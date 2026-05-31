@@ -140,7 +140,7 @@ function resolveManagedCursorSkillsDir(homeDir: string): string {
   return path.join(homeDir, ".cursor", "skills");
 }
 
-const CURSOR_SKILL_HOME_ENTRIES = new Set(["skills", "skills-cursor"]);
+const CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES = new Set(["skills", "skills-cursor", "projects"]);
 
 async function removeManagedCursorEntry(targetCursorDir: string, entryName: string): Promise<void> {
   const target = path.join(targetCursorDir, entryName);
@@ -169,7 +169,7 @@ async function syncCursorSharedHomeEntries(sourceHome: string, targetHome: strin
   await fs.mkdir(targetCursorDir, { recursive: true });
   await pruneManagedCursorConfigSnapshots(targetCursorDir);
   for (const entry of entries) {
-    if (CURSOR_SKILL_HOME_ENTRIES.has(entry.name)) continue;
+    if (CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES.has(entry.name)) continue;
     await ensureManagedHomeEntrySnapshot(
       path.join(targetCursorDir, entry.name),
       path.join(sourceCursorDir, entry.name),

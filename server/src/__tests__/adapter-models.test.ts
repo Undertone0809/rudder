@@ -111,7 +111,9 @@ describe("adapter model listing", () => {
     const capturePath = path.join(root, "capture.json");
     process.env.HOME = hostHome;
     await fs.mkdir(path.join(hostHome, ".cursor", "settings"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "projects", "volatile-project"), { recursive: true });
     await fs.writeFile(path.join(hostHome, ".cursor", "settings", "host-only.json"), "{}", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "projects", "volatile-project", "worker.sock"), "socket placeholder", "utf8");
     await fs.writeFile(
       commandPath,
       `#!/usr/bin/env node
@@ -150,7 +152,8 @@ process.exit(1);
       };
       expect(capture.argv).toEqual(["models"]);
       expect(capture.home).toContain(path.join("organizations", "organization-1", "cursor-home", "agents", "model-list"));
-      await expect(fs.stat(path.join(capture.home, ".cursor", "settings", "host-only.json"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capture.home, ".cursor", "settings", "host-only.json"))).resolves.toBeTruthy();
+      await expect(fs.stat(path.join(capture.home, ".cursor", "projects"))).rejects.toThrow();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

@@ -70,6 +70,32 @@ describe("gemini_local parser", () => {
       ],
     });
   });
+
+  it("extracts assistant text from Gemini CLI message stream events", () => {
+    const stdout = [
+      JSON.stringify({ type: "init", session_id: "gemini-session-2", model: "gemini-3-flash-preview" }),
+      JSON.stringify({ type: "message", role: "user", content: "Respond with exactly hello." }),
+      JSON.stringify({ type: "message", role: "assistant", content: "hello", delta: true }),
+      JSON.stringify({ type: "result", status: "success" }),
+    ].join("\n");
+
+    const parsed = parseGeminiJsonl(stdout);
+    expect(parsed.sessionId).toBe("gemini-session-2");
+    expect(parsed.summary).toBe("hello");
+  });
+
+  it("extracts assistant text from Gemini CLI message content parts", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+      }),
+    ].join("\n");
+
+    const parsed = parseGeminiJsonl(stdout);
+    expect(parsed.summary).toBe("hello");
+  });
 });
 
 describe("gemini_local stale session detection", () => {

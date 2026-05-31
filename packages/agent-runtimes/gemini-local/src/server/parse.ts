@@ -6,6 +6,14 @@ function collectMessageText(message: unknown): string[] {
     return trimmed ? [trimmed] : [];
   }
 
+  if (Array.isArray(message)) {
+    const lines: string[] = [];
+    for (const partRaw of message) {
+      lines.push(...collectMessageText(partRaw));
+    }
+    return lines;
+  }
+
   const record = parseObject(message);
   const direct = asString(record.text, "").trim();
   const lines: string[] = direct ? [direct] : [];
@@ -117,6 +125,14 @@ export function parseGeminiJsonl(stdout: string) {
           };
           break; // only one question per message
         }
+      }
+      continue;
+    }
+
+    if (type === "message") {
+      const role = asString(event.role, "").trim();
+      if (role === "assistant") {
+        messages.push(...collectMessageText(event.content));
       }
       continue;
     }

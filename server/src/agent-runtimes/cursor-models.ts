@@ -20,7 +20,7 @@ const CURSOR_MODELS_TIMEOUT_MS = 5_000;
 const CURSOR_MODELS_CACHE_TTL_MS = 60_000;
 const MAX_BUFFER_BYTES = 512 * 1024;
 const DEFAULT_RUDDER_INSTANCE_ID = "default";
-const CURSOR_SKILL_HOME_ENTRIES = new Set(["skills", "skills-cursor"]);
+const CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES = new Set(["skills", "skills-cursor", "projects"]);
 
 const modelCache = new Map<string, { expiresAt: number; models: AgentRuntimeModel[] }>();
 
@@ -115,7 +115,7 @@ async function prepareManagedCursorHome(env: Record<string, string>, orgId: stri
     if (await pathExists(sourceCursorDir)) {
       const entries = await fs.readdir(sourceCursorDir, { withFileTypes: true }).catch(() => []);
       for (const entry of entries) {
-        if (CURSOR_SKILL_HOME_ENTRIES.has(entry.name)) continue;
+        if (CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES.has(entry.name)) continue;
         await ensureManagedHomeEntrySnapshot(path.join(targetCursorDir, entry.name), path.join(sourceCursorDir, entry.name));
       }
     }
@@ -254,9 +254,6 @@ async function resolveCursorModelsCommandInput(ctx?: AgentRuntimeModelListContex
   const envConfig = parseObject(config.env);
   const configEnv = normalizeEnv(envConfig);
   const baseEnv = normalizeEnv({ ...process.env, ...configEnv });
-  if (ctx?.orgId && !Object.prototype.hasOwnProperty.call(configEnv, "HOME")) {
-    delete baseEnv.HOME;
-  }
   const managedHome = ctx?.orgId
     ? await prepareManagedCursorHome(baseEnv, ctx.orgId, "model-list")
     : (baseEnv.HOME ?? process.env.HOME ?? "");

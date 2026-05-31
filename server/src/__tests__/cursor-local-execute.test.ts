@@ -18,6 +18,7 @@ ${gitIdentityCaptureSnippet}
 const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const payload = {
   argv: process.argv.slice(2),
+  home: process.env.HOME,
   prompt: fs.readFileSync(0, "utf8"),
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
@@ -50,6 +51,7 @@ console.log(JSON.stringify({
 
 type CapturePayload = {
   argv: string[];
+  home: string;
   prompt: string;
   rudderEnvKeys: string[];
   gitIdentity: GitIdentityCapture;
@@ -98,6 +100,8 @@ describe("cursor execute", () => {
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer direct status updates.\n", "utf8");
+    await fs.mkdir(path.join(root, ".cursor", "projects", "volatile-project"), { recursive: true });
+    await fs.writeFile(path.join(root, ".cursor", "projects", "volatile-project", "worker.sock"), "socket placeholder", "utf8");
     await writeFakeCursorCommand(commandPath);
 
     const restoreEnv = setManagedCursorEnv(root);
@@ -153,6 +157,8 @@ describe("cursor execute", () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expectPreparedGitConfigCapture(capture);
+      expect(capture.home).toContain(path.join("organizations", "organization-1", "cursor-home", "agents", "agent-1"));
+      await expect(fs.stat(path.join(capture.home, ".cursor", "projects"))).rejects.toThrow();
       expect(capture.argv).not.toContain("Follow the rudder heartbeat.");
       expect(capture.argv).not.toContain("--mode");
       expect(capture.argv).not.toContain("ask");

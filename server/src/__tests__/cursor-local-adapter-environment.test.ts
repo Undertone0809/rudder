@@ -47,6 +47,9 @@ describe("cursor environment diagnostics", () => {
       config: {
         command: process.execPath,
         cwd,
+        env: {
+          HOME: path.join(path.dirname(cwd), "host-home"),
+        },
       },
     });
 
@@ -67,36 +70,53 @@ describe("cursor environment diagnostics", () => {
     const argsCapturePath = path.join(root, "args.json");
     const envCapturePath = path.join(root, "env.json");
     const rudderHome = path.join(root, "rudder-home");
+    const hostHome = path.join(root, "host-home");
+    const previousHome = process.env.HOME;
+    process.env.HOME = hostHome;
     await fs.mkdir(binDir, { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "settings"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "skills", "host-only-skill"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "projects", "volatile-project"), { recursive: true });
+    await fs.writeFile(path.join(hostHome, ".cursor", "settings", "host-only.json"), "{}", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "skills", "host-only-skill", "SKILL.md"), "---\nname: host-only-skill\n---\n", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "projects", "volatile-project", "worker.sock"), "socket placeholder", "utf8");
     await writeFakeCursorAgentCommand(binDir, argsCapturePath);
 
-    const result = await testEnvironment({
-      orgId: "organization-1",
-      agentRuntimeType: "cursor",
-      config: {
-        command: "cursor-agent",
-        cwd,
-        env: {
-          CURSOR_API_KEY: "test-key",
-          RUDDER_TEST_ARGS_PATH: argsCapturePath,
-          RUDDER_TEST_ENV_PATH: envCapturePath,
-          RUDDER_HOME: rudderHome,
-          RUDDER_INSTANCE_ID: "test-instance",
-          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    try {
+      const result = await testEnvironment({
+        orgId: "organization-1",
+        agentRuntimeType: "cursor",
+        config: {
+          command: "cursor-agent",
+          cwd,
+          env: {
+            CURSOR_API_KEY: "test-key",
+            RUDDER_TEST_ARGS_PATH: argsCapturePath,
+            RUDDER_TEST_ENV_PATH: envCapturePath,
+            RUDDER_HOME: rudderHome,
+            RUDDER_INSTANCE_ID: "test-instance",
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
         },
-      },
-    });
+      });
 
-    expect(result.status).toBe("pass");
-    const args = JSON.parse(await fs.readFile(argsCapturePath, "utf8")) as string[];
-    expect(args).toContain("-f");
-    expect(args).not.toContain("--workspace");
-    expect(args).not.toContain("--mode");
-    const capturedEnv = JSON.parse(await fs.readFile(envCapturePath, "utf8")) as { home: string };
-    expect(capturedEnv.home).toBe(
-      path.join(rudderHome, "instances", "test-instance", "organizations", "organization-1", "cursor-home", "agents", "environment-test"),
-    );
-    await fs.rm(root, { recursive: true, force: true });
+      expect(result.status).toBe("pass");
+      const args = JSON.parse(await fs.readFile(argsCapturePath, "utf8")) as string[];
+      expect(args).toContain("-f");
+      expect(args).not.toContain("--workspace");
+      expect(args).not.toContain("--mode");
+      const capturedEnv = JSON.parse(await fs.readFile(envCapturePath, "utf8")) as { home: string };
+      expect(capturedEnv.home).toBe(
+        path.join(rudderHome, "instances", "test-instance", "organizations", "organization-1", "cursor-home", "agents", "environment-test"),
+      );
+      await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "settings", "host-only.json"))).resolves.toBeTruthy();
+      await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "skills", "host-only-skill"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "projects"))).rejects.toThrow();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it("does not auto-add -f when extraArgs already bypass trust", async () => {
@@ -118,6 +138,7 @@ describe("cursor environment diagnostics", () => {
         cwd,
         extraArgs: ["-f"],
         env: {
+          HOME: path.join(root, "host-home"),
           CURSOR_API_KEY: "test-key",
           RUDDER_TEST_ARGS_PATH: argsCapturePath,
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
@@ -155,6 +176,7 @@ describe("cursor environment diagnostics", () => {
         command: "cursor-agent",
         cwd,
         env: {
+          HOME: path.join(root, "host-home"),
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },
       },

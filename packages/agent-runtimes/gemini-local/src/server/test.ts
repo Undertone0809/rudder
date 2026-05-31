@@ -119,9 +119,6 @@ export async function testEnvironment(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  if (!Object.prototype.hasOwnProperty.call(env, "HOME")) {
-    delete baseEnv.HOME;
-  }
   const managedHome = await prepareManagedGeminiHome(baseEnv, ctx.orgId, "environment-test");
   const runtimeEnv = Object.fromEntries(
     Object.entries(ensurePathInEnv({ ...baseEnv, HOME: managedHome })).filter(

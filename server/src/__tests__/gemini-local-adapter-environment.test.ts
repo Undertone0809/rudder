@@ -61,6 +61,9 @@ describe("gemini_local environment diagnostics", () => {
       config: {
         command: process.execPath,
         cwd,
+        env: {
+          HOME: path.join(path.dirname(cwd), "host-home"),
+        },
       },
     });
 
@@ -81,41 +84,55 @@ describe("gemini_local environment diagnostics", () => {
     const argsCapturePath = path.join(root, "args.json");
     const envCapturePath = path.join(root, "env.json");
     const rudderHome = path.join(root, "rudder-home");
+    const hostHome = path.join(root, "host-home");
+    const previousHome = process.env.HOME;
+    process.env.HOME = hostHome;
     await fs.mkdir(binDir, { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".gemini", "config"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".gemini", "skills", "host-only-skill"), { recursive: true });
+    await fs.writeFile(path.join(hostHome, ".gemini", "config", "host-only.json"), "{}", "utf8");
+    await fs.writeFile(path.join(hostHome, ".gemini", "skills", "host-only-skill", "SKILL.md"), "---\nname: host-only-skill\n---\n", "utf8");
     await writeFakeGeminiCommand(binDir, argsCapturePath);
 
-    const result = await testEnvironment({
-      orgId: "organization-1",
-      agentRuntimeType: "gemini_local",
-      config: {
-        command: "gemini",
-        cwd,
-        model: "gemini-2.5-pro",
-        yolo: true,
-        env: {
-          GEMINI_API_KEY: "test-key",
-          RUDDER_TEST_ARGS_PATH: argsCapturePath,
-          RUDDER_TEST_ENV_PATH: envCapturePath,
-          RUDDER_HOME: rudderHome,
-          RUDDER_INSTANCE_ID: "test-instance",
-          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    try {
+      const result = await testEnvironment({
+        orgId: "organization-1",
+        agentRuntimeType: "gemini_local",
+        config: {
+          command: "gemini",
+          cwd,
+          model: "gemini-2.5-pro",
+          yolo: true,
+          env: {
+            GEMINI_API_KEY: "test-key",
+            RUDDER_TEST_ARGS_PATH: argsCapturePath,
+            RUDDER_TEST_ENV_PATH: envCapturePath,
+            RUDDER_HOME: rudderHome,
+            RUDDER_INSTANCE_ID: "test-instance",
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
         },
-      },
-    });
+      });
 
-    expect(result.status).not.toBe("fail");
-    const args = JSON.parse(await fs.readFile(argsCapturePath, "utf8")) as string[];
-    expect(args).toContain("--model");
-    expect(args).toContain("gemini-2.5-pro");
-    expect(args).toContain("--approval-mode");
-    expect(args).toContain("yolo");
-    expect(args).toContain("--prompt");
-    const capturedEnv = JSON.parse(await fs.readFile(envCapturePath, "utf8")) as { home: string; trust: string };
-    expect(capturedEnv.home).toBe(
-      path.join(rudderHome, "instances", "test-instance", "organizations", "organization-1", "gemini-home", "agents", "environment-test"),
-    );
-    expect(capturedEnv.trust).toBe("true");
-    await fs.rm(root, { recursive: true, force: true });
+      expect(result.status).not.toBe("fail");
+      const args = JSON.parse(await fs.readFile(argsCapturePath, "utf8")) as string[];
+      expect(args).toContain("--model");
+      expect(args).toContain("gemini-2.5-pro");
+      expect(args).toContain("--approval-mode");
+      expect(args).toContain("yolo");
+      expect(args).toContain("--prompt");
+      const capturedEnv = JSON.parse(await fs.readFile(envCapturePath, "utf8")) as { home: string; trust: string };
+      expect(capturedEnv.home).toBe(
+        path.join(rudderHome, "instances", "test-instance", "organizations", "organization-1", "gemini-home", "agents", "environment-test"),
+      );
+      expect(capturedEnv.trust).toBe("true");
+      await expect(fs.stat(path.join(capturedEnv.home, ".gemini", "config", "host-only.json"))).resolves.toBeTruthy();
+      await expect(fs.stat(path.join(capturedEnv.home, ".gemini", "skills", "host-only-skill"))).rejects.toThrow();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it("classifies quota exhaustion as a quota warning instead of a generic failure", async () => {
@@ -135,6 +152,7 @@ describe("gemini_local environment diagnostics", () => {
         command: "gemini",
         cwd,
         env: {
+          HOME: path.join(root, "host-home"),
           GEMINI_API_KEY: "test-key",
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },

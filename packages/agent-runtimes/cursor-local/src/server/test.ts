@@ -21,7 +21,7 @@ import { parseCursorJsonl } from "./parse.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
 
 const DEFAULT_RUDDER_INSTANCE_ID = "default";
-const CURSOR_SKILL_HOME_ENTRIES = new Set(["skills", "skills-cursor"]);
+const CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES = new Set(["skills", "skills-cursor", "projects"]);
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -100,7 +100,7 @@ async function prepareManagedCursorHome(env: Record<string, string>, orgId: stri
     if (await pathExists(sourceCursorDir)) {
       const entries = await fs.readdir(sourceCursorDir, { withFileTypes: true }).catch(() => []);
       for (const entry of entries) {
-        if (CURSOR_SKILL_HOME_ENTRIES.has(entry.name)) continue;
+        if (CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES.has(entry.name)) continue;
         await ensureManagedHomeEntrySnapshot(path.join(targetCursorDir, entry.name), path.join(sourceCursorDir, entry.name));
       }
     }
@@ -152,9 +152,6 @@ export async function testEnvironment(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  if (!Object.prototype.hasOwnProperty.call(env, "HOME")) {
-    delete baseEnv.HOME;
-  }
   const managedHome = await prepareManagedCursorHome(baseEnv, ctx.orgId, "environment-test");
   const runtimeEnv = Object.fromEntries(
     Object.entries(ensurePathInEnv({ ...baseEnv, HOME: managedHome })).filter(
