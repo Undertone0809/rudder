@@ -1,0 +1,35 @@
+{
+  "skill_name": "rudder-agent-runtime-contract-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我用 Claude Code 驱动 Agent，Claude Code 难道没做 skill 隔离吗？你查一下是不是会读到我正常 CLI 的 skill/session state。",
+      "expected_output": "Uses rudder-agent-runtime-contract-maintainer, classifies the issue as runtime HOME/profile and skill isolation, reads the Claude adapter plus shared runtime helper path, distinguishes Rudder-owned runtime state from user-owned CLI state, and requires adapter-side env/path evidence plus targeted environment tests before handoff.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Pi local run 不应该读写我正常 Pi CLI 的 skill。Review 这个 diff，只看 runtime isolation P1/P2。",
+      "expected_output": "Treats this as cross-runtime contract review rather than generic code review, inspects Pi adapter env/profile variables and cleanup behavior, checks whether shared runtime invariants are preserved, and asks for proof that user-owned provider state is untouched.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "现在 skill usage 统计只适配了 Codex 的格式，但 OpenCode/Gemini 可能是 tool call 里叫 skill。你验证一下这个统计是不是错了。",
+      "expected_output": "Classifies the task as skill-usage analytics parity, compares filesystem-loaded skill signals with tool-call style skill invocations, inspects run-intelligence/transcript parser paths, and recommends tests covering at least one Codex-style and one tool-call-style provider case.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "这个 run 失败了，帮我看一下为什么。",
+      "expected_output": "Does not over-route to rudder-agent-runtime-contract-maintainer when the prompt is a normal run diagnosis; routes first to debug-run-transcript-maintainer and switches to the runtime contract skill only if transcript evidence shows a provider adapter contract bug.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "让 Codex、Claude、OpenCode、Pi 这些 runtime 的 stdout/stderr 和 transcript 解析保持一致，最后要能在 Run Detail 里看出来。",
+      "expected_output": "Builds a provider parity matrix, identifies shared transcript/stdout/stderr invariants and provider-specific exceptions, updates shared parser or adapter code where appropriate, runs parser and adapter tests, and requires a run-intelligence or UI readback proof path.",
+      "files": []
+    }
+  ]
+}
