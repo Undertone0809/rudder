@@ -9,7 +9,11 @@ import {
   parseObject,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { applyManagedOpenCodeEnv, prepareManagedOpenCodeHome } from "./home.js";
+import {
+  applyManagedOpenCodeEnv,
+  ensureManagedOpenCodeDeepSeekConfig,
+  prepareManagedOpenCodeHome,
+} from "./home.js";
 
 const MODELS_CACHE_TTL_MS = 60_000;
 const MODELS_DISCOVERY_TIMEOUT_MS = 20_000;
@@ -246,14 +250,19 @@ export async function listOpenCodeModels(
     })();
     const usePure = !extraArgs.includes("--no-pure");
     const runtimeEnv = ctx.orgId
-      ? normalizeEnv(ensurePathInEnv(applyManagedOpenCodeEnv(
-          baseEnv,
-          await prepareManagedOpenCodeHome({
+      ? await (async () => {
+          const managedHome = await prepareManagedOpenCodeHome({
             env: baseEnv,
             orgId: ctx.orgId,
             agentId: "model-list",
-          }),
-        )))
+          });
+          await ensureManagedOpenCodeDeepSeekConfig({
+            env: baseEnv,
+            homeDir: managedHome,
+            model: asString(config.model, ""),
+          });
+          return normalizeEnv(ensurePathInEnv(applyManagedOpenCodeEnv(baseEnv, managedHome)));
+        })()
       : undefined;
 
     return await discoverOpenCodeModelsCached({

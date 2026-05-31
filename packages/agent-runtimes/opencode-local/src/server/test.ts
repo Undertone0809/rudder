@@ -12,7 +12,11 @@ import {
   ensurePathInEnv,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { applyManagedOpenCodeEnv, prepareManagedOpenCodeHome } from "./home.js";
+import {
+  applyManagedOpenCodeEnv,
+  ensureManagedOpenCodeDeepSeekConfig,
+  prepareManagedOpenCodeHome,
+} from "./home.js";
 import { discoverOpenCodeModels, ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
 import { parseOpenCodeJsonl } from "./parse.js";
 
@@ -100,6 +104,11 @@ export async function testEnvironment(
     env: baseEnv,
     orgId: ctx.orgId,
     agentId: "environment-test",
+  });
+  await ensureManagedOpenCodeDeepSeekConfig({
+    env: baseEnv,
+    homeDir: managedHome,
+    model: asString(config.model, ""),
   });
   const runtimeEnv = normalizeEnv(ensurePathInEnv(applyManagedOpenCodeEnv(baseEnv, managedHome)));
 

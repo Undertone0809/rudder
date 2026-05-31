@@ -36,6 +36,10 @@ export function resolveManagedOpenCodeConfigDir(homeDir: string): string {
   return path.join(homeDir, ".config");
 }
 
+function resolveManagedOpenCodeConfigFile(homeDir: string): string {
+  return path.join(resolveManagedOpenCodeConfigDir(homeDir), "opencode", "opencode.json");
+}
+
 export function resolveManagedOpenCodeDataDir(homeDir: string): string {
   return path.join(homeDir, ".local", "share");
 }
@@ -71,6 +75,64 @@ export async function prepareManagedOpenCodeHome(input: {
     `[rudder] Using Rudder-managed OpenCode home "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
+}
+
+function isDeepSeekModel(model: string | undefined): boolean {
+  return typeof model === "string" && model.trim().startsWith("deepseek/");
+}
+
+function hasDeepSeekKey(env: NodeJS.ProcessEnv | Record<string, string | undefined>): boolean {
+  return typeof env.DEEPSEEK_API_KEY === "string" && env.DEEPSEEK_API_KEY.trim().length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export async function ensureManagedOpenCodeDeepSeekConfig(input: {
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  homeDir: string;
+  model?: string;
+}): Promise<void> {
+  if (!isDeepSeekModel(input.model) || !hasDeepSeekKey(input.env)) return;
+
+  const configFile = resolveManagedOpenCodeConfigFile(input.homeDir);
+  await fs.mkdir(path.dirname(configFile), { recursive: true });
+
+  let config: Record<string, unknown> = {
+    $schema: "https://opencode.ai/config.json",
+  };
+  try {
+    const raw = await fs.readFile(configFile, "utf8");
+    const parsed = JSON.parse(raw);
+    if (isRecord(parsed)) config = parsed;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") return;
+  }
+
+  const provider = isRecord(config.provider) ? { ...config.provider } : {};
+  const deepseek = isRecord(provider.deepseek) ? { ...provider.deepseek } : {};
+  const models = isRecord(deepseek.models) ? { ...deepseek.models } : {};
+  provider.deepseek = {
+    npm: "@ai-sdk/openai-compatible",
+    name: "DeepSeek",
+    ...deepseek,
+    options: {
+      ...(isRecord(deepseek.options) ? deepseek.options : {}),
+      baseURL: "https://api.deepseek.com",
+      apiKey: "{env:DEEPSEEK_API_KEY}",
+    },
+    models: {
+      "deepseek-chat": { name: "DeepSeek Chat" },
+      "deepseek-reasoner": { name: "DeepSeek Reasoner" },
+      "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+      "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+      ...models,
+    },
+  };
+  config.provider = provider;
+
+  await fs.writeFile(configFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }
 
 export function applyManagedOpenCodeEnv(env: Record<string, string>, managedHome: string): Record<string, string> {

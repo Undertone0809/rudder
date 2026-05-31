@@ -30,6 +30,7 @@ import {
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   applyManagedOpenCodeEnv,
+  ensureManagedOpenCodeDeepSeekConfig,
   prepareManagedOpenCodeHome,
   resolveManagedOpenCodeSkillsDir,
 } from "./home.js";
@@ -234,6 +235,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     agentId: agent.id,
     onPrepared: (message) => onLog("stdout", message),
   });
+  await ensureManagedOpenCodeDeepSeekConfig({ env: sourceEnv, homeDir: managedHome, model });
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
