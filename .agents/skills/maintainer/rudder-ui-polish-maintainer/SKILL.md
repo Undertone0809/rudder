@@ -151,6 +151,22 @@ shell, screenshot, or equivalent visual inspection. Prefer the available
 browser automation path for local routes. If browser verification is blocked,
 state the exact blocker and do not describe the layout as visually proven.
 
+When the defect is alignment, line height, avatar/text/time centering, column
+width, or row rhythm, a screenshot alone is often too weak. Use realistic data
+for the actual object being aligned, such as a real agent avatar instead of a
+placeholder icon, a long activity label, and the timestamp or action controls
+that appear in production. Then add at least one measurable proof when
+practical:
+
+- DOM bounding boxes for the avatar, primary text, secondary text, timestamp,
+  and row container
+- centerline or top/bottom delta showing the items share the intended row axis
+- screenshot with the real fixture state, saved outside the repo
+
+If Browser or the test harness cannot collect geometry, say that the alignment
+proof is visual-only. Do not claim a row-alignment fix is fully proven from a
+unit test that renders placeholder data instead of the production-shaped row.
+
 For follow-up corrections from the user, such as "这颜色不对", "没修好", or
 "这里还是不对", inspect the rendered state again before editing further. Treat
 the user's screenshot as evidence that the previous proof was incomplete, not
@@ -195,6 +211,8 @@ For advice-only tasks, hand off with:
 - Treating a visual issue as pure CSS when the real problem is wrong data,
   wrong route, or redundant object modeling.
 - Claiming visual verification after browser automation timed out.
+- Claiming an alignment fix from placeholder fixtures when the real surface uses
+  agent avatars, long labels, timestamps, badges, or row actions.
 - Shipping a nice-looking state badge that reads stale or mock data.
 - Mixing unrelated dirty files into the commit.
 - Using `advisor-review-loop-maintainer` for every small UI tweak, slowing down

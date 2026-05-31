@@ -47,6 +47,9 @@ Use this skill when the user asks for any of:
   E2E rather than a small visual polish pass
 - performance benchmark or control-plane optimization work that must start from
   measured workload evidence and a scoped first slice before implementation
+- agent-runtime, provider-adapter, transcript-parser, tool-call, or skill-usage
+  contract work that must prove the same Rudder work loop across multiple agent
+  runtimes before handoff
 - creating or improving a reusable workflow for development tasks
 
 Do not use this skill as a substitute for a clearly matched narrow skill. If
@@ -143,6 +146,10 @@ Classify the prompt into one primary stage:
   component fixtures, or design-system coverage.
 - `performance_benchmark`: the user asks to benchmark Rudder, analyze
   performance, or optimize a bottleneck before the exact fix is known.
+- `runtime_contract`: the user asks whether Codex, Claude, Gemini, OpenCode,
+  Pi, Cursor, or another runtime/provider behaves the same way for tools,
+  skills, transcript parsing, adapter isolation, analytics, comments, CLI
+  output, or any agent-visible Rudder contract.
 
 If multiple stages are present, choose the earliest blocking stage. Example:
 "fix this and review it" starts at `implementation`, then must pass
@@ -198,6 +205,10 @@ without lifecycle sequencing, dirty-state recovery, or stage-gate decisions.
   readiness, then route to implementation or
   `architecture-refactor-driver-maintainer` only if the first slice requires
   architectural change.
+- Agent-runtime/provider contract work: keep this router as owner of the
+  `runtime_contract` route. Use the relevant debug or implementation workflow
+  underneath, but do not hand off until a provider matrix and actor-run-chain
+  prove the changed contract for the runtimes that the user cares about.
 - Local Rudder Desktop dev startup, Electron shell, embedded Postgres,
   prod-local instance confusion, or update/install failure before release:
   `rudder-desktop-dev-recovery-maintainer`.
@@ -419,6 +430,37 @@ dev app for Desktop shell capture`; do not present it as full Desktop proof.
 Missing terminal product proof blocks handoff for workflow changes unless the
 user explicitly lowers the acceptance bar for this turn.
 
+### 3.6 Prove runtime/provider contracts with a matrix
+
+For runtime, provider-adapter, transcript-parser, tool-call, skill-usage,
+agent-comment, CLI, or run-analytics contract work, build a compact provider
+matrix before implementation or before claiming verification.
+
+The matrix must name:
+
+- runtimes in scope: Codex, Claude, Gemini, OpenCode, Pi, Cursor, or any
+  user-named adapter
+- actor path: the command, heartbeat, CLI invocation, chat action, or runtime
+  wakeup that exercised each provider
+- transcript/parser evidence: raw log or parsed steps showing the relevant tool
+  call, skill call, message, output, or error shape
+- persisted Rudder evidence: run record, analytics field, comment, issue,
+  message, cost, usage, or activity readback
+- terminal surface: run-intelligence view, UI state, CLI output, or API response
+  where the next actor would consume the result
+- unsupported or blocked providers, with exact blocker evidence
+
+Do not accept "works for Codex" as proof for Claude/Gemini/OpenCode/Pi-style
+tool-call behavior when the user explicitly raised provider parity. If a
+runtime cannot be launched locally, preserve the contract with a parser fixture
+or recorded log and label the missing actor-run-chain as blocked/substituted.
+
+For skill-usage analytics specifically, verify both sides:
+
+- ingestion: provider-specific raw transcript/tool-call shape is normalized
+- consumption: the stored analytics/readback/UI surface reports the expected
+  skill usage without relying on a Codex-only `SKILL.md` read heuristic
+
 ### 4. Run default review gates
 
 Use review gates by default for every routed stage that produces an artifact,
@@ -626,6 +668,15 @@ work loop when practical: seed a disposable issue, trigger the agent/runtime or
 CLI as that actor, read back persisted issue/run/comment state, and inspect the
 terminal app or CLI surface. Unit tests and direct DB assertions are supporting
 evidence, not the whole review.
+
+### Runtime/provider contract change
+
+Route: `runtime_contract -> implementation or debug -> verification -> review -> handoff`.
+
+Build the provider matrix first. Then prove the contract at three layers:
+provider raw output, Rudder normalization/persistence, and the terminal surface
+that operators or reviewers use. For provider parity requests, at least one
+non-Codex provider must be exercised or explicitly marked blocked with evidence.
 
 ### Release request
 
