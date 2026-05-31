@@ -74,6 +74,19 @@ import {
 export * from "./Chat.parts";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
+function encodeMessengerThreadSummaryCursor(summary: MessengerThreadSummary) {
+  const payload = {
+    activityAt: new Date(summary.latestActivityAt ?? 0).toISOString(),
+    title: summary.title,
+    threadKey: summary.threadKey,
+  };
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const base64 = btoa(binary);
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 export function Chat() { const { selectedOrganizationId } = useOrganization();
   if (!selectedOrganizationId) {
     return <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
@@ -125,7 +138,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         pathname: conversationId ? chatConversationPath(conversationId) : chatRootPath,
         search: nextSearch.toString() ? `?${nextSearch.toString()}` : "", }, { replace: true }, ); }, [chatConversationPath, chatRootPath, conversationId, draft, navigate, pendingPrefill, searchParams]); const conversationsQuery = useQuery({
     queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"), enabled: !!selectedOrganizationId, }); const conversationQuery = useQuery({
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"), enabled: !!selectedOrganizationId && isMobile, }); const conversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(conversationId ?? "__none__"),
     queryFn: () => chatsApi.get(conversationId!), enabled: !!conversationId, }); const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(conversationId ?? "__none__"),
@@ -260,10 +273,41 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     options?: { latestActivityAt?: Date;
       preview?: string | null; },
   ) => { if (!selectedOrganizationId) return;
+    const nextSummary = buildMessengerChatThreadSummary(conversation, options);
     queryClient.setQueryData<MessengerThreadSummary[]>(
       queryKeys.messenger.threads(selectedOrganizationId),
       (current) => mergeMessengerThreadSummaries(
-        current ?? [], buildMessengerChatThreadSummary(conversation, options), ), ); }, [queryClient, selectedOrganizationId]); const upsertOptimisticConversation = (
+        current ?? [], nextSummary, ), );
+    queryClient.setQueryData<{
+      pages: Array<{
+        items: MessengerThreadSummary[];
+        pageInfo: { limit?: number; nextCursor?: string | null; hasMore?: boolean };
+      }>;
+      pageParams: unknown[];
+    }>(
+      queryKeys.messenger.threadPages(selectedOrganizationId),
+      (current) => current ? {
+        ...current,
+        pages: current.pages.map((page, index) => {
+          const nextItems = index === 0
+            ? mergeMessengerThreadSummaries(page.items, nextSummary)
+            : page.items.filter((thread) => thread.threadKey !== nextSummary.threadKey);
+          const pageLimit = typeof page.pageInfo.limit === "number" ? page.pageInfo.limit : null;
+          const items = index === 0 && pageLimit !== null
+            ? nextItems.slice(0, pageLimit)
+            : nextItems;
+          const lastItem = items.at(-1);
+          const hasMore = page.pageInfo.hasMore === true || nextItems.length > items.length;
+          return {
+            ...page,
+            items,
+            pageInfo: index === 0 && hasMore && lastItem
+              ? { ...page.pageInfo, hasMore: true, nextCursor: encodeMessengerThreadSummaryCursor(lastItem) }
+              : page.pageInfo,
+          };
+        }),
+      } : current,
+    ); }, [queryClient, selectedOrganizationId]); const upsertOptimisticConversation = (
     conversation: ChatConversation,
     body: string,
     sentAt: Date,

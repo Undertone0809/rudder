@@ -17,6 +17,7 @@ let messengerRoute: any;
 let chatList: any[];
 let activeGeneratingChatIds: Set<string>;
 let cleanupFn: (() => void) | null = null;
+let intersectionCallback: ((entries: Array<{ isIntersecting: boolean }>) => void) | null = null;
 
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
@@ -69,11 +70,20 @@ function baseThread(threadKey: string, title: string, unreadCount = 0) {
 
 describe("MessengerContextSidebar unread scroll requests", () => {
   beforeEach(() => {
+    intersectionCallback = null;
     globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
       return 0;
     }) as typeof globalThis.requestAnimationFrame;
     globalThis.cancelAnimationFrame = vi.fn();
+    class MockIntersectionObserver {
+      constructor(callback: (entries: Array<{ isIntersecting: boolean }>) => void) {
+        intersectionCallback = callback;
+      }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    }
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
     Element.prototype.scrollIntoView = vi.fn();
     activeGeneratingChatIds = new Set();
     chatList = [];
@@ -90,6 +100,9 @@ describe("MessengerContextSidebar unread scroll requests", () => {
       systemThreadDetail: null,
       isLoading: false,
       error: null,
+      hasMoreThreadSummaries: false,
+      isFetchingMoreThreadSummaries: false,
+      loadMoreThreadSummaries: vi.fn(),
     };
   });
 
@@ -125,5 +138,36 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     });
 
     expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+  });
+
+  it("loads the next Messenger thread page when the sidebar sentinel enters view", async () => {
+    const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
+    messengerModel = {
+      ...messengerModel,
+      hasMoreThreadSummaries: true,
+      loadMoreThreadSummaries,
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-testid="messenger-thread-page-sentinel"]')).not.toBeNull();
+
+    await act(async () => {
+      intersectionCallback?.([{ isIntersecting: true }]);
+      await Promise.resolve();
+    });
+
+    expect(loadMoreThreadSummaries).toHaveBeenCalledTimes(1);
   });
 });

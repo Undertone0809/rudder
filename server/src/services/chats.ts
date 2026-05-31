@@ -34,6 +34,11 @@ type MessageHydrationRow = MessageRow & {
     endedAt: string | null;
   } | null;
 };
+type ConversationSummaryCursor = {
+  activityAt: Date;
+  title: string;
+  threadKey: string;
+};
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
 
@@ -484,19 +489,46 @@ export function chatService(db: Db) {
 
   async function listSummaries(
       orgId: string,
-      options?: { status?: "active" | "resolved" | "archived" | "all" },
+      options?: {
+        status?: "active" | "resolved" | "archived" | "all";
+        limit?: number;
+        after?: ConversationSummaryCursor | null;
+      },
       userId?: string | null,
     ) {
       const status = options?.status ?? "active";
       const conditions = [eq(chatConversations.orgId, orgId)];
+      const activityAtSql = sql<Date>`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`;
+      const threadKeySql = sql<string>`'chat:' || ${chatConversations.id}`;
       if (status !== "all") {
         conditions.push(eq(chatConversations.status, status));
       }
-      const rows = await db
+      if (options?.after) {
+        const afterActivityAt = options.after.activityAt.toISOString();
+        conditions.push(sql<boolean>`(
+          ${activityAtSql} < ${afterActivityAt}
+          OR (
+            ${activityAtSql} = ${afterActivityAt}
+            AND (
+              ${chatConversations.title} > ${options.after.title}
+              OR (
+                ${chatConversations.title} = ${options.after.title}
+                AND ${threadKeySql} > ${options.after.threadKey}
+              )
+            )
+          )
+        )`);
+      }
+      let query = db
         .select()
         .from(chatConversations)
         .where(and(...conditions))
-        .orderBy(desc(sql`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`));
+        .orderBy(desc(activityAtSql), chatConversations.title, chatConversations.id)
+        .$dynamic();
+      if (typeof options?.limit === "number" && Number.isFinite(options.limit)) {
+        query = query.limit(Math.max(1, Math.floor(options.limit)));
+      }
+      const rows = await query;
       return hydrateConversationSummaries(rows, userId);
   }
 

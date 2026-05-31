@@ -31,6 +31,16 @@ export function messengerRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const userId = boardUserId(req);
+    const hasPagingParams = typeof req.query.limit === "string" || typeof req.query.cursor === "string";
+    const rawLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
+    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+    if (hasPagingParams) {
+      res.json(await svc.listThreadSummaryPage(orgId, userId, {
+        limit: Number.isFinite(rawLimit) ? rawLimit : undefined,
+        cursor,
+      }));
+      return;
+    }
     const threads = await svc.listThreadSummaries(orgId, userId);
     res.json(threads);
   });

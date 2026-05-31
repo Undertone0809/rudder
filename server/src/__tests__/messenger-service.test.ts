@@ -153,6 +153,59 @@ describe("messengerService and issue follows", () => {
     }
   });
 
+  it("paginates Messenger thread summaries with stable cursors", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-thread-pagination";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Thread Pagination Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Thread Pagination Org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const baseTime = Date.parse("2026-05-01T12:00:00.000Z");
+    const conversationIds = Array.from({ length: 6 }, () => randomUUID());
+    await db.insert(chatConversations).values(
+      conversationIds.map((conversationId, index) => {
+        const activityAt = new Date(baseTime - index * 60_000);
+        return {
+          id: conversationId,
+          orgId,
+          title: `Pagination chat ${index + 1}`,
+          summary: `Summary ${index + 1}`,
+          issueCreationMode: "manual_approval" as const,
+          planMode: false,
+          createdByUserId: userId,
+          lastMessageAt: activityAt,
+          createdAt: activityAt,
+          updatedAt: activityAt,
+        };
+      }),
+    );
+
+    const firstPage = await messengerSvc.listThreadSummaryPage(orgId, userId, { limit: 3 });
+    const secondPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 3,
+      cursor: firstPage.pageInfo.nextCursor,
+    });
+
+    expect(firstPage.items.map((item) => item.threadKey)).toEqual([
+      `chat:${conversationIds[0]}`,
+      `chat:${conversationIds[1]}`,
+      `chat:${conversationIds[2]}`,
+    ]);
+    expect(firstPage.pageInfo).toMatchObject({ limit: 3, hasMore: true });
+    expect(firstPage.pageInfo.nextCursor).toEqual(expect.any(String));
+    expect(secondPage.items.map((item) => item.threadKey)).toEqual([
+      `chat:${conversationIds[3]}`,
+      `chat:${conversationIds[4]}`,
+      `chat:${conversationIds[5]}`,
+    ]);
+    expect(secondPage.pageInfo).toEqual({ limit: 3, nextCursor: null, hasMore: false });
+  });
+
   it("persists follows and includes followed plus assigned issues in the Messenger issues thread", async () => {
     const orgId = randomUUID();
     const userId = "board-user-1";

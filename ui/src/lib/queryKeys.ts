@@ -75,6 +75,8 @@ export const queryKeys = {
   },
   messenger: {
     threads: (orgId: string) => ["messenger", orgId, "threads"] as const,
+    threadPages: (orgId: string) => ["messenger", orgId, "threads", "pages"] as const,
+    threadPreview: (orgId: string) => ["messenger", orgId, "threads", "preview"] as const,
     issues: (orgId: string) => ["messenger", orgId, "issues"] as const,
     approvals: (orgId: string) => ["messenger", orgId, "approvals"] as const,
     system: (orgId: string, threadKind: string) => ["messenger", orgId, "system", threadKind] as const,

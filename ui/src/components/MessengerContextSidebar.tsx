@@ -660,6 +660,7 @@ export function MessengerContextSidebar() {
   const markedThreadRef = useRef<string | null>(null);
   const sidebarScrollbarActivityRef = useScrollbarActivityRef("rudder:sidebar-scroll:messenger");
   const sidebarScrollElementRef = useRef<HTMLElement | null>(null);
+  const loadMoreThreadSummariesRef = useRef<HTMLDivElement | null>(null);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [unreadScrollRequestId, setUnreadScrollRequestId] = useState(() => getMessengerUnreadScrollRequestId());
@@ -902,6 +903,29 @@ export function MessengerContextSidebar() {
     };
   }, [firstUnreadThreadKey, unreadScrollRequestId]);
 
+  useEffect(() => {
+    const sentinel = loadMoreThreadSummariesRef.current;
+    const root = sidebarScrollElementRef.current;
+    if (!sentinel || !root) return;
+    if (!model.hasMoreThreadSummaries || model.isFetchingMoreThreadSummaries || model.isLoading) return;
+    if (typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.some((entry) => entry.isIntersecting);
+      if (!visible || !model.hasMoreThreadSummaries || model.isFetchingMoreThreadSummaries) return;
+      void model.loadMoreThreadSummaries();
+    }, { root, rootMargin: "240px 0px" });
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [
+    model.hasMoreThreadSummaries,
+    model.isFetchingMoreThreadSummaries,
+    model.isLoading,
+    model.loadMoreThreadSummaries,
+    model.threadSummaries.length,
+  ]);
+
   if (!model.selectedOrganizationId) return null;
 
   return (
@@ -1015,6 +1039,20 @@ export function MessengerContextSidebar() {
             })}
           </div>
         ))}
+        {model.hasMoreThreadSummaries || model.isFetchingMoreThreadSummaries ? (
+          <div
+            ref={loadMoreThreadSummariesRef}
+            data-testid="messenger-thread-page-sentinel"
+            className="flex min-h-10 items-center justify-center px-3 py-2 text-[12px] text-muted-foreground"
+          >
+            {model.isFetchingMoreThreadSummaries ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                Loading more threads
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </nav>
     </aside>
   );

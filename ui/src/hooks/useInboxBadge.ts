@@ -7,7 +7,7 @@ import { messengerApi } from "../api/messenger";
 import { dashboardApi } from "../api/dashboard";
 import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT, heartbeatsApi } from "../api/heartbeats";
 import { issuesApi } from "../api/issues";
-import { chatsApi } from "../api/chats";
+import { sidebarBadgesApi } from "../api/sidebarBadges";
 import { queryKeys } from "../lib/queryKeys";
 import {
   computeInboxBadgeData,
@@ -19,6 +19,7 @@ import {
 } from "../lib/inbox";
 
 const INBOX_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked,done";
+const INBOX_BADGE_THREAD_PREVIEW_LIMIT = 10;
 
 export function useDismissedInboxItems() {
   const [dismissed, setDismissed] = useState<Set<string>>(loadDismissedInboxItems);
@@ -46,9 +47,16 @@ export function useDismissedInboxItems() {
 
 export function useInboxBadge(orgId: string | null | undefined) {
   const { dismissed } = useDismissedInboxItems();
-  const { data: messengerThreads = [] } = useQuery({
-    queryKey: queryKeys.messenger.threads(orgId ?? "__none__"),
-    queryFn: () => messengerApi.listThreads(orgId!),
+  const { data: messengerThreadPreview } = useQuery({
+    queryKey: queryKeys.messenger.threadPreview(orgId ?? "__none__"),
+    queryFn: () => messengerApi.listThreadPage(orgId!, { limit: INBOX_BADGE_THREAD_PREVIEW_LIMIT }),
+    enabled: !!orgId,
+  });
+  const messengerThreads = messengerThreadPreview?.items ?? [];
+
+  const { data: serverBadges } = useQuery({
+    queryKey: queryKeys.sidebarBadges(orgId ?? "__none__"),
+    queryFn: () => sidebarBadgesApi.get(orgId!),
     enabled: !!orgId,
   });
 
@@ -101,17 +109,6 @@ export function useInboxBadge(orgId: string | null | undefined) {
     enabled: !!orgId,
   });
 
-  const { data: chats = [] } = useQuery({
-    queryKey: queryKeys.chats.list(orgId ?? "__none__", "active"),
-    queryFn: () => chatsApi.list(orgId!, "active"),
-    enabled: !!orgId,
-  });
-
-  const attentionChats = useMemo(
-    () => chats.filter((conversation) => conversation.needsAttention),
-    [chats],
-  );
-
   const legacyBadge = useMemo(
     () =>
       computeInboxBadgeData({
@@ -120,50 +117,26 @@ export function useInboxBadge(orgId: string | null | undefined) {
         dashboard,
         heartbeatRuns,
         unreadIssues,
-        attentionChats,
+        attentionChats: [],
         dismissed,
       }),
-    [approvals, joinRequests, dashboard, heartbeatRuns, unreadIssues, attentionChats, dismissed],
+    [approvals, joinRequests, dashboard, heartbeatRuns, unreadIssues, dismissed],
   );
 
   return useMemo(() => {
-    if (messengerThreads.length === 0) {
-      return {
-        ...legacyBadge,
-        notificationContent: getInboxNotificationContent({
-          unreadCount: legacyBadge.inbox,
-          messengerThreads,
-        }),
-      };
-    }
-
-    const threadsByKind = new Map(messengerThreads.map((thread) => [thread.kind, thread]));
-    const unreadCount = messengerThreads.reduce((sum, thread) => sum + Math.max(0, thread.unreadCount ?? 0), 0);
-    const aggregateAgentErrorAlert =
-      (dashboard?.agents.error ?? 0) > 0 &&
-      legacyBadge.failedRuns === 0 &&
-      !dismissed.has("alert:agent-errors")
-        ? 1
-        : 0;
-    const alertCount = (threadsByKind.get("budget-alerts")?.unreadCount ?? 0) + aggregateAgentErrorAlert;
-
-    const inbox = unreadCount + aggregateAgentErrorAlert;
+    const chatAttention = serverBadges?.chatAttention ?? 0;
+    const legacyWithChatAttention = {
+      ...legacyBadge,
+      chatAttention,
+      inbox: legacyBadge.inbox + chatAttention,
+    };
 
     return {
-      ...legacyBadge,
-      inbox,
-      approvals: threadsByKind.get("approvals")?.unreadCount ?? 0,
-      failedRuns: threadsByKind.get("failed-runs")?.unreadCount ?? 0,
-      joinRequests: threadsByKind.get("join-requests")?.unreadCount ?? 0,
-      unreadTouchedIssues: threadsByKind.get("issues")?.unreadCount ?? 0,
-      chatAttention: messengerThreads
-        .filter((thread) => thread.kind === "chat" && thread.needsAttention)
-        .reduce((sum, thread) => sum + Math.max(1, thread.unreadCount ?? 0), 0),
-      alerts: alertCount,
+      ...legacyWithChatAttention,
       notificationContent: getInboxNotificationContent({
-        unreadCount: inbox,
+        unreadCount: legacyWithChatAttention.inbox,
         messengerThreads,
       }),
     };
-  }, [dashboard?.agents.error, dismissed, legacyBadge, messengerThreads]);
+  }, [legacyBadge, messengerThreads, serverBadges?.chatAttention]);
 }

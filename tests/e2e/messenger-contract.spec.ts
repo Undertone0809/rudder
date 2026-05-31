@@ -89,6 +89,78 @@ async function expectMessengerThreadStartsAtBottom(page: Page, heading: string) 
 }
 
 test.describe("Messenger unified threads contract", () => {
+  test("loads additional chat sessions in the Messenger sidebar without fetching every thread up front", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Paged-Sessions-${Date.now()}`);
+    const baseTime = Date.parse("2026-05-15T12:00:00.000Z");
+    const rows = Array.from({ length: 55 }).map((_, index) => {
+      const activityAt = new Date(baseTime - index * 60_000);
+      return {
+        id: randomUUID(),
+        orgId: organization.id,
+        title: `Paged session ${String(index + 1).padStart(2, "0")}`,
+        summary: `Paged session preview ${index + 1}`,
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: "local-board",
+        lastMessageAt: activityAt,
+        createdAt: activityAt,
+        updatedAt: activityAt,
+      };
+    });
+    await e2eDb.insert(chatConversations).values(rows);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    const unpagedThreadRequests: string[] = [];
+    const fullChatListRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        request.method() === "GET"
+        && url.pathname === `/api/orgs/${organization.id}/messenger/threads`
+        && url.search === ""
+      ) {
+        unpagedThreadRequests.push(request.url());
+      }
+      if (
+        request.method() === "GET"
+        && url.pathname === `/api/orgs/${organization.id}/chats`
+        && url.searchParams.get("status") === "active"
+      ) {
+        fullChatListRequests.push(request.url());
+      }
+    });
+
+    const firstPageResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?limit=40`),
+    );
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    const firstPage = await (await firstPageResponse).json();
+    expect(firstPage.items).toHaveLength(40);
+    expect(firstPage.pageInfo.hasMore).toBe(true);
+    expect(firstPage.items.some((item: { title: string }) => item.title === "Paged session 55")).toBe(false);
+    expect(unpagedThreadRequests).toEqual([]);
+    expect(fullChatListRequests).toEqual([]);
+
+    const nextPageResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?cursor=`)
+      && response.url().includes("limit=40"),
+    );
+    await page.getByTestId("workspace-sidebar").locator("nav").evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+      node.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    const nextPage = await (await nextPageResponse).json();
+    expect(nextPage.items.some((item: { title: string }) => item.title === "Paged session 55")).toBe(true);
+    await expect(page.getByTestId(threadTestId(`chat:${rows[54]!.id}`))).toBeVisible({ timeout: 15_000 });
+    expect(unpagedThreadRequests).toEqual([]);
+    expect(fullChatListRequests).toEqual([]);
+  });
+
   test("double-clicking primary rail Messenger scrolls the sidebar to unread threads", async ({ page }) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
