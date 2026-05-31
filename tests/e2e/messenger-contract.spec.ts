@@ -1136,6 +1136,9 @@ test.describe("Messenger unified threads contract", () => {
       ]);
 
     const runCard = page.locator(`[data-testid="messenger-system-card-failed-runs-${olderRunId}"]`);
+    await expect(runCard).toContainText("The run hit a system-level execution problem.");
+    await expect(runCard).not.toContainText("Process exited with code 1.");
+    await expect(runCard).not.toContainText("Agent bootstrap failed before tool execution.");
     const issueLink = runCard.getByTestId(`messenger-failed-run-issue-title-${olderRunId}`);
     await expect(issueLink).toHaveText("Create your first agent");
     await expect(issueLink).toHaveAttribute("href", new RegExp(`/issues/${issue.id}$`));

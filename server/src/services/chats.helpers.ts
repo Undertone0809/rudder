@@ -33,12 +33,15 @@ type ApprovalRow = typeof approvals.$inferSelect;
 export const CHAT_TRANSCRIPT_KEY = "__chatTranscript";
 
 const ISSUE_PROPOSAL_PRIORITIES = ["critical", "high", "medium", "low"] as const;
+const ISSUE_PROPOSAL_STATUSES = ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"] as const;
 
 type ChatIssueProposalPriority = typeof ISSUE_PROPOSAL_PRIORITIES[number];
+type ChatIssueProposalStatus = typeof ISSUE_PROPOSAL_STATUSES[number];
 
 export type ChatIssueProposalPayload = {
   title: string;
   description: string;
+  status: ChatIssueProposalStatus;
   priority: ChatIssueProposalPriority;
   projectId: string | null;
   goalId: string | null;
@@ -53,6 +56,10 @@ export type ChatIssueProposalPayload = {
 
 export function isIssueProposalPriority(value: unknown): value is ChatIssueProposalPriority {
   return typeof value === "string" && ISSUE_PROPOSAL_PRIORITIES.includes(value as ChatIssueProposalPriority);
+}
+
+export function isIssueProposalStatus(value: unknown): value is ChatIssueProposalStatus {
+  return typeof value === "string" && ISSUE_PROPOSAL_STATUSES.includes(value as ChatIssueProposalStatus);
 }
 
 export function contentPath(assetId: string) {
@@ -174,6 +181,7 @@ export function issueProposalFromPayload(payload: Record<string, unknown> | null
   return {
     title,
     description,
+    status: isIssueProposalStatus(proposal.status) ? proposal.status : "todo",
     priority: isIssueProposalPriority(proposal.priority) ? proposal.priority : "medium",
     projectId: safeTrim(typeof proposal.projectId === "string" ? proposal.projectId : null),
     goalId: safeTrim(typeof proposal.goalId === "string" ? proposal.goalId : null),

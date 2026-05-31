@@ -41,7 +41,12 @@ import { retryHeartbeatRun } from "../lib/heartbeat-retry";
 import { queryKeys } from "../lib/queryKeys";
 import { findOrganizationByPrefix } from "../lib/organization-routes";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
-import { getRunFailureDisplay, getRunStderrExcerptDisplayText, shouldShowRunStderrExcerpt } from "../lib/run-detail-display";
+import {
+  GENERIC_RUN_FAILURE_BODY,
+  getRunFailureDisplay,
+  getRunStderrExcerptDisplayText,
+  shouldShowRunStderrExcerpt,
+} from "../lib/run-detail-display";
 import { AgentConfigForm } from "../components/AgentConfigForm";
 import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
 import { PageTabBar } from "../components/PageTabBar";
@@ -164,15 +169,24 @@ import {
   writeRunFilterState,
 } from "./AgentDetail.run-filters";
 
+export function getRunListSummary(run: HeartbeatRun): string {
+  const failureDisplay = getRunFailureDisplay(run);
+  if (run.status === "failed" || run.status === "timed_out") {
+    return failureDisplay?.body ?? GENERIC_RUN_FAILURE_BODY;
+  }
+  if (run.resultJson) {
+    return String((run.resultJson as Record<string, unknown>).summary ?? (run.resultJson as Record<string, unknown>).result ?? "");
+  }
+  return failureDisplay?.body ?? "";
+}
+
 export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelected: boolean; agentId: string }) {
   const navigate = useNavigate();
   const { pushToast } = useToast();
   const statusInfo = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
   const StatusIcon = statusInfo.icon;
   const metrics = runMetrics(run);
-  const summary = run.resultJson
-    ? String((run.resultJson as Record<string, unknown>).summary ?? (run.resultJson as Record<string, unknown>).result ?? "")
-    : run.error ?? "";
+  const summary = getRunListSummary(run);
   const runLabel = run.id.slice(0, 8);
   const runReason = describeRunReason(run);
   const destination = isSelected ? `/agents/${agentId}/runs` : `/agents/${agentId}/runs/${run.id}`;
@@ -875,7 +889,7 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
       )}
 
       {/* stdout excerpt when no log is available */}
-      {run.stdoutExcerpt && !run.logRef && (
+      {run.stdoutExcerpt && !run.logRef && run.status !== "failed" && run.status !== "timed_out" && (
         <div className="space-y-1">
           <span className="text-xs font-medium text-muted-foreground">stdout</span>
           <pre data-testid="run-stdout-excerpt" className="min-w-0 max-w-full bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap break-words">{run.stdoutExcerpt}</pre>

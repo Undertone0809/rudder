@@ -127,6 +127,7 @@ import {
 } from "@/lib/image-actions";
 import { resolveLocalFileTarget } from "@/lib/local-file-targets";
 import { agentUrl, cn, relativeTime } from "@/lib/utils";
+import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
 import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, AskUserAnswerValue, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName } from "./Chat.parts";
@@ -463,6 +464,10 @@ export function ProposalCard({
   const proposalReviewerLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "reviewer", agents) : null;
   const proposalAssigneeDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "assignee", agents, currentUserId) : null;
   const proposalReviewerDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "reviewer", agents, currentUserId) : null;
+  const proposalIssueStatus =
+    issueProposal && typeof issueProposal.status === "string" && issueProposal.status.trim()
+      ? issueProposal.status.trim()
+      : "todo";
   const proposalAssigneeUnassignedReason =
     issueProposal && typeof issueProposal.assigneeUnassignedReason === "string"
       ? issueProposal.assigneeUnassignedReason.trim() || null
@@ -561,6 +566,16 @@ export function ProposalCard({
                   <div className="chat-review-fact-ledger">
                     <ProposalFactRow label="Priority">
                       <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
+                    </ProposalFactRow>
+                    <ProposalFactRow label="Status">
+                      <span
+                        className={cn(
+                          "inline-flex shrink-0 items-center rounded-[calc(var(--radius-sm)-1px)] border px-2.5 py-1 text-xs font-medium whitespace-nowrap",
+                          statusBadge[proposalIssueStatus] ?? statusBadgeDefault,
+                        )}
+                      >
+                        {proposalIssueStatus.replace("_", " ")}
+                      </span>
                     </ProposalFactRow>
                     <ProposalFactRow label="Owner">
                       <div className="flex min-w-0 flex-col items-end gap-1 text-right">

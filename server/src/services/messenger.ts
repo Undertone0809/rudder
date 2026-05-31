@@ -59,6 +59,8 @@ const DEFAULT_THREAD_SUMMARY_LIMIT = 40;
 const MAX_THREAD_SUMMARY_LIMIT = 100;
 const DEFAULT_ISSUE_THREAD_DETAIL_LIMIT = 50;
 const MAX_ISSUE_THREAD_DETAIL_LIMIT = 100;
+const FAILED_RUN_USER_SUMMARY =
+  "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.";
 type ThreadStateRow = typeof messengerThreadUserStates.$inferSelect;
 type ThreadReadState = {
   lastReadAt: Date;
@@ -751,8 +753,8 @@ function failedRunCard(run: FailedRunRow, agentName: string | null): MessengerHe
     kind: "failed-runs",
     title: agentName ? `${agentName} · Failed run` : "Failed run",
     subtitle: run.status.replaceAll("_", " "),
-    body: truncate(run.error) ?? truncate(run.stderrExcerpt) ?? "Run exited with an error.",
-    preview: truncate(run.error) ?? truncate(run.stderrExcerpt),
+    body: FAILED_RUN_USER_SUMMARY,
+    preview: FAILED_RUN_USER_SUMMARY,
     href: `/agents/${run.agentId}/runs/${run.id}`,
     latestActivityAt: run.updatedAt ?? run.createdAt,
     actions: [
@@ -1580,7 +1582,7 @@ export function messengerService(db: Db) {
         unreadCount,
         lastReadAt,
         "No failed runs yet",
-        truncate(latestRun?.error) ?? truncate(latestRun?.stderrExcerpt),
+        latestRun ? FAILED_RUN_USER_SUMMARY : null,
       ),
     };
   }
