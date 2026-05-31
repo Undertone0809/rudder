@@ -158,6 +158,11 @@ const payload = {
       .filter(([key]) => key.startsWith("XDG_"))
       .sort(([left], [right]) => left.localeCompare(right)),
   ),
+  piEnv: Object.fromEntries(
+    Object.entries(process.env)
+      .filter(([key]) => key.startsWith("PI_CODING_AGENT_"))
+      .sort(([left], [right]) => left.localeCompare(right)),
+  ),
 };
 fs.mkdirSync(path.dirname(${JSON.stringify(capturePath)}), { recursive: true });
 fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify(payload), "utf8");
@@ -1105,6 +1110,7 @@ test.describe("Organization and agent skills", () => {
         skillEntries: string[];
         rudderEnv: Record<string, string>;
         xdgEnv: Record<string, string>;
+        piEnv: Record<string, string>;
       };
 
       const promptArgIndex = capture.argv.indexOf("--prompt");
@@ -1132,6 +1138,10 @@ test.describe("Organization and agent skills", () => {
         await expect(fs.access(path.join(capture.home, ".local", "share", "opencode", "opencode.db"))).rejects.toMatchObject({
           code: "ENOENT",
         });
+      }
+      if (item.runtime === "pi") {
+        expect(capture.piEnv.PI_CODING_AGENT_DIR).toBe(path.join(capture.home, ".pi", "agent"));
+        expect(capture.piEnv.PI_CODING_AGENT_SESSION_DIR).toBe(path.join(capture.home, ".pi", "agent", "rudder-sessions"));
       }
     }
   });

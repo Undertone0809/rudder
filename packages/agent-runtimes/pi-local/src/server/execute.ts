@@ -27,7 +27,7 @@ import {
   runChildProcess,
   selectPromptTemplate,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { prepareManagedPiHome, resolvePiSessionsDir, resolvePiSkillsDir } from "./home.js";
+import { applyManagedPiEnv, prepareManagedPiHome, resolvePiSessionsDir, resolvePiSkillsDir } from "./home.js";
 import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
 
@@ -192,7 +192,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
-  env.HOME = managedHome;
+  Object.assign(env, applyManagedPiEnv(env, managedHome));
   env.RUDDER_RUN_ID = runId;
   
   const wakeTaskId =
@@ -247,7 +247,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (key === "HOME") continue;
     if (typeof value === "string") env[key] = value;
   }
-  env.HOME = managedHome;
+  Object.assign(env, applyManagedPiEnv(env, managedHome));
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;

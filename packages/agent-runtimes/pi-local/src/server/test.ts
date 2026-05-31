@@ -14,7 +14,7 @@ import {
 import {
   asStringArray,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { prepareManagedPiHome } from "./home.js";
+import { applyManagedPiEnv, prepareManagedPiHome } from "./home.js";
 import { discoverPiModelsCached } from "./models.js";
 import { parsePiJsonl } from "./parse.js";
 
@@ -108,7 +108,7 @@ export async function testEnvironment(
     orgId: ctx.orgId,
     agentId: "environment-test",
   });
-  const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...baseEnv, HOME: managedHome }));
+  const runtimeEnv = normalizeEnv(ensurePathInEnv(applyManagedPiEnv(baseEnv, managedHome)));
 
   const cwdInvalid = checks.some((check) => check.code === "pi_cwd_invalid");
   if (cwdInvalid) {

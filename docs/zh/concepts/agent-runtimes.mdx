@@ -75,6 +75,8 @@ Cursor local 使用按 agent 托管的 `HOME`，并且只把 Rudder 选中的 sk
 
 OpenCode local 使用按 agent 托管的 `HOME`，并额外设置托管的 `XDG_CONFIG_HOME`、`XDG_DATA_HOME` 和 `XDG_CACHE_HOME`。如果宿主 OpenCode auth 文件存在，Rudder 可以链接这个认证文件；但不会把宿主 OpenCode database、cache 或 plugin directory 共享到 run 里。除非 agent runtime config 用 OpenCode args 明确覆盖，否则 Rudder 会默认加上 `--pure`。
 
+Pi local 使用按 agent 托管的 `HOME`，并强制把 `PI_CODING_AGENT_DIR` 和 `PI_CODING_AGENT_SESSION_DIR` 指到这个托管 home。Rudder 会快照认证所需的宿主 Pi config，但不会把宿主 Pi skills 或 sessions 复制进托管 agent home。Rudder 创建的 Pi sessions 会存放在 `.pi/agent/rudder-sessions`，因此和用户平时直接使用 Pi CLI 的 sessions 是分开的。
+
 ## Codex local 和 Claude Code local 的区别
 
 Codex local 能做更强的隔离，因为 Codex 暴露了 Rudder 可以控制的 managed `CODEX_HOME` 模型。Rudder 用这个 home materialize 已选 skills，移除继承来的 skill config，禁用 Codex bundled skills，并以 plugins disabled 的方式启动 Codex。

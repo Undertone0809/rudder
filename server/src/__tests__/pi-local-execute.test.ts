@@ -40,6 +40,8 @@ if (capturePath) {
         .sort(([left], [right]) => left.localeCompare(right)),
     ),
     gitIdentity: captureGitIdentityEnv(),
+    piAgentDir: process.env.PI_CODING_AGENT_DIR,
+    piSessionDir: process.env.PI_CODING_AGENT_SESSION_DIR,
   }), "utf8");
 }
 console.log(JSON.stringify({ type: "session", version: 3, id: "pi-session-1", timestamp: new Date().toISOString(), cwd: process.cwd() }));
@@ -104,6 +106,8 @@ type CapturePayload = {
   rudderEnvKeys: string[];
   rudderEnv: Record<string, string>;
   gitIdentity: GitIdentityCapture;
+  piAgentDir: string;
+  piSessionDir: string;
 };
 
 afterEach(() => {
@@ -273,6 +277,8 @@ describe("pi execute", () => {
       expect(capture.argv[1]).toContain('"${RUDDER_CLI:-rudder}" agent me --json');
       expect(capture.argv[1]).toContain('"${RUDDER_CLI:-rudder}" issue checkout {id} --json');
       expect(capture.stdin).toBe("");
+      expect(capture.piAgentDir).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "pi-home", "agents", "agent-1", ".pi", "agent"));
+      expect(capture.piSessionDir).toBe(path.join(capture.piAgentDir, "rudder-sessions"));
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
       );

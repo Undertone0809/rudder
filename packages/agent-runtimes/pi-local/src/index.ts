@@ -35,7 +35,7 @@ Operational fields:
 Notes:
 - Pi supports multiple providers and models. Use \`pi --list-models\` to list available options.
 - Rudder requires an explicit \`model\` value for \`pi_local\` agents.
-- Sessions are stored in ~/.pi/paperclips/ and resumed with --session.
+- Sessions created by Rudder are stored in the managed Pi home under .pi/agent/rudder-sessions and resumed with --session.
 - Rudder realizes only the skills explicitly enabled on the agent's Skills page, including bundled Rudder skills when selected there.
 - Selected skills are linked into a Rudder-managed Pi home for the run; unselected skills already present in the real user home do not load.
 - All tools (read, bash, edit, write, grep, find, ls) are enabled by default.

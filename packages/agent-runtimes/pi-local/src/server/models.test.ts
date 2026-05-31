@@ -73,4 +73,60 @@ describe("pi models", () => {
       }),
     ).resolves.toEqual([{ id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" }]);
   });
+
+  it("lists models with a Rudder-managed Pi agent directory and sessions directory", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-models-managed-home-"));
+    const command = path.join(root, "pi");
+    const envCapturePath = path.join(root, "env.json");
+    const rudderHome = path.join(root, "rudder-home");
+    await fs.writeFile(
+      command,
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(process.env.RUDDER_TEST_ENV_PATH, JSON.stringify({
+  home: process.env.HOME,
+  piAgentDir: process.env.PI_CODING_AGENT_DIR,
+  piSessionDir: process.env.PI_CODING_AGENT_SESSION_DIR
+}), "utf8");
+console.log("provider  model");
+console.log("deepseek  deepseek-v4-pro");
+`,
+      "utf8",
+    );
+    await fs.chmod(command, 0o755);
+
+    await expect(
+      listPiModels({
+        orgId: "organization-1",
+        config: {
+          command,
+          env: {
+            RUDDER_HOME: rudderHome,
+            RUDDER_INSTANCE_ID: "test-instance",
+            RUDDER_TEST_ENV_PATH: envCapturePath,
+          },
+        },
+      }),
+    ).resolves.toEqual([{ id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" }]);
+
+    const capturedEnv = JSON.parse(await fs.readFile(envCapturePath, "utf8")) as {
+      home: string;
+      piAgentDir: string;
+      piSessionDir: string;
+    };
+    const managedHome = path.join(
+      rudderHome,
+      "instances",
+      "test-instance",
+      "organizations",
+      "organization-1",
+      "pi-home",
+      "agents",
+      "model-list",
+    );
+    expect(capturedEnv.home).toBe(managedHome);
+    expect(capturedEnv.piAgentDir).toBe(path.join(managedHome, ".pi", "agent"));
+    expect(capturedEnv.piSessionDir).toBe(path.join(managedHome, ".pi", "agent", "rudder-sessions"));
+    await fs.rm(root, { recursive: true, force: true });
+  });
 });

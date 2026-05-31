@@ -75,6 +75,8 @@ If a Cursor run fails with `cursor_tool_handler_unsupported`, Rudder reached the
 
 OpenCode local uses a managed per-agent `HOME` plus managed `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME`. Rudder may link a host OpenCode auth file when present, but it does not share the host OpenCode database, cache, or plugin directory into the run. `--pure` is enabled unless the agent runtime config explicitly overrides it with OpenCode args.
 
+Pi local uses a managed per-agent `HOME` and forces `PI_CODING_AGENT_DIR` plus `PI_CODING_AGENT_SESSION_DIR` into that managed home. Rudder snapshots host Pi config needed for auth, but does not copy host Pi skills or sessions into the managed agent home. Pi sessions created by Rudder are stored under `.pi/agent/rudder-sessions`, so they are separate from the user's normal Pi CLI sessions.
+
 ## Codex local versus Claude Code local
 
 Codex local can be isolated more aggressively because Codex exposes a managed `CODEX_HOME` model that Rudder can control for the run. Rudder uses that home to materialize selected skills, removes inherited skill configuration, disables bundled Codex skills, and starts Codex with plugins disabled.

@@ -7,7 +7,7 @@ import {
   parseObject,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { prepareManagedPiHome } from "./home.js";
+import { applyManagedPiEnv, prepareManagedPiHome } from "./home.js";
 
 const MODELS_CACHE_TTL_MS = 60_000;
 
@@ -214,14 +214,14 @@ export async function listPiModels(ctx: AgentRuntimeModelListContext = {}): Prom
     const env = normalizeEnv(parseObject(config.env));
     const baseEnv = normalizeEnv({ ...process.env, ...env });
     const runtimeEnv = ctx.orgId
-      ? normalizeEnv(ensurePathInEnv({
-          ...baseEnv,
-          HOME: await prepareManagedPiHome({
+      ? normalizeEnv(ensurePathInEnv(applyManagedPiEnv(
+          baseEnv,
+          await prepareManagedPiHome({
             env: baseEnv,
             orgId: ctx.orgId,
             agentId: "model-list",
           }),
-        }))
+        )))
       : undefined;
 
     return await discoverPiModelsCached({ command, cwd, env: runtimeEnv });

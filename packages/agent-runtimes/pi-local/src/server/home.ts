@@ -17,12 +17,34 @@ function resolvePiRoot(homeDir: string): string {
   return path.join(homeDir, ".pi");
 }
 
+export function resolvePiAgentDir(homeDir: string): string {
+  return path.join(resolvePiRoot(homeDir), "agent");
+}
+
 export function resolvePiSessionsDir(homeDir: string): string {
-  return path.join(resolvePiRoot(homeDir), "paperclips");
+  return path.join(resolvePiAgentDir(homeDir), "rudder-sessions");
 }
 
 export function resolvePiSkillsDir(homeDir: string): string {
-  return path.join(resolvePiRoot(homeDir), "agent", "skills");
+  return path.join(resolvePiAgentDir(homeDir), "skills");
+}
+
+function resolvePiDefaultSessionsDir(homeDir: string): string {
+  return path.join(resolvePiAgentDir(homeDir), "sessions");
+}
+
+export function applyManagedPiEnv(
+  env: Record<string, string | undefined>,
+  managedHome: string,
+): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === "string") next[key] = value;
+  }
+  next.HOME = managedHome;
+  next.PI_CODING_AGENT_DIR = resolvePiAgentDir(managedHome);
+  next.PI_CODING_AGENT_SESSION_DIR = resolvePiSessionsDir(managedHome);
+  return next;
 }
 
 function resolveSharedPiHomeDir(env: Record<string, string | undefined>): string {
@@ -50,13 +72,13 @@ async function syncPiSharedHomeEntries(sourceHome: string, targetHome: string) {
     await ensureManagedHomeEntrySnapshot(path.join(targetPiDir, entry.name), path.join(sourcePiDir, entry.name));
   }
 
-  const sourceAgentDir = path.join(sourcePiDir, "agent");
+  const sourceAgentDir = resolvePiAgentDir(sourceHome);
   if (!(await pathExists(sourceAgentDir))) return;
-  const targetAgentDir = path.join(targetPiDir, "agent");
+  const targetAgentDir = resolvePiAgentDir(targetHome);
   await fs.mkdir(targetAgentDir, { recursive: true });
   const agentEntries = await fs.readdir(sourceAgentDir, { withFileTypes: true }).catch(() => []);
   for (const entry of agentEntries) {
-    if (entry.name === "skills") continue;
+    if (entry.name === "skills" || entry.name === "sessions") continue;
     await ensureManagedHomeEntrySnapshot(path.join(targetAgentDir, entry.name), path.join(sourceAgentDir, entry.name));
   }
 }
@@ -71,6 +93,7 @@ export async function prepareManagedPiHome(input: {
   const targetHome = resolveManagedPiHomeDir(input.env, input.orgId, input.agentId);
   if (targetHome === sourceHome) return targetHome;
 
+  await fs.rm(resolvePiDefaultSessionsDir(targetHome), { recursive: true, force: true });
   await fs.mkdir(resolvePiSkillsDir(targetHome), { recursive: true });
   await fs.mkdir(resolvePiSessionsDir(targetHome), { recursive: true });
   if (await pathExists(resolvePiRoot(sourceHome))) {

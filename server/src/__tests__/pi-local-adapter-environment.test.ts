@@ -12,7 +12,11 @@ async function writeFakePiCommand(binDir: string, mode: "success" | "stale-packa
 const fs = require("node:fs");
 const envPath = process.env.RUDDER_TEST_ENV_PATH;
 if (envPath) {
-  fs.writeFileSync(envPath, JSON.stringify({ home: process.env.HOME }), "utf8");
+  fs.writeFileSync(envPath, JSON.stringify({
+    home: process.env.HOME,
+    piAgentDir: process.env.PI_CODING_AGENT_DIR,
+    piSessionDir: process.env.PI_CODING_AGENT_SESSION_DIR
+  }), "utf8");
 }
 if (process.argv.includes("--list-models")) {
   console.log("provider  model");
@@ -77,10 +81,24 @@ describe("pi_local environment diagnostics", () => {
     expect(result.status).toBe("pass");
     expect(result.checks.some((check) => check.code === "pi_models_discovered")).toBe(true);
     expect(result.checks.some((check) => check.code === "pi_hello_probe_passed")).toBe(true);
-    const capturedEnv = JSON.parse(await fs.readFile(envCapturePath, "utf8")) as { home: string };
-    expect(capturedEnv.home).toBe(
-      path.join(rudderHome, "instances", "test-instance", "organizations", "organization-1", "pi-home", "agents", "environment-test"),
+    const capturedEnv = JSON.parse(await fs.readFile(envCapturePath, "utf8")) as {
+      home: string;
+      piAgentDir: string;
+      piSessionDir: string;
+    };
+    const managedHome = path.join(
+      rudderHome,
+      "instances",
+      "test-instance",
+      "organizations",
+      "organization-1",
+      "pi-home",
+      "agents",
+      "environment-test",
     );
+    expect(capturedEnv.home).toBe(managedHome);
+    expect(capturedEnv.piAgentDir).toBe(path.join(managedHome, ".pi", "agent"));
+    expect(capturedEnv.piSessionDir).toBe(path.join(managedHome, ".pi", "agent", "rudder-sessions"));
     await fs.rm(root, { recursive: true, force: true });
   });
 
