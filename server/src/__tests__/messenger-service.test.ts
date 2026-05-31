@@ -1797,7 +1797,9 @@ describe("messengerService and issue follows", () => {
     expect(thread.detail.items.map((item) => item.id)).toEqual([olderRunId, newerRunId]);
     expect(thread.summary.unreadCount).toBe(1);
     expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
-    expect(failedRunsSummary?.preview).toBe("Newer run failed");
+    expect(failedRunsSummary?.preview).toBe(
+      "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.",
+    );
     expect(failedRunsSummary?.unreadCount).toBe(1);
     expect(failedRunsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
   });

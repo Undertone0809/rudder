@@ -110,15 +110,11 @@ export const chatsApi = {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let streamError: ApiError | null = null;
 
     const emitLine = async (line: string) => {
       if (!line.trim()) return;
       const event = JSON.parse(line) as ChatStreamEvent;
       await options.onEvent(event);
-      if (event.type === "error") {
-        streamError = new ApiError(event.error, 502, event);
-      }
     };
 
     while (true) {
@@ -138,9 +134,6 @@ export const chatsApi = {
       await emitLine(buffer);
     }
 
-    if (streamError) {
-      throw streamError;
-    }
   },
   stopMessageStream: (chatId: string) =>
     api.post<{ stopped: boolean }>(`/chats/${chatId}/messages/stream/stop`, {}),

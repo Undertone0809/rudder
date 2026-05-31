@@ -41,7 +41,7 @@ import { retryHeartbeatRun } from "../lib/heartbeat-retry";
 import { queryKeys } from "../lib/queryKeys";
 import { findOrganizationByPrefix } from "../lib/organization-routes";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
-import { getRunFailureDisplay, getRunStderrExcerptDisplayText, shouldShowRunStderrExcerpt } from "../lib/run-detail-display";
+import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { AgentConfigForm } from "../components/AgentConfigForm";
 import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
 import { PageTabBar } from "../components/PageTabBar";
@@ -593,8 +593,6 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
     queryKey: queryKeys.instance.generalSettings,
     queryFn: () => instanceSettingsApi.getGeneral(),
   }).data?.censorUsernameInLogs === true;
-  const stderrExcerptDisplayText = getRunStderrExcerptDisplayText(run);
-
   const adapterInvokePayload = useMemo(() => {
     const evt = events.find((e) => e.eventType === "adapter.invoke");
     return redactPathValue(asRecord(evt?.payload ?? null), censorUsernameInLogs);
@@ -939,30 +937,6 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
               )}
             </div>
           )}
-          {stderrExcerptDisplayText && (
-            <div>
-              <div className="text-xs text-red-700 dark:text-red-300 mb-1">stderr excerpt</div>
-              <pre className="min-w-0 max-w-full bg-red-50 dark:bg-neutral-950 rounded-md p-2 text-xs overflow-x-auto whitespace-pre-wrap break-words text-red-800 dark:text-red-100">
-                {redactPathText(stderrExcerptDisplayText, censorUsernameInLogs)}
-              </pre>
-            </div>
-          )}
-          {run.resultJson && (
-            <div>
-              <div className="text-xs text-red-700 dark:text-red-300 mb-1">runtime result JSON</div>
-              <pre className="min-w-0 max-w-full bg-red-50 dark:bg-neutral-950 rounded-md p-2 text-xs overflow-x-auto whitespace-pre-wrap break-words text-red-800 dark:text-red-100">
-                {JSON.stringify(redactPathValue(run.resultJson, censorUsernameInLogs), null, 2)}
-              </pre>
-            </div>
-          )}
-          {run.stdoutExcerpt && run.stdoutExcerpt.trim() && !run.resultJson && (
-            <div>
-              <div className="text-xs text-red-700 dark:text-red-300 mb-1">stdout excerpt</div>
-              <pre className="min-w-0 max-w-full bg-red-50 dark:bg-neutral-950 rounded-md p-2 text-xs overflow-x-auto whitespace-pre-wrap break-words text-red-800 dark:text-red-100">
-                {redactPathText(run.stdoutExcerpt, censorUsernameInLogs)}
-              </pre>
-            </div>
-          )}
         </div>
       )}
 
@@ -971,5 +945,3 @@ export function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentR
 }
 
 /* ---- Keys Tab ---- */
-
-

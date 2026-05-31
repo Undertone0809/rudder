@@ -34,6 +34,8 @@ import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js
 
 export const CHAT_UNSUPPORTED_ADAPTER_TYPES = new Set<AgentRuntimeType>(["process", "http"]);
 export const CHAT_RESULT_SENTINEL_PREFIX = "__RUDDER_RESULT_";
+export const CHAT_ASSISTANT_USER_ERROR_MESSAGE =
+  "The assistant hit a system-level issue. Rudder saved the details for diagnostics; retry when ready.";
 
 export interface ChatAttachmentPromptReference {
   localPath?: string;

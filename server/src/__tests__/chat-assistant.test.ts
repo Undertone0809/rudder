@@ -1500,7 +1500,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(result.reply.generatedAttachments?.[0]?.body.equals(Buffer.from("fake-png"))).toBe(true);
   });
 
-  it("fails streaming chat completion when the adapter omits the required result sentinel", async () => {
+  it("recovers a plain chat message when the adapter omits the required result sentinel", async () => {
     const svc = chatAssistantService({} as any);
 
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
@@ -1520,14 +1520,18 @@ describe("chatAssistantService operator profile prompt injection", () => {
       };
     });
 
-    await expect(svc.streamChatAssistantReply({
+    const result = await svc.streamChatAssistantReply({
       conversation: makeConversation(),
       messages: makeMessages(),
       contextLinks: [],
-    })).rejects.toMatchObject({
-      name: "ChatAssistantStreamError",
-      message: "Chat adapter completed without the required Rudder result sentinel",
-      partialBody: "I am still working.",
+    });
+
+    expect(result.outcome).toBe("completed");
+    if (result.outcome !== "completed") throw new Error("expected completed");
+    expect(result.reply).toMatchObject({
+      kind: "message",
+      body: "I am still working.",
+      structuredPayload: null,
     });
   });
 

@@ -213,7 +213,7 @@ test.describe("Run transcript detail", () => {
     });
   });
 
-  test("keeps long stderr excerpts inside the run detail pane", async ({ page }) => {
+  test("does not promote long stderr excerpts into the run detail summary", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-Long-Stderr-${Date.now()}`);
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -256,19 +256,11 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
 
     const detailPane = page.getByTestId("agent-runs-detail-pane");
-    const listPane = page.getByTestId("agent-runs-list-pane");
-    const stderrExcerpt = detailPane.getByTestId("run-stderr-excerpt");
-    await expect(stderrExcerpt).toBeVisible({ timeout: 15_000 });
-
-    const detailBox = await detailPane.boundingBox();
-    const listBox = await listPane.boundingBox();
-    const stderrBox = await stderrExcerpt.boundingBox();
-    expect(detailBox).not.toBeNull();
-    expect(listBox).not.toBeNull();
-    expect(stderrBox).not.toBeNull();
-    expect(stderrBox!.x).toBeGreaterThanOrEqual(detailBox!.x);
-    expect(stderrBox!.x + stderrBox!.width).toBeLessThanOrEqual(detailBox!.x + detailBox!.width + 1);
-    expect(stderrBox!.x + stderrBox!.width).toBeLessThan(listBox!.x);
+    await expect(detailPane.getByText("The run hit a system-level execution problem.", { exact: false })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(detailPane.getByTestId("run-stderr-excerpt")).toHaveCount(0);
+    await expect(detailPane.getByText("turn_id=019e2597", { exact: false })).toHaveCount(0);
 
     await page.screenshot({
       path: "/tmp/rudder-agent-run-stderr-contained.png",
@@ -276,7 +268,7 @@ test.describe("Run transcript detail", () => {
     });
   });
 
-  test("only promotes stderr excerpts for failure-status run detail pages", async ({ page }) => {
+  test("does not promote stderr excerpts for failed or successful run detail pages", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-Stderr-Status-${Date.now()}`);
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -336,7 +328,7 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${timedOutRunId}`, { waitUntil: "domcontentloaded" });
     const timedOutDetailPane = page.getByTestId("agent-runs-detail-pane");
     await expect(timedOutDetailPane.getByTestId("run-summary-card").getByText("timed out", { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(timedOutDetailPane.getByTestId("run-stderr-excerpt")).toBeVisible();
+    await expect(timedOutDetailPane.getByTestId("run-stderr-excerpt")).toHaveCount(0);
 
     await page.goto(`/agents/${agent.id}/runs/${succeededRunId}`, { waitUntil: "domcontentloaded" });
     const succeededDetailPane = page.getByTestId("agent-runs-detail-pane");

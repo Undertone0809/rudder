@@ -36,6 +36,7 @@ import { emitExecutionTranscriptTree } from "../langfuse-transcript.js";
 import { validate } from "../middleware/validate.js";
 import { logger } from "../middleware/logger.js";
 import {
+  CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   ChatAssistantStreamError,
   chatAssistantService,
   type ChatAssistantResult,
@@ -964,7 +965,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
     const trimmed = body.trim();
     const fallbackBody = status === "stopped"
       ? "Chat run stopped before a final reply. Continue the conversation to resume from the preserved context."
-      : "Chat run failed before a final reply. Continue the conversation to resume from the preserved context.";
+      : CHAT_ASSISTANT_USER_ERROR_MESSAGE;
     const durableBody = trimmed || (transcript.length > 0 ? fallbackBody : "");
     if (!durableBody) return null;
     const chatTurnId = turnContext?.chatTurnId ?? randomUUID();
@@ -1371,7 +1372,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         throw err;
       }
       res.status(502).json({
-        error: err instanceof Error ? err.message : "Chat assistant failed to respond",
+        error: CHAT_ASSISTANT_USER_ERROR_MESSAGE,
       });
     } finally {
       releaseGeneration();
