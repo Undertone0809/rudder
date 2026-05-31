@@ -3,6 +3,7 @@ import {
   chatAutomationCreateFromStructuredPayload,
   chatAskUserRequestFromStructuredPayload,
   chatAskUserRequestSchema,
+  chatIssueProposalFromStructuredPayload,
   convertChatToIssueSchema,
   chatRichReferencesFromStructuredPayload,
   sanitizeChatStructuredPayload,
@@ -192,6 +193,29 @@ describe("chat rich references", () => {
 });
 
 describe("chat issue proposals", () => {
+  it("defaults proposal status to todo while preserving explicit backlog", () => {
+    expect(chatIssueProposalFromStructuredPayload({
+      issueProposal: {
+        title: "Runnable issue",
+        description: "The default issue should be runnable.",
+        assigneeUnassignedReason: "The operator will choose an owner during approval.",
+      },
+    })).toMatchObject({
+      status: "todo",
+    });
+
+    expect(chatIssueProposalFromStructuredPayload({
+      issueProposal: {
+        title: "Deferred issue",
+        description: "The agent explicitly deferred this issue.",
+        status: "backlog",
+        assigneeUnassignedReason: "The operator will triage it later.",
+      },
+    })).toMatchObject({
+      status: "backlog",
+    });
+  });
+
   it("accepts label ids when converting chat proposals into issues", () => {
     const labelId = "11111111-1111-4111-8111-111111111111";
 
