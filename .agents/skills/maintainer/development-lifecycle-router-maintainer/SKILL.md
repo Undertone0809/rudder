@@ -112,6 +112,12 @@ exists. Do not wait for the user to ask for subagents; this skill is the user's
 standing instruction that routed development work needs independent reviewer
 agents.
 
+When the user explicitly names, links, or pastes this
+`development-lifecycle-router-maintainer` skill, treat that as an explicit
+request for this skill's reviewer-subagent policy. Do not reinterpret the same
+turn as "no explicit subagent request" unless the active spawn tool itself
+rejects the call after a real availability probe.
+
 If the active runtime truly cannot spawn reviewers, mark the review gate as
 `blocked: spawned reviewers unavailable`. You may still provide the stage
 artifact and local validation evidence, but do not claim the routed stage is
@@ -503,6 +509,11 @@ not enough. Probe the runtime by using the available tool-discovery path or the
 runtime's spawn mechanism directly. If the probe succeeds, spawn the reviewers
 and wait for verdicts. If the probe fails, include the failed probe evidence in
 the evidence ledger.
+
+Do not record "the user did not explicitly ask for subagents" as the blocker
+when the user explicitly invoked this router skill. In that case, either spawn
+the reviewers, or record the exact tool-policy or tool-call failure that blocked
+the spawn after probing.
 
 If subagents are unavailable after that probe, do not run a serial fallback.
 Record execution mode as `blocked: spawned reviewers unavailable`, include the
