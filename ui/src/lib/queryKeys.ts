@@ -79,6 +79,7 @@ export const queryKeys = {
       ["chats", orgId, status, "search", q] as const,
     detail: (chatId: string) => ["chats", "detail", chatId] as const,
     messages: (chatId: string) => ["chats", "messages", chatId] as const,
+    queue: (chatId: string) => ["chats", "queue", chatId] as const,
   },
   messenger: {
     threads: (orgId: string) => ["messenger", orgId, "threads"] as const,

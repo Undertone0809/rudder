@@ -18,6 +18,13 @@ export type {
 } from "./organization-intelligence-profile.js";
 export type {
   ChatConversation,
+  ChatQueuedMessage,
+  ChatQueuedMessagePayload,
+  ChatQueuedMessageStatus,
+  ChatQueueClaimResponse,
+  ChatQueueSnapshot,
+  ChatSteerResponse,
+  ChatSteerResult,
   ChatMessage,
   ChatAttachment,
   ChatContextLink,

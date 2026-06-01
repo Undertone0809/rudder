@@ -31,6 +31,7 @@ import {
   type ChatAskUserQuestion,
   type ChatAskUserRequest,
   type ChatConversation,
+  type ChatQueuedMessage,
   type ChatMessage,
   type ChatOperationProposalDecisionAction,
   type ChatOperationProposalDecisionStatus,
@@ -103,7 +104,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     scopeKey: draftStorageScopeKey,
     value: readChatDraft(draftStorageOrgId, draftStorageConversationId), })); const draft = draftState.scopeKey === draftStorageScopeKey ? draftState.value : ""; const setDraft = useCallback((nextDraft: string) => { setDraftState((current) => ({ ...current, value: nextDraft })); }, []); const [, refreshPendingFiles] = useState(0); const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
   const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false); const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, true>>({}); const [loadingTranscriptMessageIds, setLoadingTranscriptMessageIds] = useState<Record<string, true>>({}); const [loadedTranscriptsByMessageId, setLoadedTranscriptsByMessageId] = useState<Record<string, TranscriptEntry[]>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
-  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [editForkUserMessageId, setEditForkUserMessageId] = useState<string | null>(null); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [expandedEmptyStatePrompt, setExpandedEmptyStatePrompt] = useState<EmptyStatePromptLabel | null>(null); const [emptyStatePromptPanelEntered, setEmptyStatePromptPanelEntered] = useState(false); const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const stopRequestedChatIdsRef = useRef<Set<string>>(new Set()); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile } = useSidebar(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
+  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [editForkUserMessageId, setEditForkUserMessageId] = useState<string | null>(null); const [editingQueuedItem, setEditingQueuedItem] = useState<{ itemId: string; value: string; version: number } | null>(null); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [expandedEmptyStatePrompt, setExpandedEmptyStatePrompt] = useState<EmptyStatePromptLabel | null>(null); const [emptyStatePromptPanelEntered, setEmptyStatePromptPanelEntered] = useState(false); const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const stopRequestedChatIdsRef = useRef<Set<string>>(new Set()); const autoDequeuingChatIdsRef = useRef<Set<string>>(new Set()); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile } = useSidebar(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
     if (!desktopShell) {
       pushToast({
         title: "Open from Desktop",
@@ -143,6 +144,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryFn: () => chatsApi.get(conversationId!), enabled: !!conversationId, }); const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(conversationId ?? "__none__"),
     queryFn: () => chatsApi.listMessages(conversationId!, { includeTranscript: false }), enabled: !!conversationId, });
+  const queueQuery = useQuery({
+    queryKey: queryKeys.chats.queue(conversationId ?? "__none__"),
+    queryFn: () => chatsApi.listQueue(conversationId!), enabled: !!conversationId,
+    refetchInterval: conversationId ? 2_000 : false,
+  });
   const { data: agents, error: agentsError } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => agentsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, }); const liveAgents = useMemo(() => selectableChatAgents(agents), [agents]);
@@ -466,7 +472,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         title: "Failed to stop streaming",
         body: error instanceof Error ? error.message : "Try again.", tone: "error", }); }); abortChatStream(chatId); setStreamDraftForChat(chatId, (current) => (current ? { ...current, state: "stopped" } : current)); }, [abortChatStream, pushToast, setStreamDraftForChat]); const sendMessage = async (
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
-      editUserMessageIdOverride?: string | null; clearPendingFilesOnSuccess?: boolean; },
+      editUserMessageIdOverride?: string | null; clearPendingFilesOnSuccess?: boolean; queuedMessageId?: string | null; },
   ) => {
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined; const body = (options?.bodyOverride ?? draft).trim();
@@ -491,7 +497,46 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             draftProjectId === NO_PROJECT_ID ? null : draftProjectId, draftIssueContextId, ), }); const startedAt = new Date(); conversation = upsertOptimisticConversation(createdConversation, body, startedAt); rememberChatAgentId(selectedOrganizationId, selectedDraftAgentId); rememberChatProjectIdForAgent(selectedOrganizationId, selectedDraftAgentId, draftProjectId === NO_PROJECT_ID ? null : draftProjectId);
         if (usesComposerState) { setDraft(""); clearPendingFilesForCurrentScope(); setEditForkUserMessageId(null);
           setBranchPreview(null); }
-        navigate(chatConversationPath(conversation.id)); } const chatId = conversation.id; if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
+        navigate(chatConversationPath(conversation.id)); } const chatId = conversation.id; const activeDraftForChat = readChatScopedState(streamDrafts, chatId);
+      const serverActiveGenerationId = queueQuery.data?.activeGenerationId ?? null;
+      if (!options?.queuedMessageId && (activeDraftForChat || serverActiveGenerationId)) {
+        if (filesToUpload.length > 0) {
+          pushToast({
+            title: "Queued follow-ups do not support new files yet",
+            body: "Remove the files or wait for the current reply to finish.",
+            tone: "warn",
+          });
+          return;
+        }
+        const queued = await chatsApi.createQueuedMessage(chatId, {
+          clientMutationId: `ui:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+          expectedGenerationId: serverActiveGenerationId,
+          payload: {
+            body,
+            attachmentIds: [],
+            projectId: activeProjectId === NO_PROJECT_ID ? null : activeProjectId,
+            skillRefs: [],
+            accessMode: null,
+            model: selectedConversation?.chatRuntime.model ?? null,
+            effort: null,
+            metadata: {
+              source: "running_composer",
+            },
+          },
+        });
+        queryClient.setQueryData(
+          queryKeys.chats.queue(chatId),
+          (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
+            activeGenerationId: current?.activeGenerationId ?? queueQuery.data?.activeGenerationId ?? null,
+            items: [...(current?.items ?? []), queued],
+          }),
+        );
+        if (usesComposerState) { setEditForkUserMessageId(null); setBranchPreview(null); setDraft("");
+          clearPendingFilesForCurrentScope(); }
+        pushToast({ title: "Queued follow-up", body: "It will run after the current reply unless you steer it.", tone: "success" });
+        return;
+      }
+      if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
       if (!conversation.preferredAgentId && selectedAgentId) { conversation = await chatsApi.update(conversation.id, { preferredAgentId: selectedAgentId }); setDraftPreferredAgentId(selectedAgentId); rememberChatAgentId(selectedOrganizationId, selectedAgentId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
       if (newConversationLockAcquired || newConversationSendLockRef.current) { releaseNewConversationSendLock();
@@ -509,9 +554,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         state: "streaming",
         createdAt: startedAt,
         transcript: [], replyingAgentId: conversation.chatRuntime.runtimeAgentId ?? conversation.preferredAgentId ?? null, });
+      refreshQueue(chatId);
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,
         editUserMessageId,
+        queuedMessageId: options?.queuedMessageId ?? null,
         files: filesToUpload,
         onEvent: async (event) => {
           if (event.type === "ack") { userMessageAcknowledged = true; upsertMessages(chatId, [event.userMessage]);
@@ -533,20 +580,37 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           if (event.type === "transcript_entry") {
             setStreamDraftForChat(chatId, (current) => { if (!current) return current; const transcript = [...current.transcript]; appendTranscriptEntry(transcript, event.entry); return { ...current, transcript }; });
             return; }
+          if (event.type === "queued") {
+            queryClient.setQueryData(
+              queryKeys.chats.queue(chatId),
+              (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
+                activeGenerationId: current?.activeGenerationId ?? queueQuery.data?.activeGenerationId ?? null,
+                items: [...(current?.items ?? []), event.item],
+              }),
+            );
+            setStreamDraftForChat(chatId, null);
+            pushToast({ title: "Queued follow-up", body: "It will run after the current reply unless you steer it.", tone: "success" });
+            return; }
           if (event.type === "final") { keepProcessOpenForMessages(event.messages); upsertMessages(chatId, event.messages); setStreamDraftForChat(chatId, null); } }, });
       if (options?.clearPendingFilesOnSuccess) { clearPendingFilesForCurrentScope(); }
-      await refreshChat(chatId); setStreamDraftForChat(chatId, null);
+      await refreshChat(chatId); refreshQueue(chatId); setStreamDraftForChat(chatId, null);
     } catch (error) {
       const isAbort = error instanceof DOMException ? error.name === "AbortError" : error instanceof Error && error.name === "AbortError";
       if (conversation && (isAbort || stopRequestedChatIdsRef.current.has(conversation.id))) {
+        if (options?.queuedMessageId && !userMessageAcknowledged) {
+          await chatsApi.releaseQueuedMessageClaim(conversation.id, options.queuedMessageId).catch(() => null);
+        }
         setStreamDraftForChat(
           conversation.id, (current) => (current ? { ...current, state: "stopped" } : current), );
         window.setTimeout(() => {
-          void refreshChat(conversation!.id).finally(() => { setStreamDraftForChat(conversation!.id, null); }); }, 400);
+          void refreshChat(conversation!.id).finally(() => { refreshQueue(conversation!.id); setStreamDraftForChat(conversation!.id, null); }); }, 400);
         return; }
       if (conversation) {
+        if (options?.queuedMessageId && !userMessageAcknowledged) {
+          await chatsApi.releaseQueuedMessageClaim(conversation.id, options.queuedMessageId).catch(() => null);
+        }
         setStreamDraftForChat(
-          conversation.id, (current) => (current ? { ...current, state: "failed" } : current), ); await refreshChat(conversation.id);
+          conversation.id, (current) => (current ? { ...current, state: "failed" } : current), ); await refreshChat(conversation.id); refreshQueue(conversation.id);
         setStreamDraftForChat(conversation.id, null); }
       if (submittedComposerDraft && !userMessageAcknowledged) { const restoreConversationId = conversation?.id ?? submittedComposerDraft.conversationId; const restoreScopeKey = resolveChatPendingAttachmentScopeKey(
           submittedComposerDraft.orgId, restoreConversationId, ); saveChatDraft(submittedComposerDraft.orgId, restoreConversationId, submittedComposerDraft.body); updateChatPendingAttachmentsForScope(restoreScopeKey, () => submittedComposerDraft.files); refreshPendingFiles((version) => version + 1);
@@ -569,7 +633,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         setChatSendInFlight(activeChatId, false); }
       if (newConversationLockAcquired) { releaseNewConversationSendLock(); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
     return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]); const rawMessages = messagesQuery.data ?? []; const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
-    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const agentSelectionLocked = isChatAgentSelectionLocked({
+    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const agentSelectionLocked = isChatAgentSelectionLocked({
     hasConversation: Boolean(selectedConversation),
     preferredAgentId: selectedConversation?.preferredAgentId,
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
@@ -594,7 +658,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (agentSelectionLocked) {
       setAgentMenuOpen(false); } }, [agentSelectionLocked]);
   const loadError = conversationsQuery.error ?? conversationQuery.error ?? messagesQuery.error ?? agentsError ?? organizationSkillsError ?? activeAgentSkillsError ?? projectsError ?? issuesError;
-  const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const controlsDisabled = activeSendInFlight || newConversationSendInFlight; const activeSelectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const canPersistSelectedAgentForConversation = Boolean( selectedConversation && !selectedConversation.preferredAgentId && activeSelectedAgentId, );
+  const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const controlsDisabled = newConversationSendInFlight; const activeSelectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const canPersistSelectedAgentForConversation = Boolean( selectedConversation && !selectedConversation.preferredAgentId && activeSelectedAgentId, );
   const composerUnavailable = selectedConversation ? !selectedConversation.chatRuntime.available && !canPersistSelectedAgentForConversation : !activeSelectedAgentId; const composerUnavailableMessage = activeSelectedAgentId ? selectedConversation?.chatRuntime.error ?? "Selected chat agent is unavailable." : "Create or activate an agent before sending messages."; const hasPendingLightweightProposal = rawMessages.some(
     (message) => !message.supersededAt && message.kind === "operation_proposal" && !message.approval && operationProposalStatusFromMessage(message) === "pending", ); const hasActionableApprovals = rawMessages .filter((m) => !m.supersededAt) .some((message) => approvalNeedsAction(message.approval));
   const agentPillLabel =
@@ -914,11 +978,182 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             {entry.skillCategoryLabel} </span> ) : null}
                         <span className="min-w-0 flex-1 truncate text-muted-foreground">
                           {entry.skillDescription ?? entry.skillLocationLabel ?? entry.skillRefLabel} </span> </span> </button>
-                  ))} </div> </> )} </> ) : null} </div>, document.body, ); }; const renderComposer = (centered: boolean) => (
+                  ))} </div> </> )} </> ) : null} </div>, document.body, ); };
+  const refreshQueue = (chatId: string) => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(chatId) });
+  };
+  useEffect(() => {
+    if (!selectedConversation) return;
+    if (activeStream || activeSendInFlight || activeQueueItems.length === 0) return;
+    const chatId = selectedConversation.id;
+    if (autoDequeuingChatIdsRef.current.has(chatId)) return;
+    const timer = window.setTimeout(() => {
+      if (autoDequeuingChatIdsRef.current.has(chatId)) return;
+      autoDequeuingChatIdsRef.current.add(chatId);
+      void chatsApi.claimNextQueuedMessage(chatId)
+        .then(async (result) => {
+          if (!result.item) return;
+          refreshQueue(chatId);
+          await sendMessage({
+            bodyOverride: result.item.payload.body,
+            filesOverride: [],
+            conversationOverride: selectedConversation,
+            queuedMessageId: result.item.id,
+          });
+        })
+        .catch((error) => {
+          if (!(error instanceof ApiError) || error.status !== 409) {
+            pushToast({
+              title: "Failed to run queued follow-up",
+              body: error instanceof Error ? error.message : "Try again.",
+              tone: "error",
+            });
+          }
+        })
+        .finally(() => {
+          autoDequeuingChatIdsRef.current.delete(chatId);
+          refreshQueue(chatId);
+        });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeQueueItems.length,
+    activeSendInFlight,
+    activeStream,
+    selectedConversation,
+  ]);
+  const steerQueuedMessage = (itemId: string) => {
+    if (!selectedConversation) return;
+    const chatId = selectedConversation.id;
+    void chatsApi.steerQueuedMessage(chatId, itemId, queueQuery.data?.activeGenerationId ?? null)
+      .then((result) => {
+        refreshQueue(chatId);
+        pushToast({
+          title: result.result === "accepted" ? "Steered current reply" : "Still queued",
+          body: result.result === "accepted" ? "The running agent received the follow-up." : "This runtime cannot accept mid-run steering yet.",
+          tone: result.result === "accepted" ? "success" : "warn",
+        });
+      })
+      .catch((error) => {
+        pushToast({
+          title: "Failed to steer queued message",
+          body: error instanceof Error ? error.message : "Try again.",
+          tone: "error",
+        });
+      });
+  };
+  const editQueuedMessage = (itemId: string, body: string) => {
+    const item = activeQueueItems.find((candidate) => candidate.id === itemId);
+    if (!item) return;
+    setEditingQueuedItem({ itemId, value: body, version: item.version });
+  };
+  const saveQueuedMessage = (item: ChatQueuedMessage) => {
+    if (!selectedConversation || editingQueuedItem?.itemId !== item.id) return;
+    const body = editingQueuedItem.value.trim();
+    if (!body) {
+      pushToast({ title: "Queued message cannot be empty", tone: "error" });
+      return;
+    }
+    const chatId = selectedConversation.id;
+    void chatsApi.updateQueuedMessage(chatId, item.id, {
+      version: editingQueuedItem.version,
+      payload: {
+        ...item.payload,
+        body,
+      },
+    })
+      .then((updated) => {
+        queryClient.setQueryData(
+          queryKeys.chats.queue(chatId),
+          (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
+            activeGenerationId: current?.activeGenerationId ?? queueQuery.data?.activeGenerationId ?? null,
+            items: (current?.items ?? []).map((candidate) => candidate.id === updated.id ? updated : candidate),
+          }),
+        );
+        setEditingQueuedItem(null);
+        refreshQueue(chatId);
+      })
+      .catch((error) => {
+        pushToast({
+          title: "Failed to edit queued message",
+          body: error instanceof Error ? error.message : "Try again.",
+          tone: "error",
+        });
+      });
+  };
+  const deleteQueuedMessage = (itemId: string) => {
+    if (!selectedConversation) return;
+    const chatId = selectedConversation.id;
+    void chatsApi.cancelQueuedMessage(chatId, itemId)
+      .then(() => refreshQueue(chatId))
+      .catch((error) => {
+        pushToast({
+          title: "Failed to delete queued message",
+          body: error instanceof Error ? error.message : "Try again.",
+          tone: "error",
+        });
+      });
+  };
+  const renderComposer = (centered: boolean) => (
     <div ref={composerSurfaceRef} className={cn(
         "chat-composer rounded-[var(--radius-lg)] p-3 transition-all duration-300",
         centered ? "mx-auto w-full max-w-3xl" : "w-full",
       )} >
+      {selectedConversation && activeQueueItems.length > 0 ? (
+        <div data-testid="chat-running-queue" className="mb-2.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] p-2">
+          <div className="mb-1.5 flex items-center justify-between gap-2 px-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+            <span>{activeStream ? "Queued follow-ups" : "Queued follow-ups retained"}</span>
+            <span>{activeQueueItems.length} queued</span>
+          </div>
+          <div className="space-y-1.5">
+            {activeQueueItems.slice(0, 2).map((item, index) => (
+              <div key={item.id} data-testid="chat-running-queue-item" className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border border-border/60 bg-background/70 px-2.5 py-2 text-sm">
+                <span className="shrink-0 text-xs font-semibold text-muted-foreground">
+                  {index === 0 ? "Up next" : `#${index + 1}`}
+                </span>
+                {editingQueuedItem?.itemId === item.id ? (
+                  <>
+                    <Textarea
+                      aria-label="Edit queued message text"
+                      data-testid="chat-running-queue-edit"
+                      className="min-h-9 flex-1 resize-none rounded-[var(--radius-sm)] border-border/70 bg-background px-2 py-1.5 text-sm"
+                      value={editingQueuedItem.value}
+                      onChange={(event) => setEditingQueuedItem((current) => current?.itemId === item.id ? { ...current, value: event.target.value } : current)}
+                    />
+                    <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-foreground transition-colors hover:bg-muted" onClick={() => saveQueuedMessage(item)}>
+                      Save
+                    </button>
+                    <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted" onClick={() => setEditingQueuedItem(null)}>
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="min-w-0 flex-1 truncate text-foreground">{item.payload.body}</span>
+                    {item.lastDeliveryReason ? (
+                      <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                        Still queued
+                      </span>
+                    ) : null}
+                    <button type="button" disabled={!queueQuery.data?.activeGenerationId} className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-45 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>
+                      Steer
+                    </button>
+                    <button type="button" aria-label="Edit queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => editQueuedMessage(item.id, item.payload.body)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button type="button" aria-label="Delete queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => deleteQueuedMessage(item.id)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+          {activeQueueItems.length > 2 ? (
+            <div className="mt-1.5 px-1 text-xs text-muted-foreground">+{activeQueueItems.length - 2} more queued follow-ups</div>
+          ) : null}
+        </div>
+      ) : null}
       <div ref={composerEditorScrollRef} data-testid="chat-composer-editor-scroll" className="chat-composer-editor-scroll scrollbar-auto-hide overflow-y-auto overscroll-contain pr-1" onPasteCapture={handlePendingAttachmentPasteCapture} >
         <MarkdownEditor ref={composerEditorRef} value={draft} onChange={setDraft}
           mentions={mentionOptions}

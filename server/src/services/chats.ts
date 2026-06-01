@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { formatMessengerPreview, formatMessengerTitle, sanitizeChatStructuredPayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { formatMessengerPreview, formatMessengerTitle, sanitizeChatStructuredPayload, type ChatQueuedMessagePayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import {
   agents,
   approvals,
@@ -10,12 +10,14 @@ import {
   chatContextLinks,
   chatConversations,
   chatConversationUserStates,
+  chatGenerations,
   chatMessages,
+  chatQueuedMessages,
   organizations,
   issues,
   projects,
 } from "@rudderhq/db";
-import { notFound, unprocessable } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 import { agentService } from "./agents.js";
 import { logActivity } from "./activity-log.js";
 import { approvalService } from "./approvals.js";
@@ -27,6 +29,8 @@ import { issueService } from "./issues.js";
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
 type MessageRow = typeof chatMessages.$inferSelect;
+type ChatQueuedMessageRow = typeof chatQueuedMessages.$inferSelect;
+type ChatGenerationRow = typeof chatGenerations.$inferSelect;
 type MessageHydrationRow = MessageRow & {
   transcriptSummary?: {
     entryCount: number;
@@ -68,12 +72,22 @@ import {
 } from "./chats.helpers.js";
 
 export function chatService(db: Db) {
+  const QUEUED_MESSAGE_CLAIM_LEASE_MS = 2 * 60 * 1000;
   const issuesSvc = issueService(db);
   const approvalsSvc = approvalService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
   const documentsSvc = documentService(db);
+
+  function isQueuePositionConflict(error: unknown): boolean {
+    return Boolean(
+      error
+      && typeof error === "object"
+      && "code" in error
+      && (error as { code?: unknown }).code === "23505",
+    );
+  }
 
   async function ensureConversationUserStates(rows: ConversationRow[], userId: string) {
     if (rows.length === 0) return;
@@ -432,6 +446,439 @@ export function chatService(db: Db) {
         updatedAt: at,
       })
       .where(eq(chatConversations.id, conversationId));
+  }
+
+  function normalizeQueuedPayload(payload: Record<string, unknown>): ChatQueuedMessagePayload {
+    return {
+      body: String(payload.body ?? ""),
+      attachmentIds: Array.isArray(payload.attachmentIds)
+        ? payload.attachmentIds.filter((id): id is string => typeof id === "string")
+        : [],
+      projectId: typeof payload.projectId === "string" ? payload.projectId : null,
+      skillRefs: Array.isArray(payload.skillRefs)
+        ? payload.skillRefs.filter((ref): ref is string => typeof ref === "string")
+        : [],
+      accessMode: typeof payload.accessMode === "string" ? payload.accessMode : null,
+      model: typeof payload.model === "string" ? payload.model : null,
+      effort: typeof payload.effort === "string" ? payload.effort : null,
+      metadata:
+        payload.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
+          ? payload.metadata as Record<string, unknown>
+          : null,
+    };
+  }
+
+  function hydrateQueuedMessage(row: ChatQueuedMessageRow) {
+    return {
+      ...row,
+      payload: normalizeQueuedPayload(row.payload),
+    };
+  }
+
+  async function createGeneration(orgId: string, conversationId: string): Promise<ChatGenerationRow> {
+    const [row] = await db
+      .insert(chatGenerations)
+      .values({
+        orgId,
+        conversationId,
+        status: "active",
+      })
+      .returning();
+    if (!row) throw new Error("Failed to create chat generation");
+    return row;
+  }
+
+  async function markGenerationTerminal(
+    generationId: string | null | undefined,
+    status: "completed" | "failed" | "stopped" | "aborted",
+  ) {
+    if (!generationId) return null;
+    const now = new Date();
+    const [row] = await db
+      .update(chatGenerations)
+      .set({
+        status,
+        terminalReason: status,
+        completedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(chatGenerations.id, generationId))
+      .returning();
+    return row ?? null;
+  }
+
+  async function getLatestActiveGeneration(conversationId: string) {
+    return db
+      .select()
+      .from(chatGenerations)
+      .where(
+        and(
+          eq(chatGenerations.conversationId, conversationId),
+          inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
+        ),
+      )
+      .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function getLatestGeneration(conversationId: string) {
+    return db
+      .select()
+      .from(chatGenerations)
+      .where(eq(chatGenerations.conversationId, conversationId))
+      .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+  }
+
+  async function listQueuedMessages(conversationId: string) {
+    await reclaimStaleQueuedMessageClaims(conversationId);
+    const rows = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, conversationId),
+          inArray(chatQueuedMessages.status, ["queued", "steer_pending"]),
+        ),
+      )
+      .orderBy(asc(chatQueuedMessages.position), asc(chatQueuedMessages.createdAt));
+    return rows.map(hydrateQueuedMessage);
+  }
+
+  async function getQueueSnapshot(conversationId: string, activeGenerationId?: string | null) {
+    const activeGeneration = activeGenerationId
+      ? { id: activeGenerationId }
+      : await getLatestActiveGeneration(conversationId);
+    return {
+      activeGenerationId: activeGeneration?.id ?? null,
+      items: await listQueuedMessages(conversationId),
+    };
+  }
+
+  async function createQueuedMessage(input: {
+    orgId: string;
+    conversationId: string;
+    clientMutationId: string;
+    payload: ChatQueuedMessagePayload;
+    expectedGenerationId?: string | null;
+  }) {
+    const payload = {
+      ...input.payload,
+      body: input.payload.body.trim(),
+      attachmentIds: input.payload.attachmentIds ?? [],
+      skillRefs: input.payload.skillRefs ?? [],
+      projectId: input.payload.projectId ?? null,
+      accessMode: input.payload.accessMode ?? null,
+      model: input.payload.model ?? null,
+      effort: input.payload.effort ?? null,
+      metadata: input.payload.metadata ?? null,
+    };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await db.transaction(async (tx) => {
+          const existing = await tx
+            .select()
+            .from(chatQueuedMessages)
+            .where(
+              and(
+                eq(chatQueuedMessages.conversationId, input.conversationId),
+                eq(chatQueuedMessages.clientMutationId, input.clientMutationId),
+              ),
+            )
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+          if (existing) {
+            if (JSON.stringify(existing.payload) !== JSON.stringify(payload)) {
+              throw conflict("Queued message idempotency key reused with a different payload");
+            }
+            return hydrateQueuedMessage(existing);
+          }
+
+          const [positionRow] = await tx
+            .select({
+              nextPosition: sql<number>`coalesce(max(${chatQueuedMessages.position}), 0) + 1`,
+            })
+            .from(chatQueuedMessages)
+            .where(eq(chatQueuedMessages.conversationId, input.conversationId));
+          const [row] = await tx
+            .insert(chatQueuedMessages)
+            .values({
+              orgId: input.orgId,
+              conversationId: input.conversationId,
+              clientMutationId: input.clientMutationId,
+              position: Number(positionRow?.nextPosition ?? 1),
+              payload,
+              expectedGenerationId: input.expectedGenerationId ?? null,
+            })
+            .returning();
+          if (!row) throw new Error("Failed to create queued chat message");
+          return hydrateQueuedMessage(row);
+        });
+      } catch (error) {
+        if (attempt < 2 && isQueuePositionConflict(error)) continue;
+        throw error;
+      }
+    }
+    throw new Error("Failed to create queued chat message");
+  }
+
+  async function updateQueuedMessage(input: {
+    conversationId: string;
+    itemId: string;
+    version: number;
+    payload: ChatQueuedMessagePayload;
+  }) {
+    const now = new Date();
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        payload: {
+          ...input.payload,
+          body: input.payload.body.trim(),
+          attachmentIds: input.payload.attachmentIds ?? [],
+          skillRefs: input.payload.skillRefs ?? [],
+          projectId: input.payload.projectId ?? null,
+          accessMode: input.payload.accessMode ?? null,
+          model: input.payload.model ?? null,
+          effort: input.payload.effort ?? null,
+          metadata: input.payload.metadata ?? null,
+        },
+        version: input.version + 1,
+        lastDeliveryReason: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.version, input.version),
+          eq(chatQueuedMessages.status, "queued"),
+        ),
+      )
+      .returning();
+    if (!row) throw conflict("Queued message was changed or is no longer editable");
+    return hydrateQueuedMessage(row);
+  }
+
+  async function cancelQueuedMessage(input: {
+    conversationId: string;
+    itemId: string;
+    version?: number | null;
+  }) {
+    const now = new Date();
+    const conditions = [
+      eq(chatQueuedMessages.conversationId, input.conversationId),
+      eq(chatQueuedMessages.id, input.itemId),
+      eq(chatQueuedMessages.status, "queued"),
+    ];
+    if (input.version) conditions.push(eq(chatQueuedMessages.version, input.version));
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "cancelled",
+        version: sql`${chatQueuedMessages.version} + 1`,
+        cancelledAt: now,
+        updatedAt: now,
+      })
+      .where(and(...conditions))
+      .returning();
+    if (!row) throw conflict("Queued message was changed or is no longer cancellable");
+    return hydrateQueuedMessage(row);
+  }
+
+  async function markQueuedMessageSteerFallback(input: {
+    conversationId: string;
+    itemId: string;
+    reason: "unsupported" | "stale_generation" | "closing";
+    activeGenerationId?: string | null;
+  }) {
+    const now = new Date();
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "queued",
+        activeGenerationId: input.activeGenerationId ?? null,
+        deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
+        lastAttemptAt: now,
+        lastDeliveryReason: input.reason,
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.status, "queued"),
+        ),
+      )
+      .returning();
+    if (!row) throw conflict("Queued message was changed or is no longer steerable");
+    return hydrateQueuedMessage(row);
+  }
+
+  async function claimNextQueuedMessage(conversationId: string) {
+    await reclaimStaleQueuedMessageClaims(conversationId);
+    const now = new Date();
+    return db.transaction(async (tx) => {
+      const [candidate] = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(
+          and(
+            eq(chatQueuedMessages.conversationId, conversationId),
+            eq(chatQueuedMessages.status, "queued"),
+          ),
+        )
+        .orderBy(asc(chatQueuedMessages.position), asc(chatQueuedMessages.createdAt))
+        .limit(1);
+      if (!candidate) return null;
+      const [row] = await tx
+        .update(chatQueuedMessages)
+        .set({
+          status: "dequeue_claimed",
+          dequeuedAt: now,
+          deliveryAttempts: sql`${chatQueuedMessages.deliveryAttempts} + 1`,
+          lastAttemptAt: now,
+          lastDeliveryReason: null,
+          version: sql`${chatQueuedMessages.version} + 1`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(chatQueuedMessages.id, candidate.id),
+            eq(chatQueuedMessages.conversationId, conversationId),
+            eq(chatQueuedMessages.status, "queued"),
+            eq(chatQueuedMessages.version, candidate.version),
+          ),
+        )
+        .returning();
+      return row ? hydrateQueuedMessage(row) : null;
+    });
+  }
+
+  async function releaseQueuedMessageClaim(input: {
+    conversationId: string;
+    itemId: string;
+    reason: "delivery_failed" | "delivery_aborted" | "claim_expired";
+  }) {
+    const now = new Date();
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "queued",
+        lastDeliveryReason: input.reason,
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.status, "dequeue_claimed"),
+        ),
+      )
+      .returning();
+    return row ? hydrateQueuedMessage(row) : null;
+  }
+
+  async function reclaimStaleQueuedMessageClaims(conversationId: string) {
+    const cutoff = new Date(Date.now() - QUEUED_MESSAGE_CLAIM_LEASE_MS);
+    await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "queued",
+        lastDeliveryReason: "claim_expired",
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, conversationId),
+          eq(chatQueuedMessages.status, "dequeue_claimed"),
+          lt(chatQueuedMessages.updatedAt, cutoff),
+        ),
+      );
+  }
+
+  async function assertQueuedMessageClaimedForDelivery(input: {
+    conversationId: string;
+    itemId: string;
+    body: string;
+  }) {
+    const row = await db
+      .select()
+      .from(chatQueuedMessages)
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!row || row.status !== "dequeue_claimed") {
+      throw conflict("Queued message is not claimed for delivery");
+    }
+    const payload = normalizeQueuedPayload(row.payload);
+    if (payload.body.trim() !== input.body.trim()) {
+      throw conflict("Queued message body no longer matches claimed payload");
+    }
+    return hydrateQueuedMessage(row);
+  }
+
+  async function markQueuedMessageRunning(input: {
+    conversationId: string;
+    itemId: string;
+    sourceMessageId: string;
+  }) {
+    const now = new Date();
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: "running",
+        sourceMessageId: input.sourceMessageId,
+        deliveredMessageId: input.sourceMessageId,
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.status, "dequeue_claimed"),
+        ),
+      )
+      .returning();
+    if (!row) throw conflict("Queued message is no longer deliverable");
+    return hydrateQueuedMessage(row);
+  }
+
+  async function markQueuedMessageDeliveryTerminal(input: {
+    conversationId: string;
+    itemId: string;
+    status: "completed" | "failed" | "stopped" | "aborted";
+  }) {
+    const now = new Date();
+    const nextStatus = input.status === "completed" ? "completed" : "failed";
+    const [row] = await db
+      .update(chatQueuedMessages)
+      .set({
+        status: nextStatus,
+        lastDeliveryReason: input.status === "completed" ? null : input.status,
+        version: sql`${chatQueuedMessages.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.id, input.itemId),
+          inArray(chatQueuedMessages.status, ["dequeue_claimed", "running"]),
+        ),
+      )
+      .returning();
+    return row ? hydrateQueuedMessage(row) : null;
   }
 
   async function maybePromoteConversationTitle(conversationId: string, body: string) {
@@ -1707,6 +2154,21 @@ export function chatService(db: Db) {
     markRead,
     markUnread,
     setPinned,
+    createGeneration,
+    markGenerationTerminal,
+    getLatestActiveGeneration,
+    getLatestGeneration,
+    getQueueSnapshot,
+    listQueuedMessages,
+    createQueuedMessage,
+    updateQueuedMessage,
+    cancelQueuedMessage,
+    markQueuedMessageSteerFallback,
+    claimNextQueuedMessage,
+    releaseQueuedMessageClaim,
+    assertQueuedMessageClaimedForDelivery,
+    markQueuedMessageRunning,
+    markQueuedMessageDeliveryTerminal,
     listMessages,
     getMessageTranscript,
     addMessage,

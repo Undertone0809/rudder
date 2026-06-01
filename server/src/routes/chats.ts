@@ -6,7 +6,9 @@ import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
   addChatMessageSchema,
+  cancelChatQueuedMessageSchema,
   chatAutomationCreateFromStructuredPayload,
+  createChatQueuedMessageSchema,
   updateChatConversationUserStateSchema,
   type ChatContextLink,
   type ChatConversation,
@@ -20,6 +22,8 @@ import {
   createChatConversationSchema,
   resolveChatOperationProposalSchema,
   setChatProjectContextSchema,
+  steerChatQueuedMessageSchema,
+  updateChatQueuedMessageSchema,
   updateChatConversationSchema,
 } from "@rudderhq/shared";
 import type { StorageService } from "../storage/types.js";
@@ -42,7 +46,7 @@ import {
   type ChatAssistantResult,
   type ChatGeneratedAttachment,
 } from "../services/chat-assistant.js";
-import { cancelActiveChatGeneration, claimChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { cancelActiveChatGeneration, claimChatGeneration, getActiveChatGeneration, hasActiveChatGeneration, setActiveChatGenerationId } from "../services/chat-generation-locks.js";
 import {
   accessService,
   agentService,
@@ -1171,6 +1175,157 @@ export function chatRoutes(db: Db, storage: StorageService) {
     res.json(deleted);
   });
 
+  router.get("/chats/:id/queue", async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const active = getActiveChatGeneration(conversation.id);
+    res.json(await svc.getQueueSnapshot(conversation.id, active?.generationId ?? null));
+  });
+
+  router.post("/chats/:id/queue", validate(createChatQueuedMessageSchema), async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const item = await svc.createQueuedMessage({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      clientMutationId: req.body.clientMutationId,
+      expectedGenerationId: req.body.expectedGenerationId ?? getActiveChatGeneration(conversation.id)?.generationId ?? null,
+      payload: req.body.payload,
+    });
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: conversation.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.queue.created",
+      entityType: "chat",
+      entityId: conversation.id,
+      details: {
+        queuedMessageId: item.id,
+        position: item.position,
+      },
+    });
+    res.status(201).json(item);
+  });
+
+  router.post("/chats/:id/queue/next/claim", async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    if (hasActiveChatGeneration(conversation.id)) {
+      throw conflict("Cannot dequeue the next message while a reply is in progress");
+    }
+    const latestGeneration = await svc.getLatestGeneration(conversation.id);
+    if (latestGeneration && latestGeneration.status !== "completed") {
+      throw conflict("Queued follow-ups remain parked after a stopped or failed reply");
+    }
+    const item = await svc.claimNextQueuedMessage(conversation.id);
+    if (item) {
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId: conversation.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "chat.queue.claimed",
+        entityType: "chat",
+        entityId: conversation.id,
+        details: {
+          queuedMessageId: item.id,
+          position: item.position,
+        },
+      });
+    }
+    res.json({ item });
+  });
+
+  router.post("/chats/:id/queue/:itemId/release-claim", async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const item = await svc.releaseQueuedMessageClaim({
+      conversationId: conversation.id,
+      itemId: req.params.itemId as string,
+      reason: "delivery_failed",
+    });
+    res.json({ item });
+  });
+
+  router.patch("/chats/:id/queue/:itemId", validate(updateChatQueuedMessageSchema), async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const item = await svc.updateQueuedMessage({
+      conversationId: conversation.id,
+      itemId: req.params.itemId as string,
+      version: req.body.version,
+      payload: req.body.payload,
+    });
+    res.json(item);
+  });
+
+  router.delete("/chats/:id/queue/:itemId", async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const parsed = cancelChatQueuedMessageSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid queued message cancel request", details: parsed.error.issues });
+      return;
+    }
+    const item = await svc.cancelQueuedMessage({
+      conversationId: conversation.id,
+      itemId: req.params.itemId as string,
+      version: parsed.data.version ?? null,
+    });
+    res.json(item);
+  });
+
+  router.post("/chats/:id/queue/:itemId/steer", validate(steerChatQueuedMessageSchema), async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const active = getActiveChatGeneration(conversation.id);
+    const expected = req.body.expectedActiveGenerationId ?? null;
+    const result = !active?.generationId
+      ? "closing"
+      : expected && expected !== active.generationId
+        ? "stale_generation"
+        : "unsupported";
+    const item = await svc.markQueuedMessageSteerFallback({
+      conversationId: conversation.id,
+      itemId: req.params.itemId as string,
+      reason: result,
+      activeGenerationId: active?.generationId ?? null,
+    });
+    res.json({
+      item,
+      result: result === "unsupported" ? "queued_fallback" : result,
+      activeGenerationId: active?.generationId ?? null,
+      queueVersion: item.version,
+      transcriptEventId: null,
+    });
+  });
+
   router.get("/chats/:id/messages", async (req, res) => {
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
@@ -1206,20 +1361,49 @@ export function chatRoutes(db: Db, storage: StorageService) {
       return;
     }
 
+    const releaseGeneration = claimChatGeneration(conversation.id, null, null);
+    if (!releaseGeneration) {
+      const item = await svc.createQueuedMessage({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        clientMutationId: `message:${randomUUID()}`,
+        expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
+        payload: {
+          body: req.body.body,
+          attachmentIds: [],
+          skillRefs: [],
+          projectId: null,
+          accessMode: null,
+          model: null,
+          effort: null,
+          metadata: {
+            source: "messages_endpoint_during_active_generation",
+          },
+        },
+      });
+      res.status(202).json({ queued: item });
+      return;
+    }
+
     const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
     if (!assistantAvailability.available) {
+      releaseGeneration();
       res.status(503).json({ error: assistantAvailability.error });
       return;
     }
 
-    const releaseGeneration = claimChatGeneration(conversation.id);
-    if (!releaseGeneration) {
-      res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
-      return;
+    let generation;
+    try {
+      generation = await svc.createGeneration(conversation.orgId, conversation.id);
+    } catch (error) {
+      releaseGeneration();
+      throw error;
     }
+    setActiveChatGenerationId(conversation.id, generation.id);
 
     const actor = getActorInfo(req);
     let chatObservation: ExecutionObservabilityContext | null = null;
+    let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     try {
       const userMessage = await addUserMessage(
         conversation as ChatConversation,
@@ -1282,6 +1466,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
             fallbackOutput = streamed.partialBody;
             if (streamed.outcome !== "completed") {
               finalChatStatus = "failed";
+              generationTerminalStatus = "failed";
               throw new Error("Chat assistant reply was stopped before completion");
             }
             const created = await persistAssistantReply(
@@ -1294,6 +1479,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
               streamed.replyingAgentId,
             );
             finalChatOutput = streamed.reply.body;
+            generationTerminalStatus = "completed";
             await logChatMessagesAdded(assistantInput.conversation, created, {
               actorType: "system",
               actorId: "chat-assistant",
@@ -1314,6 +1500,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
               fallbackOutput = error.partialBody;
             }
             finalChatStatus = "failed";
+            generationTerminalStatus = "failed";
             throw error;
           } finally {
             try {
@@ -1375,6 +1562,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
         error: CHAT_ASSISTANT_USER_ERROR_MESSAGE,
       });
     } finally {
+      await svc.markGenerationTerminal(generation.id, generationTerminalStatus).catch((error: unknown) => {
+        logger.warn({ err: error, generationId: generation.id }, "failed to mark chat generation terminal");
+      });
       releaseGeneration();
     }
   });

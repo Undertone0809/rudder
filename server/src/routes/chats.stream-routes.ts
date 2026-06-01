@@ -41,7 +41,7 @@ import {
   type ChatAssistantResult,
   type ChatGeneratedAttachment,
 } from "../services/chat-assistant.js";
-import { cancelActiveChatGeneration, claimChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { cancelActiveChatGeneration, claimChatGeneration, getActiveChatGeneration, hasActiveChatGeneration, setActiveChatGenerationId } from "../services/chat-generation-locks.js";
 import {
   accessService,
   agentService,
@@ -139,18 +139,70 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
 
-    const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
-    if (!assistantAvailability.available) {
-      res.status(503).json({ error: assistantAvailability.error });
+    const queuedMessageId = parsedBody.data.queuedMessageId ?? null;
+    const abortController = new AbortController();
+    const releaseGeneration = claimChatGeneration(conversation.id, abortController, null);
+    if (!releaseGeneration) {
+      if (queuedMessageId) {
+        res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
+        return;
+      }
+      if (messageFiles.length > 0) {
+        res.status(422).json({ error: "Queued follow-ups do not support new files yet" });
+        return;
+      }
+      const item = await svc.createQueuedMessage({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        clientMutationId: `stream:${randomUUID()}`,
+        expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
+        payload: {
+          body: parsedBody.data.body,
+          attachmentIds: [],
+          skillRefs: [],
+          projectId: null,
+          accessMode: null,
+          model: null,
+          effort: null,
+          metadata: {
+            source: "stream_endpoint_during_active_generation",
+          },
+        },
+      });
+      res.status(202);
+      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+      res.write(`${JSON.stringify({ type: "queued", item })}\n`);
+      res.end();
       return;
     }
 
-    const abortController = new AbortController();
-    const releaseGeneration = claimChatGeneration(conversation.id, abortController);
-    if (!releaseGeneration) {
-      res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
+    const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
+    if (!assistantAvailability.available) {
+      releaseGeneration();
+      res.status(503).json({ error: assistantAvailability.error });
       return;
     }
+    if (queuedMessageId) {
+      try {
+        await svc.assertQueuedMessageClaimedForDelivery({
+          conversationId: conversation.id,
+          itemId: queuedMessageId,
+          body: parsedBody.data.body,
+        });
+      } catch (error) {
+        releaseGeneration();
+        throw error;
+      }
+    }
+
+    let generation;
+    try {
+      generation = await svc.createGeneration(conversation.orgId, conversation.id);
+    } catch (error) {
+      releaseGeneration();
+      throw error;
+    }
+    setActiveChatGenerationId(conversation.id, generation.id);
 
     const actor = getActorInfo(req);
     let assistantConversationForPartial: ChatConversation | null = null;
@@ -161,6 +213,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     let modelTurnInput: unknown;
     let assistantProgressMessage: ChatMessage | null = null;
     let assistantProgressMessageId: string | null = null;
+    let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let assistantDraftBody = "";
     const persistStreamProgress = async (
       progressConversation: ChatConversation,
@@ -217,6 +270,13 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         actor,
         parsedBody.data.editUserMessageId ?? null,
       );
+      if (queuedMessageId) {
+        await svc.markQueuedMessageRunning({
+          conversationId: conversation.id,
+          itemId: queuedMessageId,
+          sourceMessageId: userMessage.id,
+        });
+      }
       const userAttachments = await attachFilesToUserMessage(
         conversation as ChatConversation,
         userMessage.id,
@@ -309,6 +369,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
 
             if (streamed.outcome === "stopped") {
               finalChatStatus = "stopped";
+              generationTerminalStatus = "stopped";
               finalChatOutput = streamed.partialBody;
               const stoppedMessage = await persistPartialAssistantMessage(
                 assistantInput.conversation,
@@ -356,6 +417,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               assistantProgressMessageId,
             );
             finalChatOutput = streamed.reply.body;
+            generationTerminalStatus = "completed";
             await logChatMessagesAdded(assistantInput.conversation, createdMessages, {
               actorType: "system",
               actorId: "chat-assistant",
@@ -378,6 +440,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
             }
           } catch (error) {
             finalChatStatus = "failed";
+            generationTerminalStatus = "failed";
             if (error instanceof ChatAssistantStreamError) {
               finalChatOutput = error.partialBody;
             }
@@ -476,6 +539,18 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     } finally {
       req.off("aborted", handleClosed);
       res.off("close", handleClosed);
+      await svc.markGenerationTerminal(generation.id, generationTerminalStatus).catch((error: unknown) => {
+        logger.warn({ err: error, generationId: generation.id }, "failed to mark chat generation terminal");
+      });
+      if (queuedMessageId) {
+        await svc.markQueuedMessageDeliveryTerminal({
+          conversationId: conversation.id,
+          itemId: queuedMessageId,
+          status: generationTerminalStatus,
+        }).catch((error: unknown) => {
+          logger.warn({ err: error, queuedMessageId }, "failed to mark queued chat message terminal");
+        });
+      }
       releaseGeneration();
     }
   });

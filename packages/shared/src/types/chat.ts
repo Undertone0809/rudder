@@ -61,6 +61,75 @@ export interface ChatRuntimeDescriptor {
   error: string | null;
 }
 
+export type ChatQueuedMessageStatus =
+  | "queued"
+  | "steer_pending"
+  | "steered"
+  | "dequeue_claimed"
+  | "running"
+  | "completed"
+  | "cancelled"
+  | "failed";
+
+export type ChatSteerResult =
+  | "accepted"
+  | "pending"
+  | "queued_fallback"
+  | "stale_generation"
+  | "closing"
+  | "unsupported";
+
+export interface ChatQueuedMessagePayload {
+  body: string;
+  attachmentIds?: string[];
+  projectId?: string | null;
+  skillRefs?: string[];
+  accessMode?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface ChatQueuedMessage {
+  id: string;
+  orgId: string;
+  conversationId: string;
+  position: number;
+  status: ChatQueuedMessageStatus;
+  version: number;
+  clientMutationId: string;
+  payload: ChatQueuedMessagePayload;
+  expectedGenerationId: string | null;
+  activeGenerationId: string | null;
+  deliveryAttempts: number;
+  lastAttemptAt: Date | null;
+  lastDeliveryReason: string | null;
+  sourceMessageId: string | null;
+  deliveredMessageId: string | null;
+  cancelledAt: Date | null;
+  steeredAt: Date | null;
+  dequeuedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ChatQueueSnapshot {
+  activeGenerationId: string | null;
+  items: ChatQueuedMessage[];
+}
+
+export interface ChatQueueClaimResponse {
+  item: ChatQueuedMessage | null;
+}
+
+export interface ChatSteerResponse {
+  item: ChatQueuedMessage;
+  result: ChatSteerResult;
+  activeGenerationId: string | null;
+  queueVersion: number;
+  transcriptEventId: string | null;
+}
+
 export interface ChatConversation {
   id: string;
   orgId: string;
@@ -227,10 +296,16 @@ export interface ChatStreamErrorEvent {
   messageId?: string | null;
 }
 
+export interface ChatStreamQueuedEvent {
+  type: "queued";
+  item: ChatQueuedMessage;
+}
+
 export type ChatStreamEvent =
   | ChatStreamAckEvent
   | ChatStreamAssistantDeltaEvent
   | ChatStreamAssistantStateEvent
   | ChatStreamTranscriptEntryEvent
   | ChatStreamFinalEvent
-  | ChatStreamErrorEvent;
+  | ChatStreamErrorEvent
+  | ChatStreamQueuedEvent;

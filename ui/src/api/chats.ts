@@ -3,6 +3,11 @@ import type {
   ChatContextLink,
   ChatConversation,
   ChatMessage,
+  ChatQueuedMessage,
+  ChatQueuedMessagePayload,
+  ChatQueueClaimResponse,
+  ChatQueueSnapshot,
+  ChatSteerResponse,
   ChatIssueCreationMode,
   ChatOperationProposalDecisionAction,
   ChatStreamEvent,
@@ -61,12 +66,42 @@ export const chatsApi = {
     ),
   sendMessage: (chatId: string, body: string) =>
     api.post<{ messages: ChatMessage[] }>(`/chats/${chatId}/messages`, { body }),
+  listQueue: (chatId: string) =>
+    api.get<ChatQueueSnapshot>(`/chats/${chatId}/queue`),
+  createQueuedMessage: (
+    chatId: string,
+    data: {
+      clientMutationId: string;
+      expectedGenerationId?: string | null;
+      payload: ChatQueuedMessagePayload;
+    },
+  ) => api.post<ChatQueuedMessage>(`/chats/${chatId}/queue`, data),
+  claimNextQueuedMessage: (chatId: string) =>
+    api.post<ChatQueueClaimResponse>(`/chats/${chatId}/queue/next/claim`, {}),
+  updateQueuedMessage: (
+    chatId: string,
+    itemId: string,
+    data: {
+      version: number;
+      payload: ChatQueuedMessagePayload;
+    },
+  ) => api.patch<ChatQueuedMessage>(`/chats/${chatId}/queue/${itemId}`, data),
+  cancelQueuedMessage: (chatId: string, itemId: string) =>
+    api.delete<ChatQueuedMessage>(`/chats/${chatId}/queue/${itemId}`),
+  releaseQueuedMessageClaim: (chatId: string, itemId: string) =>
+    api.post<{ item: ChatQueuedMessage | null }>(`/chats/${chatId}/queue/${itemId}/release-claim`, {}),
+  steerQueuedMessage: (
+    chatId: string,
+    itemId: string,
+    expectedActiveGenerationId?: string | null,
+  ) => api.post<ChatSteerResponse>(`/chats/${chatId}/queue/${itemId}/steer`, { expectedActiveGenerationId }),
   sendMessageStream: async (
     chatId: string,
     body: string,
     options: {
       signal?: AbortSignal;
       editUserMessageId?: string | null;
+      queuedMessageId?: string | null;
       files?: File[];
       onEvent: (event: ChatStreamEvent) => Promise<void> | void;
     },
@@ -77,6 +112,7 @@ export const chatsApi = {
         const form = new FormData();
         form.append("body", body);
         if (options.editUserMessageId) form.append("editUserMessageId", options.editUserMessageId);
+        if (options.queuedMessageId) form.append("queuedMessageId", options.queuedMessageId);
         for (const file of files) {
           form.append("files", file, file.name || "attachment");
         }
@@ -85,6 +121,7 @@ export const chatsApi = {
       : JSON.stringify({
         body,
         ...(options.editUserMessageId ? { editUserMessageId: options.editUserMessageId } : {}),
+        ...(options.queuedMessageId ? { queuedMessageId: options.queuedMessageId } : {}),
       });
     const res = await fetch(`/api/chats/${chatId}/messages/stream`, {
       method: "POST",

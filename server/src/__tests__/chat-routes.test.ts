@@ -5,7 +5,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatRoutes } from "../routes/chats.js";
 import { errorHandler } from "../middleware/index.js";
-import { claimChatGeneration } from "../services/chat-generation-locks.js";
+import { claimChatGeneration, clearActiveChatGenerationsForTest } from "../services/chat-generation-locks.js";
 
 const mockWithExecutionObservation = vi.hoisted(() => vi.fn(async (_context, _input, fn) => fn(null)));
 const mockObserveExecutionEvent = vi.hoisted(() => vi.fn().mockResolvedValue(null));
@@ -34,6 +34,21 @@ const mockChatService = vi.hoisted(() => ({
   markRead: vi.fn(),
   markUnread: vi.fn(),
   setPinned: vi.fn(),
+  createGeneration: vi.fn(),
+  markGenerationTerminal: vi.fn(),
+  getLatestActiveGeneration: vi.fn(),
+  getLatestGeneration: vi.fn(),
+  getQueueSnapshot: vi.fn(),
+  listQueuedMessages: vi.fn(),
+  createQueuedMessage: vi.fn(),
+  updateQueuedMessage: vi.fn(),
+  cancelQueuedMessage: vi.fn(),
+  markQueuedMessageSteerFallback: vi.fn(),
+  claimNextQueuedMessage: vi.fn(),
+  releaseQueuedMessageClaim: vi.fn(),
+  assertQueuedMessageClaimedForDelivery: vi.fn(),
+  markQueuedMessageRunning: vi.fn(),
+  markQueuedMessageDeliveryTerminal: vi.fn(),
   listMessages: vi.fn(),
   getMessageTranscript: vi.fn(),
   getMessage: vi.fn(),
@@ -197,6 +212,42 @@ function createMessage(id: string, role: "user" | "assistant" | "system", kind: 
   };
 }
 
+function createQueuedMessage(overrides: Partial<Record<string, unknown>> = {}) {
+  const now = new Date("2026-03-26T08:01:30.000Z");
+  return {
+    id: "queue-1",
+    orgId: "organization-1",
+    conversationId: "chat-1",
+    position: 1,
+    status: "queued",
+    version: 1,
+    clientMutationId: "client-1",
+    payload: {
+      body: "queued follow-up",
+      attachmentIds: [],
+      skillRefs: [],
+      projectId: null,
+      accessMode: null,
+      model: null,
+      effort: null,
+      metadata: null,
+    },
+    expectedGenerationId: "10000000-0000-4000-8000-000000000010",
+    activeGenerationId: null,
+    deliveryAttempts: 0,
+    lastAttemptAt: null,
+    lastDeliveryReason: null,
+    sourceMessageId: null,
+    deliveredMessageId: null,
+    cancelledAt: null,
+    steeredAt: null,
+    dequeuedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
 function createApp(actor: Record<string, unknown> = {
   type: "board",
   userId: "user-1",
@@ -237,6 +288,7 @@ async function waitUntil(assertion: () => void, timeoutMs = 1000) {
 describe("chat routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearActiveChatGenerationsForTest();
     mockCompanyService.getById.mockResolvedValue({
       id: "organization-1",
       defaultChatIssueCreationMode: "manual_approval",
@@ -320,6 +372,23 @@ describe("chat routes", () => {
       originalFilename: "image.png",
     });
     mockStorage.deleteObject.mockResolvedValue(undefined);
+    mockChatService.createGeneration.mockResolvedValue({
+      id: "10000000-0000-4000-8000-000000000010",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      status: "active",
+    });
+    mockChatService.markGenerationTerminal.mockResolvedValue(null);
+    mockChatService.getLatestGeneration.mockResolvedValue({
+      id: "10000000-0000-4000-8000-000000000010",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      status: "completed",
+    });
+    mockChatService.getQueueSnapshot.mockResolvedValue({
+      activeGenerationId: null,
+      items: [],
+    });
     mockChatService.addUserChatMessage.mockImplementation(async (_cid: string, _orgId: string, body: string) =>
       createMessage("message-user", "user", "message", body),
     );
@@ -428,6 +497,201 @@ describe("chat routes", () => {
       expect(res.body.error).toBe("Cannot delete a chat while a reply is in progress");
       expect(mockChatService.listAttachmentsForConversation).not.toHaveBeenCalled();
       expect(mockChatService.remove).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
+  });
+
+  it("returns the authoritative queue snapshot for a chat", async () => {
+    const conversation = createConversation();
+    const queued = createQueuedMessage();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueueSnapshot.mockResolvedValue({
+      activeGenerationId: "10000000-0000-4000-8000-000000000010",
+      items: [queued],
+    });
+
+    const res = await request(createApp())
+      .get("/api/chats/chat-1/queue");
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.getQueueSnapshot).toHaveBeenCalledWith("chat-1", null);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].payload.body).toBe("queued follow-up");
+  });
+
+  it("creates a queued follow-up with an idempotency key", async () => {
+    const conversation = createConversation();
+    const queued = createQueuedMessage({ clientMutationId: "client-mutation-1" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.createQueuedMessage.mockResolvedValue(queued);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/queue")
+      .send({
+        clientMutationId: "client-mutation-1",
+        expectedGenerationId: "10000000-0000-4000-8000-000000000010",
+        payload: {
+          body: "queued follow-up",
+          attachmentIds: [],
+          skillRefs: [],
+        },
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.createQueuedMessage).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      clientMutationId: "client-mutation-1",
+      expectedGenerationId: "10000000-0000-4000-8000-000000000010",
+      payload: expect.objectContaining({ body: "queued follow-up" }),
+    });
+    expect(res.body.clientMutationId).toBe("client-mutation-1");
+  });
+
+  it("claims the next queued follow-up only when the chat is idle", async () => {
+    const conversation = createConversation();
+    const queued = createQueuedMessage({ status: "dequeue_claimed", version: 2 });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.claimNextQueuedMessage.mockResolvedValue(queued);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/queue/next/claim")
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.claimNextQueuedMessage).toHaveBeenCalledWith("chat-1");
+    expect(res.body.item.id).toBe("queue-1");
+    expect(res.body.item.status).toBe("dequeue_claimed");
+  });
+
+  it("does not claim a queued follow-up while a generation is active", async () => {
+    const conversation = createConversation();
+    const release = claimChatGeneration(conversation.id, null, "10000000-0000-4000-8000-000000000010");
+    mockChatService.getById.mockResolvedValue(conversation);
+
+    try {
+      const res = await request(createApp())
+        .post("/api/chats/chat-1/queue/next/claim")
+        .send({});
+
+      expect(res.status).toBe(409);
+      expect(mockChatService.claimNextQueuedMessage).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
+  });
+
+  it("queues non-stream sends during an active generation without creating an aborted generation", async () => {
+    const conversation = createConversation();
+    const release = claimChatGeneration(conversation.id, null, "10000000-0000-4000-8000-000000000010");
+    const queued = createQueuedMessage({ payload: { ...createQueuedMessage().payload, body: "Queued via message endpoint" } });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.createQueuedMessage.mockResolvedValue(queued);
+
+    try {
+      const res = await request(createApp())
+        .post("/api/chats/chat-1/messages")
+        .send({ body: "Queued via message endpoint" });
+
+      expect(res.status).toBe(202);
+      expect(res.body.queued.id).toBe("queue-1");
+      expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+      expect(mockChatService.markGenerationTerminal).not.toHaveBeenCalledWith(expect.anything(), "aborted");
+      expect(mockChatService.createQueuedMessage).toHaveBeenCalledWith(expect.objectContaining({
+        expectedGenerationId: "10000000-0000-4000-8000-000000000010",
+      }));
+    } finally {
+      release?.();
+    }
+  });
+
+  it("emits a queued stream event during an active generation", async () => {
+    const conversation = createConversation();
+    const release = claimChatGeneration(conversation.id, null, "10000000-0000-4000-8000-000000000010");
+    const queued = createQueuedMessage({ payload: { ...createQueuedMessage().payload, body: "Queued via stream endpoint" } });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.createQueuedMessage.mockResolvedValue(queued);
+
+    try {
+      const res = await request(createApp())
+        .post("/api/chats/chat-1/messages/stream")
+        .send({ body: "Queued via stream endpoint" });
+
+      expect(res.status).toBe(202);
+      expect(res.text).toContain('"type":"queued"');
+      expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+      expect(mockChatService.createQueuedMessage).toHaveBeenCalledWith(expect.objectContaining({
+        expectedGenerationId: "10000000-0000-4000-8000-000000000010",
+      }));
+    } finally {
+      release?.();
+    }
+  });
+
+  it("does not auto-claim a queued follow-up after a stopped generation", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestGeneration.mockResolvedValue({
+      id: "10000000-0000-4000-8000-000000000010",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      status: "stopped",
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/queue/next/claim")
+      .send({});
+
+    expect(res.status).toBe(409);
+    expect(mockChatService.claimNextQueuedMessage).not.toHaveBeenCalled();
+  });
+
+  it("releases a claimed queued follow-up back to the queue when delivery fails before ack", async () => {
+    const conversation = createConversation();
+    const queued = createQueuedMessage({ status: "queued", lastDeliveryReason: "delivery_failed" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.releaseQueuedMessageClaim.mockResolvedValue(queued);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/queue/queue-1/release-claim")
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.releaseQueuedMessageClaim).toHaveBeenCalledWith({
+      conversationId: "chat-1",
+      itemId: "queue-1",
+      reason: "delivery_failed",
+    });
+    expect(res.body.item.lastDeliveryReason).toBe("delivery_failed");
+  });
+
+  it("keeps a queued item when steer is unsupported", async () => {
+    const conversation = createConversation();
+    const release = claimChatGeneration(conversation.id, null, "10000000-0000-4000-8000-000000000010");
+    const queued = createQueuedMessage({
+      lastDeliveryReason: "unsupported",
+      version: 2,
+      activeGenerationId: "10000000-0000-4000-8000-000000000010",
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.markQueuedMessageSteerFallback.mockResolvedValue(queued);
+
+    try {
+      const res = await request(createApp())
+        .post("/api/chats/chat-1/queue/queue-1/steer")
+        .send({ expectedActiveGenerationId: "10000000-0000-4000-8000-000000000010" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.result).toBe("queued_fallback");
+      expect(res.body.transcriptEventId).toBeNull();
+      expect(res.body.item.lastDeliveryReason).toBe("unsupported");
+      expect(mockChatService.markQueuedMessageSteerFallback).toHaveBeenCalledWith({
+        conversationId: "chat-1",
+        itemId: "queue-1",
+        reason: "unsupported",
+        activeGenerationId: "10000000-0000-4000-8000-000000000010",
+      });
     } finally {
       release?.();
     }
