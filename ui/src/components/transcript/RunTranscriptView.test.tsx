@@ -119,8 +119,8 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("<strong>world</strong>");
-    expect(html).toContain("<li>first</li>");
-    expect(html).toContain("<li>second</li>");
+    expect(html).toContain(">first</li>");
+    expect(html).toContain(">second</li>");
   });
 
   it("hides saved-session resume skip stderr from nice mode normalization", () => {

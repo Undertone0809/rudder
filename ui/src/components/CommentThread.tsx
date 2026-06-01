@@ -9,6 +9,7 @@ import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { MarkdownBody } from "./MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
+import type { MarkdownAgentMentionPreview } from "./MarkdownBody";
 import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { StatusBadge } from "./StatusBadge";
@@ -161,6 +162,7 @@ const TimelineList = memo(function TimelineList({
   runTranscriptById,
   runHasOutput,
   operatorDisplayName,
+  agentMentions,
   skillReferences,
   emptyMessage,
 }: {
@@ -172,6 +174,7 @@ const TimelineList = memo(function TimelineList({
   runTranscriptById: Map<string, TranscriptEntry[]>;
   runHasOutput: (runId: string) => boolean;
   operatorDisplayName?: string | null;
+  agentMentions?: MarkdownAgentMentionPreview[];
   skillReferences?: MarkdownSkillReferencePreview[];
   emptyMessage: string;
 }) {
@@ -302,7 +305,7 @@ const TimelineList = memo(function TimelineList({
                 <CopyMarkdownButton text={comment.body} />
               </span>
             </div>
-            <MarkdownBody className="text-sm" skillReferences={skillReferences}>{comment.body}</MarkdownBody>
+            <MarkdownBody className="text-sm" agentMentions={agentMentions} skillReferences={skillReferences}>{comment.body}</MarkdownBody>
             {orgId ? (
               <div className="mt-2 space-y-2">
                 <PluginSlotOutlet
@@ -466,6 +469,16 @@ export function CommentThread({
       }))
   ), [mentions]);
 
+  const agentMentions = useMemo<MarkdownAgentMentionPreview[]>(() => (
+    mentions
+      .filter((mention) => mention.kind === "agent" && mention.agentId)
+      .map((mention) => ({
+        name: mention.name,
+        agentId: mention.agentId!,
+        agentIcon: mention.agentIcon,
+      }))
+  ), [mentions]);
+
   useEffect(() => {
     if (!draftKey) return;
     setBody(loadDraft(draftKey));
@@ -570,6 +583,7 @@ export function CommentThread({
         runTranscriptById={transcriptByRun}
         runHasOutput={hasOutputForRun}
         operatorDisplayName={operatorDisplayName}
+        agentMentions={agentMentions}
         skillReferences={skillReferences}
         emptyMessage={emptyMessage}
       />

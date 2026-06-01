@@ -97,6 +97,7 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@/lib/router", () => ({
+  useNavigate: () => vi.fn(),
   useSearchParams: () => [
     new URLSearchParams("path=artifacts/chat-ui-review/image.png"),
     mockState.setSearchParams,
