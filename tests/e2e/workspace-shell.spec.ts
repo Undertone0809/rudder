@@ -644,15 +644,16 @@ test.describe("Workspace shell", () => {
 
     await expect(page.getByTestId(`org-workspaces-project-resources-folder-${project.id}`)).toBeVisible();
     await expect(page.getByTestId(`org-workspaces-project-resource-${attachment.id}`)).toBeVisible();
-    await expect(page.getByTestId("org-workspaces-resource-detail")).toBeVisible();
-    await expect(page.getByTestId("org-workspaces-resource-detail").getByText("New Zealand repo", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("org-workspaces-resource-detail").getByText("~/projects/new-zealand", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("org-workspaces-resource-detail").getByText("Primary implementation checkout.", { exact: true })).toBeVisible();
+    const resourceDetail = page.getByTestId("org-workspaces-resource-detail");
+    await expect(resourceDetail).toBeVisible();
+    await expect(resourceDetail.getByText("New Zealand repo", { exact: true })).toBeVisible();
+    await expect(resourceDetail.getByText("~/projects/new-zealand", { exact: true }).first()).toBeVisible();
+    await expect(resourceDetail.getByText("Primary implementation checkout.", { exact: true })).toBeVisible();
     await expect(page.getByTestId("org-workspaces-resource-launcher").getByRole("button", { name: "Open resource in Cursor" })).toBeVisible();
 
     const resourceLauncher = page.getByTestId("org-workspaces-resource-launcher");
     await resourceLauncher.getByRole("button", { name: "Open resource menu" }).click();
-    await page.getByRole("menuitem", { name: "Terminal" }).click();
+    await page.getByRole("menuitemradio", { name: "Terminal" }).click();
     await expect(resourceLauncher.getByRole("button", { name: "Open resource in Terminal" })).toBeVisible();
     await resourceLauncher.getByRole("button", { name: "Open resource in Terminal" }).click();
     await expect(page.getByText("Opened resource in Terminal")).toBeVisible();
@@ -1114,17 +1115,17 @@ test.describe("Workspace shell", () => {
     await expect(launcher.getByRole("button", { name: "Open workspace in Cursor" })).toBeVisible();
 
     await launcher.getByRole("button", { name: "Open workspace menu" }).click();
-    await expect(page.getByRole("menuitem", { name: "Cursor" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Terminal" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Finder" })).toBeVisible();
+    await expect(page.getByRole("menuitemradio", { name: "Cursor" })).toBeVisible();
+    await expect(page.getByRole("menuitemradio", { name: "Terminal" })).toBeVisible();
+    await expect(page.getByRole("menuitemradio", { name: "Finder" })).toBeVisible();
 
-    await page.getByRole("menuitem", { name: "Terminal" }).click();
+    await page.getByRole("menuitemradio", { name: "Terminal" }).click();
     await expect(launcher.getByRole("button", { name: "Open workspace in Terminal" })).toBeVisible();
     await launcher.getByRole("button", { name: "Open workspace in Terminal" }).click();
     await expect(page.getByText("Opened workspace in Terminal")).toBeVisible();
 
     await launcher.getByRole("button", { name: "Open workspace menu" }).click();
-    await page.getByRole("menuitem", { name: "Finder" }).click();
+    await page.getByRole("menuitemradio", { name: "Finder" }).click();
     await expect(launcher.getByRole("button", { name: "Open workspace in Finder" })).toBeVisible();
     await launcher.getByRole("button", { name: "Open workspace in Finder" }).click();
     await expect(page.getByText("Opened workspace in Finder")).toBeVisible();
