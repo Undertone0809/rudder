@@ -22,7 +22,7 @@ export const organizationResourceSourceTypeOptions: Array<{
   label: string;
 }> = [
   { value: "external", label: "External" },
-  { value: "library", label: "Docs" },
+  { value: "library", label: "Library" },
 ];
 
 export const projectResourceRoleOptions: Array<{

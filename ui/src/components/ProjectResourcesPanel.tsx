@@ -273,11 +273,11 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     onSuccess: () => {
       invalidateProjectResourceQueries();
       setAttachPopoverOpen(false);
-      pushToast({ title: "Docs resource attached", tone: "success" });
+      pushToast({ title: "Library resource attached", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to attach Docs resource",
+        title: error instanceof Error ? error.message : "Failed to attach Library resource",
         tone: "error",
       });
     },
@@ -304,11 +304,11 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       invalidateProjectResourceQueries();
       setAttachPopoverOpen(false);
       setLibrarySearch("");
-      pushToast({ title: "Docs resource attached", tone: "success" });
+      pushToast({ title: "Library resource attached", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to attach Docs resource",
+        title: error instanceof Error ? error.message : "Failed to attach Library resource",
         tone: "error",
       });
     },
@@ -324,7 +324,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
             </div>
             <div className="text-base font-semibold text-foreground">Project Context</div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Choose the repos, docs, URLs, and connector objects agents should actually use on this project. Shared resources
+              Choose the repos, Library files, URLs, and connector objects agents should actually use on this project. Shared resources
               stay canonical; this tab decides what matters here.
             </p>
           </div>
@@ -350,7 +350,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
               </PopoverTrigger>
               <PopoverContent align="end" className="max-h-[460px] w-[22rem] overflow-y-auto p-2">
                 <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  Add from Docs
+                  Add from Library
                 </div>
                 <div className="px-2 pb-2">
                   <Input
@@ -363,12 +363,12 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                       }
                     }}
                     className="h-8 text-xs"
-                    placeholder="Search Docs or paste relative path"
+                    placeholder="Search Library or paste relative path"
                   />
                 </div>
                 {availableLibraryFiles.length === 0 ? (
                   <div className="px-2 py-3 text-sm text-muted-foreground">
-                    {librarySearch.trim() ? "No matching Docs files." : "No Library files available."}
+                    {librarySearch.trim() ? "No matching Library files." : "No Library files available."}
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -404,7 +404,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                       <FileText className="h-3.5 w-3.5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-foreground">Use this Docs path</div>
+                      <div className="truncate text-sm font-medium text-foreground">Use this Library path</div>
                       <div className="truncate font-mono text-[11px] text-muted-foreground">
                         {normalizedLibrarySearch}
                       </div>

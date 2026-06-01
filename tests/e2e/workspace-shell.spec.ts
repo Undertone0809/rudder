@@ -493,7 +493,7 @@ test.describe("Workspace shell", () => {
     });
   });
 
-  test("keeps project context in a dedicated project tab and Docs", async ({ page }, testInfo) => {
+  test("keeps project context in a dedicated project tab and Library", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Project-Resources-${Date.now()}`,
@@ -550,7 +550,7 @@ test.describe("Workspace shell", () => {
     await expect(mainContent.getByText("Project Context", { exact: true }).nth(1)).toBeVisible();
     await expect(mainContent.getByRole("button", { name: "Attach existing" })).toBeVisible();
     await expect(mainContent.getByRole("button", { name: "Add resource" })).toBeVisible();
-    await expect(mainContent.getByRole("link", { name: "Docs" })).toBeVisible();
+    await expect(mainContent.getByRole("link", { name: "Library" })).toBeVisible();
     await expect(mainContent.getByText("Rudder repo", { exact: true })).toBeVisible();
     await expect(
       mainContent.getByRole("textbox", { name: "Optional project-specific guidance for agents" }),
@@ -572,13 +572,13 @@ test.describe("Workspace shell", () => {
       fullPage: true,
     });
 
-    await mainContent.getByRole("link", { name: "Docs" }).click();
+    await mainContent.getByRole("link", { name: "Library" }).click();
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library$`));
     await expect(page.getByTestId("workspace-main-header")).toHaveCount(0);
-    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Docs", exact: true })).toBeVisible();
+    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Library", exact: true })).toBeVisible();
   });
 
-  test("surfaces Docs in the shared three-column shell", async ({ page }, testInfo) => {
+  test("surfaces Library in the shared three-column shell", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Org-${Date.now()}`,
@@ -603,7 +603,7 @@ test.describe("Workspace shell", () => {
     await expect(mainHeader).toBeVisible();
     await expect(mainCard).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Structure" })).toBeVisible();
-    await expect(sidebar.getByRole("link", { name: "Docs" })).toHaveCount(0);
+    await expect(sidebar.getByRole("link", { name: "Library" })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Heartbeats" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Workspaces" })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Goals" })).toBeVisible();
@@ -709,7 +709,7 @@ test.describe("Workspace shell", () => {
     });
   });
 
-  test("shows the Docs file browser inside the organization shell", async ({ page }, testInfo) => {
+  test("shows the Library file browser inside the organization shell", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Files-${Date.now()}`,
@@ -775,7 +775,7 @@ test.describe("Workspace shell", () => {
     await expect(page.getByTestId("workspace-context-card")).toHaveClass(/workspace-context-card/);
     await expect(page.getByTestId("workspace-main-card")).toHaveClass(/workspace-main-card/);
     await expect(page.getByTestId("workspace-main-header")).toHaveCount(0);
-    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Docs", exact: true })).toBeVisible();
+    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Library", exact: true })).toBeVisible();
     await expect(page.getByText("File tree", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("org-workspaces-new-file-button")).toBeVisible();
     await expect(page.getByTestId("org-workspaces-new-folder-button")).toBeVisible();
@@ -801,7 +801,7 @@ test.describe("Workspace shell", () => {
     await expect(page.getByTestId("workspace-context-card")).toHaveClass(/workspace-context-card/);
     await expect(page.getByTestId("workspace-main-card")).toHaveClass(/workspace-main-card/);
     await expect(page.getByTestId("workspace-main-header")).toHaveCount(0);
-    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Docs", exact: true })).toBeVisible();
+    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Library", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
     await expect(page.getByTestId("org-workspaces-files-scroll")).toBeVisible();
     await expect(filesCard.getByRole("button", { name: "notes.md", exact: true })).toBeVisible();

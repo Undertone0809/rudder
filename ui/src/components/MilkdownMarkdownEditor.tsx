@@ -796,7 +796,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       if (kind === "project") return "Projects";
       if (kind === "issue") return "Issues";
       if (kind === "chat") return "Chats";
-      if (kind === "library_doc" || kind === "library_file") return "Docs";
+      if (kind === "library_doc" || kind === "library_file") return "Library";
       return "Agents";
     };
 

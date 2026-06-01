@@ -244,7 +244,7 @@ test.describe("Primary rail create menu", () => {
     await expect(dialog).toBeVisible();
 
     await dialog.getByPlaceholder("Project name").fill("Structured Resource Project");
-    const resourceHelpText = "Attach the codebases, docs, URLs, and external systems agents should use for this project.";
+    const resourceHelpText = "Attach the codebases, Library files, URLs, and external systems agents should use for this project.";
     await expect(dialog.getByText(resourceHelpText)).toHaveCount(0);
     await expect(dialog.getByText("No project-specific resources yet. You can still create the project now and attach resources later.")).toHaveCount(0);
 
@@ -314,7 +314,7 @@ test.describe("Primary rail create menu", () => {
     expect(detail.resources.map((attachment) => attachment.resource.name)).toEqual(["Rudder repo"]);
   });
 
-  test("creates a project with a Docs file attached as a path-based library resource", async ({ page }) => {
+  test("creates a project with a Library file attached as a path-based library resource", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `PrimaryRail-Project-Library-${Date.now()}`,
@@ -346,7 +346,7 @@ test.describe("Primary rail create menu", () => {
 
     await dialog.getByRole("button", { name: "Add resources" }).click();
     await page.getByRole("button", { name: /project-brief\.md/ }).click();
-    await expect(dialog.getByText("Docs · File · docs/project-brief.md")).toBeVisible();
+    await expect(dialog.getByText("Library · File · docs/project-brief.md")).toBeVisible();
 
     const createResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"

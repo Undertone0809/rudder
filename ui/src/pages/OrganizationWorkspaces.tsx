@@ -879,7 +879,7 @@ export function OrganizationWorkspaceFilesSidebar() {
       : null
   ) ?? workspaceLaunchTargets[0] ?? null;
   const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
-    () => ({ name: "", path: "", isDirectory: true, displayLabel: "Docs" }),
+    () => ({ name: "", path: "", isDirectory: true, displayLabel: "Library" }),
     [],
   );
   const expandedDirectories = useMemo(
@@ -1220,7 +1220,7 @@ export function OrganizationWorkspaceFilesSidebar() {
           className="workspace-card-header workspace-context-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4 py-3"
         >
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">Docs</h2>
+            <h2 className="truncate text-sm font-semibold">Library</h2>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <Tooltip>
@@ -2055,7 +2055,7 @@ export function OrganizationWorkspaceBrowser({
       : null
   ) ?? workspaceLaunchTargets[0] ?? null;
   const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
-    () => ({ name: "", path: "", isDirectory: true, displayLabel: "Docs" }),
+    () => ({ name: "", path: "", isDirectory: true, displayLabel: "Library" }),
     [],
   );
   const handleStartCreateRootEntry = useCallback((kind: "file" | "folder") => {
@@ -2548,7 +2548,7 @@ export function OrganizationWorkspaceBrowser({
             >
               <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">Docs</div>
+                  <div className="truncate text-sm font-medium">Library</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <Tooltip>
@@ -2902,7 +2902,7 @@ export function OrganizationWorkspaceBrowser({
                   className="scrollbar-auto-hide h-full min-h-0 overflow-auto"
                 >
                   <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
-                    {selectedFileDetail.message ?? "This file is rendered read-only in Docs."}
+                    {selectedFileDetail.message ?? "This file is rendered read-only in Library."}
                   </div>
                   <pre className="overflow-x-auto px-4 py-4 text-xs leading-6 text-foreground">
                     <code>{selectedFileDetail.content}</code>
@@ -2910,7 +2910,7 @@ export function OrganizationWorkspaceBrowser({
                 </div>
               ) : (
                 <div className="px-4 py-6 text-sm text-muted-foreground">
-                  {selectedFileDetail?.message ?? "This file cannot be rendered in Docs."}
+                  {selectedFileDetail?.message ?? "This file cannot be rendered in Library."}
                 </div>
               )}
             </div>

@@ -214,7 +214,7 @@ test.describe("Organization and agent skills", () => {
     const agentMain = page.locator("#main-content");
     await expect(agentMain.getByPlaceholder("Search skills")).toBeVisible();
     await expect(agentMain.getByText("Rudder always loads the bundled Rudder skills. Agent, organization, global, and adapter skills load only when enabled on this page.")).toBeVisible();
-    await expect(agentMain.getByText("Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Docs.")).toBeVisible();
+    await expect(agentMain.getByText("Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Library.")).toBeVisible();
     await expect(agentMain.getByText("Available in this organization")).toHaveCount(0);
     await expect(agentMain.getByText("Bundled by Rudder").first()).toBeVisible();
     await expect(agentMain.getByText("Community preset").first()).toBeVisible();
@@ -293,7 +293,7 @@ test.describe("Organization and agent skills", () => {
     ]);
   });
 
-  test("shows agent skills above organization skills and edits both through Docs", async ({ page }) => {
+  test("shows agent skills above organization skills and edits both through Library", async ({ page }) => {
     const organizationName = `Org-Agent-Private-Skills-${Date.now()}`;
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -359,7 +359,7 @@ test.describe("Organization and agent skills", () => {
     await expect(agentMain.getByText("Alpha test skill.")).toBeVisible();
     const agentHelperToggle = agentMain.getByRole("switch", { name: "agent-helper" });
     await expect(agentHelperToggle).toHaveAttribute("aria-checked", "false");
-    const editLinks = agentMain.getByRole("link", { name: "Edit in Docs" });
+    const editLinks = agentMain.getByRole("link", { name: "Edit in Library" });
     await expect(editLinks).toHaveCount(2);
 
     const agentEditHref = await editLinks.nth(0).getAttribute("href");
@@ -375,7 +375,7 @@ test.describe("Organization and agent skills", () => {
       && response.ok(),
     );
     await workspaceEditor.fill(
-      "---\nname: agent-helper\ndescription: Rewritten agent helper skill.\n---\n\n# Agent Helper\n\nUpdated in Docs.\n",
+      "---\nname: agent-helper\ndescription: Rewritten agent helper skill.\n---\n\n# Agent Helper\n\nUpdated in Library.\n",
     );
     await agentSaveResponse;
     await expect.poll(() => fs.readFile(path.join(agentSkillDir, "SKILL.md"), "utf8")).toContain("Rewritten agent helper skill.");
@@ -383,7 +383,7 @@ test.describe("Organization and agent skills", () => {
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
     await expect(agentMain.getByText("Rewritten agent helper skill.")).toBeVisible();
 
-    const orgEditLinks = agentMain.getByRole("link", { name: "Edit in Docs" });
+    const orgEditLinks = agentMain.getByRole("link", { name: "Edit in Library" });
     await expect(orgEditLinks).toHaveCount(2);
     const orgEditHref = await orgEditLinks.nth(1).getAttribute("href");
     expect(orgEditHref).toContain(`/${organization.issuePrefix}/library?path=`);
@@ -397,7 +397,7 @@ test.describe("Organization and agent skills", () => {
       && response.ok(),
     );
     await orgWorkspaceEditor.fill(
-      "---\nname: alpha-test\ndescription: Updated organization skill.\n---\n\n# Alpha Test\n\nEdited from Docs.\n",
+      "---\nname: alpha-test\ndescription: Updated organization skill.\n---\n\n# Alpha Test\n\nEdited from Library.\n",
     );
     await orgSaveResponse;
 

@@ -99,7 +99,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
   });
 
-  it("renders library document mentions as live Docs links", () => {
+  it("renders library document mentions as live Library links", () => {
     const href = buildLibraryDocMentionHref("doc-123", "Product principles");
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -112,7 +112,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain("Product principles");
   });
 
-  it("renders library file mentions as live Docs path links", () => {
+  it("renders library file mentions as live Library path links", () => {
     const href = buildLibraryFileMentionHref("docs/product-brief.md", "product-brief.md");
     const html = renderToStaticMarkup(
       <ThemeProvider>

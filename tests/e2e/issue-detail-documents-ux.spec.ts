@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-test.describe("Issue detail Docs UX", () => {
-  test("renders Doc mentions and migrated issue docs without issue-owned document creation", async ({ page, baseURL }) => {
+test.describe("Issue detail Library UX", () => {
+  test("renders Library mentions and migrated issue docs without issue-owned document creation", async ({ page, baseURL }) => {
     await page.goto("/");
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -29,7 +29,7 @@ test.describe("Issue detail Docs UX", () => {
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
-        title: "Issue should link docs from Docs",
+        title: "Issue should link docs from Library",
         description: [
           `Use [@Product brief](library-doc://${libraryDoc.id}?t=Product%20brief) as the legacy source.`,
           "Use [@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md) as the live file source.",
@@ -93,10 +93,10 @@ test.describe("Issue detail Docs UX", () => {
       .poll(async () => page.evaluate(() => navigator.clipboard.readText()))
       .toBe("[@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md)");
 
-    await expect(page.getByLabel("Linked Docs")).toBeVisible();
-    await expect(page.getByLabel("Linked Docs").getByText("Product brief")).toBeVisible();
-    await expect(page.getByLabel("Linked Docs").getByRole("link", { name: "product-brief.md live Docs" })).toBeVisible();
-    await expect(page.getByLabel("Linked Docs").getByText("Ops checklist")).toBeVisible();
+    await expect(page.getByLabel("Linked Library")).toBeVisible();
+    await expect(page.getByLabel("Linked Library").getByText("Product brief")).toBeVisible();
+    await expect(page.getByLabel("Linked Library").getByRole("link", { name: "product-brief.md live Library" })).toBeVisible();
+    await expect(page.getByLabel("Linked Library").getByText("Ops checklist")).toBeVisible();
     await expect(page.getByRole("link", { name: "product-brief.md" }).first())
       .toHaveAttribute("href", new RegExp(`/library\\?path=docs%2Fproduct-brief\\.md$`));
 
@@ -115,7 +115,7 @@ test.describe("Issue detail Docs UX", () => {
     await expect(page.locator(".rudder-edit-in-place-content .ProseMirror[contenteditable='true']").first()).toBeVisible();
   });
 
-  test("attaches files from the Docs file tree", async ({ page }) => {
+  test("attaches files from the Library file tree", async ({ page }) => {
     await page.goto("/");
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -133,8 +133,8 @@ test.describe("Issue detail Docs UX", () => {
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
-        title: "Issue can attach Docs files",
-        description: "Attachments come from the same Docs file tree.",
+        title: "Issue can attach Library files",
+        description: "Attachments come from the same Library file tree.",
         status: "todo",
         priority: "medium",
       },
@@ -145,8 +145,8 @@ test.describe("Issue detail Docs UX", () => {
     await page.goto(`/issues/${issue.identifier ?? issue.id}`);
 
     await page.getByRole("button", { name: "Attach", exact: true }).click();
-    await page.getByRole("menuitem", { name: "Attach from Docs" }).click();
-    const libraryDialog = page.getByRole("dialog", { name: "Attach from Docs" });
+    await page.getByRole("menuitem", { name: "Attach from Library" }).click();
+    const libraryDialog = page.getByRole("dialog", { name: "Attach from Library" });
     await expect(libraryDialog).toBeVisible();
     await libraryDialog.getByRole("button", { name: "handoff-notes.md" }).click();
     await libraryDialog.getByRole("button", { name: "Attach" }).click();
