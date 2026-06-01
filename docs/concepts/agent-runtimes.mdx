@@ -49,9 +49,9 @@ This matters because agent behavior must be reproducible from the Rudder control
 
 ## How Rudder selects skills
 
-Agent skill state is a control-plane decision. The source of truth is the agent's Skills page. Rudder-bundled skills appear in the catalog as read-only product skills, but they are not automatically enabled for every run.
+Agent skill state is a control-plane decision. The source of truth is the agent's Skills page for optional agent, organization, global, and adapter skills. Rudder-bundled skills are product built-ins: they appear in the catalog as read-only skills, are always enabled for every agent, and cannot be disabled from the Skills page.
 
-Before each run, Rudder resolves the enabled skill keys for that agent, including any bundled skills explicitly selected on the Skills page, and realizes the matching runtime skill entries. It then injects the prepared list into the runtime config as `rudderSkillSync.desiredSkills` and `rudderRuntimeSkills`.
+Before each run, Rudder resolves the effective skill keys for that agent by combining the required Rudder-bundled skills with the optional skills selected on the Skills page, and realizes the matching runtime skill entries. It then injects the prepared list into the runtime config as `rudderSkillSync.desiredSkills` and `rudderRuntimeSkills`.
 
 Adapters should consume that prepared config. They should not decide enabled Rudder Agent Skills from whatever their host CLI happens to discover.
 

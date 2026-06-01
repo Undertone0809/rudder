@@ -248,6 +248,77 @@ describe("organization skill references", () => {
     expect(updatedAgent?.agentRuntimeConfig).not.toHaveProperty("paperclipRuntimeSkills");
   });
 
+  it("keeps Rudder bundled skills effective without persisting them as user selections", { timeout: 30000 }, async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const skillId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Always On Org",
+      urlKey: "always-on-org",
+      issuePrefix: "AON",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Always On Agent",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: {},
+    });
+    await db.insert(organizationSkills).values({
+      id: skillId,
+      orgId,
+      key: `organization/${orgId}/alpha-test`,
+      slug: "alpha-test",
+      name: "Alpha Test",
+      description: null,
+      markdown: "# Alpha Test\n",
+      sourceType: "catalog",
+      sourceLocator: "skills/alpha-test",
+      sourceRef: null,
+      trustLevel: "markdown_only",
+      compatibility: "compatible",
+      fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+      metadata: { sourceKind: "catalog" },
+    });
+
+    const optionalSelectionRef = `org:organization/${orgId}/alpha-test`;
+    await skillSvc.replaceEnabledSkillKeysForAgent(orgId, agentId, [
+      "bundled:rudder/rudder",
+      "rudder/rudder-create-agent",
+      optionalSelectionRef,
+    ]);
+
+    const enabledRows = await db.select().from(agentEnabledSkills);
+    expect(enabledRows.map((row) => row.skillKey)).toEqual([optionalSelectionRef]);
+
+    const agent = await db.select().from(agents).then((rows) => rows[0]!);
+    const enabledSkillKeys = await skillSvc.getEnabledSkillKeysForAgent(orgId, agent);
+    expect(enabledSkillKeys).toEqual(expect.arrayContaining([
+      "bundled:rudder/rudder",
+      "bundled:rudder/rudder-create-agent",
+      optionalSelectionRef,
+    ]));
+
+    const snapshot = await skillSvc.buildAgentSkillSnapshot(agent, {});
+    expect(snapshot.desiredSkills).toEqual(expect.arrayContaining([
+      "bundled:rudder/rudder",
+      "bundled:rudder/rudder-create-agent",
+      optionalSelectionRef,
+    ]));
+    expect(snapshot.entries.find((entry) => entry.selectionKey === "bundled:rudder/rudder")).toMatchObject({
+      desired: true,
+      configurable: false,
+      alwaysEnabled: true,
+      state: "configured",
+    });
+  });
+
   it("seeds bundled and community preset skills into the organization library", { timeout: 30000 }, async () => {
     const orgId = randomUUID();
 

@@ -362,8 +362,8 @@ test.describe("Organization and agent skills", () => {
     await expect(agentMain.getByText("deep-research").first()).toBeVisible();
     await expect(agentMain.getByText("Alpha test skill.")).toBeVisible();
     await expect(agentMain.getByText("Will be mounted into the ephemeral Claude skill directory on the next run.")).toHaveCount(0);
-    await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toBeEnabled();
-    await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toHaveAttribute("aria-checked", "false");
+    await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toBeDisabled();
+    await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toHaveAttribute("aria-checked", "true");
 
     const deepResearchToggle = agentMain.getByRole("switch", { name: "deep-research" });
     await expect(deepResearchToggle).toBeVisible();
@@ -842,7 +842,8 @@ test.describe("Organization and agent skills", () => {
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
-    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "false");
+    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toBeDisabled();
+    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(agentMain.getByRole("button", { name: /External skills/ })).toBeVisible();
     await agentMain.getByRole("button", { name: /External skills/ }).click();
     await expect(agentMain.getByText("Global and adapter skills are discovered from ~/.agents/skills and the current runtime adapter home. Discovery does not enable them; only the selections on this page determine runtime loading.")).toBeVisible();
@@ -866,6 +867,8 @@ test.describe("Organization and agent skills", () => {
 
     await page.reload();
     const reloadedAgentMain = page.locator("#main-content");
+    await expect(reloadedAgentMain.getByRole("switch", { name: "rudder", exact: true })).toBeDisabled();
+    await expect(reloadedAgentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(reloadedAgentMain.getByText("build-advisor")).toBeVisible();
     await expect(reloadedAgentMain.getByRole("switch", { name: "build-advisor" })).toHaveAttribute("aria-checked", "true");
   });
@@ -916,7 +919,8 @@ test.describe("Organization and agent skills", () => {
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
-    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "false");
+    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toBeDisabled();
+    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(agentMain.getByRole("button", { name: /External skills/ })).toBeVisible();
     await agentMain.getByRole("button", { name: /External skills/ }).click();
     await expect(agentMain.getByText("Adapter skills", { exact: true })).toBeVisible();
@@ -936,6 +940,8 @@ test.describe("Organization and agent skills", () => {
 
     await page.reload();
     const reloadedAgentMain = page.locator("#main-content");
+    await expect(reloadedAgentMain.getByRole("switch", { name: "rudder", exact: true })).toBeDisabled();
+    await expect(reloadedAgentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(reloadedAgentMain.getByText("build-advisor")).toBeVisible();
     await expect(reloadedAgentMain.getByRole("switch", { name: "build-advisor" })).toHaveAttribute("aria-checked", "true");
   });
@@ -1008,7 +1014,7 @@ test.describe("Organization and agent skills", () => {
       }, { timeout: 30_000 })
       .toEqual({
         codexHome: managedCodexHome,
-        rootEntries: ["rudder"],
+        rootEntries: [...BUNDLED_RUDDER_SKILL_SLUGS],
         systemEntries: [],
       });
     await expect(fs.access(path.join(managedCodexHome, "skills", ".system"))).rejects.toMatchObject({
@@ -1122,12 +1128,16 @@ test.describe("Organization and agent skills", () => {
       expect(runtimePrompt).toContain("--comment-file -");
       expect(runtimePrompt).toContain("<requested runtime type>");
       expect(runtimePrompt).not.toContain('"agentRuntimeType":"codex_local"');
-      expect(runtimePrompt).not.toContain('"desiredSkills":["rudder/rudder"]');
+      expect(runtimePrompt).toContain("rudder-create-agent");
       expect(capture.home).not.toBe(E2E_HOME);
       expect(capture.skillsHome).not.toBe(path.join(E2E_HOME, ...hostSkillDirByRuntime[item.runtime]));
       expect(capture.rudderEnv.RUDDER_CLI).toBeTruthy();
       expect(capture.rudderEnv.RUDDER_API_KEY).toBe("[redacted]");
       expect(capture.skillEntries).toContain("runtime-selected");
+      expect(capture.skillEntries).toEqual(expect.arrayContaining([
+        "rudder",
+        "rudder-create-agent",
+      ]));
       expect(capture.skillEntries).not.toContain("build-advisor");
       expect(capture.skillEntries).not.toContain("code-review");
       if (item.runtime === "opencode") {
@@ -1238,7 +1248,7 @@ test.describe("Organization and agent skills", () => {
         managedClaudeJsonExists: true,
         managedClaudeJsonIsSymlink: false,
         managedClaudeJsonText: "{}\n",
-        managedClaudeSkillEntries: ["rudder"],
+        managedClaudeSkillEntries: [...BUNDLED_RUDDER_SKILL_SLUGS],
         prompt: expect.stringContaining("# Rudder Runtime Skill Boundary"),
       }));
 
@@ -1249,9 +1259,7 @@ test.describe("Organization and agent skills", () => {
     expect(capture.prompt).toContain("Enabled Rudder Agent Skills:");
     expect(capture.prompt).toContain("rudder");
     expect(capture.prompt).not.toContain("code-review");
-    expect(capture.managedClaudeSkillEntries).toContain("rudder");
+    expect(capture.managedClaudeSkillEntries).toEqual([...BUNDLED_RUDDER_SKILL_SLUGS]);
     expect(capture.managedClaudeSkillEntries).not.toContain("code-review");
-    expect(capture.managedClaudeSkillEntries).not.toContain("rudder-create-agent");
-    expect(capture.managedClaudeSkillEntries).not.toContain("skill-creator");
   });
 });

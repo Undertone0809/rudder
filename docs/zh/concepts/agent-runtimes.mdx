@@ -49,9 +49,9 @@ Agent 的 `agentRuntimeType` 选择后端。`agentRuntimeConfig` 存放后端相
 
 ## Rudder 如何选择 skills
 
-Agent skill 状态是 control-plane 决策。事实来源是 agent 的 Skills 页面。Rudder bundled skills 会作为只读产品技能出现在 catalog 里，但不会自动对每次运行启用。
+Agent skill 状态是 control-plane 决策。可选的 agent、organization、global 和 adapter skills 以 agent 的 Skills 页面为事实来源。Rudder bundled skills 是产品内置能力：它们会作为只读技能出现在 catalog 里，对每个 agent 始终启用，并且不能从 Skills 页面关闭。
 
-每次运行前，Rudder 会解析这个 agent 已启用的 skill keys，包括在 Skills 页面明确选择的 bundled skills，并生成匹配的 runtime skill entries。然后 Rudder 会把准备好的列表注入 runtime config，字段是 `rudderSkillSync.desiredSkills` 和 `rudderRuntimeSkills`。
+每次运行前，Rudder 会把必需的 Rudder bundled skills 和 Skills 页面选择的可选 skills 合并成这个 agent 的有效 skill keys，并生成匹配的 runtime skill entries。然后 Rudder 会把准备好的列表注入 runtime config，字段是 `rudderSkillSync.desiredSkills` 和 `rudderRuntimeSkills`。
 
 Adapter 应该消费这份已经准备好的 config。它不应该根据宿主 CLI 自己发现了什么来决定 Rudder Agent Skills。
 

@@ -144,7 +144,7 @@ function makeAgent(agentRuntimeType: string) {
 }
 
 function normalizeDesiredSkillSelectionRefs(agentRuntimeType: string, requested: string[]) {
-  return Array.from(new Set(requested.flatMap((value) => {
+  return Array.from(new Set(["bundled:rudder/rudder", ...requested.flatMap((value) => {
     const trimmed = value.trim();
     if (!trimmed) return [];
     if (trimmed === "rudder" || trimmed === "rudder/rudder" || trimmed === "bundled:rudder/rudder") {
@@ -165,20 +165,22 @@ function normalizeDesiredSkillSelectionRefs(agentRuntimeType: string, requested:
       return [trimmed];
     }
     return [];
-  }))).sort((left, right) => left.localeCompare(right));
+  })])).sort((left, right) => left.localeCompare(right));
 }
 
 function buildMockSkillSnapshot(agentRuntimeType: string, desiredSkills: string[]) {
   const mode = agentRuntimeType === "claude_local" || agentRuntimeType === "opencode_local"
     ? "ephemeral"
     : "persistent";
-  const hasBuildAdvisor = desiredSkills.includes(`adapter:${agentRuntimeType}:build-advisor`);
-  const hasRudder = desiredSkills.includes("bundled:rudder/rudder");
+  const effectiveDesiredSkills = Array.from(new Set(["bundled:rudder/rudder", ...desiredSkills]))
+    .sort((left, right) => left.localeCompare(right));
+  const hasBuildAdvisor = effectiveDesiredSkills.includes(`adapter:${agentRuntimeType}:build-advisor`);
+  const hasRudder = effectiveDesiredSkills.includes("bundled:rudder/rudder");
   return {
     agentRuntimeType,
     supported: true,
     mode,
-    desiredSkills,
+    desiredSkills: effectiveDesiredSkills,
     entries: [
       {
         key: "rudder",
@@ -186,10 +188,10 @@ function buildMockSkillSnapshot(agentRuntimeType: string, desiredSkills: string[
         runtimeName: "rudder",
         description: "Bundled Rudder skill",
         desired: hasRudder,
-        configurable: true,
-        alwaysEnabled: false,
+        configurable: false,
+        alwaysEnabled: true,
         managed: true,
-        state: hasRudder ? "configured" : "available",
+        state: "configured",
         sourceClass: "bundled",
         origin: "organization_managed",
         originLabel: "Bundled by Rudder",
@@ -261,17 +263,21 @@ describe("agent skill routes", () => {
         Array.from(new Set(["rudder/rudder", ...skillKeys])).sort((left, right) => left.localeCompare(right)),
     );
     mockCompanySkillService.getEnabledSkillKeysForAgent.mockImplementation(
-      async () => enabledSkillState,
+      async () => Array.from(new Set(["bundled:rudder/rudder", ...enabledSkillState]))
+        .sort((left, right) => left.localeCompare(right)),
     );
     mockCompanySkillService.replaceEnabledSkillKeysForAgent.mockImplementation(
       async (_orgId: string, _agentId: string, skillKeys: string[]) => {
-        enabledSkillState = skillKeys;
+        enabledSkillState = skillKeys.filter((skillKey) => !skillKey.startsWith("bundled:"));
         return enabledSkillState;
       },
     );
     mockCompanySkillService.addEnabledSkillKeysForAgent.mockImplementation(
       async (_orgId: string, _agentId: string, skillKeys: string[]) => {
-        enabledSkillState = Array.from(new Set([...enabledSkillState, ...skillKeys]))
+        enabledSkillState = Array.from(new Set([
+          ...enabledSkillState,
+          ...skillKeys.filter((skillKey) => !skillKey.startsWith("bundled:")),
+        ]))
           .sort((left, right) => left.localeCompare(right));
         return enabledSkillState;
       },
@@ -458,11 +464,11 @@ describe("agent skill routes", () => {
     expect(mockCompanySkillService.replaceEnabledSkillKeysForAgent).toHaveBeenCalledWith(
       "organization-1",
       "11111111-1111-4111-8111-111111111111",
-      ["adapter:claude_local:build-advisor"],
+      ["adapter:claude_local:build-advisor", "bundled:rudder/rudder"],
     );
   });
 
-  it("clears bundled Rudder skills when users disable all agent skills", async () => {
+  it("keeps bundled Rudder skills enabled when users disable all optional skills", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
 
     const res = await request(createApp())
@@ -473,8 +479,9 @@ describe("agent skill routes", () => {
     expect(mockCompanySkillService.replaceEnabledSkillKeysForAgent).toHaveBeenCalledWith(
       "organization-1",
       "11111111-1111-4111-8111-111111111111",
-      [],
+      ["bundled:rudder/rudder"],
     );
+    expect(res.body.desiredSkills).toEqual(["bundled:rudder/rudder"]);
   });
 
   it("additively enables skills without replacing existing selections", async () => {
@@ -491,11 +498,13 @@ describe("agent skill routes", () => {
       "11111111-1111-4111-8111-111111111111",
       [
         "adapter:claude_local:build-advisor",
+        "bundled:rudder/rudder",
         "org:organization/organization-1/alpha-test",
       ],
     );
     expect(res.body.desiredSkills).toEqual([
       "adapter:claude_local:build-advisor",
+      "bundled:rudder/rudder",
       "org:organization/organization-1/alpha-test",
     ]);
   });

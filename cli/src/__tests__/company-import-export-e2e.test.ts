@@ -842,5 +842,7 @@ describe("rudder org import/export e2e", () => {
     const sourceSkillFiles = sourceKeys.filter((k) => k.startsWith("skills/"));
     const reexportSkillFiles = reexportKeys.filter((k) => k.startsWith("skills/"));
     expect(reexportSkillFiles.length).toBeGreaterThanOrEqual(sourceSkillFiles.length);
+    expect(reexportSkillFiles.filter((filePath) => filePath.includes("/bundled-rudder-"))).toEqual([]);
+    expect(Object.values(reexportFiles).join("\n")).not.toMatch(/\b(?:agent|global|adapter:[^:\s]+):bundled-rudder-/i);
   }, 300_000);
 });

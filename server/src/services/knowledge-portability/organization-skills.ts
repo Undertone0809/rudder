@@ -414,8 +414,27 @@ export function organizationSkillService(db: Db) {
 
   function stripBundledSelectionRefs(selectionRefs: string[]) {
     return sortUniqueSelectionRefs(
-      selectionRefs.filter((selectionRef) => parseSelectionKey(selectionRef).sourceClass !== "bundled"),
+      selectionRefs.filter((selectionRef) => {
+        const parsed = parseSelectionKey(selectionRef);
+        if (parsed.sourceClass === "bundled") return false;
+        if (
+          (parsed.sourceClass === "agent_home" || parsed.sourceClass === "global" || parsed.sourceClass === "adapter_home")
+          && parsed.slug?.startsWith("bundled-rudder-")
+        ) {
+          return false;
+        }
+        return true;
+      }),
     );
+  }
+
+  function normalizeOptionalSelectionRefsForAgent(
+    orgId: string,
+    agent: EnabledSkillsAgentRef,
+    skills: OrganizationSkill[],
+    refs: string[],
+  ) {
+    return stripBundledSelectionRefs(normalizeStoredSelectionRefs(orgId, agent, skills, refs));
   }
 
   function mergeRequiredBundledSelectionRefs(
@@ -769,7 +788,11 @@ export function organizationSkillService(db: Db) {
       throw unprocessable(`Invalid skill selection (${problems.join("; ")}).`);
     }
 
-    return validateDesiredSelectionRefs(catalogEntries, requestedRefs);
+    const validated = validateDesiredSelectionRefs(catalogEntries, requestedRefs);
+    return {
+      desiredSkills: mergeRequiredBundledSelectionRefs(skills, validated.desiredSkills),
+      warnings: validated.warnings,
+    };
   }
 
   async function listRealizedSkillEntriesForAgent(
@@ -1510,11 +1533,27 @@ export function organizationSkillService(db: Db) {
       orgId: string,
       agentId: string,
       skillKeys: string[],
-    ) => enabledSkills.replaceKeys(orgId, agentId, sortUniqueSelectionRefs(skillKeys)),
+    ) => {
+      const agent = await agents.getById(agentId);
+      const skills = await listFull(orgId);
+      return enabledSkills.replaceKeys(
+        orgId,
+        agentId,
+        normalizeOptionalSelectionRefsForAgent(orgId, agent, skills, skillKeys),
+      );
+    },
     addEnabledSkillKeysForAgent: async (
       orgId: string,
       agentId: string,
       skillKeys: string[],
-    ) => enabledSkills.addMissingKeys(orgId, agentId, sortUniqueSelectionRefs(skillKeys)),
+    ) => {
+      const agent = await agents.getById(agentId);
+      const skills = await listFull(orgId);
+      return enabledSkills.addMissingKeys(
+        orgId,
+        agentId,
+        normalizeOptionalSelectionRefsForAgent(orgId, agent, skills, skillKeys),
+      );
+    },
   };
 }

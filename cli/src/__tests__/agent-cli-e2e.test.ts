@@ -1391,7 +1391,8 @@ describe("agent CLI e2e", () => {
         env,
       },
     );
-    expect(snapshot.desiredSkills).toHaveLength(1);
+    expect(snapshot.desiredSkills).toContain("bundled:rudder/rudder");
+    expect(snapshot.desiredSkills.filter((skillRef) => !skillRef.startsWith("bundled:"))).toHaveLength(1);
     expect(
       snapshot.entries.some(
         (entry) =>

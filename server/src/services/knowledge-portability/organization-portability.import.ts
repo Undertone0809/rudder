@@ -42,7 +42,6 @@ import {
   deriveProjectUrlKey,
   getBundledRudderSkillSlug,
   normalizeAgentUrlKey,
-  toBundledRudderSkillKey,
 } from "@rudderhq/shared";
 import { notFound, unprocessable } from "../../errors.js";
 import type { StorageService } from "../../storage/types.js";
@@ -94,6 +93,19 @@ type ImportContext = {
   organizationSkills: ReturnType<typeof organizationSkillService>;
   buildPreview: ReturnType<typeof createOrganizationPortabilityPreviewHandlers>["buildPreview"];
 };
+
+function isBundledSkillReference(reference: string) {
+  const trimmed = reference.trim();
+  if (!trimmed) return false;
+  const rawSkillKey = trimmed.startsWith("bundled:")
+    ? trimmed.slice("bundled:".length)
+    : trimmed;
+  return Boolean(getBundledRudderSkillSlug(rawSkillKey));
+}
+
+function isImportedBundledCollisionSelection(reference: string) {
+  return /^(agent:|global:|adapter:[^:]+:)bundled-rudder-/i.test(reference.trim());
+}
 
 export function createOrganizationPortabilityImportHandlers(context: ImportContext) {
   const { db, storage, access, organizations, agents, assetRecords, instructions, projects, issues, organizationSkills, buildPreview } = context;
@@ -248,8 +260,11 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
       : [];
     const desiredSkillRefMap = new Map<string, string>();
     for (const importedSkill of importedSkills) {
-      desiredSkillRefMap.set(importedSkill.originalKey, importedSkill.skill.key);
-      desiredSkillRefMap.set(importedSkill.originalSlug, importedSkill.skill.key);
+      const originalKeyIsBundled = isBundledSkillReference(importedSkill.originalKey);
+      if (!originalKeyIsBundled) {
+        desiredSkillRefMap.set(importedSkill.originalKey, importedSkill.skill.key);
+        desiredSkillRefMap.set(importedSkill.originalSlug, importedSkill.skill.key);
+      }
       if (importedSkill.action === "skipped") {
         warnings.push(`Skipped skill ${importedSkill.originalSlug}; existing skill ${importedSkill.skill.slug} was kept.`);
       } else if (importedSkill.originalKey !== importedSkill.skill.key) {
@@ -306,7 +321,9 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
           ? { ...adapterOverride.agentRuntimeConfig }
           : { ...manifestAgent.agentRuntimeConfig } as Record<string, unknown>;
 
-        const desiredSkills = (manifestAgent.skills ?? []).map((skillRef) => desiredSkillRefMap.get(skillRef) ?? skillRef);
+        const desiredSkills = (manifestAgent.skills ?? [])
+          .map((skillRef) => desiredSkillRefMap.get(skillRef) ?? skillRef)
+          .filter((skillRef) => !isImportedBundledCollisionSelection(skillRef));
         const agentRuntimeConfigWithoutSkills = { ...baseAdapterConfig };
         delete agentRuntimeConfigWithoutSkills.promptTemplate;
         delete agentRuntimeConfigWithoutSkills.bootstrapPromptTemplate;

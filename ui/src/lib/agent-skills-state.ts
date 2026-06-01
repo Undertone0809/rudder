@@ -71,7 +71,7 @@ export function toggleSkillSelection(
   enabled: boolean,
   entries: AgentSkillEntry[],
 ) {
-  if (!targetEntry.configurable) return sortUnique(currentDraft);
+  if (!canManageSkillEntry(targetEntry)) return sortUnique(currentDraft);
 
   const entryBySelectionKey = new Map(entries.map((entry) => [entry.selectionKey, entry]));
   const filteredCurrentDraft = currentDraft.filter((selectionKey) => {

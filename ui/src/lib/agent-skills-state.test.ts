@@ -139,14 +139,37 @@ describe("applyAgentSkillSnapshot", () => {
       selectionKey: "bundled:rudder/para-memory-files",
       key: "para-memory-files",
       runtimeName: "para-memory-files",
-      desired: false,
-      configurable: true,
-      alwaysEnabled: false,
+      desired: true,
+      configurable: false,
+      alwaysEnabled: true,
       managed: true,
-      state: "available",
+      state: "configured",
       sourceClass: "bundled",
       origin: "organization_managed",
-    })).toBe(true);
+    })).toBe(false);
+  });
+
+  it("does not toggle bundled always-on entries even if a stale snapshot marks them configurable", () => {
+    const bundledEntry = {
+      selectionKey: "bundled:rudder/para-memory-files",
+      key: "para-memory-files",
+      runtimeName: "para-memory-files",
+      desired: true,
+      configurable: true,
+      alwaysEnabled: true,
+      managed: true,
+      state: "configured" as const,
+      sourceClass: "bundled" as const,
+      origin: "organization_managed" as const,
+    };
+
+    expect(toggleSkillSelection([
+      "bundled:rudder/para-memory-files",
+      "global:build-advisor",
+    ], bundledEntry, false, [bundledEntry])).toEqual([
+      "bundled:rudder/para-memory-files",
+      "global:build-advisor",
+    ]);
   });
 
   it("switches conflicting same-name entries instead of enabling both", () => {
