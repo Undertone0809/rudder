@@ -9,7 +9,7 @@ import {
   type OrganizationWorkspaceFileDetail,
   type OrganizationWorkspaceFileEntry,
 } from "@rudderhq/shared";
-import { useSearchParams } from "@/lib/router";
+import { useNavigate, useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -70,6 +70,7 @@ import {
   Loader2,
   Terminal,
   Trash2,
+  Unlink,
   X,
 } from "lucide-react";
 
@@ -313,7 +314,6 @@ type ProjectResourceTreeGroup = {
 function buildProjectResourceTreeGroups(projects: Project[] | undefined) {
   const groups = new Map<string, ProjectResourceTreeGroup>();
   for (const project of projects ?? []) {
-    if (project.resources.length === 0) continue;
     groups.set(projectLibraryPath(project), {
       project,
       resources: [...project.resources].sort((left, right) =>
@@ -407,7 +407,13 @@ function canDeleteWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "pa
   return !isProtectedAgentWorkspaceContainerPath(entry.path)
     && !isProtectedAgentInstructionsEntryPath(entry.path)
     && !isProtectedAgentManagedEntryPath(entry.path)
-    && !isProtectedOrganizationSkillsEntryPath(entry.path);
+    && !isProtectedOrganizationSkillsEntryPath(entry.path)
+    && !isProjectLibraryFolderPath(entry.path);
+}
+
+function isProjectLibraryFolderPath(filePath: string) {
+  const segments = filePath.split("/").filter(Boolean);
+  return segments.length === 2 && segments[0] === "projects";
 }
 
 function parentWorkspaceDirectoryPath(entryPath: string) {
@@ -628,6 +634,11 @@ function DirectoryChildren({
   onStartRename,
   onStartDelete,
   onMoveEntry,
+  onAddResources,
+  onCopyResourceLocator,
+  onOpenResource,
+  onUnlinkResource,
+  unlinkingResourceId,
   expandedDirectories,
   projectResourceGroupsByLibraryPath,
   depth,
@@ -646,6 +657,11 @@ function DirectoryChildren({
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
+  onAddResources: (project: Project) => void;
+  onCopyResourceLocator: (attachment: ProjectResourceAttachment) => void;
+  onOpenResource: (attachment: ProjectResourceAttachment) => void;
+  onUnlinkResource: (project: Project, attachment: ProjectResourceAttachment) => void;
+  unlinkingResourceId: string | null;
   expandedDirectories: Set<string>;
   projectResourceGroupsByLibraryPath: Map<string, ProjectResourceTreeGroup>;
   depth: number;
@@ -679,6 +695,11 @@ function DirectoryChildren({
           onStartRename={onStartRename}
           onStartDelete={onStartDelete}
           onMoveEntry={onMoveEntry}
+          onAddResources={onAddResources}
+          onCopyResourceLocator={onCopyResourceLocator}
+          onOpenResource={onOpenResource}
+          onUnlinkResource={onUnlinkResource}
+          unlinkingResourceId={unlinkingResourceId}
           expandedDirectories={expandedDirectories}
           projectResourceGroupsByLibraryPath={projectResourceGroupsByLibraryPath}
           depth={depth}
@@ -703,6 +724,11 @@ function WorkspaceTreeNode({
   onStartRename,
   onStartDelete,
   onMoveEntry,
+  onAddResources,
+  onCopyResourceLocator,
+  onOpenResource,
+  onUnlinkResource,
+  unlinkingResourceId,
   expandedDirectories,
   projectResourceGroupsByLibraryPath,
   depth = 0,
@@ -721,6 +747,11 @@ function WorkspaceTreeNode({
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
+  onAddResources: (project: Project) => void;
+  onCopyResourceLocator: (attachment: ProjectResourceAttachment) => void;
+  onOpenResource: (attachment: ProjectResourceAttachment) => void;
+  onUnlinkResource: (project: Project, attachment: ProjectResourceAttachment) => void;
+  unlinkingResourceId: string | null;
   expandedDirectories: Set<string>;
   projectResourceGroupsByLibraryPath: Map<string, ProjectResourceTreeGroup>;
   depth?: number;
@@ -973,6 +1004,11 @@ function WorkspaceTreeNode({
               onStartRename={onStartRename}
               onStartDelete={onStartDelete}
               onMoveEntry={onMoveEntry}
+              onAddResources={onAddResources}
+              onCopyResourceLocator={onCopyResourceLocator}
+              onOpenResource={onOpenResource}
+              onUnlinkResource={onUnlinkResource}
+              unlinkingResourceId={unlinkingResourceId}
               expandedDirectories={expandedDirectories}
               projectResourceGroupsByLibraryPath={projectResourceGroupsByLibraryPath}
               depth={depth + 1}
@@ -984,6 +1020,11 @@ function WorkspaceTreeNode({
                 activeEntryPath={activeEntryPath}
                 onSelectResource={onSelectResource}
                 onFocusEntry={onFocusEntry}
+                onAddResources={onAddResources}
+                onCopyResourceLocator={onCopyResourceLocator}
+                onOpenResource={onOpenResource}
+                onUnlinkResource={onUnlinkResource}
+                unlinkingResourceId={unlinkingResourceId}
                 depth={depth + 1}
               />
             ) : null}
@@ -1038,6 +1079,11 @@ function ProjectResourcesVirtualTree({
   activeEntryPath,
   onSelectResource,
   onFocusEntry,
+  onAddResources,
+  onCopyResourceLocator,
+  onOpenResource,
+  onUnlinkResource,
+  unlinkingResourceId,
   depth,
 }: {
   group: ProjectResourceTreeGroup;
@@ -1045,6 +1091,11 @@ function ProjectResourcesVirtualTree({
   activeEntryPath: string | null;
   onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
+  onAddResources: (project: Project) => void;
+  onCopyResourceLocator: (attachment: ProjectResourceAttachment) => void;
+  onOpenResource: (attachment: ProjectResourceAttachment) => void;
+  onUnlinkResource: (project: Project, attachment: ProjectResourceAttachment) => void;
+  unlinkingResourceId: string | null;
   depth: number;
 }) {
   const folderPath = projectResourceFolderPath(group.project);
@@ -1052,6 +1103,7 @@ function ProjectResourcesVirtualTree({
     selectedResourcePath?.startsWith(`${folderPath}/`) ?? false,
   );
   const folderActive = activeEntryPath === folderPath;
+  const [folderActionMenuOpen, setFolderActionMenuOpen] = useState(false);
 
   useEffect(() => {
     if (selectedResourcePath?.startsWith(`${folderPath}/`)) {
@@ -1070,6 +1122,12 @@ function ProjectResourcesVirtualTree({
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
           data-workspace-entry-path={folderPath}
           data-testid={`org-workspaces-project-resources-folder-${group.project.id}`}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onFocusEntry(folderPath);
+            setFolderActionMenuOpen(true);
+          }}
         >
           <button
             type="button"
@@ -1091,6 +1149,35 @@ function ProjectResourcesVirtualTree({
               {group.resources.length}
             </span>
           </button>
+          <DropdownMenu open={folderActionMenuOpen} onOpenChange={setFolderActionMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100 focus-visible:opacity-100"
+                aria-label={`More actions for ${group.project.name} resources`}
+                data-testid={`org-workspaces-project-resources-more-${group.project.id}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onFocusEntry(folderPath);
+                }}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              sideOffset={6}
+              className="w-44"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <DropdownMenuItem onSelect={() => onAddResources(group.project)}>
+                <Link2 className="h-3.5 w-3.5" />
+                Add resources
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         {expanded ? (
           <ul className="space-y-0.5">
@@ -1099,6 +1186,7 @@ function ProjectResourcesVirtualTree({
               const isSelected = selectedResourcePath === entryPath;
               const isActive = activeEntryPath === entryPath;
               const Icon = projectResourceKindIcon(attachment.resource.kind);
+              const isUnlinking = unlinkingResourceId === attachment.id;
               return (
                 <li key={attachment.id}>
                   <div
@@ -1125,6 +1213,48 @@ function ProjectResourcesVirtualTree({
                       <Icon className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">{attachment.resource.name}</span>
                     </button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100 focus-visible:opacity-100"
+                          aria-label={`More actions for ${attachment.resource.name}`}
+                          data-testid={`org-workspaces-project-resource-more-${attachment.id}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onFocusEntry(entryPath);
+                          }}
+                        >
+                          <MoreHorizontal className="h-3.5 w-3.5" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        sideOffset={6}
+                        className="w-48"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <DropdownMenuItem onSelect={() => onOpenResource(attachment)}>
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          Open resource
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => onCopyResourceLocator(attachment)}>
+                          <Copy className="h-3.5 w-3.5" />
+                          Copy locator
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          variant="destructive"
+                          disabled={isUnlinking}
+                          onSelect={() => onUnlinkResource(group.project, attachment)}
+                        >
+                          {isUnlinking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlink className="h-3.5 w-3.5" />}
+                          Unlink resource
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </li>
               );
@@ -1204,7 +1334,7 @@ function ProjectResourceDetailPanel({
     && selectedWorkspaceLaunchTarget
     && workspaceLaunchTargets.length > 0,
   );
-  const canOpenPath = Boolean(resourceOpenPath && readDesktopShell()?.openPath);
+  const canOpenStandalonePath = Boolean(resourceOpenPath && readDesktopShell()?.openPath && !canOpenAsWorkspace);
   const canOpenExternal = attachment.resource.kind === "url" || isHttpUrl(locator);
 
   async function handleOpenPath() {
@@ -1290,10 +1420,10 @@ function ProjectResourceDetailPanel({
                 data-testid="org-workspaces-resource-open-external"
               >
                 {openingExternal ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
-                Open URL
+                Open
               </Button>
             ) : null}
-            {canOpenPath ? (
+            {canOpenStandalonePath ? (
               <Button
                 type="button"
                 variant="outline"
@@ -1390,6 +1520,7 @@ function ProjectResourceDetailPanel({
 
 export function OrganizationWorkspaceFilesSidebar() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { pushToast } = useToast();
   const { viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1459,6 +1590,30 @@ export function OrganizationWorkspaceFilesSidebar() {
       queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-file"] }),
     ]);
   }, [queryClient, viewedOrganizationId]);
+
+  const removeProjectResourceAttachment = useMutation({
+    mutationFn: (payload: { project: Project; attachment: ProjectResourceAttachment }) =>
+      projectsApi.removeResourceAttachment(payload.project.id, payload.attachment.id, payload.project.orgId),
+    onSuccess: (removed, payload) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(payload.project.orgId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects.resources(payload.project.id) });
+      if (selectedResourceAttachmentId === payload.attachment.id) {
+        updateSelectedPath(searchParams, setSearchParams, null);
+        setActiveEntryPath(projectResourceFolderPath(payload.project));
+      }
+      pushToast({
+        title: "Resource unlinked",
+        body: removed.resource.name,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to unlink resource",
+        tone: "error",
+      });
+    },
+  });
 
   const createWorkspaceEntry = useMutation({
     mutationFn: async (payload: {
@@ -1655,6 +1810,64 @@ export function OrganizationWorkspaceFilesSidebar() {
     }
   }
 
+  function handleAddProjectResources(project: Project) {
+    navigate(`/projects/${project.urlKey ?? project.id}/resources`);
+  }
+
+  async function handleCopyResourceLocator(attachment: ProjectResourceAttachment) {
+    const copyValue = attachment.resource.locator;
+    const desktopShell = readDesktopShell();
+    try {
+      if (desktopShell?.copyText) {
+        await desktopShell.copyText(copyValue);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copyValue);
+      } else {
+        throw new Error("Clipboard is not available in this environment.");
+      }
+      pushToast({
+        title: "Resource locator copied",
+        body: copyValue,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to copy resource locator",
+        body: error instanceof Error ? error.message : copyValue,
+        tone: "error",
+      });
+    }
+  }
+
+  async function handleOpenResourceDefault(attachment: ProjectResourceAttachment) {
+    const locator = attachment.resource.locator.trim();
+    const desktopShell = readDesktopShell();
+    try {
+      if (attachment.resource.kind === "url" || isHttpUrl(locator)) {
+        if (desktopShell?.openExternal) {
+          await desktopShell.openExternal(locator);
+        } else {
+          window.open(locator, "_blank", "noopener,noreferrer");
+        }
+        pushToast({ title: "Opened resource link", body: locator, tone: "info" });
+        return;
+      }
+
+      const targetPath = resolveResourceOpenPath(attachment, workspaceRootPath);
+      if (!targetPath || !desktopShell?.openPath) {
+        throw new Error("This resource cannot be opened from the current shell.");
+      }
+      await desktopShell.openPath(targetPath);
+      pushToast({ title: "Opened resource", body: targetPath, tone: "info" });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open resource",
+        body: error instanceof Error ? error.message : locator,
+        tone: "error",
+      });
+    }
+  }
+
   function handleSelectFile(filePath: string) {
     updateSelectedPath(searchParams, setSearchParams, filePath);
   }
@@ -1820,6 +2033,11 @@ export function OrganizationWorkspaceFilesSidebar() {
                       onStartRename={handleStartRename}
                       onStartDelete={handleStartDelete}
                       onMoveEntry={handleMoveEntry}
+                      onAddResources={handleAddProjectResources}
+                      onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
+                      onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
+                      onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
+                      unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                       expandedDirectories={expandedDirectories}
                       projectResourceGroupsByLibraryPath={projectResourceTree.groupsByLibraryPath}
                     />
@@ -2009,6 +2227,7 @@ export function OrganizationWorkspaceBrowser({
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { viewedOrganization, viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedFilePath = normalizeRequestedPath(searchParams.get("path"));
@@ -2315,6 +2534,32 @@ export function OrganizationWorkspaceBrowser({
       queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-file"] }),
     ]);
   }, [queryClient, viewedOrganizationId]);
+
+  const removeProjectResourceAttachment = useMutation({
+    mutationFn: (payload: { project: Project; attachment: ProjectResourceAttachment }) =>
+      projectsApi.removeResourceAttachment(payload.project.id, payload.attachment.id, payload.project.orgId),
+    onSuccess: (removed, payload) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(payload.project.orgId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects.resources(payload.project.id) });
+      if (requestedResourceAttachmentId === payload.attachment.id) {
+        setSelectedFilePath(null);
+        setDraftFilePath(null);
+        updateSelectedPath(searchParams, setSearchParams, null);
+        setActiveEntryPath(projectResourceFolderPath(payload.project));
+      }
+      pushToast({
+        title: "Resource unlinked",
+        body: removed.resource.name,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to unlink resource",
+        tone: "error",
+      });
+    },
+  });
 
   useEffect(() => {
     if (!viewedOrganizationId) return;
@@ -2625,7 +2870,7 @@ export function OrganizationWorkspaceBrowser({
         >
           <FolderPlus className="h-3.5 w-3.5" />
         </Button>
-        {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
+        {workspaceRootPath && selectedWorkspaceLaunchTarget && !selectedProjectResource ? (
           <div
             className="inline-flex h-8 items-stretch overflow-hidden rounded-md border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
             data-testid="org-workspaces-launcher"
@@ -2696,6 +2941,7 @@ export function OrganizationWorkspaceBrowser({
     handleStartCreateRootEntry,
     isMobileViewport,
     openingWorkspaceTargetId,
+    selectedProjectResource,
     selectedWorkspaceLaunchTarget,
     setHeaderActions,
     workspaceLaunchTargets,
@@ -2873,6 +3119,64 @@ export function OrganizationWorkspaceBrowser({
       pushToast({
         title: entry.isDirectory ? "Failed to open folder" : "Failed to open in editor",
         body: error instanceof Error ? error.message : targetPath,
+        tone: "error",
+      });
+    }
+  }
+
+  function handleAddProjectResources(project: Project) {
+    navigate(`/projects/${project.urlKey ?? project.id}/resources`);
+  }
+
+  async function handleCopyResourceLocator(attachment: ProjectResourceAttachment) {
+    const copyValue = attachment.resource.locator;
+    const desktopShell = readDesktopShell();
+    try {
+      if (desktopShell?.copyText) {
+        await desktopShell.copyText(copyValue);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copyValue);
+      } else {
+        throw new Error("Clipboard is not available in this environment.");
+      }
+      pushToast({
+        title: "Resource locator copied",
+        body: copyValue,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to copy resource locator",
+        body: error instanceof Error ? error.message : copyValue,
+        tone: "error",
+      });
+    }
+  }
+
+  async function handleOpenResourceDefault(attachment: ProjectResourceAttachment) {
+    const locator = attachment.resource.locator.trim();
+    const desktopShell = readDesktopShell();
+    try {
+      if (attachment.resource.kind === "url" || isHttpUrl(locator)) {
+        if (desktopShell?.openExternal) {
+          await desktopShell.openExternal(locator);
+        } else {
+          window.open(locator, "_blank", "noopener,noreferrer");
+        }
+        pushToast({ title: "Opened resource link", body: locator, tone: "info" });
+        return;
+      }
+
+      const targetPath = resolveResourceOpenPath(attachment, workspaceRootPath);
+      if (!targetPath || !desktopShell?.openPath) {
+        throw new Error("This resource cannot be opened from the current shell.");
+      }
+      await desktopShell.openPath(targetPath);
+      pushToast({ title: "Opened resource", body: targetPath, tone: "info" });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open resource",
+        body: error instanceof Error ? error.message : locator,
         tone: "error",
       });
     }
@@ -3129,6 +3433,11 @@ export function OrganizationWorkspaceBrowser({
                           onStartRename={handleStartRename}
                           onStartDelete={handleStartDelete}
                           onMoveEntry={handleMoveEntry}
+                          onAddResources={handleAddProjectResources}
+                          onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
+                          onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
+                          onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
+                          unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                           expandedDirectories={expandedDirectories}
                           projectResourceGroupsByLibraryPath={projectResourceTree.groupsByLibraryPath}
                         />
@@ -3216,12 +3525,10 @@ export function OrganizationWorkspaceBrowser({
                     <div aria-hidden="true" className="rudder-doc-editor-tab-drag-spacer mb-1 h-9 min-w-6 flex-1" />
                   </>
                 ) : (
-                  <div className="rudder-doc-editor-tab-drag-spacer mb-1 flex h-9 min-w-0 flex-1 items-center px-2 text-sm text-muted-foreground">
-                    No file open
-                  </div>
+                  <div className="rudder-doc-editor-tab-drag-spacer mb-1 h-9 min-w-0 flex-1" aria-hidden="true" />
                 )}
               </div>
-              {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
+              {workspaceRootPath && selectedWorkspaceLaunchTarget && !selectedProjectResource ? (
                 <div className="flex shrink-0 items-center border-l border-border px-2 text-xs text-muted-foreground">
                   <div
                     className="inline-flex h-8 items-stretch overflow-hidden rounded-[18px] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"

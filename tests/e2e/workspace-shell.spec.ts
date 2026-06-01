@@ -650,6 +650,28 @@ test.describe("Workspace shell", () => {
     await expect(resourceDetail.getByText("~/projects/new-zealand", { exact: true }).first()).toBeVisible();
     await expect(resourceDetail.getByText("Primary implementation checkout.", { exact: true })).toBeVisible();
     await expect(page.getByTestId("org-workspaces-resource-launcher").getByRole("button", { name: "Open resource in Cursor" })).toBeVisible();
+    await expect(page.getByText("No file open")).toHaveCount(0);
+    await expect(page.getByTestId("org-workspaces-editor-launcher")).toHaveCount(0);
+    await expect(resourceDetail.getByTestId("org-workspaces-resource-open-path")).toHaveCount(0);
+
+    const projectFolderRow = page.locator(`[data-workspace-entry-path="projects/${project.urlKey}"]`);
+    await projectFolderRow.hover();
+    await page.getByTestId(`org-workspaces-entry-more-projects/${project.urlKey}`).click();
+    let treeMenu = page.getByRole("menu");
+    await expect(treeMenu).toContainText("Copy file path");
+    await expect(treeMenu.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    const resourcesFolder = page.getByTestId(`org-workspaces-project-resources-folder-${project.id}`);
+    await resourcesFolder.hover();
+    await page.getByTestId(`org-workspaces-project-resources-more-${project.id}`).click();
+    treeMenu = page.getByRole("menu");
+    await expect(treeMenu.getByRole("menuitem", { name: "Add resources" })).toBeVisible();
+    await treeMenu.getByRole("menuitem", { name: "Add resources" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/projects/${project.urlKey}/resources$`));
+
+    await gotoOrganizationPath(page, organization, `/library?resource=${attachment.id}`);
+    await expect(page.getByTestId(`org-workspaces-project-resource-${attachment.id}`)).toBeVisible();
 
     const resourceLauncher = page.getByTestId("org-workspaces-resource-launcher");
     await resourceLauncher.getByRole("button", { name: "Open resource menu" }).click();
@@ -669,6 +691,21 @@ test.describe("Workspace shell", () => {
         targetId: "terminal",
       },
     ]);
+
+    const resourceRow = page.getByTestId(`org-workspaces-project-resource-${attachment.id}`);
+    await resourceRow.hover();
+    await page.getByTestId(`org-workspaces-project-resource-more-${attachment.id}`).click();
+    const resourceMenu = page.getByRole("menu");
+    await expect(resourceMenu.getByRole("menuitem", { name: "Open resource" })).toBeVisible();
+    await expect(resourceMenu.getByRole("menuitem", { name: "Copy locator" })).toBeVisible();
+    await resourceMenu.getByRole("menuitem", { name: "Unlink resource" }).click();
+    await expect(page.getByText("Resource unlinked")).toBeVisible();
+    await expect(page.getByTestId(`org-workspaces-project-resource-${attachment.id}`)).toHaveCount(0);
+    await expect.poll(async () => {
+      const resourcesRes = await page.request.get(`/api/projects/${project.id}/resources?orgId=${organization.id}`);
+      const resources = await resourcesRes.json() as Array<unknown>;
+      return resources.length;
+    }).toBe(0);
   });
 
   test("surfaces Library in the shared three-column shell", async ({ page }, testInfo) => {
