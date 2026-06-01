@@ -256,6 +256,42 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(document.querySelector("[data-testid='org-workspaces-files-scroll']")).not.toBeNull();
   });
 
+  it("keeps the workspace launcher icon-only while preserving the accessible app label", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1200,
+    });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn((query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
+    mockState.desktopShell = {
+      listAvailableIdes: vi.fn().mockResolvedValue([{ id: "vscode", label: "VS Code" }]),
+      listWorkspaceLaunchTargets: vi.fn().mockResolvedValue([
+        { id: "vscode", label: "VS Code", kind: "ide" },
+      ]),
+      openWorkspace: vi.fn(),
+    };
+
+    renderWorkspacesPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const launcher = document.querySelector("[data-testid='org-workspaces-editor-launcher']");
+    const openButton = launcher?.querySelector("button[aria-label='Open workspace in VS Code']");
+    expect(launcher).not.toBeNull();
+    expect(openButton).not.toBeNull();
+    expect(openButton?.textContent).toBe("VS");
+    expect(launcher?.textContent).not.toContain("VS Code");
+  });
+
   it("marks only the empty editor tab-strip space for desktop window dragging", async () => {
     renderWorkspacesPage();
 

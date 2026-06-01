@@ -1444,8 +1444,8 @@ function ProjectResourceDetailPanel({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
-                  className="h-full rounded-none border-0 px-2 text-sm text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
+                  size="icon"
+                  className="h-full w-8 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
                   aria-label={`Open resource in ${selectedWorkspaceLaunchTarget.label}`}
                   onClick={() => onOpenWorkspaceTarget(resourceOpenPath, selectedWorkspaceLaunchTarget, "resource")}
                   disabled={openingWorkspaceTargetId !== null}
@@ -1455,7 +1455,6 @@ function ProjectResourceDetailPanel({
                   ) : (
                     <WorkspaceLaunchTargetIcon target={selectedWorkspaceLaunchTarget} className="h-3.5 w-3.5" />
                   )}
-                  <span className="ml-1.5 max-w-20 truncate">{selectedWorkspaceLaunchTarget.label}</span>
                 </Button>
                 <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
                 <DropdownMenu>
@@ -2878,8 +2877,8 @@ export function OrganizationWorkspaceBrowser({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
-              className="h-full rounded-none border-0 px-2.5 text-sm text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
+              size="icon"
+              className="h-full w-8 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
               aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
               onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
               disabled={openingWorkspaceTargetId !== null}
@@ -2892,7 +2891,6 @@ export function OrganizationWorkspaceBrowser({
                   className="h-3.5 w-3.5"
                 />
               )}
-              {selectedWorkspaceLaunchTarget.label}
             </Button>
             <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
             <DropdownMenu>
@@ -3537,8 +3535,8 @@ export function OrganizationWorkspaceBrowser({
                     <Button
                       type="button"
                       variant="ghost"
-                      size="sm"
-                      className="h-full rounded-none border-0 px-2 text-sm text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
+                      size="icon"
+                      className="h-full w-8 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
                       aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
                       onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
                       disabled={openingWorkspaceTargetId !== null}
@@ -3551,7 +3549,6 @@ export function OrganizationWorkspaceBrowser({
                           className="h-3.5 w-3.5"
                         />
                       )}
-                      <span className="ml-1.5 max-w-20 truncate">{selectedWorkspaceLaunchTarget.label}</span>
                     </Button>
                     <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
                     <DropdownMenu>
