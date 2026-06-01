@@ -26,6 +26,7 @@ related_code:
   - .agents/skills/maintainer
 commit_refs:
   - 4dc75086
+  - 54e29d7c
 updated_at: 2026-06-01
 ---
 
