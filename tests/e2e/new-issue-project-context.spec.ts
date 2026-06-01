@@ -105,7 +105,7 @@ test.describe("New issue project context", () => {
 
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "No goal" }).click();
+    await dialog.getByRole("button", { name: "Goal" }).click();
     await page.getByRole("button", { name: goal.title, exact: true }).click();
 
     const title = `Goal-linked issue ${Date.now()}`;

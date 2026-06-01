@@ -1320,7 +1320,7 @@ export function NewIssueDialog() {
         </div>
 
         <div className="px-4 pb-3 shrink-0">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="min-w-0 space-y-1">
               <div className="text-[11px] font-medium text-muted-foreground">Assignee</div>
               <InlineEntitySelector
@@ -1413,38 +1413,6 @@ export function NewIssueDialog() {
                     </>
                   );
                 }}
-              />
-            </div>
-            <div className="min-w-0 space-y-1">
-              <div className="text-[11px] font-medium text-muted-foreground">Goal</div>
-              <InlineEntitySelector value={goalId}
-                options={goalOptions} placeholder="Goal"
-                disablePortal
-                noneLabel="No goal"
-                searchPlaceholder="Search goals..."
-                emptyMessage="No goals found." variant="field" className={ISSUE_METADATA_SELECTOR_CLASSNAME} onChange={setGoalId} onConfirm={() => {
-                  descriptionEditorRef.current?.focus();
-                }}
-                renderTriggerValue={(option) =>
-                  option && currentGoal ? (
-                    <>
-                      <Target className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{option.label}</span>
-                    </>
-                  ) : (
-                    <span className="text-muted-foreground">No goal</span>
-                  )
-                }
-                renderOption={(option) =>
-                  option.id ? (
-                    <>
-                      <Target className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{option.label}</span>
-                    </>
-                  ) : (
-                    <span className="truncate">{option.label}</span>
-                  )
-                }
               />
             </div>
             <div className="min-w-0 space-y-1">
@@ -1730,6 +1698,48 @@ export function NewIssueDialog() {
               {labelPickerContent}
             </PopoverContent>
           </Popover>
+
+          <InlineEntitySelector
+            value={goalId}
+            options={goalOptions}
+            placeholder="Goal"
+            disablePortal
+            noneLabel="No goal"
+            searchPlaceholder="Search goals..."
+            emptyMessage="No goals found."
+            className={cn(
+              "border-border bg-transparent px-2 py-1 [font-size:0.75rem] hover:bg-accent/50",
+              currentGoal ? "text-foreground" : "text-muted-foreground",
+            )}
+            contentClassName="w-56"
+            onChange={setGoalId}
+            onConfirm={() => {
+              descriptionEditorRef.current?.focus();
+            }}
+            renderTriggerValue={(option) =>
+              option && currentGoal ? (
+                <>
+                  <Target className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  <span className="max-w-40 truncate">{option.label}</span>
+                </>
+              ) : (
+                <>
+                  <Target className="h-3 w-3 shrink-0" />
+                  Goal
+                </>
+              )
+            }
+            renderOption={(option) =>
+              option.id ? (
+                <>
+                  <Target className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{option.label}</span>
+                </>
+              ) : (
+                <span className="truncate">{option.label}</span>
+              )
+            }
+          />
 
           <input
             ref={stageFileInputRef}

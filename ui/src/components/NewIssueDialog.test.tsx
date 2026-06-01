@@ -309,14 +309,16 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("disabled:bg-muted/20");
   });
 
-  it("renders primary metadata controls as field selectors", () => {
+  it("renders primary metadata controls as field selectors and keeps goal in the footer toolbar", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
     expect(html).toContain('data-variant="field"');
-    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(4);
-    expect((html.match(/h-auto min-h-12 w-full py-2/g) ?? []).length).toBe(4);
+    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect((html.match(/h-auto min-h-12 w-full py-2/g) ?? []).length).toBe(3);
     expect(html).toContain("Goal");
     expect(html).toContain("Improve issue routing");
+    expect(html.indexOf("Labels")).toBeLessThan(html.indexOf("Goal"));
+    expect(html.indexOf("Goal")).toBeLessThan(html.indexOf("Upload"));
   });
 
   it("keeps labels in the property chip when the organization has five labels", () => {
@@ -331,9 +333,9 @@ describe("NewIssueDialog", () => {
 
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
-    expect(html).toContain("sm:grid-cols-4");
+    expect(html).toContain("sm:grid-cols-3");
     expect(html).not.toContain(">Labels</div>");
-    expect((html.match(/data-variant="field"/g) ?? []).length).toBe(4);
+    expect((html.match(/data-variant="field"/g) ?? []).length).toBe(3);
     expect(html).toContain("Search labels...");
   });
 
