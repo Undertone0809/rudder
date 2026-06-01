@@ -175,13 +175,6 @@ test.describe("Primary rail create menu", () => {
     expect(created.codebase.scope).toBe("organization");
     expect(created.codebase.repoUrl).toBeNull();
     expect(created.codebase.localFolder).toContain(`/organizations/${organization.id}/workspaces`);
-    const projectReadmeRes = await page.request.get(
-      `/api/orgs/${organization.id}/workspace/file?path=projects/shared-workspace-project/README.md`,
-    );
-    expect(projectReadmeRes.ok()).toBe(true);
-    const projectReadme = await projectReadmeRes.json() as { content: string; filePath: string };
-    expect(projectReadme.filePath).toBe("projects/shared-workspace-project/README.md");
-    expect(projectReadme.content).toContain("Agents should keep durable project work files inside this folder.");
     await expect(page).toHaveURL(
       new RegExp(`/${organization.issuePrefix}/issues\\?projectId=${created.id}$`),
     );

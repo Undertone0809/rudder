@@ -68,7 +68,7 @@ An issue keeps the important record together:
 - goal/project context
 - comments and decisions
 - agent runs and transcripts
-- Library files, screenshots, links, or PRs
+- artifacts, files, screenshots, links, or PRs
 - close-out evidence and feedback
 
 ### Reviews, Feedback, and Learning
@@ -158,7 +158,7 @@ See [SPEC.md](./SPEC.md) for the long-horizon technical specification and [TASKS
    Chat should clarify, route, and propose work, but durable work should remain attached to issues, projects, goals, runs, reviews, and approvals.
 
 4. **Progressive disclosure**
-   Top layer: human-readable summary. Middle layer: checklist/steps/outputs. Bottom layer: raw logs/tool calls/transcript.
+   Top layer: human-readable summary. Middle layer: checklist/steps/artifacts. Bottom layer: raw logs/tool calls/transcript.
 
 5. **Output-first**
    Work is not done until the user can see the result: file, document, preview link, screenshot, plan, or PR.

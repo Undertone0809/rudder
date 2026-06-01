@@ -1,6 +1,6 @@
 ---
 title: "Workspaces"
-description: "Use Rudder workspaces to keep project Library files, agent-private files, skills, and runtime state in predictable locations."
+description: "Use Rudder workspaces to keep project resources, agent-private files, organization artifacts, and durable outputs in predictable locations."
 icon: "folder-tree"
 keywords:
   - "agent workspace"
@@ -12,7 +12,7 @@ canonical: "https://doc.rudder.zeeland.studio/concepts/workspaces"
 
 ---
 
-Rudder gives agents predictable filesystem locations for shared project Library files, skills, runtime work, and agent-private state.
+Rudder gives agents predictable filesystem locations for shared project work, organization artifacts, plans, skills, and agent-private state.
 
 ![Workspaces and resources](../images/workspaces-resources.png)
 
@@ -21,8 +21,8 @@ Rudder gives agents predictable filesystem locations for shared project Library 
 | Use case | Location |
 | --- | --- |
 | Source code or project repo work | Project workspace |
-| Durable reports, screenshots, exports, plans, and handoff files | Project folder in Library |
-| Cross-project references and reusable docs | Shared Library files |
+| Durable reports, screenshots, exports, and handoff files | Organization artifacts |
+| Plans generated for organization work | Organization plans |
 | Agent-private instructions, memory, and local state | Agent home |
 | Temporary scratch validation | `/tmp` or system temp |
 
@@ -31,27 +31,21 @@ Rudder gives agents predictable filesystem locations for shared project Library 
 Use managed workspace paths instead of ad-hoc folders:
 
 - project repositories stay in their attached project resource locations
-- durable project files belong under that project's Library folder
+- organization artifacts belong under the organization artifacts directory
+- organization plans belong under the organization plans directory
 - agent-private memory, instructions, and skills stay under that agent's home directory
 
 ## Durable outputs
 
-When a project is created, Rudder creates a matching folder under Library:
-
-```text
-projects/<project-slug>/
-  README.md
-```
-
-Agents should place durable project work files inside that project folder. They can create subfolders as the work naturally requires, such as `research/`, `screenshots/`, `proposals/`, `evals/`, or `handoff/`. Rudder does not require a fixed `plans/` folder.
+Screenshots, reports, generated documents, CSVs, preview notes, and other user-visible work products should be written to the organization artifacts directory when available.
 
 Use `/tmp` only for transient scratch files and verification artifacts.
 
 ## Project resources
 
-When a run is linked to a project, Rudder injects the explicitly attached Project Context resources into the runtime context. These resources can be external references or Library files. Library-backed resources use safe paths relative to the organization workspace root, so agents can read the file-native knowledge directly without treating protected system folders as project resources.
+When a run is linked to a project, Rudder injects the explicitly attached Project Context resources into the runtime context. These resources can be external references or Docs files. Docs-backed resources use safe paths relative to the organization workspace root, so agents can read the file-native knowledge directly without treating protected system folders as project resources.
 
-Project Context is the curated starting point, not the full knowledge boundary. Agents can still inspect broader Library files when the attached context is not enough.
+Project Context is the curated starting point, not the full knowledge boundary. Agents can still inspect broader Docs and Library files when the attached context is not enough.
 
 ## Local development
 

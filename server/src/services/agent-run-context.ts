@@ -2,14 +2,12 @@ import fs from "node:fs/promises";
 import { and, asc, eq } from "drizzle-orm";
 import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
-import { agents, issues, projects, projectWorkspaces } from "@rudderhq/db";
+import { agents, issues, projectWorkspaces } from "@rudderhq/db";
 import type { ProjectResourceAttachment } from "@rudderhq/shared";
 import { parseObject } from "../agent-runtimes/utils.js";
 import {
   ensureAgentWorkspaceLayout,
   ensureOrganizationWorkspaceLayout,
-  resolveProjectLibraryDir,
-  resolveProjectLibraryRelativePath,
 } from "../home-paths.js";
 import { organizationSkillService } from "./organization-skills.js";
 import { listProjectResourceAttachments } from "./resource-catalog.js";
@@ -435,34 +433,6 @@ export function agentRunContextService(db: Db) {
             workspaceProjectId,
           )
         : [];
-    const workspaceProject = await (async () => {
-      if (!workspaceProjectId || typeof (db as Partial<Db>).select !== "function") return null;
-      const query = db.select({
-        id: projects.id,
-        name: projects.name,
-      });
-      if (!query || typeof (query as { from?: unknown }).from !== "function") return null;
-      return await query
-        .from(projects)
-        .where(and(
-          eq(projects.id, workspaceProjectId),
-          eq(projects.orgId, input.agent.orgId),
-        ))
-        .then((rows) => rows[0] ?? null);
-    })();
-    const projectLibraryRelativePath = workspaceProject
-      ? resolveProjectLibraryRelativePath({
-          projectName: workspaceProject.name,
-          projectId: workspaceProject.id,
-        })
-      : null;
-    const projectLibraryRoot = workspaceProject
-      ? resolveProjectLibraryDir({
-          orgId: input.agent.orgId,
-          projectName: workspaceProject.name,
-          projectId: workspaceProject.id,
-        })
-      : null;
     const compiledResourcesPrompt =
       buildCompiledResourcesPrompt(projectResources);
     const rudderWorkspace = {
@@ -490,8 +460,6 @@ export function agentRunContextService(db: Db) {
       orgSkillsDir: organizationWorkspace.skillsDir,
       orgPlansDir: organizationWorkspace.plansDir,
       orgArtifactsDir: organizationWorkspace.artifactsDir,
-      projectLibraryRoot,
-      projectLibraryRelativePath,
       resourcesPrompt: compiledResourcesPrompt,
       orgResourcesPrompt: compiledResourcesPrompt,
     } satisfies Record<string, unknown>;

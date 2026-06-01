@@ -7,8 +7,6 @@ const DEFAULT_INSTANCE_ID = "default";
 const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
 const PATH_SEGMENT_RE = /^[a-zA-Z0-9_-]+$/;
 const FRIENDLY_PATH_SEGMENT_RE = /[^a-zA-Z0-9._-]+/g;
-const PROJECT_LIBRARY_KEY_DELIM_RE = /[^a-z0-9]+/g;
-const PROJECT_LIBRARY_KEY_TRIM_RE = /^-+|-+$/g;
 
 function expandHomePrefix(value: string): string {
   if (value === "~") return os.homedir();
@@ -122,42 +120,8 @@ export function resolveOrganizationArtifactsDir(orgId: string): string {
   return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "artifacts");
 }
 
-export function resolveOrganizationProjectsDir(orgId: string): string {
-  return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "projects");
-}
-
 export function resolveOrganizationAgentsDir(orgId: string): string {
   return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "agents");
-}
-
-export function deriveProjectLibraryKey(input: {
-  projectName?: string | null;
-  projectId?: string | null;
-}): string {
-  const raw = input.projectName?.trim() || input.projectId?.trim() || "project";
-  const key = raw
-    .toLowerCase()
-    .replace(PROJECT_LIBRARY_KEY_DELIM_RE, "-")
-    .replace(PROJECT_LIBRARY_KEY_TRIM_RE, "");
-  return key || "project";
-}
-
-export function resolveProjectLibraryRelativePath(input: {
-  projectName?: string | null;
-  projectId?: string | null;
-}): string {
-  return path.posix.join("projects", deriveProjectLibraryKey(input));
-}
-
-export function resolveProjectLibraryDir(input: {
-  orgId: string;
-  projectName?: string | null;
-  projectId?: string | null;
-}): string {
-  return path.resolve(
-    resolveOrganizationWorkspaceRoot(input.orgId),
-    resolveProjectLibraryRelativePath(input),
-  );
 }
 
 export function resolveManagedOrganizationCodebaseDir(input: {
@@ -177,64 +141,20 @@ export async function ensureOrganizationWorkspaceLayout(orgId: string): Promise<
   skillsDir: string;
   plansDir: string;
   artifactsDir: string;
-  projectsDir: string;
 }> {
   const root = resolveOrganizationWorkspaceRoot(orgId);
   const agentsDir = resolveOrganizationAgentsDir(orgId);
   const skillsDir = resolveOrganizationSkillsDir(orgId);
   const plansDir = resolveOrganizationPlansDir(orgId);
   const artifactsDir = resolveOrganizationArtifactsDir(orgId);
-  const projectsDir = resolveOrganizationProjectsDir(orgId);
   await Promise.all([
     fs.mkdir(root, { recursive: true }),
     fs.mkdir(agentsDir, { recursive: true }),
     fs.mkdir(skillsDir, { recursive: true }),
     fs.mkdir(plansDir, { recursive: true }),
     fs.mkdir(artifactsDir, { recursive: true }),
-    fs.mkdir(projectsDir, { recursive: true }),
   ]);
-  return { root, agentsDir, skillsDir, plansDir, artifactsDir, projectsDir };
-}
-
-export async function ensureProjectLibraryLayout(input: {
-  orgId: string;
-  projectId: string;
-  projectName: string;
-}): Promise<{
-  relativePath: string;
-  root: string;
-  readmePath: string;
-}> {
-  await ensureOrganizationWorkspaceLayout(input.orgId);
-  const relativePath = resolveProjectLibraryRelativePath({
-    projectName: input.projectName,
-    projectId: input.projectId,
-  });
-  const root = resolveProjectLibraryDir({
-    orgId: input.orgId,
-    projectName: input.projectName,
-    projectId: input.projectId,
-  });
-  const readmePath = path.join(root, "README.md");
-  await fs.mkdir(root, { recursive: true });
-  const readme = [
-    `# ${input.projectName}`,
-    "",
-    "This is the Library folder for this Rudder project.",
-    "",
-    `- Project ID: \`${input.projectId}\``,
-    `- Library path: \`${relativePath}\``,
-    "",
-    "Agents should keep durable project work files inside this folder. Create subfolders as the work naturally requires, and use `/tmp` only for transient scratch files.",
-    "",
-  ].join("\n");
-  await fs.writeFile(readmePath, readme, { encoding: "utf8", flag: "wx" }).catch((error: unknown) => {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST") {
-      return;
-    }
-    throw error;
-  });
-  return { relativePath, root, readmePath };
+  return { root, agentsDir, skillsDir, plansDir, artifactsDir };
 }
 
 export async function ensureAgentWorkspaceLayout(agent: {

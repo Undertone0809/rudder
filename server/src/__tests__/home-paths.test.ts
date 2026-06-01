@@ -6,7 +6,6 @@ import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import {
   ensureAgentWorkspaceLayout,
   ensureOrganizationWorkspaceLayout,
-  ensureProjectLibraryLayout,
   pruneOrphanedOrganizationStorage,
   resolveAgentInstructionsDir,
   resolveAgentLifeDir,
@@ -16,10 +15,7 @@ import {
   resolveOrganizationAgentsDir,
   resolveOrganizationArtifactsDir,
   resolveOrganizationPlansDir,
-  resolveOrganizationProjectsDir,
   resolveOrganizationSkillsDir,
-  resolveProjectLibraryDir,
-  resolveProjectLibraryRelativePath,
 } from "../home-paths.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
@@ -71,7 +67,6 @@ describe("home paths", () => {
       skillsDir: resolveOrganizationSkillsDir(orgId),
       plansDir: resolveOrganizationPlansDir(orgId),
       artifactsDir: resolveOrganizationArtifactsDir(orgId),
-      projectsDir: resolveOrganizationProjectsDir(orgId),
     });
     expect(agentWorkspace).toEqual({
       root: resolveDefaultAgentWorkspaceDir(orgId, workspaceKey),
@@ -85,39 +80,11 @@ describe("home paths", () => {
     await expect(fs.stat(resolveOrganizationSkillsDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveOrganizationPlansDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveOrganizationArtifactsDir(orgId))).resolves.toBeDefined();
-    await expect(fs.stat(resolveOrganizationProjectsDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveDefaultAgentWorkspaceDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentInstructionsDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentMemoryDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentLifeDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentSkillsDir(orgId, workspaceKey))).resolves.toBeDefined();
-  });
-
-  it("creates a project Library root with a README anchor", async () => {
-    const rudderHome = await makeTempDir("rudder-home-project-library-");
-    cleanupDirs.add(rudderHome);
-    process.env.RUDDER_HOME = rudderHome;
-    process.env.RUDDER_INSTANCE_ID = "test-instance";
-
-    const project = await ensureProjectLibraryLayout({
-      orgId,
-      projectId: "22222222-2222-4222-8222-222222222222",
-      projectName: "Project Library Demo",
-    });
-
-    expect(project.relativePath).toBe("projects/project-library-demo");
-    expect(project.root).toBe(resolveProjectLibraryDir({
-      orgId,
-      projectName: "Project Library Demo",
-      projectId: "22222222-2222-4222-8222-222222222222",
-    }));
-    expect(resolveProjectLibraryRelativePath({
-      projectName: "Project Library Demo",
-      projectId: "22222222-2222-4222-8222-222222222222",
-    })).toBe("projects/project-library-demo");
-    await expect(fs.readFile(project.readmePath, "utf8")).resolves.toContain(
-      "Agents should keep durable project work files inside this folder.",
-    );
   });
 
   it("does not read or migrate legacy workspace roots", async () => {

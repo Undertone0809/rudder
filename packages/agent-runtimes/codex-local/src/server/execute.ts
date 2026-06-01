@@ -195,8 +195,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     workspaceContext.orgArtifactsDir,
     orgWorkspaceRoot ? path.join(orgWorkspaceRoot, "artifacts") : "",
   );
-  const projectLibraryRoot = asString(workspaceContext.projectLibraryRoot, "");
-  const projectLibraryRelativePath = asString(workspaceContext.projectLibraryRelativePath, "");
   const workspaceHints = Array.isArray(context.rudderWorkspaces)
     ? context.rudderWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -366,12 +364,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
   if (orgArtifactsDir) {
     env.RUDDER_ORG_ARTIFACTS_DIR = orgArtifactsDir;
-  }
-  if (projectLibraryRoot) {
-    env.RUDDER_PROJECT_LIBRARY_ROOT = projectLibraryRoot;
-  }
-  if (projectLibraryRelativePath) {
-    env.RUDDER_PROJECT_LIBRARY_PATH = projectLibraryRelativePath;
   }
   if (workspaceHints.length > 0) {
     env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);

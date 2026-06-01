@@ -258,7 +258,7 @@ describe("issue lifecycle routes", () => {
       });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agents must write new durable project files with `rudder library file put projects/<project>/<file> --body-file <path>`");
+    expect(res.body.error).toBe("Agents must write new durable docs with `rudder library file put docs/<file>.md`");
     expect(mockDocumentService.upsertIssueDocument).not.toHaveBeenCalled();
   });
 
@@ -322,7 +322,7 @@ describe("issue lifecycle routes", () => {
     });
     expect(res.body.documentSummaries).toHaveLength(1);
     expect(res.body.issueDocumentsPrompt).toContain("## Legacy Issue Documents");
-    expect(res.body.issueDocumentsPrompt).toContain("rudder library file put projects/<project>/<file>.md --body-file <path> --json");
+    expect(res.body.issueDocumentsPrompt).toContain("rudder library file put docs/<file>.md --body-file <path> --json");
     expect(res.body.issueDocumentsPrompt).toContain(`rudder issue documents get ${issue.id} plan --json`);
     expect(res.body.issueDocumentsPrompt).not.toContain("Confirm whether agents can see issue docs.");
   });

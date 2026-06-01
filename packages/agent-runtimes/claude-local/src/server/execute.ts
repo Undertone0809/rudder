@@ -226,8 +226,6 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     workspaceContext.orgArtifactsDir,
     orgWorkspaceRoot ? path.join(orgWorkspaceRoot, "artifacts") : "",
   ) || null;
-  const projectLibraryRoot = asString(workspaceContext.projectLibraryRoot, "") || null;
-  const projectLibraryRelativePath = asString(workspaceContext.projectLibraryRelativePath, "") || null;
   const workspaceHints = Array.isArray(context.rudderWorkspaces)
     ? context.rudderWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -346,12 +344,6 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   }
   if (orgArtifactsDir) {
     env.RUDDER_ORG_ARTIFACTS_DIR = orgArtifactsDir;
-  }
-  if (projectLibraryRoot) {
-    env.RUDDER_PROJECT_LIBRARY_ROOT = projectLibraryRoot;
-  }
-  if (projectLibraryRelativePath) {
-    env.RUDDER_PROJECT_LIBRARY_PATH = projectLibraryRelativePath;
   }
   if (workspaceHints.length > 0) {
     env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);

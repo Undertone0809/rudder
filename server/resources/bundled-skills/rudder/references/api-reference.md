@@ -165,9 +165,8 @@ Loading policy:
   Library workspace files when the attached resources are not enough.
 - Resource `sourceType` values:
   - `library`: `locator` is a safe relative path under the organization Library
-    workspace root, commonly below `projects/<project>/` for project files or
-    `docs/` for shared docs. Protected roots such as `agents/`, `artifacts/`,
-    `plans/`, and `skills/` are not valid project Library resources.
+    workspace root. Protected roots such as `agents/`, `artifacts/`, `plans/`,
+    and `skills/` are not valid project Library resources.
   - `external`: `locator` is the original URL, local path, repo path, or
     connector object reference.
 - If you need org-wide background that was not attached to the current project,
