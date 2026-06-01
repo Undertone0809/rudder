@@ -77,8 +77,10 @@ test.describe("Agent dashboard skills analytics", () => {
         id: runOneId,
         orgId: organization.id,
         agentId: agent.id,
-        invocationSource: "on_demand",
+        invocationSource: "timer",
+        triggerDetail: "system",
         status: "succeeded",
+        contextSnapshot: { wakeReason: "heartbeat_timer" },
         createdAt: recentMorning,
         updatedAt: new Date(recentMorning.getTime() + 5 * 60 * 1000),
       },
@@ -86,8 +88,10 @@ test.describe("Agent dashboard skills analytics", () => {
         id: runTwoId,
         orgId: organization.id,
         agentId: agent.id,
-        invocationSource: "on_demand",
+        invocationSource: "automation",
+        triggerDetail: "system",
         status: "succeeded",
+        contextSnapshot: { wakeReason: "issue_comment_mentioned", wakeSource: "comment.mention" },
         createdAt: recentAfternoon,
         updatedAt: new Date(recentAfternoon.getTime() + 5 * 60 * 1000),
       },
@@ -95,8 +99,10 @@ test.describe("Agent dashboard skills analytics", () => {
         id: runThreeId,
         orgId: organization.id,
         agentId: agent.id,
-        invocationSource: "on_demand",
+        invocationSource: "assignment",
+        triggerDetail: "system",
         status: "succeeded",
+        contextSnapshot: { wakeReason: "issue_assigned" },
         createdAt: earlierRecent,
         updatedAt: new Date(earlierRecent.getTime() + 5 * 60 * 1000),
       },
@@ -196,6 +202,12 @@ test.describe("Agent dashboard skills analytics", () => {
     await expect(page.getByRole("button", { name: "1M" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Custom/ })).toBeVisible();
     await expect(mainContent.getByText("Skill usage per run for Last 7 days. Hover a day to inspect the breakdown.")).toBeVisible();
+    await expect(mainContent.getByText("Run Triggers")).toBeVisible();
+    const triggerDistribution = mainContent.getByRole("button", { name: /Run trigger distribution: 3 runs across 3 triggers/ });
+    await expect(triggerDistribution).toBeVisible();
+    await expect(triggerDistribution.getByText("Scheduled heartbeat")).toBeVisible();
+    await expect(triggerDistribution.getByText("Mentioned")).toBeVisible();
+    await expect(triggerDistribution.getByText("Task assigned")).toBeVisible();
     await expect(mainContent.getByText("4 skill uses")).toBeVisible();
     await expect(mainContent.getByText("2 runs with skill usage")).toBeVisible();
     await expect(mainContent.getByText("Skill Usage Distribution")).toBeVisible();

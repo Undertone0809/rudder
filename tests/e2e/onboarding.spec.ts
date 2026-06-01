@@ -50,7 +50,7 @@ test.describe("Onboarding wizard", () => {
   }) => {
     const initialOrganizationName = `E2E-Fresh-${Date.now()}`;
     const updatedOrganizationName = `${initialOrganizationName}-Updated`;
-    const updatedAgentName = "Founding CEO";
+    const updatedAgentName = "Avery";
 
     await page.goto("/onboarding");
 
@@ -113,12 +113,14 @@ test.describe("Onboarding wizard", () => {
     expect(agentsRes.ok()).toBe(true);
     const agents = await agentsRes.json();
     expect(agents).toHaveLength(1);
-    const ceoAgent = agents.find(
+    const rootAgent = agents.find(
       (agent: { name: string }) => agent.name === updatedAgentName
     );
-    expect(ceoAgent).toBeTruthy();
-    expect(ceoAgent.agentRuntimeType).toBe("codex_local");
-    expect(ceoAgent.agentRuntimeConfig.model).toBe(selectedCodexModel);
+    expect(rootAgent).toBeTruthy();
+    expect(rootAgent.role).toBe("ceo");
+    expect(rootAgent.title).toBe("Operator Assistant");
+    expect(rootAgent.agentRuntimeType).toBe("codex_local");
+    expect(rootAgent.agentRuntimeConfig.model).toBe(selectedCodexModel);
 
     const projectsRes = await page.request.get(
       `${baseUrl}/api/orgs/${organization.id}/projects`
@@ -178,9 +180,9 @@ test.describe("Onboarding wizard", () => {
     const chatCtaUrl = new URL(chatCtaHref, baseUrl);
     expect(chatCtaUrl.pathname).toBe(`/${organization.issuePrefix}/messenger/chat`);
     expect(chatIssueDescription).toContain(`projectId=${gettingStartedProject.id}`);
-    expect(chatIssueDescription).toContain(`agentId=${ceoAgent.id}`);
+    expect(chatIssueDescription).toContain(`agentId=${rootAgent.id}`);
     expect(chatCtaUrl.searchParams.get("projectId")).toBe(gettingStartedProject.id);
-    expect(chatCtaUrl.searchParams.get("agentId")).toBe(ceoAgent.id);
+    expect(chatCtaUrl.searchParams.get("agentId")).toBe(rootAgent.id);
     const expectedPrefill = chatCtaUrl.searchParams.get("prefill");
     expect(expectedPrefill).toBeTruthy();
     for (const issue of issues) {
@@ -224,7 +226,7 @@ test.describe("Onboarding wizard", () => {
       { timeout: 15_000 },
     );
     await expect(page.locator(".chat-composer")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("chat-agent-selector")).toContainText(ceoAgent.name, { timeout: 15_000 });
+    await expect(page.getByTestId("chat-agent-selector")).toContainText(rootAgent.name, { timeout: 15_000 });
     await expect(page.getByTestId("chat-project-selector")).toContainText("Getting Started", { timeout: 15_000 });
     await expect(page.locator(".chat-composer [contenteditable='true']").first()).toContainText(expectedPrefill!, { timeout: 15_000 });
     await expect(page.locator(".chat-warning")).toHaveCount(0);
@@ -344,10 +346,10 @@ test.describe("Onboarding wizard", () => {
     );
     expect(agentsRes.ok()).toBe(true);
     const agents = await agentsRes.json();
-    const ceoAgent = agents.find(
+    const rootAgent = agents.find(
       (agent: { name: string }) => agent.name === agentName
     );
-    expect(ceoAgent).toBeTruthy();
+    expect(rootAgent).toBeTruthy();
 
     const issuesRes = await page.request.get(
       `${baseUrl}/api/orgs/${organization.id}/issues`
@@ -358,7 +360,7 @@ test.describe("Onboarding wizard", () => {
       (issue: { title: string }) => issue.title === taskTitle
     );
     expect(task).toBeTruthy();
-    expect(task.assigneeAgentId).toBe(ceoAgent.id);
+    expect(task.assigneeAgentId).toBe(rootAgent.id);
     expect(task.projectId).toBeNull();
 
     if (!SKIP_LLM) {

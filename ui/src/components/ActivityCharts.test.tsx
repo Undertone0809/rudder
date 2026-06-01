@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
-import { RunActivityChart, SkillsUsageChart, SuccessRateChart } from "./ActivityCharts";
+import { RunActivityChart, RunTriggerDistributionChart, SkillsUsageChart, SuccessRateChart } from "./ActivityCharts";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -140,6 +140,51 @@ describe("RunActivityChart", () => {
     expect(scale).toBeTruthy();
     expect(scale?.textContent).toContain("1");
     expect(scale?.textContent).toContain("0");
+  });
+});
+
+describe("RunTriggerDistributionChart", () => {
+  it("groups runs by trigger reason", () => {
+    const runs = [
+      {
+        id: "run-1",
+        orgId: "org-1",
+        agentId: "agent-1",
+        invocationSource: "timer",
+        triggerDetail: "system",
+        status: "succeeded",
+        createdAt: new Date("2026-05-12T10:00:00Z"),
+        contextSnapshot: { wakeReason: "heartbeat_timer" },
+      },
+      {
+        id: "run-2",
+        orgId: "org-1",
+        agentId: "agent-1",
+        invocationSource: "automation",
+        triggerDetail: "system",
+        status: "succeeded",
+        createdAt: new Date("2026-05-12T11:00:00Z"),
+        contextSnapshot: { wakeReason: "issue_comment_mentioned", wakeSource: "comment.mention" },
+      },
+      {
+        id: "run-3",
+        orgId: "org-1",
+        agentId: "agent-1",
+        invocationSource: "assignment",
+        triggerDetail: "system",
+        status: "succeeded",
+        createdAt: new Date("2026-05-12T12:00:00Z"),
+        contextSnapshot: { wakeReason: "issue_assigned" },
+      },
+    ] as unknown as HeartbeatRun[];
+
+    const container = render(<RunTriggerDistributionChart runs={runs} />);
+
+    expect(container.textContent).toContain("Scheduled heartbeat");
+    expect(container.textContent).toContain("Mentioned");
+    expect(container.textContent).toContain("Task assigned");
+    expect(container.querySelector('[data-testid="run-trigger-distribution-bar"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="Run trigger distribution: 3 runs across 3 triggers"]')).toBeTruthy();
   });
 });
 

@@ -5,14 +5,16 @@ type RunStderrExcerptInput = Pick<HeartbeatRun, "status" | "stderrExcerpt">;
 type RunFailureInput = Pick<HeartbeatRun, "error" | "errorCode">;
 
 const WORKSPACE_PERMISSION_REPAIR_NEEDED_CODE = "workspace_permission_repair_needed";
+export const GENERIC_RUN_FAILURE_BODY =
+  "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.";
 
 export function getRunStderrExcerptDisplayText(run: RunStderrExcerptInput): string {
   return stripBenignStderr(run.stderrExcerpt ?? "");
 }
 
 export function shouldShowRunStderrExcerpt(run: RunStderrExcerptInput): boolean {
-  if (!getRunStderrExcerptDisplayText(run)) return false;
-  return run.status === "failed" || run.status === "timed_out";
+  void run;
+  return false;
 }
 
 export function isWorkspacePermissionRepairRun(run: RunFailureInput): boolean {
@@ -30,7 +32,7 @@ export function getRunFailureDisplay(run: RunFailureInput): {
   if (isWorkspacePermissionRepairRun(run)) {
     return {
       title: "Workspace permission repair needed",
-      body: run.error ?? "Rudder could not verify write access to its managed agent workspace before starting the run.",
+      body: "Rudder could not verify write access to its managed agent workspace before starting the run.",
       code: run.errorCode,
       actionLabel: "Open instance details",
       actionPath: "/instance/settings/about",
@@ -38,7 +40,7 @@ export function getRunFailureDisplay(run: RunFailureInput): {
   }
   return {
     title: "Run failed",
-    body: run.error ?? run.errorCode ?? "Run exited with an error.",
+    body: GENERIC_RUN_FAILURE_BODY,
     code: run.errorCode,
   };
 }

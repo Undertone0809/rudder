@@ -124,6 +124,19 @@
       ]
     },
     {
+      "id": 20,
+      "prompt": "推进这个 Chat 交互改动，按 lifecycle-router 走完整实现、验证和 review。现在一开始没看到 spawn_agent 工具。",
+      "expected_output": "Does not treat the initially hidden or uncertain spawn tool as proof that spawned reviewers are unavailable. After the artifact and validation evidence exist, it performs an explicit spawn availability probe through tool discovery or the runtime spawn path, then either spawns reviewers and waits for verdicts or records blocked: spawned reviewers unavailable with the failed probe evidence.",
+      "files": [],
+      "expectations": [
+        "The result does not declare reviewer spawning unavailable solely because the first visible tool list lacks spawn_agent.",
+        "The result delays reviewer spawning until there is a concrete stage artifact and validation evidence to review.",
+        "The result probes the multi-agent or runtime spawn path before recording blocked: spawned reviewers unavailable.",
+        "If the probe succeeds, the result uses spawned reviewer verdicts instead of self-review or serial personas.",
+        "If the probe fails, the result includes the failed probe evidence in the evidence ledger and does not claim complete handoff."
+      ]
+    },
+    {
       "id": 15,
       "prompt": "这些删了。no，我只叫你把 package.json 的变更删掉。帮我看看这些代码是不是之前 Codex 没 commit。",
       "expected_output": "Routes to recovery before any destructive cleanup, rebuilds branch/status/session evidence, groups modified and untracked files by likely source or feature, touches only the narrowed target group, and preserves unrelated dirty work.",

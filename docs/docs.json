@@ -48,15 +48,7 @@
             "pages": [
               "index",
               "get-started/installation",
-              "get-started/first-organization",
-              "faq"
-            ]
-          },
-          {
-            "group": "Use Cases",
-            "icon": "workflow",
-            "pages": [
-              "use-cases/agent-work-loops"
+              "get-started/first-organization"
             ]
           },
           {

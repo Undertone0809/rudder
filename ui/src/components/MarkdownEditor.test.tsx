@@ -19,6 +19,7 @@ const mdxEditorMocks = vi.hoisted(() => ({
     defaultSelection?: "rootStart" | "rootEnd";
     preventScroll?: boolean;
   } | undefined>,
+  navigate: vi.fn(),
 }));
 
 (
@@ -30,6 +31,10 @@ vi.mock("@/context/I18nContext", () => ({
     locale: "en",
     t: (key: string) => key,
   }),
+}));
+
+vi.mock("@/lib/router", () => ({
+  useNavigate: () => mdxEditorMocks.navigate,
 }));
 
 vi.mock("@/components/ui/dialog", () => ({
@@ -64,7 +69,22 @@ vi.mock("./AgentIconPicker", () => ({
 vi.mock("../lib/mention-chips", () => ({
   applyMentionChipDecoration: vi.fn(),
   clearMentionChipDecoration: vi.fn(),
-  parseMentionChipHref: () => null,
+  parseMentionChipHref: (href: string) => {
+    const [scheme, rest] = href.split("://");
+    if (!rest) return null;
+    if (scheme === "agent") return { kind: "agent", agentId: rest.split("?")[0], icon: null };
+    if (scheme === "project") return { kind: "project", projectId: rest.split("?")[0], color: null };
+    if (scheme === "chat") return { kind: "chat", conversationId: rest.split("?")[0] };
+    if (scheme === "issue") {
+      const [issueId, query = ""] = rest.split("?");
+      return {
+        kind: "issue",
+        issueId,
+        ref: new URLSearchParams(query).get("r"),
+      };
+    }
+    return null;
+  },
   stripMentionChipLabelPrefix: (value: string) => value.replace(/^@(?=\S)/, ""),
 }));
 
@@ -87,7 +107,11 @@ vi.mock("../lib/mention-token-node", () => ({
 vi.mock("../lib/skill-reference", () => ({
   applySkillTokenDecoration: vi.fn(),
   clearSkillTokenDecoration: vi.fn(),
-  parseSkillReference: () => null,
+  parseSkillReference: (href: string, label: string) => (
+    href.endsWith("/SKILL.md") || href.toLowerCase().endsWith(".md")
+      ? { href, label: label.trim() }
+      : null
+  ),
   removeSkillReferenceFromMarkdown: (markdown: string) => markdown,
 }));
 
@@ -157,7 +181,7 @@ vi.mock("@mdxeditor/editor", async () => {
 
     const imageMatch = markdown.match(/!\[([^\]]*)\]\(([^)]+)\)/);
     const linkMatch = markdown.match(/\[([^\]]+)\]\(([^)]+)\)/);
-    const mentionLinkMatch = linkMatch && /^(agent|project|issue):\/\//.test(linkMatch[2])
+    const mentionLinkMatch = linkMatch && /^(agent|project|issue|chat):\/\//.test(linkMatch[2])
       ? linkMatch
       : null;
 
@@ -270,6 +294,7 @@ afterEach(() => {
   mdxEditorMocks.linkDialogPlugin.mockClear();
   mdxEditorMocks.lastEditorProps = null;
   mdxEditorMocks.focusCalls = [];
+  mdxEditorMocks.navigate.mockReset();
   document.body.innerHTML = "";
 });
 
@@ -481,6 +506,79 @@ describe("MarkdownEditor", () => {
     expect(mdxEditorMocks.lastEditorProps?.translation?.("linkPreview.edit", "Edit link URL")).toBe("Edit");
   });
 
+  it("navigates mention tokens by default when clicked", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="[Navigator](agent://agent-123)"
+          onChange={() => undefined}
+        />,
+      );
+    });
+
+    const token = container.querySelector("[data-mention-kind='agent']");
+    expect(token).toBeTruthy();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(mdxEditorMocks.navigate).toHaveBeenCalledWith("/agents/agent-123");
+  });
+
+  it("navigates skill tokens by default when a details href is available", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const skillTarget = "/workspace/skills/build-advisor/SKILL.md";
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value={`[build-advisor](${skillTarget})`}
+          onChange={() => undefined}
+          mentions={[
+            {
+              id: "skill:build-advisor",
+              name: "build-advisor",
+              kind: "skill",
+              skillRefLabel: "build-advisor",
+              skillMarkdownTarget: skillTarget,
+              skillDetailsHref: "/skills/skill-123",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const token = container.querySelector("a");
+    expect(token).toBeTruthy();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(mdxEditorMocks.navigate).toHaveBeenCalledWith("/skills/skill-123");
+  });
+
   it("inserts a selected mention at the active mid-text caret position", async () => {
     const restoreCaretRect = stubCaretRect();
     const container = document.createElement("div");
@@ -656,7 +754,7 @@ describe("MarkdownEditor", () => {
 
     expect(copyData.setData).toHaveBeenCalled();
     const copiedPlainText = copyData.setData.mock.calls.at(-1)?.[1] as string;
-    expect(copiedPlainText).toContain("asadsad. Orion (Product Release Agent) ");
+    expect(copiedPlainText).toContain("asadsad. [Orion (Product Release Agent)](agent://agent-1) ");
     expect(copiedPlainText).not.toContain("\u200B");
   });
 

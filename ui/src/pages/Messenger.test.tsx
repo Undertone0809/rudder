@@ -374,8 +374,8 @@ describe("Messenger page headers", () => {
           kind: "failed-runs",
           title: "Run failed for Messenger worker",
           subtitle: "Failed heartbeat run",
-          body: "Process exited with code 1.",
-          preview: "Process exited with code 1.",
+          body: "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.",
+          preview: "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.",
           href: "/heartbeats/run-1",
           latestActivityAt: "2026-04-11T10:00:00.000Z",
           actions: [

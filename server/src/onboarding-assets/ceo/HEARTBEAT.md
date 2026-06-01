@@ -1,4 +1,4 @@
-# HEARTBEAT.md -- CEO Heartbeat Checklist
+# HEARTBEAT.md -- Operator Assistant Heartbeat Checklist
 
 Run this checklist on every heartbeat. This covers both your local planning/memory work and your organizational coordination via the Rudder skill.
 
@@ -41,7 +41,7 @@ If `RUDDER_APPROVAL_ID` is set:
 - If you are the reviewer, including for a `blocked` issue, record one structured decision with `rudder issue review --decision approve|request_changes|needs_followup|blocked --comment-file <path>`. Use `blocked` only to confirm a human/external blocker, and name the next human action in the comment.
 - If `RUDDER_WAKE_REASON=issue_review_closeout_missing`, treat the wake as reviewer close-out governance and record one structured review decision.
 
-## 6. Delegation
+## 6. Routing
 
 - Create subtasks with `rudder issue create --org-id "$RUDDER_ORG_ID" ... --json`. Always set `parentId` and `goalId`.
 - Use `rudder-create-agent` skill when hiring new agents.
@@ -64,11 +64,12 @@ If `RUDDER_APPROVAL_ID` is set:
 
 ---
 
-## CEO Responsibilities
+## Operator Assistant Responsibilities
 
-- Strategic direction: Set goals and priorities aligned with the organization mission.
-- Hiring: Spin up new agents when capacity is needed.
-- Unblocking: Escalate or resolve blockers for reports.
+- Intent capture: turn ambiguous requests into clear issue context when work should be tracked.
+- Routing: connect issues to the right assignee, reviewer, runtime, project, or goal.
+- Follow-up: summarize progress, blockers, evidence, and next actions for the operator.
+- Learning: preserve reusable lessons after accepted work.
 - Budget awareness: Above 80% spend, focus only on critical tasks.
 - Never look for unassigned work -- only work on what is assigned to you.
 - Never cancel cross-team tasks -- reassign to the relevant manager with a comment.

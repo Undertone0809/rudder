@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { formatMessengerPreview, formatMessengerTitle, sanitizeChatStructuredPayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { formatMessengerPreview, formatMessengerTitle, sanitizeChatStructuredPayload, type ChatStreamTranscriptEntry, type ChatTranscriptSummary } from "@rudderhq/shared";
 import {
   agents,
   approvals,
@@ -33,12 +33,15 @@ type ApprovalRow = typeof approvals.$inferSelect;
 export const CHAT_TRANSCRIPT_KEY = "__chatTranscript";
 
 const ISSUE_PROPOSAL_PRIORITIES = ["critical", "high", "medium", "low"] as const;
+const ISSUE_PROPOSAL_STATUSES = ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"] as const;
 
 type ChatIssueProposalPriority = typeof ISSUE_PROPOSAL_PRIORITIES[number];
+type ChatIssueProposalStatus = typeof ISSUE_PROPOSAL_STATUSES[number];
 
 export type ChatIssueProposalPayload = {
   title: string;
   description: string;
+  status: ChatIssueProposalStatus;
   priority: ChatIssueProposalPriority;
   projectId: string | null;
   goalId: string | null;
@@ -53,6 +56,10 @@ export type ChatIssueProposalPayload = {
 
 export function isIssueProposalPriority(value: unknown): value is ChatIssueProposalPriority {
   return typeof value === "string" && ISSUE_PROPOSAL_PRIORITIES.includes(value as ChatIssueProposalPriority);
+}
+
+export function isIssueProposalStatus(value: unknown): value is ChatIssueProposalStatus {
+  return typeof value === "string" && ISSUE_PROPOSAL_STATUSES.includes(value as ChatIssueProposalStatus);
 }
 
 export function contentPath(assetId: string) {
@@ -120,6 +127,25 @@ export function chatTranscriptFromPayload(
   return Array.isArray(transcript) ? (transcript as ChatStreamTranscriptEntry[]) : [];
 }
 
+export function chatTranscriptSummaryFromEntries(
+  transcript: ChatStreamTranscriptEntry[],
+): ChatTranscriptSummary | null {
+  if (transcript.length === 0) return null;
+  let startedAt: string | null = null;
+  let endedAt: string | null = null;
+  for (const entry of transcript) {
+    const ts = typeof entry.ts === "string" && Number.isFinite(Date.parse(entry.ts)) ? entry.ts : null;
+    if (!ts) continue;
+    if (!startedAt || Date.parse(ts) < Date.parse(startedAt)) startedAt = ts;
+    if (!endedAt || Date.parse(ts) > Date.parse(endedAt)) endedAt = ts;
+  }
+  return {
+    entryCount: transcript.length,
+    startedAt,
+    endedAt,
+  };
+}
+
 export function stripChatMetadataFromPayload(payload: Record<string, unknown> | null | undefined) {
   if (!payload) return null;
   if (!(CHAT_TRANSCRIPT_KEY in payload)) return payload;
@@ -155,6 +181,7 @@ export function issueProposalFromPayload(payload: Record<string, unknown> | null
   return {
     title,
     description,
+    status: isIssueProposalStatus(proposal.status) ? proposal.status : "todo",
     priority: isIssueProposalPriority(proposal.priority) ? proposal.priority : "medium",
     projectId: safeTrim(typeof proposal.projectId === "string" ? proposal.projectId : null),
     goalId: safeTrim(typeof proposal.goalId === "string" ? proposal.goalId : null),

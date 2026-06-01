@@ -10,16 +10,16 @@ describe("shouldShowRunStderrExcerpt", () => {
     })).toBe(false);
   });
 
-  it("shows stderr excerpts for failed and timed-out runs", () => {
+  it("does not promote stderr excerpts for failed and timed-out runs", () => {
     expect(shouldShowRunStderrExcerpt({
       status: "failed",
       stderrExcerpt: "runtime failed",
-    })).toBe(true);
+    })).toBe(false);
 
     expect(shouldShowRunStderrExcerpt({
       status: "timed_out",
       stderrExcerpt: "runtime stopped responding",
-    })).toBe(true);
+    })).toBe(false);
   });
 
   it("ignores empty stderr excerpts", () => {
@@ -57,10 +57,21 @@ describe("getRunFailureDisplay", () => {
       errorCode: "workspace_permission_repair_needed",
     })).toEqual({
       title: "Workspace permission repair needed",
-      body: "Rudder workspace permission repair needed: managed life path is not writable: /tmp/agent/life (EACCES).",
+      body: "Rudder could not verify write access to its managed agent workspace before starting the run.",
       code: "workspace_permission_repair_needed",
       actionLabel: "Open instance details",
       actionPath: "/instance/settings/about",
+    });
+  });
+
+  it("uses a generic user-facing message for runtime failures", () => {
+    expect(getRunFailureDisplay({
+      error: "Chat adapter completed without the required Rudder result sentinel",
+      errorCode: "adapter_failed",
+    })).toEqual({
+      title: "Run failed",
+      body: "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.",
+      code: "adapter_failed",
     });
   });
 });

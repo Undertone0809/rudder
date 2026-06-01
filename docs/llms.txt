@@ -9,8 +9,6 @@ Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, 
 - [Rudder overview](https://doc.rudder.zeeland.studio): Product introduction and path selector.
 - [Quick Start](https://doc.rudder.zeeland.studio/get-started/installation): Install Rudder Desktop and the CLI.
 - [Create Your First AI Agent Team Organization](https://doc.rudder.zeeland.studio/get-started/first-organization): First end-to-end human-agent work loop.
-- [AI Agent Work Loops In Rudder](https://doc.rudder.zeeland.studio/use-cases/agent-work-loops): Common use cases and workflow shape.
-- [Rudder FAQ](https://doc.rudder.zeeland.studio/faq): Common setup, runtime, and product-fit answers.
 
 ## Core concepts
 

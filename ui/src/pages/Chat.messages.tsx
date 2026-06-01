@@ -14,6 +14,7 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Repeat,
   RotateCcw,
   Settings2,
   Square,
@@ -126,6 +127,7 @@ import {
 } from "@/lib/image-actions";
 import { resolveLocalFileTarget } from "@/lib/local-file-targets";
 import { agentUrl, cn, relativeTime } from "@/lib/utils";
+import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
 import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, AskUserAnswerValue, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName } from "./Chat.parts";
@@ -462,6 +464,10 @@ export function ProposalCard({
   const proposalReviewerLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "reviewer", agents) : null;
   const proposalAssigneeDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "assignee", agents, currentUserId) : null;
   const proposalReviewerDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "reviewer", agents, currentUserId) : null;
+  const proposalIssueStatus =
+    issueProposal && typeof issueProposal.status === "string" && issueProposal.status.trim()
+      ? issueProposal.status.trim()
+      : "todo";
   const proposalAssigneeUnassignedReason =
     issueProposal && typeof issueProposal.assigneeUnassignedReason === "string"
       ? issueProposal.assigneeUnassignedReason.trim() || null
@@ -560,6 +566,16 @@ export function ProposalCard({
                   <div className="chat-review-fact-ledger">
                     <ProposalFactRow label="Priority">
                       <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
+                    </ProposalFactRow>
+                    <ProposalFactRow label="Status">
+                      <span
+                        className={cn(
+                          "inline-flex shrink-0 items-center rounded-[calc(var(--radius-sm)-1px)] border px-2.5 py-1 text-xs font-medium whitespace-nowrap",
+                          statusBadge[proposalIssueStatus] ?? statusBadgeDefault,
+                        )}
+                      >
+                        {proposalIssueStatus.replace("_", " ")}
+                      </span>
                     </ProposalFactRow>
                     <ProposalFactRow label="Owner">
                       <div className="flex min-w-0 flex-col items-end gap-1 text-right">
@@ -861,6 +877,11 @@ function automationSourceSystemMessageParts(message: ChatMessage) {
   };
 }
 
+function isAutomationSystemMessage(message: ChatMessage) {
+  const eventType = message.structuredPayload?.eventType;
+  return eventType === "automation_source" || eventType === "automation_created";
+}
+
 export function ChatSystemMessageBody({
   message,
   skillReferences,
@@ -1019,6 +1040,7 @@ export function AskUserPanel({
   onAddAttachment,
   onRemovePendingFile,
   onOpenAttachmentPreview,
+  onPasteAttachment,
   onSubmit,
 }: {
   message: ChatMessage;
@@ -1028,6 +1050,7 @@ export function AskUserPanel({
   onAddAttachment: () => void;
   onRemovePendingFile: (fileKey: string) => void;
   onOpenAttachmentPreview: (preview: AttachmentPreviewState) => void;
+  onPasteAttachment: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   onSubmit: (body: string) => void;
 }) {
   const [selectedByQuestionId, setSelectedByQuestionId] = useState<Record<string, string[]>>({});
@@ -1121,6 +1144,7 @@ export function AskUserPanel({
   return (
     <div
       data-testid="chat-ask-user-panel"
+      onPasteCapture={onPasteAttachment}
       className="rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]"
     >
       {hasMultipleQuestions ? (
@@ -1441,10 +1465,12 @@ export function ChatMessageItem({
   }
 
   if (message.role === "system") {
+    const SystemMessageIcon = isAutomationSystemMessage(message) ? Repeat : CheckCircle2;
+
     return (
       <div className="chat-system-pill rounded-[calc(var(--radius-sm)+2px)] px-4 py-2 text-sm transition-all duration-200">
         <div className="flex items-center gap-2">
-          <CheckCircle2 className="h-4 w-4 text-[color:var(--accent-strong)]" />
+          <SystemMessageIcon className="h-4 w-4 text-[color:var(--accent-strong)]" aria-hidden />
           <ChatSystemMessageBody
             message={message}
             skillReferences={skillReferences}
@@ -1704,6 +1730,64 @@ export function ChatMessagesLoadingState() {
             <Skeleton className="h-4 w-[84%]" />
             <Skeleton className="h-4 w-[76%]" />
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function transcriptSummaryDurationMs(summary: NonNullable<ChatMessage["transcriptSummary"]>) {
+  if (!summary.startedAt) return null;
+  const start = Date.parse(summary.startedAt);
+  const end = summary.endedAt ? Date.parse(summary.endedAt) : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+export function LazyStreamTranscriptItem({
+  summary,
+  state,
+  loading,
+  onLoad,
+}: {
+  summary: NonNullable<ChatMessage["transcriptSummary"]>;
+  state: ChatStreamDraftState | ChatMessage["status"];
+  loading?: boolean;
+  onLoad: () => void;
+}) {
+  const durationMs = transcriptSummaryDurationMs(summary);
+  const statusHint =
+    state === "failed"
+      ? "Stopped with errors"
+      : state === "stopped"
+        ? "Stopped"
+        : "";
+
+  return (
+    <div data-testid="chat-transcript-item" className="flex justify-start transition-all duration-200">
+      <div className="w-full max-w-3xl px-1 py-1">
+        <div className="flex items-center gap-3">
+          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+          <button
+            type="button"
+            className="flex max-w-[min(100%,90%)] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:cursor-wait disabled:opacity-70"
+            disabled={loading}
+            onClick={onLoad}
+            aria-expanded={false}
+          >
+            {loading ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden /> : null}
+            <span className="whitespace-nowrap">
+              {durationMs === null ? "Process details" : `Worked for ${formatChatProcessDuration(durationMs)}`}
+            </span>
+            {statusHint ? (
+              <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
+            ) : null}
+            <span className="truncate text-muted-foreground/75">
+              · {summary.entryCount} event{summary.entryCount === 1 ? "" : "s"}
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+          </button>
+          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
         </div>
       </div>
     </div>

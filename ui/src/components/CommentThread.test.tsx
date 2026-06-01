@@ -13,12 +13,16 @@ vi.mock("./MarkdownEditor", () => ({
 vi.mock("./MarkdownBody", () => ({
   MarkdownBody: ({
     children,
+    agentMentions,
     skillReferences,
   }: {
     children: ReactNode;
+    agentMentions?: Array<{ name?: string | null }>;
     skillReferences?: Array<{ displayName?: string | null }>;
   }) => (
     <div
+      data-agent-mention-count={agentMentions?.length ?? 0}
+      data-agent-mention-name={agentMentions?.[0]?.name ?? ""}
       data-skill-reference-count={skillReferences?.length ?? 0}
       data-skill-reference-name={skillReferences?.[0]?.displayName ?? ""}
     >
@@ -42,6 +46,10 @@ vi.mock("./transcript/useLiveRunTranscripts", () => ({
     transcriptByRun: new Map(),
     hasOutputForRun: () => false,
   }),
+}));
+
+vi.mock("./transcript/RunTranscriptView", () => ({
+  RunTranscriptView: () => <div>Transcript details</div>,
 }));
 
 describe("CommentThread", () => {
@@ -97,6 +105,40 @@ describe("CommentThread", () => {
 
     expect(html).toContain('data-skill-reference-count="1"');
     expect(html).toContain('data-skill-reference-name="Build Advisor"');
+  });
+
+  it("passes agent mention metadata into rendered comments", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-1",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "@Holden please review this.",
+              createdAt: new Date("2026-05-07T00:00:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+            },
+          ]}
+          mentions={[
+            {
+              id: "agent:agent-1",
+              name: "Holden",
+              kind: "agent",
+              agentId: "agent-1",
+              agentIcon: "code",
+            },
+          ]}
+          onAdd={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('data-agent-mention-count="1"');
+    expect(html).toContain('data-agent-mention-name="Holden"');
   });
 
   it("uses the operator nickname for board-authored comments", () => {
@@ -187,7 +229,7 @@ describe("CommentThread", () => {
     expect(html.indexOf("Middle comment.")).toBeLessThan(html.indexOf("Last activity"));
   });
 
-  it("labels linked run transcript cards as run output", () => {
+  it("presents linked run transcript cards as agent runs", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -206,8 +248,67 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("Run output");
+    expect(html).toContain("Run");
+    expect(html).not.toContain("Run output");
     expect(html).not.toContain("Not an issue comment");
-    expect(html).toContain('aria-label="Agent run output"');
+    expect(html).toContain('aria-label="Agent run"');
+  });
+
+  it("collapses inactive linked run details by default", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          linkedRuns={[
+            {
+              runId: "55555555-5555-4555-8555-555555555555",
+              status: "failed",
+              agentId: "22222222-2222-4222-8222-222222222222",
+              createdAt: new Date("2026-05-07T00:02:00.000Z"),
+              startedAt: new Date("2026-05-07T00:02:00.000Z"),
+            },
+            {
+              runId: "66666666-6666-4666-8666-666666666666",
+              status: "succeeded",
+              agentId: "22222222-2222-4222-8222-222222222222",
+              createdAt: new Date("2026-05-07T00:03:00.000Z"),
+              startedAt: new Date("2026-05-07T00:03:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('aria-label="Show details"');
+    expect(html).not.toContain(">Show details<");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("succeeded");
+    expect(html).not.toContain("Transcript details");
+  });
+
+  it("keeps only active linked run details expanded by default", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          linkedRuns={[
+            {
+              runId: "55555555-5555-4555-8555-555555555555",
+              status: "running",
+              agentId: "22222222-2222-4222-8222-222222222222",
+              createdAt: new Date("2026-05-07T00:02:00.000Z"),
+              startedAt: new Date("2026-05-07T00:02:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain('aria-label="Hide details"');
+    expect(html).not.toContain(">Hide details<");
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("Transcript details");
   });
 });

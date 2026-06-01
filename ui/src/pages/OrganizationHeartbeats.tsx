@@ -14,6 +14,7 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useToast } from "@/context/ToastContext";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { buildAgentSchedulerState, humanizeUnderscore, isHeartbeatToggleOn } from "@/lib/heartbeat-scheduler";
+import { getRunFailureDisplay } from "@/lib/run-detail-display";
 import { queryKeys } from "@/lib/queryKeys";
 import { agentRouteRef, agentUrl, cn, formatDateTime, relativeTime } from "@/lib/utils";
 
@@ -24,7 +25,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function latestRunSummary(run: HeartbeatRun | null) {
   if (!run) return null;
-  if (run.error?.trim()) return run.error.trim();
+  if (run.status === "failed" || run.status === "timed_out") {
+    return getRunFailureDisplay(run)?.body ?? "Run exited with an error.";
+  }
   const result = asRecord(run.resultJson);
   const summary = typeof result?.summary === "string" && result.summary.trim()
     ? result.summary.trim()

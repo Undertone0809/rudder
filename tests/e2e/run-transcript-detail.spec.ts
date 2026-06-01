@@ -19,6 +19,34 @@ async function createOrganization(page: Page, name: string) {
   return orgRes.json();
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function formatRunOccurrenceForTest(date: Date, now: Date) {
+  const time = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  if (sameDay) return time;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday = date.getFullYear() === yesterday.getFullYear()
+    && date.getMonth() === yesterday.getMonth()
+    && date.getDate() === yesterday.getDate();
+  if (isYesterday) return `Yesterday ${time}`;
+  const dateLabel = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  }).format(date);
+  return `${dateLabel} ${time}`;
+}
+
 test.describe("Run transcript detail", () => {
   test("renders detail transcripts as readable progress chunks with collapsed grouped tool activity", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
@@ -185,7 +213,7 @@ test.describe("Run transcript detail", () => {
     });
   });
 
-  test("keeps long stderr excerpts inside the run detail pane", async ({ page }) => {
+  test("does not promote long stderr excerpts into the run detail summary", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-Long-Stderr-${Date.now()}`);
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -228,19 +256,11 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
 
     const detailPane = page.getByTestId("agent-runs-detail-pane");
-    const listPane = page.getByTestId("agent-runs-list-pane");
-    const stderrExcerpt = detailPane.getByTestId("run-stderr-excerpt");
-    await expect(stderrExcerpt).toBeVisible({ timeout: 15_000 });
-
-    const detailBox = await detailPane.boundingBox();
-    const listBox = await listPane.boundingBox();
-    const stderrBox = await stderrExcerpt.boundingBox();
-    expect(detailBox).not.toBeNull();
-    expect(listBox).not.toBeNull();
-    expect(stderrBox).not.toBeNull();
-    expect(stderrBox!.x).toBeGreaterThanOrEqual(detailBox!.x);
-    expect(stderrBox!.x + stderrBox!.width).toBeLessThanOrEqual(detailBox!.x + detailBox!.width + 1);
-    expect(stderrBox!.x + stderrBox!.width).toBeLessThan(listBox!.x);
+    await expect(detailPane.getByText("The run hit a system-level execution problem.", { exact: false })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(detailPane.getByTestId("run-stderr-excerpt")).toHaveCount(0);
+    await expect(detailPane.getByText("turn_id=019e2597", { exact: false })).toHaveCount(0);
 
     await page.screenshot({
       path: "/tmp/rudder-agent-run-stderr-contained.png",
@@ -248,7 +268,7 @@ test.describe("Run transcript detail", () => {
     });
   });
 
-  test("only promotes stderr excerpts for failure-status run detail pages", async ({ page }) => {
+  test("does not promote stderr excerpts for failed or successful run detail pages", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-Stderr-Status-${Date.now()}`);
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -308,7 +328,7 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${timedOutRunId}`, { waitUntil: "domcontentloaded" });
     const timedOutDetailPane = page.getByTestId("agent-runs-detail-pane");
     await expect(timedOutDetailPane.getByTestId("run-summary-card").getByText("timed out", { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(timedOutDetailPane.getByTestId("run-stderr-excerpt")).toBeVisible();
+    await expect(timedOutDetailPane.getByTestId("run-stderr-excerpt")).toHaveCount(0);
 
     await page.goto(`/agents/${agent.id}/runs/${succeededRunId}`, { waitUntil: "domcontentloaded" });
     const succeededDetailPane = page.getByTestId("agent-runs-detail-pane");
@@ -366,6 +386,126 @@ test.describe("Run transcript detail", () => {
 
     await page.screenshot({
       path: "tests/e2e/test-results/agent-run-id-copied.png",
+      fullPage: true,
+    });
+  });
+
+  test("shows run occurrence times in the compact runs list", async ({ page }) => {
+    const organization = await createOrganization(page, `Run-List-Time-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Run Time Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const now = new Date();
+    const todayStartedAt = new Date(now);
+    todayStartedAt.setMinutes(now.getMinutes() - 20, 0, 0);
+    const todayFinishedAt = new Date(todayStartedAt.getTime() + 92_000);
+    const olderStartedAt = new Date(now);
+    olderStartedAt.setDate(now.getDate() - 2);
+    olderStartedAt.setHours(8, 5, 0, 0);
+    const olderFinishedAt = new Date(olderStartedAt.getTime() + 4 * 60_000);
+    const todayRunId = randomUUID();
+    const olderRunId = randomUUID();
+
+    await e2eDb.insert(heartbeatRuns).values([
+      {
+        id: todayRunId,
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "scheduled",
+        triggerDetail: "Scheduled heartbeat",
+        status: "succeeded",
+        startedAt: todayStartedAt,
+        finishedAt: todayFinishedAt,
+        resultJson: { summary: "Today run should show clock time" },
+        createdAt: new Date(todayStartedAt.getTime() - 30_000),
+        updatedAt: todayFinishedAt,
+      },
+      {
+        id: olderRunId,
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "mention",
+        triggerDetail: "Mentioned",
+        status: "succeeded",
+        startedAt: olderStartedAt,
+        finishedAt: olderFinishedAt,
+        resultJson: { summary: "Older run should show date and time" },
+        createdAt: new Date(olderStartedAt.getTime() - 30_000),
+        updatedAt: olderFinishedAt,
+      },
+    ]);
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/agents/${agent.id}/runs/${todayRunId}`, { waitUntil: "domcontentloaded" });
+
+    const listPane = page.getByTestId("agent-runs-list-pane");
+    await expect(listPane).toBeVisible({ timeout: 15_000 });
+
+    const expectedTodayLabel = formatRunOccurrenceForTest(todayStartedAt, now);
+    const expectedOlderLabel = formatRunOccurrenceForTest(olderStartedAt, now);
+    const todayRow = listPane.getByRole("link", {
+      name: new RegExp(`Open run ${todayRunId.slice(0, 8)} from ${escapeRegExp(expectedTodayLabel)}`),
+    });
+    const olderRow = listPane.getByRole("link", {
+      name: new RegExp(`Open run ${olderRunId.slice(0, 8)} from ${escapeRegExp(expectedOlderLabel)}`),
+    });
+
+    await expect(todayRow).toBeVisible();
+    await expect(olderRow).toBeVisible();
+    await expect(todayRow.getByTestId("run-list-timing")).toContainText(expectedTodayLabel);
+    await expect(todayRow.getByTestId("run-list-timing")).toContainText("Ran for 1m 32s");
+    await expect(olderRow.getByTestId("run-list-timing")).toContainText(expectedOlderLabel);
+    await expect(olderRow.getByTestId("run-list-timing")).toContainText("Ran for 4m");
+    await expect(todayRow.getByTestId("run-list-timing")).toHaveAttribute("title", /Created/);
+
+    const listBox = await listPane.boundingBox();
+    const todayTimingBox = await todayRow.getByTestId("run-list-timing").boundingBox();
+    const olderTimingBox = await olderRow.getByTestId("run-list-timing").boundingBox();
+    expect(listBox).not.toBeNull();
+    expect(todayTimingBox).not.toBeNull();
+    expect(olderTimingBox).not.toBeNull();
+    expect(todayTimingBox!.x + todayTimingBox!.width).toBeLessThanOrEqual(listBox!.x + listBox!.width + 1);
+    expect(olderTimingBox!.x + olderTimingBox!.width).toBeLessThanOrEqual(listBox!.x + listBox!.width + 1);
+
+    await page.screenshot({
+      path: "/tmp/rudder-agent-run-list-occurrence-times.png",
+      fullPage: true,
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/agents/${agent.id}/runs`, { waitUntil: "domcontentloaded" });
+    const mobileListPane = page.getByTestId("agent-runs-list-pane");
+    await expect(mobileListPane).toBeVisible();
+    const mobileTodayRow = mobileListPane.getByRole("link", {
+      name: new RegExp(`Open run ${todayRunId.slice(0, 8)} from ${escapeRegExp(expectedTodayLabel)}`),
+    });
+    const mobileOlderRow = mobileListPane.getByRole("link", {
+      name: new RegExp(`Open run ${olderRunId.slice(0, 8)} from ${escapeRegExp(expectedOlderLabel)}`),
+    });
+    await expect(mobileTodayRow).toBeVisible();
+    await expect(mobileOlderRow).toBeVisible();
+    const mobileListBox = await mobileListPane.boundingBox();
+    const mobileOlderTimingBox = await mobileOlderRow.getByTestId("run-list-timing").boundingBox();
+    expect(mobileListBox).not.toBeNull();
+    expect(mobileOlderTimingBox).not.toBeNull();
+    expect(mobileOlderTimingBox!.x + mobileOlderTimingBox!.width).toBeLessThanOrEqual(mobileListBox!.x + mobileListBox!.width + 1);
+    await page.screenshot({
+      path: "/tmp/rudder-agent-run-list-occurrence-times-mobile.png",
       fullPage: true,
     });
   });

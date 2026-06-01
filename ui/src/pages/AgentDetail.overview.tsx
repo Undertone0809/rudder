@@ -26,6 +26,7 @@ import {
   RunActivityChart,
   PriorityChart,
   IssueStatusChart,
+  RunTriggerDistributionChart,
   SuccessRateChart,
   SkillsUsageChart,
 } from "../components/ActivityCharts";
@@ -275,9 +276,12 @@ export function AgentOverview({
       <LatestRunCard runs={runs} agentId={agentRouteId} />
 
       {/* Charts */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <ChartCard title="Run Activity" subtitle={`${rangeLabel} · relative daily run volume · hover for details`}>
           <RunActivityChart runs={chartRuns} days={chartDays} />
+        </ChartCard>
+        <ChartCard title="Run Triggers" subtitle={`${rangeLabel} · why runs started · hover for details`}>
+          <RunTriggerDistributionChart runs={chartRuns} />
         </ChartCard>
         <ChartCard title="Issues by Priority" subtitle={`${rangeLabel} · relative daily issue volume · hover for details`}>
           <PriorityChart issues={chartIssues} days={chartDays} />

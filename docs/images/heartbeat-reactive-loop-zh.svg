@@ -1,0 +1,55 @@
+<svg width="720" height="760" viewBox="0 0 720 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">响应式 Heartbeat</title>
+  <desc id="desc">Rudder 会先检查是否有可执行工作，再决定是否唤醒 agent runtime。</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0F172A" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <rect width="720" height="760" rx="28" fill="#F8FAFC"/>
+  <rect x="24" y="24" width="672" height="712" rx="24" fill="#FFFFFF" stroke="#E2E8F0"/>
+
+  <text x="54" y="72" fill="#0F172A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="760">响应式 Heartbeat</text>
+  <text x="54" y="106" fill="#475569" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">开启表示随时准备响应，不是一直运行。</text>
+
+  <rect x="220" y="144" width="280" height="84" rx="18" fill="#EFF6FF" stroke="#BFDBFE" filter="url(#shadow)"/>
+  <text x="360" y="179" text-anchor="middle" fill="#1E3A8A" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="740">Heartbeat</text>
+  <text x="360" y="207" text-anchor="middle" fill="#1E40AF" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19">保持开启</text>
+
+  <path d="M360 228V264" stroke="#334155" stroke-width="3" stroke-linecap="round"/>
+  <path d="M360 264L352 250H368L360 264Z" fill="#334155"/>
+
+  <rect x="220" y="270" width="280" height="84" rx="18" fill="#F0FDFA" stroke="#99F6E4" filter="url(#shadow)"/>
+  <text x="360" y="305" text-anchor="middle" fill="#115E59" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="740">Rudder 预检</text>
+  <text x="360" y="333" text-anchor="middle" fill="#0F766E" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19">检查工作状态</text>
+
+  <path d="M360 354V388" stroke="#334155" stroke-width="3" stroke-linecap="round"/>
+  <path d="M360 388L352 374H368L360 388Z" fill="#334155"/>
+
+  <path d="M360 384L514 462L360 540L206 462L360 384Z" fill="#FFF7ED" stroke="#FDBA74" stroke-width="2" filter="url(#shadow)"/>
+  <text x="360" y="449" text-anchor="middle" fill="#9A3412" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="740">有分配或</text>
+  <text x="360" y="480" text-anchor="middle" fill="#9A3412" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="740">评审任务吗？</text>
+
+  <path d="M258 514L188 564" stroke="#E11D48" stroke-width="3" stroke-linecap="round"/>
+  <path d="M188 564L195 548L205 562L188 564Z" fill="#E11D48"/>
+  <text x="206" y="548" fill="#BE123C" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17" font-weight="760">没有</text>
+
+  <path d="M462 514L532 564" stroke="#16A34A" stroke-width="3" stroke-linecap="round"/>
+  <path d="M532 564L515 562L525 548L532 564Z" fill="#16A34A"/>
+  <text x="494" y="548" fill="#15803D" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="17" font-weight="760">有</text>
+
+  <rect x="62" y="574" width="260" height="116" rx="18" fill="#FFF1F2" stroke="#FDA4AF" filter="url(#shadow)"/>
+  <text x="192" y="613" text-anchor="middle" fill="#9F1239" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="760">没有任务</text>
+  <text x="192" y="643" text-anchor="middle" fill="#BE123C" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18">跳过 runtime 调用</text>
+  <text x="192" y="670" text-anchor="middle" fill="#475569" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18">不会空转消耗 token</text>
+
+  <rect x="398" y="574" width="260" height="116" rx="18" fill="#F0FDF4" stroke="#86EFAC" filter="url(#shadow)"/>
+  <text x="528" y="610" text-anchor="middle" fill="#166534" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="760">有任务</text>
+  <text x="528" y="637" text-anchor="middle" fill="#15803D" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18">1. 选择最高优先级 issue</text>
+  <text x="528" y="663" text-anchor="middle" fill="#334155" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18">2. 唤醒 runtime</text>
+  <text x="528" y="687" text-anchor="middle" fill="#334155" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18">3. 留下证据</text>
+
+  <rect x="54" y="706" width="612" height="28" rx="14" fill="#F8FAFC" stroke="#E2E8F0"/>
+  <text x="360" y="726" text-anchor="middle" fill="#475569" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14">只有真的有事可做时，Rudder 才会调用 runtime。</text>
+</svg>

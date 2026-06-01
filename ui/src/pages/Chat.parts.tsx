@@ -124,7 +124,7 @@ import { cn, relativeTime } from "@/lib/utils";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
 export { ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog } from "./Chat.attachments";
-export { ChatAssistantAttributionRow, ProposalCard, chatIssueApprovalPayloadWithProposalOverride, chatMessageHoverBarClass, ChatLongMessageBody, readStructuredPayloadString, issueCreatedSystemMessageParts, ChatSystemMessageBody, AskUserHistoryRecord, AskUserAnswerBubble, AskUserPanel, ChatMessageItem, OptimisticUserDraftItem, ChatMessagesLoadingState, StreamTranscriptItem, AssistantDraftItem } from "./Chat.messages";
+export { ChatAssistantAttributionRow, ProposalCard, chatIssueApprovalPayloadWithProposalOverride, chatMessageHoverBarClass, ChatLongMessageBody, readStructuredPayloadString, issueCreatedSystemMessageParts, ChatSystemMessageBody, AskUserHistoryRecord, AskUserAnswerBubble, AskUserPanel, ChatMessageItem, OptimisticUserDraftItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, StreamTranscriptItem, AssistantDraftItem } from "./Chat.messages";
 
 export type ApprovalAction = "approve" | "reject" | "requestRevision";
 export type AttachmentPreviewState = {
@@ -177,6 +177,7 @@ export const EMPTY_STATE_PROMPT_GROUPS = [
 
 export const NO_PROJECT_ID = "__none__";
 export const CHAT_LAST_PROJECT_STORAGE_KEY = "rudder.chatLastProjectByOrg";
+export const CHAT_PROJECT_BY_AGENT_STORAGE_KEY = "rudder.chatProjectByAgentByOrg";
 
 export type EmptyStatePromptLabel = (typeof EMPTY_STATE_PROMPT_GROUPS)[number]["label"];
 export type EmptyStatePromptGroup = (typeof EMPTY_STATE_PROMPT_GROUPS)[number];
@@ -253,6 +254,69 @@ export function rememberChatProjectId(orgId: string, projectId: string | null) {
   } catch {
     // Ignore storage failures; project context still persists on saved conversations.
   }
+}
+
+export function readRememberedChatProjectIdForAgent(orgId: string, agentId: string): string | null | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem(CHAT_PROJECT_BY_AGENT_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return undefined;
+    const orgMap = (parsed as Record<string, unknown>)[orgId];
+    if (!orgMap || typeof orgMap !== "object") return undefined;
+    const value = (orgMap as Record<string, unknown>)[agentId];
+    return typeof value === "string" ? value : value === null ? null : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function rememberChatProjectIdForAgent(orgId: string, agentId: string | null | undefined, projectId: string | null) {
+  if (typeof window === "undefined" || !agentId) return;
+  try {
+    const raw = window.localStorage.getItem(CHAT_PROJECT_BY_AGENT_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const next = parsed && typeof parsed === "object"
+      ? parsed as Record<string, Record<string, string | null>>
+      : {};
+    const orgMap = next[orgId] && typeof next[orgId] === "object" ? next[orgId] : {};
+    orgMap[agentId] = projectId;
+    next[orgId] = orgMap;
+    window.localStorage.setItem(CHAT_PROJECT_BY_AGENT_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore storage failures; the organization-level default still applies.
+  }
+}
+
+function isVisibleProjectId(projectId: string | null | undefined, projects: readonly Pick<Project, "id">[]) {
+  return Boolean(projectId && projects.some((project) => project.id === projectId));
+}
+
+export function resolveDefaultDraftChatProjectId({
+  orgId,
+  projects,
+  issue,
+  agentId,
+}: {
+  orgId: string;
+  projects: readonly Pick<Project, "id">[];
+  issue?: Pick<Issue, "projectId"> | null;
+  agentId?: string | null;
+}) {
+  if (isVisibleProjectId(issue?.projectId, projects)) return issue!.projectId!;
+
+  if (agentId) {
+    const agentRememberedProjectId = readRememberedChatProjectIdForAgent(orgId, agentId);
+    if (agentRememberedProjectId === null) return NO_PROJECT_ID;
+    if (isVisibleProjectId(agentRememberedProjectId, projects)) return agentRememberedProjectId!;
+  }
+
+  const rememberedProjectId = readRememberedChatProjectId(orgId);
+  if (rememberedProjectId === null) return NO_PROJECT_ID;
+  if (isVisibleProjectId(rememberedProjectId, projects)) return rememberedProjectId!;
+
+  return NO_PROJECT_ID;
 }
 
 export function projectContextId(conversation: ChatConversation | null | undefined) {

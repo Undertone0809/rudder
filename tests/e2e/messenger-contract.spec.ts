@@ -89,6 +89,78 @@ async function expectMessengerThreadStartsAtBottom(page: Page, heading: string) 
 }
 
 test.describe("Messenger unified threads contract", () => {
+  test("loads additional chat sessions in the Messenger sidebar without fetching every thread up front", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Paged-Sessions-${Date.now()}`);
+    const baseTime = Date.parse("2026-05-15T12:00:00.000Z");
+    const rows = Array.from({ length: 55 }).map((_, index) => {
+      const activityAt = new Date(baseTime - index * 60_000);
+      return {
+        id: randomUUID(),
+        orgId: organization.id,
+        title: `Paged session ${String(index + 1).padStart(2, "0")}`,
+        summary: `Paged session preview ${index + 1}`,
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: "local-board",
+        lastMessageAt: activityAt,
+        createdAt: activityAt,
+        updatedAt: activityAt,
+      };
+    });
+    await e2eDb.insert(chatConversations).values(rows);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    const unpagedThreadRequests: string[] = [];
+    const fullChatListRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        request.method() === "GET"
+        && url.pathname === `/api/orgs/${organization.id}/messenger/threads`
+        && url.search === ""
+      ) {
+        unpagedThreadRequests.push(request.url());
+      }
+      if (
+        request.method() === "GET"
+        && url.pathname === `/api/orgs/${organization.id}/chats`
+        && url.searchParams.get("status") === "active"
+      ) {
+        fullChatListRequests.push(request.url());
+      }
+    });
+
+    const firstPageResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?limit=40`),
+    );
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    const firstPage = await (await firstPageResponse).json();
+    expect(firstPage.items).toHaveLength(40);
+    expect(firstPage.pageInfo.hasMore).toBe(true);
+    expect(firstPage.items.some((item: { title: string }) => item.title === "Paged session 55")).toBe(false);
+    expect(unpagedThreadRequests).toEqual([]);
+    expect(fullChatListRequests).toEqual([]);
+
+    const nextPageResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?cursor=`)
+      && response.url().includes("limit=40"),
+    );
+    await page.getByTestId("workspace-sidebar").locator("nav").evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+      node.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    const nextPage = await (await nextPageResponse).json();
+    expect(nextPage.items.some((item: { title: string }) => item.title === "Paged session 55")).toBe(true);
+    await expect(page.getByTestId(threadTestId(`chat:${rows[54]!.id}`))).toBeVisible({ timeout: 15_000 });
+    expect(unpagedThreadRequests).toEqual([]);
+    expect(fullChatListRequests).toEqual([]);
+  });
+
   test("double-clicking primary rail Messenger scrolls the sidebar to unread threads", async ({ page }) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
@@ -1064,6 +1136,9 @@ test.describe("Messenger unified threads contract", () => {
       ]);
 
     const runCard = page.locator(`[data-testid="messenger-system-card-failed-runs-${olderRunId}"]`);
+    await expect(runCard).toContainText("The run hit a system-level execution problem.");
+    await expect(runCard).not.toContainText("Process exited with code 1.");
+    await expect(runCard).not.toContainText("Agent bootstrap failed before tool execution.");
     const issueLink = runCard.getByTestId(`messenger-failed-run-issue-title-${olderRunId}`);
     await expect(issueLink).toHaveText("Create your first agent");
     await expect(issueLink).toHaveAttribute("href", new RegExp(`/issues/${issue.id}$`));
@@ -1355,5 +1430,60 @@ test.describe("Messenger unified threads contract", () => {
     const approvalMessage = page.getByTestId(`messenger-approval-message-${approval.id}`);
     await approvalMessage.hover();
     await expect(page.getByTestId(`messenger-approval-message-${approval.id}-timestamp`)).toHaveText(exactTimestampPattern());
+  });
+
+  test("supports chat pin, archive, and delete actions from Messenger menus", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Actions-${Date.now()}`);
+
+    async function createChat(title: string) {
+      const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title,
+          summary: `${title} summary`,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+        },
+      });
+      expect(res.ok()).toBe(true);
+      return res.json();
+    }
+
+    const pinChat = await createChat("Pin action chat");
+    const archiveChat = await createChat("Archive action chat");
+    const deleteChat = await createChat("Delete action chat");
+    const sidebarDeleteChat = await createChat("Sidebar delete action chat");
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${pinChat.id}`, { waitUntil: "commit" });
+    await page.getByTestId("chat-actions-trigger").click();
+    await expect(page.getByRole("menuitem", { name: "Pin Chat" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Archive" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Pin Chat" }).click();
+    const pinnedRes = await page.request.get(`/api/chats/${pinChat.id}`);
+    expect(pinnedRes.ok()).toBe(true);
+    await expect.poll(async () => (await (await page.request.get(`/api/chats/${pinChat.id}`)).json()).isPinned).toBe(true);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${archiveChat.id}`, { waitUntil: "commit" });
+    await page.getByTestId("chat-actions-trigger").click();
+    await page.getByRole("menuitem", { name: "Archive" }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat(?:\?[^#]*)?$/, { timeout: 15_000 });
+    await expect.poll(async () => (await (await page.request.get(`/api/chats/${archiveChat.id}`)).json()).status).toBe("archived");
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${deleteChat.id}`, { waitUntil: "commit" });
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByTestId("chat-actions-trigger").click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat(?:\?[^#]*)?$/, { timeout: 15_000 });
+    await expect.poll(async () => (await page.request.get(`/api/chats/${deleteChat.id}`)).status()).toBe(404);
+
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    const sidebarRow = page.getByTestId(threadTestId(`chat:${sidebarDeleteChat.id}`));
+    await expect(sidebarRow).toContainText("Sidebar delete action chat");
+    await sidebarRow.hover();
+    await sidebarRow.getByRole("button", { name: "Chat actions" }).click();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await expect.poll(async () => (await page.request.get(`/api/chats/${sidebarDeleteChat.id}`)).status()).toBe(404);
+    await expect(sidebarRow).toHaveCount(0);
   });
 });

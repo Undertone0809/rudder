@@ -445,6 +445,20 @@ function renderChat() {
   };
 }
 
+function dispatchPasteFiles(target: Element, files: File[]) {
+  const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(pasteEvent, "clipboardData", {
+    value: {
+      items: files.map((file) => ({
+        kind: "file",
+        getAsFile: () => file,
+      })),
+      files,
+    },
+  });
+  target.dispatchEvent(pasteEvent);
+}
+
 beforeEach(() => {
   installLocalStorageMock();
   resetChatPendingAttachmentsForTests();
@@ -658,6 +672,53 @@ describe("Chat ask_user panel", () => {
     expect(mockState.sendMessageStream.mock.calls[0]?.[2]).toMatchObject({
       files: [attachment],
     });
+    expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).toBeNull();
+  });
+
+  it("lets Other answers paste attachments directly into the input panel", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    const clickButton = (label: string) => {
+      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+        candidate.textContent?.includes(label)
+      );
+      expect(button).not.toBeUndefined();
+      act(() => {
+        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    };
+
+    clickButton("Other");
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+
+    const attachment = new File(["receipt details"], "receipt.txt", { type: "text/plain" });
+    await act(async () => {
+      dispatchPasteFiles(textarea!, [attachment]);
+      await Promise.resolve();
+    });
+
+    expect(panel?.textContent).toContain("receipt.txt");
+    expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).not.toBeNull();
+
+    await act(async () => {
+      clickButton("Submit answer");
+      await Promise.resolve();
+    });
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    const sentFiles = mockState.sendMessageStream.mock.calls[0]?.[2]?.files as File[] | undefined;
+    expect(sentFiles).toHaveLength(1);
+    expect(sentFiles?.[0]?.name).toBe("receipt.txt");
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).toBeNull();
   });
 

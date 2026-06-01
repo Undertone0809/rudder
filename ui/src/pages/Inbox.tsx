@@ -14,6 +14,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { retryHeartbeatRun } from "../lib/heartbeat-retry";
 import { queryKeys } from "../lib/queryKeys";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
+import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 
@@ -97,14 +98,8 @@ const APPROVAL_FILTER_OPTIONS = [
   icon: typeof ShieldCheck;
 }>;
 
-function firstNonEmptyLine(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const line = value.split("\n").map((chunk) => chunk.trim()).find(Boolean);
-  return line ?? null;
-}
-
 function runFailureMessage(run: HeartbeatRun): string {
-  return firstNonEmptyLine(run.error) ?? firstNonEmptyLine(run.stderrExcerpt) ?? "Run exited with an error.";
+  return getRunFailureDisplay(run)?.body ?? "Run exited with an error.";
 }
 
 function approvalStatusLabel(status: Approval["status"]): string {

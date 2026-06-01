@@ -66,7 +66,16 @@ import {
   ChevronDown,
   X
 } from "lucide-react";
-import { Step, AdapterType, DEFAULT_TASK_DESCRIPTION, ONBOARDING_PROJECT_NAME, ONBOARDING_DRAFT_ORGANIZATION_STORAGE_KEY, upsertOrganization } from "./OnboardingWizard.parts";
+import {
+  DEFAULT_FIRST_AGENT_TITLE,
+  DEFAULT_TASK_DESCRIPTION,
+  DEFAULT_TASK_TITLE,
+  ONBOARDING_DRAFT_ORGANIZATION_STORAGE_KEY,
+  ONBOARDING_PROJECT_NAME,
+  type AdapterType,
+  type Step,
+  upsertOrganization,
+} from "./OnboardingWizard.parts";
 import { AdapterEnvironmentResult } from "./OnboardingWizard.environment";
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
@@ -121,9 +130,7 @@ export function OnboardingWizard() {
   const [unsetAnthropicLoading, setUnsetAnthropicLoading] = useState(false);
   const [showMoreAdapters, setShowMoreAdapters] = useState(false);
   // Step 3
-  const [taskTitle, setTaskTitle] = useState(
-    "Hire your first engineer and create a hiring plan"
-  );
+  const [taskTitle, setTaskTitle] = useState(DEFAULT_TASK_TITLE);
   const [taskDescription, setTaskDescription] = useState(
     DEFAULT_TASK_DESCRIPTION
   );
@@ -455,7 +462,7 @@ export function OnboardingWizard() {
     setAdapterEnvLoading(false);
     setForceUnsetAnthropicApiKey(false);
     setUnsetAnthropicLoading(false);
-    setTaskTitle("Hire your first engineer and create a hiring plan");
+    setTaskTitle(DEFAULT_TASK_TITLE);
     setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
     setCreatedCompanyName(null);
@@ -698,6 +705,7 @@ export function OnboardingWizard() {
       const agentPayload = {
         name: trimmedAgentName,
         role: "ceo",
+        title: DEFAULT_FIRST_AGENT_TITLE,
         agentRuntimeType,
         agentRuntimeConfig: buildAdapterConfig(),
         runtimeConfig: {
@@ -1226,7 +1234,7 @@ export function OnboardingWizard() {
                           <p className="text-[11px] text-amber-900/90 leading-relaxed">
                             Claude failed while{" "}
                             <span className="font-mono">ANTHROPIC_API_KEY</span>{" "}
-                            is set. You can clear it in this CEO adapter config
+                            is set. You can clear it in this agent adapter config
                             and retry the probe.
                           </p>
                           <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={

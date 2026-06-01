@@ -257,7 +257,7 @@ const blankAutomationTemplate: AutomationTemplate = {
     "zh-CN": "",
   },
   scheduleCron: "0 9 * * *",
-  outputMode: "track_issue",
+  outputMode: "chat_output",
 };
 
 function localizeText(text: LocalizedText, locale = getUiLocale()) {
@@ -345,7 +345,7 @@ export function Automations() {
     concurrencyPolicy: "coalesce_if_active",
     catchUpPolicy: "skip_missed",
     scheduleCron: "0 9 * * *",
-    outputMode: "track_issue" as AutomationOutputMode,
+    outputMode: "chat_output" as AutomationOutputMode,
     chatConversationId: "",
     allowAssigneeChatMismatch: false,
   });
@@ -360,7 +360,7 @@ export function Automations() {
       concurrencyPolicy: "coalesce_if_active",
       catchUpPolicy: "skip_missed",
       scheduleCron: "0 9 * * *",
-      outputMode: "track_issue",
+      outputMode: "chat_output",
       chatConversationId: "",
       allowAssigneeChatMismatch: false,
     });
@@ -469,7 +469,6 @@ export function Automations() {
       if (draft.scheduleCron.trim()) {
         await automationsApi.createTrigger(automation.id, {
           kind: "schedule",
-          label: describeSchedule(draft.scheduleCron),
           cronExpression: draft.scheduleCron.trim(),
           timezone: getLocalTimezone(),
         });

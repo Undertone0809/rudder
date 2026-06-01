@@ -34,6 +34,8 @@ import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js
 
 export const CHAT_UNSUPPORTED_ADAPTER_TYPES = new Set<AgentRuntimeType>(["process", "http"]);
 export const CHAT_RESULT_SENTINEL_PREFIX = "__RUDDER_RESULT_";
+export const CHAT_ASSISTANT_USER_ERROR_MESSAGE =
+  "The assistant hit a system-level issue. Rudder saved the details for diagnostics; retry when ready.";
 
 export interface ChatAttachmentPromptReference {
   localPath?: string;
@@ -385,6 +387,7 @@ export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntime
     "For ask_user, each requestUserInput question id must be unique, and option ids must be unique within their question. Set question selectionMode to 'multiple' only when the user can choose more than one option; omit it for normal single-choice questions.",
     "Use result kind 'issue_proposal' for larger work that should become an issue.",
     "For issue_proposal, include exactly one owner decision in structuredPayload.issueProposal: either assigneeAgentId/assigneeUserId for the proposed owner, or assigneeUnassignedReason explaining why the issue should intentionally remain unassigned. Do not leave ownership implicit. Do not default to the selected chat agent unless that agent should actually own execution.",
+    "Issue proposals create To Do issues by default. Omit status for the normal runnable default; set status to 'backlog' only when the issue should intentionally wait and not be picked up by agents yet.",
     "Use result kind 'automation_create' when the user clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. This creates a Rudder Automation directly without a board approval proposal.",
     "For automation_create, include structuredPayload.automationCreate with title, description, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to assign the automation to the selected chat agent. Use outputMode 'chat_output' when the user wants the result sent back in chat.",
     "Reply in two phases.",
@@ -416,6 +419,7 @@ export function buildResponseSchemaPromptSection(planMode: boolean) {
           issueProposal: {
             title: "required for issue_proposal",
             description: "required for issue_proposal",
+            status: "optional backlog|todo|in_progress|in_review|done|blocked|cancelled; omit for default todo, use backlog only when explicitly deferring work",
             priority: "critical|high|medium|low",
             assigneeAgentId: "optional uuid",
             assigneeUserId: "optional user id",
@@ -468,7 +472,6 @@ export function buildResponseSchemaPromptSection(planMode: boolean) {
             schedule: {
               cronExpression: "required cron expression, for example 0 12 * * *",
               timezone: "required IANA timezone, for example Asia/Shanghai",
-              label: "optional short trigger label",
             },
           },
           richReferences: [

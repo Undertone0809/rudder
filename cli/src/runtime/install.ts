@@ -12,6 +12,7 @@ export const DEFAULT_RUNTIME_CACHE_MAX_ENTRIES = 5;
 export const DEFAULT_RUNTIME_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 export const DEFAULT_RUNTIME_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const DEFAULT_RUNTIME_CACHE_KEEP_PREVIOUS = 1;
+const RUNTIME_NPM_INSTALL_FLAGS = ["--omit=dev", "--include=optional", "--no-audit", "--no-fund"];
 
 export interface RuntimeInstallMetadata {
   version: 1;
@@ -162,7 +163,7 @@ export async function ensureRuntimeInstalled(
   const packageVersion = resolveRuntimePackageVersion(options.version);
   const cacheDir = resolveRuntimeCacheDir(packageVersion, options.homeDir);
   const packageSpec = resolveRuntimePackageSpec(packageVersion, packageName);
-  const command = `npm install --prefix ${cacheDir} --omit=dev --no-audit --no-fund ${packageSpec}`;
+  const command = formatRuntimeInstallCommand(cacheDir, packageSpec);
 
   if (await isRuntimeCacheHit({ cacheDir, version: packageVersion, packageName })) {
     await touchRuntimeInstallMetadata(cacheDir);
@@ -193,7 +194,7 @@ export async function ensureRuntimeInstalled(
         status: "hit",
         cacheDir: fallbackCacheDir,
         packageSpec: fallbackSpec,
-        command: `npm install --prefix ${fallbackCacheDir} --omit=dev --no-audit --no-fund ${fallbackSpec}`,
+        command: formatRuntimeInstallCommand(fallbackCacheDir, fallbackSpec),
         output: "",
       };
     }
@@ -216,7 +217,7 @@ export async function ensureRuntimeInstalled(
         status: "installed",
         cacheDir: fallbackCacheDir,
         packageSpec: fallbackSpec,
-        command: `npm install --prefix ${fallbackCacheDir} --omit=dev --no-audit --no-fund ${fallbackSpec}`,
+        command: formatRuntimeInstallCommand(fallbackCacheDir, fallbackSpec),
         output: fallbackOutput,
       };
     }
@@ -263,13 +264,17 @@ function runNpmRuntimeInstall(
 ): SpawnSyncResultLike {
   return spawnSyncImpl(
     process.platform === "win32" ? "npm.cmd" : "npm",
-    ["install", "--prefix", cacheDir, "--omit=dev", "--no-audit", "--no-fund", packageSpec],
+    ["install", "--prefix", cacheDir, ...RUNTIME_NPM_INSTALL_FLAGS, packageSpec],
     {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
     },
   );
+}
+
+function formatRuntimeInstallCommand(cacheDir: string, packageSpec: string): string {
+  return `npm install --prefix ${cacheDir} ${RUNTIME_NPM_INSTALL_FLAGS.join(" ")} ${packageSpec}`;
 }
 
 function collectSpawnOutput(result: SpawnSyncResultLike): string {

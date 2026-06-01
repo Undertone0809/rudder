@@ -153,6 +153,59 @@ describe("messengerService and issue follows", () => {
     }
   });
 
+  it("paginates Messenger thread summaries with stable cursors", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-thread-pagination";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Thread Pagination Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Thread Pagination Org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const baseTime = Date.parse("2026-05-01T12:00:00.000Z");
+    const conversationIds = Array.from({ length: 6 }, () => randomUUID());
+    await db.insert(chatConversations).values(
+      conversationIds.map((conversationId, index) => {
+        const activityAt = new Date(baseTime - index * 60_000);
+        return {
+          id: conversationId,
+          orgId,
+          title: `Pagination chat ${index + 1}`,
+          summary: `Summary ${index + 1}`,
+          issueCreationMode: "manual_approval" as const,
+          planMode: false,
+          createdByUserId: userId,
+          lastMessageAt: activityAt,
+          createdAt: activityAt,
+          updatedAt: activityAt,
+        };
+      }),
+    );
+
+    const firstPage = await messengerSvc.listThreadSummaryPage(orgId, userId, { limit: 3 });
+    const secondPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 3,
+      cursor: firstPage.pageInfo.nextCursor,
+    });
+
+    expect(firstPage.items.map((item) => item.threadKey)).toEqual([
+      `chat:${conversationIds[0]}`,
+      `chat:${conversationIds[1]}`,
+      `chat:${conversationIds[2]}`,
+    ]);
+    expect(firstPage.pageInfo).toMatchObject({ limit: 3, hasMore: true });
+    expect(firstPage.pageInfo.nextCursor).toEqual(expect.any(String));
+    expect(secondPage.items.map((item) => item.threadKey)).toEqual([
+      `chat:${conversationIds[3]}`,
+      `chat:${conversationIds[4]}`,
+      `chat:${conversationIds[5]}`,
+    ]);
+    expect(secondPage.pageInfo).toEqual({ limit: 3, nextCursor: null, hasMore: false });
+  });
+
   it("persists follows and includes followed plus assigned issues in the Messenger issues thread", async () => {
     const orgId = randomUUID();
     const userId = "board-user-1";
@@ -413,6 +466,52 @@ describe("messengerService and issue follows", () => {
     expect(editedAfterEdit?.attachments).toHaveLength(1);
     expect(editedAfterEdit?.attachments[0]?.assetId).toBe(originalAfterEdit?.attachments[0]?.assetId);
     expect(editedAfterEdit?.attachments[0]?.contentPath).toBe(originalAfterEdit?.attachments[0]?.contentPath);
+  });
+
+  it("can list chat messages without hydrating full persisted transcripts", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const userId = "board-user-light-messages";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Lightweight Messages Org",
+      urlKey: deriveOrganizationUrlKey("Chat Lightweight Messages Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Transcript payload",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+
+    const message = await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Done",
+      transcript: [
+        { kind: "stdout", ts: "2026-03-26T08:00:00.000Z", text: "large output" },
+        { kind: "result", ts: "2026-03-26T08:01:30.000Z", text: "done", inputTokens: 1, outputTokens: 1, cachedTokens: 0, costUsd: 0, subtype: "success", isError: false, errors: [] },
+      ],
+    });
+
+    const [lightweight] = await chatSvc.listMessages(conversationId, { includeTranscript: false });
+    const transcript = await chatSvc.getMessageTranscript(conversationId, message.id);
+
+    expect(lightweight?.transcript).toBeUndefined();
+    expect(lightweight?.transcriptSummary).toEqual({
+      entryCount: 2,
+      startedAt: "2026-03-26T08:00:00.000Z",
+      endedAt: "2026-03-26T08:01:30.000Z",
+    });
+    expect(lightweight?.structuredPayload).toBeNull();
+    expect(transcript?.transcript).toHaveLength(2);
   });
 
   it("does not mark a chat unread until an incoming message has visible content", async () => {
@@ -1698,7 +1797,9 @@ describe("messengerService and issue follows", () => {
     expect(thread.detail.items.map((item) => item.id)).toEqual([olderRunId, newerRunId]);
     expect(thread.summary.unreadCount).toBe(1);
     expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
-    expect(failedRunsSummary?.preview).toBe("Newer run failed");
+    expect(failedRunsSummary?.preview).toBe(
+      "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.",
+    );
     expect(failedRunsSummary?.unreadCount).toBe(1);
     expect(failedRunsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
   });

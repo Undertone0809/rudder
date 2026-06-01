@@ -1,12 +1,23 @@
+// @vitest-environment jsdom
+
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it } from "vitest";
 import type { HeartbeatRun } from "@rudderhq/shared";
 import {
   applyRunFilters,
+  applyRunSort,
   parseRunFilterState,
+  RunFiltersToolbar,
+  type RunFilterState,
   runFilterChips,
   runSkillOptions,
   writeRunFilterState,
 } from "./AgentDetail.run-filters";
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
   return {
@@ -46,9 +57,54 @@ function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
   };
 }
 
+function defaultFilterState(overrides: Partial<RunFilterState> = {}): RunFilterState {
+  return {
+    view: "all",
+    q: "",
+    statuses: [],
+    sources: [],
+    contexts: [],
+    skills: [],
+    date: "all",
+    cost: [],
+    sort: "newest",
+    ...overrides,
+  };
+}
+
+function renderToolbar({
+  state = defaultFilterState(),
+  onChange = () => undefined,
+}: {
+  state?: RunFilterState;
+  onChange?: (patch: Partial<RunFilterState>) => void;
+} = {}) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => {
+    root.render(createElement(RunFiltersToolbar, {
+      runs: [],
+      filteredCount: 0,
+      state,
+      onChange,
+      onClear: () => undefined,
+    }));
+  });
+  return { container, root };
+}
+
+function cleanupToolbar(root: Root, container: HTMLElement) {
+  act(() => {
+    root.unmount();
+  });
+  container.remove();
+  document.body.replaceChildren();
+}
+
 describe("agent run filters", () => {
   it("parses and writes URL query state without dropping unrelated params", () => {
-    const original = new URLSearchParams("tab=runs&runView=failed&runStatus=failed,timed_out&runContext=retry&runSkill=build-advisor&runQ=process");
+    const original = new URLSearchParams("tab=runs&runView=failed&runStatus=failed,timed_out&runContext=retry&runSkill=build-advisor&runQ=process&runSort=duration_desc");
     const state = parseRunFilterState(original);
 
     expect(state.view).toBe("failed");
@@ -56,6 +112,7 @@ describe("agent run filters", () => {
     expect(state.contexts).toEqual(["retry"]);
     expect(state.skills).toEqual(["build-advisor"]);
     expect(state.q).toBe("process");
+    expect(state.sort).toBe("duration_desc");
 
     const next = writeRunFilterState(original, {
       view: "all",
@@ -63,6 +120,7 @@ describe("agent run filters", () => {
       statuses: [],
       contexts: [],
       skills: [],
+      sort: "newest",
     });
 
     expect(next.get("tab")).toBe("runs");
@@ -71,6 +129,7 @@ describe("agent run filters", () => {
     expect(next.get("runContext")).toBeNull();
     expect(next.get("runSkill")).toBeNull();
     expect(next.get("runQ")).toBeNull();
+    expect(next.get("runSort")).toBeNull();
   });
 
   it("filters by status, issue context, retry context, used skill, token cost, and search text", () => {
@@ -135,6 +194,7 @@ describe("agent run filters", () => {
       skills: ["build-advisor"],
       date: "all",
       cost: ["high_tokens"],
+      sort: "newest",
     });
 
     expect(filtered.map((item) => item.id)).toEqual([skillRun.id]);
@@ -172,6 +232,7 @@ describe("agent run filters", () => {
       skills: ["build-advisor", "debug-run-transcript"],
       date: "7d",
       cost: ["long"],
+      sort: "duration_desc",
     });
 
     expect(chips).toEqual([
@@ -184,5 +245,93 @@ describe("agent run filters", () => {
       ">30m",
       "7d",
     ]);
+  });
+
+  it("sorts filtered runs by duration after filtering", () => {
+    const shortRun = run({
+      id: "11111111-0000-4000-8000-000000000000",
+      startedAt: new Date("2026-05-24T12:00:00.000Z"),
+      finishedAt: new Date("2026-05-24T12:03:00.000Z"),
+      createdAt: new Date("2026-05-24T12:00:00.000Z"),
+    });
+    const longRun = run({
+      id: "22222222-0000-4000-8000-000000000000",
+      startedAt: new Date("2026-05-24T11:00:00.000Z"),
+      finishedAt: new Date("2026-05-24T12:00:00.000Z"),
+      createdAt: new Date("2026-05-24T11:00:00.000Z"),
+    });
+    const mediumRun = run({
+      id: "33333333-0000-4000-8000-000000000000",
+      startedAt: new Date("2026-05-24T10:00:00.000Z"),
+      finishedAt: new Date("2026-05-24T10:20:00.000Z"),
+      createdAt: new Date("2026-05-24T10:00:00.000Z"),
+    });
+
+    expect(applyRunSort([shortRun, longRun, mediumRun], "duration_desc").map((item) => item.id)).toEqual([
+      longRun.id,
+      mediumRun.id,
+      shortRun.id,
+    ]);
+  });
+
+  it("sorts runs by ascending token and cost totals", () => {
+    const cheap = run({
+      id: "11111111-0000-4000-8000-000000000000",
+      usageJson: { inputTokens: 10, outputTokens: 5, costCents: 1 },
+      createdAt: new Date("2026-05-24T12:00:00.000Z"),
+    });
+    const expensive = run({
+      id: "22222222-0000-4000-8000-000000000000",
+      usageJson: { inputTokens: 100, outputTokens: 50, costCents: 20 },
+      createdAt: new Date("2026-05-24T11:00:00.000Z"),
+    });
+
+    expect(applyRunSort([expensive, cheap], "tokens_asc").map((item) => item.id)).toEqual([
+      cheap.id,
+      expensive.id,
+    ]);
+    expect(applyRunSort([expensive, cheap], "cost_asc").map((item) => item.id)).toEqual([
+      cheap.id,
+      expensive.id,
+    ]);
+  });
+
+  it("uses the issue-board sort interaction for run sorting", () => {
+    const patches: Array<Partial<RunFilterState>> = [];
+    const { container, root } = renderToolbar({
+      onChange: (patch) => patches.push(patch),
+    });
+
+    try {
+      const sortButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Sort"),
+      );
+      expect(sortButton?.textContent).toContain("Sort");
+      expect(sortButton?.textContent).not.toContain("Newest");
+
+      act(() => {
+        sortButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+
+      const createdButton = Array.from(document.body.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Created"),
+      );
+      const durationButton = Array.from(document.body.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Duration"),
+      );
+      expect(createdButton?.textContent).toContain("\u2193");
+
+      act(() => {
+        createdButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(patches.at(-1)).toMatchObject({ sort: "oldest" });
+
+      act(() => {
+        durationButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(patches.at(-1)).toMatchObject({ sort: "duration_asc" });
+    } finally {
+      cleanupToolbar(root, container);
+    }
   });
 });

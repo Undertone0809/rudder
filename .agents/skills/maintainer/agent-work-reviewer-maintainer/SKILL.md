@@ -177,7 +177,7 @@ with unrelated dirty feature groups, use a mixed-state verdict instead of a
 binary pass/fail. Examples:
 
 - `accept`: no blocking product, behavior, validation, or handoff gaps remain
-  for the requested scope.
+  for the requested scope and verdict level.
 - `conditional accept`: the artifact direction is sound, but merge/handoff is
   blocked by missing proof, unrelated dirty work, or explicit reviewer follow-up.
 - `needs more evidence`: the required scenario, diff, source data, or validation
@@ -185,11 +185,51 @@ binary pass/fail. Examples:
 - `reject`: the artifact solves the wrong problem or introduces a blocking
   regression.
 
+Every verdict must declare its level:
+
+- `stage verdict`: judges whether the current requirements, proposal, design,
+  implementation slice, or review artifact is good enough to proceed to the
+  next stage.
+- `final handoff verdict`: judges whether the requested work can be accepted as
+  done, merged, released, or handed to the user with no blocking evidence gap.
+
+Do not let a `stage accept` read like a final handoff. If terminal product
+proof, commit/push state, public release evidence, or reviewer follow-up is
+still missing, the final verdict cannot be `accept` even when the stage verdict
+is positive.
+
 For child-reviewer outputs, preserve the parent task boundary. Do not turn the
 review into implementation and do not judge sibling or unrelated dirty work as
 part of the artifact unless it affects merge/handoff safety.
 
-### 4.1 Run The Real Scenario When It Matters
+### 4.1 Evidence Freshness Guard
+
+Before writing the verdict, state the evidence baseline being reviewed. This
+prevents repeated reviewer child sessions from re-judging stale or mismatched
+artifacts.
+
+Include the relevant subset:
+
+- target id: session, run, PR, commit, branch, diff, proposal, release, or
+  screenshot
+- git basis: current branch and commit SHA, plus whether the worktree is dirty
+- diff basis: changed files or `git diff --stat` scope inspected
+- artifact basis: plan/proposal/screenshot/log path and timestamp when relevant
+- validation basis: checks, browser/Desktop evidence, CI, release workflow, or
+  product proof actually inspected
+- review round: first pass, delta review, second round, or final review
+
+If a prior reviewer already judged the same target, same git SHA, and same
+artifact basis, run a delta review against the changed evidence instead of
+repeating the full review. If there is no changed evidence, say that the prior
+verdict still applies and name the missing proof instead of producing a fresh
+confident verdict.
+
+For spawned reviewer or sub-review work, explicitly say which artifact is being
+reviewed. Do not silently upgrade the scope from "this proposal" or "this diff"
+to the whole dirty worktree.
+
+### 4.2 Run The Real Scenario When It Matters
 
 For functional review, UI review, Desktop review, agent-visible workflow review,
 or workflow-regression review, prefer direct scenario verification over
@@ -237,6 +277,8 @@ the relevant subset:
 
 - target: session, run, PR, branch, commit, diff, proposal, screenshot, release,
   or browser state
+- evidence baseline: git SHA/branch, dirty state, diff scope, artifact timestamp,
+  and review round when available
 - user intent: original request plus important corrections or constraints
 - changed object: the product/workflow/code object being reviewed
 - evidence inspected: files, diffs, logs, screenshots, docs, plans, tests, CI,
@@ -365,12 +407,21 @@ reviewers or a serial two-role fallback when that distinction affects trust.
 - Read `doc/DESIGN.md` before judging.
 - Verify rendered states with Browser, screenshot, Desktop shell evidence, or
   Computer Use against the real packaged app when native behavior matters.
+- For alignment, row rhythm, avatar/text/time centering, truncation, or
+  column-layout reviews, require production-shaped fixture data and measurable
+  proof when practical. Strong evidence includes real agent avatars, long labels
+  or message text, timestamps/action controls, a screenshot, and DOM bounding
+  boxes or centerline deltas for the elements being aligned.
 - Treat visual hierarchy, density, interaction feedback, animation, native app
   affordances, and copy clarity as product quality, not nitpicks.
 - Check whether menus, hover actions, dialogs, keyboard behavior, and icons match
   expected Rudder patterns.
 - If no visual evidence exists, the verdict should usually be `needs more
   evidence` or `conditional accept`.
+- If the claimed fix is "aligned" but the proof only uses placeholder data,
+  isolated component tests, or screenshots that hide the relevant avatar,
+  timestamp, action, or long-text state, the verdict should usually be
+  `conditional accept` until the real row shape is verified.
 
 ### Functional Workflow Review
 
@@ -463,6 +514,7 @@ line range tight.
 ## Judgment Rules
 
 - A task can be directionally correct and still not be done.
+- A stage can pass while final handoff is still blocked.
 - Passing typecheck/build does not prove product behavior.
 - A visible UI task is not done without rendered-state evidence.
 - A release task is not done until npm, tags, GitHub Release, Desktop assets,
@@ -536,6 +588,23 @@ overflow, hover, dialog, or responsive state matters.
 
 Must not:
 Call a layout-sensitive UI change fully accepted from code review alone.
+
+### Case: Alignment Review With Placeholder Proof
+
+Input:
+"这里行对齐没有做好. Review the fix." The submitted proof includes a component
+test with placeholder icons but no real agent avatar, no timestamp, and no
+browser geometry or screenshot of the production row.
+
+Expected behavior:
+The review treats the fix as directionally plausible but not fully proven. It
+asks for production-shaped fixture proof, ideally a browser screenshot plus DOM
+bounding boxes or centerline deltas for avatar, text, timestamp, and row
+container.
+
+Must not:
+Accept the alignment fix as final from placeholder component tests or a cropped
+screenshot that does not show the elements whose alignment was questioned.
 
 ### Case: Explicit Review-Only Guard
 

@@ -18,10 +18,11 @@ import {
   PinOff,
   Plus,
   ShieldCheck,
+  Trash2,
   UserPlus,
   XCircle,
 } from "lucide-react";
-import { formatMessengerPreview, formatMessengerTitle, type ChatConversation } from "@rudderhq/shared";
+import { buildChatMentionHref, formatMessengerPreview, formatMessengerTitle, type ChatConversation } from "@rudderhq/shared";
 import { chatsApi } from "@/api/chats";
 import { messengerApi } from "@/api/messenger";
 import { Link, useLocation, useNavigate } from "@/lib/router";
@@ -55,6 +56,15 @@ const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label:
   { value: "kind", label: "Thread type" },
   { value: "attention", label: "Needs attention" },
 ];
+
+function escapeMarkdownLinkLabel(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/]/g, "\\]");
+}
+
+function chatReferenceMarkdown(conversation: Pick<ChatConversation, "id" | "title" | "summary">) {
+  const label = escapeMarkdownLinkLabel(displayChatTitle(conversation).trim() || "Chat");
+  return `[${label}](${buildChatMentionHref(conversation.id)})`;
+}
 
 function ContextColumnHeader({
   title,
@@ -256,9 +266,10 @@ function ChatThreadRow({
   onCommitRename,
   onStartRename,
   onArchive,
+  onDelete,
   onTogglePin,
   onToggleUnread,
-  onCopyConversationId,
+  onCopyConversationLink,
   onSelect,
 }: {
   conversation: ChatConversation;
@@ -271,9 +282,10 @@ function ChatThreadRow({
   onCommitRename: () => void;
   onStartRename: () => void;
   onArchive: () => void;
+  onDelete: () => void;
   onTogglePin: () => void;
   onToggleUnread: () => void;
-  onCopyConversationId: () => void;
+  onCopyConversationLink: () => void;
   onSelect: (href: string) => void;
 }) {
   const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt);
@@ -416,13 +428,17 @@ function ChatThreadRow({
                   </>
                 )}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={onCopyConversationId}>
+              <DropdownMenuItem onClick={onCopyConversationLink}>
                 <Copy className="h-4 w-4" />
-                Copy chat ID
+                Copy Chat Link
               </DropdownMenuItem>
               <DropdownMenuItem onClick={onArchive}>
                 <Archive className="h-4 w-4" />
                 Archive
+              </DropdownMenuItem>
+              <DropdownMenuItem variant="destructive" disabled={generating} onClick={onDelete}>
+                <Trash2 className="h-4 w-4" />
+                Delete
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -644,6 +660,7 @@ export function MessengerContextSidebar() {
   const markedThreadRef = useRef<string | null>(null);
   const sidebarScrollbarActivityRef = useScrollbarActivityRef("rudder:sidebar-scroll:messenger");
   const sidebarScrollElementRef = useRef<HTMLElement | null>(null);
+  const loadMoreThreadSummariesRef = useRef<HTMLDivElement | null>(null);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [unreadScrollRequestId, setUnreadScrollRequestId] = useState(() => getMessengerUnreadScrollRequestId());
@@ -772,6 +789,16 @@ export function MessengerContextSidebar() {
     },
   });
 
+  const deleteConversationMutation = useMutation({
+    mutationFn: (chatId: string) => chatsApi.remove(chatId),
+    onSuccess: async (conversation) => {
+      if (route.kind === "chat" && route.conversationId === conversation.id) {
+        navigate("/messenger/chat");
+      }
+      await refreshChatViews(conversation.id);
+    },
+  });
+
   const updateConversationUserStateMutation = useMutation({
     mutationFn: ({
       chatId,
@@ -800,9 +827,9 @@ export function MessengerContextSidebar() {
     });
   };
 
-  const copyConversationId = async (conversationId: string) => {
+  const copyConversationLink = async (conversation: ChatConversation) => {
     try {
-      await navigator.clipboard.writeText(conversationId);
+      await navigator.clipboard.writeText(chatReferenceMarkdown(conversation));
     } catch {
       // Ignore clipboard failures in restricted environments.
     }
@@ -875,6 +902,29 @@ export function MessengerContextSidebar() {
       cancelAnimationFrame(frame);
     };
   }, [firstUnreadThreadKey, unreadScrollRequestId]);
+
+  useEffect(() => {
+    const sentinel = loadMoreThreadSummariesRef.current;
+    const root = sidebarScrollElementRef.current;
+    if (!sentinel || !root) return;
+    if (!model.hasMoreThreadSummaries || model.isFetchingMoreThreadSummaries || model.isLoading) return;
+    if (typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.some((entry) => entry.isIntersecting);
+      if (!visible || !model.hasMoreThreadSummaries || model.isFetchingMoreThreadSummaries) return;
+      void model.loadMoreThreadSummaries();
+    }, { root, rootMargin: "240px 0px" });
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [
+    model.hasMoreThreadSummaries,
+    model.isFetchingMoreThreadSummaries,
+    model.isLoading,
+    model.loadMoreThreadSummaries,
+    model.threadSummaries.length,
+  ]);
 
   if (!model.selectedOrganizationId) return null;
 
@@ -956,6 +1006,10 @@ export function MessengerContextSidebar() {
                         data: { status: "archived" },
                       });
                     }}
+                    onDelete={() => {
+                      if (typeof window !== "undefined" && !window.confirm(`Delete "${conversationDisplayTitle(conversation)}"? This cannot be undone.`)) return;
+                      deleteConversationMutation.mutate(conversation.id);
+                    }}
                     onTogglePin={() => {
                       updateConversationUserStateMutation.mutate({
                         chatId: conversation.id,
@@ -968,7 +1022,7 @@ export function MessengerContextSidebar() {
                         unread: !conversation.isUnread,
                       });
                     }}
-                    onCopyConversationId={() => void copyConversationId(conversation.id)}
+                    onCopyConversationLink={() => void copyConversationLink(conversation)}
                     onSelect={handleMessengerEntrySelect}
                   />
                 );
@@ -985,6 +1039,20 @@ export function MessengerContextSidebar() {
             })}
           </div>
         ))}
+        {model.hasMoreThreadSummaries || model.isFetchingMoreThreadSummaries ? (
+          <div
+            ref={loadMoreThreadSummariesRef}
+            data-testid="messenger-thread-page-sentinel"
+            className="flex min-h-10 items-center justify-center px-3 py-2 text-[12px] text-muted-foreground"
+          >
+            {model.isFetchingMoreThreadSummaries ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                Loading more threads
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </nav>
     </aside>
   );

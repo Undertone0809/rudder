@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { HeartbeatInvocationSource, HeartbeatRun, HeartbeatRunStatus } from "@rudderhq/shared";
 import { HEARTBEAT_INVOCATION_SOURCES, HEARTBEAT_RUN_STATUSES } from "@rudderhq/shared";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -6,13 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { Filter, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowDownUp, Filter, Search, SlidersHorizontal, X } from "lucide-react";
 import { runMetrics, asRecord, asNonEmptyString, formatCompactTokenLabel, readInvocationSkillList } from "./AgentDetail.helpers";
 
 export type RunFilterView = "all" | "active" | "failed" | "issue" | "retries" | "expensive";
 export type RunFilterContext = "issue" | "retry" | "followup" | "process_lost";
 export type RunFilterDatePreset = "all" | "24h" | "7d" | "30d";
 export type RunFilterCostPreset = "high_tokens" | "long";
+export type RunSortKey = "newest" | "oldest" | "duration_desc" | "duration_asc" | "tokens_desc" | "tokens_asc" | "cost_desc" | "cost_asc";
+type RunSortField = "created" | "duration" | "tokens" | "cost";
+type RunSortDir = "asc" | "desc";
 export type RunSkillOption = { key: string; label: string; count: number };
 
 export interface RunFilterState {
@@ -24,6 +27,7 @@ export interface RunFilterState {
   skills: string[];
   date: RunFilterDatePreset;
   cost: RunFilterCostPreset[];
+  sort: RunSortKey;
 }
 
 type RunFilterParamPatch = Partial<RunFilterState>;
@@ -73,12 +77,31 @@ const costLabels: Record<RunFilterCostPreset, string> = {
   long: ">30m",
 };
 
+const sortLabels: Record<RunSortKey, string> = {
+  newest: "Newest",
+  oldest: "Oldest",
+  duration_desc: "Longest duration",
+  duration_asc: "Shortest duration",
+  tokens_desc: "Most tokens",
+  tokens_asc: "Fewest tokens",
+  cost_desc: "Highest cost",
+  cost_asc: "Lowest cost",
+};
+
+const runSortOptions: Array<{ value: RunSortField; label: string }> = [
+  { value: "created", label: "Created" },
+  { value: "duration", label: "Duration" },
+  { value: "tokens", label: "Tokens" },
+  { value: "cost", label: "Cost" },
+];
+
 const validViews = new Set<RunFilterView>(runFilterViews.map((view) => view.value));
 const validStatuses = new Set<HeartbeatRunStatus>(HEARTBEAT_RUN_STATUSES);
 const validSources = new Set<HeartbeatInvocationSource>(HEARTBEAT_INVOCATION_SOURCES);
 const validContexts = new Set<RunFilterContext>(Object.keys(contextLabels) as RunFilterContext[]);
 const validDates = new Set<RunFilterDatePreset>(Object.keys(dateLabels) as RunFilterDatePreset[]);
 const validCosts = new Set<RunFilterCostPreset>(Object.keys(costLabels) as RunFilterCostPreset[]);
+const validSorts = new Set<RunSortKey>(Object.keys(sortLabels) as RunSortKey[]);
 
 const ACTIVE_STATUSES: HeartbeatRunStatus[] = ["queued", "running"];
 const HIGH_TOKEN_THRESHOLD = 500_000;
@@ -132,7 +155,7 @@ function runHasPassiveFollowup(run: HeartbeatRun) {
   return Boolean(asRecord(context?.passiveFollowup));
 }
 
-function runDurationMs(run: HeartbeatRun) {
+export function runDurationMs(run: HeartbeatRun) {
   if (!run.startedAt) return 0;
   const start = new Date(run.startedAt).getTime();
   const end = run.finishedAt ? new Date(run.finishedAt).getTime() : Date.now();
@@ -274,6 +297,7 @@ function searchableText(run: HeartbeatRun) {
 export function parseRunFilterState(searchParams: URLSearchParams): RunFilterState {
   const rawView = searchParams.get("runView") as RunFilterView | null;
   const rawDate = searchParams.get("runDate") as RunFilterDatePreset | null;
+  const rawSort = searchParams.get("runSort") as RunSortKey | null;
   return {
     view: rawView && validViews.has(rawView) ? rawView : "all",
     q: searchParams.get("runQ")?.trim() ?? "",
@@ -283,6 +307,7 @@ export function parseRunFilterState(searchParams: URLSearchParams): RunFilterSta
     skills: readFreeformList(searchParams.get("runSkill")),
     date: rawDate && validDates.has(rawDate) ? rawDate : "all",
     cost: readList(searchParams.get("runCost"), validCosts),
+    sort: rawSort && validSorts.has(rawSort) ? rawSort : "newest",
   };
 }
 
@@ -303,6 +328,7 @@ export function writeRunFilterState(searchParams: URLSearchParams, patch: RunFil
     ["runSkill", writeList(nextState.skills)],
     ["runCost", writeList(nextState.cost)],
     ["runDate", nextState.date === "all" ? null : nextState.date],
+    ["runSort", nextState.sort === "newest" ? null : nextState.sort],
   ];
   for (const [key, value] of values) {
     if (value) next.set(key, value);
@@ -341,6 +367,50 @@ export function applyRunFilters(runs: HeartbeatRun[], state: RunFilterState) {
   });
 }
 
+function compareCreatedAt(left: HeartbeatRun, right: HeartbeatRun) {
+  return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+}
+
+export function applyRunSort(runs: HeartbeatRun[], sort: RunSortKey) {
+  return [...runs].sort((left, right) => {
+    switch (sort) {
+      case "oldest":
+        return -compareCreatedAt(left, right);
+      case "duration_desc":
+        return runDurationMs(right) - runDurationMs(left) || compareCreatedAt(left, right);
+      case "duration_asc":
+        return runDurationMs(left) - runDurationMs(right) || compareCreatedAt(left, right);
+      case "tokens_desc":
+        return runMetrics(right).totalTokens - runMetrics(left).totalTokens || compareCreatedAt(left, right);
+      case "tokens_asc":
+        return runMetrics(left).totalTokens - runMetrics(right).totalTokens || compareCreatedAt(left, right);
+      case "cost_desc":
+        return runMetrics(right).cost - runMetrics(left).cost || compareCreatedAt(left, right);
+      case "cost_asc":
+        return runMetrics(left).cost - runMetrics(right).cost || compareCreatedAt(left, right);
+      case "newest":
+      default:
+        return compareCreatedAt(left, right);
+    }
+  });
+}
+
+function runSortField(sort: RunSortKey): RunSortField {
+  if (sort.startsWith("duration_")) return "duration";
+  if (sort.startsWith("tokens_")) return "tokens";
+  if (sort.startsWith("cost_")) return "cost";
+  return "created";
+}
+
+function runSortDir(sort: RunSortKey): RunSortDir {
+  return sort === "oldest" || sort.endsWith("_asc") ? "asc" : "desc";
+}
+
+function runSortKey(field: RunSortField, dir: RunSortDir): RunSortKey {
+  if (field === "created") return dir === "asc" ? "oldest" : "newest";
+  return `${field}_${dir}` as RunSortKey;
+}
+
 export function runFilterChips(state: RunFilterState) {
   const chips: string[] = [];
   if (state.view !== "all") chips.push(runFilterViews.find((view) => view.value === state.view)?.label ?? state.view);
@@ -368,6 +438,10 @@ export function RunFiltersToolbar({
   onClear: () => void;
 }) {
   const activeFilterCount = countActiveRunFilters(state);
+  const activeSortLabel = sortLabels[state.sort] ?? sortLabels.newest;
+  const activeSortField = runSortField(state.sort);
+  const activeSortDir = runSortDir(state.sort);
+  const [sortOpen, setSortOpen] = useState(false);
   const statusCounts = useMemo(() => {
     const counts = new Map<HeartbeatRunStatus, number>();
     for (const status of HEARTBEAT_RUN_STATUSES) counts.set(status, 0);
@@ -410,6 +484,49 @@ export function RunFiltersToolbar({
             className="h-7 pl-7 pr-2 text-xs"
           />
         </label>
+
+        <Popover open={sortOpen} onOpenChange={setSortOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn("h-7 px-2 text-xs", state.sort !== "newest" && "text-[color:var(--accent-strong)] bg-accent/30")}
+              aria-label={`Sort runs: ${activeSortLabel}`}
+            >
+              <ArrowDownUp className="h-3.5 w-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">Sort</span>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" sideOffset={8} className="w-48 p-0" data-testid="run-sort-popover">
+            <div className="space-y-0.5 p-2" role="menu" aria-label="Sort runs">
+              {runSortOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={activeSortField === option.value}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-sm transition-colors",
+                    activeSortField === option.value ? "bg-accent/50 text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                  )}
+                  onClick={() => {
+                    const nextDir = activeSortField === option.value
+                      ? activeSortDir === "asc" ? "desc" : "asc"
+                      : "asc";
+                    onChange({ sort: runSortKey(option.value, nextDir) });
+                  }}
+                >
+                  <span>{option.label}</span>
+                  {activeSortField === option.value && (
+                    <span className="text-xs text-muted-foreground">
+                      {activeSortDir === "asc" ? "\u2191" : "\u2193"}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <Popover>
           <PopoverTrigger asChild>

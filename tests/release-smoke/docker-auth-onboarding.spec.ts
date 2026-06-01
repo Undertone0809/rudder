@@ -91,12 +91,14 @@ test.describe("Docker authenticated onboarding smoke", () => {
       id: string;
       name: string;
       role: string;
+      title: string | null;
       agentRuntimeType: string;
     }>;
-    const ceoAgent = agents.find((entry) => entry.name === agentName);
-    expect(ceoAgent).toBeTruthy();
-    expect(ceoAgent!.role).toBe("ceo");
-    expect(ceoAgent!.agentRuntimeType).not.toBe("process");
+    const rootAgent = agents.find((entry) => entry.name === agentName);
+    expect(rootAgent).toBeTruthy();
+    expect(rootAgent!.role).toBe("ceo");
+    expect(rootAgent!.title).toBe("Operator Assistant");
+    expect(rootAgent!.agentRuntimeType).not.toBe("process");
 
     const projectsRes = await page.request.get(
       `${baseUrl}/api/companies/${company!.id}/projects`

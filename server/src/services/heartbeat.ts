@@ -9,6 +9,7 @@ export {
   buildHeartbeatAdapterInvokePayload,
   buildHeartbeatRuntimeTraceMetadata,
   buildIssueRunTraceName,
+  inferUsedSkillsFromTranscript,
   resolveHeartbeatObservabilitySurface,
 } from "./runtime-kernel/heartbeat.core.js";
 

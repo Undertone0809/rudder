@@ -102,4 +102,45 @@ describe("ActivityRow", () => {
     expect(html).toContain("ZST-117");
     expect(html).toContain("Add agent-reported commit activity");
   });
+
+  it("renders agent activity with a production-shaped avatar image", () => {
+    const html = renderToStaticMarkup(
+      <ActivityRow
+        event={{
+          id: "activity-agent-avatar",
+          orgId: "org-1",
+          actorType: "agent",
+          actorId: "agent-1",
+          action: "issue.comment_added",
+          entityType: "issue",
+          entityId: "issue-1",
+          agentId: "agent-1",
+          runId: "run-1",
+          details: { title: "Verify activity row avatar alignment" },
+          createdAt: new Date("2026-04-09T10:00:00.000Z"),
+        }}
+        agentMap={new Map([[
+          "agent-1",
+          {
+            id: "agent-1",
+            name: "Run Filter Operator",
+            role: "engineer",
+            icon: "dicebear:notionists:ca2d1cc2-ebe0-48b8-8e07-b93a0f8cea65",
+          } as any,
+        ]])}
+        entityNameMap={new Map([["issue:issue-1", "AGE-177"]])}
+        entityTitleMap={new Map([["issue:issue-1", "Verify activity row avatar alignment"]])}
+      />,
+    );
+
+    expect(html).toContain("Run Filter Operator");
+    expect(html).toContain("<img");
+    expect(html).toContain("data:image/svg+xml");
+    expect(html).toContain("grid-cols-[minmax(0,1fr)_auto]");
+    expect(html).toContain("items-center");
+    expect(html).toContain("data-slot=\"avatar");
+    expect(html).toContain("top-0");
+    expect(html).toContain("leading-5");
+    expect(html).toContain("tabular-nums");
+  });
 });

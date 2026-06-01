@@ -35,6 +35,7 @@ import { emitExecutionTranscriptTree } from "../langfuse-transcript.js";
 import { validate } from "../middleware/validate.js";
 import { logger } from "../middleware/logger.js";
 import {
+  CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   ChatAssistantStreamError,
   chatAssistantService,
   type ChatAssistantResult,
@@ -467,7 +468,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       if (!clientClosed) {
         writeStreamEvent(res, {
           type: "error",
-          error: err instanceof Error ? err.message : "Chat assistant failed to respond",
+          error: CHAT_ASSISTANT_USER_ERROR_MESSAGE,
           messageId: failedMessage?.id ?? null,
         });
         res.end();

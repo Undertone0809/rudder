@@ -8,7 +8,7 @@ const ORG_NAME = `Err-Chat-${Date.now()}`;
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Chat error toasts", () => {
-  test("shows the real runtime error instead of a Node stack frame", async ({ page }) => {
+  test("keeps runtime errors out of the operator-facing chat surface", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: ORG_NAME,
@@ -33,10 +33,12 @@ test.describe("Chat error toasts", () => {
     await composer.fill("Why did this fail?");
     await page.getByRole("button", { name: "Send" }).click();
 
-    await expect(page.getByText("Failed to send message")).toBeVisible({ timeout: 15_000 });
-    await expect(
-      page.getByText("Missing optional dependency @openai/codex-darwin-arm64", { exact: false }),
-    ).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("The assistant hit a system-level issue.", { exact: false })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText("Failed to send message")).toHaveCount(0);
+    await expect(page.getByText("Missing optional dependency @openai/codex-darwin-arm64", { exact: false }))
+      .toHaveCount(0);
     await expect(page.getByText("file:///stub/codex.js:100")).toHaveCount(0);
   });
 

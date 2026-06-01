@@ -1,20 +1,14 @@
 ---
 name: development-lifecycle-router-maintainer
 description: >
-  Route Rudder development work across the full lifecycle: intake, requirement
-  framing, product/advisor analysis, UI design, implementation, testing,
-  evidence collection, review gates, rework, commit, push, and handoff. Use
-  when the user gives an ambiguous or end-to-end development request, asks which
-  workflow or skill should handle a task, wants to enter at any lifecycle stage,
-  wants reviewer subagents after each stage, or expects review by default before
-  handoff. Review gates require spawned reviewers by default. Verification gates
-  must prove the terminal product workflow when the task affects an operator,
-  agent, Desktop, release, or UI path. Also use for component-lab/catalog work,
-  performance benchmark-to-implementation work, and destructive cleanup or
-  dirty-worktree recovery where the safe route is not yet clear. Prefer narrower
-  maintainer skills directly when the user clearly asks for a release, UI
-  polish, run transcript debug, local preview, data diagnosis, PR preview, or
-  review-only task.
+  Route Rudder development work when a request is ambiguous or spans lifecycle
+  stages: requirements, advisor/product analysis, UI design, implementation,
+  verification, review, commit/push, and handoff. Use for stage selection,
+  reviewer gates, aborted-run recovery, component-lab work, scoped performance
+  optimization, and risky dirty-worktree cleanup. Keep thin: if the prompt
+  clearly names release, UI polish, run/debug, local preview, data path, Desktop
+  recovery, PR preview, mock data, or review-only work, use the narrower
+  maintainer skill directly.
 ---
 
 # Development Lifecycle Router Maintainer
@@ -53,12 +47,44 @@ Use this skill when the user asks for any of:
   E2E rather than a small visual polish pass
 - performance benchmark or control-plane optimization work that must start from
   measured workload evidence and a scoped first slice before implementation
+- agent-runtime, provider-adapter, transcript-parser, tool-call, or skill-usage
+  contract work that must prove the same Rudder work loop across multiple agent
+  runtimes before handoff
 - creating or improving a reusable workflow for development tasks
 
 Do not use this skill as a substitute for a clearly matched narrow skill. If
 the user asks only to release, debug a run, review a Codex session, preview a
 PR, seed mock data, polish a screenshot, or stop dev processes, use the
 specialized skill directly.
+
+## Non-Use Gate
+
+Before taking ownership, ask whether the prompt already has a narrow owner.
+This router should only stay active when it adds value by choosing a stage,
+resolving ambiguity, sequencing multiple stages, or protecting a high-risk
+handoff.
+
+Use the narrow skill directly when all of these are true:
+
+- the user names a concrete surface, run, PR, release, screenshot, data path, or
+  local runtime problem
+- the next useful artifact is obvious for that surface
+- the task does not need cross-stage planning, reviewer orchestration, or
+  destructive recovery judgment before the narrow work can begin
+
+When the narrow route is clear, state the route in one sentence and then follow
+the downstream skill. Do not expand a lifecycle plan just because this router is
+available.
+
+Keep only these cases in the router:
+
+- the user asks which workflow or skill should handle the work
+- the request combines multiple stages and the earliest blocking stage is not
+  obvious
+- the task needs sequencing from requirements to implementation, verification,
+  review, commit, and handoff
+- the worktree or prior-session state must be reconstructed before any safe
+  edit, cleanup, or handoff
 
 ## Core Rule
 
@@ -85,6 +111,12 @@ When reviewer spawning is available, run it by default after each stage artifact
 exists. Do not wait for the user to ask for subagents; this skill is the user's
 standing instruction that routed development work needs independent reviewer
 agents.
+
+When the user explicitly names, links, or pastes this
+`development-lifecycle-router-maintainer` skill, treat that as an explicit
+request for this skill's reviewer-subagent policy. Do not reinterpret the same
+turn as "no explicit subagent request" unless the active spawn tool itself
+rejects the call after a real availability probe.
 
 If the active runtime truly cannot spawn reviewers, mark the review gate as
 `blocked: spawned reviewers unavailable`. You may still provide the stage
@@ -120,6 +152,10 @@ Classify the prompt into one primary stage:
   component fixtures, or design-system coverage.
 - `performance_benchmark`: the user asks to benchmark Rudder, analyze
   performance, or optimize a bottleneck before the exact fix is known.
+- `runtime_contract`: the user asks whether Codex, Claude, Gemini, OpenCode,
+  Pi, Cursor, or another runtime/provider behaves the same way for tools,
+  skills, transcript parsing, adapter isolation, analytics, comments, CLI
+  output, or any agent-visible Rudder contract.
 
 If multiple stages are present, choose the earliest blocking stage. Example:
 "fix this and review it" starts at `implementation`, then must pass
@@ -128,6 +164,24 @@ If multiple stages are present, choose the earliest blocking stage. Example:
 ## Routing Matrix
 
 Use the smallest matching workflow:
+
+- If the prompt is already narrow, route out first:
+  - visible screenshot, label, alignment, menu, icon, empty state, or compact UI
+    behavior: `rudder-ui-polish-maintainer`
+  - missing, stale, wrong, unexplained, slow, or suspicious page data:
+    `rudder-data-path-diagnostician-maintainer`
+  - one run, recent run batch, transcript, stdout/stderr, runtime failure, or
+    run-quality investigation: `debug-run-transcript-maintainer`
+  - Desktop launch, local Electron shell, packaged startup, update, profile, or
+    local instance recovery: `rudder-desktop-dev-recovery-maintainer`
+  - review-only of a session, PR, commit, proposal, release, screenshot, or
+    agent outcome: `agent-work-reviewer-maintainer` or the more specific
+    session reviewer
+  - release, npm, GitHub Release, Desktop release assets, tags, dist-tags, or
+    install-smoke state: `release-maintainer`
+
+Only keep ownership after this table when the narrow owner cannot safely begin
+without lifecycle sequencing, dirty-state recovery, or stage-gate decisions.
 
 - Vague dissatisfaction, weak result, unclear product/design critique:
   `build-advisor`.
@@ -157,6 +211,10 @@ Use the smallest matching workflow:
   readiness, then route to implementation or
   `architecture-refactor-driver-maintainer` only if the first slice requires
   architectural change.
+- Agent-runtime/provider contract work: keep this router as owner of the
+  `runtime_contract` route. Use the relevant debug or implementation workflow
+  underneath, but do not hand off until a provider matrix and actor-run-chain
+  prove the changed contract for the runtimes that the user cares about.
 - Local Rudder Desktop dev startup, Electron shell, embedded Postgres,
   prod-local instance confusion, or update/install failure before release:
   `rudder-desktop-dev-recovery-maintainer`.
@@ -378,6 +436,37 @@ dev app for Desktop shell capture`; do not present it as full Desktop proof.
 Missing terminal product proof blocks handoff for workflow changes unless the
 user explicitly lowers the acceptance bar for this turn.
 
+### 3.6 Prove runtime/provider contracts with a matrix
+
+For runtime, provider-adapter, transcript-parser, tool-call, skill-usage,
+agent-comment, CLI, or run-analytics contract work, build a compact provider
+matrix before implementation or before claiming verification.
+
+The matrix must name:
+
+- runtimes in scope: Codex, Claude, Gemini, OpenCode, Pi, Cursor, or any
+  user-named adapter
+- actor path: the command, heartbeat, CLI invocation, chat action, or runtime
+  wakeup that exercised each provider
+- transcript/parser evidence: raw log or parsed steps showing the relevant tool
+  call, skill call, message, output, or error shape
+- persisted Rudder evidence: run record, analytics field, comment, issue,
+  message, cost, usage, or activity readback
+- terminal surface: run-intelligence view, UI state, CLI output, or API response
+  where the next actor would consume the result
+- unsupported or blocked providers, with exact blocker evidence
+
+Do not accept "works for Codex" as proof for Claude/Gemini/OpenCode/Pi-style
+tool-call behavior when the user explicitly raised provider parity. If a
+runtime cannot be launched locally, preserve the contract with a parser fixture
+or recorded log and label the missing actor-run-chain as blocked/substituted.
+
+For skill-usage analytics specifically, verify both sides:
+
+- ingestion: provider-specific raw transcript/tool-call shape is normalized
+- consumption: the stored analytics/readback/UI surface reports the expected
+  skill usage without relying on a Codex-only `SKILL.md` read heuristic
+
 ### 4. Run default review gates
 
 Use review gates by default for every routed stage that produces an artifact,
@@ -413,10 +502,24 @@ produced by spawned reviewer agents.
 When subagents are available, spawn reviewers after the stage artifact exists.
 Record execution mode as `spawned reviewers`.
 
-If subagents are unavailable, do not run a serial fallback. Record execution mode
-as `blocked: spawned reviewers unavailable`, include the artifact and validation
-evidence gathered so far, and stop before complete handoff unless the user
-explicitly changes the review policy.
+Before recording `blocked: spawned reviewers unavailable`, perform an explicit
+spawn availability probe. Absence of a visible spawn tool in the first tool list,
+uncertainty about the active harness, or not having used multi-agent tools yet is
+not enough. Probe the runtime by using the available tool-discovery path or the
+runtime's spawn mechanism directly. If the probe succeeds, spawn the reviewers
+and wait for verdicts. If the probe fails, include the failed probe evidence in
+the evidence ledger.
+
+Do not record "the user did not explicitly ask for subagents" as the blocker
+when the user explicitly invoked this router skill. In that case, either spawn
+the reviewers, or record the exact tool-policy or tool-call failure that blocked
+the spawn after probing.
+
+If subagents are unavailable after that probe, do not run a serial fallback.
+Record execution mode as `blocked: spawned reviewers unavailable`, include the
+artifact, validation evidence gathered so far, and the failed probe evidence, and
+stop before complete handoff unless the user explicitly changes the review
+policy.
 
 Reviewer A owns scenario correctness:
 
@@ -576,6 +679,15 @@ work loop when practical: seed a disposable issue, trigger the agent/runtime or
 CLI as that actor, read back persisted issue/run/comment state, and inspect the
 terminal app or CLI surface. Unit tests and direct DB assertions are supporting
 evidence, not the whole review.
+
+### Runtime/provider contract change
+
+Route: `runtime_contract -> implementation or debug -> verification -> review -> handoff`.
+
+Build the provider matrix first. Then prove the contract at three layers:
+provider raw output, Rudder normalization/persistence, and the terminal surface
+that operators or reviewers use. For provider parity requests, at least one
+non-Codex provider must be exercised or explicitly marked blocked with evidence.
 
 ### Release request
 

@@ -208,6 +208,45 @@ function readUsage(parsed: Record<string, unknown>) {
   };
 }
 
+function parseMessageEvent(parsed: Record<string, unknown>, ts: string): TranscriptEntry[] {
+  const role = asString(parsed.role).trim().toLowerCase();
+  const content = parsed.content ?? parsed.message;
+  if (role === "assistant") return parseAssistantMessage(content, ts);
+  if (role === "user") return collectTextEntries(content, ts, "user");
+  const text = stringifyUnknown(content).trim();
+  return text ? [{ kind: "assistant", ts, text }] : [];
+}
+
+function parseToolUseEvent(parsed: Record<string, unknown>, ts: string): TranscriptEntry[] {
+  const name =
+    asString(parsed.tool_name) ||
+    asString(parsed.toolName) ||
+    asString(parsed.name) ||
+    asString(parsed.tool, "tool");
+  return [{
+    kind: "tool_call",
+    ts,
+    name,
+    toolUseId: asString(parsed.tool_id) || asString(parsed.toolUseId) || asString(parsed.id) || undefined,
+    input: parsed.parameters ?? parsed.input ?? parsed.arguments ?? parsed.args ?? {},
+  }];
+}
+
+function parseToolResultEvent(parsed: Record<string, unknown>, ts: string): TranscriptEntry[] {
+  const content = parsed.output ?? parsed.result ?? parsed.content ?? parsed.response;
+  const isError =
+    parsed.is_error === true ||
+    parsed.error !== undefined ||
+    asString(parsed.status).toLowerCase() === "error";
+  return [{
+    kind: "tool_result",
+    ts,
+    toolUseId: asString(parsed.tool_id) || asString(parsed.toolUseId) || asString(parsed.id) || "tool_result",
+    content: content !== undefined ? stringifyUnknown(content) : "",
+    isError,
+  }];
+}
+
 export function parseGeminiStdoutLine(line: string, ts: string): TranscriptEntry[] {
   const parsed = asRecord(safeJsonParse(line));
   if (!parsed) {
@@ -215,6 +254,11 @@ export function parseGeminiStdoutLine(line: string, ts: string): TranscriptEntry
   }
 
   const type = asString(parsed.type);
+
+  if (type === "init") {
+    const sessionId = readSessionId(parsed);
+    return [{ kind: "init", ts, model: asString(parsed.model, "gemini"), sessionId }];
+  }
 
   if (type === "system") {
     const subtype = asString(parsed.subtype);
@@ -237,6 +281,10 @@ export function parseGeminiStdoutLine(line: string, ts: string): TranscriptEntry
     return collectTextEntries(parsed.message, ts, "user");
   }
 
+  if (type === "message") {
+    return parseMessageEvent(parsed, ts);
+  }
+
   if (type === "thinking") {
     const text = asString(parsed.text).trim() || asString(asRecord(parsed.delta)?.text).trim();
     return text ? [{ kind: "thinking", ts, text }] : [];
@@ -244,6 +292,14 @@ export function parseGeminiStdoutLine(line: string, ts: string): TranscriptEntry
 
   if (type === "tool_call") {
     return parseTopLevelToolEvent(parsed, ts);
+  }
+
+  if (type === "tool_use") {
+    return parseToolUseEvent(parsed, ts);
+  }
+
+  if (type === "tool_result") {
+    return parseToolResultEvent(parsed, ts);
   }
 
   if (type === "result") {

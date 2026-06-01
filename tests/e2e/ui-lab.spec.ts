@@ -37,6 +37,7 @@ test.describe("UI Lab", () => {
     await expect(page.getByText("Charts, selectors, and sidebar rows")).toBeVisible();
     await expect(page.getByText("Schema form")).toBeVisible();
     await expect(page.getByText("File tree")).toBeVisible();
+    await expect(page.locator('[data-mention-kind="agent"]').getByText("Holden")).toBeVisible();
     await expect(page.getByText("Chat prompts, messages, and process states")).toBeVisible();
     await expect(page.getByText("Chat composer surface")).toBeVisible();
     await expect(page.getByRole("switch", { name: "Plan mode" })).toBeVisible();
