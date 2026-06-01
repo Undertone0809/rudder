@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { projects, projectGoals, goals, projectWorkspaces, workspaceRuntimeServices } from "@rudderhq/db";
+import { projects, projectGoals, goals, agents, projectWorkspaces, workspaceRuntimeServices } from "@rudderhq/db";
 import {
   PROJECT_COLORS,
   deriveProjectUrlKey,
@@ -27,6 +27,7 @@ import {
   ensureProjectLibraryLayout,
   resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
+import { unprocessable } from "../errors.js";
 
 type ProjectRow = typeof projects.$inferSelect;
 type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;
@@ -319,6 +320,34 @@ function resolveGoalIds(data: { goalIds?: string[]; goalId?: string | null }): s
   return undefined;
 }
 
+async function assertGoalsBelongToOrganization(db: Db, orgId: string, goalIds: string[] | undefined) {
+  if (goalIds === undefined || goalIds.length === 0) return;
+
+  const uniqueGoalIds = [...new Set(goalIds)];
+  const rows = await db
+    .select({ id: goals.id })
+    .from(goals)
+    .where(and(eq(goals.orgId, orgId), inArray(goals.id, uniqueGoalIds)));
+
+  if (rows.length !== uniqueGoalIds.length) {
+    throw unprocessable("Goals must belong to same organization");
+  }
+}
+
+async function assertLeadAgentBelongsToOrganization(db: Db, orgId: string, leadAgentId: string | null | undefined) {
+  if (!leadAgentId) return;
+
+  const row = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.id, leadAgentId), eq(agents.orgId, orgId)))
+    .then((rows) => rows[0] ?? null);
+
+  if (!row) {
+    throw unprocessable("Lead agent must belong to same organization");
+  }
+}
+
 function readNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -477,6 +506,8 @@ export function projectService(db: Db) {
         ...projectData
       } = data;
       const ids = resolveGoalIds({ goalIds: inputGoalIds, goalId: projectData.goalId });
+      await assertGoalsBelongToOrganization(db, orgId, ids);
+      await assertLeadAgentBelongsToOrganization(db, orgId, projectData.leadAgentId);
 
       // Auto-assign a color from the palette if none provided
       if (!projectData.color) {
@@ -501,7 +532,7 @@ export function projectService(db: Db) {
       });
 
       // Also write goalId to the legacy column (first goal or null)
-      const legacyGoalId = ids && ids.length > 0 ? ids[0] : projectData.goalId ?? null;
+      const legacyGoalId = ids !== undefined ? (ids[0] ?? null) : projectData.goalId ?? null;
 
       const row = await db.transaction(async (tx) => {
         const created = await tx
@@ -553,6 +584,10 @@ export function projectService(db: Db) {
         .where(eq(projects.id, id))
         .then((rows) => rows[0] ?? null);
       if (!existingProject) return null;
+      await assertGoalsBelongToOrganization(db, existingProject.orgId, ids);
+      if (projectData.leadAgentId !== undefined) {
+        await assertLeadAgentBelongsToOrganization(db, existingProject.orgId, projectData.leadAgentId);
+      }
 
       if (projectData.name !== undefined) {
         const existingShortname = normalizeProjectUrlKey(existingProject.name);

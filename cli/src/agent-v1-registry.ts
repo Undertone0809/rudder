@@ -1,4 +1,4 @@
-export type AgentCliCapabilityCategory = "agent" | "issue" | "approval" | "skill" | "library";
+export type AgentCliCapabilityCategory = "agent" | "issue" | "project" | "approval" | "skill" | "library";
 export type AgentCliCapabilityContract = "agent-v1" | "compat";
 
 export interface AgentCliCapability {
@@ -404,6 +404,54 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     attachesRunIdWhenAvailable: false,
   },
   {
+    id: "project.list",
+    command: "rudder project list --org-id <id>",
+    category: "project",
+    description: "List projects in an organization.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
+    id: "project.get",
+    command: "rudder project get <project-id-or-shortname> [--org-id <id>]",
+    category: "project",
+    description: "Read one project by ID or shortname.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: false,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
+    id: "project.create",
+    command: "rudder project create --org-id <id> --name <name>",
+    category: "project",
+    description: "Create a project in the organization.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "project.update",
+    command: "rudder project update <project-id-or-shortname> [--org-id <id>]",
+    category: "project",
+    description: "Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: false,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
     id: "library.file.list",
     command: "rudder library file list [directory]",
     category: "library",
@@ -601,6 +649,7 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
 const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   agent: "Agent",
   issue: "Issue",
+  project: "Project",
   approval: "Approval",
   skill: "Skill",
   library: "Library",

@@ -7,8 +7,10 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   applyPendingMigrations,
+  agents,
   createDb,
   ensurePostgresDatabase,
+  goals,
   organizations,
   organizationResources,
   projectResourceAttachments,
@@ -107,6 +109,8 @@ describe("project service workspace resolution", () => {
     await db.delete(organizationResources);
     await db.delete(projectWorkspaces);
     await db.delete(projects);
+    await db.delete(goals);
+    await db.delete(agents);
     await db.delete(organizations);
     for (const dir of cleanupDirs) {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -230,6 +234,184 @@ describe("project service workspace resolution", () => {
       projectName: "Renamed Project",
     });
     expect(fs.existsSync(path.join(renamedProjectLibraryDir, "README.md"))).toBe(true);
+  });
+
+  it("rejects creating a project with goals from another organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Project Org",
+        urlKey: deriveOrganizationUrlKey("Project Org"),
+        issuePrefix: "PRO",
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Project Org",
+        urlKey: deriveOrganizationUrlKey("Other Project Org"),
+        issuePrefix: "OPO",
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    const otherGoal = await db.insert(goals).values({
+      orgId: otherOrgId,
+      title: "Other org goal",
+    }).returning().then((rows) => rows[0]!);
+
+    await expect(projectSvc.create(orgId, {
+      name: "Cross Org Project",
+      status: "planned",
+      goalIds: [otherGoal.id],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: "Goals must belong to same organization",
+    });
+  });
+
+  it("treats explicit empty goalIds as authoritative over a legacy goalId on create", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Explicit Empty Goals Org",
+        urlKey: deriveOrganizationUrlKey("Explicit Empty Goals Org"),
+        issuePrefix: "EEG",
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Explicit Empty Goals Org",
+        urlKey: deriveOrganizationUrlKey("Other Explicit Empty Goals Org"),
+        issuePrefix: "OEG",
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    const otherGoal = await db.insert(goals).values({
+      orgId: otherOrgId,
+      title: "Other org legacy goal",
+    }).returning().then((rows) => rows[0]!);
+
+    const created = await projectSvc.create(orgId, {
+      name: "Explicit Empty Goal Project",
+      status: "planned",
+      goalId: otherGoal.id,
+      goalIds: [],
+    });
+
+    expect(created.goalId).toBeNull();
+    expect(created.goalIds).toEqual([]);
+    expect(created.goals).toEqual([]);
+  });
+
+  it("rejects updating a project with goals from another organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Project Goal Update Org",
+        urlKey: deriveOrganizationUrlKey("Project Goal Update Org"),
+        issuePrefix: "PGU",
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Goal Update Org",
+        urlKey: deriveOrganizationUrlKey("Other Goal Update Org"),
+        issuePrefix: "OGU",
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    const project = await projectSvc.create(orgId, {
+      name: "Goal Update Project",
+      status: "planned",
+    });
+    const otherGoal = await db.insert(goals).values({
+      orgId: otherOrgId,
+      title: "Other org update goal",
+    }).returning().then((rows) => rows[0]!);
+
+    await expect(projectSvc.update(project.id, {
+      goalIds: [otherGoal.id],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: "Goals must belong to same organization",
+    });
+  });
+
+  it("rejects creating a project with a lead agent from another organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Lead Agent Create Org",
+        urlKey: deriveOrganizationUrlKey("Lead Agent Create Org"),
+        issuePrefix: "LAC",
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Lead Agent Create Org",
+        urlKey: deriveOrganizationUrlKey("Other Lead Agent Create Org"),
+        issuePrefix: "OLC",
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    const otherAgent = await db.insert(agents).values({
+      orgId: otherOrgId,
+      name: "Other Agent",
+      role: "engineer",
+    }).returning().then((rows) => rows[0]!);
+
+    await expect(projectSvc.create(orgId, {
+      name: "Cross Org Lead Project",
+      status: "planned",
+      leadAgentId: otherAgent.id,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: "Lead agent must belong to same organization",
+    });
+  });
+
+  it("rejects updating a project with a lead agent from another organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Lead Agent Project Org",
+        urlKey: deriveOrganizationUrlKey("Lead Agent Project Org"),
+        issuePrefix: "LAP",
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Lead Agent Org",
+        urlKey: deriveOrganizationUrlKey("Other Lead Agent Org"),
+        issuePrefix: "OLA",
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    const project = await projectSvc.create(orgId, {
+      name: "Owned Project",
+      status: "planned",
+    });
+    const otherAgent = await db.insert(agents).values({
+      orgId: otherOrgId,
+      name: "Other Agent",
+      role: "engineer",
+    }).returning().then((rows) => rows[0]!);
+
+    await expect(projectSvc.update(project.id, {
+      leadAgentId: otherAgent.id,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: "Lead agent must belong to same organization",
+    });
   });
 
   it("keeps legacy project workspace records internal while resolving project codebase to the org root", async () => {

@@ -137,6 +137,101 @@ describe("POST /api/orgs/:orgId/projects", () => {
     );
   });
 
+  it("allows authenticated agents to create projects in their organization", async () => {
+    mockProjectService.create.mockResolvedValue(createProject());
+    const app = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/organization-1/projects")
+      .send({
+        name: "Control Plane",
+        status: "planned",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockProjectService.create).toHaveBeenCalledWith("organization-1", {
+      name: "Control Plane",
+      status: "planned",
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        orgId: "organization-1",
+        actorType: "agent",
+        actorId: "agent-1",
+        agentId: "agent-1",
+        runId: "run-1",
+        action: "project.created",
+      }),
+    );
+  });
+
+  it("rejects agent project creation outside the authenticated organization", async () => {
+    const app = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-2",
+      source: "agent_key",
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/organization-1/projects")
+      .send({
+        name: "Control Plane",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Agent key cannot access another organization");
+    expect(mockProjectService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects agent project reads outside the authenticated organization", async () => {
+    mockProjectService.getById.mockResolvedValue({
+      ...createProject(),
+      orgId: "organization-1",
+    });
+    const app = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-2",
+      source: "agent_key",
+    });
+
+    const res = await request(app).get("/api/projects/project-1");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Agent key cannot access another organization");
+  });
+
+  it("rejects agent project updates outside the authenticated organization", async () => {
+    mockProjectService.getById.mockResolvedValue({
+      ...createProject(),
+      orgId: "organization-1",
+    });
+    const app = createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-2",
+      source: "agent_key",
+    });
+
+    const res = await request(app)
+      .patch("/api/projects/project-1")
+      .send({
+        status: "in_progress",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Agent key cannot access another organization");
+    expect(mockProjectService.update).not.toHaveBeenCalled();
+  });
+
   it("attaches a project resource through the dedicated resource route", async () => {
     const project = createProject();
     mockProjectService.getById.mockResolvedValue(project);

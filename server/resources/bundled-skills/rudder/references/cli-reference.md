@@ -41,6 +41,10 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder issue documents list <issue>` | List issue documents. | no | no | no | no |
 | `rudder issue documents get <issue> <key>` | Read one issue document by key. | no | no | no | no |
 | `rudder issue documents revisions <issue> <key>` | List revisions for an issue document. | no | no | no | no |
+| `rudder project list --org-id <id>` | List projects in an organization. | no | required | no | no |
+| `rudder project get <project-id-or-shortname> [--org-id <id>]` | Read one project by ID or shortname. | no | no | no | no |
+| `rudder project create --org-id <id> --name <name>` | Create a project in the organization. | yes | required | no | attached when available |
+| `rudder project update <project-id-or-shortname> [--org-id <id>]` | Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt. | yes | no | no | attached when available |
 | `rudder library file list [directory]` | List path-based Library files and folders. | no | required | no | no |
 | `rudder library file get <path>` | Read one path-based Library file. | no | required | no | no |
 | `rudder library file put <path> --body-file <path>` | Create or update one path-based Library file. | yes | required | no | attached when available |

@@ -62,6 +62,14 @@ Important files and conventions:
 - If a `resources.md` file exists, treat it like a normal workspace file rather than a reserved Rudder surface.
 - Agent-specific files live under `workspaces/agents/<workspace-key>/...`.
 - New projects do not create or configure their own workspace roots.
+- When the operator asks you to create or maintain project records, use the
+  stable CLI instead of ad hoc API calls:
+
+```bash
+rudder project list --org-id "$RUDDER_ORG_ID" --json
+rudder project create --org-id "$RUDDER_ORG_ID" --name "<name>" --json
+rudder project update "<project-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --status in_progress --json
+```
 
 ## Heartbeat Procedure
 
