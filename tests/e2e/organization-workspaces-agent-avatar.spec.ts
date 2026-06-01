@@ -40,6 +40,68 @@ test.describe("Organization workspaces agent avatar", () => {
     await expect(agentWorkspaceRow.getByTestId("org-workspaces-agent-badge")).toHaveText("Agent");
   });
 
+  test("hides delete actions for protected agent instruction entries", async ({ page, request }) => {
+    const organizationRes = await request.post("/api/orgs", {
+      data: {
+        name: `Organization-Workspaces-Protected-Instructions-${Date.now()}`,
+      },
+    });
+    expect(organizationRes.ok()).toBe(true);
+    const organization = await organizationRes.json() as { id: string; issuePrefix: string };
+
+    const agentRes = await request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Instruction Guard Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agentsDirectoryRes = await request.get(
+      `/api/orgs/${organization.id}/workspace/files?path=${encodeURIComponent("agents")}`,
+    );
+    expect(agentsDirectoryRes.ok()).toBe(true);
+    const agentsDirectory = await agentsDirectoryRes.json() as {
+      entries: Array<{ displayLabel?: string | null; path: string }>;
+    };
+    const agentWorkspace = agentsDirectory.entries.find((entry) => entry.displayLabel === "Instruction Guard Agent");
+    expect(agentWorkspace).toBeTruthy();
+
+    const instructionsPath = `${agentWorkspace!.path}/instructions`;
+    const heartbeatPath = `${instructionsPath}/HEARTBEAT.md`;
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(heartbeatPath)}`);
+
+    const instructionsRow = page.locator(`[data-workspace-entry-path="${instructionsPath}"]`);
+    await expect(instructionsRow).toBeVisible();
+    await instructionsRow.hover();
+    await page.getByTestId(`org-workspaces-entry-more-${instructionsPath}`).click();
+
+    const instructionsMenu = page.getByRole("menu");
+    await expect(instructionsMenu).toContainText("Copy file path");
+    await expect(instructionsMenu).toContainText("New file");
+    await expect(instructionsMenu.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+    await expect(instructionsMenu.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    const heartbeatRow = page.locator(`[data-workspace-entry-path="${heartbeatPath}"]`);
+    await expect(heartbeatRow).toBeVisible();
+    await heartbeatRow.hover();
+    await page.getByTestId(`org-workspaces-entry-more-${heartbeatPath}`).click();
+
+    const heartbeatMenu = page.getByRole("menu");
+    await expect(heartbeatMenu).toContainText("Copy file path");
+    await expect(heartbeatMenu.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+    await expect(heartbeatMenu.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+  });
+
   test("moves entries by drag-and-drop and supports VS Code-style tree keyboard selection", async ({ page, request }) => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
