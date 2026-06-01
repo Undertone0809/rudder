@@ -7,6 +7,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const targetDir = path.join(repoRoot, "desktop", ".packaged", "server-package");
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const sourceManifestRoots = ["packages", "server", "cli"];
 
 function run(command, args, cwd) {
   return new Promise((resolve, reject) => {
@@ -30,6 +31,57 @@ function run(command, args, cwd) {
   });
 }
 
+async function exists(targetPath) {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function snapshotSourcePackageManifests() {
+  const snapshots = new Map();
+
+  async function walk(absDir) {
+    if (!(await exists(absDir))) return;
+
+    const manifestPath = path.join(absDir, "package.json");
+    if (await exists(manifestPath)) {
+      snapshots.set(manifestPath, await fs.readFile(manifestPath, "utf8"));
+      return;
+    }
+
+    const entries = await fs.readdir(absDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git") continue;
+      await walk(path.join(absDir, entry.name));
+    }
+  }
+
+  for (const relRoot of sourceManifestRoots) {
+    await walk(path.join(repoRoot, relRoot));
+  }
+
+  return snapshots;
+}
+
+async function restoreSourcePackageManifests(snapshots) {
+  await Promise.all(
+    [...snapshots.entries()].map(([manifestPath, content]) => fs.writeFile(manifestPath, content, "utf8")),
+  );
+}
+
+async function writeFileBreakingLinks(filePath, content) {
+  const tempPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  await fs.writeFile(tempPath, content, "utf8");
+  await fs.rename(tempPath, filePath);
+}
+
 async function rewritePublishedManifest(packageDir) {
   const manifestPath = path.join(packageDir, "package.json");
   const raw = await fs.readFile(manifestPath, "utf8");
@@ -48,7 +100,7 @@ async function rewritePublishedManifest(packageDir) {
     nextManifest.types = manifest.publishConfig.types;
   }
 
-  await fs.writeFile(manifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`, "utf8");
+  await writeFileBreakingLinks(manifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`);
 }
 
 function addDefaultExportCondition(exportsObj) {
@@ -93,7 +145,12 @@ async function main() {
   await fs.rm(targetDir, { recursive: true, force: true });
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
 
-  await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot);
+  const sourceManifestSnapshots = await snapshotSourcePackageManifests();
+  try {
+    await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot);
+  } finally {
+    await restoreSourcePackageManifests(sourceManifestSnapshots);
+  }
   await rewritePublishedManifest(targetDir);
   await rewriteInternalPackages(targetDir);
   await normalizeSelfReference(targetDir);

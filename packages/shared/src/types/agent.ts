@@ -88,6 +88,7 @@ export interface Agent {
 export interface AgentDetail extends Agent {
   chainOfCommand: AgentChainOfCommandEntry[];
   access: AgentAccessState;
+  instructionsLibraryPath: string | null;
 }
 
 export interface AgentKeyCreated {

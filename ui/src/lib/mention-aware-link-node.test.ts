@@ -58,7 +58,9 @@ describe("getMentionAwareLinkNodeInit", () => {
         node.sanitizeUrl("agent://agent-123"),
         node.sanitizeUrl("project://project-123?c=336699"),
         node.sanitizeUrl("issue://issue-123?r=RUD-123"),
-        node.sanitizeUrl("chat://chat-123"),
+        node.sanitizeUrl("chat://chat-123?t=Launch%20planning"),
+        node.sanitizeUrl("library-doc://doc-123?t=Product%20principles"),
+        node.sanitizeUrl("library-file://file?p=docs%2Fproduct-brief.md"),
       ];
     });
 
@@ -66,7 +68,9 @@ describe("getMentionAwareLinkNodeInit", () => {
       "agent://agent-123",
       "project://project-123?c=336699",
       "issue://issue-123?r=RUD-123",
-      "chat://chat-123",
+      "chat://chat-123?t=Launch%20planning",
+      "library-doc://doc-123?t=Product%20principles",
+      "library-file://file?p=docs%2Fproduct-brief.md",
     ]);
   });
 });

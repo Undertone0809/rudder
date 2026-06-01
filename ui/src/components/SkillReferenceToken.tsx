@@ -1,4 +1,5 @@
 import { Boxes, ArrowUpRight } from "lucide-react";
+import { skillTokenIconInlineStyle } from "@/lib/skill-reference";
 import { cn } from "@/lib/utils";
 
 export interface MarkdownSkillReferencePreview {
@@ -23,17 +24,31 @@ export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps
   const locationLabel = preview?.locationLabel?.trim() || null;
   const detailsHref = preview?.detailsHref?.trim() || null;
   const hasPreview = Boolean(description || categoryLabel || locationLabel || detailsHref);
+  const tokenContent = detailsHref ? (
+    <a
+      className="rudder-skill-token"
+      data-skill-token="true"
+      href={detailsHref}
+      aria-label={`${displayName} skill`}
+      style={skillTokenIconInlineStyle()}
+    >
+      {label}
+    </a>
+  ) : (
+    <span
+      className="rudder-skill-token"
+      data-skill-token="true"
+      tabIndex={hasPreview ? 0 : undefined}
+      aria-label={hasPreview ? `${displayName} skill` : undefined}
+      style={skillTokenIconInlineStyle()}
+    >
+      {label}
+    </span>
+  );
 
   return (
     <span className={cn("rudder-skill-token-wrap", hasPreview && "rudder-skill-token-wrap--preview")}>
-      <span
-        className="rudder-skill-token"
-        data-skill-token="true"
-        tabIndex={hasPreview ? 0 : undefined}
-        aria-label={hasPreview ? `${displayName} skill` : undefined}
-      >
-        {label}
-      </span>
+      {tokenContent}
       {hasPreview ? (
         <span className="rudder-skill-hover-card" role="tooltip">
           <span className="flex items-start gap-3">

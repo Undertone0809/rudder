@@ -134,6 +134,25 @@ describe("buildNewIssueCreateRequest", () => {
       }),
     );
   });
+
+  it("includes selected goal id in the create payload", () => {
+    expect(
+      buildNewIssueCreateRequest({
+        title: "Anchor work",
+        description: "",
+        status: "todo",
+        priority: "medium",
+        projectId: "",
+        goalId: "22222222-2222-4222-8222-222222222222",
+        labelIds: [],
+        projectWorkspaceId: "",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        goalId: "22222222-2222-4222-8222-222222222222",
+      }),
+    );
+  });
 });
 
 describe("resolveDraftBackedNewIssueValues", () => {
@@ -151,6 +170,7 @@ describe("resolveDraftBackedNewIssueValues", () => {
           status: "blocked",
           priority: "low",
           projectId: "project-1",
+          goalId: "goal-draft",
           labelIds: ["label-draft"],
           assigneeValue: "user:user-1",
         },
@@ -162,6 +182,7 @@ describe("resolveDraftBackedNewIssueValues", () => {
       status: "todo",
       priority: "high",
       projectId: "project-2",
+      goalId: "goal-draft",
       labelIds: ["label-1"],
       assigneeValue: "agent:agent-1",
       reviewerValue: "",
@@ -176,6 +197,7 @@ describe("resolveDraftBackedNewIssueValues", () => {
           status: "in_review",
           priority: "medium",
           projectId: "project-1",
+          goalId: "goal-1",
           labelIds: ["label-draft"],
           assigneeValue: "user:user-1",
           reviewerValue: "agent:reviewer-1",
@@ -188,6 +210,7 @@ describe("resolveDraftBackedNewIssueValues", () => {
       status: "in_review",
       priority: "medium",
       projectId: "project-1",
+      goalId: "goal-1",
       labelIds: ["label-draft"],
       assigneeValue: "user:user-1",
       reviewerValue: "agent:reviewer-1",
@@ -206,6 +229,7 @@ describe("issue autosave and draft persistence", () => {
     assigneeValue: "agent:agent-1",
     reviewerValue: "agent:reviewer-1",
     projectId: "project-1",
+    goalId: "goal-1",
     projectWorkspaceId: "",
     assigneeModelOverride: "",
     assigneeThinkingEffort: "",
@@ -225,6 +249,7 @@ describe("issue autosave and draft persistence", () => {
       labelIds: [],
       assigneeValue: "",
       projectId: "",
+      goalId: "",
       projectWorkspaceId: "",
       assigneeModelOverride: "",
       assigneeThinkingEffort: "",

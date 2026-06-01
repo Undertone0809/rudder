@@ -16,11 +16,6 @@ describe("organization bundled skill pruning", () => {
           metadata: { sourceKind: "rudder_bundled" },
         },
         {
-          id: "drop-legacy-paperclip",
-          key: "rudder/office-hours",
-          metadata: { sourceKind: "paperclip_bundled" },
-        },
-        {
           id: "keep-local",
           key: "organization/org-1/build-advisor",
           metadata: { sourceKind: "managed_local" },
@@ -29,6 +24,6 @@ describe("organization bundled skill pruning", () => {
       ["rudder/rudder", "rudder/rudder-create-agent"],
     );
 
-    expect(staleIds).toEqual(["drop-agent-browser", "drop-legacy-paperclip"]);
+    expect(staleIds).toEqual(["drop-agent-browser"]);
   });
 });

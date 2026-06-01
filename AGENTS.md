@@ -225,7 +225,6 @@ Task-specific additions:
   - verify the rendered result in a browser or desktop shell, not just by tests
   - when browser verification is needed, prefer `@browser-use` for local navigation, inspection, interaction checks, and screenshots before falling back to other browser automation paths
   - store temporary screenshots and other ad-hoc verification artifacts outside the repository tree (for example under `/tmp` or the system temp dir), not in the project root
-  - store durable generated work product intended for handoff under `$RUDDER_ORG_ARTIFACTS_DIR` when that runtime path is available
 
 ## 8. API and Auth Expectations
 

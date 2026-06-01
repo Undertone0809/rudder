@@ -349,7 +349,7 @@ export function normalizeSkillKey(value: string | null | undefined) {
 }
 
 export function isBundledRudderSourceKind(value: string | null | undefined) {
-  return value === "rudder_bundled" || value === "paperclip_bundled";
+  return value === "rudder_bundled";
 }
 
 export function isBundledRudderSkillKey(value: string | null | undefined) {
@@ -624,7 +624,7 @@ export function listStaleBundledSkillIds(
   return existingSkills
     .filter((skill) => {
       const sourceKind = skill.metadata?.sourceKind;
-      if (sourceKind !== "rudder_bundled" && sourceKind !== "paperclip_bundled") {
+      if (sourceKind !== "rudder_bundled") {
         return false;
       }
       const canonicalKey = toBundledRudderSkillKey(getBundledRudderSkillSlug(skill.key)) ?? skill.key;
@@ -982,10 +982,14 @@ export function applyDesiredSelectionsToCatalog(
   desiredSelectionRefs: string[],
   agentRuntimeType: string,
 ): AgentSkillCatalog {
-  const desiredSet = new Set(desiredSelectionRefs);
+  const effectiveDesiredSelectionRefs = sortUniqueSelectionRefs([
+    ...desiredSelectionRefs,
+    ...entries.filter((entry) => entry.alwaysEnabled).map((entry) => entry.selectionKey),
+  ]);
+  const desiredSet = new Set(effectiveDesiredSelectionRefs);
   const warnings: string[] = [];
   const out = entries.map<AgentSkillCatalogEntry>((entry) => {
-    const desired = desiredSet.has(entry.selectionKey);
+    const desired = entry.alwaysEnabled || desiredSet.has(entry.selectionKey);
     const state: AgentSkillState = desired
       ? "configured"
       : entry.sourceClass === "agent_home" || entry.sourceClass === "global" || entry.sourceClass === "adapter_home"
@@ -1026,7 +1030,7 @@ export function applyDesiredSelectionsToCatalog(
   }
 
   return {
-    desiredSkills: sortUniqueSelectionRefs(desiredSelectionRefs),
+    desiredSkills: effectiveDesiredSelectionRefs,
     entries: out,
     warnings,
   };

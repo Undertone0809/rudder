@@ -4,12 +4,10 @@ import { useNavigate } from "@/lib/router";
 import {
   ArrowRight,
   Bot,
-  BookOpen,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
   FolderOpen,
-  Info,
   MessageSquare,
   MoreHorizontal,
   Pause,
@@ -22,6 +20,7 @@ import {
 } from "lucide-react";
 import { automationsApi } from "../api/automations";
 import { agentsApi } from "../api/agents";
+import { chatsApi } from "../api/chats";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
@@ -74,6 +73,10 @@ const catchUpPolicyDescriptions: Record<string, string> = {
   skip_missed: "Ignore windows that were missed while the scheduler or automation was paused.",
   enqueue_missed_with_cap: "Catch up missed schedule windows in capped batches after recovery.",
 };
+const automationComposerChipClass =
+  "h-8 items-center rounded-md px-2.5 text-xs font-medium leading-none";
+const automationComposerChipIconClass =
+  "h-3.5 w-3.5 shrink-0 text-muted-foreground";
 
 type AutomationOutputMode = "track_issue" | "chat_output";
 
@@ -273,9 +276,10 @@ function outputInstruction(mode: AutomationOutputMode, locale = getUiLocale()) {
 }
 
 function withOutputInstruction(description: string, mode: AutomationOutputMode, locale = getUiLocale()) {
-  if (!description.trim()) return "";
+  const trimmedDescription = description.trim();
+  if (!trimmedDescription) return "";
   const instruction = outputInstruction(mode, locale);
-  return `${description.trim()}\n\n${instruction}`;
+  return `${trimmedDescription}\n\n${instruction}`;
 }
 
 function removeOutputInstruction(description: string) {
@@ -323,15 +327,14 @@ export function Automations() {
   const { pushToast } = useToast();
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const descriptionComposerRef = useRef<HTMLDivElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
   const composerBodyScrollRef = useScrollbarActivityRef("rudder:automation-composer-body");
   const composerMainScrollRef = useScrollbarActivityRef("rudder:automation-composer-main");
-  const templatePickerScrollRef = useScrollbarActivityRef("rudder:automation-template-picker");
   const [runningAutomationId, setRunningAutomationId] = useState<string | null>(null);
   const [statusMutationAutomationId, setStatusMutationAutomationId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
-  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [draft, setDraft] = useState({
     title: "",
@@ -344,6 +347,7 @@ export function Automations() {
     scheduleCron: "0 9 * * *",
     outputMode: "chat_output" as AutomationOutputMode,
     chatConversationId: "",
+    allowAssigneeChatMismatch: false,
   });
 
   const resetDraft = useCallback(() => {
@@ -358,10 +362,11 @@ export function Automations() {
       scheduleCron: "0 9 * * *",
       outputMode: "chat_output",
       chatConversationId: "",
+      allowAssigneeChatMismatch: false,
     });
   }, []);
 
-  const applyTemplate = useCallback((template: AutomationTemplate) => {
+  const openComposer = useCallback((template: AutomationTemplate = blankAutomationTemplate) => {
     const locale = getUiLocale();
     setDraft((current) => ({
       ...current,
@@ -369,20 +374,19 @@ export function Automations() {
       description: withOutputInstruction(localizeText(template.description, locale), template.outputMode, locale),
       scheduleCron: template.scheduleCron,
       outputMode: template.outputMode,
+      chatConversationId: "",
+      allowAssigneeChatMismatch: false,
     }));
-    setTemplatePickerOpen(false);
-  }, []);
-
-  const openComposer = useCallback((template: AutomationTemplate = blankAutomationTemplate) => {
-    applyTemplate(template);
     setAdvancedOpen(false);
     setComposerOpen(true);
-  }, [applyTemplate]);
+  }, []);
 
   const selectOutputMode = useCallback((outputMode: AutomationOutputMode) => {
     setDraft((current) => ({
       ...current,
       outputMode,
+      chatConversationId: outputMode === "chat_output" ? current.chatConversationId : "",
+      allowAssigneeChatMismatch: outputMode === "chat_output" ? current.allowAssigneeChatMismatch : false,
       description: withOutputInstruction(removeOutputInstruction(current.description), outputMode),
     }));
   }, []);
@@ -422,6 +426,11 @@ export function Automations() {
     queryFn: () => projectsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
+  const { data: chats } = useQuery({
+    queryKey: queryKeys.chats.list(selectedOrganizationId!, "active"),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
+    enabled: !!selectedOrganizationId && composerOpen && draft.outputMode === "chat_output",
+  });
   const { data: issues } = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId!),
     queryFn: () => issuesApi.list(selectedOrganizationId!),
@@ -453,7 +462,8 @@ export function Automations() {
         concurrencyPolicy: draft.concurrencyPolicy,
         catchUpPolicy: draft.catchUpPolicy,
         outputMode: draft.outputMode,
-        chatConversationId: null,
+        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId || null : null,
+        allowAssigneeChatMismatch: draft.allowAssigneeChatMismatch,
       });
 
       if (draft.scheduleCron.trim()) {
@@ -528,14 +538,11 @@ export function Automations() {
     onMutate: (id) => {
       setRunningAutomationId(id);
     },
-    onSuccess: async (run, id) => {
+    onSuccess: async (_, id) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(id) }),
       ]);
-      if (run.linkedChatConversationId && run.lastChatMessageId) {
-        navigate(`/messenger/chat/${run.linkedChatConversationId}`);
-      }
     },
     onSettled: () => {
       setRunningAutomationId(null);
@@ -571,6 +578,15 @@ export function Automations() {
       })),
     [projects],
   );
+  const chatOptions = useMemo<InlineEntityOption[]>(
+    () =>
+      (chats ?? []).map((chat) => ({
+        id: chat.id,
+        label: chat.title,
+        searchText: chat.summary ?? chat.latestReplyPreview ?? "",
+      })),
+    [chats],
+  );
   const agentById = useMemo(
     () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
     [agents],
@@ -581,6 +597,9 @@ export function Automations() {
   );
   const currentAssignee = draft.assigneeAgentId ? agentById.get(draft.assigneeAgentId) ?? null : null;
   const currentProject = draft.projectId ? projectById.get(draft.projectId) ?? null : null;
+  const currentChat = draft.chatConversationId
+    ? (chats ?? []).find((chat) => chat.id === draft.chatConversationId) ?? null
+    : null;
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
       agent: currentAssignee,
@@ -616,7 +635,6 @@ export function Automations() {
         onOpenChange={(open) => {
           if (!createAutomation.isPending) {
             setComposerOpen(open);
-            if (!open) setTemplatePickerOpen(false);
           }
         }}
       >
@@ -641,96 +659,20 @@ export function Automations() {
                 ) : null}
                 <span className="font-medium text-foreground">New automation</span>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  type="button"
-                  className="hidden text-muted-foreground sm:inline-flex"
-                  aria-label="Automation help"
-                >
-                  <Info className="h-3.5 w-3.5" />
-                </Button>
-                <Popover open={templatePickerOpen} onOpenChange={setTemplatePickerOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      className="h-8 rounded-md px-3"
-                      disabled={createAutomation.isPending}
-                    >
-                      <BookOpen className="h-3.5 w-3.5" />
-                      Use template
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="end"
-                    side="bottom"
-                    sideOffset={10}
-                    disablePortal
-                    className="w-[min(760px,calc(100vw-2rem))] overflow-hidden rounded-lg border-border/70 p-0 shadow-[0_18px_50px_rgba(0,0,0,0.22)]"
-                  >
-                    <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
-                      <p className="text-sm font-medium text-foreground">Automation templates</p>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        className="h-8 px-3"
-                        onClick={() => applyTemplate(blankAutomationTemplate)}
-                      >
-                        Create new
-                      </Button>
-                    </div>
-                    <div
-                      ref={templatePickerScrollRef}
-                      className="scrollbar-auto-hide max-h-[min(460px,calc(100dvh-13rem))] overflow-y-auto p-4"
-                      data-testid="automation-template-picker"
-                    >
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        {automationTemplates.map((template) => {
-                          const title = localizeText(template.title);
-                          const summary = localizeText(template.summary);
-                          return (
-                            <button
-                              key={template.id}
-                              type="button"
-                              className="group min-h-[92px] rounded-md border border-border/70 bg-background/50 p-4 text-left transition-colors hover:border-border hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              onClick={() => applyTemplate(template)}
-                            >
-                              <span className="flex items-start gap-3">
-                                <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/60 text-muted-foreground">
-                                  <BookOpen className="h-4 w-4" />
-                                </span>
-                                <span className="min-w-0">
-                                  <span className="block text-sm font-medium text-foreground">{title}</span>
-                                  <span className="mt-1 block text-sm leading-5 text-muted-foreground">{summary}</span>
-                                </span>
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  type="button"
-                  className="text-muted-foreground"
-                  onClick={() => {
-                    setComposerOpen(false);
-                    setTemplatePickerOpen(false);
-                    setAdvancedOpen(false);
-                  }}
-                  disabled={createAutomation.isPending}
-                  aria-label="Close automation composer"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              </div>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                type="button"
+                className="shrink-0 text-muted-foreground"
+                onClick={() => {
+                  setComposerOpen(false);
+                  setAdvancedOpen(false);
+                }}
+                disabled={createAutomation.isPending}
+                aria-label="Close automation composer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
             </div>
 
             <div
@@ -762,24 +704,29 @@ export function Automations() {
                   autoFocus
                 />
 
-                <MarkdownEditor
-                  ref={descriptionEditorRef}
-                  value={draft.description}
-                  onChange={(description) => setDraft((current) => ({ ...current, description }))}
-                  mentions={mentionOptions}
-                  placeholder="Add instructions..."
-                  bordered={false}
-                  contentClassName="min-h-[320px] text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"
-                  onSubmit={() => {
-                    if (!createAutomation.isPending && isDraftReady) {
-                      createAutomation.mutate();
-                    }
-                  }}
-                />
+                <div ref={descriptionComposerRef} data-testid="automation-description-composer">
+                  <MarkdownEditor
+                    ref={descriptionEditorRef}
+                    value={draft.description}
+                    onChange={(description) => setDraft((current) => ({ ...current, description }))}
+                    mentions={mentionOptions}
+                    mentionMenuAnchorRef={descriptionComposerRef}
+                    mentionMenuPlacement="container"
+                    plainText
+                    placeholder="Add prompt e.g. look for crashes in Sentry"
+                    bordered={false}
+                    contentClassName="min-h-[320px] bg-transparent text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"
+                    onSubmit={() => {
+                      if (!createAutomation.isPending && isDraftReady) {
+                        createAutomation.mutate();
+                      }
+                    }}
+                  />
+                </div>
               </main>
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2 sm:px-5">
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-border/60 px-4 py-2 sm:px-5">
               <InlineEntitySelector
                 ref={assigneeSelectorRef}
                 value={draft.assigneeAgentId}
@@ -788,7 +735,7 @@ export function Automations() {
                 noneLabel="No assignee"
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
-                className="h-8 max-w-[220px] bg-transparent px-2 text-sm"
+                className={cn(automationComposerChipClass, "max-w-[210px] bg-transparent")}
                 disablePortal
                 side="top"
                 sideOffset={8}
@@ -801,7 +748,7 @@ export function Automations() {
                   option ? (
                     currentAssignee ? (
                       <>
-                        <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className={automationComposerChipIconClass} />
                         <span className="truncate">{option.label}</span>
                       </>
                     ) : (
@@ -809,7 +756,7 @@ export function Automations() {
                     )
                   ) : (
                     <>
-                      <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <Bot className={automationComposerChipIconClass} />
                       <span className="truncate text-muted-foreground">Assignee</span>
                     </>
                   )
@@ -819,7 +766,7 @@ export function Automations() {
                   const assignee = agentById.get(option.id);
                   return (
                     <>
-                      {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className={automationComposerChipIconClass} /> : null}
                       <span className="truncate">{option.label}</span>
                     </>
                   );
@@ -834,7 +781,7 @@ export function Automations() {
                 noneLabel="No project"
                 searchPlaceholder="Search projects..."
                 emptyMessage="No projects found."
-                className="h-8 max-w-[220px] bg-transparent px-2 text-sm"
+                className={cn(automationComposerChipClass, "max-w-[210px] bg-transparent")}
                 disablePortal
                 side="top"
                 sideOffset={8}
@@ -844,14 +791,14 @@ export function Automations() {
                   option && currentProject ? (
                     <>
                       <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                        className="h-3 w-3 shrink-0 rounded-[3px]"
                         style={projectColorBackgroundStyle(currentProject.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
                     <>
-                      <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <FolderOpen className={automationComposerChipIconClass} />
                       <span className="truncate text-muted-foreground">No project</span>
                     </>
                   )
@@ -862,7 +809,7 @@ export function Automations() {
                   return (
                     <>
                       <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                        className="h-3 w-3 shrink-0 rounded-[3px]"
                         style={projectColorBackgroundStyle(project?.color)}
                       />
                       <span className="truncate">{option.label}</span>
@@ -875,11 +822,14 @@ export function Automations() {
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cn(
+                      "inline-flex max-w-full items-center gap-1.5 border border-border bg-transparent text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      automationComposerChipClass,
+                    )}
                   >
-                    <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <CalendarClock className={automationComposerChipIconClass} />
                     <span className="truncate">{draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron) : "No schedule set"}</span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/80" />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" side="top" sideOffset={8} disablePortal className="w-[min(340px,calc(100vw-2rem))] space-y-3 p-3">
@@ -899,15 +849,18 @@ export function Automations() {
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cn(
+                      "inline-flex max-w-full items-center gap-1.5 border border-border bg-transparent text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      automationComposerChipClass,
+                    )}
                   >
                     {draft.outputMode === "track_issue" ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <CheckCircle2 className={automationComposerChipIconClass} />
                     ) : (
-                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <MessageSquare className={automationComposerChipIconClass} />
                     )}
                     <span>{draft.outputMode === "track_issue" ? "Track as issue" : "Send to chat"}</span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/80" />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" side="top" sideOffset={8} disablePortal className="w-[min(320px,calc(100vw-2rem))] space-y-2 p-2">
@@ -951,22 +904,64 @@ export function Automations() {
                 </PopoverContent>
               </Popover>
 
+
+
               {draft.outputMode === "chat_output" ? (
-                <span
-                  data-testid="automation-create-chat-destination"
-                  className="inline-flex h-8 min-w-0 max-w-[240px] items-center rounded-md border border-border/70 bg-background/40 px-2 text-sm font-medium text-foreground"
-                >
-                  <span className="truncate">New chat per run</span>
-                </span>
+                <InlineEntitySelector
+                  value={draft.chatConversationId}
+                  options={chatOptions}
+                  placeholder="New chat"
+                  noneLabel="New chat"
+                  searchPlaceholder="Search chats..."
+                  emptyMessage="No active chats found."
+                  className={cn(automationComposerChipClass, "max-w-[240px] bg-transparent")}
+                  disablePortal
+                  side="top"
+                  sideOffset={8}
+                  onChange={(chatConversationId) => setDraft((current) => ({
+                    ...current,
+                    chatConversationId,
+                    allowAssigneeChatMismatch: false,
+                  }))}
+                  renderTriggerValue={(option) =>
+                    option && currentChat ? (
+                      <>
+                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">New chat</span>
+                      </>
+                    )
+                  }
+                  renderOption={(option) =>
+                    option.id ? (
+                      <>
+                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    )
+                  }
+                />
               ) : null}
 
               <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cn(
+                      "inline-flex items-center gap-1.5 border border-border bg-transparent text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      automationComposerChipClass,
+                    )}
                   >
-                    <MoreHorizontal className="h-3.5 w-3.5" />
+                    <MoreHorizontal className="h-3 w-3" />
                     <span className="hidden sm:inline">Delivery rules</span>
                   </button>
                 </PopoverTrigger>
@@ -1010,18 +1005,18 @@ export function Automations() {
               </Popover>
             </div>
 
-            <div className="flex shrink-0 flex-col gap-3 border-t border-border/60 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex shrink-0 flex-col gap-2.5 border-t border-border/60 px-4 py-2.5 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
               <p className="min-w-0 truncate text-xs text-muted-foreground">
                 Runs automatically until paused.
               </p>
-              <div className="flex items-center justify-end gap-3">
+              <div className="flex items-center justify-end gap-2.5">
                 <Button
                   variant="ghost"
                   size="sm"
                   type="button"
+                  className="h-8 px-3 text-xs"
                   onClick={() => {
                     setComposerOpen(false);
-                    setTemplatePickerOpen(false);
                     setAdvancedOpen(false);
                   }}
                   disabled={createAutomation.isPending}
@@ -1029,9 +1024,9 @@ export function Automations() {
                   Cancel
                 </Button>
                 <div className="flex flex-col items-end gap-2">
-                  <Button size="sm" onClick={() => createAutomation.mutate()} disabled={createAutomation.isPending || !isDraftReady}>
+                  <Button className="h-8 px-3 text-xs" size="sm" onClick={() => createAutomation.mutate()} disabled={createAutomation.isPending || !isDraftReady}>
                     {createAutomation.isPending ? "Creating..." : "Create automation"}
-                    <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                    <ArrowRight className="ml-1 h-3 w-3" />
                   </Button>
                   {createAutomation.isError ? (
                     <p className="text-sm text-destructive">

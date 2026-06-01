@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   activityLog,
@@ -1040,7 +1040,7 @@ export function messengerService(db: Db) {
     `;
   }
 
-  async function loadLatestIssueCommentsForDisplay(orgId: string, issueIds: string[]) {
+  async function loadLatestIssueCommentsForDisplay(orgId: string, issueIds: string[], userId: string) {
     if (issueIds.length === 0) return [] as IssueCommentRow[];
     return (await db
       .selectDistinctOn([issueComments.issueId], {
@@ -1056,7 +1056,11 @@ export function messengerService(db: Db) {
       .from(issueComments)
       .leftJoin(agents, eq(issueComments.authorAgentId, agents.id))
       .leftJoin(authUsers, eq(issueComments.authorUserId, authUsers.id))
-      .where(and(eq(issueComments.orgId, orgId), inArray(issueComments.issueId, issueIds)))
+      .where(and(
+        eq(issueComments.orgId, orgId),
+        inArray(issueComments.issueId, issueIds),
+        or(isNull(issueComments.authorUserId), ne(issueComments.authorUserId, userId)),
+      ))
       .orderBy(issueComments.issueId, desc(issueComments.createdAt), desc(issueComments.id))) as IssueCommentRow[];
   }
 
@@ -1227,7 +1231,7 @@ export function messengerService(db: Db) {
     const hasMoreDetailEntries = options.includeDetail && detailEntries.length > detailLimit;
     const pageEntries = hasMoreDetailEntries ? detailEntries.slice(0, detailLimit) : detailEntries;
     const cursorEntry = hasMoreDetailEntries ? pageEntries.at(-1) ?? null : null;
-    const latestDisplayCommentRows = await loadLatestIssueCommentsForDisplay(orgId, pageEntries.map((entry) => entry.issue.id));
+    const latestDisplayCommentRows = await loadLatestIssueCommentsForDisplay(orgId, pageEntries.map((entry) => entry.issue.id), userId);
     const latestDisplayCommentByIssue = new Map<string, IssueCommentRow>();
     for (const row of latestDisplayCommentRows) {
       latestDisplayCommentByIssue.set(row.issueId, row);

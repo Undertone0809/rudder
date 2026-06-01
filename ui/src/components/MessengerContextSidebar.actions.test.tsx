@@ -51,12 +51,14 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
     children,
     disabled,
     onClick,
+    variant,
   }: {
     children: ReactNode;
     disabled?: boolean;
     onClick?: () => void;
+    variant?: "default" | "destructive";
   }) => (
-    <button type="button" disabled={disabled} onClick={onClick}>
+    <button type="button" data-variant={variant} disabled={disabled} onClick={onClick}>
       {children}
     </button>
   ),
@@ -246,6 +248,7 @@ describe("MessengerContextSidebar chat actions", () => {
       .find((button) => button.textContent?.includes("Delete")) as HTMLButtonElement | undefined;
 
     expect(deleteButton).toBeTruthy();
+    expect(deleteButton?.dataset.variant).toBe("destructive");
     act(() => {
       deleteButton?.click();
     });

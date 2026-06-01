@@ -5,7 +5,12 @@ export type {
   OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList,
   OrganizationWorkspaceFileDetail,
+  OrganizationWorkspaceDirectoryCreateRequest,
+  OrganizationWorkspaceFileCreateRequest,
   OrganizationWorkspaceFileUpdateRequest,
+  OrganizationWorkspaceEntryRenameRequest,
+  OrganizationWorkspaceEntryMoveRequest,
+  OrganizationWorkspaceEntryMutationResult,
 } from "./organization.js";
 export type {
   OrganizationIntelligenceProfile,
@@ -173,6 +178,10 @@ export type {
   IssueSearchMatch,
   IssueComment,
   IssueCommitReport,
+  LibraryDocument,
+  LibraryDocumentIssueLink,
+  LibraryDocumentRevision,
+  LibraryDocumentSummary,
   IssueDocument,
   IssueDocumentSummary,
   DocumentRevision,

@@ -13,6 +13,7 @@ import {
   organizations,
   createDb,
   ensurePostgresDatabase,
+  goals,
   heartbeatRuns,
   issueComments,
   issueLabels,
@@ -109,6 +110,7 @@ describe("issueService.list participantAgentId", () => {
     await db.delete(organizationMemberships);
     await db.delete(activityLog);
     await db.delete(issues);
+    await db.delete(goals);
     await db.delete(labels);
     await db.delete(assets);
     await db.delete(heartbeatRuns);
@@ -862,6 +864,95 @@ describe("issueService.list participantAgentId", () => {
       status: 422,
       message: "Issue cannot be its own parent",
     });
+  });
+
+  it("rejects direct goal links outside the organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Goal Boundary Org",
+        urlKey: deriveOrganizationUrlKey("Goal Boundary Org"),
+        issuePrefix: `G${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Goal Org",
+        urlKey: deriveOrganizationUrlKey("Other Goal Org"),
+        issuePrefix: `H${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+
+    const [externalGoal] = await db
+      .insert(goals)
+      .values({
+        orgId: otherOrgId,
+        title: "External goal",
+        level: "organization",
+        status: "active",
+      })
+      .returning();
+
+    await expect(svc.create(orgId, {
+      title: "Cross-org goal",
+      status: "todo",
+      priority: "medium",
+      goalId: externalGoal!.id,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: "Goal must belong to same organization",
+    });
+
+    const issue = await svc.create(orgId, {
+      title: "Local issue",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await expect(svc.update(issue.id, { goalId: externalGoal!.id })).rejects.toMatchObject({
+      status: 422,
+      message: "Goal must belong to same organization",
+    });
+  });
+
+  it("persists an explicit goal clear for projectless issues with a default organization goal", async () => {
+    const orgId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Goal Clear Org",
+      urlKey: deriveOrganizationUrlKey("Goal Clear Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const [defaultGoal] = await db
+      .insert(goals)
+      .values({
+        orgId,
+        title: "Default organization goal",
+        level: "organization",
+        status: "active",
+      })
+      .returning();
+
+    const issue = await svc.create(orgId, {
+      title: "Projectless issue",
+      status: "todo",
+      priority: "medium",
+    });
+
+    expect(issue.goalId).toBe(defaultGoal!.id);
+
+    const updated = await svc.update(issue.id, { goalId: null });
+
+    expect(updated?.goalId).toBeNull();
+    const persisted = await svc.getById(issue.id);
+    expect(persisted?.goalId).toBeNull();
   });
 
   it("rejects reviewers outside the organization or inactive membership", async () => {

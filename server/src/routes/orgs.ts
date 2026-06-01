@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import {
@@ -6,10 +7,17 @@ import {
   organizationPortabilityPreviewSchema,
   createOrganizationResourceSchema,
   createOrganizationSchema,
+  createLibraryDocumentSchema,
+  createOrganizationWorkspaceDirectorySchema,
+  restoreLibraryDocumentRevisionSchema,
   updateOrganizationResourceSchema,
   updateOrganizationBrandingSchema,
+  createOrganizationWorkspaceFileSchema,
+  updateLibraryDocumentSchema,
   updateOrganizationSchema,
   updateOrganizationWorkspaceFileSchema,
+  renameOrganizationWorkspaceEntrySchema,
+  moveOrganizationWorkspaceEntrySchema,
   organizationIntelligenceProfilePurposeSchema,
   upsertOrganizationIntelligenceProfileSchema,
   createWorkspaceBackupSchema,
@@ -28,6 +36,7 @@ import {
   organizationSkillService,
   organizationIntelligenceProfileService,
   organizationService,
+  documentService,
   logActivity,
 } from "../services/index.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
@@ -44,6 +53,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   const access = accessService(db);
   const budgets = budgetService(db);
   const resources = resourceCatalogService(db);
+  const documents = documentService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
   const workspaceBackups = workspaceBackupService(db);
   const exportJobs = organizationExportJobService();
@@ -73,6 +83,30 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     }
     if (actorAgent.role !== "ceo") {
       throw forbidden(`Only CEO agents can manage organization ${capability}`);
+    }
+  }
+
+  async function assertCanWriteWorkspaceFile(req: Request, orgId: string) {
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type === "board") return;
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+
+    const actorAgent = await agents.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.orgId !== orgId) {
+      throw forbidden("Agent key cannot access another organization");
+    }
+  }
+
+  function assertAgentLibraryDocsPath(req: Request, requestedPath: string, mode: "directory" | "file") {
+    if (req.actor.type !== "agent") return;
+    const rawPath = requestedPath.trim().replaceAll("\\", "/").replace(/^\/+/, "");
+    const normalizedPath = path.posix.normalize(rawPath);
+    const safePath = normalizedPath === "." ? "" : normalizedPath;
+    const allowed = mode === "directory"
+      ? safePath === "docs" || safePath.startsWith("docs/")
+      : safePath.startsWith("docs/");
+    if (!allowed) {
+      throw forbidden("Agent Library file access is limited to docs/ paths");
     }
   }
 
@@ -122,6 +156,157 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     }
     res.json(organization);
   });
+
+  router.get("/:orgId/library/documents", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type !== "agent") {
+      assertBoard(req);
+    }
+    const result = await documents.listLibraryDocuments(orgId);
+    res.json(result);
+  });
+
+  router.post("/:orgId/library/documents", validate(createLibraryDocumentSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const actor = getActorInfo(req);
+    const document = await documents.createLibraryDocument({
+      orgId,
+      title: req.body.title ?? null,
+      format: req.body.format,
+      body: req.body.body ?? "",
+      changeSummary: req.body.changeSummary ?? null,
+      createdByAgentId: actor.agentId ?? null,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "library.document.created",
+      entityType: "document",
+      entityId: document.id,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        title: document.title,
+        revisionNumber: document.latestRevisionNumber,
+      },
+    });
+    res.status(201).json(document);
+  });
+
+  router.get("/:orgId/library/documents/:documentId", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const documentId = req.params.documentId as string;
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type !== "agent") {
+      assertBoard(req);
+    }
+    const document = await documents.getLibraryDocumentById(orgId, documentId);
+    if (!document) {
+      res.status(404).json({ error: "Library document not found" });
+      return;
+    }
+    res.json(document);
+  });
+
+  router.patch("/:orgId/library/documents/:documentId", validate(updateLibraryDocumentSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const documentId = req.params.documentId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const actor = getActorInfo(req);
+    const document = await documents.updateLibraryDocument({
+      orgId,
+      documentId,
+      title: req.body.title ?? null,
+      format: req.body.format,
+      body: req.body.body,
+      changeSummary: req.body.changeSummary ?? null,
+      baseRevisionId: req.body.baseRevisionId ?? null,
+      createdByAgentId: actor.agentId ?? null,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+    if (!document) {
+      res.status(404).json({ error: "Library document not found" });
+      return;
+    }
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "library.document.updated",
+      entityType: "document",
+      entityId: document.id,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        title: document.title,
+        revisionNumber: document.latestRevisionNumber,
+      },
+    });
+    res.json(document);
+  });
+
+  router.get("/:orgId/library/documents/:documentId/revisions", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const documentId = req.params.documentId as string;
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type !== "agent") {
+      assertBoard(req);
+    }
+    const document = await documents.getLibraryDocumentById(orgId, documentId);
+    if (!document) {
+      res.status(404).json({ error: "Library document not found" });
+      return;
+    }
+    const revisions = await documents.listLibraryDocumentRevisions(orgId, documentId);
+    res.json(revisions);
+  });
+
+  router.post(
+    "/:orgId/library/documents/:documentId/revisions/:revisionId/restore",
+    validate(restoreLibraryDocumentRevisionSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      const documentId = req.params.documentId as string;
+      const revisionId = req.params.revisionId as string;
+      assertCompanyAccess(req, orgId);
+      assertBoard(req);
+      const actor = getActorInfo(req);
+      const document = await documents.restoreLibraryDocumentRevision({
+        orgId,
+        documentId,
+        revisionId,
+        changeSummary: req.body.changeSummary ?? null,
+        createdByAgentId: actor.agentId ?? null,
+        createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      if (!document) {
+        res.status(404).json({ error: "Library document revision not found" });
+        return;
+      }
+      await logActivity(db, {
+        orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        action: "library.document.restored",
+        entityType: "document",
+        entityId: document.id,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        details: {
+          title: document.title,
+          revisionNumber: document.latestRevisionNumber,
+          restoredRevisionId: revisionId,
+        },
+      });
+      res.json(document);
+    },
+  );
 
   router.get("/:orgId/resources", async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -257,6 +442,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       assertBoard(req);
     }
     const directoryPath = typeof req.query.path === "string" ? req.query.path : "";
+    assertAgentLibraryDocsPath(req, directoryPath, "directory");
     const result = await workspaceBrowser.listFiles(orgId, directoryPath);
     res.json(result);
   });
@@ -268,6 +454,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       assertBoard(req);
     }
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    assertAgentLibraryDocsPath(req, filePath, "file");
     const result = await workspaceBrowser.readFile(orgId, filePath);
     res.json(result);
   });
@@ -279,6 +466,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       assertBoard(req);
     }
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    assertAgentLibraryDocsPath(req, filePath, "file");
     const workspaceFile = await workspaceBrowser.readAttachmentFile(orgId, filePath);
     if (!workspaceFile.contentType.toLowerCase().startsWith("image/")) {
       res.status(415).json({ error: "Workspace file is not an image preview" });
@@ -296,11 +484,68 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     res.send(workspaceFile.buffer);
   });
 
-  router.patch("/:orgId/workspace/file", validate(updateOrganizationWorkspaceFileSchema), async (req, res) => {
+  router.get("/:orgId/workspace/mention-files", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
+    const query = typeof req.query.q === "string" ? req.query.q : "";
+    const rawLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : null;
+    const entries = await workspaceBrowser.listMentionableFiles(orgId, {
+      query,
+      limit: Number.isFinite(rawLimit) ? rawLimit : null,
+    });
+    res.json({ entries });
+  });
+
+  router.post("/:orgId/workspace/file", validate(createOrganizationWorkspaceFileSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    await assertCanWriteWorkspaceFile(req, orgId);
+    assertAgentLibraryDocsPath(req, req.body.filePath, "file");
+    const result = await workspaceBrowser.createFile(orgId, req.body.filePath, req.body.content ?? "");
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_file.created",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        path: result.filePath,
+      },
+    });
+    res.status(201).json(result);
+  });
+
+  router.post("/:orgId/workspace/directory", validate(createOrganizationWorkspaceDirectorySchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const result = await workspaceBrowser.createDirectory(orgId, req.body.directoryPath);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_directory.created",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        path: result.path,
+      },
+    });
+    res.status(201).json(result);
+  });
+
+  router.patch("/:orgId/workspace/file", validate(updateOrganizationWorkspaceFileSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    await assertCanWriteWorkspaceFile(req, orgId);
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    assertAgentLibraryDocsPath(req, filePath, "file");
     const result = await workspaceBrowser.writeFile(orgId, filePath, req.body.content);
     await organizationSkills.syncWorkspaceFileChange(orgId, result.filePath, req.body.content);
     const actor = getActorInfo(req);
@@ -315,6 +560,81 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       runId: actor.runId,
       details: {
         path: result.filePath,
+      },
+    });
+    res.json(result);
+  });
+
+  router.patch("/:orgId/workspace/entry", validate(renameOrganizationWorkspaceEntrySchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const entryPath = typeof req.query.path === "string" ? req.query.path : "";
+    const result = await workspaceBrowser.renameEntry(orgId, entryPath, req.body.name);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_entry.renamed",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        previousPath: result.previousPath,
+        path: result.path,
+        isDirectory: result.isDirectory,
+      },
+    });
+    res.json(result);
+  });
+
+  router.patch("/:orgId/workspace/entry/move", validate(moveOrganizationWorkspaceEntrySchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const entryPath = typeof req.query.path === "string" ? req.query.path : "";
+    const result = await workspaceBrowser.moveEntry(orgId, entryPath, req.body.destinationDirectoryPath);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_entry.moved",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        previousPath: result.previousPath,
+        path: result.path,
+        destinationDirectoryPath: req.body.destinationDirectoryPath,
+        isDirectory: result.isDirectory,
+      },
+    });
+    res.json(result);
+  });
+
+  router.delete("/:orgId/workspace/entry", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const entryPath = typeof req.query.path === "string" ? req.query.path : "";
+    const result = await workspaceBrowser.deleteEntry(orgId, entryPath);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_entry.deleted",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        path: result.path,
+        isDirectory: result.isDirectory,
       },
     });
     res.json(result);

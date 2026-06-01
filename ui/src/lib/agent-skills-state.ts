@@ -62,7 +62,7 @@ export function isExternalSkillEntry(entry: AgentSkillEntry) {
 }
 
 export function canManageSkillEntry(entry: AgentSkillEntry) {
-  return entry.configurable;
+  return entry.configurable && !entry.alwaysEnabled;
 }
 
 export function toggleSkillSelection(

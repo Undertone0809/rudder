@@ -29,7 +29,7 @@ describe("shouldShowRunStderrExcerpt", () => {
     })).toBe(false);
   });
 
-  it("filters benign Codex model refresh timeout noise from run stderr display", () => {
+  it("filters benign Codex runtime noise from run stderr display", () => {
     const stderrExcerpt = [
       "2026-05-15T06:57:31.977213Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit",
       "2026-05-15T06:57:34.139709Z ERROR codex_memories_write::phase2: Phase 2 no changes",
@@ -39,7 +39,7 @@ describe("shouldShowRunStderrExcerpt", () => {
     expect(getRunStderrExcerptDisplayText({
       status: "failed",
       stderrExcerpt,
-    })).toBe("2026-05-15T06:57:34.139709Z ERROR codex_memories_write::phase2: Phase 2 no changes");
+    })).toBe("");
   });
 
   it("does not show stderr excerpts that only contain benign Codex model refresh timeouts", () => {

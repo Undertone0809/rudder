@@ -158,6 +158,19 @@ export function issueService(db: Db) {
     }
   }
 
+  async function assertValidGoal(orgId: string, goalId: string | null | undefined) {
+    if (!goalId) return;
+    const goal = await db
+      .select({ id: goals.id, orgId: goals.orgId })
+      .from(goals)
+      .where(eq(goals.id, goalId))
+      .then((rows) => rows[0] ?? null);
+    if (!goal) throw notFound("Goal not found");
+    if (goal.orgId !== orgId) {
+      throw unprocessable("Goal must belong to same organization");
+    }
+  }
+
   async function assertValidExecutionWorkspace(orgId: string, projectId: string | null | undefined, executionWorkspaceId: string) {
     const workspace = await db
       .select({
@@ -749,6 +762,9 @@ export function issueService(db: Db) {
       if (data.reviewerUserId) {
         await assertReviewerUser(orgId, data.reviewerUserId);
       }
+      if (data.goalId) {
+        await assertValidGoal(orgId, data.goalId);
+      }
       if (data.projectWorkspaceId) {
         await assertValidProjectWorkspace(orgId, data.projectId, data.projectWorkspaceId);
       }
@@ -894,6 +910,9 @@ export function issueService(db: Db) {
       }
       if (issueData.reviewerUserId) {
         await assertReviewerUser(existing.orgId, issueData.reviewerUserId);
+      }
+      if (issueData.goalId) {
+        await assertValidGoal(existing.orgId, issueData.goalId);
       }
       const nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
       const nextProjectWorkspaceId =

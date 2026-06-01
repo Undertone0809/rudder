@@ -2,6 +2,8 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { en } from "@/i18n/locales/en";
+import { zhCN } from "@/i18n/locales/zh-CN";
 import { InstanceAboutSettings, resolveAboutCurrentVersion } from "./InstanceAboutSettings";
 
 vi.mock("@tanstack/react-query", () => ({
@@ -95,5 +97,16 @@ describe("InstanceAboutSettings", () => {
         healthVersion: "0.1.0",
       }),
     ).toBe("0.1.0-canary.18");
+  });
+
+  it("describes the feedback recipient without exposing the raw email address", () => {
+    expect(en["about.feedback.description"]).toContain("Rudder maintainer's email");
+    expect(en["about.feedback.toastBody"]).toContain("Rudder maintainer's email");
+    expect(zhCN["about.feedback.description"]).toContain("Rudder 维护者邮箱");
+    expect(zhCN["about.feedback.toastBody"]).toContain("Rudder 维护者邮箱");
+    expect(en["about.feedback.description"]).not.toContain("zeeland4work@gmail.com");
+    expect(en["about.feedback.toastBody"]).not.toContain("zeeland4work@gmail.com");
+    expect(zhCN["about.feedback.description"]).not.toContain("zeeland4work@gmail.com");
+    expect(zhCN["about.feedback.toastBody"]).not.toContain("zeeland4work@gmail.com");
   });
 });

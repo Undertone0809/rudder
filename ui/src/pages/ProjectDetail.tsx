@@ -513,7 +513,7 @@ export function ProjectDetail() {
         <PageTabBar
           items={[
             { value: "configuration", label: "Configuration" },
-            { value: "resources", label: "Resources" },
+            { value: "resources", label: "Context" },
             { value: "budget", label: "Budget" },
             { value: "issues", label: "Issues" },
             ...pluginTabItems.map((item) => ({

@@ -67,6 +67,10 @@ Public packages are discovered from:
 Stable releases do not rewrite versions. They publish the committed workspace semver directly.
 
 Canary rewrites are temporary. The working tree is restored after publish or dry-run.
+The lower-level `set-publish-version` command is guarded because it rewrites
+source manifests into their publish shape. Use `set-version` for normal
+development version alignment; only release automation should call
+`set-publish-version <version> --allow-source-mutation`.
 
 Canary releases cannot reuse a stable base after that base is public. If
 `X.Y.Z` exists as an npm stable package version or remote git tag `vX.Y.Z`,

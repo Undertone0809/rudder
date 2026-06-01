@@ -124,6 +124,41 @@ export function resolveOrganizationAgentsDir(orgId: string): string {
   return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "agents");
 }
 
+export function resolveOrganizationProjectsDir(orgId: string): string {
+  return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "projects");
+}
+
+function deriveProjectLibraryKey(input: {
+  projectId: string;
+  projectName?: string | null;
+  projectUrlKey?: string | null;
+}): string {
+  const explicitKey = sanitizeFriendlyPathSegment(input.projectUrlKey, "").toLowerCase();
+  if (explicitKey) return explicitKey;
+
+  const nameKey = sanitizeFriendlyPathSegment(input.projectName, "").toLowerCase();
+  if (nameKey) return nameKey;
+
+  return validatePathSegment(input.projectId, "project id");
+}
+
+export function resolveProjectLibraryRelativePath(input: {
+  projectId: string;
+  projectName?: string | null;
+  projectUrlKey?: string | null;
+}): string {
+  return path.join("projects", deriveProjectLibraryKey(input));
+}
+
+export function resolveProjectLibraryDir(input: {
+  orgId: string;
+  projectId: string;
+  projectName?: string | null;
+  projectUrlKey?: string | null;
+}): string {
+  return path.resolve(resolveOrganizationWorkspaceRoot(input.orgId), resolveProjectLibraryRelativePath(input));
+}
+
 export function resolveManagedOrganizationCodebaseDir(input: {
   orgId: string;
   repoName?: string | null;
@@ -141,20 +176,64 @@ export async function ensureOrganizationWorkspaceLayout(orgId: string): Promise<
   skillsDir: string;
   plansDir: string;
   artifactsDir: string;
+  projectsDir: string;
 }> {
   const root = resolveOrganizationWorkspaceRoot(orgId);
   const agentsDir = resolveOrganizationAgentsDir(orgId);
   const skillsDir = resolveOrganizationSkillsDir(orgId);
   const plansDir = resolveOrganizationPlansDir(orgId);
   const artifactsDir = resolveOrganizationArtifactsDir(orgId);
+  const projectsDir = resolveOrganizationProjectsDir(orgId);
   await Promise.all([
     fs.mkdir(root, { recursive: true }),
     fs.mkdir(agentsDir, { recursive: true }),
     fs.mkdir(skillsDir, { recursive: true }),
     fs.mkdir(plansDir, { recursive: true }),
     fs.mkdir(artifactsDir, { recursive: true }),
+    fs.mkdir(projectsDir, { recursive: true }),
   ]);
-  return { root, agentsDir, skillsDir, plansDir, artifactsDir };
+  return { root, agentsDir, skillsDir, plansDir, artifactsDir, projectsDir };
+}
+
+export async function ensureProjectLibraryLayout(input: {
+  orgId: string;
+  projectId: string;
+  projectName?: string | null;
+  projectUrlKey?: string | null;
+}): Promise<{
+  root: string;
+  relativePath: string;
+  readmePath: string;
+}> {
+  await ensureOrganizationWorkspaceLayout(input.orgId);
+
+  const relativePath = resolveProjectLibraryRelativePath(input);
+  const root = resolveProjectLibraryDir(input);
+  await fs.mkdir(root, { recursive: true });
+
+  const readmePath = path.join(root, "README.md");
+  try {
+    await fs.writeFile(
+      readmePath,
+      [
+        `# ${input.projectName?.trim() || "Project"}`,
+        "",
+        "Agents should keep durable project work files inside this folder.",
+        "Attached Project Resources are surfaced in the Library tree under `resources/` as virtual references; external resources are not copied into this folder.",
+        "",
+      ].join("\n"),
+      { flag: "wx" },
+    );
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+    if (code !== "EEXIST") {
+      throw error;
+    }
+  }
+
+  return { root, relativePath, readmePath };
 }
 
 export async function ensureAgentWorkspaceLayout(agent: {

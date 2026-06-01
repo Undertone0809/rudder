@@ -34,7 +34,16 @@ async function rewriteInternalPackageManifest(packageDir) {
     nextManifest.types = manifest.publishConfig.types;
   }
 
-  await fs.writeFile(`${manifestPath}`, `${JSON.stringify(nextManifest, null, 2)}\n`, "utf8");
+  await writeFileBreakingLinks(manifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`);
+}
+
+async function writeFileBreakingLinks(filePath, content) {
+  const tempPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  await fs.writeFile(tempPath, content, "utf8");
+  await fs.rename(tempPath, filePath);
 }
 
 function addDefaultExportCondition(exportsObj) {

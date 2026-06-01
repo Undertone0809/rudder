@@ -17,7 +17,7 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { projectService } from "../services/projects.js";
-import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
+import { resolveOrganizationWorkspaceRoot, resolveProjectLibraryDir } from "../home-paths.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -153,12 +153,83 @@ describe("project service workspace resolution", () => {
     expect(created.codebase.localFolder).toBe(resolveOrganizationWorkspaceRoot(orgId));
     expect(created.codebase.effectiveLocalFolder).toBe(resolveOrganizationWorkspaceRoot(orgId));
     expect(created.codebase.origin).toBe("local_folder");
+    const projectLibraryDir = resolveProjectLibraryDir({
+      orgId,
+      projectId: created.id,
+      projectName: created.name,
+    });
+    expect(fs.existsSync(projectLibraryDir)).toBe(true);
+    expect(fs.readFileSync(path.join(projectLibraryDir, "README.md"), "utf8")).toContain(
+      "Agents should keep durable project work files inside this folder.",
+    );
 
     const persistedWorkspaces = await db
       .select({ id: projectWorkspaces.id })
       .from(projectWorkspaces)
       .where(eq(projectWorkspaces.projectId, created.id));
     expect(persistedWorkspaces).toEqual([]);
+  });
+
+  it("repairs missing project Library folders when projects are listed", async () => {
+    const rudderHome = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-projects-repair-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Repair Workspace Org",
+      urlKey: deriveOrganizationUrlKey("Repair Workspace Org"),
+      issuePrefix: "RWO",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const created = await projectSvc.create(orgId, {
+      name: "Repairable Project",
+      status: "planned",
+    });
+    const projectLibraryDir = resolveProjectLibraryDir({
+      orgId,
+      projectId: created.id,
+      projectName: created.name,
+    });
+    fs.rmSync(projectLibraryDir, { recursive: true, force: true });
+    expect(fs.existsSync(projectLibraryDir)).toBe(false);
+
+    await projectSvc.list(orgId);
+
+    expect(fs.existsSync(path.join(projectLibraryDir, "README.md"))).toBe(true);
+  });
+
+  it("creates the current project Library folder after a project rename", async () => {
+    const rudderHome = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-projects-rename-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rename Workspace Org",
+      urlKey: deriveOrganizationUrlKey("Rename Workspace Org"),
+      issuePrefix: "NWO",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const created = await projectSvc.create(orgId, {
+      name: "Original Project",
+      status: "planned",
+    });
+    const updated = await projectSvc.update(created.id, {
+      name: "Renamed Project",
+    });
+
+    expect(updated?.name).toBe("Renamed Project");
+    const renamedProjectLibraryDir = resolveProjectLibraryDir({
+      orgId,
+      projectId: created.id,
+      projectName: "Renamed Project",
+    });
+    expect(fs.existsSync(path.join(renamedProjectLibraryDir, "README.md"))).toBe(true);
   });
 
   it("keeps legacy project workspace records internal while resolving project codebase to the org root", async () => {
@@ -219,7 +290,8 @@ describe("project service workspace resolution", () => {
       orgId,
       name: "Existing spec",
       kind: "file",
-      locator: "~/projects/rudder/doc/SPEC-implementation.md",
+      sourceType: "library",
+      locator: "docs/SPEC-implementation.md",
       description: "Implementation contract",
     }).returning().then((rows) => rows[0]!);
 
@@ -238,6 +310,7 @@ describe("project service workspace resolution", () => {
         {
           name: "Main repo",
           kind: "directory",
+          sourceType: "external",
           locator: "~/projects/rudder",
           description: "Monorepo checkout",
           role: "working_set",
@@ -254,6 +327,7 @@ describe("project service workspace resolution", () => {
       resource: expect.objectContaining({
         id: existingResource.id,
         name: "Existing spec",
+        sourceType: "library",
       }),
     }));
     expect(created.resources[1]).toEqual(expect.objectContaining({
@@ -262,6 +336,7 @@ describe("project service workspace resolution", () => {
       resource: expect.objectContaining({
         name: "Main repo",
         kind: "directory",
+        sourceType: "external",
         locator: "~/projects/rudder",
       }),
     }));
@@ -277,5 +352,47 @@ describe("project service workspace resolution", () => {
       .from(projectResourceAttachments)
       .where(eq(projectResourceAttachments.projectId, created.id));
     expect(persistedAttachments).toHaveLength(2);
+  });
+
+  it("reuses existing library resources when inline project resources target the same path", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Reusable Resource Org",
+      urlKey: deriveOrganizationUrlKey("Reusable Resource Org"),
+      issuePrefix: "RRO",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const existingResource = await db.insert(organizationResources).values({
+      orgId,
+      name: "Existing spec",
+      kind: "file",
+      sourceType: "library",
+      locator: "docs/spec.md",
+    }).returning().then((rows) => rows[0]!);
+
+    const created = await projectSvc.create(orgId, {
+      name: "Path Based Context",
+      status: "planned",
+      newResources: [
+        {
+          name: "Spec copy",
+          kind: "file",
+          sourceType: "library",
+          locator: "docs/spec.md",
+          role: "reference",
+        },
+      ],
+    });
+
+    expect(created.resources).toHaveLength(1);
+    expect(created.resources[0]?.resourceId).toBe(existingResource.id);
+
+    const persistedOrgResources = await db
+      .select({ id: organizationResources.id })
+      .from(organizationResources)
+      .where(eq(organizationResources.orgId, orgId));
+    expect(persistedOrgResources).toHaveLength(1);
   });
 });

@@ -170,7 +170,7 @@ describe("Messenger page headers", () => {
 
     const html = renderIssueThread();
 
-    expect(html).toContain("<h2>Review Summary</h2>");
+    expect(html).toContain(">Review Summary</h2>");
     expect(html).toContain("<strong>Rendered</strong>");
     expect(html).toContain("Alex comment");
     expect(html).not.toContain("Source comment by Alex");

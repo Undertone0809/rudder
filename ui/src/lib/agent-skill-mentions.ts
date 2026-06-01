@@ -167,3 +167,47 @@ export function buildAgentSkillMentionOptions(params: {
 
   return Array.from(options.values()).sort((left, right) => left.name.localeCompare(right.name));
 }
+
+export function buildOrganizationSkillMentionOptions(params: {
+  orgUrlKey: string | null | undefined;
+  organizationSkills: OrganizationSkillListItem[] | null | undefined;
+}) {
+  const orgUrlKey = params.orgUrlKey ?? "organization";
+  return (params.organizationSkills ?? [])
+    .map((skill): SkillMentionOption | null => {
+      const markdownTarget = organizationSkillMarkdownTarget(skill);
+      if (!markdownTarget) return null;
+      const publicRef = formatOrganizationSkillPublicRef(skill, {
+        orgUrlKey,
+        scope: "organization",
+      });
+      const mentionLabel = skill.slug || buildSkillMentionLabel(
+        {
+          key: skill.key,
+          runtimeName: skill.name,
+        } as AgentSkillEntry,
+        publicRef,
+      );
+      return {
+        id: `skill:org:${skill.id}`,
+        name: mentionLabel,
+        kind: "skill",
+        searchText: [
+          buildOrganizationSkillSearchText(skill, {
+            orgUrlKey,
+            scope: "organization",
+          }),
+          skill.description ?? "",
+        ].join(" ").toLowerCase(),
+        skillRefLabel: mentionLabel,
+        skillMarkdownTarget: markdownTarget,
+        skillDisplayName: skill.name,
+        skillDescription: normalizeOptionalText(skill.description),
+        skillCategoryLabel: "Org skill",
+        skillLocationLabel: normalizeOptionalText(skill.sourceLabel ?? skill.sourcePath),
+        skillDetailsHref: `/skills/${skill.id}`,
+      };
+    })
+    .filter((option): option is SkillMentionOption => option !== null)
+    .sort((left, right) => left.name.localeCompare(right.name));
+}

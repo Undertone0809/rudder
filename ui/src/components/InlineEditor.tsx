@@ -13,6 +13,9 @@ interface InlineEditorProps {
   multiline?: boolean;
   imageUploadHandler?: (file: File) => Promise<string>;
   mentions?: MentionOption[];
+  onMentionQueryChange?: (query: string | null) => void;
+  editorEngine?: "legacy" | "milkdown";
+  alwaysEdit?: boolean;
 }
 
 /** Shared padding so display and edit modes occupy the exact same box. */
@@ -35,6 +38,9 @@ export function InlineEditor({
   multiline = false,
   imageUploadHandler,
   mentions,
+  onMentionQueryChange,
+  editorEngine,
+  alwaysEdit = false,
 }: InlineEditorProps) {
   const [editing, setEditing] = useState(false);
   const [multilineFocused, setMultilineFocused] = useState(false);
@@ -88,7 +94,7 @@ export function InlineEditor({
 
   const commit = useCallback(async (nextValue = draft) => {
     const trimmed = nextValue.trim();
-    if (trimmed && trimmed !== value) {
+    if (trimmed !== value) {
       await Promise.resolve(onSave(trimmed));
     } else {
       setDraft(value);
@@ -111,7 +117,9 @@ export function InlineEditor({
       setDraft(value);
       if (multiline) {
         setMultilineFocused(false);
-        setEditing(false);
+        if (!alwaysEdit) {
+          setEditing(false);
+        }
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
@@ -125,7 +133,7 @@ export function InlineEditor({
     if (!multiline) return;
     if (!multilineFocused) return;
     const trimmed = draft.trim();
-    if (!trimmed || trimmed === value) {
+    if (trimmed === value) {
       if (autosaveState !== "saved") {
         reset();
       }
@@ -146,12 +154,12 @@ export function InlineEditor({
     };
   }, [autosaveState, commit, draft, markDirty, multiline, multilineFocused, reset, runSave, value]);
 
-  if (multiline && editing) {
+  if (multiline && (editing || alwaysEdit)) {
     return (
       <div
         className={cn(
           markdownPad,
-          "rounded",
+          "rudder-inline-markdown-surface rounded",
         )}
         onFocusCapture={() => setMultilineFocused(true)}
         onBlurCapture={(event) => {
@@ -160,9 +168,11 @@ export function InlineEditor({
             clearTimeout(autosaveDebounceRef.current);
           }
           setMultilineFocused(false);
-          setEditing(false);
+          if (!alwaysEdit) {
+            setEditing(false);
+          }
           const trimmed = draft.trim();
-          if (!trimmed || trimmed === value) {
+          if (trimmed === value) {
             reset();
             void commit();
             return;
@@ -173,6 +183,7 @@ export function InlineEditor({
       >
         <MarkdownEditor
           ref={markdownRef}
+          engine={editorEngine}
           value={draft}
           onChange={setDraft}
           placeholder={placeholder}
@@ -181,9 +192,10 @@ export function InlineEditor({
           contentClassName={cn("rudder-edit-in-place-content", className)}
           imageUploadHandler={imageUploadHandler}
           mentions={mentions}
+          onMentionQueryChange={onMentionQueryChange}
           onSubmit={() => {
             const trimmed = draft.trim();
-            if (!trimmed || trimmed === value) {
+            if (trimmed === value) {
               reset();
               void commit();
               return;
@@ -243,12 +255,13 @@ export function InlineEditor({
   return (
     <DisplayTag
       className={cn(
-        "rounded overflow-hidden",
+        multiline ? "rudder-inline-markdown-surface rounded" : "rounded overflow-hidden",
         multiline
           ? "cursor-text"
           : "cursor-pointer transition-colors hover:bg-accent/50",
         pad,
-        !value && "text-muted-foreground italic",
+        multiline && !value && "min-h-9 py-1 text-muted-foreground italic",
+        !multiline && !value && "text-muted-foreground italic",
         className,
       )}
       onClick={(event) => {
@@ -258,6 +271,8 @@ export function InlineEditor({
     >
       {value && multiline ? (
         <MarkdownBody
+          className="rudder-inline-markdown-body"
+          copyMarkdownOnCopy
           onLinkClick={({ event }) => {
             event.stopPropagation();
           }}

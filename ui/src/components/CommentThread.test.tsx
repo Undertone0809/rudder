@@ -49,7 +49,13 @@ vi.mock("./transcript/useLiveRunTranscripts", () => ({
 }));
 
 vi.mock("./transcript/RunTranscriptView", () => ({
-  RunTranscriptView: () => <div>Transcript details</div>,
+  RunTranscriptView: ({
+    emptyMessage,
+    streaming,
+  }: {
+    emptyMessage?: string;
+    streaming?: boolean;
+  }) => <div data-streaming={streaming ? "true" : "false"}>{emptyMessage ?? "Transcript details"}</div>,
 }));
 
 describe("CommentThread", () => {
@@ -229,7 +235,7 @@ describe("CommentThread", () => {
     expect(html.indexOf("Middle comment.")).toBeLessThan(html.indexOf("Last activity"));
   });
 
-  it("presents linked run transcript cards as agent runs", () => {
+  it("presents linked run transcript cards as agent run output", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -248,13 +254,12 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("Run");
-    expect(html).not.toContain("Run output");
+    expect(html).toContain("Run output");
     expect(html).not.toContain("Not an issue comment");
-    expect(html).toContain('aria-label="Agent run"');
+    expect(html).toContain('aria-label="Agent run output"');
   });
 
-  it("collapses inactive linked run details by default", () => {
+  it("renders inactive linked run details with an empty output state", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -280,14 +285,13 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain('aria-label="Show details"');
-    expect(html).not.toContain(">Show details<");
-    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('aria-label="Agent run output"');
     expect(html).toContain("succeeded");
-    expect(html).not.toContain("Transcript details");
+    expect(html).toContain("No run output captured.");
+    expect(html).toContain('data-streaming="false"');
   });
 
-  it("keeps only active linked run details expanded by default", () => {
+  it("renders active linked run details in streaming mode", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -306,9 +310,8 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain('aria-label="Hide details"');
-    expect(html).not.toContain(">Hide details<");
-    expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain("Transcript details");
+    expect(html).toContain('aria-label="Agent run output"');
+    expect(html).toContain("Run running. Waiting for output...");
+    expect(html).toContain('data-streaming="true"');
   });
 });

@@ -199,6 +199,22 @@ Stable changelog files live at:
 
 Canaries do not get changelog files.
 
+Use this body shape because GitHub already renders the release title, tag,
+author, and publish date around the notes:
+
+```md
+## Highlights
+
+- ...
+
+## Install
+
+...
+```
+
+Do not add an initial `# Rudder vX.Y.Z` heading, `Released: YYYY-MM-DD` line, or
+standalone prose summary before `## Highlights`.
+
 Recommended local generation flow:
 
 ```bash

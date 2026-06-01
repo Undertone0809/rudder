@@ -6,6 +6,7 @@ import { SettingsSidebar } from "./SettingsSidebar";
 import { PrimaryRail } from "./PrimaryRail";
 import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
+import { OrganizationWorkspaceFilesSidebar } from "../pages/OrganizationWorkspaces";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 import { CommandPalette } from "./CommandPalette";
 import { hasCompletedProductTour, hasPendingProductTour } from "./ProductTourOverlay";
@@ -49,6 +50,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useI18n } from "@/context/I18nContext";
 import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
+import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
@@ -197,7 +199,7 @@ function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily |
   if (/^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath)) return "calendar";
   if (/^\/projects(?:\/|$)/.test(relativePath)) return "org";
   if (/^\/agents(?:\/|$)/.test(relativePath)) return "agents";
-  if (/^\/(?:org|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) return "org";
+  if (/^\/(?:org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) return "org";
   return null;
 }
 
@@ -256,11 +258,15 @@ export function Layout() {
   );
   const useMiddleContextColumn = useMemo(
     () =>
-      /^\/(?:chat|messenger|issues|calendar|dashboard\/calendar|agents|projects|org|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
+      /^\/(?:chat|messenger|issues|calendar|dashboard\/calendar|agents|projects|org|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
   const isWorkspaceBackupsRoute = useMemo(
     () => /^\/workspaces\/backups(?:\/|$)/.test(relativeBoardPath),
+    [relativeBoardPath],
+  );
+  const isLibraryRoute = useMemo(
+    () => /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativeBoardPath) && !/^\/workspaces\/backups(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
   const isChatRoute = useMemo(() => /^\/chat(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
@@ -569,7 +575,9 @@ export function Layout() {
   const showIntegratedCardHeaders = showDesktopWorkspaceShell;
   const showDesktopSettingsModal = !isMobile && isSettingsRoute;
   const shellMainPaddingClass = showDesktopWorkspaceShell
-    ? "px-2 py-1.5 md:px-3.5 md:py-2.5 lg:px-5 lg:py-3"
+    ? isLibraryRoute
+      ? "p-0"
+      : "px-2 py-1.5 md:px-3.5 md:py-2.5 lg:px-5 lg:py-3"
     : "px-2.5 py-1.5 md:px-3 md:py-2 lg:px-4 lg:py-2.5";
 
   const warmSettingsEntry = useCallback(() => {
@@ -707,6 +715,7 @@ export function Layout() {
       </a>
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
+      <MarkdownMentionsProvider>
       <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
         {isMobile && sidebarOpen && (
@@ -829,7 +838,12 @@ export function Layout() {
               ) : null}
               <div className={cn(isMobile ? "block" : "flex min-h-0 min-w-0 flex-1")}>
                 {showDesktopWorkspaceShell ? (
-                  <div className="flex min-h-0 min-w-0 flex-1 px-[3px] pb-[3px] pt-[1px] md:px-1 md:pb-1 md:pt-0.5">
+                  <div
+                    className={cn(
+                      "flex min-h-0 min-w-0 flex-1",
+                      "px-[3px] pb-[3px] pt-[1px] md:px-1 md:pb-1 md:pt-0.5",
+                    )}
+                  >
                     {showIntegratedShellSidebar ? (
                       <>
                         <div
@@ -837,13 +851,20 @@ export function Layout() {
                           aria-hidden={!sidebarOpen}
                           inert={sidebarOpen ? undefined : true}
                           className={cn(
-                            "workspace-context-card flex min-h-0 shrink-0 overflow-hidden rounded-[5px]",
+                            "flex min-h-0 shrink-0 overflow-hidden",
+                            "workspace-context-card rounded-[5px]",
                             !resizingColumn && "transition-[width,opacity,border-color] duration-200 ease-out motion-reduce:transition-none",
                             sidebarOpen ? "opacity-100" : "pointer-events-none border-transparent opacity-0",
                           )}
                           style={{ width: sidebarOpen ? contextColumnWidth : 0 }}
                         >
-                          {isWorkspaceBackupsRoute ? <WorkspaceBackupFilesSidebar /> : <ThreeColumnContextSidebar />}
+                          {isWorkspaceBackupsRoute ? (
+                            <WorkspaceBackupFilesSidebar />
+                          ) : isLibraryRoute ? (
+                            <OrganizationWorkspaceFilesSidebar />
+                          ) : (
+                            <ThreeColumnContextSidebar />
+                          )}
                         </div>
                         <div
                           data-testid="workspace-column-resizer"
@@ -865,11 +886,17 @@ export function Layout() {
                     <div
                       data-testid="workspace-main-card"
                       data-tour-target="workspace-main"
-                      className="workspace-main-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[5px]"
+                      className={cn(
+                        "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+                        "workspace-main-card rounded-[5px]",
+                        isLibraryRoute && "workspace-main-card--frameless",
+                      )}
                     >
-                      <div data-testid="workspace-main-header" className="shrink-0">
-                        <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
-                      </div>
+                      {!isLibraryRoute ? (
+                        <div data-testid="workspace-main-header" className="shrink-0">
+                          <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
+                        </div>
+                      ) : null}
                       <main
                         id="main-content"
                         tabIndex={-1}
@@ -877,7 +904,11 @@ export function Layout() {
                         className={cn(
                           "scrollbar-auto-hide min-w-0 flex-1",
                           shellMainPaddingClass,
-                          isMobile ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]" : "overflow-auto",
+                          isMobile
+                            ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]"
+                            : isLibraryRoute
+                              ? "overflow-hidden"
+                              : "overflow-auto",
                         )}
                       >
                         {hasUnknownOrganizationPrefix ? (
@@ -925,6 +956,7 @@ export function Layout() {
       <NewGoalDialog />
       <NewAgentDialog />
       </CalendarWorkspaceProvider>
+      </MarkdownMentionsProvider>
     </div>
     </NavigationBackProvider>
   );

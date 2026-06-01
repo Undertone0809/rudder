@@ -37,11 +37,19 @@ export {
   createOrganizationSchema,
   updateOrganizationSchema,
   updateOrganizationBrandingSchema,
+  createOrganizationWorkspaceDirectorySchema,
+  createOrganizationWorkspaceFileSchema,
   updateOrganizationWorkspaceFileSchema,
+  renameOrganizationWorkspaceEntrySchema,
+  moveOrganizationWorkspaceEntrySchema,
   type CreateOrganization,
   type UpdateOrganization,
   type UpdateOrganizationBranding,
+  type CreateOrganizationWorkspaceDirectory,
+  type CreateOrganizationWorkspaceFile,
   type UpdateOrganizationWorkspaceFile,
+  type RenameOrganizationWorkspaceEntry,
+  type MoveOrganizationWorkspaceEntry,
 } from "./organization.js";
 export {
   organizationIntelligenceProfilePurposeSchema,
@@ -53,6 +61,7 @@ export {
 } from "./organization-intelligence-profile.js";
 export {
   organizationResourceKindSchema,
+  organizationResourceSourceTypeSchema,
   projectResourceAttachmentRoleSchema,
   createOrganizationResourceSchema,
   updateOrganizationResourceSchema,
@@ -224,6 +233,9 @@ export {
   issueDocumentFormatSchema,
   issueDocumentKeySchema,
   upsertIssueDocumentSchema,
+  createLibraryDocumentSchema,
+  updateLibraryDocumentSchema,
+  restoreLibraryDocumentRevisionSchema,
   type CreateIssue,
   type CreateIssueLabel,
   type UpdateIssueLabel,
@@ -238,6 +250,9 @@ export {
   type CreateIssueWorkspaceAttachment,
   type IssueDocumentFormat,
   type UpsertIssueDocument,
+  type CreateLibraryDocument,
+  type UpdateLibraryDocument,
+  type RestoreLibraryDocumentRevision,
 } from "./issue.js";
 
 export {

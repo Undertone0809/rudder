@@ -247,7 +247,7 @@ export function readSkillSourceKind(skill: OrganizationSkill) {
 }
 
 export function isBundledRudderSourceKind(value: string | null | undefined) {
-  return value === "rudder_bundled" || value === "paperclip_bundled";
+  return value === "rudder_bundled";
 }
 
 export function deriveLocalExportNamespace(skill: OrganizationSkill, slug: string) {

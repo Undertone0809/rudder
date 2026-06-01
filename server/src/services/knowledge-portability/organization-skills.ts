@@ -63,6 +63,7 @@ import {
   enrichSkill,
   findMissingLocalSkillIds,
   getSkillMeta,
+  getRequiredBundledSkillKeys,
   inferLanguageFromPath,
   isBundledRudderSkillKey,
   isBundledRudderSourceKind,
@@ -407,6 +408,26 @@ export function organizationSkillService(db: Db) {
     return sortUniqueSelectionRefs(normalized);
   }
 
+  function requiredBundledSelectionRefs(skills: OrganizationSkill[]) {
+    return getRequiredBundledSkillKeys(skills).map((skillKey) => buildBundledSelectionKey(skillKey));
+  }
+
+  function stripBundledSelectionRefs(selectionRefs: string[]) {
+    return sortUniqueSelectionRefs(
+      selectionRefs.filter((selectionRef) => parseSelectionKey(selectionRef).sourceClass !== "bundled"),
+    );
+  }
+
+  function mergeRequiredBundledSelectionRefs(
+    skills: OrganizationSkill[],
+    selectionRefs: string[],
+  ) {
+    return sortUniqueSelectionRefs([
+      ...stripBundledSelectionRefs(selectionRefs),
+      ...requiredBundledSelectionRefs(skills),
+    ]);
+  }
+
   async function migrateLegacyEnabledSkills(
     orgId: string,
     agent: EnabledSkillsAgentRef,
@@ -417,10 +438,11 @@ export function organizationSkillService(db: Db) {
     const currentRefs = await enabledSkills.listKeys(agent.id);
     if (currentRefs.length > 0) {
       const normalizedCurrentRefs = normalizeStoredSelectionRefs(orgId, agent, skills, currentRefs);
-      if (!arraysEqual(currentRefs, normalizedCurrentRefs)) {
-        await enabledSkills.replaceKeys(orgId, agent.id, normalizedCurrentRefs);
+      const persistedOptionalRefs = stripBundledSelectionRefs(normalizedCurrentRefs);
+      if (!arraysEqual(currentRefs, persistedOptionalRefs)) {
+        await enabledSkills.replaceKeys(orgId, agent.id, persistedOptionalRefs);
       }
-      return normalizedCurrentRefs;
+      return persistedOptionalRefs;
     }
 
     const legacyPreference = readRudderSkillSyncPreference(
@@ -436,9 +458,10 @@ export function organizationSkillService(db: Db) {
       skills,
       legacyPreference.desiredSkills,
     );
+    const persistedOptionalRefs = stripBundledSelectionRefs(migratedRefs);
 
-    if (migratedRefs.length > 0) {
-      await enabledSkills.addMissingKeys(orgId, agent.id, migratedRefs);
+    if (persistedOptionalRefs.length > 0) {
+      await enabledSkills.addMissingKeys(orgId, agent.id, persistedOptionalRefs);
     }
 
     await agents.update(agent.id, {
@@ -448,7 +471,7 @@ export function organizationSkillService(db: Db) {
       ),
     });
 
-    return migratedRefs;
+    return persistedOptionalRefs;
   }
 
   async function getEnabledSkillSelectionMap(
@@ -462,13 +485,15 @@ export function organizationSkillService(db: Db) {
       const existing = selectionMap.get(agent.id);
       if (existing) {
         const normalizedExisting = normalizeStoredSelectionRefs(orgId, agent, skills, existing);
-        if (!arraysEqual(existing, normalizedExisting)) {
-          await enabledSkills.replaceKeys(orgId, agent.id, normalizedExisting);
+        const persistedOptionalRefs = stripBundledSelectionRefs(normalizedExisting);
+        if (!arraysEqual(existing, persistedOptionalRefs)) {
+          await enabledSkills.replaceKeys(orgId, agent.id, persistedOptionalRefs);
         }
-        selectionMap.set(agent.id, normalizedExisting);
+        selectionMap.set(agent.id, mergeRequiredBundledSelectionRefs(skills, persistedOptionalRefs));
         continue;
       }
-      selectionMap.set(agent.id, await migrateLegacyEnabledSkills(orgId, agent, skills));
+      const persistedOptionalRefs = await migrateLegacyEnabledSkills(orgId, agent, skills);
+      selectionMap.set(agent.id, mergeRequiredBundledSelectionRefs(skills, persistedOptionalRefs));
     }
 
     return selectionMap;
@@ -516,8 +541,8 @@ export function organizationSkillService(db: Db) {
         runtimeName: skill.slug,
         description: skill.description ?? null,
         desired: false,
-        configurable: true,
-        alwaysEnabled: false,
+        configurable: !bundled,
+        alwaysEnabled: bundled,
         managed: true,
         state: "available",
         sourceClass: bundled ? "bundled" : "organization",
@@ -621,7 +646,8 @@ export function organizationSkillService(db: Db) {
     skills?: OrganizationSkill[],
   ) {
     const availableSkills = skills ?? await listFull(orgId);
-    return migrateLegacyEnabledSkills(orgId, agent, availableSkills);
+    const persistedOptionalRefs = await migrateLegacyEnabledSkills(orgId, agent, availableSkills);
+    return mergeRequiredBundledSelectionRefs(availableSkills, persistedOptionalRefs);
   }
 
   async function buildAgentSkillSnapshot(
@@ -759,7 +785,7 @@ export function organizationSkillService(db: Db) {
     const catalogEntries = await buildAgentSkillCatalogEntries(orgId, agentId, agentRuntimeType, runtimeConfig, skills);
     const bySelectionKey = new Map(catalogEntries.map((entry) => [entry.selectionKey, entry]));
     const desiredSet = new Set(selectionRefs);
-    const activeEntries = catalogEntries.filter((entry) => desiredSet.has(entry.selectionKey));
+    const activeEntries = catalogEntries.filter((entry) => entry.alwaysEnabled || desiredSet.has(entry.selectionKey));
     const out: RudderSkillEntry[] = [];
 
     for (const entry of activeEntries) {
@@ -1464,13 +1490,14 @@ export function organizationSkillService(db: Db) {
       skillKeys: string[],
     ) => {
       const skills = await listFull(orgId);
-      return sortUniqueSelectionRefs(
+      const optionalSelectionRefs = sortUniqueSelectionRefs(
         skillKeys.flatMap((skillKey) => {
           const normalized = normalizeSelectionRef(skillKey, skills, orgId, "claude_local");
           if (!normalized) return [];
           return parseSelectionKey(normalized).sourceClass === "bundled" ? [] : [normalized];
         }),
       );
+      return mergeRequiredBundledSelectionRefs(skills, optionalSelectionRefs);
     },
     getEnabledSkillKeysForAgent: async (
       orgId: string,

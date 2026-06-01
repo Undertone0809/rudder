@@ -41,14 +41,14 @@ async function listAgentWorkspaceKeys(orgId: string) {
 }
 
 test.describe("Agent rename workspace contract", () => {
-  test("keeps managed instructions pinned to the original workspace after rename", async ({ request }) => {
+  test("keeps managed instructions pinned to the original workspace after rename", async ({ page, request }) => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Agent-Rename-Workspace-${Date.now()}`,
       },
     });
     expect(organizationRes.ok()).toBe(true);
-    const organization = await organizationRes.json() as { id: string };
+    const organization = await organizationRes.json() as { id: string; issuePrefix: string };
 
     const agentRes = await request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -87,9 +87,17 @@ test.describe("Agent rename workspace contract", () => {
       rootPath: string | null;
       files: Array<{ path: string }>;
     };
+    const detailRes = await request.get(`/api/agents/${agent.id}`);
+    expect(detailRes.ok()).toBe(true);
+    const detail = await detailRes.json() as {
+      instructionsLibraryPath: string | null;
+      workspaceKey?: string;
+    };
 
     expect(bundle.rootPath).toBe(originalInstructionsRoot);
     expect(bundle.files.map((file) => file.path)).toContain("AGENTS.md");
+    expect(detail.workspaceKey).toBeUndefined();
+    expect(detail.instructionsLibraryPath).toBe(`agents/${originalWorkspaceKey}/instructions`);
     expect(await listAgentWorkspaceKeys(organization.id)).toEqual([originalWorkspaceKey]);
     await expect(
       fs.readFile(path.join(originalInstructionsRoot, "AGENTS.md"), "utf8"),
@@ -97,5 +105,22 @@ test.describe("Agent rename workspace contract", () => {
     await expect(
       fs.stat(resolveAgentWorkspaceRoot(organization.id, renamedWorkspaceKey)),
     ).rejects.toThrow();
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/dashboard`);
+    await page.getByRole("tab", { name: "Instructions" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?directory=`));
+    const expectedInstructionsDirectory = `agents/${originalWorkspaceKey}/instructions`;
+    expect(new URL(page.url()).searchParams.get("directory")).toBe(expectedInstructionsDirectory);
+    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+    await expect(page.getByText("File not found inside the organization workspace")).toHaveCount(0);
+    await expect(
+      page
+        .locator(`[data-workspace-entry-path="${expectedInstructionsDirectory}"]`)
+        .locator('button[aria-selected="true"]'),
+    ).toBeVisible();
   });
 });

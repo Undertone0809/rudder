@@ -565,6 +565,13 @@
     {
       "idx": 80,
       "version": "7",
+      "when": 1779872896181,
+      "tag": "0080_stale_screwball",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
       "when": 1780133410736,
       "tag": "0080_curly_flatman",
       "breakpoints": true

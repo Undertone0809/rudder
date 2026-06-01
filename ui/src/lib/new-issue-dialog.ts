@@ -18,6 +18,7 @@ export interface IssueDraft {
   assigneeId?: string;
   reviewerValue?: string;
   projectId: string;
+  goalId?: string;
   projectWorkspaceId?: string;
   assigneeModelOverride: string;
   assigneeThinkingEffort: string;
@@ -62,6 +63,7 @@ export interface BuildNewIssueCreateRequestInput {
   reviewerAgentId?: string | null;
   reviewerUserId?: string | null;
   projectId: string;
+  goalId?: string;
   labelIds: string[];
   projectWorkspaceId: string;
   assigneeAgentRuntimeOverrides?: Record<string, unknown> | null;
@@ -77,6 +79,7 @@ export interface ResolvedNewIssueDraftInput {
   status?: string;
   priority?: string;
   projectId: string;
+  goalId?: string;
   labelIds?: string[];
   assigneeValue?: string;
   assigneeId?: string;
@@ -112,6 +115,7 @@ export function hasMeaningfulIssueDraft(draft: Partial<IssueDraft> | null | unde
       safeTrim(draft.assigneeValue) ||
       safeTrim(draft.assigneeId) ||
       safeTrim(draft.reviewerValue) ||
+      safeTrim(draft.goalId) ||
       (safeTrim(draft.priority) && safeTrim(draft.priority) !== "medium") ||
       (safeTrim(draft.status) && safeTrim(draft.status) !== "todo") ||
       (Array.isArray(draft.labelIds) && draft.labelIds.length > 0) ||
@@ -234,6 +238,7 @@ function issueDraftContentKey(draft: IssueDraft): string {
     assigneeId: draft.assigneeId ?? "",
     reviewerValue: draft.reviewerValue ?? "",
     projectId: draft.projectId ?? "",
+    goalId: draft.goalId ?? "",
     projectWorkspaceId: draft.projectWorkspaceId ?? "",
     assigneeModelOverride: draft.assigneeModelOverride ?? "",
     assigneeThinkingEffort: draft.assigneeThinkingEffort ?? "",
@@ -316,6 +321,7 @@ export interface ResolvedNewIssueDefaultsInput {
   status?: string;
   priority?: string;
   projectId?: string;
+  goalId?: string;
   labelIds?: string[];
   assigneeAgentId?: string;
   assigneeUserId?: string;
@@ -336,6 +342,7 @@ export function resolveDraftBackedNewIssueValues(input: {
   labelIds: string[];
   assigneeValue: string;
   reviewerValue: string;
+  goalId: string;
 } {
   const hasExplicitAssignee = Boolean(input.defaults.assigneeAgentId || input.defaults.assigneeUserId);
   const hasExplicitReviewer = Boolean(input.defaults.reviewerAgentId || input.defaults.reviewerUserId);
@@ -343,6 +350,7 @@ export function resolveDraftBackedNewIssueValues(input: {
     status: input.defaults.status ?? input.draft.status ?? "todo",
     priority: input.defaults.priority ?? input.draft.priority ?? "",
     projectId: input.defaultProjectId || input.draft.projectId,
+    goalId: input.defaults.goalId ?? input.draft.goalId ?? "",
     labelIds: input.defaults.labelIds ?? input.draft.labelIds ?? [],
     assigneeValue: hasExplicitAssignee
       ? input.defaultAssigneeValue
@@ -389,6 +397,7 @@ export function buildNewIssueCreateRequest(input: BuildNewIssueCreateRequestInpu
     ...(input.reviewerAgentId ? { reviewerAgentId: input.reviewerAgentId } : {}),
     ...(input.reviewerUserId ? { reviewerUserId: input.reviewerUserId } : {}),
     ...(input.projectId ? { projectId: input.projectId } : {}),
+    ...(input.goalId ? { goalId: input.goalId } : {}),
     ...(input.labelIds.length > 0 ? { labelIds: input.labelIds } : {}),
     ...(input.projectWorkspaceId ? { projectWorkspaceId: input.projectWorkspaceId } : {}),
     ...(input.assigneeAgentRuntimeOverrides ? { assigneeAgentRuntimeOverrides: input.assigneeAgentRuntimeOverrides } : {}),

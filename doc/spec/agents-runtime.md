@@ -144,17 +144,22 @@ Organization resources and project resources are intentionally different:
   repos, folders, URLs, docs, and connector objects. They are available through
   the Resources API/UI, but they are not injected into every agent run or chat
   prompt by default.
-- **Project Resources** are attachments from a project to org resources, with a
-  project-specific role and note. When a heartbeat or chat run resolves a
-  `projectId`, Rudder loads only that project's attached resources into
+- **Project Context Resources** are attachments from a project to org resources,
+  with a project-specific role and note. `external` resources point to URLs,
+  local paths, repos, or connector objects. `library` resources point to one
+  normalized relative path under the organization Library workspace root; they
+  must not use absolute paths, URL schemes, `..` traversal, or protected system
+  roots such as `agents/`, `artifacts/`, `plans/`, and `skills/`.
+- When a heartbeat or chat run resolves a `projectId`, Rudder loads only that
+  project's attached resources into
   `context.rudderWorkspace.resourcesPrompt`,
   `context.rudderWorkspace.orgResourcesPrompt` (legacy alias),
   `context.rudderResourcesPrompt`, and `context.rudderProjectResources`.
 
 This keeps default context narrow. A project-linked run gets the resources the
 board explicitly attached to that project. If the agent needs broader org-wide
-background, it should query the org resource catalog itself instead of relying
-on automatic prompt injection.
+background or Library know-how, it should query the org resource catalog or
+inspect the Library itself instead of relying on automatic prompt injection.
 
 Runs with no project context receive no resource prompt by default.
 

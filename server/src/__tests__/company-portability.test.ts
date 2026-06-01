@@ -668,7 +668,7 @@ describe("organization portability", () => {
         compatibility: "compatible",
         fileInventory: [{ path: "SKILL.md", kind: "skill" }],
         metadata: {
-          sourceKind: "paperclip_bundled",
+          sourceKind: "rudder_bundled",
           owner: "rudder",
           repo: "rudder",
           ref: "0123456789abcdef0123456789abcdef01234567",

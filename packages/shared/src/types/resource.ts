@@ -1,10 +1,15 @@
-import type { OrganizationResourceKind, ProjectResourceAttachmentRole } from "../constants.js";
+import type {
+  OrganizationResourceKind,
+  OrganizationResourceSourceType,
+  ProjectResourceAttachmentRole,
+} from "../constants.js";
 
 export interface OrganizationResource {
   id: string;
   orgId: string;
   name: string;
   kind: OrganizationResourceKind;
+  sourceType: OrganizationResourceSourceType;
   locator: string;
   description: string | null;
   metadata: Record<string, unknown> | null;
@@ -15,6 +20,7 @@ export interface OrganizationResource {
 export interface CreateOrganizationResourceRequest {
   name: string;
   kind: OrganizationResourceKind;
+  sourceType?: OrganizationResourceSourceType;
   locator: string;
   description?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -23,6 +29,7 @@ export interface CreateOrganizationResourceRequest {
 export interface UpdateOrganizationResourceRequest {
   name?: string;
   kind?: OrganizationResourceKind;
+  sourceType?: OrganizationResourceSourceType;
   locator?: string;
   description?: string | null;
   metadata?: Record<string, unknown> | null;

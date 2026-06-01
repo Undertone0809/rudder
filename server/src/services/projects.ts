@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { projects, projectGoals, goals, projectWorkspaces, workspaceRuntimeServices } from "@rudderhq/db";
@@ -23,6 +24,7 @@ import {
 } from "./resource-catalog.js";
 import {
   ensureOrganizationWorkspaceLayout,
+  ensureProjectLibraryLayout,
   resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
 
@@ -209,7 +211,17 @@ async function attachWorkspaces(db: Db, rows: ProjectWithGoals[]): Promise<Proje
 
   const projectIds = rows.map((r) => r.id);
   const orgIds = [...new Set(rows.map((row) => row.orgId))];
-  await Promise.all(orgIds.map((orgId) => ensureOrganizationWorkspaceLayout(orgId)));
+  await Promise.all([
+    ...orgIds.map((orgId) => ensureOrganizationWorkspaceLayout(orgId)),
+    ...rows.map((row) =>
+      ensureProjectLibraryLayout({
+        orgId: row.orgId,
+        projectId: row.id,
+        projectName: row.name,
+        projectUrlKey: row.urlKey,
+      }),
+    ),
+  ]);
   const workspaceRows = await db
     .select()
     .from(projectWorkspaces)
@@ -480,6 +492,14 @@ export function projectService(db: Db) {
         .from(projects)
         .where(eq(projects.orgId, orgId));
       projectData.name = resolveProjectNameForUniqueShortname(projectData.name, existingProjects);
+      const projectId = projectData.id ?? randomUUID();
+
+      await ensureProjectLibraryLayout({
+        orgId,
+        projectId,
+        projectName: projectData.name,
+        projectUrlKey: deriveProjectUrlKey(projectData.name, projectId),
+      });
 
       // Also write goalId to the legacy column (first goal or null)
       const legacyGoalId = ids && ids.length > 0 ? ids[0] : projectData.goalId ?? null;
@@ -487,7 +507,7 @@ export function projectService(db: Db) {
       const row = await db.transaction(async (tx) => {
         const created = await tx
           .insert(projects)
-          .values({ ...projectData, goalId: legacyGoalId, orgId })
+          .values({ ...projectData, id: projectId, goalId: legacyGoalId, orgId })
           .returning()
           .then((rows) => rows[0]);
 
@@ -507,7 +527,6 @@ export function projectService(db: Db) {
         return created;
       });
 
-      await ensureOrganizationWorkspaceLayout(orgId);
       const [withGoals] = await attachGoals(db, [row]);
       const [withWorkspaces] = withGoals ? await attachWorkspaces(db, [withGoals]) : [];
       const [enriched] = withWorkspaces ? await attachResources(db, [withWorkspaces]) : [];

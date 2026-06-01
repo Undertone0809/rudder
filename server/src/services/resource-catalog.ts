@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   organizationResources,
@@ -14,6 +14,7 @@ import type {
   UpdateProjectResourceAttachmentRequest,
   UpdateOrganizationResourceRequest,
 } from "@rudderhq/shared";
+import { badRequest, conflict } from "../errors.js";
 
 function toOrganizationResource(row: typeof organizationResources.$inferSelect): OrganizationResource {
   return {
@@ -21,6 +22,7 @@ function toOrganizationResource(row: typeof organizationResources.$inferSelect):
     orgId: row.orgId,
     name: row.name,
     kind: row.kind as OrganizationResource["kind"],
+    sourceType: (row.sourceType ?? "external") as OrganizationResource["sourceType"],
     locator: row.locator,
     description: row.description ?? null,
     metadata: (row.metadata as Record<string, unknown> | null) ?? null,
@@ -52,6 +54,78 @@ function normalizeNullableText(value: string | null | undefined) {
   if (value === null) return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+const LIBRARY_PATH_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+const PROTECTED_LIBRARY_RESOURCE_ROOTS = new Set(["agents", "artifacts", "plans", "skills"]);
+
+function isValidLibraryRelativePath(locator: string) {
+  const trimmed = locator.trim();
+  if (!trimmed) return false;
+  if (LIBRARY_PATH_SCHEME_RE.test(trimmed)) return false;
+  if (trimmed.startsWith("/") || trimmed.startsWith("\\") || trimmed.startsWith("~")) return false;
+  if (trimmed.includes("\\")) return false;
+  const parts = trimmed.split("/");
+  if (!parts.every((part) => part.length > 0 && part !== "." && part !== "..")) return false;
+  return !PROTECTED_LIBRARY_RESOURCE_ROOTS.has(parts[0] ?? "");
+}
+
+function assertValidLibraryResource(input: {
+  sourceType: string;
+  kind: string;
+  locator: string;
+}) {
+  if (input.sourceType !== "library") return;
+  if (input.kind !== "file" && input.kind !== "directory") {
+    throw badRequest("Library resources must be file or directory resources.");
+  }
+  if (!isValidLibraryRelativePath(input.locator)) {
+    throw badRequest("Library resource locator must be a normalized relative path inside the organization Library.");
+  }
+}
+
+async function findLibraryResourceByLocator(dbOrTx: Db | any, orgId: string, locator: string) {
+  return dbOrTx
+    .select()
+    .from(organizationResources)
+    .where(
+      and(
+        eq(organizationResources.orgId, orgId),
+        eq(organizationResources.sourceType, "library"),
+        eq(organizationResources.locator, locator.trim()),
+      ),
+    )
+    .limit(1)
+    .then((rows: typeof organizationResources.$inferSelect[]) => rows[0] ?? null);
+}
+
+async function createOrReuseOrganizationResource(
+  dbOrTx: Db | any,
+  orgId: string,
+  input: CreateOrganizationResourceRequest,
+) {
+  const sourceType = input.sourceType ?? "external";
+  const locator = input.locator.trim();
+  assertValidLibraryResource({ sourceType, kind: input.kind, locator });
+
+  if (sourceType === "library") {
+    const existing = await findLibraryResourceByLocator(dbOrTx, orgId, locator);
+    if (existing) return existing;
+  }
+
+  return dbOrTx
+    .insert(organizationResources)
+    .values({
+      orgId,
+      name: input.name.trim(),
+      kind: input.kind,
+      sourceType,
+      locator,
+      description: normalizeNullableText(input.description) ?? null,
+      metadata: input.metadata ?? null,
+    })
+    .returning()
+    .then((rows: typeof organizationResources.$inferSelect[]) => rows[0]);
 }
 
 async function fetchProjectOrgId(db: Db, projectId: string) {
@@ -145,18 +219,7 @@ export async function replaceProjectResourceAttachments(
   const createdResourceIds: string[] = [];
 
   for (const inlineResource of input.newResources ?? []) {
-    const created = await dbOrTx
-      .insert(organizationResources)
-      .values({
-        orgId: input.orgId,
-        name: inlineResource.name.trim(),
-        kind: inlineResource.kind,
-        locator: inlineResource.locator.trim(),
-        description: normalizeNullableText(inlineResource.description) ?? null,
-        metadata: inlineResource.metadata ?? null,
-      })
-      .returning()
-      .then((rows: typeof organizationResources.$inferSelect[]) => rows[0]);
+    const created = await createOrReuseOrganizationResource(dbOrTx, input.orgId, inlineResource);
     createdResourceIds.push(created.id);
   }
 
@@ -169,6 +232,9 @@ export async function replaceProjectResourceAttachments(
       sortOrder: resource.sortOrder,
     })),
   ];
+  const dedupedAttachments = combinedAttachments.filter((attachment, index, attachments) =>
+    attachments.findIndex((candidate) => candidate.resourceId === attachment.resourceId) === index,
+  );
 
   await dbOrTx
     .delete(projectResourceAttachments)
@@ -179,9 +245,9 @@ export async function replaceProjectResourceAttachments(
       ),
     );
 
-  if (combinedAttachments.length > 0) {
+  if (dedupedAttachments.length > 0) {
     await dbOrTx.insert(projectResourceAttachments).values(
-      combinedAttachments.map((attachment, index) => ({
+      dedupedAttachments.map((attachment, index) => ({
         orgId: input.orgId,
         projectId: input.projectId,
         resourceId: attachment.resourceId,
@@ -213,18 +279,7 @@ export function resourceCatalogService(db: Db) {
       orgId: string,
       input: CreateOrganizationResourceRequest,
     ): Promise<OrganizationResource> => {
-      const row = await db
-        .insert(organizationResources)
-        .values({
-          orgId,
-          name: input.name.trim(),
-          kind: input.kind,
-          locator: input.locator.trim(),
-          description: normalizeNullableText(input.description) ?? null,
-          metadata: input.metadata ?? null,
-        })
-        .returning()
-        .then((rows) => rows[0]);
+      const row = await createOrReuseOrganizationResource(db, orgId, input);
       return toOrganizationResource(row);
     },
 
@@ -233,11 +288,44 @@ export function resourceCatalogService(db: Db) {
       resourceId: string,
       input: UpdateOrganizationResourceRequest,
     ): Promise<OrganizationResource | null> => {
+      const existing = await db
+        .select()
+        .from(organizationResources)
+        .where(and(eq(organizationResources.orgId, orgId), eq(organizationResources.id, resourceId)))
+        .then((rows) => rows[0] ?? null);
+      if (!existing) return null;
+
+      assertValidLibraryResource({
+        sourceType: input.sourceType ?? existing.sourceType,
+        kind: input.kind ?? existing.kind,
+        locator: input.locator?.trim() ?? existing.locator,
+      });
+      const nextSourceType = input.sourceType ?? existing.sourceType;
+      const nextLocator = input.locator?.trim() ?? existing.locator;
+      if (nextSourceType === "library") {
+        const duplicate = await db
+          .select({ id: organizationResources.id })
+          .from(organizationResources)
+          .where(
+            and(
+              eq(organizationResources.orgId, orgId),
+              eq(organizationResources.sourceType, "library"),
+              eq(organizationResources.locator, nextLocator),
+              ne(organizationResources.id, resourceId),
+            ),
+          )
+          .then((rows) => rows[0] ?? null);
+        if (duplicate) {
+          throw conflict("A Library resource already exists for this path.");
+        }
+      }
+
       const patch: Partial<typeof organizationResources.$inferInsert> = {
         updatedAt: new Date(),
       };
       if (input.name !== undefined) patch.name = input.name.trim();
       if (input.kind !== undefined) patch.kind = input.kind;
+      if (input.sourceType !== undefined) patch.sourceType = input.sourceType;
       if (input.locator !== undefined) patch.locator = input.locator.trim();
       if (input.description !== undefined) patch.description = normalizeNullableText(input.description) ?? null;
       if (input.metadata !== undefined) patch.metadata = input.metadata;

@@ -224,7 +224,13 @@ describe("organization skill references", () => {
 
     expect(agent).toBeTruthy();
     const expectedSelectionRef = `org:organization/${orgId}/build-advisor`;
-    await expect(skillSvc.getEnabledSkillKeysForAgent(orgId, agent!)).resolves.toEqual([
+    const enabledSkillKeys = await skillSvc.getEnabledSkillKeysForAgent(orgId, agent!);
+    expect(enabledSkillKeys).toEqual(expect.arrayContaining([
+      "bundled:rudder/rudder",
+      "bundled:rudder/rudder-create-agent",
+      expectedSelectionRef,
+    ]));
+    expect(enabledSkillKeys.filter((key) => key.startsWith("org:"))).toEqual([
       expectedSelectionRef,
     ]);
 

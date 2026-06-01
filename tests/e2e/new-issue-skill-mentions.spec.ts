@@ -21,6 +21,13 @@ test.describe("New issue skill mentions", () => {
       id: string;
       issuePrefix: string;
     };
+    const workspaceFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: "docs/handoff-notes.md",
+        content: "# Handoff notes\n",
+      },
+    });
+    expect(workspaceFileRes.ok()).toBe(true);
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -74,14 +81,25 @@ test.describe("New issue skill mentions", () => {
     await expect(dialog).toBeVisible({ timeout: 15_000 });
 
     await dialog.getByPlaceholder("Issue title").fill("Use current agent skill mention");
-    const composer = dialog.locator(".rudder-mdxeditor-content").first();
+    const composer = dialog.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').first();
 
-    await composer.fill("Use @advisor");
+    await composer.click();
+    await page.keyboard.type("Use @advisor");
     const atMentionMenu = page.getByTestId("markdown-mention-menu");
     await expect(atMentionMenu).toBeVisible({ timeout: 15_000 });
     await expect(atMentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first()).toContainText("build-advisor");
 
-    await composer.fill("Use $advisor");
+    await composer.press("ControlOrMeta+A");
+    await page.keyboard.type("Use @handoff");
+    const fileMentionMenu = page.getByTestId("markdown-mention-menu");
+    await expect(fileMentionMenu).toBeVisible({ timeout: 15_000 });
+    const fileOption = page.getByTestId("markdown-mention-option-library-file:docs/handoff-notes.md");
+    await expect(fileOption).toBeVisible();
+    await expect(fileOption.locator(".font-medium")).toHaveText("handoff-notes.md");
+    await expect(fileOption).toContainText("docs/handoff-notes.md");
+
+    await composer.press("ControlOrMeta+A");
+    await page.keyboard.type("Use $advisor");
 
     const mentionMenu = page.getByTestId("markdown-mention-menu");
     await expect(mentionMenu).toBeVisible({ timeout: 15_000 });
@@ -89,7 +107,7 @@ test.describe("New issue skill mentions", () => {
     await expect(skillOption).toContainText("build-advisor");
     await skillOption.dispatchEvent("mousedown");
 
-    const insertedSkillToken = dialog.locator(".rudder-mdxeditor-content [data-skill-token='true']").first();
+    const insertedSkillToken = composer.locator("a").filter({ hasText: "build-advisor" }).first();
     await expect(insertedSkillToken).toBeVisible({ timeout: 15_000 });
     const insertedSkillLabel = (await insertedSkillToken.textContent())?.trim() ?? "";
     expect(insertedSkillLabel).toContain("build-advisor");

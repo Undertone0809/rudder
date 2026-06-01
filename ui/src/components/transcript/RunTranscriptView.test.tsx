@@ -119,8 +119,8 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("<strong>world</strong>");
-    expect(html).toContain("<li>first</li>");
-    expect(html).toContain("<li>second</li>");
+    expect(html).toContain(">first</li>");
+    expect(html).toContain(">second</li>");
   });
 
   it("hides saved-session resume skip stderr from nice mode normalization", () => {
@@ -236,7 +236,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Continuing after runtime noise.");
   });
 
-  it("does not render benign Codex model refresh timeout stderr in nice or raw mode", () => {
+  it("does not render benign Codex runtime stderr in nice or raw mode", () => {
     const entries: TranscriptEntry[] = [
       {
         kind: "stderr",
@@ -262,8 +262,8 @@ describe("RunTranscriptView", () => {
 
     expect(niceHtml).not.toContain("failed to refresh available models");
     expect(rawHtml).not.toContain("failed to refresh available models");
-    expect(niceHtml).toContain("Phase 2 no changes");
-    expect(rawHtml).toContain("Phase 2 no changes");
+    expect(niceHtml).not.toContain("Phase 2 no changes");
+    expect(rawHtml).not.toContain("Phase 2 no changes");
   });
 
   it("collapses long stderr by default while keeping a short summary visible", () => {

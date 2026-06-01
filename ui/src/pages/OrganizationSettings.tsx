@@ -448,7 +448,7 @@ export function OrganizationSettings() {
     });
   }
 
-  const organizationWorkspacesPath = applyOrganizationPrefix("/workspaces", viewedOrganization.issuePrefix);
+  const organizationLibraryPath = applyOrganizationPrefix("/library", viewedOrganization.issuePrefix);
   const organizationWorkspaceBackupsPath = applyOrganizationPrefix(
     "/workspaces/backups",
     viewedOrganization.issuePrefix,
@@ -634,7 +634,7 @@ export function OrganizationSettings() {
 
           <div className="flex items-center gap-2">
             <Button asChild size="sm" variant="outline">
-              <Link to={organizationWorkspacesPath}>{t("organizationSettings.workspace.open")}</Link>
+              <Link to={organizationLibraryPath}>{t("organizationSettings.workspace.open")}</Link>
             </Button>
             <Button asChild size="sm" variant="outline">
               <Link to={organizationWorkspaceBackupsPath}>{t("organizationSettings.workspace.backups")}</Link>

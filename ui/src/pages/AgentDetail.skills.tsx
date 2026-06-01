@@ -317,11 +317,11 @@ export function AgentSkillsTab({
       selectionKey: getOrganizationSelectionKey(skill.key),
       runtimeName: skill.slug,
       description: skill.description ?? null,
-      desired: false,
-      configurable: true,
-      alwaysEnabled: false,
+      desired: bundled,
+      configurable: !bundled,
+      alwaysEnabled: bundled,
       managed: true,
-      state: "available",
+      state: bundled ? "configured" : "available",
       sourceClass: bundled ? "bundled" : "organization",
     };
   }, [getOrganizationSelectionKey]);
@@ -522,9 +522,9 @@ export function AgentSkillsTab({
   const isSkillsLoading = isLoading || organizationSkillsLoading;
   const saveStatusLabel = syncSkills.isPending ? "Saving..." : null;
 
-  const controlsHelperText = "Rudder Agent Skills load only when enabled on this page. Adapter, global, project, plugin, slash-command, and host-installed skills are discovery-only until selected.";
+  const controlsHelperText = "Rudder-bundled skills are always enabled for every agent. Other Rudder Agent Skills load only when enabled on this page; adapter, global, project, plugin, slash-command, and host-installed skills are discovery-only until selected.";
   const agentSectionHelperText = "Agent-private skills belong to this agent only. Edit them in Workspaces, then enable them here when you want Rudder to load them.";
-  const organizationSectionHelperText = "Bundled, community preset, and organization skills are optional selections controlled by this page; workspace-backed skills can be edited from Workspaces.";
+  const organizationSectionHelperText = "Bundled Rudder skills are required product capabilities and cannot be disabled. Community preset and organization skills are optional selections controlled by this page; workspace-backed skills can be edited from Workspaces.";
   const externalSectionHelperText = "Global and adapter skills are discovered from ~/.agents/skills and the current runtime adapter home. Discovery does not enable them; only the selections on this page determine runtime loading.";
 
   const updateSkillDraft = useCallback((updater: (current: string[]) => string[]) => {

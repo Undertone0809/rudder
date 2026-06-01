@@ -3,8 +3,12 @@
 import { act } from "react";
 import type React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { WorkspaceLaunchTargetIcon } from "./OrganizationWorkspaces";
+
+vi.mock("../components/MarkdownEditor", () => ({
+  MarkdownEditor: () => <div data-testid="markdown-editor" />,
+}));
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
