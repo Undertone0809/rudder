@@ -170,6 +170,68 @@ describe("project service workspace resolution", () => {
     expect(persistedWorkspaces).toEqual([]);
   });
 
+  it("repairs missing project Library folders when projects are listed", async () => {
+    const rudderHome = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-projects-repair-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Repair Workspace Org",
+      urlKey: deriveOrganizationUrlKey("Repair Workspace Org"),
+      issuePrefix: "RWO",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const created = await projectSvc.create(orgId, {
+      name: "Repairable Project",
+      status: "planned",
+    });
+    const projectLibraryDir = resolveProjectLibraryDir({
+      orgId,
+      projectId: created.id,
+      projectName: created.name,
+    });
+    fs.rmSync(projectLibraryDir, { recursive: true, force: true });
+    expect(fs.existsSync(projectLibraryDir)).toBe(false);
+
+    await projectSvc.list(orgId);
+
+    expect(fs.existsSync(path.join(projectLibraryDir, "README.md"))).toBe(true);
+  });
+
+  it("creates the current project Library folder after a project rename", async () => {
+    const rudderHome = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-projects-rename-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rename Workspace Org",
+      urlKey: deriveOrganizationUrlKey("Rename Workspace Org"),
+      issuePrefix: "NWO",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const created = await projectSvc.create(orgId, {
+      name: "Original Project",
+      status: "planned",
+    });
+    const updated = await projectSvc.update(created.id, {
+      name: "Renamed Project",
+    });
+
+    expect(updated?.name).toBe("Renamed Project");
+    const renamedProjectLibraryDir = resolveProjectLibraryDir({
+      orgId,
+      projectId: created.id,
+      projectName: "Renamed Project",
+    });
+    expect(fs.existsSync(path.join(renamedProjectLibraryDir, "README.md"))).toBe(true);
+  });
+
   it("keeps legacy project workspace records internal while resolving project codebase to the org root", async () => {
     const rudderHome = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-projects-home-"));
     cleanupDirs.add(rudderHome);
