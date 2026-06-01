@@ -68,6 +68,7 @@ async function syncPiSharedHomeEntries(sourceHome: string, targetHome: string) {
 
   const topEntries = await fs.readdir(sourcePiDir, { withFileTypes: true }).catch(() => []);
   for (const entry of topEntries) {
+    // Skip Pi's legacy project-state folder so Rudder never copies host work state into the managed home.
     if (entry.name === "agent" || entry.name === "paperclips") continue;
     await ensureManagedHomeEntrySnapshot(path.join(targetPiDir, entry.name), path.join(sourcePiDir, entry.name));
   }

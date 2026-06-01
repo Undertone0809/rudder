@@ -122,4 +122,15 @@ describe("cursor local adapter skill injection", () => {
 
     await expect(fs.lstat(path.join(skillsHome, "rudder"))).rejects.toThrow();
   });
+
+  it("fails closed instead of writing to the host Cursor skills home when skillsHome is omitted", async () => {
+    const skillsDir = await makeTempDir("rudder-cursor-no-host-src-");
+    cleanupDirs.add(skillsDir);
+
+    await createSkillDir(skillsDir, "rudder");
+
+    await expect(
+      ensureCursorSkillsInjected(async () => {}, { skillsDir, desiredSkillKeys: ["rudder"] }),
+    ).rejects.toThrow("explicit Rudder-managed skillsHome");
+  });
 });

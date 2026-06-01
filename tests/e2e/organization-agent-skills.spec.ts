@@ -151,6 +151,7 @@ const payload = {
   rudderEnv: Object.fromEntries(
     Object.entries(process.env)
       .filter(([key]) => key.startsWith("RUDDER_"))
+      .map(([key, value]) => [key, key.includes("API_KEY") || key.includes("TOKEN") ? "[redacted]" : value])
       .sort(([left], [right]) => left.localeCompare(right)),
   ),
   xdgEnv: Object.fromEntries(
@@ -1127,6 +1128,7 @@ test.describe("Organization and agent skills", () => {
       expect(capture.home).not.toBe(E2E_HOME);
       expect(capture.skillsHome).not.toBe(path.join(E2E_HOME, ...hostSkillDirByRuntime[item.runtime]));
       expect(capture.rudderEnv.RUDDER_CLI).toBeTruthy();
+      expect(capture.rudderEnv.RUDDER_API_KEY).toBe("[redacted]");
       expect(capture.skillEntries).toContain("runtime-selected");
       expect(capture.skillEntries).not.toContain("build-advisor");
       expect(capture.skillEntries).not.toContain("code-review");

@@ -120,10 +120,6 @@ function hasCursorResultEvent(stdout: string): boolean {
   return parseCursorJsonl(stdout).resultSeen;
 }
 
-function cursorSkillsHome(): string {
-  return path.join(os.homedir(), ".cursor", "skills");
-}
-
 type EnsureCursorSkillsInjectedOptions = {
   skillsDir?: string | null;
   skillsEntries?: Array<{ key: string; runtimeName: string; source: string }>;
@@ -148,7 +144,10 @@ export async function ensureCursorSkillsInjected(
       : await readRudderRuntimeSkillEntries({}, __moduleDir));
   if (skillsEntries.length === 0) return;
 
-  const skillsHome = options.skillsHome ?? cursorSkillsHome();
+  if (!options.skillsHome) {
+    throw new Error("Cursor skill injection requires an explicit Rudder-managed skillsHome");
+  }
+  const skillsHome = options.skillsHome;
   await ensureRudderRuntimeSkillSymlinks({
     onLog,
     runtimeLabel: "Cursor",
