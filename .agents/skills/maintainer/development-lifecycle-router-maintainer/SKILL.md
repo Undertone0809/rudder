@@ -300,14 +300,6 @@ scope guard:
   selection, approval attention, chat composer behavior, or document/library
   navigation, require the relevant E2E path unless the user explicitly approves
   a lower-level substitute.
-- If the request changes counts, badges, notification dots, inbox state, read
-  state, attention state, or derived summaries, identify the single source of
-  truth and any older parallel derivations before editing. If the confirmed
-  fix depends on multiple authorities agreeing, retire or rewire the stale
-  derivation; otherwise record the drift risk and keep the fix narrow.
-- For query-backed UI state, name the mutation-to-readback path: which mutation
-  changes the source record, which queries must be invalidated or bypass cache,
-  and which terminal surface must visibly update.
 - If the likely edit target is an already oversized UI file, especially
   `IssueDetail.tsx` or another multi-responsibility page component, prefer a
   small extracted component/helper for new behavior instead of making the
@@ -418,14 +410,6 @@ Choose proof that follows that loop:
   read back the API/DB state and observe the final app or CLI surface.
 - For UI and workflow changes, use Browser or Computer Use to exercise the
   actual route when practical, plus API/log readback when state matters.
-- For badge, notification, inbox, and read-state fixes, prove both the local
-  surface and its sibling/global surface. Example: a Messenger thread badge
-  clearing is not enough if the primary rail, desktop notification count, or
-  server badge endpoint can still show the stale value.
-- When the risk is client cache or query invalidation, prove the update in the
-  same mounted app session immediately after the mutation. A full page reload or
-  direct API readback is supporting evidence, not proof that cache invalidation
-  works.
 - For Desktop-native behavior, packaged startup, menus, update prompts,
   drag/drop, native dialogs, or resident shell behavior, use Computer Use or
   packaged Desktop verification. Browser proof is only a substitute when the
@@ -588,14 +572,6 @@ explicitly changes the acceptance bar.
 Always inspect branch and dirty state before edits and before commit.
 
 - Stage only files from the current task.
-- After staging, inspect the cached diff or staged file list before committing.
-  If unrelated files were already staged by someone else, use an explicit
-  path-limited commit or unstage only your own accidental additions; do not fold
-  unrelated staged work into the current task.
-- Before committing, inspect the upstream-ahead commit list such as
-  `git log --oneline @{u}..HEAD` when an upstream exists. If unrelated local
-  commits already sit between upstream and the planned task commit, do not
-  later push the branch as a whole.
 - For large refactors or `/goal` runs, split commits by coherent phase when
   the phase can stand on its own: facade/boundary setup, internal extraction,
   consumer rewiring, compatibility fix, test hardening, or docs update.
@@ -610,12 +586,6 @@ Always inspect branch and dirty state before edits and before commit.
 - Prefer a normal follow-up commit over history rewrite in a shared workspace.
 - Do not push when the branch is behind, non-fast-forward, or includes unrelated
   local commits that the user did not ask to publish.
-- Re-check `git status --short --branch` and recent commits after committing
-  and before pushing. Inspect the whole ahead range, not only the top commit. If
-  unrelated local commits are in `@{u}..HEAD`, do not push a descendant task
-  commit by explicit ref because Git will publish its reachable ancestors too.
-  Stop and report the branch state, or use a clean branch/worktree and
-  cherry-pick only the verified task commit before pushing.
 - If push is blocked, still make the scoped local commit when repo rules require
   a commit, and explain the branch state.
 
@@ -674,17 +644,6 @@ the target file is already a hotspot. Add E2E coverage for the workflow path
 when behavior changes. Prefer extracting a small component/helper if the new
 logic would otherwise deepen an oversized page component, but keep the task
 scoped and avoid opportunistic refactors.
-
-### Badge, notification, or read-state regression
-
-Route: `debug -> implementation -> verification -> review -> handoff`.
-
-Fast-path to `rudder-data-path-diagnostician-maintainer` when the symptom is a
-wrong number or stale surface. Keep this router thin unless lifecycle recovery
-or review orchestration is needed. Before fixing, identify the canonical
-read/attention state and any parallel counters that can drift. Verification must
-exercise the user action that changes read state and prove every user-visible
-consumer that should update, including sibling badges or global rails.
 
 ### Proposal-only request
 
