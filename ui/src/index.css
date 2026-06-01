@@ -2913,6 +2913,37 @@ a.rudder-skill-token[href] {
   border-color: var(--border);
 }
 
+/* Dashboard run cards are compact previews, not transcript detail panes. */
+.dashboard-run-preview .rudder-markdown {
+  font-size: 0.75rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.dashboard-run-preview .rudder-markdown :where(h1, h2, h3, h4, h5, h6) {
+  margin: 0.2rem 0;
+  font-size: 0.75rem !important;
+  line-height: 1.35 !important;
+  font-weight: 600 !important;
+  letter-spacing: 0;
+}
+
+.dashboard-run-preview .rudder-markdown :where(p, ul, ol, blockquote, pre) {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.dashboard-run-preview .rudder-markdown :where(p, li) {
+  font-size: 0.75rem !important;
+  line-height: 1.45 !important;
+}
+
+.dashboard-run-preview .rudder-markdown :where(a, code) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .rudder-markdown img {
   border-radius: calc(var(--radius) + 2px);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent);

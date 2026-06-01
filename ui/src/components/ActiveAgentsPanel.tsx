@@ -12,9 +12,11 @@ import { ExternalLink } from "lucide-react";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
+import { filterRoutineStdout } from "./transcript/RunTranscriptView.common";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 
 const MIN_DASHBOARD_RUNS = 4;
+const DASHBOARD_RUN_PREVIEW_TEXT_MAX = 260;
 
 function isRunActive(run: LiveRunForIssue): boolean {
   return run.status === "queued" || run.status === "running";
@@ -22,6 +24,70 @@ function isRunActive(run: LiveRunForIssue): boolean {
 
 interface ActiveAgentsPanelProps {
   orgId: string;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function summarizeDashboardPreviewText(value: string): string {
+  const lines = value.split(/\r?\n/);
+  const previewLines: string[] = [];
+  let sawStructuredEvent = false;
+  let commandCount = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    try {
+      const record = readRecord(JSON.parse(trimmed));
+      const item = readRecord(record?.["item"]);
+      const itemType = typeof item?.["type"] === "string" ? item["type"] : null;
+
+      if (typeof record?.["type"] === "string") {
+        sawStructuredEvent = true;
+      }
+
+      if (itemType === "agent_message") {
+        const text = typeof item?.["text"] === "string"
+          ? filterRoutineStdout(item["text"], false)
+          : "";
+        if (text) previewLines.push(text);
+        continue;
+      }
+
+      if (itemType === "command_execution" && record?.["type"] === "item.completed") {
+        commandCount += 1;
+        continue;
+      }
+
+      if (typeof record?.["type"] === "string") {
+        continue;
+      }
+    } catch {
+      previewLines.push(trimmed);
+      continue;
+    }
+  }
+
+  if (commandCount > 0) {
+    previewLines.push(`Ran ${commandCount} command${commandCount === 1 ? "" : "s"}.`);
+  }
+
+  const text = sawStructuredEvent ? previewLines.slice(-3).join("\n\n").trim() : value;
+  if (text.length <= DASHBOARD_RUN_PREVIEW_TEXT_MAX) return text;
+  return `${text.slice(0, DASHBOARD_RUN_PREVIEW_TEXT_MAX).trimEnd()}...`;
+}
+
+export function filterDashboardRunPreviewTranscript(entries: TranscriptEntry[]): TranscriptEntry[] {
+  return entries.flatMap((entry) => {
+    if (!("text" in entry) || typeof entry.text !== "string") return [entry];
+    const text = summarizeDashboardPreviewText(filterRoutineStdout(entry.text, false));
+    return text ? [{ ...entry, text }] : [];
+  });
 }
 
 export function ActiveAgentsPanel({ orgId }: ActiveAgentsPanelProps) {
@@ -115,6 +181,10 @@ function AgentRunCard({
   }, [isActive]);
 
   const activeDuration = formatRunElapsedDuration(run.startedAt ?? run.createdAt);
+  const previewTranscript = useMemo(
+    () => filterDashboardRunPreviewTranscript(transcript),
+    [transcript],
+  );
 
   return (
     <div className={cn(
@@ -172,7 +242,8 @@ function AgentRunCard({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <RunTranscriptView
-          entries={transcript}
+          className="dashboard-run-preview"
+          entries={previewTranscript}
           density="compact"
           limit={5}
           streaming={isActive}

@@ -102,6 +102,16 @@ describe("index.css motion rules", () => {
     expect(rootTokens).toContain("--desktop-content-top-gap: 0.375rem");
   });
 
+  it("keeps dashboard run previews compact even when transcripts contain markdown headings", () => {
+    const previewMarkdown = cssBlock(".dashboard-run-preview .rudder-markdown");
+    const previewHeadings = cssBlock(".dashboard-run-preview .rudder-markdown :where(h1, h2, h3, h4, h5, h6)");
+
+    expect(previewMarkdown).toContain("font-size: 0.75rem");
+    expect(previewMarkdown).toContain("overflow-wrap: anywhere");
+    expect(previewHeadings).toContain("font-size: 0.75rem !important");
+    expect(previewHeadings).toContain("letter-spacing: 0");
+  });
+
   it("scopes Library file-tab window dragging to the macOS desktop shell", () => {
     const tabStripSpacer = cssBlock("html.desktop-shell-macos .rudder-doc-editor-tab-drag-spacer");
     const fileTab = cssBlock("html.desktop-shell-macos .rudder-doc-editor-tab--desktop-no-drag");
