@@ -101,4 +101,14 @@ describe("index.css motion rules", () => {
     expect(rootTokens).toContain("--desktop-sidebar-top-clearance: 2.125rem");
     expect(rootTokens).toContain("--desktop-content-top-gap: 0.375rem");
   });
+
+  it("scopes Library file-tab window dragging to the macOS desktop shell", () => {
+    const tabStripSpacer = cssBlock("html.desktop-shell-macos .rudder-doc-editor-tab-drag-spacer");
+    const fileTab = cssBlock("html.desktop-shell-macos .rudder-doc-editor-tab--desktop-no-drag");
+
+    expect(tabStripSpacer).toContain("-webkit-app-region: drag");
+    expect(fileTab).toContain("-webkit-app-region: no-drag");
+    expect(indexCss).not.toMatch(/^\s*\.rudder-doc-editor-tab-strip--desktop-chrome\s*\{\s*-webkit-app-region:\s*drag/m);
+    expect(indexCss).not.toMatch(/^\s*html\.desktop-shell-macos\s+\.rudder-doc-editor-tab-strip--desktop-chrome\s*\{\s*-webkit-app-region:\s*drag/m);
+  });
 });

@@ -290,6 +290,14 @@
     -webkit-app-region: no-drag;
   }
 
+  html.desktop-shell-macos .rudder-doc-editor-tab-drag-spacer {
+    -webkit-app-region: drag;
+  }
+
+  html.desktop-shell-macos .rudder-doc-editor-tab--desktop-no-drag {
+    -webkit-app-region: no-drag;
+  }
+
   .font-display {
     font-family: var(--font-display);
     font-weight: 700;

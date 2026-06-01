@@ -49,6 +49,13 @@ vi.mock("@tanstack/react-query", () => ({
             isDirectory: false,
             entityType: "organization_workspace",
           },
+          {
+            name: "notes.md",
+            displayLabel: "notes.md",
+            path: "artifacts/chat-ui-review/notes.md",
+            isDirectory: false,
+            entityType: "organization_workspace",
+          },
         ],
       } as const;
       return {
@@ -124,6 +131,18 @@ vi.mock("../lib/desktop-shell", () => ({
   readDesktopShell: () => mockState.desktopShell,
 }));
 
+vi.mock("../components/MarkdownEditor", () => ({
+  MarkdownEditor: ({ value }: { value?: string }) => (
+    <textarea aria-label="Markdown editor" readOnly value={value ?? ""} />
+  ),
+}));
+
+vi.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: import("react").ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: import("react").ReactNode }) => <div>{children}</div>,
+  TooltipTrigger: ({ children }: { children: import("react").ReactNode }) => <>{children}</>,
+}));
+
 let cleanupFn: (() => void) | null = null;
 
 beforeEach(() => {
@@ -179,6 +198,27 @@ function renderWorkspacesPage() {
   cleanupFn = () => root?.unmount();
 }
 
+function createTabDragEvent(type: string, dataTransfer: DataTransferStub, clientX = 75) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+  Object.defineProperty(event, "clientX", { value: clientX });
+  return event;
+}
+
+function createDataTransferStub() {
+  const data = new Map<string, string>();
+  return {
+    dropEffect: "none",
+    effectAllowed: "none",
+    getData: vi.fn((type: string) => data.get(type) ?? ""),
+    setData: vi.fn((type: string, value: string) => {
+      data.set(type, value);
+    }),
+  };
+}
+
+type DataTransferStub = ReturnType<typeof createDataTransferStub>;
+
 describe("OrganizationWorkspaces scroll regions", () => {
   it("uses separate auto-hidden scroll regions for files and editor preview", () => {
     renderWorkspacesPage();
@@ -214,4 +254,59 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(() => renderWorkspacesPage()).not.toThrow();
     expect(document.querySelector("[data-testid='org-workspaces-files-scroll']")).not.toBeNull();
   });
+
+  it("marks only the empty editor tab-strip space for desktop window dragging", async () => {
+    renderWorkspacesPage();
+
+    const tabStrip = document.querySelector("[data-testid='org-workspaces-editor-tabs']");
+    const fileTab = document.querySelector("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab");
+    const dragSpacer = document.querySelector("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab-drag-spacer");
+    expect(tabStrip?.classList.contains("rudder-doc-editor-tab-strip--desktop-chrome")).toBe(true);
+    expect(fileTab?.classList.contains("rudder-doc-editor-tab--desktop-no-drag")).toBe(true);
+    expect(dragSpacer).not.toBeNull();
+
+    const notesFileButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "notes.md",
+    );
+    expect(notesFileButton).toBeTruthy();
+
+    await act(async () => {
+      notesFileButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const fileTabs = Array.from(
+      document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"),
+    );
+    expect(fileTabs).toHaveLength(2);
+    expect(fileTabs.map((tab) => tab.getAttribute("draggable"))).toEqual(["true", "true"]);
+    expect(fileTabs.every((tab) => tab.classList.contains("rudder-doc-editor-tab--desktop-no-drag"))).toBe(true);
+
+    Object.defineProperty(fileTabs[1], "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        bottom: 40,
+        height: 40,
+        left: 0,
+        right: 100,
+        top: 0,
+        width: 100,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+    });
+
+    const dataTransfer = createDataTransferStub();
+    await act(async () => {
+      fileTabs[0].dispatchEvent(createTabDragEvent("dragstart", dataTransfer));
+      fileTabs[1].dispatchEvent(createTabDragEvent("dragover", dataTransfer, 75));
+      fileTabs[1].dispatchEvent(createTabDragEvent("drop", dataTransfer, 75));
+    });
+
+    expect(
+      Array.from(document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"))
+        .map((tab) => tab.textContent?.trim()),
+    ).toEqual(["notes.md", "image.png"]);
+  });
+
 });

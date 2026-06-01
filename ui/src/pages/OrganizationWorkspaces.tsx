@@ -2658,70 +2658,77 @@ export function OrganizationWorkspaceBrowser({
               data-testid="org-workspaces-editor-tabs"
               role="tablist"
               aria-label="Open files"
-              className="rudder-doc-editor-tab-strip flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-page)]"
+              className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-page)]"
             >
               <div className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-0 pr-2 pt-1">
                 {openFilePaths.length > 0 ? (
-                  openFilePaths.map((filePath, index) => {
-                    const active = selectedFilePath === filePath;
-                    const first = index === 0;
-                    const dragging = draggedTabPath === filePath;
-                    const dropBefore = tabDropPreview?.targetPath === filePath && tabDropPreview.position === "before";
-                    const dropAfter = tabDropPreview?.targetPath === filePath && tabDropPreview.position === "after";
-                    return (
-                      <div
-                        key={filePath}
-                        data-testid={`org-workspaces-editor-tab-${filePath}`}
-                        draggable={openFilePaths.length > 1}
-                        onDragStart={(event) => handleOpenFileTabDragStart(event, filePath)}
-                        onDragOver={(event) => handleOpenFileTabDragOver(event, filePath)}
-                        onDragLeave={(event) => handleOpenFileTabDragLeave(event, filePath)}
-                        onDrop={(event) => handleOpenFileTabDrop(event, filePath)}
-                        onDragEnd={handleOpenFileTabDragEnd}
-                        onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
-                        className={cn(
-                          "rudder-doc-editor-tab group relative flex min-w-[132px] max-w-[248px] shrink-0 cursor-default items-center border px-1 transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
-                          active
-                            ? "rudder-doc-editor-tab--active mb-[-1px] h-10 overflow-visible rounded-t-[24px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
-                            : "mb-1 h-9 translate-y-px overflow-hidden rounded-[18px] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
-                          active && first && "rudder-doc-editor-tab--first-active",
-                          dragging && "opacity-55",
-                          dropBefore && !dragging && "rudder-doc-editor-tab--drop-before",
-                          dropAfter && !dragging && "rudder-doc-editor-tab--drop-after",
-                        )}
-                      >
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          draggable={false}
-                          className="min-w-0 flex-1 truncate rounded-[10px] px-2 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                          title={filePath}
-                          onClick={() => handleSelectFile(filePath)}
+                  <>
+                    {openFilePaths.map((filePath, index) => {
+                      const active = selectedFilePath === filePath;
+                      const first = index === 0;
+                      const dragging = draggedTabPath === filePath;
+                      const dropBefore = tabDropPreview?.targetPath === filePath && tabDropPreview.position === "before";
+                      const dropAfter = tabDropPreview?.targetPath === filePath && tabDropPreview.position === "after";
+                      return (
+                        <div
+                          key={filePath}
+                          data-testid={`org-workspaces-editor-tab-${filePath}`}
+                          draggable={openFilePaths.length > 1}
+                          onDragStart={(event) => handleOpenFileTabDragStart(event, filePath)}
+                          onDragOver={(event) => handleOpenFileTabDragOver(event, filePath)}
+                          onDragLeave={(event) => handleOpenFileTabDragLeave(event, filePath)}
+                          onDrop={(event) => handleOpenFileTabDrop(event, filePath)}
+                          onDragEnd={handleOpenFileTabDragEnd}
                           onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
-                        >
-                          {displayWorkspaceFileTabLabel(filePath)}
-                        </button>
-                        <button
-                          type="button"
-                          draggable={false}
                           className={cn(
-                            "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
-                            active ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                            "rudder-doc-editor-tab rudder-doc-editor-tab--desktop-no-drag group relative flex min-w-[132px] max-w-[248px] shrink-0 cursor-default items-center border px-1 transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+                            active
+                              ? "rudder-doc-editor-tab--active mb-[-1px] h-10 overflow-visible rounded-t-[24px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
+                              : "mb-1 h-9 translate-y-px overflow-hidden rounded-[18px] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
+                            active && first && "rudder-doc-editor-tab--first-active",
+                            dragging && "opacity-55",
+                            dropBefore && !dragging && "rudder-doc-editor-tab--drop-before",
+                            dropAfter && !dragging && "rudder-doc-editor-tab--drop-after",
                           )}
-                          aria-label={`Close ${filePath}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleCloseFileTab(filePath);
-                          }}
                         >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    );
-                  })
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            draggable={false}
+                            className="min-w-0 flex-1 truncate rounded-[10px] px-2 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                            title={filePath}
+                            onClick={() => handleSelectFile(filePath)}
+                          >
+                            {displayWorkspaceFileTabLabel(filePath)}
+                          </button>
+                          <button
+                            type="button"
+                            draggable={false}
+                            className={cn(
+                              "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                              active ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                            )}
+                            aria-label={`Close ${filePath}`}
+                            onPointerDown={(event) => {
+                              event.stopPropagation();
+                            }}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleCloseFileTab(filePath);
+                            }}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <div aria-hidden="true" className="rudder-doc-editor-tab-drag-spacer mb-1 h-9 min-w-6 flex-1" />
+                  </>
                 ) : (
-                  <div className="mb-1 flex h-9 items-center px-2 text-sm text-muted-foreground">No file open</div>
+                  <div className="rudder-doc-editor-tab-drag-spacer mb-1 flex h-9 min-w-0 flex-1 items-center px-2 text-sm text-muted-foreground">
+                    No file open
+                  </div>
                 )}
               </div>
               {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
