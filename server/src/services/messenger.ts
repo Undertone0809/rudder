@@ -277,6 +277,13 @@ function compareLatestActivity<T extends { latestActivityAt: Date | null; title:
   return (a.threadKey ?? "").localeCompare(b.threadKey ?? "");
 }
 
+function comparePinnedThenLatest<T extends { latestActivityAt: Date | null; title: string; threadKey?: string; isPinned?: boolean }>(a: T, b: T) {
+  const aPinned = Boolean(a.isPinned);
+  const bPinned = Boolean(b.isPinned);
+  if (aPinned !== bPinned) return aPinned ? -1 : 1;
+  return compareLatestActivity(a, b);
+}
+
 function compareChronologicalActivity<T extends { latestActivityAt: Date | null; title: string }>(a: T, b: T) {
   const aTime = a.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
   const bTime = b.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
@@ -1789,6 +1796,7 @@ export function messengerService(db: Db) {
     if (budgetData.detail.items.length > 0) syntheticSummaries.push(budgetData.summary);
     if (joinRequestData.itemCount > 0) syntheticSummaries.push(joinRequestData.summary);
     const syntheticAfterCursor = syntheticSummaries.filter((summary) => threadSummaryIsAfterCursor(summary, cursor));
+    const pinnedChats = cursor ? [] : await chatsSvc.listPinnedSummaries(orgId, userId);
     const chatLimit = limit + syntheticAfterCursor.length + 1;
     const chatAfter = cursor
       ? {
@@ -1801,15 +1809,18 @@ export function messengerService(db: Db) {
       status: "active",
       limit: chatLimit,
       after: chatAfter,
+      excludePinned: true,
     }, userId);
     const combined = [
+      ...pinnedChats.map(chatSummary),
       ...chats.map(chatSummary),
       ...syntheticAfterCursor,
     ]
       .filter((summary) => threadSummaryIsAfterCursor(summary, cursor))
-      .sort(compareLatestActivity);
-    const items = combined.slice(0, limit);
-    const hasMore = combined.length > limit;
+      .sort(comparePinnedThenLatest);
+    const itemLimit = limit + pinnedChats.length;
+    const items = combined.slice(0, itemLimit);
+    const hasMore = combined.length > itemLimit;
 
     return {
       items,

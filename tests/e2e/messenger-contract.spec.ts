@@ -161,6 +161,57 @@ test.describe("Messenger unified threads contract", () => {
     expect(fullChatListRequests).toEqual([]);
   });
 
+  test("keeps pinned Messenger chats visible when they are older than the first activity page", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Pinned-Older-Page-${Date.now()}`);
+    const baseTime = Date.parse("2026-05-16T12:00:00.000Z");
+    const rows = Array.from({ length: 45 }).map((_, index) => {
+      const activityAt = new Date(baseTime - index * 60_000);
+      return {
+        id: randomUUID(),
+        orgId: organization.id,
+        title: `Pinned page session ${String(index + 1).padStart(2, "0")}`,
+        summary: `Pinned page session preview ${index + 1}`,
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: currentUserId,
+        lastMessageAt: activityAt,
+        createdAt: activityAt,
+        updatedAt: activityAt,
+      };
+    });
+    await e2eDb.insert(chatConversations).values(rows);
+    const pinnedOlderChat = rows[44]!;
+    await e2eDb.insert(chatConversationUserStates).values({
+      orgId: organization.id,
+      conversationId: pinnedOlderChat.id,
+      userId: currentUserId,
+      lastReadAt: pinnedOlderChat.lastMessageAt,
+      pinnedAt: new Date("2026-05-16T13:00:00.000Z"),
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    const firstPageResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?limit=40`),
+    );
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    const firstPage = await (await firstPageResponse).json();
+    expect(firstPage.items.some((item: { title: string }) => item.title === "Pinned page session 45")).toBe(true);
+
+    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId(threadTestId(`chat:${pinnedOlderChat.id}`))).toContainText("Pinned page session 45");
+  });
+
   test("double-clicking primary rail Messenger scrolls the sidebar to unread threads", async ({ page }) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);

@@ -493,6 +493,7 @@ export function chatService(db: Db) {
         status?: "active" | "resolved" | "archived" | "all";
         limit?: number;
         after?: ConversationSummaryCursor | null;
+        excludePinned?: boolean;
       },
       userId?: string | null,
     ) {
@@ -519,6 +520,16 @@ export function chatService(db: Db) {
           )
         )`);
       }
+      if (options?.excludePinned && userId) {
+        conditions.push(sql<boolean>`NOT EXISTS (
+          SELECT 1
+          FROM ${chatConversationUserStates}
+          WHERE ${chatConversationUserStates.orgId} = ${orgId}
+            AND ${chatConversationUserStates.userId} = ${userId}
+            AND ${chatConversationUserStates.conversationId} = ${chatConversations.id}
+            AND ${chatConversationUserStates.pinnedAt} IS NOT NULL
+        )`);
+      }
       let query = db
         .select()
         .from(chatConversations)
@@ -530,6 +541,35 @@ export function chatService(db: Db) {
       }
       const rows = await query;
       return hydrateConversationSummaries(rows, userId);
+  }
+
+  async function listPinnedSummaries(orgId: string, userId: string) {
+    const stateRows = await db
+      .select({ conversationId: chatConversationUserStates.conversationId })
+      .from(chatConversationUserStates)
+      .where(
+        and(
+          eq(chatConversationUserStates.orgId, orgId),
+          eq(chatConversationUserStates.userId, userId),
+          sql<boolean>`${chatConversationUserStates.pinnedAt} IS NOT NULL`,
+        ),
+      );
+    const conversationIds = stateRows.map((row) => row.conversationId);
+    if (conversationIds.length === 0) return [];
+
+    const activityAtSql = sql<Date>`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`;
+    const rows = await db
+      .select()
+      .from(chatConversations)
+      .where(
+        and(
+          eq(chatConversations.orgId, orgId),
+          eq(chatConversations.status, "active"),
+          inArray(chatConversations.id, conversationIds),
+        ),
+      )
+      .orderBy(desc(activityAtSql), chatConversations.title, chatConversations.id);
+    return hydrateConversationSummaries(rows, userId);
   }
 
   async function getById(id: string, userId?: string | null) {
@@ -1698,6 +1738,7 @@ export function chatService(db: Db) {
   return {
     list,
     listSummaries,
+    listPinnedSummaries,
     getById,
     create,
     update,
