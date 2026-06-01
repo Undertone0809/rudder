@@ -1139,16 +1139,14 @@ describe("messengerService and issue follows", () => {
     const issuesSummary = summaries.find((item) => item.threadKey === "issues");
 
     expect(thread.detail.items.map((item) => item.issueId)).toEqual([createdIssueId]);
-    expect(thread.detail.items[0]?.preview).toBe("I already handled this");
-    expect(thread.detail.items[0]?.body).toContain("I already handled this");
-    expect(thread.detail.items[0]?.sourceCommentId).toBeTruthy();
-    expect(thread.detail.items[0]?.sourceCommentAuthorLabel).toBe("You");
-    expect(thread.detail.items[0]?.sourceCommentBody).toBe("I already handled this");
-    expect(thread.detail.items[0]?.metadata).toMatchObject({
-      sourceCommentAuthorKind: "user",
-      sourceCommentByMe: true,
-      sourceCommentAuthorLabel: "You",
-    });
+    expect(thread.detail.items[0]?.preview).toBeNull();
+    expect(thread.detail.items[0]?.body).not.toContain("I already handled this");
+    expect(thread.detail.items[0]?.sourceCommentId).toBeNull();
+    expect(thread.detail.items[0]?.sourceCommentAuthorLabel).toBeNull();
+    expect(thread.detail.items[0]?.sourceCommentBody).toBeNull();
+    expect(thread.detail.items[0]?.metadata).not.toHaveProperty("sourceCommentAuthorKind");
+    expect(thread.detail.items[0]?.metadata).not.toHaveProperty("sourceCommentByMe");
+    expect(thread.detail.items[0]?.metadata).not.toHaveProperty("sourceCommentAuthorLabel");
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
     expect(thread.summary.latestActivityAt).toBeNull();
@@ -1156,6 +1154,55 @@ describe("messengerService and issue follows", () => {
     expect(issuesSummary?.unreadCount).toBe(0);
     expect(issuesSummary?.needsAttention).toBe(false);
     expect(issuesSummary?.latestActivityAt).toBeNull();
+  });
+
+  it("uses the latest non-self issue comment for Messenger issue previews", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-self-latest-comment";
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const createdAt = new Date("2026-04-10T09:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Non Self Comment Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Non Self Comment Org"),
+      issuePrefix: `N${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Build Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Created issue with comments",
+      status: "todo",
+      priority: "medium",
+      createdByUserId: userId,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const agentComment = await issueSvc.addComment(issueId, "Agent-visible update", { agentId });
+    await issueSvc.addComment(issueId, "My later note should stay out of Messenger", { userId });
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const item = thread.detail.items.find((entry) => entry.issueId === issueId);
+
+    expect(item?.sourceCommentId).toBe(agentComment.id);
+    expect(item?.sourceCommentBody).toBe("Agent-visible update");
+    expect(item?.sourceCommentAuthorLabel).toBe("Build Agent");
+    expect(item?.body).toContain("Agent-visible update");
+    expect(item?.body).not.toContain("My later note should stay out of Messenger");
   });
 
   it("includes the issue title in completion previews for unread Messenger issue notifications", async () => {
