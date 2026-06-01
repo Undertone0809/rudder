@@ -1106,7 +1106,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             <span>{activeQueueItems.length} queued</span>
           </div>
           <div className="space-y-1.5">
-            {activeQueueItems.slice(0, 2).map((item, index) => (
+            {activeQueueItems.map((item, index) => (
               <div key={item.id} data-testid="chat-running-queue-item" className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border border-border/60 bg-background/70 px-2.5 py-2 text-sm">
                 <span className="shrink-0 text-xs font-semibold text-muted-foreground">
                   {index === 0 ? "Up next" : `#${index + 1}`}
@@ -1149,9 +1149,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               </div>
             ))}
           </div>
-          {activeQueueItems.length > 2 ? (
-            <div className="mt-1.5 px-1 text-xs text-muted-foreground">+{activeQueueItems.length - 2} more queued follow-ups</div>
-          ) : null}
         </div>
       ) : null}
       <div ref={composerEditorScrollRef} data-testid="chat-composer-editor-scroll" className="chat-composer-editor-scroll scrollbar-auto-hide overflow-y-auto overscroll-contain pr-1" onPasteCapture={handlePendingAttachmentPasteCapture} >

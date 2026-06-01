@@ -38,6 +38,28 @@ async function pushSpaRoute(page: Page, path: string) {
   }, path);
 }
 
+async function createQueuedFollowUp(page: Page, chatId: string, body: string, index: number) {
+  const res = await page.request.post(`/api/chats/${chatId}/queue`, {
+    data: {
+      clientMutationId: `e2e:${Date.now()}:${index}`,
+      expectedGenerationId: null,
+      payload: {
+        body,
+        attachmentIds: [],
+        projectId: null,
+        skillRefs: [],
+        accessMode: null,
+        model: null,
+        effort: null,
+        metadata: {
+          source: "e2e",
+        },
+      },
+    },
+  });
+  expect(res.ok()).toBe(true);
+}
+
 test("allows sending a new chat while another chat is still streaming", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Concurrent-Chat-${Date.now()}`);
 
@@ -174,9 +196,16 @@ test("keeps queued follow-ups parked after stopping the running reply", async ({
   const chatId = currentChatId(page.url());
   await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
 
-  await composer.fill("This should stay parked after stop");
-  await composer.press("Enter");
+  await createQueuedFollowUp(page, chatId, "This should stay parked after stop", 1);
+  await createQueuedFollowUp(page, chatId, "Second parked follow-up", 2);
+  await createQueuedFollowUp(page, chatId, "Third parked follow-up", 3);
   await expect(page.getByTestId("chat-running-queue")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-running-queue-item")).toHaveCount(3, { timeout: 15_000 });
+  await expect(page.getByTestId("chat-running-queue")).not.toContainText("more queued follow-ups");
+  await expect(page.getByTestId("chat-running-queue-item").nth(0)).toContainText("Up next");
+  await expect(page.getByTestId("chat-running-queue-item").nth(1)).toContainText("#2");
+  await expect(page.getByTestId("chat-running-queue-item").nth(2)).toContainText("#3");
+  await expect(page.getByTestId("chat-running-queue-item").nth(2)).toContainText("Third parked follow-up");
 
   await page.getByRole("button", { name: "Stop streaming" }).click();
   await expect(page.getByRole("button", { name: "Stop streaming" })).toHaveCount(0, { timeout: 15_000 });
@@ -188,8 +217,10 @@ test("keeps queued follow-ups parked after stopping the running reply", async ({
   const queueRes = await page.request.get(`/api/chats/${chatId}/queue`);
   expect(queueRes.ok()).toBe(true);
   const queue = await queueRes.json();
-  expect(queue.items).toHaveLength(1);
+  expect(queue.items).toHaveLength(3);
   expect(queue.items[0].payload.body).toBe("This should stay parked after stop");
+  expect(queue.items[1].payload.body).toBe("Second parked follow-up");
+  expect(queue.items[2].payload.body).toBe("Third parked follow-up");
 });
 
 test("keeps a streaming chat visible after navigating to issue detail and back", async ({ page }) => {
