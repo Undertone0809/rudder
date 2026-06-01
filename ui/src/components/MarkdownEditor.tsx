@@ -132,6 +132,13 @@ export interface MentionOption {
 
 /* ---- Editor props ---- */
 
+export interface InlineTokenClickEvent {
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+}
+
 export interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -153,7 +160,7 @@ export interface MarkdownEditorProps {
   /** Composer mode that preserves normal Markdown syntax as literal text. */
   plainText?: boolean;
   /** Optional handler for activating decorated inline reference tokens. */
-  onInlineTokenClick?: (token: AtomicInlineTokenElement) => void;
+  onInlineTokenClick?: (token: AtomicInlineTokenElement, event: InlineTokenClickEvent) => void;
   /** Experimental editor engine for true Markdown surfaces. */
   engine?: "legacy" | "milkdown";
 }
@@ -534,6 +541,10 @@ type AtomicInlineTokenEvent = {
   nativeEvent: Event & { stopImmediatePropagation?: () => void };
   preventDefault: () => void;
   stopPropagation: () => void;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
   clientX?: number;
 };
 
@@ -1583,7 +1594,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   }
 
   const canDropImage = Boolean(imageUploadHandler);
-  const handleDefaultInlineTokenClick = useCallback((token: AtomicInlineTokenElement) => {
+  const handleDefaultInlineTokenClick = useCallback((token: AtomicInlineTokenElement, _event: InlineTokenClickEvent) => {
     if (token.kind === "mention") {
       const parsed = parseMentionChipHref(token.href);
       if (!parsed) return;
@@ -1611,7 +1622,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     const token = readAtomicInlineTokenElement(event.target instanceof Node ? event.target : null);
     if (!token) return false;
     stopAtomicInlineTokenEvent(event);
-    (onInlineTokenClick ?? handleDefaultInlineTokenClick)(token);
+    (onInlineTokenClick ?? handleDefaultInlineTokenClick)(token, event);
     return true;
   }, [handleDefaultInlineTokenClick, onInlineTokenClick]);
 

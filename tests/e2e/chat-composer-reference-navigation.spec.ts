@@ -1,6 +1,18 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createE2EChatAgent } from "./support/chat-agent";
 
+function buildProjectMentionHref(projectId: string, color?: string | null) {
+  return color ? `project://${projectId}?c=${encodeURIComponent(color.replace(/^#/, ""))}` : `project://${projectId}`;
+}
+
+function buildLibraryDocMentionHref(documentId: string, title: string) {
+  return `library-doc://${documentId}?t=${encodeURIComponent(title)}`;
+}
+
+function buildLibraryFileMentionHref(filePath: string, title: string) {
+  return `library-file://file?p=${encodeURIComponent(filePath)}&t=${encodeURIComponent(title)}`;
+}
+
 function organizationSkillMarkdownTarget(skill: { sourceLocator?: string | null; sourcePath?: string | null }) {
   const candidate = skill.sourceLocator ?? skill.sourcePath ?? null;
   if (!candidate) return null;
@@ -30,13 +42,41 @@ async function createIssue(page: Page, orgId: string, title: string) {
   return issueRes.json() as Promise<{ id: string; identifier: string | null; title: string }>;
 }
 
-test("chat composer reference tokens navigate to their target pages", async ({ page }) => {
+async function createProject(page: Page, orgId: string, name: string) {
+  const projectRes = await page.request.post(`/api/orgs/${orgId}/projects`, {
+    data: { name },
+  });
+  expect(projectRes.ok()).toBe(true);
+  return projectRes.json() as Promise<{ id: string; name: string; urlKey?: string | null; color?: string | null }>;
+}
+
+test("chat composer reference tokens navigate to their target pages with a command click", async ({ page }) => {
   const organization = await createOrganization(page, "Composer-Reference-Navigation");
   const agent = await createE2EChatAgent(page.request, organization.id, { name: "Navigator Agent" }) as {
     id: string;
     name: string;
   };
+  const project = await createProject(page, organization.id, "Navigation project");
   const issue = await createIssue(page, organization.id, "Navigation issue");
+
+  const libraryDocRes = await page.request.post(`/api/orgs/${organization.id}/library/documents`, {
+    data: {
+      title: "Navigation library doc",
+      body: "# Navigation library doc\n",
+    },
+  });
+  expect(libraryDocRes.ok()).toBe(true);
+  const libraryDoc = await libraryDocRes.json() as { id: string; title: string };
+
+  const libraryFilePath = `docs/navigation-reference-${Date.now()}.md`;
+  const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+    data: {
+      filePath: libraryFilePath,
+      content: "# Navigation library file\n",
+    },
+  });
+  expect(libraryFileRes.ok()).toBe(true);
+  const libraryFileName = libraryFilePath.split("/").at(-1) ?? libraryFilePath;
 
   const skillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
     data: {
@@ -92,38 +132,63 @@ test("chat composer reference tokens navigate to their target pages", async ({ p
   const issueRef = issue.identifier ?? issue.id;
   const draft = [
     `[${agent.name}](agent://${agent.id})`,
+    `[${project.name}](${buildProjectMentionHref(project.id, project.color ?? null)})`,
     `[${issue.title}](issue://${issue.id}?r=${encodeURIComponent(issueRef)})`,
     `[Referenced navigation chat](chat://${referencedChat.id})`,
+    `[${libraryDoc.title}](${buildLibraryDocMentionHref(libraryDoc.id, libraryDoc.title)})`,
+    `[${libraryFileName}](${buildLibraryFileMentionHref(libraryFilePath, libraryFileName)})`,
     `[navigation-skill](${skillTarget})`,
   ].join(" ");
 
   await composer.fill(draft);
 
   const agentToken = composer.locator("[data-mention-kind='agent']").filter({ hasText: agent.name }).first();
+  const projectToken = composer.locator("[data-mention-kind='project']").filter({ hasText: project.name }).first();
   const issueToken = composer.locator("[data-mention-kind='issue']").filter({ hasText: issue.title }).first();
   const chatToken = composer.locator("[data-mention-kind='chat']").filter({ hasText: "Referenced navigation chat" }).first();
+  const libraryDocToken = composer.locator("[data-mention-kind='library_doc']").filter({ hasText: libraryDoc.title }).first();
+  const libraryFileToken = composer.locator("[data-mention-kind='library_file']").filter({ hasText: libraryFileName }).first();
   const skillToken = composer.locator("[data-skill-token='true']").filter({ hasText: "navigation-skill" }).first();
 
   await expect(agentToken).toBeVisible({ timeout: 15_000 });
+  await expect(projectToken).toBeVisible();
   await expect(issueToken).toBeVisible();
   await expect(chatToken).toBeVisible();
+  await expect(libraryDocToken).toBeVisible();
+  await expect(libraryFileToken).toBeVisible();
   await expect(skillToken).toBeVisible();
 
-  await agentToken.click();
+  await agentToken.click({ modifiers: ["ControlOrMeta"] });
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/agents/${agent.id}$`));
 
   await page.goto(hostChatPath);
+  await expect(projectToken).toBeVisible({ timeout: 15_000 });
+  await projectToken.click({ modifiers: ["ControlOrMeta"] });
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/projects/[^/?]+(?:/configuration)?(?:\\?.*)?$`));
+  await expect(page.getByText(project.name).first()).toBeVisible({ timeout: 15_000 });
+
+  await page.goto(hostChatPath);
   await expect(issueToken).toBeVisible({ timeout: 15_000 });
-  await issueToken.click();
+  await issueToken.click({ modifiers: ["ControlOrMeta"] });
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${issueRef}$`));
 
   await page.goto(hostChatPath);
   await expect(chatToken).toBeVisible({ timeout: 15_000 });
-  await chatToken.click();
+  await chatToken.click({ modifiers: ["ControlOrMeta"] });
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${referencedChat.id}$`));
 
   await page.goto(hostChatPath);
+  await expect(libraryDocToken).toBeVisible({ timeout: 15_000 });
+  await libraryDocToken.click({ modifiers: ["ControlOrMeta"] });
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?doc=${libraryDoc.id}$`));
+
+  await page.goto(hostChatPath);
+  await expect(libraryFileToken).toBeVisible({ timeout: 15_000 });
+  await libraryFileToken.click({ modifiers: ["ControlOrMeta"] });
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(libraryFilePath).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}$`));
+
+  await page.goto(hostChatPath);
   await expect(skillToken).toBeVisible({ timeout: 15_000 });
-  await skillToken.click();
+  await skillToken.click({ modifiers: ["ControlOrMeta"] });
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/skills/${skill.id}$`));
 });

@@ -2788,7 +2788,12 @@ a.rudder-skill-token {
 }
 
 .chat-composer .rudder-mdxeditor-content .rudder-skill-token {
-  vertical-align: -0.2em;
+  vertical-align: -0.34em;
+}
+
+.chat-composer .rudder-mdxeditor-content .rudder-skill-token::before {
+  width: 1.42em;
+  height: 1.42em;
 }
 
 .rudder-mdxeditor-content .rudder-skill-token::before,
@@ -3273,6 +3278,17 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
   background: currentColor;
 }
 
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip::before,
+.chat-composer .rudder-mdxeditor-content .rudder-project-mention-chip::before {
+  width: 1.42em;
+  height: 1.42em;
+}
+
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"]::before {
+  width: 0.92em;
+  height: 0.92em;
+}
+
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"],
 .rudder-milkdown-content .rudder-mention-chip[data-mention-kind="project"],
 a.rudder-mention-chip[data-mention-kind="project"] {
@@ -3311,6 +3327,12 @@ a.rudder-mention-chip[data-mention-kind="library_file"]::before {
   mask-repeat: no-repeat;
   -webkit-mask-size: contain;
   mask-size: contain;
+}
+
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before {
+  width: 1.42em;
+  height: 1.42em;
 }
 
 /* Keep MDXEditor popups above app dialogs, even when they portal to <body>. */
