@@ -56,17 +56,9 @@ export interface PluginPackageResolutionOptions {
   serverPackageRoot?: string;
 }
 
-function getSafeBundledPluginDirName(packageName: string): string | null {
-  const localPackageName = packageName.startsWith("@")
-    ? packageName.split("/")[1]
-    : packageName;
-
-  if (!localPackageName || path.basename(localPackageName) !== localPackageName) {
-    return null;
-  }
-
-  return localPackageName;
-}
+const BUNDLED_PLUGIN_PACKAGE_DIRS = new Map<string, string>([
+  ["@rudderhq/plugin-linear", "plugin-linear"],
+]);
 
 export function resolvePluginPackageCandidateDirs(
   localPluginDir: string,
@@ -88,7 +80,7 @@ export function resolvePluginPackageCandidateDirs(
 
   candidates.push(path.join(localPluginDir, packageName));
 
-  const bundledPluginDirName = getSafeBundledPluginDirName(packageName);
+  const bundledPluginDirName = BUNDLED_PLUGIN_PACKAGE_DIRS.get(packageName);
   if (bundledPluginDirName) {
     candidates.push(
       path.join(
