@@ -761,6 +761,57 @@ test.describe("Workspace shell", () => {
     });
   });
 
+  test("shows Library Markdown sections only for files with headings", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Outline-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(organization.id);
+    const longIntro = Array.from(
+      { length: 36 },
+      (_, index) => `Intro detail ${index + 1}: keep this plan scannable from the outline.`,
+    ).join("\n\n");
+
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceRoot, "heading-doc.md"),
+      `# Launch Plan\n\n${longIntro}\n\n## Tasks\n\nKeep the rollout checklist nearby.\n`,
+      "utf8",
+    );
+    await fs.writeFile(path.join(workspaceRoot, "plain-doc.md"), "Keep this note intentionally flat.\n", "utf8");
+
+    await page.setViewportSize({ width: 1491, height: 926 });
+    await gotoOrganizationPath(page, organization, "/library?path=heading-doc.md");
+
+    const markdownEditor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+    await expect(markdownEditor.locator("h1", { hasText: "Launch Plan" })).toBeVisible();
+    const documentOutline = page.getByTestId("org-workspaces-document-outline");
+    await expect(documentOutline).toBeVisible();
+    await expect(documentOutline.getByRole("button", { name: "Launch Plan", exact: true })).toBeVisible();
+    const tasksOutlineButton = documentOutline.getByRole("button", { name: "Tasks", exact: true });
+    await expect(tasksOutlineButton).toBeVisible();
+
+    await page.screenshot({
+      path: testInfo.outputPath("workspace-shell-library-outline.png"),
+      fullPage: true,
+    });
+
+    const markdownEditorScroll = page.getByTestId("org-workspaces-markdown-editor");
+    const beforeOutlineClickScrollTop = await markdownEditorScroll.evaluate((element) => element.scrollTop);
+    await tasksOutlineButton.click();
+    await expect.poll(async () => markdownEditorScroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(
+      beforeOutlineClickScrollTop,
+    );
+    await expect(markdownEditor.locator("h2", { hasText: "Tasks" })).toBeInViewport();
+
+    await gotoOrganizationPath(page, organization, "/library?path=plain-doc.md");
+    await expect(markdownEditor).toContainText("Keep this note intentionally flat.");
+    await expect(page.getByTestId("org-workspaces-document-outline")).toHaveCount(0);
+  });
+
   test("renders org heartbeats as an org-scoped runtime control page", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
