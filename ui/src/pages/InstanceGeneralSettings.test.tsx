@@ -17,6 +17,7 @@ vi.mock("@tanstack/react-query", () => ({
     data: {
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
+      analyzeCompletedAgentRuns: false,
       locale: "en",
     },
     isLoading: false,
@@ -83,6 +84,8 @@ vi.mock("../context/I18nContext", () => ({
         "general.updates.canary.enabledDescription": "Early update channel selected",
         "general.diagnostics.developer.title": "Show developer diagnostics",
         "general.diagnostics.developer.description": "Developer diagnostics description",
+        "general.diagnostics.runAnalysis.title": "Analyze completed agent runs",
+        "general.diagnostics.runAnalysis.description": "Run analysis description",
         "general.developer.title": "Developer",
         "general.appearance.title": "Appearance",
         "general.appearance.description": "Appearance section",
@@ -245,5 +248,7 @@ describe("InstanceGeneralSettings", () => {
     expect(container.textContent).toContain("Censor username in logs");
     expect(container.textContent).toContain("Show developer diagnostics");
     expect(container.textContent).toContain("Developer diagnostics description");
+    expect(container.textContent).toContain("Analyze completed agent runs");
+    expect(container.textContent).toContain("Run analysis description");
   });
 });

@@ -56,6 +56,15 @@ export type {
   InstanceSettings,
 } from "./instance.js";
 export type {
+  PatchRunDiagnosticFinding,
+  RunDiagnosticEvidence,
+  RunDiagnosticFinding,
+  RunDiagnosticFindingKind,
+  RunDiagnosticFindingSeverity,
+  RunDiagnosticFindingStatus,
+  RunDiagnosticSummary,
+} from "./run-diagnostics.js";
+export type {
   OrganizationSkillSourceType,
   OrganizationSkillTrustLevel,
   OrganizationSkillCompatibility,

@@ -3,6 +3,7 @@ export * from "./transcript.js";
 export * from "./trace.js";
 export * from "./parsers.js";
 export * from "./diagnosis.js";
+export * from "./diagnostics.js";
 export * from "./langfuse-scores.js";
 export * from "./create-agent-benchmark.js";
 export * from "./loaders/rudder.js";

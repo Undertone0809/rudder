@@ -3,6 +3,7 @@ export type InstanceLocale = "en" | "zh-CN";
 export interface InstanceGeneralSettings {
   censorUsernameInLogs: boolean;
   showDeveloperDiagnostics: boolean;
+  analyzeCompletedAgentRuns: boolean;
   locale: InstanceLocale;
 }
 

@@ -5,6 +5,7 @@ export const instanceLocaleSchema = z.enum(["en", "zh-CN"]);
 export const instanceGeneralSettingsSchema = z.object({
   censorUsernameInLogs: z.boolean().default(false),
   showDeveloperDiagnostics: z.boolean().default(false),
+  analyzeCompletedAgentRuns: z.boolean().default(false),
   locale: instanceLocaleSchema.default("en"),
 }).strict();
 

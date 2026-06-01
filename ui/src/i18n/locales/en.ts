@@ -301,6 +301,9 @@ export const en = {
   "general.diagnostics.developer.title": "Show developer diagnostics",
   "general.diagnostics.developer.description":
     "Show internal Rudder runtime, workspace, session, and adapter diagnostics in transcripts.",
+  "general.diagnostics.runAnalysis.title": "Analyze completed agent runs",
+  "general.diagnostics.runAnalysis.description":
+    "Record tool, CLI, and runtime errors from completed runs for maintainer follow-up.",
   "general.developer.title": "Developer",
   "general.appearance.title": "Appearance",
   "general.appearance.description":

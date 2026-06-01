@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { HeartbeatRun } from "@rudderhq/shared";
 import { diagnoseRun } from "./diagnosis.js";
+import { buildRunDiagnosticFindings } from "./diagnostics.js";
 import { observedRunFromFilesystem } from "./loaders/rudder.js";
 
 function makeRun(overrides: Partial<HeartbeatRun> = {}): HeartbeatRun {
@@ -86,5 +87,81 @@ describe("diagnoseRun", () => {
     const diagnosis = diagnoseRun(detail, "perf");
     expect(diagnosis.findings.some((finding) => finding.id === "duration-over-10m")).toBe(true);
     expect(diagnosis.findings.some((finding) => finding.id === "very-high-input-tokens")).toBe(true);
+  });
+});
+
+describe("buildRunDiagnosticFindings", () => {
+  it("detects missing required CLI option errors inside succeeded runs", () => {
+    const detail = observedRunFromFilesystem({
+      run: makeRun({
+        status: "succeeded",
+        error: null,
+        errorCode: null,
+        exitCode: 0,
+        stderrExcerpt: "error: required option '--comment <text>' not specified",
+      }),
+      agentName: "Vera",
+      bundle: {
+        agentRuntimeType: "codex_local",
+        agentConfigRevisionId: null,
+        agentConfigRevisionCreatedAt: null,
+        agentConfigFingerprint: null,
+        runtimeConfigFingerprint: null,
+      },
+      logContent: [
+        JSON.stringify({
+          ts: "2026-04-08T10:01:00.000Z",
+          stream: "stderr",
+          chunk: "error: required option '--comment <text>' not specified\n",
+        }),
+      ].join("\n"),
+    });
+
+    const findings = buildRunDiagnosticFindings(detail);
+    expect(findings.some((finding) => finding.kind === "cli_usage_error")).toBe(true);
+    expect(findings[0]?.rawExcerpt).toContain("--comment <text>");
+  });
+
+  it("detects transcript tool-result errors inside succeeded runs", () => {
+    const detail = observedRunFromFilesystem({
+      run: makeRun({
+        status: "succeeded",
+        error: null,
+        errorCode: null,
+        exitCode: 0,
+      }),
+      agentName: "Vera",
+      bundle: {
+        agentRuntimeType: "codex_local",
+        agentConfigRevisionId: null,
+        agentConfigRevisionCreatedAt: null,
+        agentConfigFingerprint: null,
+        runtimeConfigFingerprint: null,
+      },
+      logContent: "",
+    });
+
+    const findings = buildRunDiagnosticFindings({
+      ...detail,
+      transcript: [
+        {
+          kind: "tool_result",
+          ts: "2026-04-08T10:01:00.000Z",
+          toolUseId: "tool-1",
+          toolName: "comment",
+          content: "error: required option '--comment <text>' not specified",
+          isError: true,
+        },
+      ],
+    });
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "tool_call_error",
+          summary: "Tool call failed: comment",
+        }),
+      ]),
+    );
   });
 });

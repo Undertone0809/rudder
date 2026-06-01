@@ -26,12 +26,14 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
     return {
       censorUsernameInLogs: parsed.data.censorUsernameInLogs ?? false,
       showDeveloperDiagnostics: parsed.data.showDeveloperDiagnostics ?? false,
+      analyzeCompletedAgentRuns: parsed.data.analyzeCompletedAgentRuns ?? false,
       locale: parsed.data.locale ?? "en",
     };
   }
   return {
     censorUsernameInLogs: false,
     showDeveloperDiagnostics: false,
+    analyzeCompletedAgentRuns: false,
     locale: "en",
   };
 }

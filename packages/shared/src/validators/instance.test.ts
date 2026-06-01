@@ -10,6 +10,7 @@ describe("instanceGeneralSettingsSchema", () => {
     expect(instanceGeneralSettingsSchema.parse({})).toEqual({
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
+      analyzeCompletedAgentRuns: false,
       locale: "en",
     });
   });

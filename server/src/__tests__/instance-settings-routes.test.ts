@@ -75,6 +75,7 @@ describe("instance settings routes", () => {
     mockInstanceSettingsService.getGeneral.mockResolvedValue({
       censorUsernameInLogs: false,
       showDeveloperDiagnostics: false,
+      analyzeCompletedAgentRuns: false,
       locale: "en",
     });
     mockInstanceSettingsService.getNotifications.mockResolvedValue({
@@ -88,6 +89,7 @@ describe("instance settings routes", () => {
       general: {
         censorUsernameInLogs: true,
         showDeveloperDiagnostics: true,
+        analyzeCompletedAgentRuns: true,
         locale: "zh-CN",
       },
     });
@@ -154,16 +156,27 @@ describe("instance settings routes", () => {
 
     const getRes = await request(app).get("/api/instance/settings/general");
     expect(getRes.status).toBe(200);
-    expect(getRes.body).toEqual({ censorUsernameInLogs: false, showDeveloperDiagnostics: false, locale: "en" });
+    expect(getRes.body).toEqual({
+      censorUsernameInLogs: false,
+      showDeveloperDiagnostics: false,
+      analyzeCompletedAgentRuns: false,
+      locale: "en",
+    });
 
     const patchRes = await request(app)
       .patch("/api/instance/settings/general")
-      .send({ censorUsernameInLogs: true, showDeveloperDiagnostics: true, locale: "zh-CN" });
+      .send({
+        censorUsernameInLogs: true,
+        showDeveloperDiagnostics: true,
+        analyzeCompletedAgentRuns: true,
+        locale: "zh-CN",
+      });
 
     expect(patchRes.status).toBe(200);
     expect(mockInstanceSettingsService.updateGeneral).toHaveBeenCalledWith({
       censorUsernameInLogs: true,
       showDeveloperDiagnostics: true,
+      analyzeCompletedAgentRuns: true,
       locale: "zh-CN",
     });
     expect(mockLogActivity).toHaveBeenCalledTimes(2);

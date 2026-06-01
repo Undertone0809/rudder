@@ -280,6 +280,8 @@ export const zhCN: Messages = {
   "general.updates.canary.enabledDescription": "这台机器会同时检查正式版和更新的测试版。",
   "general.diagnostics.developer.title": "显示开发诊断信息",
   "general.diagnostics.developer.description": "在 transcript 中显示 Rudder 内部运行时、workspace、session 和 adapter 诊断信息。",
+  "general.diagnostics.runAnalysis.title": "分析已完成的 Agent run",
+  "general.diagnostics.runAnalysis.description": "记录已完成 run 中的 tool、CLI 和运行时报错，供 maintainer 后续处理。",
   "general.developer.title": "开发者",
   "general.appearance.title": "外观",
   "general.appearance.description": "选择这个设备上的 Rudder 外观。视觉风格遵循低眩光、克制的 Claude 风格界面。",

@@ -145,7 +145,12 @@ export function InstanceGeneralSettings() {
   }, []);
 
   const toggleMutation = useMutation({
-    mutationFn: async (patch: { censorUsernameInLogs?: boolean; showDeveloperDiagnostics?: boolean; locale?: "en" | "zh-CN" }) =>
+    mutationFn: async (patch: {
+      censorUsernameInLogs?: boolean;
+      showDeveloperDiagnostics?: boolean;
+      analyzeCompletedAgentRuns?: boolean;
+      locale?: "en" | "zh-CN";
+    }) =>
       instanceSettingsApi.updateGeneral(patch),
     onSuccess: async (nextSettings) => {
       setActionError(null);
@@ -179,6 +184,7 @@ export function InstanceGeneralSettings() {
 
   const censorUsernameInLogs = generalQuery.data?.censorUsernameInLogs === true;
   const showDeveloperDiagnostics = generalQuery.data?.showDeveloperDiagnostics === true;
+  const analyzeCompletedAgentRuns = generalQuery.data?.analyzeCompletedAgentRuns === true;
   const locale = generalQuery.data?.locale ?? "en";
 
   async function handleUpdateChannelToggle() {
@@ -351,6 +357,19 @@ export function InstanceGeneralSettings() {
               aria-label="Toggle developer diagnostics"
               disabled={toggleMutation.isPending}
               onClick={() => toggleMutation.mutate({ showDeveloperDiagnostics: !showDeveloperDiagnostics })}
+            />
+          }
+        />
+
+        <SettingsRow
+          title={t("general.diagnostics.runAnalysis.title")}
+          description={t("general.diagnostics.runAnalysis.description")}
+          action={
+            <SettingsToggle
+              checked={analyzeCompletedAgentRuns}
+              aria-label="Toggle completed run diagnostics"
+              disabled={toggleMutation.isPending}
+              onClick={() => toggleMutation.mutate({ analyzeCompletedAgentRuns: !analyzeCompletedAgentRuns })}
             />
           }
         />

@@ -22,6 +22,7 @@ import { organizationRoutes } from "../routes/orgs.js";
 import { pluginRoutes } from "../routes/plugins.js";
 import { projectRoutes } from "../routes/projects.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
+import { runDiagnosticRoutes } from "../routes/run-diagnostics.js";
 import { secretRoutes } from "../routes/secrets.js";
 import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
 import { instanceSettingsRoutes } from "../routes/instance-settings.js";
@@ -66,6 +67,7 @@ export function registerApiRoutes(
   api.use(costRoutes(db));
   api.use(activityRoutes(db));
   api.use(runIntelligenceRoutes(db));
+  api.use(runDiagnosticRoutes(db));
   api.use(dashboardRoutes(db));
   api.use(sidebarBadgeRoutes(db));
   api.use(instanceSettingsRoutes(db, { deploymentMode: opts.deploymentMode }));

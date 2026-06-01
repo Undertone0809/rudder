@@ -163,7 +163,7 @@ test.describe("Settings sidebar", () => {
 
   test("persists developer diagnostics from general settings", async ({ page }) => {
     await page.request.patch("/api/instance/settings/general", {
-      data: { showDeveloperDiagnostics: false },
+      data: { showDeveloperDiagnostics: false, analyzeCompletedAgentRuns: false },
     });
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -179,8 +179,11 @@ test.describe("Settings sidebar", () => {
 
     const modal = page.getByTestId("settings-modal-shell");
     const diagnosticsSwitch = modal.getByRole("switch", { name: "Toggle developer diagnostics" });
+    const runDiagnosticsSwitch = modal.getByRole("switch", { name: "Toggle completed run diagnostics" });
     await expect(modal.getByText("Show developer diagnostics")).toBeVisible();
+    await expect(modal.getByText("Analyze completed agent runs")).toBeVisible();
     await expect(diagnosticsSwitch).toHaveAttribute("aria-checked", "false");
+    await expect(runDiagnosticsSwitch).toHaveAttribute("aria-checked", "false");
 
     const updateResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
@@ -191,10 +194,21 @@ test.describe("Settings sidebar", () => {
     await updateResponse;
 
     await expect(diagnosticsSwitch).toHaveAttribute("aria-checked", "true");
+
+    const runUpdateResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes("/api/instance/settings/general")
+      && response.ok(),
+    );
+    await runDiagnosticsSwitch.click();
+    await runUpdateResponse;
+
+    await expect(runDiagnosticsSwitch).toHaveAttribute("aria-checked", "true");
     const settingsResponse = await page.request.get("/api/instance/settings/general");
     expect(settingsResponse.ok()).toBe(true);
     expect(await settingsResponse.json()).toMatchObject({
       showDeveloperDiagnostics: true,
+      analyzeCompletedAgentRuns: true,
     });
   });
 

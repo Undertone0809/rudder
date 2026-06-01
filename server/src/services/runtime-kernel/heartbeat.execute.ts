@@ -100,6 +100,7 @@ import {
   resolveExecutionWorkspaceMode,
 } from "../execution-workspace-policy.js";
 import { instanceSettingsService } from "../instance-settings.js";
+import { runDiagnosticsService } from "../run-diagnostics.js";
 import { logActivity } from "../activity-log.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../../log-redaction.js";
 import {
@@ -1070,6 +1071,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
           }
         }
         await emitHeartbeatLiveEval(finalizedRun.id);
+        void runDiagnosticsService(db).analyzeRunIfEnabled(
+          finalizedRun.id,
+          async () => (await instanceSettings.getGeneral()).analyzeCompletedAgentRuns === true,
+        );
       }
       await finalizeAgentStatus(agent.id, outcome);
     } catch (err) {

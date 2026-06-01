@@ -28,6 +28,7 @@ export { sidebarBadgeService } from "./sidebar-badges.js";
 export { accessService } from "./access.js";
 export { boardAuthService } from "./board-auth.js";
 export { instanceSettingsService } from "./instance-settings.js";
+export { runDiagnosticsService } from "./run-diagnostics.js";
 export { operatorProfileService } from "./operator-profile.js";
 export { organizationPortabilityService, organizationPortabilityFacade } from "./organization-portability.js";
 export { organizationExportJobService } from "./export-jobs.js";
