@@ -29,7 +29,8 @@ import {
 type ProjectRow = typeof projects.$inferSelect;
 type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;
 type WorkspaceRuntimeServiceRow = typeof workspaceRuntimeServices.$inferSelect;
-const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
+const REPO_ONLY_CWD_SENTINEL = "/__rudder_repo_only__";
+const LEGACY_REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 type CreateWorkspaceInput = {
   name?: string | null;
   sourceType?: string | null;
@@ -316,7 +317,7 @@ function readNonEmptyString(value: unknown): string | null {
 function normalizeWorkspaceCwd(value: unknown): string | null {
   const cwd = readNonEmptyString(value);
   if (!cwd) return null;
-  return cwd === REPO_ONLY_CWD_SENTINEL ? null : cwd;
+  return cwd === REPO_ONLY_CWD_SENTINEL || cwd === LEGACY_REPO_ONLY_CWD_SENTINEL ? null : cwd;
 }
 
 function deriveNameFromCwd(cwd: string): string {

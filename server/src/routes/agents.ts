@@ -148,9 +148,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     return {
       ...config,
       rudderSkillSync: { desiredSkills },
-      paperclipSkillSync: { desiredSkills },
       rudderRuntimeSkills: runtimeSkillEntries,
-      paperclipRuntimeSkills: runtimeSkillEntries,
     };
   }
 

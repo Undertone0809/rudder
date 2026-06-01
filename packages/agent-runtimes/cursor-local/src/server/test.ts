@@ -1,5 +1,3 @@
-import fs from "node:fs/promises";
-import os from "node:os";
 import type {
   AgentRuntimeEnvironmentCheck,
   AgentRuntimeEnvironmentTestContext,
@@ -11,17 +9,14 @@ import {
   parseObject,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
-  ensureManagedHomeEntrySnapshot,
   ensurePathInEnv,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import path from "node:path";
 import { DEFAULT_CURSOR_LOCAL_COMMAND, DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
+import { prepareManagedCursorHome } from "./home.js";
 import { parseCursorJsonl } from "./parse.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
-
-const DEFAULT_RUDDER_INSTANCE_ID = "default";
-const CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES = new Set(["skills", "skills-cursor", "projects"]);
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -55,64 +50,8 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
-function nonEmpty(value: string | undefined): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-async function pathExists(candidate: string): Promise<boolean> {
-  return fs.access(candidate).then(() => true).catch(() => false);
-}
-
-async function removeManagedCursorEntry(targetCursorDir: string, entryName: string): Promise<void> {
-  const target = path.join(targetCursorDir, entryName);
-  const existing = await fs.lstat(target).catch(() => null);
-  if (!existing) return;
-  if (entryName === "skills" && existing.isDirectory() && !existing.isSymbolicLink()) return;
-  await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-}
-
-async function pruneManagedCursorConfigSnapshots(targetCursorDir: string): Promise<void> {
-  const entries = await fs.readdir(targetCursorDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    if (entry.name === "skills") continue;
-    await removeManagedCursorEntry(targetCursorDir, entry.name);
-  }
-}
-
-function resolveManagedCursorHomeDir(env: Record<string, string>, orgId: string, agentId: string): string {
-  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
-  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "cursor-home", "agents", agentId);
-}
-
-async function prepareManagedCursorHome(env: Record<string, string>, orgId: string, agentId: string): Promise<string> {
-  const sourceHome = nonEmpty(env.HOME);
-  const resolvedSourceHome = sourceHome ? path.resolve(sourceHome) : null;
-  const targetHome = resolveManagedCursorHomeDir(env, orgId, agentId);
-  if (resolvedSourceHome && targetHome === resolvedSourceHome) return targetHome;
-
-  const targetCursorDir = path.join(targetHome, ".cursor");
-  await fs.mkdir(path.join(targetCursorDir, "skills"), { recursive: true });
-  await pruneManagedCursorConfigSnapshots(targetCursorDir);
-
-  if (resolvedSourceHome) {
-    const sourceCursorDir = path.join(resolvedSourceHome, ".cursor");
-    if (await pathExists(sourceCursorDir)) {
-      const entries = await fs.readdir(sourceCursorDir, { withFileTypes: true }).catch(() => []);
-      for (const entry of entries) {
-        if (CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES.has(entry.name)) continue;
-        await ensureManagedHomeEntrySnapshot(path.join(targetCursorDir, entry.name), path.join(sourceCursorDir, entry.name));
-      }
-    }
-
-    if (process.platform === "darwin") {
-      const sourceKeychainsDir = path.join(resolvedSourceHome, "Library", "Keychains");
-      if (await pathExists(sourceKeychainsDir)) {
-        await ensureManagedHomeEntrySnapshot(path.join(targetHome, "Library", "Keychains"), sourceKeychainsDir);
-      }
-    }
-  }
-  return targetHome;
+function hasCursorResultEvent(stdout: string): boolean {
+  return parseCursorJsonl(stdout).resultSeen;
 }
 
 const CURSOR_AUTH_REQUIRED_RE =
@@ -152,7 +91,11 @@ export async function testEnvironment(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  const managedHome = await prepareManagedCursorHome(baseEnv, ctx.orgId, "environment-test");
+  const managedHome = (await prepareManagedCursorHome({
+    env: baseEnv,
+    orgId: ctx.orgId,
+    agentId: "environment-test",
+  })).homeDir;
   const runtimeEnv = Object.fromEntries(
     Object.entries(ensurePathInEnv({ ...baseEnv, HOME: managedHome })).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -187,7 +130,7 @@ export async function testEnvironment(
   } else {
     checks.push({
       code: "cursor_api_key_missing",
-      level: "warn",
+      level: "info",
       message: "CURSOR_API_KEY is not set. Cursor runs may fail until authentication is configured.",
       hint: "Set CURSOR_API_KEY in adapter env or run `cursor-agent login`.",
     });
@@ -228,6 +171,7 @@ export async function testEnvironment(
           timeoutSec: 45,
           graceSec: 5,
           onLog: async () => {},
+          shouldTerminate: (event) => event.stream === "stdout" && hasCursorResultEvent(event.stdout),
         },
       );
       const parsed = parseCursorJsonl(probe.stdout);
@@ -241,7 +185,7 @@ export async function testEnvironment(
           message: "Cursor hello probe timed out.",
           hint: "Retry the probe. If this persists, verify `cursor-agent -p --output-format json \"Respond with hello.\"` manually.",
         });
-      } else if ((probe.exitCode ?? 1) === 0) {
+      } else if ((probe.exitCode ?? 1) === 0 || (parsed.resultSeen && !parsed.resultIsError)) {
         const summary = parsed.summary.trim();
         const hasHello = /\bhello\b/i.test(summary);
         checks.push({

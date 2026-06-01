@@ -12,7 +12,8 @@ import {
 import { organizationSkillService } from "./organization-skills.js";
 import { listProjectResourceAttachments } from "./resource-catalog.js";
 import { secretService } from "./secrets.js";
-const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
+const REPO_ONLY_CWD_SENTINEL = "/__rudder_repo_only__";
+const LEGACY_REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const LEGACY_COPILOT_SYSTEM_KIND = "rudder_copilot";
 
 export type AgentRunScene = "chat" | "heartbeat";
@@ -190,9 +191,7 @@ export function agentRunContextService(db: Db) {
       runtimeConfig: {
         ...resolvedConfig,
         rudderSkillSync: { desiredSkills: desiredRuntimeSkills },
-        paperclipSkillSync: { desiredSkills: desiredRuntimeSkills },
         rudderRuntimeSkills: runtimeSkillEntries,
-        paperclipRuntimeSkills: runtimeSkillEntries,
       },
       runtimeSkillEntries,
       secretKeys,
@@ -269,7 +268,7 @@ export function agentRunContextService(db: Db) {
       }
       for (const workspace of projectWorkspaceRows) {
         const projectCwd = readNonEmptyString(workspace.cwd);
-        if (!projectCwd || projectCwd === REPO_ONLY_CWD_SENTINEL) continue;
+        if (!projectCwd || projectCwd === REPO_ONLY_CWD_SENTINEL || projectCwd === LEGACY_REPO_ONLY_CWD_SENTINEL) continue;
         hasConfiguredProjectCwd = true;
         const projectCwdExists = await fs
           .stat(projectCwd)

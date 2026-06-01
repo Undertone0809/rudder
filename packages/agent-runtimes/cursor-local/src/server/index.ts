@@ -1,4 +1,10 @@
-export { execute, ensureCursorSkillsInjected, prepareManagedCursorHome } from "./execute.js";
+export { execute, ensureCursorSkillsInjected } from "./execute.js";
+export {
+  CURSOR_MANAGED_HOME_INCLUDED_ENTRIES,
+  prepareManagedCursorHome,
+  resolveManagedCursorHomeDir,
+  resolveManagedCursorSkillsDir,
+} from "./home.js";
 export { listCursorSkills, syncCursorSkills } from "./skills.js";
 export { testEnvironment } from "./test.js";
 export { parseCursorJsonl, isCursorUnknownSessionError } from "./parse.js";

@@ -466,7 +466,6 @@ describe("organization service", () => {
         instructionsRootPath: "/tmp/ceo",
         instructionsEntryFile: "AGENTS.md",
         rudderSkillSync: { desiredSkills: ["organization/org/build-advisor"] },
-        paperclipSkillSync: { desiredSkills: ["organization/org/build-advisor"] },
       },
       runtimeConfig: {},
       budgetMonthlyCents: 0,

@@ -27,7 +27,7 @@ describe("managed OpenCode home", () => {
     }
   });
 
-  it("does not create provider config unless a DeepSeek model and key are configured", async () => {
+  it("writes DeepSeek provider config when a key is available before model selection", async () => {
     const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-home-skip-"));
     const configFile = path.join(homeDir, ".config", "opencode", "opencode.json");
 
@@ -35,7 +35,26 @@ describe("managed OpenCode home", () => {
       await ensureManagedOpenCodeDeepSeekConfig({
         env: { DEEPSEEK_API_KEY: "sk-test-secret" },
         homeDir,
-        model: "opencode/deepseek-v4-flash-free",
+      });
+
+      const raw = await fs.readFile(configFile, "utf8");
+      const config = JSON.parse(raw);
+      expect(config.provider.deepseek.models["deepseek-v4-pro"].name).toBe("DeepSeek V4 Pro");
+      expect(raw).not.toContain("sk-test-secret");
+    } finally {
+      await fs.rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not create provider config unless a DeepSeek key is configured", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-home-skip-no-key-"));
+    const configFile = path.join(homeDir, ".config", "opencode", "opencode.json");
+
+    try {
+      await ensureManagedOpenCodeDeepSeekConfig({
+        env: {},
+        homeDir,
+        model: "deepseek/deepseek-v4-pro",
       });
 
       await expect(fs.access(configFile)).rejects.toMatchObject({ code: "ENOENT" });

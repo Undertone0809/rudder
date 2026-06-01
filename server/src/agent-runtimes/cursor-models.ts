@@ -1,16 +1,14 @@
 import { spawnSync } from "node:child_process";
-import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_CURSOR_LOCAL_COMMAND,
   models as cursorFallbackModels,
 } from "@rudderhq/agent-runtime-cursor-local";
+import { prepareManagedCursorHome } from "@rudderhq/agent-runtime-cursor-local/server";
 import type { AgentRuntimeModelListContext } from "@rudderhq/agent-runtime-utils";
 import {
   asString,
   ensureAbsoluteDirectory,
-  ensureManagedHomeEntrySnapshot,
   ensurePathInEnv,
   parseObject,
 } from "@rudderhq/agent-runtime-utils/server-utils";
@@ -19,9 +17,6 @@ import type { AgentRuntimeModel } from "./types.js";
 const CURSOR_MODELS_TIMEOUT_MS = 5_000;
 const CURSOR_MODELS_CACHE_TTL_MS = 60_000;
 const MAX_BUFFER_BYTES = 512 * 1024;
-const DEFAULT_RUDDER_INSTANCE_ID = "default";
-const CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES = new Set(["skills", "skills-cursor", "projects"]);
-
 const modelCache = new Map<string, { expiresAt: number; models: AgentRuntimeModel[] }>();
 
 type CursorModelsCommandResult = {
@@ -68,66 +63,6 @@ function pushModelId(target: AgentRuntimeModel[], raw: string) {
   const id = sanitizeModelId(raw);
   if (!isLikelyModelId(id)) return;
   target.push({ id, label: id });
-}
-
-function nonEmpty(value: string | undefined): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-async function pathExists(candidate: string): Promise<boolean> {
-  return fs.access(candidate).then(() => true).catch(() => false);
-}
-
-async function removeManagedCursorEntry(targetCursorDir: string, entryName: string): Promise<void> {
-  const target = path.join(targetCursorDir, entryName);
-  const existing = await fs.lstat(target).catch(() => null);
-  if (!existing) return;
-  if (entryName === "skills" && existing.isDirectory() && !existing.isSymbolicLink()) return;
-  await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-}
-
-async function pruneManagedCursorConfigSnapshots(targetCursorDir: string): Promise<void> {
-  const entries = await fs.readdir(targetCursorDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    if (entry.name === "skills") continue;
-    await removeManagedCursorEntry(targetCursorDir, entry.name);
-  }
-}
-
-function resolveManagedCursorHomeDir(env: Record<string, string>, orgId: string, agentId: string): string {
-  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
-  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "cursor-home", "agents", agentId);
-}
-
-async function prepareManagedCursorHome(env: Record<string, string>, orgId: string, agentId: string): Promise<string> {
-  const targetHome = resolveManagedCursorHomeDir(env, orgId, agentId);
-  const sourceHome = nonEmpty(env.HOME);
-  const resolvedSourceHome = sourceHome ? path.resolve(sourceHome) : null;
-  if (resolvedSourceHome && targetHome === resolvedSourceHome) return targetHome;
-
-  const targetCursorDir = path.join(targetHome, ".cursor");
-  await fs.mkdir(path.join(targetCursorDir, "skills"), { recursive: true });
-  await pruneManagedCursorConfigSnapshots(targetCursorDir);
-
-  if (resolvedSourceHome) {
-    const sourceCursorDir = path.join(resolvedSourceHome, ".cursor");
-    if (await pathExists(sourceCursorDir)) {
-      const entries = await fs.readdir(sourceCursorDir, { withFileTypes: true }).catch(() => []);
-      for (const entry of entries) {
-        if (CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES.has(entry.name)) continue;
-        await ensureManagedHomeEntrySnapshot(path.join(targetCursorDir, entry.name), path.join(sourceCursorDir, entry.name));
-      }
-    }
-
-    if (process.platform === "darwin") {
-      const sourceKeychainsDir = path.join(resolvedSourceHome, "Library", "Keychains");
-      if (await pathExists(sourceKeychainsDir)) {
-        await ensureManagedHomeEntrySnapshot(path.join(targetHome, "Library", "Keychains"), sourceKeychainsDir);
-      }
-    }
-  }
-  return targetHome;
 }
 
 function collectFromJsonValue(value: unknown, target: AgentRuntimeModel[]) {
@@ -255,7 +190,11 @@ async function resolveCursorModelsCommandInput(ctx?: AgentRuntimeModelListContex
   const configEnv = normalizeEnv(envConfig);
   const baseEnv = normalizeEnv({ ...process.env, ...configEnv });
   const managedHome = ctx?.orgId
-    ? await prepareManagedCursorHome(baseEnv, ctx.orgId, "model-list")
+    ? (await prepareManagedCursorHome({
+        env: baseEnv,
+        orgId: ctx.orgId,
+        agentId: "model-list",
+      })).homeDir
     : (baseEnv.HOME ?? process.env.HOME ?? "");
   const runtimeEnv = ensurePathInEnv({
     ...baseEnv,

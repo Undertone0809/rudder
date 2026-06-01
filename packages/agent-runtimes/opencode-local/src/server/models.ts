@@ -249,11 +249,12 @@ export async function listOpenCodeModels(
       return asStringArray(config.args);
     })();
     const usePure = !extraArgs.includes("--no-pure");
-    const runtimeEnv = ctx.orgId
+    const orgId = ctx.orgId;
+    const runtimeEnv = orgId
       ? await (async () => {
           const managedHome = await prepareManagedOpenCodeHome({
             env: baseEnv,
-            orgId: ctx.orgId,
+            orgId,
             agentId: "model-list",
           });
           await ensureManagedOpenCodeDeepSeekConfig({

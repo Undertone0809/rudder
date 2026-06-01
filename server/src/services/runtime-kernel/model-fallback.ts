@@ -26,9 +26,7 @@ const SHARED_ATTEMPT_CONFIG_KEYS = [
   "instructionsBundleMode",
   "agentsMdPath",
   "rudderSkillSync",
-  "paperclipSkillSync",
   "rudderRuntimeSkills",
-  "paperclipRuntimeSkills",
 ];
 
 function clearRuntimeSession(runtime: AgentRuntimeState): AgentRuntimeState {

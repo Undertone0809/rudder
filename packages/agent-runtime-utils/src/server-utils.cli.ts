@@ -324,7 +324,7 @@ export function buildPersistentSkillSnapshot(
   };
 }
 
-export function normalizeConfiguredPaperclipRuntimeSkills(value: unknown): RudderSkillEntry[] {
+export function normalizeConfiguredRudderRuntimeSkills(value: unknown): RudderSkillEntry[] {
   if (!Array.isArray(value)) return [];
   const out: RudderSkillEntry[] = [];
   for (const rawEntry of value) {
@@ -355,7 +355,7 @@ export async function readRudderRuntimeSkillEntries(
   moduleDir: string,
   additionalCandidates: string[] = [],
 ): Promise<RudderSkillEntry[]> {
-  const configuredEntries = normalizeConfiguredPaperclipRuntimeSkills(
+  const configuredEntries = normalizeConfiguredRudderRuntimeSkills(
     config.rudderRuntimeSkills ?? config.paperclipRuntimeSkills,
   );
   if (configuredEntries.length > 0) return configuredEntries;

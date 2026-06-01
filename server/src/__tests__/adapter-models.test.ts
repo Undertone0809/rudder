@@ -112,8 +112,14 @@ describe("adapter model listing", () => {
     process.env.HOME = hostHome;
     await fs.mkdir(path.join(hostHome, ".cursor", "settings"), { recursive: true });
     await fs.mkdir(path.join(hostHome, ".cursor", "projects", "volatile-project"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "plugins", "host-plugin"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "chats", "host-chat"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "worktrees", "host-worktree"), { recursive: true });
     await fs.writeFile(path.join(hostHome, ".cursor", "settings", "host-only.json"), "{}", "utf8");
     await fs.writeFile(path.join(hostHome, ".cursor", "projects", "volatile-project", "worker.sock"), "socket placeholder", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "plugins", "host-plugin", "plugin.json"), "{}", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "chats", "host-chat", "chat.json"), "{}", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "worktrees", "host-worktree", "state.json"), "{}", "utf8");
     await fs.writeFile(
       commandPath,
       `#!/usr/bin/env node
@@ -154,13 +160,16 @@ process.exit(1);
       expect(capture.home).toContain(path.join("organizations", "organization-1", "cursor-home", "agents", "model-list"));
       await expect(fs.stat(path.join(capture.home, ".cursor", "settings", "host-only.json"))).resolves.toBeTruthy();
       await expect(fs.stat(path.join(capture.home, ".cursor", "projects"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capture.home, ".cursor", "plugins"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capture.home, ".cursor", "chats"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capture.home, ".cursor", "worktrees"))).rejects.toThrow();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
   it("returns no opencode models when opencode command is unavailable", async () => {
-    process.env.RUDDER_OPENCODE_COMMAND = "__paperclip_missing_opencode_command__";
+    process.env.RUDDER_OPENCODE_COMMAND = "__rudder_missing_opencode_command__";
 
     const models = await listAgentRuntimeModels("opencode_local");
     expect(models).toEqual([]);
@@ -174,10 +183,14 @@ process.exit(1);
       commandPath,
       `#!/usr/bin/env node
 const fs = require("node:fs");
+const configPath = String(process.env.XDG_CONFIG_HOME ?? "") + "/opencode/opencode.json";
 fs.writeFileSync(process.env.RUDDER_TEST_CAPTURE_PATH, JSON.stringify({
   argv: process.argv.slice(2),
   home: process.env.HOME,
-  xdgConfigHome: process.env.XDG_CONFIG_HOME
+  xdgConfigHome: process.env.XDG_CONFIG_HOME,
+  opencodeConfig: fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : null
 }), "utf8");
 if (process.argv[2] === "--pure" && process.argv[3] === "models") {
   console.log("opencode/deepseek-v4-flash-free");
@@ -198,6 +211,7 @@ process.exit(1);
           env: {
             RUDDER_HOME: path.join(root, "rudder-home"),
             RUDDER_TEST_CAPTURE_PATH: capturePath,
+            DEEPSEEK_API_KEY: "sk-test-secret",
           },
         },
       });
@@ -209,10 +223,20 @@ process.exit(1);
         argv: string[];
         home: string;
         xdgConfigHome: string;
+        opencodeConfig: {
+          provider?: {
+            deepseek?: {
+              options?: {
+                apiKey?: string;
+              };
+            };
+          };
+        } | null;
       };
       expect(capture.argv).toEqual(["--pure", "models"]);
       expect(capture.home).toContain(path.join("organizations", "organization-1", "opencode-home", "agents", "model-list"));
       expect(capture.xdgConfigHome).toBe(path.join(capture.home, ".config"));
+      expect(capture.opencodeConfig?.provider?.deepseek?.options?.apiKey).toBe("{env:DEEPSEEK_API_KEY}");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

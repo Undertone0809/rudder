@@ -13,7 +13,6 @@ import {
   redactEnvForLogs,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
-  ensureManagedHomeEntrySnapshot,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderRuntimeSkillSymlinks,
   ensureRudderCliInPath,
@@ -31,6 +30,10 @@ import {
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { DEFAULT_CURSOR_LOCAL_COMMAND, DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
 import {
+  prepareManagedCursorHome,
+  resolveManagedCursorSkillsDir,
+} from "./home.js";
+import {
   detectCursorAuthRequired,
   detectCursorToolHandlerUnsupported,
   parseCursorJsonl,
@@ -40,7 +43,6 @@ import { normalizeCursorStreamLine } from "../shared/stream.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_RUDDER_INSTANCE_ID = "default";
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -116,107 +118,6 @@ function renderApiAccessNote(env: Record<string, string>): string {
 
 function hasCursorResultEvent(stdout: string): boolean {
   return parseCursorJsonl(stdout).resultSeen;
-}
-
-function nonEmpty(value: string | undefined): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-async function pathExists(candidate: string): Promise<boolean> {
-  return fs.access(candidate).then(() => true).catch(() => false);
-}
-
-function resolveSharedCursorHomeDir(env: NodeJS.ProcessEnv): string {
-  return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
-}
-
-function resolveManagedCursorHomeDir(env: NodeJS.ProcessEnv, orgId: string, agentId: string): string {
-  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
-  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "cursor-home", "agents", agentId);
-}
-
-function resolveManagedCursorSkillsDir(homeDir: string): string {
-  return path.join(homeDir, ".cursor", "skills");
-}
-
-const CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES = new Set(["skills", "skills-cursor", "projects"]);
-
-async function removeManagedCursorEntry(targetCursorDir: string, entryName: string): Promise<void> {
-  const target = path.join(targetCursorDir, entryName);
-  const existing = await fs.lstat(target).catch(() => null);
-  if (!existing) return;
-
-  if (entryName === "skills" && existing.isDirectory() && !existing.isSymbolicLink()) {
-    return;
-  }
-
-  await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-}
-
-async function pruneManagedCursorConfigSnapshots(targetCursorDir: string): Promise<void> {
-  const entries = await fs.readdir(targetCursorDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    if (entry.name === "skills") continue;
-    await removeManagedCursorEntry(targetCursorDir, entry.name);
-  }
-}
-
-async function syncCursorSharedHomeEntries(sourceHome: string, targetHome: string) {
-  const sourceCursorDir = path.join(sourceHome, ".cursor");
-  const entries = await fs.readdir(sourceCursorDir, { withFileTypes: true }).catch(() => []);
-  const targetCursorDir = path.join(targetHome, ".cursor");
-  await fs.mkdir(targetCursorDir, { recursive: true });
-  await pruneManagedCursorConfigSnapshots(targetCursorDir);
-  for (const entry of entries) {
-    if (CURSOR_MANAGED_HOME_EXCLUDED_ENTRIES.has(entry.name)) continue;
-    await ensureManagedHomeEntrySnapshot(
-      path.join(targetCursorDir, entry.name),
-      path.join(sourceCursorDir, entry.name),
-    );
-  }
-}
-
-async function syncCursorMacOSKeychainSearchPath(sourceHome: string, targetHome: string): Promise<boolean> {
-  if (process.platform !== "darwin") return false;
-
-  const sourceKeychainsDir = path.join(sourceHome, "Library", "Keychains");
-  if (!(await pathExists(sourceKeychainsDir))) return false;
-
-  await ensureManagedHomeEntrySnapshot(
-    path.join(targetHome, "Library", "Keychains"),
-    sourceKeychainsDir,
-  );
-  return true;
-}
-
-export async function prepareManagedCursorHome(
-  env: NodeJS.ProcessEnv,
-  onLog: AgentRuntimeExecutionContext["onLog"],
-  orgId: string,
-  agentId: string,
-): Promise<string> {
-  const sourceHome = resolveSharedCursorHomeDir(env);
-  const targetHome = resolveManagedCursorHomeDir(env, orgId, agentId);
-  if (targetHome === sourceHome) return targetHome;
-
-  await fs.mkdir(resolveManagedCursorSkillsDir(targetHome), { recursive: true });
-  if (await pathExists(path.join(sourceHome, ".cursor"))) {
-    await syncCursorSharedHomeEntries(sourceHome, targetHome);
-  }
-  const keychainLinked = await syncCursorMacOSKeychainSearchPath(sourceHome, targetHome);
-
-  await onLog(
-    "stdout",
-    `[rudder] Using Rudder-managed Cursor home "${targetHome}" (seeded from "${sourceHome}").\n`,
-  );
-  if (keychainLinked) {
-    await onLog(
-      "stdout",
-      "[rudder] Seeded macOS Keychain search path snapshot into managed Cursor home for subscription authentication.\n",
-    );
-  }
-  return targetHome;
 }
 
 function cursorSkillsHome(): string {
@@ -307,7 +208,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedCursorHome(sourceEnv, onLog, agent.orgId, agent.id);
+  const preparedHome = await prepareManagedCursorHome({
+    env: sourceEnv,
+    orgId: agent.orgId,
+    agentId: agent.id,
+    onPrepared: (message) => onLog("stdout", message),
+  });
+  const managedHome = preparedHome.homeDir;
+  if (preparedHome.keychainLinked) {
+    await onLog(
+      "stdout",
+      "[rudder] Linked macOS Keychain search path into managed Cursor home for subscription authentication.\n",
+    );
+  }
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,

@@ -77,10 +77,6 @@ export async function prepareManagedOpenCodeHome(input: {
   return targetHome;
 }
 
-function isDeepSeekModel(model: string | undefined): boolean {
-  return typeof model === "string" && model.trim().startsWith("deepseek/");
-}
-
 function hasDeepSeekKey(env: NodeJS.ProcessEnv | Record<string, string | undefined>): boolean {
   return typeof env.DEEPSEEK_API_KEY === "string" && env.DEEPSEEK_API_KEY.trim().length > 0;
 }
@@ -94,7 +90,7 @@ export async function ensureManagedOpenCodeDeepSeekConfig(input: {
   homeDir: string;
   model?: string;
 }): Promise<void> {
-  if (!isDeepSeekModel(input.model) || !hasDeepSeekKey(input.env)) return;
+  if (!hasDeepSeekKey(input.env)) return;
 
   const configFile = resolveManagedOpenCodeConfigFile(input.homeDir);
   await fs.mkdir(path.dirname(configFile), { recursive: true });

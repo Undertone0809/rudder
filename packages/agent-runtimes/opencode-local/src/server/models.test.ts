@@ -15,7 +15,7 @@ describe("openCode models", () => {
   });
 
   it("returns an empty list when discovery command is unavailable", async () => {
-    process.env.RUDDER_OPENCODE_COMMAND = "__paperclip_missing_opencode_command__";
+    process.env.RUDDER_OPENCODE_COMMAND = "__rudder_missing_opencode_command__";
     await expect(listOpenCodeModels()).resolves.toEqual([]);
   });
 
@@ -26,7 +26,7 @@ describe("openCode models", () => {
   });
 
   it("rejects when discovery cannot run for configured model", async () => {
-    process.env.RUDDER_OPENCODE_COMMAND = "__paperclip_missing_opencode_command__";
+    process.env.RUDDER_OPENCODE_COMMAND = "__rudder_missing_opencode_command__";
     await expect(
       ensureOpenCodeModelConfiguredAndAvailable({
         model: "openai/gpt-5",

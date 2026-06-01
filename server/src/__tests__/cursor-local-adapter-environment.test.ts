@@ -75,11 +75,19 @@ describe("cursor environment diagnostics", () => {
     process.env.HOME = hostHome;
     await fs.mkdir(binDir, { recursive: true });
     await fs.mkdir(path.join(hostHome, ".cursor", "settings"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "snapshots", "large-history"), { recursive: true });
     await fs.mkdir(path.join(hostHome, ".cursor", "skills", "host-only-skill"), { recursive: true });
     await fs.mkdir(path.join(hostHome, ".cursor", "projects", "volatile-project"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "plugins", "host-plugin"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "chats", "host-chat"), { recursive: true });
+    await fs.mkdir(path.join(hostHome, ".cursor", "worktrees", "host-worktree"), { recursive: true });
     await fs.writeFile(path.join(hostHome, ".cursor", "settings", "host-only.json"), "{}", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "snapshots", "large-history", "snapshot.json"), "{}", "utf8");
     await fs.writeFile(path.join(hostHome, ".cursor", "skills", "host-only-skill", "SKILL.md"), "---\nname: host-only-skill\n---\n", "utf8");
     await fs.writeFile(path.join(hostHome, ".cursor", "projects", "volatile-project", "worker.sock"), "socket placeholder", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "plugins", "host-plugin", "plugin.json"), "{}", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "chats", "host-chat", "chat.json"), "{}", "utf8");
+    await fs.writeFile(path.join(hostHome, ".cursor", "worktrees", "host-worktree", "state.json"), "{}", "utf8");
     await writeFakeCursorAgentCommand(binDir, argsCapturePath);
 
     try {
@@ -110,8 +118,12 @@ describe("cursor environment diagnostics", () => {
         path.join(rudderHome, "instances", "test-instance", "organizations", "organization-1", "cursor-home", "agents", "environment-test"),
       );
       await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "settings", "host-only.json"))).resolves.toBeTruthy();
+      await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "snapshots"))).rejects.toThrow();
       await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "skills", "host-only-skill"))).rejects.toThrow();
       await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "projects"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "plugins"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "chats"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capturedEnv.home, ".cursor", "worktrees"))).rejects.toThrow();
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

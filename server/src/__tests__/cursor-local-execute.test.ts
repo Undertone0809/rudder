@@ -101,7 +101,13 @@ describe("cursor execute", () => {
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer direct status updates.\n", "utf8");
     await fs.mkdir(path.join(root, ".cursor", "projects", "volatile-project"), { recursive: true });
+    await fs.mkdir(path.join(root, ".cursor", "plugins", "host-plugin"), { recursive: true });
+    await fs.mkdir(path.join(root, ".cursor", "chats", "host-chat"), { recursive: true });
+    await fs.mkdir(path.join(root, ".cursor", "worktrees", "host-worktree"), { recursive: true });
     await fs.writeFile(path.join(root, ".cursor", "projects", "volatile-project", "worker.sock"), "socket placeholder", "utf8");
+    await fs.writeFile(path.join(root, ".cursor", "plugins", "host-plugin", "plugin.json"), "{}", "utf8");
+    await fs.writeFile(path.join(root, ".cursor", "chats", "host-chat", "chat.json"), "{}", "utf8");
+    await fs.writeFile(path.join(root, ".cursor", "worktrees", "host-worktree", "state.json"), "{}", "utf8");
     await writeFakeCursorCommand(commandPath);
 
     const restoreEnv = setManagedCursorEnv(root);
@@ -159,6 +165,9 @@ describe("cursor execute", () => {
       expectPreparedGitConfigCapture(capture);
       expect(capture.home).toContain(path.join("organizations", "organization-1", "cursor-home", "agents", "agent-1"));
       await expect(fs.stat(path.join(capture.home, ".cursor", "projects"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capture.home, ".cursor", "plugins"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capture.home, ".cursor", "chats"))).rejects.toThrow();
+      await expect(fs.stat(path.join(capture.home, ".cursor", "worktrees"))).rejects.toThrow();
       expect(capture.argv).not.toContain("Follow the rudder heartbeat.");
       expect(capture.argv).not.toContain("--mode");
       expect(capture.argv).not.toContain("ask");
@@ -531,7 +540,7 @@ describe("cursor execute", () => {
     }
   });
 
-  it.runIf(process.platform === "darwin")("seeds the macOS Keychain search path snapshot into the managed Cursor home", async () => {
+  it.runIf(process.platform === "darwin")("links the macOS Keychain search path into the managed Cursor home", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-keychain-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");
@@ -584,7 +593,7 @@ describe("cursor execute", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      expect((await fs.lstat(managedKeychainsDir)).isSymbolicLink()).toBe(false);
+      expect((await fs.lstat(managedKeychainsDir)).isSymbolicLink()).toBe(true);
       expect(await fs.readFile(path.join(managedKeychainsDir, "login.keychain-db"), "utf8")).toBe("");
     } finally {
       restoreEnv();

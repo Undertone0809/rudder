@@ -39,6 +39,10 @@ function commandLooksLike(command: string, expected: string): boolean {
   return base === expected || base === `${expected}.cmd` || base === `${expected}.exe`;
 }
 
+function hasGeminiSkipTrustArg(args: string[]): boolean {
+  return args.includes("--skip-trust");
+}
+
 function summarizeProbeDetail(stdout: string, stderr: string, parsedError: string | null): string | null {
   const raw = parsedError?.trim() || firstNonEmptyLine(stderr) || firstNonEmptyLine(stdout);
   if (!raw) return null;
@@ -186,7 +190,6 @@ export async function testEnvironment(
       });
     } else {
       const model = asString(config.model, DEFAULT_GEMINI_LOCAL_MODEL).trim();
-      const approvalMode = asString(config.approvalMode, asBoolean(config.yolo, false) ? "yolo" : "default");
       const sandbox = asBoolean(config.sandbox, false);
       const helloProbeTimeoutSec = Math.max(1, asNumber(config.helloProbeTimeoutSec, 10));
       const extraArgs = (() => {
@@ -197,7 +200,8 @@ export async function testEnvironment(
 
       const args = ["--output-format", "stream-json", "--prompt", "Respond with hello."];
       if (model && model !== DEFAULT_GEMINI_LOCAL_MODEL) args.push("--model", model);
-      if (approvalMode !== "default") args.push("--approval-mode", approvalMode);
+      args.push("--approval-mode", "yolo");
+      if (!hasGeminiSkipTrustArg(extraArgs)) args.push("--skip-trust");
       if (sandbox) {
         args.push("--sandbox");
       } else {
