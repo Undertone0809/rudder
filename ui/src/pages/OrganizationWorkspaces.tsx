@@ -94,6 +94,7 @@ const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
 const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
+const PROTECTED_AGENT_INSTRUCTIONS_FILE_NAMES = new Set(["HEARTBEAT.MD", "MEMORY.MD", "SOUL.MD", "TOOLS.MD"]);
 const AGENT_MENTION_MARKDOWN_LINK_RE = /\[([^\]]*)]\((agent:\/\/[^)\s]+)\)/g;
 const WORKSPACE_ENTRY_DND_MIME = "application/x-rudder-workspace-entry";
 const WORKSPACE_TAB_DND_MIME = "application/x-rudder-workspace-tab";
@@ -361,12 +362,34 @@ function isProtectedAgentWorkspaceContainerPath(filePath: string) {
   return segments.length === 2 && segments[0] === "agents";
 }
 
+function isProtectedAgentInstructionsEntryPath(filePath: string) {
+  const segments = filePath.split("/").filter(Boolean);
+  if (segments.length === 3) {
+    return segments[0] === "agents" && segments[2] === "instructions";
+  }
+  if (segments.length === 4 && segments[0] === "agents" && segments[2] === "instructions") {
+    return PROTECTED_AGENT_INSTRUCTIONS_FILE_NAMES.has(segments[3]?.toUpperCase() ?? "");
+  }
+  return false;
+}
+
 function canCreateInsideWorkspaceDirectory(directoryPath: string) {
   return !isProtectedAgentWorkspaceContainerPath(directoryPath);
 }
 
 function canMoveWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
-  return !isProtectedAgentWorkspaceContainerPath(entry.path);
+  return !isProtectedAgentWorkspaceContainerPath(entry.path)
+    && !isProtectedAgentInstructionsEntryPath(entry.path);
+}
+
+function canRenameWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
+  return !isProtectedAgentWorkspaceContainerPath(entry.path)
+    && !isProtectedAgentInstructionsEntryPath(entry.path);
+}
+
+function canDeleteWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
+  return !isProtectedAgentWorkspaceContainerPath(entry.path)
+    && !isProtectedAgentInstructionsEntryPath(entry.path);
 }
 
 function parentWorkspaceDirectoryPath(entryPath: string) {
@@ -694,6 +717,8 @@ function WorkspaceTreeNode({
   const projectResourceGroup = projectResourceGroupsByLibraryPath.get(entry.path) ?? null;
   const canCreateInsideDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
   const canMoveEntry = canMoveWorkspaceEntry(entry);
+  const canRenameEntry = canRenameWorkspaceEntry(entry);
+  const canDeleteEntry = canDeleteWorkspaceEntry(entry);
   const canDropIntoDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
   const isActive = activeEntryPath === entry.path || (!activeEntryPath && selectedFilePath === entry.path);
   const handleOpenActionMenu = (event: MouseEvent<HTMLElement>) => {
@@ -827,15 +852,19 @@ function WorkspaceTreeNode({
                 </DropdownMenuItem>
               </>
             ) : null}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onStartRename(entry)}>
-              <Pencil className="h-3.5 w-3.5" />
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" onSelect={() => onStartDelete(entry)}>
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </DropdownMenuItem>
+            {canRenameEntry || canDeleteEntry ? <DropdownMenuSeparator /> : null}
+            {canRenameEntry ? (
+              <DropdownMenuItem onSelect={() => onStartRename(entry)}>
+                <Pencil className="h-3.5 w-3.5" />
+                Rename
+              </DropdownMenuItem>
+            ) : null}
+            {canDeleteEntry ? (
+              <DropdownMenuItem variant="destructive" onSelect={() => onStartDelete(entry)}>
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </DropdownMenuItem>
+            ) : null}
           </>
         ) : null}
       </DropdownMenuContent>
@@ -1627,13 +1656,13 @@ export function OrganizationWorkspaceFilesSidebar() {
   }
 
   function handleStartRename(entry: OrganizationWorkspaceFileEntry) {
-    if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
+    if (!canRenameWorkspaceEntry(entry)) return;
     setRenameTarget(entry);
     setRenameDraft(entry.name);
   }
 
   function handleStartDelete(entry: OrganizationWorkspaceFileEntry) {
-    if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
+    if (!canDeleteWorkspaceEntry(entry)) return;
     setDeleteTarget(entry);
   }
 
@@ -2936,13 +2965,13 @@ export function OrganizationWorkspaceBrowser({
   }
 
   function handleStartRename(entry: OrganizationWorkspaceFileEntry) {
-    if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
+    if (!canRenameWorkspaceEntry(entry)) return;
     setRenameTarget(entry);
     setRenameDraft(entry.name);
   }
 
   function handleStartDelete(entry: OrganizationWorkspaceFileEntry) {
-    if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
+    if (!canDeleteWorkspaceEntry(entry)) return;
     setDeleteTarget(entry);
   }
 

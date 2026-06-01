@@ -382,6 +382,7 @@ describe("organization workspace browser", () => {
     await fs.mkdir(path.join(root, "artifacts"), { recursive: true });
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
     await fs.mkdir(path.join(root, "agents", workspaceKey, "instructions"), { recursive: true });
+    await fs.writeFile(path.join(root, "agents", workspaceKey, "instructions", "HEARTBEAT.md"), "# Heartbeat\n", "utf8");
     await fs.writeFile(path.join(root, "agents", workspaceKey, "instructions", "MEMORY.md"), "# Memory\n", "utf8");
 
     await expect(workspaceBrowser.createDirectory(orgId, "artifacts/new-folder")).resolves.toEqual({
@@ -411,6 +412,24 @@ describe("organization workspace browser", () => {
       status: 422,
     });
     await expect(workspaceBrowser.moveEntry(orgId, `agents/${workspaceKey}`, "docs")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.renameEntry(orgId, `agents/${workspaceKey}/instructions`, "notes")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}/instructions`)).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.moveEntry(orgId, `agents/${workspaceKey}/instructions`, "docs")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.renameEntry(orgId, `agents/${workspaceKey}/instructions/MEMORY.md`, "memory.old")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}/instructions/HEARTBEAT.md`)).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.moveEntry(orgId, `agents/${workspaceKey}/instructions/MEMORY.md`, "docs")).rejects.toMatchObject({
       status: 422,
     });
     await expect(workspaceBrowser.moveEntry(orgId, "artifacts/new-file.md", "agents")).rejects.toMatchObject({
