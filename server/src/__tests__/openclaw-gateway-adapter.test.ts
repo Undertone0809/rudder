@@ -456,8 +456,93 @@ describe("openclaw gateway adapter execute", () => {
       expect(String(payload?.message ?? "")).toContain("wake now");
       expect(String(payload?.message ?? "")).toContain("RUDDER_RUN_ID=run-123");
       expect(String(payload?.message ?? "")).toContain("RUDDER_TASK_ID=task-123");
+      expect(payload?.rudder).toEqual(
+        expect.objectContaining({
+          runId: "run-123",
+          orgId: "organization-123",
+          agentId: "agent-123",
+          taskId: "task-123",
+          issueId: "issue-123",
+          workspace: expect.objectContaining({
+            cwd: "/tmp/worktrees/pap-123",
+            strategy: "git_worktree",
+          }),
+          workspaces: [
+            expect.objectContaining({
+              id: "workspace-1",
+              cwd: "/tmp/project",
+            }),
+          ],
+          workspaceRuntime: expect.objectContaining({
+            services: [
+              expect.objectContaining({
+                name: "preview",
+                lifecycle: "ephemeral",
+              }),
+            ],
+          }),
+        }),
+      );
+      expect(payload).not.toHaveProperty("paperclip");
 
       expect(logs.some((entry) => entry.includes("[openclaw-gateway:event] run=run-123 stream=assistant"))).toBe(true);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("normalizes legacy Paperclip template/context aliases into outbound Rudder fields only", async () => {
+    const gateway = await createMockGatewayServer();
+
+    try {
+      const result = await execute(
+        buildContext(
+          {
+            url: gateway.url,
+            headers: {
+              "x-openclaw-token": "gateway-token",
+            },
+            paperclipApiUrl: "https://rudder.example.test",
+            payloadTemplate: {
+              message: "wake now",
+              paperclipApiUrl: "https://template-legacy.example.test",
+              paperclipSkillSync: {
+                desiredSkills: ["legacy/skill"],
+              },
+              paperclip: {
+                legacy: true,
+                paperclipRuntimeSkills: [{ key: "legacy/skill" }],
+              },
+            },
+            waitTimeoutMs: 2000,
+          },
+          {
+            context: {
+              taskId: "task-123",
+              issueId: "issue-123",
+              wakeReason: "issue_assigned",
+              issueIds: ["issue-123"],
+              paperclipWorkspace: {
+                cwd: "/tmp/legacy-workspace",
+              },
+            },
+          },
+        ),
+      );
+
+      expect(result.exitCode).toBe(0);
+      const payload = gateway.getAgentPayload();
+      expect(payload?.rudder).toEqual(
+        expect.objectContaining({
+          legacy: true,
+          apiUrl: "https://rudder.example.test/",
+          workspace: expect.objectContaining({
+            cwd: "/tmp/legacy-workspace",
+          }),
+        }),
+      );
+      expect(Object.keys((payload?.rudder as Record<string, unknown> | undefined) ?? {}).filter((key) => key.startsWith("paperclip"))).toEqual([]);
+      expect(Object.keys(payload ?? {}).filter((key) => key.startsWith("paperclip"))).toEqual([]);
     } finally {
       await gateway.close();
     }

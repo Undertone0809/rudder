@@ -314,6 +314,7 @@ function resolveRudderApiUrlOverride(value: unknown): string | null {
 }
 
 function buildRudderEnvForWake(ctx: AgentRuntimeExecutionContext, wakePayload: WakePayload): Record<string, string> {
+  // `paperclipApiUrl` is a legacy read-only alias. New adapter config must use `rudderApiUrl`.
   const rudderApiUrlOverride = resolveRudderApiUrlOverride(ctx.config.rudderApiUrl ?? ctx.config.paperclipApiUrl);
   const rudderEnv: Record<string, string> = {
     ...buildRudderEnv(ctx.agent),
@@ -423,7 +424,11 @@ function buildStandardRudderPayload(
   rudderEnv: Record<string, string>,
   payloadTemplate: Record<string, unknown>,
 ): Record<string, unknown> {
-  const templateRudder = parseObject(payloadTemplate.rudder ?? payloadTemplate.paperclip);
+  // `payloadTemplate.paperclip` and `context.paperclip*` are legacy read-only aliases.
+  // Rudder always sends the normalized outbound contract under `rudder`.
+  const templateRudder = stripLegacyPaperclipTemplateKeys(
+    parseObject(payloadTemplate.rudder ?? payloadTemplate.paperclip),
+  );
   const workspace = asRecord(ctx.context.rudderWorkspace ?? ctx.context.paperclipWorkspace);
   const workspaceEntries = ctx.context.rudderWorkspaces ?? ctx.context.paperclipWorkspaces;
   const workspaces = Array.isArray(workspaceEntries)
@@ -469,6 +474,15 @@ function buildStandardRudderPayload(
     ...templateRudder,
     ...standardRudder,
   };
+}
+
+function stripLegacyPaperclipTemplateKeys(payloadTemplate: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payloadTemplate)) {
+    if (key === "paperclip" || key.startsWith("paperclip")) continue;
+    next[key] = value;
+  }
+  return next;
 }
 
 function normalizeUrl(input: string): URL | null {
@@ -1071,9 +1085,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const templateMessage = nonEmpty(payloadTemplate.message) ?? nonEmpty(payloadTemplate.text);
   const message = templateMessage ? appendWakeText(templateMessage, wakeText) : wakeText;
   const rudderPayload = buildStandardRudderPayload(ctx, wakePayload, rudderEnv, payloadTemplate);
+  const sanitizedPayloadTemplate = stripLegacyPaperclipTemplateKeys(payloadTemplate);
 
   const agentParams: Record<string, unknown> = {
-    ...payloadTemplate,
+    ...sanitizedPayloadTemplate,
+    rudder: rudderPayload,
     message,
     sessionKey,
     idempotencyKey: ctx.runId,

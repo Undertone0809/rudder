@@ -271,35 +271,35 @@ export function normalizeAgentDefaultsForJoin(input: {
     }
   }
 
-  const rawPaperclipApiUrl =
+  const rawRudderApiUrl =
     typeof defaults.rudderApiUrl === "string"
       ? defaults.rudderApiUrl.trim()
       : "";
-  if (rawPaperclipApiUrl) {
+  if (rawRudderApiUrl) {
     try {
-      const parsedPaperclipApiUrl = new URL(rawPaperclipApiUrl);
+      const parsedRudderApiUrl = new URL(rawRudderApiUrl);
       if (
-        parsedPaperclipApiUrl.protocol !== "http:" &&
-        parsedPaperclipApiUrl.protocol !== "https:"
+        parsedRudderApiUrl.protocol !== "http:" &&
+        parsedRudderApiUrl.protocol !== "https:"
       ) {
         diagnostics.push({
-          code: "openclaw_gateway_paperclip_api_url_protocol",
+          code: "openclaw_gateway_rudder_api_url_protocol",
           level: "warn",
-          message: `rudderApiUrl must use http:// or https:// (got ${parsedPaperclipApiUrl.protocol}).`
+          message: `rudderApiUrl must use http:// or https:// (got ${parsedRudderApiUrl.protocol}).`
         });
       } else {
-        normalized.rudderApiUrl = parsedPaperclipApiUrl.toString();
+        normalized.rudderApiUrl = parsedRudderApiUrl.toString();
         diagnostics.push({
-          code: "openclaw_gateway_paperclip_api_url_configured",
+          code: "openclaw_gateway_rudder_api_url_configured",
           level: "info",
-          message: `rudderApiUrl set to ${parsedPaperclipApiUrl.toString()}`
+          message: `rudderApiUrl set to ${parsedRudderApiUrl.toString()}`
         });
       }
     } catch {
       diagnostics.push({
-        code: "openclaw_gateway_paperclip_api_url_invalid",
+        code: "openclaw_gateway_rudder_api_url_invalid",
         level: "warn",
-        message: `Invalid rudderApiUrl: ${rawPaperclipApiUrl}`
+        message: `Invalid rudderApiUrl: ${rawRudderApiUrl}`
       });
     }
   }
@@ -986,5 +986,4 @@ export async function probeInviteResolutionTarget(
     clearTimeout(timeout);
   }
 }
-
 

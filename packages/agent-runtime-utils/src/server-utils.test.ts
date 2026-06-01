@@ -15,6 +15,7 @@ import {
   RUDDER_AGENT_OPERATING_CONTRACT,
   runChildProcess,
   selectPromptTemplate,
+  writeRudderSkillSyncPreference,
 } from "./server-utils.js";
 
 const ORIGINAL_HOME = process.env.HOME;
@@ -140,6 +141,26 @@ describe("ensureManagedHomeEntrySnapshot", () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("writeRudderSkillSyncPreference", () => {
+  it("writes the Rudder skill sync key and removes legacy Paperclip skill config", () => {
+    const next = writeRudderSkillSyncPreference(
+      {
+        paperclipSkillSync: { desiredSkills: ["legacy/skill"] },
+        paperclipRuntimeSkills: [{ key: "legacy/skill" }],
+        rudderSkillSync: { mode: "manual", desiredSkills: ["old/skill"] },
+      },
+      ["organization/org/build-advisor", "organization/org/build-advisor", " "],
+    );
+
+    expect(next).toEqual({
+      rudderSkillSync: {
+        mode: "manual",
+        desiredSkills: ["organization/org/build-advisor"],
+      },
+    });
   });
 });
 

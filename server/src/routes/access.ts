@@ -717,6 +717,7 @@ export function accessRoutes(
               agentRuntimeType,
               defaultsPayload: replayMergedDefaults,
               rudderApiUrl: req.body.rudderApiUrl ?? null,
+              paperclipApiUrl: req.body.paperclipApiUrl ?? null,
               inboundOpenClawAuthHeader: req.header("x-openclaw-auth") ?? null,
               inboundOpenClawTokenHeader: req.header("x-openclaw-token") ?? null
             })

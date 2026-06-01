@@ -8,6 +8,8 @@ import {
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  agentEnabledSkills,
+  agents,
   organizationSkills,
   organizations,
 } from "@rudderhq/db";
@@ -97,6 +99,8 @@ describe("organization skill references", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(agentEnabledSkills);
+    await db.delete(agents);
     await db.delete(organizationSkills);
     await db.delete(organizations);
   });
@@ -171,6 +175,71 @@ describe("organization skill references", () => {
       `organization/${orgId}/alpha-test`,
       "rudder/omega-test",
     ]));
+  });
+
+  it("migrates legacy paperclip skill sync config into enabled skill rows and clears persisted legacy keys", { timeout: 30000 }, async () => {
+    const orgId = randomUUID();
+    const skillId = randomUUID();
+    const agentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Legacy Skill Sync Org",
+      urlKey: "legacy-skill-sync-org",
+      issuePrefix: "LSS",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(organizationSkills).values({
+      id: skillId,
+      orgId,
+      key: `organization/${orgId}/build-advisor`,
+      slug: "build-advisor",
+      name: "Build Advisor",
+      description: null,
+      markdown: "# Build Advisor\n",
+      sourceType: "catalog",
+      sourceLocator: "skills/build-advisor",
+      sourceRef: null,
+      trustLevel: "markdown_only",
+      compatibility: "compatible",
+      fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+      metadata: { sourceKind: "catalog" },
+    });
+
+    const [agent] = await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Legacy Sync Agent",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {
+        model: "gpt-5",
+        paperclipSkillSync: { desiredSkills: ["build-advisor"] },
+        paperclipRuntimeSkills: [{ key: "legacy/skill" }],
+      },
+    }).returning();
+
+    expect(agent).toBeTruthy();
+    const expectedSelectionRef = `org:organization/${orgId}/build-advisor`;
+    await expect(skillSvc.getEnabledSkillKeysForAgent(orgId, agent!)).resolves.toEqual([
+      expectedSelectionRef,
+    ]);
+
+    const enabledRows = await db.select().from(agentEnabledSkills);
+    expect(enabledRows.map((row) => row.skillKey)).toEqual([
+      expectedSelectionRef,
+    ]);
+
+    const [updatedAgent] = await db.select().from(agents);
+    expect(updatedAgent?.agentRuntimeConfig).toEqual({
+      model: "gpt-5",
+      rudderSkillSync: { desiredSkills: [] },
+    });
+    expect(updatedAgent?.agentRuntimeConfig).not.toHaveProperty("paperclipSkillSync");
+    expect(updatedAgent?.agentRuntimeConfig).not.toHaveProperty("paperclipRuntimeSkills");
   });
 
   it("seeds bundled and community preset skills into the organization library", { timeout: 30000 }, async () => {

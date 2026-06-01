@@ -71,6 +71,51 @@ describe("buildJoinDefaultsPayloadForAccept (openclaw_gateway)", () => {
       },
     });
   });
+
+  it("normalizes request-level rudderApiUrl into gateway defaults", () => {
+    const result = buildJoinDefaultsPayloadForAccept({
+      agentRuntimeType: "openclaw_gateway",
+      defaultsPayload: {
+        url: "ws://127.0.0.1:18789",
+      },
+      rudderApiUrl: "https://rudder.example.com",
+    }) as Record<string, unknown>;
+
+    expect(result).toMatchObject({
+      rudderApiUrl: "https://rudder.example.com",
+    });
+    expect(result).not.toHaveProperty("paperclipApiUrl");
+  });
+
+  it("keeps legacy paperclipApiUrl as a read-only alias for older join clients", () => {
+    const result = buildJoinDefaultsPayloadForAccept({
+      agentRuntimeType: "openclaw_gateway",
+      defaultsPayload: {
+        url: "ws://127.0.0.1:18789",
+      },
+      paperclipApiUrl: "https://legacy-rudder.example.com",
+    }) as Record<string, unknown>;
+
+    expect(result).toMatchObject({
+      rudderApiUrl: "https://legacy-rudder.example.com",
+    });
+    expect(result).not.toHaveProperty("paperclipApiUrl");
+  });
+
+  it("normalizes legacy paperclipApiUrl from nested agent defaults", () => {
+    const result = buildJoinDefaultsPayloadForAccept({
+      agentRuntimeType: "openclaw_gateway",
+      defaultsPayload: {
+        url: "ws://127.0.0.1:18789",
+        paperclipApiUrl: "https://nested-legacy-rudder.example.com",
+      },
+    }) as Record<string, unknown>;
+
+    expect(result).toMatchObject({
+      rudderApiUrl: "https://nested-legacy-rudder.example.com",
+    });
+    expect(result).not.toHaveProperty("paperclipApiUrl");
+  });
 });
 
 describe("normalizeAgentDefaultsForJoin (openclaw_gateway)", () => {

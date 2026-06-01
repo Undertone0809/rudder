@@ -384,6 +384,7 @@ export function readRudderSkillSyncPreference(config: Record<string, unknown>): 
   explicit: boolean;
   desiredSkills: string[];
 } {
+  // Legacy `paperclipSkillSync` is accepted only for migration from older Rudder/Paperclip data.
   const raw = config.rudderSkillSync ?? config.paperclipSkillSync;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return { explicit: false, desiredSkills: [] };
@@ -441,6 +442,8 @@ export function writeRudderSkillSyncPreference(
   desiredSkills: string[],
 ): Record<string, unknown> {
   const next = { ...config };
+  delete next.paperclipSkillSync;
+  delete next.paperclipRuntimeSkills;
   const raw = next.rudderSkillSync;
   const current =
     typeof raw === "object" && raw !== null && !Array.isArray(raw)

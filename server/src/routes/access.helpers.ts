@@ -437,6 +437,7 @@ export function buildJoinDefaultsPayloadForAccept(input: {
   agentRuntimeType: string | null;
   defaultsPayload: unknown;
   rudderApiUrl?: unknown;
+  /** Legacy read-only alias accepted from older join clients. */
   paperclipApiUrl?: unknown;
   inboundOpenClawAuthHeader?: string | null;
   inboundOpenClawTokenHeader?: string | null;
@@ -450,9 +451,16 @@ export function buildJoinDefaultsPayloadForAccept(input: {
     : ({} as Record<string, unknown>);
 
   if (!nonEmptyTrimmedString(merged.rudderApiUrl)) {
+    const rudderApiUrl =
+      nonEmptyTrimmedString(input.rudderApiUrl) ??
+      nonEmptyTrimmedString(merged.paperclipApiUrl);
+    if (rudderApiUrl) merged.rudderApiUrl = rudderApiUrl;
+  }
+  if (!nonEmptyTrimmedString(merged.rudderApiUrl)) {
     const legacyPaperclipApiUrl = nonEmptyTrimmedString(input.paperclipApiUrl);
     if (legacyPaperclipApiUrl) merged.rudderApiUrl = legacyPaperclipApiUrl;
   }
+  delete merged.paperclipApiUrl;
   const mergedHeaders = normalizeHeaderMap(merged.headers) ?? {};
 
   const inboundOpenClawAuthHeader = nonEmptyTrimmedString(
@@ -613,4 +621,3 @@ export function summarizeOpenClawGatewayDefaultsForLog(defaultsPayload: unknown)
     gatewayToken: summarizeSecretForLog(gatewayTokenValue)
   };
 }
-

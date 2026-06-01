@@ -2,6 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { accessRoutes } from "../routes/access.js";
+import { hashToken } from "../routes/access.helpers.js";
 import { errorHandler } from "../middleware/index.js";
 
 const mockAccessService = vi.hoisted(() => ({
@@ -57,7 +58,7 @@ function createDbStub() {
     inviteType: "company_join",
     allowedJoinTypes: "agent",
     defaultsPayload: null,
-    expiresAt: new Date("2026-03-07T00:10:00.000Z"),
+    expiresAt: new Date("2027-03-07T00:10:00.000Z"),
     invitedByUserId: null,
     tokenHash: "hash",
     revokedAt: null,
@@ -70,6 +71,52 @@ function createDbStub() {
   const insert = vi.fn().mockReturnValue({ values });
   return {
     insert,
+  };
+}
+
+function createInviteAcceptDbStub() {
+  const invite = {
+    id: "invite-accept-1",
+    orgId: "organization-1",
+    inviteType: "company_join",
+    allowedJoinTypes: "agent",
+    defaultsPayload: null,
+    expiresAt: new Date("2027-03-07T00:10:00.000Z"),
+    invitedByUserId: null,
+    tokenHash: hashToken("token-123"),
+    revokedAt: null,
+    acceptedAt: null,
+    createdAt: new Date("2026-03-07T00:00:00.000Z"),
+    updatedAt: new Date("2026-03-07T00:00:00.000Z"),
+  };
+  const insertValues = vi.fn((values: Record<string, unknown>) => ({
+    returning: vi.fn().mockResolvedValue([{
+      id: "join-request-1",
+      ...values,
+      createdAt: new Date("2026-03-07T00:01:00.000Z"),
+      updatedAt: new Date("2026-03-07T00:01:00.000Z"),
+    }]),
+  }));
+  const updateWhere = vi.fn().mockResolvedValue([]);
+  const tx = {
+    update: vi.fn(() => ({
+      set: vi.fn(() => ({
+        where: updateWhere,
+      })),
+    })),
+    insert: vi.fn(() => ({
+      values: insertValues,
+    })),
+  };
+
+  return {
+    insertValues,
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => Promise.resolve([invite])),
+      })),
+    })),
+    transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(tx)),
   };
 }
 
@@ -194,5 +241,50 @@ describe("POST /orgs/:orgId/openclaw/invite-prompt", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("Permission denied");
+  });
+});
+
+describe("POST /invites/:token/accept", () => {
+  beforeEach(() => {
+    mockAccessService.canUser.mockResolvedValue(false);
+    mockAgentService.getById.mockReset();
+    mockLogActivity.mockResolvedValue(undefined);
+  });
+
+  it("normalizes legacy top-level paperclipApiUrl into persisted rudderApiUrl", async () => {
+    const db = createInviteAcceptDbStub();
+    const app = createApp(
+      {
+        type: "board",
+        userId: "user-1",
+        orgIds: ["organization-1"],
+        source: "session",
+        isInstanceAdmin: false,
+      },
+      db,
+    );
+
+    const res = await request(app)
+      .post("/api/invites/token-123/accept")
+      .send({
+        requestType: "agent",
+        agentName: "OpenClaw",
+        agentRuntimeType: "openclaw_gateway",
+        paperclipApiUrl: "https://legacy-rudder.example.com",
+        agentDefaultsPayload: {
+          url: "ws://127.0.0.1:18789",
+          headers: {
+            "x-openclaw-token": "gateway-token-1234567890",
+          },
+          disableDeviceAuth: true,
+        },
+      });
+
+    expect(res.status).toBe(202);
+    const persisted = db.insertValues.mock.calls[0]?.[0]?.agentDefaultsPayload as Record<string, unknown>;
+    expect(persisted).toMatchObject({
+      rudderApiUrl: "https://legacy-rudder.example.com/",
+    });
+    expect(persisted).not.toHaveProperty("paperclipApiUrl");
   });
 });
