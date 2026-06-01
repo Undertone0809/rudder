@@ -65,11 +65,6 @@ cannot be safely inferred.
   the user explicitly asks to retarget the release.
 - A stable release is not done until verification, npm, GitHub Release, Desktop
   assets, and public notes/announcement are all handled.
-- Stable release notes are used directly as the GitHub Release body. Do not
-  include the duplicate opening block shown by GitHub itself: no initial
-  `# Rudder vX.Y.Z` heading, no `Released: YYYY-MM-DD` line, and no standalone
-  summary paragraph before the first section. Start the file with useful
-  sections such as `## Highlights`, then install or upgrade notes.
 - Pre-stable public canaries may temporarily be the default `latest` install
   path if there is no stable npm version yet and the user explicitly wants
   `npx @rudderhq/cli@latest start` or bare `npx @rudderhq/cli start` to work
@@ -388,14 +383,7 @@ node scripts/release-package-map.mjs list
 ./scripts/release.sh stable --print-version
 ```
 
-3. Confirm `releases/vX.Y.Z.md` exists on the source ref and is formatted for
-   direct GitHub Release body rendering:
-   - starts with the first useful section, normally `## Highlights`
-   - does not start with `# Rudder vX.Y.Z`
-   - does not include `Released: YYYY-MM-DD`
-   - does not include a standalone summary paragraph before `## Highlights`
-   If an older draft has that front matter, remove it before the dry-run or
-   manual GitHub Release update.
+3. Confirm `releases/vX.Y.Z.md` exists on the source ref.
 4. Check recent and in-progress `release.yml` runs. If there are unrelated
    `main` push canaries in progress, decide whether they are true blockers:
    - before npm stable exists, they can temporarily move `latest` to a canary,
@@ -413,8 +401,8 @@ node scripts/release-package-map.mjs list
 7. If dry-run passes, rerun with `dry_run: false`, again using the same locked
    SHA as `source_ref`.
 8. Wait for or request `npm-stable` approval.
-9. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release title/body shape,
-   Desktop release workflow, and assets.
+9. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
+   workflow, and assets.
 10. Clean up obsolete canary GitHub Releases and `canary/*` tags for the stable
     base and any older base versions after the stable is proven. Preserve the
     active next-line canary, for example keep `canary/v0.2.6-canary.N` after
@@ -652,7 +640,7 @@ channel:
 git status --short --branch
 node scripts/release-package-map.mjs list
 npm view @rudderhq/cli dist-tags --json
-gh release view '<tag>' --json tagName,name,body,url,isPrerelease,isDraft,assets
+gh release view '<tag>' --json tagName,url,isPrerelease,isDraft,assets
 gh release list --repo Undertone0809/rudder --limit 100
 git ls-remote --tags origin 'refs/tags/canary/v*'
 ```
@@ -667,9 +655,6 @@ gh run list --workflow release.yml --limit 10
 For stable releases, report in-progress unrelated canary or smoke workflows
 separately from the fixed stable result. Do not keep retargeting or revalidating
 against newer `main` commits after `vX.Y.Z` points at the locked source SHA.
-For stable GitHub Releases, verify the title is the clean version tag and the
-body starts at the changelog content instead of repeating the version title,
-release date, or one-paragraph overview that GitHub already frames.
 Also report whether obsolete canary GitHub Releases/tags were cleaned up or why
 they were intentionally preserved; include the retained active canary line and
 confirm npm dist-tags were not changed by cleanup.
@@ -759,8 +744,8 @@ finish with:
 - exact links or commands for the next action
 - GitHub Actions run IDs for the release and Desktop workflows when publishing
   was involved
-- GitHub Release URL/title/body-shape, npm dist-tag state, and whether Desktop
-  assets match the expected set
+- GitHub Release URL/title, npm dist-tag state, and whether Desktop assets match
+  the expected set
 - whether the local working tree was left clean, or which unrelated files were
   already dirty and preserved
 - a token rotation reminder if token-based publishing was used
@@ -775,8 +760,6 @@ Expected behavior:
 - inspect local and remote state
 - identify target version with `./scripts/release.sh stable --print-version`
 - require `releases/vX.Y.Z.md`
-- require the release notes to start at `## Highlights`, without a duplicate
-  H1 title, release date, or introductory summary block
 - recommend GitHub Actions dry-run before real publish
 - include Desktop and npm verification steps
 
