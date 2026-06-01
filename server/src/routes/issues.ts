@@ -678,7 +678,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     }
     assertCompanyAccess(req, issue.orgId);
     if (req.actor.type === "agent") {
-      throw forbidden("Agents must write new durable docs with `rudder library file put docs/<file>.md`");
+      throw forbidden("Agents must write new durable project files with `rudder library file put projects/<project>/<file> --body-file <path>`");
     }
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {

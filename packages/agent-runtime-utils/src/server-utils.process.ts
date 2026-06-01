@@ -386,7 +386,7 @@ export function buildIssueDocumentsPrompt(input: IssueDocumentPromptInput | null
   return [
     "## Legacy Issue Documents",
     "These legacy issue documents are not inlined automatically. Fetch one only when you need its contents.",
-    "For new or revised durable docs, write a path-based Library file with `rudder library file put docs/<file>.md --body-file <path> --json`, then link it in issue text or comments with `library-file://file?p=docs%2F<file>.md`.",
+    "For new or revised durable project files, write a path-based Library file under the current project folder, preferably with `rudder library file put projects/<project>/<file>.md --body-file <path> --json`, then link it in issue text or comments with `library-file://file?p=projects%2F<project>%2F<file>.md`.",
     "",
     ...references,
   ].join("\n");

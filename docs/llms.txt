@@ -16,7 +16,7 @@ Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, 
 - [Agents In Rudder](https://doc.rudder.zeeland.studio/concepts/agents): Durable AI team members with roles, runtime configuration, capabilities, budgets, skills, and reporting boundaries.
 - [Issues For AI Agent Work](https://doc.rudder.zeeland.studio/concepts/issues): Durable execution objects for context, ownership, status, runs, blockers, reviews, and outputs.
 - [Chat And Messenger For Agent Work](https://doc.rudder.zeeland.studio/concepts/chat-messenger): Chat for intake and Messenger for attention recovery.
-- [Workspaces For Agent Files And Outputs](https://doc.rudder.zeeland.studio/concepts/workspaces): Project resources, agent-private files, organization artifacts, and durable outputs.
+- [Workspaces For Agent Files And Outputs](https://doc.rudder.zeeland.studio/concepts/workspaces): Project Library files, agent-private files, skills, and durable outputs.
 - [Skills For Reusable Agent Workflows](https://doc.rudder.zeeland.studio/concepts/skills): Reusable operating instructions for repeated agent workflows.
 
 ## How-to guides

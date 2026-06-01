@@ -52,13 +52,13 @@ Important files and conventions:
 - Structured shared references live in the org `Resources` catalog. Agents do not receive the whole org catalog automatically.
 - If a run or chat is linked to a project, Rudder injects only that project's attached resources into the runtime context.
 - Project Context is the explicit operator-curated starting set, not a knowledge boundary. If those resources are insufficient, inspect broader Library docs and other org workspace know-how before concluding context is missing.
-- Library-backed resources use `sourceType: "library"` and a safe `locator` relative to `$RUDDER_ORG_WORKSPACE_ROOT`, usually under `docs/` (for example `docs/product-brief.md`). Read them as files from `$RUDDER_ORG_WORKSPACE_ROOT/<locator>` when the shared workspace is available. Protected system roots such as `agents/`, `artifacts/`, `plans/`, and `skills/` are not valid project Library resources.
+- Library-backed resources use `sourceType: "library"` and a safe `locator` relative to `$RUDDER_ORG_WORKSPACE_ROOT`, usually under `projects/<project>/` or `docs/` (for example `projects/onboarding/research.md`). Read them as files from `$RUDDER_ORG_WORKSPACE_ROOT/<locator>` when the shared workspace is available. Protected system roots such as `agents/`, `artifacts/`, `plans/`, and `skills/` are not valid project Library resources.
 - External resources use `sourceType: "external"` and keep their original URL, local path, repo path, or connector locator.
 - If you encounter older `library-file://...` or `library-doc://...` links, treat them as legacy Rudder Library references. Prefer path-based Library resources going forward; `library-file` points at a Library workspace file, while `library-doc` was an older document-id based link.
 - If you need broader org-wide resources, query the org resource catalog or inspect Library docs explicitly instead of assuming they are already in the prompt.
 - Use Workspaces for disk-backed shared files, plans, and skill packages.
-- When you need to place durable generated Markdown documents, plans, design docs, or decision notes on disk, write them under `docs/` with `rudder library file put docs/<file>.md --body-file <path> --json`. Use `$RUDDER_ORG_ARTIFACTS_DIR` for screenshots, images, mockups, reports, CSVs, handoff logs, and other user-visible non-doc files. Use `/tmp` only for transient scratch files and temporary verification artifacts.
-- For other shared output, prefer the managed workspace paths Rudder injected for this run such as `$RUDDER_ORG_PLANS_DIR`, `$RUDDER_ORG_SKILLS_DIR`, and the active `$RUDDER_WORKSPACE_CWD` or `$RUDDER_ORG_WORKSPACE_ROOT`. Do not invent new top-level `projects/` folders.
+- When you need to place durable generated project files on disk, write them inside `$RUDDER_PROJECT_LIBRARY_ROOT` when available. This includes Markdown, plans, design docs, decision notes, screenshots, images, mockups, reports, CSVs, JSON, HTML, and handoff logs. If the variable is not available, write under `projects/<project-or-run>/` with `rudder library file put projects/<project-or-run>/<file> --body-file <path> --json`. Use `/tmp` only for transient scratch files and temporary verification artifacts.
+- For other shared output, prefer the managed workspace paths Rudder injected for this run such as `$RUDDER_PROJECT_LIBRARY_ROOT`, `$RUDDER_ORG_SKILLS_DIR`, and the active `$RUDDER_WORKSPACE_CWD` or `$RUDDER_ORG_WORKSPACE_ROOT`. Do not invent project folders outside the Library workspace.
 - If a `resources.md` file exists, treat it like a normal workspace file rather than a reserved Rudder surface.
 - Agent-specific files live under `workspaces/agents/<workspace-key>/...`.
 - New projects do not create or configure their own workspace roots.
@@ -273,17 +273,17 @@ Do not fall back to raw `curl` for this workflow in local adapters or packaged d
 
 ## Planning And Library Files
 
-If asked to make or revise a plan or durable work document, write it as a path-based Library file under `docs/` instead of creating an issue document. Issues should reference Library files with normal Markdown links, for example:
+If asked to make or revise a plan or durable work document, write it as a path-based Library file inside the current project folder instead of creating an issue document. Prefer `$RUDDER_PROJECT_LIBRARY_ROOT` when available; otherwise use `projects/<project-or-run>/`. Issues should reference Library files with normal Markdown links, for example:
 
 ```md
-[Plan](library-file://file?p=docs%2FRUD-123-plan.md&t=Plan)
+[Plan](library-file://file?p=projects%2Frudder-docs%2FRUD-123-plan.md&t=Plan)
 ```
 
 Typical flow:
 
 ```bash
-rudder library file get "docs/<issue-identifier>-plan.md" --json
-rudder library file put "docs/<issue-identifier>-plan.md" --body-file "<path>" --json
+rudder library file get "projects/<project>/<issue-identifier>-plan.md" --json
+rudder library file put "projects/<project>/<issue-identifier>-plan.md" --body-file "<path>" --json
 rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" --json
 ```
 
@@ -347,7 +347,7 @@ Example:
 
 Plan updated and ready for review.
 
-- Plan: [PAP-142 plan](/PAP/library?path=docs%2FPAP-142-plan.md)
+- Plan: [PAP-142 plan](/PAP/library?path=projects%2Frudder-docs%2FPAP-142-plan.md)
 - Depends on: [PAP-224](/PAP/issues/PAP-224)
 - Approval: [ca6ba09d](/PAP/messenger/approvals/ca6ba09d-b558-4a53-a552-e7ef87e54a1b)
 ```

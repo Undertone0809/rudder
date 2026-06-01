@@ -22,6 +22,7 @@ import {
   replaceProjectResourceAttachments,
 } from "./resource-catalog.js";
 import {
+  ensureProjectLibraryLayout,
   ensureOrganizationWorkspaceLayout,
   resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
@@ -502,6 +503,12 @@ export function projectService(db: Db) {
             newResources,
           });
         }
+
+        await ensureProjectLibraryLayout({
+          orgId,
+          projectId: created.id,
+          projectName: created.name,
+        });
 
         return created;
       });

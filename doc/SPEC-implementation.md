@@ -790,9 +790,11 @@ Resource loading contract:
 - Project Context Resources are explicit project attachments to org resources.
   Resources have a `sourceType`: `external` resources point to URLs, local
   paths, repos, or connector objects; `library` resources point to a normalized
-  relative path under the organization Library workspace root. Library resource
-  locators must not be absolute paths, URL schemes, `..` paths, or protected
-  system roots such as `agents/`, `artifacts/`, `plans/`, and `skills/`.
+  relative path under the organization Library workspace root, commonly below
+  `projects/<project>/` for project files or `docs/` for shared docs. Library
+  resource locators must not be absolute paths, URL schemes, `..` paths, or
+  protected system roots such as `agents/`, `artifacts/`, `plans/`, and
+  `skills/`.
 - When a heartbeat or chat run resolves a `projectId`, Rudder loads only that
   project's attached resources into the runtime context and prompt resource
   block.

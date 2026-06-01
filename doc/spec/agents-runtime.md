@@ -147,9 +147,11 @@ Organization resources and project resources are intentionally different:
 - **Project Context Resources** are attachments from a project to org resources,
   with a project-specific role and note. `external` resources point to URLs,
   local paths, repos, or connector objects. `library` resources point to one
-  normalized relative path under the organization Library workspace root; they
-  must not use absolute paths, URL schemes, `..` traversal, or protected system
-  roots such as `agents/`, `artifacts/`, `plans/`, and `skills/`.
+  normalized relative path under the organization Library workspace root,
+  commonly below `projects/<project>/` for project files or `docs/` for shared
+  docs; they must not use absolute paths, URL schemes, `..` traversal, or
+  protected system roots such as `agents/`, `artifacts/`, `plans/`, and
+  `skills/`.
 - When a heartbeat or chat run resolves a `projectId`, Rudder loads only that
   project's attached resources into
   `context.rudderWorkspace.resourcesPrompt`,

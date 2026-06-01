@@ -248,7 +248,7 @@ describe("organization workspace file agent access", () => {
     mockLogActivity.mockReset();
   });
 
-  it("limits agent workspace file reads to docs paths", async () => {
+  it("limits agent workspace file reads to docs and projects paths", async () => {
     const app = createApp({
       type: "agent",
       orgId: "organization-1",
@@ -258,7 +258,7 @@ describe("organization workspace file agent access", () => {
     const res = await request(app).get("/api/orgs/organization-1/workspace/files?path=agents");
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to docs/ paths");
+    expect(res.body.error).toBe("Agent Library file access is limited to docs/ and projects/ paths");
   });
 
   it("rejects agent workspace file reads that traverse out of docs", async () => {
@@ -271,10 +271,10 @@ describe("organization workspace file agent access", () => {
     const res = await request(app).get("/api/orgs/organization-1/workspace/files?path=docs/../agents");
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to docs/ paths");
+    expect(res.body.error).toBe("Agent Library file access is limited to docs/ and projects/ paths");
   });
 
-  it("limits agent workspace file writes to docs paths", async () => {
+  it("limits agent workspace file writes to docs and projects paths", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
       orgId: "organization-1",
@@ -291,7 +291,7 @@ describe("organization workspace file agent access", () => {
       .send({ filePath: "skills/agent-team-design.md", content: "# Design\n" });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to docs/ paths");
+    expect(res.body.error).toBe("Agent Library file access is limited to docs/ and projects/ paths");
   });
 
   it("rejects agent workspace file writes that traverse out of docs", async () => {
@@ -311,6 +311,6 @@ describe("organization workspace file agent access", () => {
       .send({ filePath: "docs/../skills/agent-team-design.md", content: "# Design\n" });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to docs/ paths");
+    expect(res.body.error).toBe("Agent Library file access is limited to docs/ and projects/ paths");
   });
 });

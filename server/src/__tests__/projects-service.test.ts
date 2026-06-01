@@ -17,7 +17,7 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { projectService } from "../services/projects.js";
-import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
+import { resolveOrganizationWorkspaceRoot, resolveProjectLibraryDir } from "../home-paths.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -153,6 +153,15 @@ describe("project service workspace resolution", () => {
     expect(created.codebase.localFolder).toBe(resolveOrganizationWorkspaceRoot(orgId));
     expect(created.codebase.effectiveLocalFolder).toBe(resolveOrganizationWorkspaceRoot(orgId));
     expect(created.codebase.origin).toBe("local_folder");
+    const projectLibraryDir = resolveProjectLibraryDir({
+      orgId,
+      projectId: created.id,
+      projectName: created.name,
+    });
+    expect(fs.existsSync(projectLibraryDir)).toBe(true);
+    expect(fs.readFileSync(path.join(projectLibraryDir, "README.md"), "utf8")).toContain(
+      "Agents should keep durable project work files inside this folder.",
+    );
 
     const persistedWorkspaces = await db
       .select({ id: projectWorkspaces.id })
