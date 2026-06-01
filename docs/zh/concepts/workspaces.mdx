@@ -1,6 +1,6 @@
 ---
 title: "工作区"
-description: "项目资源、agent 文件和持久输出放在哪里。"
+description: "项目 Library 文件、agent 文件和运行时状态放在哪里。"
 icon: "folder-tree"
 keywords:
   - "AI agent 协作"
@@ -13,7 +13,7 @@ canonical: "https://doc.rudder.zeeland.studio/zh/concepts/workspaces"
 
 ---
 
-Rudder 为项目工作、组织产物、计划、技能和 agent 私有状态提供固定的文件系统位置。
+Rudder 为项目 Library 文件、技能、运行时工作和 agent 私有状态提供固定的文件系统位置。
 
 ![工作区和资源](../../images/workspaces-resources.png)
 
@@ -22,8 +22,8 @@ Rudder 为项目工作、组织产物、计划、技能和 agent 私有状态提
 | 场景 | 位置 |
 | --- | --- |
 | 源码或项目仓库工作 | 项目工作区 |
-| 持久报告、截图、导出和交接文件 | 组织产物目录 |
-| 为组织工作生成的计划 | 组织计划目录 |
+| 持久报告、截图、导出、计划和交接文件 | Library 中的项目文件夹 |
+| 跨项目引用和可复用文档 | 共享 Library 文件 |
 | Agent 私有说明、记忆和本地状态 | Agent home |
 | 临时验证草稿 | `/tmp` 或系统临时目录 |
 
@@ -32,19 +32,27 @@ Rudder 为项目工作、组织产物、计划、技能和 agent 私有状态提
 使用 Rudder 托管的工作区路径，不要随手新建临时目录：
 
 - 项目仓库保存在其附加的项目资源位置
-- 组织产物应写入组织产物目录
-- 组织计划应写入组织计划目录
+- 持久项目文件应写入对应项目的 Library 文件夹
 - agent 私有记忆、说明和技能保存在这个 agent 的 home 目录下
 
 ## 持久输出
 
-截图、报告、生成文档、CSV、预览说明和其他用户可见产物，能写入组织产物目录时就写进去。
+创建项目时，Rudder 会在 Library 下创建对应项目文件夹：
+
+```text
+projects/<project-slug>/
+  README.md
+```
+
+Agent 应该把持久项目文件写在这个项目文件夹内，并根据工作需要自行创建 `research/`、`screenshots/`、`proposals/`、`evals/` 或 `handoff/` 等子目录。Rudder 不要求固定的 `plans/` 文件夹。
 
 `/tmp` 只放临时草稿和验证产物。
 
 ## 项目资源
 
-一次运行链接到项目时，Rudder 会把相关项目资源注入运行时上下文。Agent 应该直接检查这些资源，不要假设全局仓库布局。
+一次运行链接到项目时，Rudder 会把相关项目资源注入运行时上下文。这些资源可以是外部引用或 Library 文件。Project Context 是默认起点，不是知识边界；上下文不够时，Agent 可以继续检查更广的 Library 文件。
+
+Library 文件树也会在对应的 `projects/<project-slug>/resources/` 下展示这些项目资源。这里是指向资源目录的虚拟引用；外部仓库、URL 和 connector 对象不会被复制进 Library 文件。
 
 ## 本地开发
 

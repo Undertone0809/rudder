@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   buildAgentMentionHref,
   parseAgentMentionHref,
+  type Project,
+  type ProjectResourceAttachment,
   type OrganizationWorkspaceFileDetail,
   type OrganizationWorkspaceFileEntry,
 } from "@rudderhq/shared";
@@ -30,6 +32,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { organizationsApi } from "../api/orgs";
+import { projectsApi } from "../api/projects";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
@@ -41,6 +44,12 @@ import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import {
+  organizationResourceKindLabel,
+  organizationResourceSourceTypeLabel,
+  projectResourceRoleLabel,
+} from "../lib/resource-options";
+import {
+  Boxes,
   ChevronDown,
   ChevronRight,
   Bot,
@@ -55,6 +64,7 @@ import {
   FolderPlus,
   FileCode2,
   Image as ImageIcon,
+  Link2,
   MoreHorizontal,
   Pencil,
   Loader2,
@@ -267,6 +277,84 @@ function displayWorkspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
   return entry.displayLabel?.trim() || entry.name;
 }
 
+function projectLibraryPath(project: Pick<Project, "urlKey" | "id">) {
+  return `projects/${project.urlKey || project.id}`;
+}
+
+function projectResourceFolderPath(project: Pick<Project, "urlKey" | "id">) {
+  return `${projectLibraryPath(project)}/resources`;
+}
+
+function projectResourceEntryPath(project: Pick<Project, "urlKey" | "id">, attachment: Pick<ProjectResourceAttachment, "id">) {
+  return `${projectResourceFolderPath(project)}/${attachment.id}`;
+}
+
+function projectResourceKindIcon(kind: ProjectResourceAttachment["resource"]["kind"]) {
+  switch (kind) {
+    case "directory":
+      return Folder;
+    case "file":
+      return FileText;
+    case "connector_object":
+      return Boxes;
+    case "url":
+    default:
+      return Link2;
+  }
+}
+
+type ProjectResourceTreeGroup = {
+  project: Project;
+  resources: ProjectResourceAttachment[];
+};
+
+function buildProjectResourceTreeGroups(projects: Project[] | undefined) {
+  const groups = new Map<string, ProjectResourceTreeGroup>();
+  for (const project of projects ?? []) {
+    if (project.resources.length === 0) continue;
+    groups.set(projectLibraryPath(project), {
+      project,
+      resources: [...project.resources].sort((left, right) =>
+        left.sortOrder - right.sortOrder || left.resource.name.localeCompare(right.resource.name),
+      ),
+    });
+  }
+  return groups;
+}
+
+function useProjectResourceTreeGroups(orgId: string | null | undefined) {
+  const query = useQuery({
+    queryKey: orgId ? queryKeys.projects.list(orgId) : queryKeys.projects.list("__none__"),
+    queryFn: () => projectsApi.list(orgId!),
+    enabled: !!orgId,
+    refetchOnWindowFocus: false,
+  });
+  const groupsByLibraryPath = useMemo(
+    () => buildProjectResourceTreeGroups(query.data),
+    [query.data],
+  );
+  return {
+    projects: query.data ?? [],
+    groupsByLibraryPath,
+    isLoading: query.isLoading,
+  };
+}
+
+function findProjectResourceSelection(projects: Project[], attachmentId: string | null) {
+  if (!attachmentId) return null;
+  for (const project of projects) {
+    const attachment = project.resources.find((candidate) => candidate.id === attachmentId);
+    if (attachment) {
+      return {
+        project,
+        attachment,
+        path: projectResourceEntryPath(project, attachment),
+      };
+    }
+  }
+  return null;
+}
+
 function isProtectedAgentWorkspaceContainerPath(filePath: string) {
   if (filePath === "agents") return true;
   const segments = filePath.split("/").filter(Boolean);
@@ -467,6 +555,20 @@ function updateSelectedPath(
   if (filePath) next.set("path", filePath);
   else next.delete("path");
   if (filePath) next.delete("directory");
+  if (filePath) next.delete("resource");
+  else next.delete("resource");
+  setSearchParams(next, { replace: true });
+}
+
+function updateSelectedResource(
+  searchParams: URLSearchParams,
+  setSearchParams: ReturnType<typeof useSearchParams>[1],
+  attachmentId: string,
+) {
+  const next = new URLSearchParams(searchParams);
+  next.set("resource", attachmentId);
+  next.delete("path");
+  next.delete("directory");
   setSearchParams(next, { replace: true });
 }
 
@@ -474,8 +576,10 @@ function DirectoryChildren({
   orgId,
   directoryPath,
   selectedFilePath,
+  selectedResourcePath,
   activeEntryPath,
   onSelectFile,
+  onSelectResource,
   onFocusEntry,
   onCopyPath,
   onOpenEntry,
@@ -484,13 +588,16 @@ function DirectoryChildren({
   onStartDelete,
   onMoveEntry,
   expandedDirectories,
+  projectResourceGroupsByLibraryPath,
   depth,
 }: {
   orgId: string;
   directoryPath: string;
   selectedFilePath: string | null;
+  selectedResourcePath: string | null;
   activeEntryPath: string | null;
   onSelectFile: (filePath: string) => void;
+  onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -499,6 +606,7 @@ function DirectoryChildren({
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
   expandedDirectories: Set<string>;
+  projectResourceGroupsByLibraryPath: Map<string, ProjectResourceTreeGroup>;
   depth: number;
 }) {
   const { data } = useQuery({
@@ -519,8 +627,10 @@ function DirectoryChildren({
           orgId={orgId}
           entry={entry}
           selectedFilePath={selectedFilePath}
+          selectedResourcePath={selectedResourcePath}
           activeEntryPath={activeEntryPath}
           onSelectFile={onSelectFile}
+          onSelectResource={onSelectResource}
           onFocusEntry={onFocusEntry}
           onCopyPath={onCopyPath}
           onOpenEntry={onOpenEntry}
@@ -529,6 +639,7 @@ function DirectoryChildren({
           onStartDelete={onStartDelete}
           onMoveEntry={onMoveEntry}
           expandedDirectories={expandedDirectories}
+          projectResourceGroupsByLibraryPath={projectResourceGroupsByLibraryPath}
           depth={depth}
         />
       ))}
@@ -540,8 +651,10 @@ function WorkspaceTreeNode({
   orgId,
   entry,
   selectedFilePath,
+  selectedResourcePath,
   activeEntryPath,
   onSelectFile,
+  onSelectResource,
   onFocusEntry,
   onCopyPath,
   onOpenEntry,
@@ -550,13 +663,16 @@ function WorkspaceTreeNode({
   onStartDelete,
   onMoveEntry,
   expandedDirectories,
+  projectResourceGroupsByLibraryPath,
   depth = 0,
 }: {
   orgId: string;
   entry: OrganizationWorkspaceFileEntry;
   selectedFilePath: string | null;
+  selectedResourcePath: string | null;
   activeEntryPath: string | null;
   onSelectFile: (filePath: string) => void;
+  onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -565,6 +681,7 @@ function WorkspaceTreeNode({
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
   expandedDirectories: Set<string>;
+  projectResourceGroupsByLibraryPath: Map<string, ProjectResourceTreeGroup>;
   depth?: number;
 }) {
   const [expanded, setExpanded] = useState(expandedDirectories.has(entry.path));
@@ -574,6 +691,7 @@ function WorkspaceTreeNode({
   const isAgentWorkspace = entry.entityType === "agent_workspace";
   const isAgentsRoot = entry.path === "agents";
   const isProtectedContainer = isProtectedAgentWorkspaceContainerPath(entry.path);
+  const projectResourceGroup = projectResourceGroupsByLibraryPath.get(entry.path) ?? null;
   const canCreateInsideDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
   const canMoveEntry = canMoveWorkspaceEntry(entry);
   const canDropIntoDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
@@ -792,22 +910,37 @@ function WorkspaceTreeNode({
           {actionMenu}
         </div>
         {expanded ? (
-          <DirectoryChildren
-            orgId={orgId}
-            directoryPath={entry.path}
-            selectedFilePath={selectedFilePath}
-            activeEntryPath={activeEntryPath}
-            onSelectFile={onSelectFile}
-            onFocusEntry={onFocusEntry}
-            onCopyPath={onCopyPath}
-            onOpenEntry={onOpenEntry}
-            onStartCreateEntry={onStartCreateEntry}
-            onStartRename={onStartRename}
-            onStartDelete={onStartDelete}
-            onMoveEntry={onMoveEntry}
-            expandedDirectories={expandedDirectories}
-            depth={depth + 1}
-          />
+          <>
+            <DirectoryChildren
+              orgId={orgId}
+              directoryPath={entry.path}
+              selectedFilePath={selectedFilePath}
+              selectedResourcePath={selectedResourcePath}
+              activeEntryPath={activeEntryPath}
+              onSelectFile={onSelectFile}
+              onSelectResource={onSelectResource}
+              onFocusEntry={onFocusEntry}
+              onCopyPath={onCopyPath}
+              onOpenEntry={onOpenEntry}
+              onStartCreateEntry={onStartCreateEntry}
+              onStartRename={onStartRename}
+              onStartDelete={onStartDelete}
+              onMoveEntry={onMoveEntry}
+              expandedDirectories={expandedDirectories}
+              projectResourceGroupsByLibraryPath={projectResourceGroupsByLibraryPath}
+              depth={depth + 1}
+            />
+            {projectResourceGroup ? (
+              <ProjectResourcesVirtualTree
+                group={projectResourceGroup}
+                selectedResourcePath={selectedResourcePath}
+                activeEntryPath={activeEntryPath}
+                onSelectResource={onSelectResource}
+                onFocusEntry={onFocusEntry}
+                depth={depth + 1}
+              />
+            ) : null}
+          </>
         ) : null}
       </li>
     );
@@ -852,12 +985,369 @@ function WorkspaceTreeNode({
   );
 }
 
+function ProjectResourcesVirtualTree({
+  group,
+  selectedResourcePath,
+  activeEntryPath,
+  onSelectResource,
+  onFocusEntry,
+  depth,
+}: {
+  group: ProjectResourceTreeGroup;
+  selectedResourcePath: string | null;
+  activeEntryPath: string | null;
+  onSelectResource: (attachmentId: string) => void;
+  onFocusEntry: (entryPath: string) => void;
+  depth: number;
+}) {
+  const folderPath = projectResourceFolderPath(group.project);
+  const [expanded, setExpanded] = useState(
+    selectedResourcePath?.startsWith(`${folderPath}/`) ?? false,
+  );
+  const folderActive = activeEntryPath === folderPath;
+
+  useEffect(() => {
+    if (selectedResourcePath?.startsWith(`${folderPath}/`)) {
+      setExpanded(true);
+    }
+  }, [folderPath, selectedResourcePath]);
+
+  return (
+    <ul className="space-y-0.5">
+      <li>
+        <div
+          className={cn(
+            "group flex w-full items-center rounded-md pr-1 text-sm text-foreground transition-colors hover:bg-accent/60",
+            folderActive && "bg-accent text-foreground",
+          )}
+          style={{ paddingLeft: `${depth * 14 + 8}px` }}
+          data-workspace-entry-path={folderPath}
+          data-testid={`org-workspaces-project-resources-folder-${group.project.id}`}
+        >
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
+            onClick={() => {
+              onFocusEntry(folderPath);
+              setExpanded((value) => !value);
+            }}
+            onFocus={() => onFocusEntry(folderPath)}
+            aria-expanded={expanded}
+            aria-selected={folderActive}
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
+              {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </span>
+            <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate font-medium">resources</span>
+            <span className="shrink-0 rounded-full border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {group.resources.length}
+            </span>
+          </button>
+        </div>
+        {expanded ? (
+          <ul className="space-y-0.5">
+            {group.resources.map((attachment) => {
+              const entryPath = projectResourceEntryPath(group.project, attachment);
+              const isSelected = selectedResourcePath === entryPath;
+              const isActive = activeEntryPath === entryPath;
+              const Icon = projectResourceKindIcon(attachment.resource.kind);
+              return (
+                <li key={attachment.id}>
+                  <div
+                    className={cn(
+                      "group flex w-full items-center rounded-md pr-1 text-sm transition-colors",
+                      isSelected || isActive
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                    )}
+                    style={{ paddingLeft: `${(depth + 1) * 14 + 23}px` }}
+                    data-workspace-entry-path={entryPath}
+                    data-testid={`org-workspaces-project-resource-${attachment.id}`}
+                  >
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
+                      onClick={() => {
+                        onFocusEntry(entryPath);
+                        onSelectResource(attachment.id);
+                      }}
+                      onFocus={() => onFocusEntry(entryPath)}
+                      aria-selected={isActive || isSelected}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{attachment.resource.name}</span>
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+      </li>
+    </ul>
+  );
+}
+
+function isHttpUrl(value: string) {
+  return /^https?:\/\//i.test(value.trim());
+}
+
+function resolveResourceOpenPath(
+  attachment: ProjectResourceAttachment,
+  workspaceRootPath: string | null,
+) {
+  const locator = attachment.resource.locator.trim();
+  if (!locator || isHttpUrl(locator)) return null;
+  if (attachment.resource.sourceType === "library") {
+    return joinWorkspacePath(workspaceRootPath, locator);
+  }
+  if (attachment.resource.kind === "file" || attachment.resource.kind === "directory") {
+    return locator;
+  }
+  return null;
+}
+
+function ResourceMetadataRow({
+  label,
+  children,
+  mono = false,
+}: {
+  label: string;
+  children: ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <div className="grid gap-1 border-b border-border/60 py-3 last:border-b-0 sm:grid-cols-[9rem_minmax(0,1fr)]">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={cn("min-w-0 text-sm text-foreground", mono && "break-all font-mono text-xs")}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ProjectResourceDetailPanel({
+  project,
+  attachment,
+  workspaceRootPath,
+  workspaceLaunchTargets,
+  selectedWorkspaceLaunchTarget,
+  openingWorkspaceTargetId,
+  onSelectWorkspaceLaunchTarget,
+  onOpenWorkspaceTarget,
+}: {
+  project: Project;
+  attachment: ProjectResourceAttachment;
+  workspaceRootPath: string | null;
+  workspaceLaunchTargets: DesktopWorkspaceLaunchTarget[];
+  selectedWorkspaceLaunchTarget: DesktopWorkspaceLaunchTarget | null;
+  openingWorkspaceTargetId: DesktopWorkspaceLaunchTarget["id"] | null;
+  onSelectWorkspaceLaunchTarget: (target: DesktopWorkspaceLaunchTarget) => void;
+  onOpenWorkspaceTarget: (rootPath: string, target: DesktopWorkspaceLaunchTarget, toastLabel?: string) => void;
+}) {
+  const { pushToast } = useToast();
+  const [openingPath, setOpeningPath] = useState(false);
+  const [openingExternal, setOpeningExternal] = useState(false);
+  const locator = attachment.resource.locator.trim();
+  const resourceOpenPath = resolveResourceOpenPath(attachment, workspaceRootPath);
+  const canOpenAsWorkspace = Boolean(
+    resourceOpenPath
+    && attachment.resource.kind === "directory"
+    && selectedWorkspaceLaunchTarget
+    && workspaceLaunchTargets.length > 0,
+  );
+  const canOpenPath = Boolean(resourceOpenPath && readDesktopShell()?.openPath);
+  const canOpenExternal = attachment.resource.kind === "url" || isHttpUrl(locator);
+
+  async function handleOpenPath() {
+    if (!resourceOpenPath) return;
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.openPath) return;
+    setOpeningPath(true);
+    try {
+      await desktopShell.openPath(resourceOpenPath);
+      pushToast({
+        title: attachment.resource.kind === "directory" ? "Opened resource folder" : "Opened resource file",
+        body: resourceOpenPath,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open resource",
+        body: error instanceof Error ? error.message : resourceOpenPath,
+        tone: "error",
+      });
+    } finally {
+      setOpeningPath(false);
+    }
+  }
+
+  async function handleOpenExternal() {
+    if (!locator) return;
+    const desktopShell = readDesktopShell();
+    setOpeningExternal(true);
+    try {
+      if (desktopShell?.openExternal) {
+        await desktopShell.openExternal(locator);
+      } else {
+        window.open(locator, "_blank", "noopener,noreferrer");
+      }
+      pushToast({
+        title: "Opened resource link",
+        body: locator,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open resource link",
+        body: error instanceof Error ? error.message : locator,
+        tone: "error",
+      });
+    } finally {
+      setOpeningExternal(false);
+    }
+  }
+
+  return (
+    <div
+      data-testid="org-workspaces-resource-detail"
+      className="flex h-full min-h-0 flex-col overflow-hidden"
+    >
+      <div className="shrink-0 border-b border-border bg-[color:var(--surface-elevated)] px-5 py-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h3 className="min-w-0 truncate text-base font-semibold text-foreground">
+                {attachment.resource.name}
+              </h3>
+              <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
+              </span>
+              <span className="rounded-[calc(var(--radius-sm)-1px)] border border-emerald-300/50 bg-emerald-500/8 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
+                {projectResourceRoleLabel(attachment.role)}
+              </span>
+            </div>
+            <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+              {locator}
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {canOpenExternal ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleOpenExternal()}
+                disabled={openingExternal}
+                data-testid="org-workspaces-resource-open-external"
+              >
+                {openingExternal ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                Open URL
+              </Button>
+            ) : null}
+            {canOpenPath ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleOpenPath()}
+                disabled={openingPath}
+                data-testid="org-workspaces-resource-open-path"
+              >
+                {openingPath ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
+                Open
+              </Button>
+            ) : null}
+            {canOpenAsWorkspace && selectedWorkspaceLaunchTarget && resourceOpenPath ? (
+              <div
+                className="inline-flex h-8 items-stretch overflow-hidden rounded-[18px] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
+                data-testid="org-workspaces-resource-launcher"
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-full rounded-none border-0 px-2 text-sm text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
+                  aria-label={`Open resource in ${selectedWorkspaceLaunchTarget.label}`}
+                  onClick={() => onOpenWorkspaceTarget(resourceOpenPath, selectedWorkspaceLaunchTarget, "resource")}
+                  disabled={openingWorkspaceTargetId !== null}
+                >
+                  {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <WorkspaceLaunchTargetIcon target={selectedWorkspaceLaunchTarget} className="h-3.5 w-3.5" />
+                  )}
+                  <span className="ml-1.5 max-w-20 truncate">{selectedWorkspaceLaunchTarget.label}</span>
+                </Button>
+                <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-full w-8 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                      aria-label="Open resource menu"
+                      disabled={openingWorkspaceTargetId !== null}
+                    >
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuRadioGroup
+                      value={selectedWorkspaceLaunchTarget.id}
+                      onValueChange={(targetId) => {
+                        const target = workspaceLaunchTargets.find((candidate) => candidate.id === targetId);
+                        if (target) onSelectWorkspaceLaunchTarget(target);
+                      }}
+                    >
+                      {workspaceLaunchTargets.map((target) => (
+                        <DropdownMenuRadioItem
+                          key={target.id}
+                          value={target.id}
+                          data-testid={`org-workspaces-resource-launch-target-${target.id}`}
+                        >
+                          <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
+                          <span>{target.label}</span>
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto px-5 py-4">
+        <div className="max-w-3xl">
+          <ResourceMetadataRow label="Project">{project.name}</ResourceMetadataRow>
+          <ResourceMetadataRow label="Role">{projectResourceRoleLabel(attachment.role)}</ResourceMetadataRow>
+          <ResourceMetadataRow label="Source">
+            {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
+          </ResourceMetadataRow>
+          <ResourceMetadataRow label="Locator" mono>{locator}</ResourceMetadataRow>
+          <ResourceMetadataRow label="Description">
+            {attachment.resource.description?.trim() || <span className="text-muted-foreground">No description.</span>}
+          </ResourceMetadataRow>
+          <ResourceMetadataRow label="Project note">
+            {attachment.note?.trim() || <span className="text-muted-foreground">No project-specific note.</span>}
+          </ResourceMetadataRow>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function OrganizationWorkspaceFilesSidebar() {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const { viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedFilePath = normalizeRequestedPath(searchParams.get("path"));
+  const selectedResourceAttachmentId = normalizeRequestedPath(searchParams.get("resource"));
   const requestedDirectoryPath = normalizeRequestedPath(searchParams.get("directory"));
   const filesScrollRef = useScrollbarActivityRef("org-workspaces:files-sidebar");
   const [createTarget, setCreateTarget] = useState<{
@@ -877,6 +1367,12 @@ export function OrganizationWorkspaceFilesSidebar() {
     enabled: !!viewedOrganizationId,
     refetchOnWindowFocus: false,
   });
+  const projectResourceTree = useProjectResourceTreeGroups(viewedOrganizationId);
+  const selectedProjectResource = useMemo(
+    () => findProjectResourceSelection(projectResourceTree.projects, selectedResourceAttachmentId),
+    [projectResourceTree.projects, selectedResourceAttachmentId],
+  );
+  const selectedResourcePath = selectedProjectResource?.path ?? null;
 
   const workspaceRootPath = rootQuery.data?.rootExists ? rootQuery.data.rootPath : null;
   const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
@@ -886,16 +1382,18 @@ export function OrganizationWorkspaceFilesSidebar() {
   const expandedDirectories = useMemo(
     () => {
       if (selectedFilePath) return parentDirectories(selectedFilePath);
+      if (selectedResourcePath) return parentDirectories(selectedResourcePath);
       if (requestedDirectoryPath) return directoryAndParentDirectories(requestedDirectoryPath);
       return new Set<string>();
     },
-    [requestedDirectoryPath, selectedFilePath],
+    [requestedDirectoryPath, selectedFilePath, selectedResourcePath],
   );
 
   useEffect(() => {
     if (selectedFilePath) setActiveEntryPath(selectedFilePath);
+    else if (selectedResourcePath) setActiveEntryPath(selectedResourcePath);
     else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
-  }, [requestedDirectoryPath, selectedFilePath]);
+  }, [requestedDirectoryPath, selectedFilePath, selectedResourcePath]);
 
   useEffect(() => {
     const clearRootDropState = () => setRootDropActive(false);
@@ -1114,6 +1612,10 @@ export function OrganizationWorkspaceFilesSidebar() {
     updateSelectedPath(searchParams, setSearchParams, filePath);
   }
 
+  function handleSelectResource(attachmentId: string) {
+    updateSelectedResource(searchParams, setSearchParams, attachmentId);
+  }
+
   function handleStartCreateEntry(entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") {
     if (!entry.isDirectory || !canCreateInsideWorkspaceDirectory(entry.path)) return;
     setCreateTarget({ parent: entry, kind });
@@ -1258,8 +1760,10 @@ export function OrganizationWorkspaceFilesSidebar() {
                       orgId={viewedOrganizationId}
                       entry={entry}
                       selectedFilePath={selectedFilePath}
+                      selectedResourcePath={selectedResourcePath}
                       activeEntryPath={activeEntryPath}
                       onSelectFile={handleSelectFile}
+                      onSelectResource={handleSelectResource}
                       onFocusEntry={setActiveEntryPath}
                       onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
                       onOpenEntry={readDesktopShell()?.openPath
@@ -1270,6 +1774,7 @@ export function OrganizationWorkspaceFilesSidebar() {
                       onStartDelete={handleStartDelete}
                       onMoveEntry={handleMoveEntry}
                       expandedDirectories={expandedDirectories}
+                      projectResourceGroupsByLibraryPath={projectResourceTree.groupsByLibraryPath}
                     />
                   ))}
                 </ul>
@@ -1460,6 +1965,7 @@ export function OrganizationWorkspaceBrowser({
   const { viewedOrganization, viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedFilePath = normalizeRequestedPath(searchParams.get("path"));
+  const requestedResourceAttachmentId = normalizeRequestedPath(searchParams.get("resource"));
   const requestedDirectoryPath = normalizeRequestedPath(searchParams.get("directory"));
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(requestedFilePath);
   const [openFilePaths, setOpenFilePaths] = useState<string[]>(() => requestedFilePath ? [requestedFilePath] : []);
@@ -1508,11 +2014,6 @@ export function OrganizationWorkspaceBrowser({
     selectedFilePath ? `org-workspaces:editor:${selectedFilePath}` : "org-workspaces:editor",
   );
   selectedFilePathRef.current = selectedFilePath;
-
-  useEffect(() => {
-    if (selectedFilePath) setActiveEntryPath(selectedFilePath);
-    else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
-  }, [requestedDirectoryPath, selectedFilePath]);
 
   useEffect(() => {
     const clearRootDropState = () => setRootDropActive(false);
@@ -1593,6 +2094,18 @@ export function OrganizationWorkspaceBrowser({
     enabled: !!viewedOrganizationId,
     refetchOnWindowFocus: false,
   });
+  const projectResourceTree = useProjectResourceTreeGroups(viewedOrganizationId);
+  const selectedProjectResource = useMemo(
+    () => findProjectResourceSelection(projectResourceTree.projects, requestedResourceAttachmentId),
+    [projectResourceTree.projects, requestedResourceAttachmentId],
+  );
+  const selectedResourcePath = selectedProjectResource?.path ?? null;
+
+  useEffect(() => {
+    if (selectedFilePath) setActiveEntryPath(selectedFilePath);
+    else if (selectedResourcePath) setActiveEntryPath(selectedResourcePath);
+    else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
+  }, [requestedDirectoryPath, selectedFilePath, selectedResourcePath]);
   const agentWorkspaceEntriesQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", "agents"),
     queryFn: () => organizationsApi.listWorkspaceFiles(viewedOrganizationId!, "agents"),
@@ -1631,13 +2144,26 @@ export function OrganizationWorkspaceBrowser({
 
   useEffect(() => {
     flushCurrentDraft();
+    if (requestedResourceAttachmentId) {
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      return;
+    }
     setSelectedFilePath(requestedFilePath);
     if (requestedFilePath) openWorkspaceFileTab(requestedFilePath);
     else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
-  }, [flushCurrentDraft, openWorkspaceFileTab, requestedDirectoryPath, requestedFilePath, viewedOrganizationId]);
+  }, [
+    flushCurrentDraft,
+    openWorkspaceFileTab,
+    requestedDirectoryPath,
+    requestedFilePath,
+    requestedResourceAttachmentId,
+    viewedOrganizationId,
+  ]);
 
   useEffect(() => {
     if (selectedFilePath) return;
+    if (requestedResourceAttachmentId) return;
     if (requestedDirectoryPath) return;
     const preferredFile = rootQuery.data?.entries.find((entry) => !entry.isDirectory);
     if (preferredFile) {
@@ -1645,7 +2171,15 @@ export function OrganizationWorkspaceBrowser({
       openWorkspaceFileTab(preferredFile.path);
       updateSelectedPath(searchParams, setSearchParams, preferredFile.path);
     }
-  }, [openWorkspaceFileTab, requestedDirectoryPath, rootQuery.data?.entries, searchParams, selectedFilePath, setSearchParams]);
+  }, [
+    openWorkspaceFileTab,
+    requestedDirectoryPath,
+    requestedResourceAttachmentId,
+    rootQuery.data?.entries,
+    searchParams,
+    selectedFilePath,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
     if (!selectedFilePath) {
@@ -1669,10 +2203,11 @@ export function OrganizationWorkspaceBrowser({
   const expandedDirectories = useMemo(
     () => {
       if (selectedFilePath) return parentDirectories(selectedFilePath);
+      if (selectedResourcePath) return parentDirectories(selectedResourcePath);
       if (requestedDirectoryPath) return directoryAndParentDirectories(requestedDirectoryPath);
       return new Set<string>();
     },
-    [requestedDirectoryPath, selectedFilePath],
+    [requestedDirectoryPath, selectedFilePath, selectedResourcePath],
   );
 
   const saveWorkspaceFile = useMutation({
@@ -1706,11 +2241,15 @@ export function OrganizationWorkspaceBrowser({
       if (event.key === "Escape") closeMenu();
     };
 
-    window.addEventListener("pointerdown", closeMenu);
-    window.addEventListener("resize", closeMenu);
-    window.addEventListener("scroll", closeMenu, true);
-    window.addEventListener("keydown", handleKeyDown);
+    const attachCloseListenersId = window.setTimeout(() => {
+      window.addEventListener("pointerdown", closeMenu);
+      window.addEventListener("resize", closeMenu);
+      window.addEventListener("scroll", closeMenu, true);
+      window.addEventListener("keydown", handleKeyDown);
+    }, 0);
+
     return () => {
+      window.clearTimeout(attachCloseListenersId);
       window.removeEventListener("pointerdown", closeMenu);
       window.removeEventListener("resize", closeMenu);
       window.removeEventListener("scroll", closeMenu, true);
@@ -1969,32 +2508,38 @@ export function OrganizationWorkspaceBrowser({
     setCreateDraft(kind === "file" ? "untitled.md" : "new-folder");
   }, [flushCurrentDraft, workspaceRootEntry]);
 
-  const handleOpenWorkspace = useCallback(async (
+  const handleOpenWorkspaceTarget = useCallback(async (
+    rootPath: string,
     target: DesktopWorkspaceLaunchTarget,
+    toastLabel = "workspace",
   ) => {
-    if (!workspaceRootPath) return;
     const desktopShell = readDesktopShell();
     if (!desktopShell?.openWorkspace) return;
 
     setOpeningWorkspaceTargetId(target.id);
     try {
-      await desktopShell.openWorkspace(workspaceRootPath, target.id);
+      await desktopShell.openWorkspace(rootPath, target.id);
       setLastWorkspaceLaunchTargetId(target.id);
       writeStoredWorkspaceLaunchTargetId(target.id);
       pushToast({
-        title: `Opened workspace in ${target.label}`,
+        title: `Opened ${toastLabel} in ${target.label}`,
         tone: "info",
       });
     } catch (error) {
       pushToast({
-        title: "Failed to open workspace",
-        body: error instanceof Error ? error.message : `Could not open the workspace in ${target.label}.`,
+        title: `Failed to open ${toastLabel}`,
+        body: error instanceof Error ? error.message : `Could not open the ${toastLabel} in ${target.label}.`,
         tone: "error",
       });
     } finally {
       setOpeningWorkspaceTargetId(null);
     }
-  }, [pushToast, workspaceRootPath]);
+  }, [pushToast]);
+
+  const handleOpenWorkspace = useCallback((target: DesktopWorkspaceLaunchTarget) => {
+    if (!workspaceRootPath) return;
+    void handleOpenWorkspaceTarget(workspaceRootPath, target, "workspace");
+  }, [handleOpenWorkspaceTarget, workspaceRootPath]);
 
   const handleSelectWorkspaceLaunchTarget = useCallback((target: DesktopWorkspaceLaunchTarget) => {
     setLastWorkspaceLaunchTargetId(target.id);
@@ -2132,6 +2677,16 @@ export function OrganizationWorkspaceBrowser({
     setActiveEntryPath(filePath);
     setSelectedFilePath(filePath);
     updateSelectedPath(searchParams, setSearchParams, filePath);
+  };
+
+  const handleSelectResource = (attachmentId: string) => {
+    setTabContextMenu(null);
+    flushCurrentDraft();
+    const selection = findProjectResourceSelection(projectResourceTree.projects, attachmentId);
+    setActiveEntryPath(selection?.path ?? null);
+    setSelectedFilePath(null);
+    setDraftFilePath(null);
+    updateSelectedResource(searchParams, setSearchParams, attachmentId);
   };
 
   function handleCloseFileTab(filePath: string) {
@@ -2279,10 +2834,14 @@ export function OrganizationWorkspaceBrowser({
   function handleOpenTabContextMenu(event: MouseEvent<HTMLElement>, filePath: string) {
     event.preventDefault();
     event.stopPropagation();
-    handleSelectFile(filePath);
+    openTabContextMenu(filePath, event.clientX, event.clientY);
+  }
+
+  function openTabContextMenu(filePath: string, clientX: number, clientY: number) {
+    setActiveEntryPath(filePath);
     setTabContextMenu({
       filePath,
-      ...clampWorkspaceTabContextMenuPosition(event.clientX, event.clientY),
+      ...clampWorkspaceTabContextMenuPosition(clientX, clientY),
     });
   }
 
@@ -2510,8 +3069,10 @@ export function OrganizationWorkspaceBrowser({
                           orgId={viewedOrganizationId}
                           entry={entry}
                           selectedFilePath={selectedFilePath}
+                          selectedResourcePath={selectedResourcePath}
                           activeEntryPath={activeEntryPath}
                           onSelectFile={handleSelectFile}
+                          onSelectResource={handleSelectResource}
                           onFocusEntry={setActiveEntryPath}
                           onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
                           onOpenEntry={readDesktopShell()?.openPath
@@ -2522,6 +3083,7 @@ export function OrganizationWorkspaceBrowser({
                           onStartDelete={handleStartDelete}
                           onMoveEntry={handleMoveEntry}
                           expandedDirectories={expandedDirectories}
+                          projectResourceGroupsByLibraryPath={projectResourceTree.groupsByLibraryPath}
                         />
                       ))}
                     </ul>
@@ -2724,7 +3286,24 @@ export function OrganizationWorkspaceBrowser({
               </div>
             ) : null}
             <div className="min-h-0 flex-1 overflow-hidden">
-              {!selectedFilePath ? (
+              {selectedProjectResource ? (
+                <ProjectResourceDetailPanel
+                  project={selectedProjectResource.project}
+                  attachment={selectedProjectResource.attachment}
+                  workspaceRootPath={workspaceRootPath}
+                  workspaceLaunchTargets={workspaceLaunchTargets}
+                  selectedWorkspaceLaunchTarget={selectedWorkspaceLaunchTarget}
+                  openingWorkspaceTargetId={openingWorkspaceTargetId}
+                  onSelectWorkspaceLaunchTarget={handleSelectWorkspaceLaunchTarget}
+                  onOpenWorkspaceTarget={(rootPath, target, toastLabel) => {
+                    void handleOpenWorkspaceTarget(rootPath, target, toastLabel);
+                  }}
+                />
+              ) : requestedResourceAttachmentId && projectResourceTree.isLoading ? (
+                <div className="px-4 py-6 text-sm text-muted-foreground">Loading resource...</div>
+              ) : requestedResourceAttachmentId ? (
+                <div className="px-4 py-6 text-sm text-muted-foreground">Resource not found in this project Library.</div>
+              ) : !selectedFilePath ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">
                   {noSelectionMessage}
                 </div>

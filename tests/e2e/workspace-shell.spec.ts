@@ -109,6 +109,8 @@ async function installDesktopShellWorkspaceIdeStub(page: Page) {
   await page.addInitScript(() => {
     const ideCalls: Array<{ rootPath: string; filePath: string; ideId?: string }> = [];
     const workspaceCalls: Array<{ rootPath: string; targetId?: string }> = [];
+    const pathCalls: string[] = [];
+    const externalCalls: string[] = [];
     Object.defineProperty(window, "__rudderWorkspaceIdeCalls", {
       configurable: true,
       value: ideCalls,
@@ -119,11 +121,23 @@ async function installDesktopShellWorkspaceIdeStub(page: Page) {
       value: workspaceCalls,
       writable: false,
     });
+    Object.defineProperty(window, "__rudderPathOpenCalls", {
+      configurable: true,
+      value: pathCalls,
+      writable: false,
+    });
+    Object.defineProperty(window, "__rudderExternalOpenCalls", {
+      configurable: true,
+      value: externalCalls,
+      writable: false,
+    });
 
     const desktopShell = {
       getBootState: async () => ({}),
       onBootState: () => () => {},
-      openPath: async () => {},
+      openPath: async (targetPath: string) => {
+        pathCalls.push(targetPath);
+      },
       listAvailableIdes: async () => [{ id: "cursor", label: "Cursor" }],
       listWorkspaceLaunchTargets: async () => [
         { id: "cursor", label: "Cursor", kind: "ide" },
@@ -147,7 +161,9 @@ async function installDesktopShellWorkspaceIdeStub(page: Page) {
       }),
       getSystemPermissions: async () => ({}),
       sendFeedback: async () => {},
-      openExternal: async () => {},
+      openExternal: async (target: string) => {
+        externalCalls.push(target);
+      },
       openNotificationSettings: async () => ({ opened: false, platform: "darwin" }),
       setBadgeCount: async () => {},
       showNotification: async () => {},
@@ -548,9 +564,7 @@ test.describe("Workspace shell", () => {
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/projects/[^/]+/resources$`));
     await expect(page.getByRole("tab", { name: "Context" })).toBeVisible();
     await expect(mainContent.getByText("Project Context", { exact: true }).nth(1)).toBeVisible();
-    await expect(mainContent.getByRole("button", { name: "Attach existing" })).toBeVisible();
-    await expect(mainContent.getByRole("button", { name: "Add resource" })).toBeVisible();
-    await expect(mainContent.getByRole("link", { name: "Library" })).toBeVisible();
+    await expect(mainContent.getByRole("button", { name: "Add resources" })).toBeVisible();
     await expect(mainContent.getByText("Rudder repo", { exact: true })).toBeVisible();
     await expect(
       mainContent.getByRole("textbox", { name: "Optional project-specific guidance for agents" }),
@@ -561,8 +575,9 @@ test.describe("Workspace shell", () => {
       && response.url().includes(`/api/projects/${project.id}/resources?orgId=${organization.id}`)
       && response.ok(),
     );
-    await mainContent.getByRole("button", { name: "Attach existing" }).click();
-    await expect(page.getByText("Attach resource", { exact: true })).toBeVisible();
+    await mainContent.getByRole("button", { name: "Add resources" }).click();
+    await expect(page.getByText("Existing resources", { exact: true })).toBeVisible();
+    await expect(page.getByText("Create external resource")).toBeVisible();
     await page.getByRole("button", { name: /SPEC doc/i }).click();
     await attachResponse;
     await expect(mainContent.getByText("SPEC doc", { exact: true })).toBeVisible();
@@ -572,10 +587,87 @@ test.describe("Workspace shell", () => {
       fullPage: true,
     });
 
-    await mainContent.getByRole("link", { name: "Library" }).click();
+    await gotoOrganizationPath(page, organization, "/library");
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library$`));
     await expect(page.getByTestId("workspace-main-header")).toHaveCount(0);
     await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+  });
+
+  test("surfaces project resources as virtual entries in the Library tree", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Library-Resources-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const repoResourceRes = await page.request.post(`/api/orgs/${organization.id}/resources`, {
+      data: {
+        name: "New Zealand repo",
+        kind: "directory",
+        sourceType: "external",
+        locator: "~/projects/new-zealand",
+        description: "Local checkout for project implementation.",
+      },
+    });
+    expect(repoResourceRes.ok()).toBe(true);
+    const repoResource = await repoResourceRes.json() as { id: string };
+
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "New Zealand launch",
+        description: "Verifies project resources appear in Library.",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; urlKey: string };
+
+    const attachRepoRes = await page.request.post(`/api/projects/${project.id}/resources?orgId=${organization.id}`, {
+      data: {
+        resourceId: repoResource.id,
+        role: "working_set",
+        note: "Primary implementation checkout.",
+        sortOrder: 0,
+      },
+    });
+    expect(attachRepoRes.ok()).toBe(true);
+    const attachment = await attachRepoRes.json() as { id: string };
+
+    const virtualFileRes = await page.request.get(
+      `/api/orgs/${organization.id}/workspace/file?path=projects/${project.urlKey}/resources/${attachment.id}`,
+    );
+    expect(virtualFileRes.ok()).toBe(false);
+
+    await installDesktopShellWorkspaceIdeStub(page);
+    await gotoOrganizationPath(page, organization, `/library?resource=${attachment.id}`);
+
+    await expect(page.getByTestId(`org-workspaces-project-resources-folder-${project.id}`)).toBeVisible();
+    await expect(page.getByTestId(`org-workspaces-project-resource-${attachment.id}`)).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-resource-detail")).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-resource-detail").getByText("New Zealand repo", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-resource-detail").getByText("~/projects/new-zealand", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-resource-detail").getByText("Primary implementation checkout.", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-resource-launcher").getByRole("button", { name: "Open resource in Cursor" })).toBeVisible();
+
+    const resourceLauncher = page.getByTestId("org-workspaces-resource-launcher");
+    await resourceLauncher.getByRole("button", { name: "Open resource menu" }).click();
+    await page.getByRole("menuitem", { name: "Terminal" }).click();
+    await expect(resourceLauncher.getByRole("button", { name: "Open resource in Terminal" })).toBeVisible();
+    await resourceLauncher.getByRole("button", { name: "Open resource in Terminal" }).click();
+    await expect(page.getByText("Opened resource in Terminal")).toBeVisible();
+
+    const workspaceCalls = await page.evaluate(() =>
+      (window as typeof window & {
+        __rudderWorkspaceOpenCalls?: Array<{ rootPath: string; targetId?: string }>;
+      }).__rudderWorkspaceOpenCalls ?? [],
+    );
+    expect(workspaceCalls).toEqual([
+      {
+        rootPath: "~/projects/new-zealand",
+        targetId: "terminal",
+      },
+    ]);
   });
 
   test("surfaces Library in the shared three-column shell", async ({ page }, testInfo) => {
@@ -1018,7 +1110,7 @@ test.describe("Workspace shell", () => {
     await installDesktopShellWorkspaceIdeStub(page);
     await gotoOrganizationPath(page, organization, "/workspaces");
 
-    const launcher = page.getByTestId("org-workspaces-launcher");
+    const launcher = page.getByTestId("org-workspaces-editor-launcher");
     await expect(launcher.getByRole("button", { name: "Open workspace in Cursor" })).toBeVisible();
 
     await launcher.getByRole("button", { name: "Open workspace menu" }).click();
