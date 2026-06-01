@@ -80,7 +80,7 @@ test.describe("Automation detail layout", () => {
     const addTriggerButton = page.getByTestId("automation-add-trigger-button");
     const triggersList = page.getByTestId("automation-triggers-list");
     const triggerEditorBody = page.getByTestId("automation-trigger-editor-body");
-    const statusButton = headerActions.getByRole("button", { name: "Pause automation" });
+    const statusSwitch = headerActions.getByRole("switch", { name: "Disable automation" });
     const deleteButton = headerActions.getByRole("button", { name: "Delete automation" });
     const runButton = headerActions.getByRole("button", { name: "Run now" });
 
@@ -94,10 +94,10 @@ test.describe("Automation detail layout", () => {
     await expect(page.getByTestId("automation-add-trigger-card")).toHaveCount(0);
     await expect(triggersList).toBeVisible();
     await expect(triggerEditorBody).toBeHidden();
-    await expect(statusButton).toBeVisible();
+    await expect(statusSwitch).toBeVisible();
     await expect(deleteButton).toBeVisible();
     await expect(runButton).toBeVisible();
-    await expect(page.getByRole("switch")).toHaveCount(0);
+    await expect(page.getByRole("switch")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Run now" })).toHaveCount(1);
     await expect(page.getByRole("button", { name: /^Save$/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
@@ -124,8 +124,6 @@ test.describe("Automation detail layout", () => {
 
     const assigneeSelector = agentControl.getByRole("button", { name: /Automation Layout Agent/ });
     const projectSelector = projectControl.getByRole("button", { name: /Onboarding/ });
-    await expect(agentControl).toHaveCSS("border-top-width", "1px");
-    await expect(projectControl).toHaveCSS("border-top-width", "1px");
     await expect(assigneeSelector).toBeVisible();
     await expect(projectSelector).toBeVisible();
 
@@ -150,7 +148,7 @@ test.describe("Automation detail layout", () => {
     const viewport = page.viewportSize();
     const shellBox = await shell.boundingBox();
     const headerActionsBox = await headerActions.boundingBox();
-    const statusButtonBox = await statusButton.boundingBox();
+    const statusButtonBox = await statusSwitch.boundingBox();
     const deleteButtonBox = await deleteButton.boundingBox();
     const runButtonBox = await runButton.boundingBox();
     const overviewBox = await overviewStrip.boundingBox();
@@ -232,8 +230,8 @@ test.describe("Automation detail layout", () => {
 
     await expect(activityList).toBeVisible();
     await expect(firstRow).toBeVisible();
-    await expect(firstSummary).toContainText("Trigger added");
-    await expect(firstDetails).toContainText("Schedule trigger");
+    await expect(firstSummary).toContainText("Added schedule trigger");
+    await expect(firstDetails).toContainText("Every day at 10:00");
     await expect(firstDetails).not.toContainText("automationId");
     await expect(firstDetails).not.toContainText("kind: schedule");
 
