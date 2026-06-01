@@ -5,6 +5,7 @@ import type { Agent, Issue } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
+import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
@@ -27,7 +28,7 @@ import { formatDate, formatDateTime, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { User, Hexagon, ArrowUpRight, Tag, Plus, AlertTriangle, ListTree, Search, ChevronDown } from "lucide-react";
+import { User, Hexagon, ArrowUpRight, Tag, Plus, AlertTriangle, ListTree, Search, ChevronDown, Target } from "lucide-react";
 
 function defaultProjectWorkspaceIdForProject(project: {
   workspaces?: Array<{ id: string; isPrimary: boolean }>;
@@ -155,6 +156,8 @@ export function IssueProperties({
   const [reviewerSearch, setReviewerSearch] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [goalSearch, setGoalSearch] = useState("");
   const [parentOpen, setParentOpen] = useState(false);
   const [parentSearch, setParentSearch] = useState("");
   const [subIssueActionOpen, setSubIssueActionOpen] = useState(false);
@@ -180,6 +183,11 @@ export function IssueProperties({
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(orgId!),
     queryFn: () => projectsApi.list(orgId!),
+    enabled: !!orgId,
+  });
+  const { data: goals } = useQuery({
+    queryKey: queryKeys.goals.list(orgId!),
+    queryFn: () => goalsApi.list(orgId!),
     enabled: !!orgId,
   });
   const activeProjects = useMemo(
@@ -233,6 +241,11 @@ export function IssueProperties({
     const project = orderedProjects.find((p) => p.id === id);
     return project?.name ?? id.slice(0, 8);
   };
+  const goalName = (id: string | null) => {
+    if (!id) return "None";
+    const goal = goals?.find((candidate) => candidate.id === id) ?? issue.goal ?? null;
+    return goal?.title ?? id.slice(0, 8);
+  };
   const issueById = useMemo(() => new Map((allIssues ?? []).map((candidate) => [candidate.id, candidate])), [allIssues]);
   const issueProjectName = useCallback(
     (candidate: Issue) => candidate.project?.name
@@ -271,6 +284,7 @@ export function IssueProperties({
         title: issue.title,
       },
       ...(issue.projectId ? { projectId: issue.projectId } : {}),
+      ...(issue.goalId ? { goalId: issue.goalId } : {}),
     });
   };
   const linkExistingSubIssue = useMutation({
@@ -320,6 +334,7 @@ export function IssueProperties({
     const project = projects?.find((p) => p.id === id) ?? null;
     return project ? projectUrl(project) : `/projects/${id}`;
   };
+  const goalLink = (id: string | null) => id ? `/goals/${id}` : null;
 
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [assigneeOpen]);
   const sortedAgents = useMemo(
@@ -340,6 +355,14 @@ export function IssueProperties({
   const reviewerMatchesAssignee = Boolean(
     (issue.reviewerAgentId && issue.reviewerAgentId === issue.assigneeAgentId) ||
       (issue.reviewerUserId && issue.reviewerUserId === issue.assigneeUserId),
+  );
+  const visibleGoals = useMemo(
+    () => (goals ?? []).filter((goal) => {
+      if (!goalSearch.trim()) return true;
+      const query = goalSearch.toLowerCase();
+      return `${goal.title} ${goal.description ?? ""} ${goal.level} ${goal.status}`.toLowerCase().includes(query);
+    }),
+    [goals, goalSearch],
   );
 
   const labelsTrigger = (issue.labels ?? []).length > 0 ? (
@@ -681,6 +704,70 @@ export function IssueProperties({
     </>
   );
 
+  const goalTrigger = issue.goalId ? (
+    <>
+      <Target className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="text-sm truncate">{goalName(issue.goalId)}</span>
+      <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden="true" />
+    </>
+  ) : (
+    <>
+      <Target className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="text-sm text-muted-foreground">No goal</span>
+      <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden="true" />
+    </>
+  );
+
+  const goalContent = (
+    <>
+      <input
+        className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
+        placeholder="Search goals..."
+        value={goalSearch}
+        onChange={(e) => setGoalSearch(e.target.value)}
+        autoFocus={!inline}
+      />
+      <div className="max-h-48 overflow-y-auto overscroll-contain">
+        <button
+          type="button"
+          className={cn(
+            "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 whitespace-nowrap",
+            !issue.goalId && "bg-accent"
+          )}
+          onClick={() => {
+            onUpdate({ goalId: null });
+            setGoalOpen(false);
+            setGoalSearch("");
+          }}
+        >
+          <Target className="h-3 w-3 text-muted-foreground shrink-0" />
+          No goal
+        </button>
+        {visibleGoals.map((goal) => (
+          <button
+            type="button"
+            key={goal.id}
+            className={cn(
+              "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left",
+              goal.id === issue.goalId && "bg-accent"
+            )}
+            onClick={() => {
+              onUpdate({ goalId: goal.id });
+              setGoalOpen(false);
+              setGoalSearch("");
+            }}
+          >
+            <Target className="h-3 w-3 text-muted-foreground shrink-0" />
+            <span className="truncate">{goal.title}</span>
+          </button>
+        ))}
+        {visibleGoals.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-muted-foreground">No matching goals.</p>
+        ) : null}
+      </div>
+    </>
+  );
+
   const parentTrigger = parentIssue ? (
     <>
       <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{issueRef(parentIssue)}</span>
@@ -891,6 +978,29 @@ export function IssueProperties({
           ) : undefined}
         >
           {projectContent}
+        </PropertyPicker>
+
+        <PropertyPicker
+          inline={inline}
+          label="Goal"
+          open={goalOpen}
+          onOpenChange={(open) => { setGoalOpen(open); if (!open) setGoalSearch(""); }}
+          triggerContent={goalTrigger}
+          triggerAriaLabel={`Change goal: ${issue.goalId ? goalName(issue.goalId) : "No goal"}`}
+          triggerClassName="min-w-0 max-w-full"
+          popoverClassName="w-fit min-w-[11rem]"
+          extra={issue.goalId ? (
+            <Link
+              to={goalLink(issue.goalId)!}
+              aria-label="Open goal"
+              className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ArrowUpRight className="h-3 w-3" />
+            </Link>
+          ) : undefined}
+        >
+          {goalContent}
         </PropertyPicker>
 
         <PropertyPicker

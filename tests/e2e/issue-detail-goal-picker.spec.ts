@@ -73,18 +73,18 @@ test.describe("Issue detail goal picker", () => {
 
     await page.goto(`/${organization.issuePrefix}/issues/${issueRouteId}`);
     await expect(page.getByText("Properties", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: originalGoal.title, exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: `Change goal: ${originalGoal.title}` }).first()).toBeVisible();
 
     const switchToAlternateGoal = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
       && response.url().endsWith(`/api/issues/${issueRouteId}`)
       && response.ok(),
     );
-    await page.getByRole("button", { name: originalGoal.title, exact: true }).first().click();
+    await page.getByRole("button", { name: `Change goal: ${originalGoal.title}` }).first().click();
     await page.getByRole("button", { name: alternateGoal.title, exact: true }).click();
     await switchToAlternateGoal;
 
-    await expect(page.getByRole("button", { name: alternateGoal.title, exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: `Change goal: ${alternateGoal.title}` }).first()).toBeVisible();
     await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBe(alternateGoal.id);
 
     const restoreOriginalGoal = page.waitForResponse((response) =>
@@ -92,11 +92,11 @@ test.describe("Issue detail goal picker", () => {
       && response.url().endsWith(`/api/issues/${issueRouteId}`)
       && response.ok(),
     );
-    await page.getByRole("button", { name: alternateGoal.title, exact: true }).first().click();
+    await page.getByRole("button", { name: `Change goal: ${alternateGoal.title}` }).first().click();
     await page.getByRole("button", { name: originalGoal.title, exact: true }).click();
     await restoreOriginalGoal;
 
-    await expect(page.getByRole("button", { name: originalGoal.title, exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: `Change goal: ${originalGoal.title}` }).first()).toBeVisible();
     await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBe(originalGoal.id);
   });
 });

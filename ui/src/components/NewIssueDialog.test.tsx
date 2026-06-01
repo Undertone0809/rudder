@@ -90,6 +90,24 @@ vi.mock("@tanstack/react-query", () => ({
       };
     }
     if (queryKey[0] === "projects") return { data: [] };
+    if (queryKey[0] === "goals") {
+      return {
+        data: [
+          {
+            id: "goal-1",
+            orgId: "org-1",
+            title: "Improve issue routing",
+            description: null,
+            level: "team",
+            status: "active",
+            parentId: null,
+            ownerAgentId: null,
+            createdAt: "",
+            updatedAt: "",
+          },
+        ],
+      };
+    }
     if (queryKey[0] === "issues" && queryKey[2] === "labels") {
       return {
         data: dialogState.labels,
@@ -232,6 +250,12 @@ vi.mock("../api/projects", () => ({
   },
 }));
 
+vi.mock("../api/goals", () => ({
+  goalsApi: {
+    list: vi.fn(),
+  },
+}));
+
 vi.mock("../api/issues", () => ({
   issuesApi: {
     listLabels: vi.fn(),
@@ -289,8 +313,10 @@ describe("NewIssueDialog", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
     expect(html).toContain('data-variant="field"');
-    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(3);
-    expect((html.match(/h-auto min-h-12 w-full py-2/g) ?? []).length).toBe(3);
+    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect((html.match(/h-auto min-h-12 w-full py-2/g) ?? []).length).toBe(4);
+    expect(html).toContain("Goal");
+    expect(html).toContain("Improve issue routing");
   });
 
   it("keeps labels in the property chip when the organization has five labels", () => {
@@ -305,10 +331,9 @@ describe("NewIssueDialog", () => {
 
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
-    expect(html).toContain("sm:grid-cols-3");
-    expect(html).not.toContain("sm:grid-cols-4");
+    expect(html).toContain("sm:grid-cols-4");
     expect(html).not.toContain(">Labels</div>");
-    expect((html.match(/data-variant="field"/g) ?? []).length).toBe(3);
+    expect((html.match(/data-variant="field"/g) ?? []).length).toBe(4);
     expect(html).toContain("Search labels...");
   });
 

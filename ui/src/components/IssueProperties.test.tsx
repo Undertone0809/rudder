@@ -392,7 +392,7 @@ describe("IssueProperties", () => {
     act(() => {
       root.render(
         <IssueProperties
-          issue={{ ...baseIssue, projectId: "project-1" }}
+          issue={{ ...baseIssue, projectId: "project-1", goalId: "goal-1" }}
           onUpdate={vi.fn()}
           childIssues={[]}
         />,
@@ -427,6 +427,7 @@ describe("IssueProperties", () => {
         title: "Issue with long assignee",
       },
       projectId: "project-1",
+      goalId: "goal-1",
     });
   });
 });

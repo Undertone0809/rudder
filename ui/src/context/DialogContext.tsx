@@ -22,6 +22,7 @@ export interface NewIssueDefaults {
   status?: string;
   priority?: string;
   projectId?: string;
+  goalId?: string;
   labelIds?: string[];
   assigneeAgentId?: string;
   assigneeUserId?: string;

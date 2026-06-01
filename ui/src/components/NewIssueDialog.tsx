@@ -7,6 +7,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { issuesApi } from "../api/issues";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
+import { goalsApi } from "../api/goals";
 import { agentsApi } from "../api/agents";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { authApi } from "../api/auth";
@@ -70,6 +71,7 @@ import {
   X,
   Plus,
   ListTree,
+  Target,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
@@ -203,6 +205,11 @@ function defaultProjectWorkspaceIdForProject(project: {
     ?? "";
 }
 
+function soleGoalIdForProject(project: { goalIds?: string[]; goalId?: string | null } | null | undefined) {
+  const goalIds = project?.goalIds?.length ? project.goalIds : project?.goalId ? [project.goalId] : [];
+  return goalIds.length === 1 ? goalIds[0]! : "";
+}
+
 export function NewIssueDialog() {
   const { newIssueOpen, newIssueDefaults, closeNewIssue } = useDialog();
   const { organizations, selectedOrganizationId, selectedOrganization } = useOrganization();
@@ -219,6 +226,7 @@ export function NewIssueDialog() {
   const [assigneeValue, setAssigneeValue] = useState("");
   const [reviewerValue, setReviewerValue] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [goalId, setGoalId] = useState("");
   const [projectWorkspaceId, setProjectWorkspaceId] = useState("");
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
   const [assigneeModelOverride, setAssigneeModelOverride] = useState("");
@@ -258,6 +266,11 @@ export function NewIssueDialog() {
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(effectiveCompanyId!),
     queryFn: () => projectsApi.list(effectiveCompanyId!),
+    enabled: !!effectiveCompanyId && newIssueOpen,
+  });
+  const { data: goals } = useQuery({
+    queryKey: queryKeys.goals.list(effectiveCompanyId!),
+    queryFn: () => goalsApi.list(effectiveCompanyId!),
     enabled: !!effectiveCompanyId && newIssueOpen,
   });
   const { data: allIssues } = useQuery({
@@ -517,6 +530,7 @@ export function NewIssueDialog() {
       assigneeValue,
       reviewerValue,
       projectId,
+      goalId,
       projectWorkspaceId,
       assigneeModelOverride,
       assigneeThinkingEffort,
@@ -534,6 +548,7 @@ export function NewIssueDialog() {
       assigneeValue,
       reviewerValue,
       projectId,
+      goalId,
       projectWorkspaceId,
       assigneeModelOverride,
       assigneeThinkingEffort,
@@ -548,6 +563,7 @@ export function NewIssueDialog() {
     assigneeValue,
     reviewerValue,
     projectId,
+    goalId,
     projectWorkspaceId,
     assigneeModelOverride,
     assigneeThinkingEffort,
@@ -603,6 +619,7 @@ export function NewIssueDialog() {
       });
       const restoredProjectId = restoredValues.projectId;
       const restoredProject = orderedProjects.find((project) => project.id === restoredProjectId);
+      const restoredGoalId = restoredValues.goalId || soleGoalIdForProject(restoredProject);
       setTitle(savedDraft.title);
       setDescription(savedDraft.description);
       setStatus(restoredValues.status);
@@ -612,6 +629,7 @@ export function NewIssueDialog() {
       setAssigneeValue(restoredValues.assigneeValue);
       setReviewerValue(restoredValues.reviewerValue);
       setProjectId(restoredProjectId);
+      setGoalId(restoredGoalId);
       setProjectWorkspaceId(savedDraft.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(restoredProject));
       setAssigneeModelOverride(savedDraft.assigneeModelOverride ?? "");
       setAssigneeThinkingEffort(savedDraft.assigneeThinkingEffort ?? "");
@@ -624,7 +642,9 @@ export function NewIssueDialog() {
       setSelectedLabelIds(newIssueDefaults.labelIds ?? []);
       setLabelSearch("");
       const defaultProject = orderedProjects.find((project) => project.id === preferredProjectId);
+      const preferredGoalId = newIssueDefaults.goalId ?? soleGoalIdForProject(defaultProject);
       setProjectId(preferredProjectId);
+      setGoalId(preferredGoalId);
       setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(defaultProject));
       setAssigneeValue(preferredAssigneeValue);
       setReviewerValue(preferredReviewerValue);
@@ -641,6 +661,7 @@ export function NewIssueDialog() {
       });
       const restoredProjectId = restoredValues.projectId;
       const restoredProject = orderedProjects.find((project) => project.id === restoredProjectId);
+      const restoredGoalId = restoredValues.goalId || soleGoalIdForProject(restoredProject);
       setTitle(draft.title);
       setDescription(draft.description);
       setStatus(restoredValues.status);
@@ -650,6 +671,7 @@ export function NewIssueDialog() {
       setAssigneeValue(restoredValues.assigneeValue);
       setReviewerValue(restoredValues.reviewerValue);
       setProjectId(restoredProjectId);
+      setGoalId(restoredGoalId);
       setProjectWorkspaceId(draft.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(restoredProject));
       setAssigneeModelOverride(draft.assigneeModelOverride ?? "");
       setAssigneeThinkingEffort(draft.assigneeThinkingEffort ?? "");
@@ -662,7 +684,9 @@ export function NewIssueDialog() {
       setPriority(newIssueDefaults.priority ?? "");
       setSelectedLabelIds(newIssueDefaults.labelIds ?? []);
       setLabelSearch("");
+      const preferredGoalId = newIssueDefaults.goalId ?? soleGoalIdForProject(defaultProject);
       setProjectId(preferredProjectId);
+      setGoalId(preferredGoalId);
       setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(defaultProject));
       setAssigneeValue(preferredAssigneeValue);
       setReviewerValue(preferredReviewerValue);
@@ -709,6 +733,7 @@ export function NewIssueDialog() {
     setAssigneeValue("");
     setReviewerValue("");
     setProjectId("");
+    setGoalId("");
     setProjectWorkspaceId("");
     setAssigneeOptionsOpen(false);
     setAssigneeModelOverride("");
@@ -734,6 +759,7 @@ export function NewIssueDialog() {
     setAssigneeValue("");
     setReviewerValue("");
     setProjectId("");
+    setGoalId("");
     setProjectWorkspaceId("");
     setSelectedLabelIds([]);
     setLabelSearch("");
@@ -753,6 +779,7 @@ export function NewIssueDialog() {
       assigneeValue,
       reviewerValue,
       projectId,
+      goalId,
       projectWorkspaceId,
       assigneeModelOverride,
       assigneeThinkingEffort,
@@ -794,6 +821,7 @@ export function NewIssueDialog() {
         reviewerAgentId: selectedReviewerAgentId,
         reviewerUserId: selectedReviewerUserId,
         projectId,
+        goalId,
         labelIds: selectedLabelIds,
         projectWorkspaceId,
         assigneeAgentRuntimeOverrides,
@@ -915,6 +943,7 @@ export function NewIssueDialog() {
     shouldShowCreateLabelOption,
   ]);
   const currentProject = orderedProjects.find((project) => project.id === projectId);
+  const currentGoal = (goals ?? []).find((goal) => goal.id === goalId) ?? null;
   const assigneeOptionsTitle =
     assigneeAdapterType === "claude_local"
       ? "Claude options"
@@ -967,6 +996,15 @@ export function NewIssueDialog() {
       })),
     [orderedProjects],
   );
+  const goalOptions = useMemo<InlineEntityOption[]>(
+    () =>
+      (goals ?? []).map((goal) => ({
+        id: goal.id,
+        label: goal.title,
+        searchText: `${goal.title} ${goal.description ?? ""} ${goal.level} ${goal.status}`,
+      })),
+    [goals],
+  );
   const canSaveDraft = hasMeaningfulIssueDraft({
     title,
     description,
@@ -976,6 +1014,7 @@ export function NewIssueDialog() {
     assigneeValue,
     reviewerValue,
     projectId,
+    goalId,
     projectWorkspaceId,
     assigneeModelOverride,
     assigneeThinkingEffort,
@@ -1061,6 +1100,10 @@ export function NewIssueDialog() {
     setProjectId(nextProjectId);
     const nextProject = orderedProjects.find((project) => project.id === nextProjectId);
     setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(nextProject));
+    const nextGoalId = soleGoalIdForProject(nextProject);
+    if (nextGoalId) {
+      setGoalId((current) => current || nextGoalId);
+    }
   }, [orderedProjects]);
   const modelOverrideOptions = useMemo<InlineEntityOption[]>(
     () => {
@@ -1277,7 +1320,7 @@ export function NewIssueDialog() {
         </div>
 
         <div className="px-4 pb-3 shrink-0">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
             <div className="min-w-0 space-y-1">
               <div className="text-[11px] font-medium text-muted-foreground">Assignee</div>
               <InlineEntitySelector
@@ -1370,6 +1413,38 @@ export function NewIssueDialog() {
                     </>
                   );
                 }}
+              />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <div className="text-[11px] font-medium text-muted-foreground">Goal</div>
+              <InlineEntitySelector value={goalId}
+                options={goalOptions} placeholder="Goal"
+                disablePortal
+                noneLabel="No goal"
+                searchPlaceholder="Search goals..."
+                emptyMessage="No goals found." variant="field" className={ISSUE_METADATA_SELECTOR_CLASSNAME} onChange={setGoalId} onConfirm={() => {
+                  descriptionEditorRef.current?.focus();
+                }}
+                renderTriggerValue={(option) =>
+                  option && currentGoal ? (
+                    <>
+                      <Target className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">No goal</span>
+                  )
+                }
+                renderOption={(option) =>
+                  option.id ? (
+                    <>
+                      <Target className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  ) : (
+                    <span className="truncate">{option.label}</span>
+                  )
+                }
               />
             </div>
             <div className="min-w-0 space-y-1">

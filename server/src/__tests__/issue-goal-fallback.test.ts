@@ -45,6 +45,17 @@ describe("issue goal fallback", () => {
     ).toBe("goal-1");
   });
 
+  it("honors an explicit goal clear on update instead of reapplying the organization fallback", () => {
+    expect(
+      resolveNextIssueGoalId({
+        currentProjectId: null,
+        currentGoalId: "goal-1",
+        goalId: null,
+        defaultGoalId: "goal-1",
+      }),
+    ).toBeNull();
+  });
+
   it("clears the fallback when a project is added later", () => {
     expect(
       resolveNextIssueGoalId({
