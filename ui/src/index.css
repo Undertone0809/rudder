@@ -2787,6 +2787,10 @@ a.rudder-skill-token {
   -webkit-user-select: none;
 }
 
+.chat-composer .rudder-mdxeditor-content .rudder-skill-token {
+  vertical-align: -0.2em;
+}
+
 .rudder-mdxeditor-content .rudder-skill-token::before,
 .rudder-milkdown-content .rudder-skill-token::before,
 .rudder-markdown .rudder-skill-token::before,
