@@ -18,6 +18,7 @@ import { organizationService } from "./orgs.js";
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
 const PROTECTED_LIBRARY_RESOURCE_ROOTS = new Set(["agents", "artifacts", "plans", "skills"]);
 const PROTECTED_AGENT_INSTRUCTIONS_FILE_NAMES = new Set(["HEARTBEAT.MD", "MEMORY.MD", "SOUL.MD", "TOOLS.MD"]);
+const PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES = new Set(["memory", "skills"]);
 const WORKSPACE_TEXT_CONTENT_TYPES = new Map([
   [".md", "text/markdown"],
   [".markdown", "text/markdown"],
@@ -90,6 +91,17 @@ function isProtectedAgentInstructionsEntryPath(normalizedPath: string) {
   return false;
 }
 
+function isProtectedAgentManagedEntryPath(normalizedPath: string) {
+  const segments = normalizedPath.split("/").filter(Boolean);
+  return segments.length >= 3
+    && segments[0] === "agents"
+    && PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES.has(segments[2]?.toLowerCase() ?? "");
+}
+
+function isProtectedOrganizationSkillsEntryPath(normalizedPath: string) {
+  return normalizedPath.split("/").filter(Boolean)[0]?.toLowerCase() === "skills";
+}
+
 function isProtectedLibraryResourcePath(normalizedPath: string) {
   const root = normalizedPath.split("/").filter(Boolean)[0] ?? "";
   return PROTECTED_LIBRARY_RESOURCE_ROOTS.has(root);
@@ -104,6 +116,12 @@ function assertMutableWorkspaceEntry(normalizedPath: string) {
   }
   if (isProtectedAgentInstructionsEntryPath(normalizedPath)) {
     throw unprocessable("Protected agent instruction entries can only be copied or edited");
+  }
+  if (isProtectedAgentManagedEntryPath(normalizedPath)) {
+    throw unprocessable("Protected agent managed workspace entries can only be copied or edited");
+  }
+  if (isProtectedOrganizationSkillsEntryPath(normalizedPath)) {
+    throw unprocessable("Organization skill entries can only be copied or edited");
   }
 }
 

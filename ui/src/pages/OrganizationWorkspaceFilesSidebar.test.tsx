@@ -12,6 +12,7 @@ import { OrganizationWorkspaceFilesSidebar } from "./OrganizationWorkspaces";
 const mockState = vi.hoisted(() => ({
   pushToast: vi.fn(),
   setSearchParams: vi.fn(),
+  searchParams: "path=agents/Asher/instructions/HEARTBEAT.md",
   desktopShell: null as unknown,
 }));
 
@@ -42,6 +43,13 @@ vi.mock("@tanstack/react-query", () => ({
             isDirectory: true,
             entityType: "organization_workspace",
           },
+          {
+            name: "skills",
+            displayLabel: "skills",
+            path: "skills",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
         ],
         agents: [
           {
@@ -57,6 +65,20 @@ vi.mock("@tanstack/react-query", () => ({
             name: "instructions",
             displayLabel: "instructions",
             path: "agents/Asher/instructions",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
+          {
+            name: "memory",
+            displayLabel: "memory",
+            path: "agents/Asher/memory",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
+          {
+            name: "skills",
+            displayLabel: "skills",
+            path: "agents/Asher/skills",
             isDirectory: true,
             entityType: "organization_workspace",
           },
@@ -77,11 +99,56 @@ vi.mock("@tanstack/react-query", () => ({
             entityType: "organization_workspace",
           },
         ],
+        "agents/Asher/memory": [
+          {
+            name: "notes.md",
+            displayLabel: "notes.md",
+            path: "agents/Asher/memory/notes.md",
+            isDirectory: false,
+            entityType: "organization_workspace",
+          },
+        ],
+        "agents/Asher/skills": [
+          {
+            name: "agent-helper",
+            displayLabel: "agent-helper",
+            path: "agents/Asher/skills/agent-helper",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
+        ],
+        "agents/Asher/skills/agent-helper": [
+          {
+            name: "SKILL.md",
+            displayLabel: "SKILL.md",
+            path: "agents/Asher/skills/agent-helper/SKILL.md",
+            isDirectory: false,
+            entityType: "organization_workspace",
+          },
+        ],
         docs: [
           {
             name: "draft.md",
             displayLabel: "draft.md",
             path: "docs/draft.md",
+            isDirectory: false,
+            entityType: "organization_workspace",
+          },
+        ],
+        skills: [
+          {
+            name: "org-helper",
+            displayLabel: "org-helper",
+            path: "skills/org-helper",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
+        ],
+        "skills/org-helper": [
+          {
+            name: "SKILL.md",
+            displayLabel: "SKILL.md",
+            path: "skills/org-helper/SKILL.md",
             isDirectory: false,
             entityType: "organization_workspace",
           },
@@ -112,8 +179,9 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@/lib/router", () => ({
+  useNavigate: () => vi.fn(),
   useSearchParams: () => [
-    new URLSearchParams("path=agents/Asher/instructions/HEARTBEAT.md"),
+    new URLSearchParams(mockState.searchParams),
     mockState.setSearchParams,
   ],
 }));
@@ -163,6 +231,7 @@ beforeEach(() => {
     },
   });
   mockState.desktopShell = null;
+  mockState.searchParams = "path=agents/Asher/instructions/HEARTBEAT.md";
 });
 
 afterEach(() => {
@@ -173,7 +242,10 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function renderSidebar() {
+function renderSidebar(activePath?: string) {
+  if (activePath) {
+    mockState.searchParams = `path=${encodeURIComponent(activePath)}`;
+  }
   const container = document.createElement("div");
   document.body.appendChild(container);
   let root: Root | null = null;
@@ -242,5 +314,62 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     const menu = openEntryMenu("agents/Asher/instructions/notes.md");
     expect(menu?.textContent).toContain("Rename");
     expect(menu?.textContent).toContain("Delete");
+  });
+
+  it("hides destructive actions for agent memory entries", () => {
+    renderSidebar("agents/Asher/memory/notes.md");
+
+    const memoryFolderMenu = openEntryMenu("agents/Asher/memory");
+    expect(memoryFolderMenu?.textContent).toContain("Copy file path");
+    expect(memoryFolderMenu?.textContent).toContain("New file");
+    expect(memoryFolderMenu?.textContent).not.toContain("Delete");
+    expect(memoryFolderMenu?.textContent).not.toContain("Rename");
+
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    const memoryFileMenu = openEntryMenu("agents/Asher/memory/notes.md");
+    expect(memoryFileMenu?.textContent).toContain("Copy file path");
+    expect(memoryFileMenu?.textContent).not.toContain("Delete");
+    expect(memoryFileMenu?.textContent).not.toContain("Rename");
+  });
+
+  it("hides destructive actions for agent skill entries", () => {
+    renderSidebar("agents/Asher/skills/agent-helper/SKILL.md");
+
+    const agentSkillsFolderMenu = openEntryMenu("agents/Asher/skills");
+    expect(agentSkillsFolderMenu?.textContent).toContain("Copy file path");
+    expect(agentSkillsFolderMenu?.textContent).toContain("New file");
+    expect(agentSkillsFolderMenu?.textContent).not.toContain("Delete");
+    expect(agentSkillsFolderMenu?.textContent).not.toContain("Rename");
+
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    const agentSkillFileMenu = openEntryMenu("agents/Asher/skills/agent-helper/SKILL.md");
+    expect(agentSkillFileMenu?.textContent).toContain("Copy file path");
+    expect(agentSkillFileMenu?.textContent).not.toContain("Delete");
+    expect(agentSkillFileMenu?.textContent).not.toContain("Rename");
+  });
+
+  it("hides destructive actions for organization skill entries", () => {
+    renderSidebar("skills/org-helper/SKILL.md");
+
+    const skillsRootMenu = openEntryMenu("skills");
+    expect(skillsRootMenu?.textContent).toContain("Copy file path");
+    expect(skillsRootMenu?.textContent).toContain("New file");
+    expect(skillsRootMenu?.textContent).not.toContain("Delete");
+    expect(skillsRootMenu?.textContent).not.toContain("Rename");
+
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    const orgSkillFileMenu = openEntryMenu("skills/org-helper/SKILL.md");
+    expect(orgSkillFileMenu?.textContent).toContain("Copy file path");
+    expect(orgSkillFileMenu?.textContent).not.toContain("Delete");
+    expect(orgSkillFileMenu?.textContent).not.toContain("Rename");
   });
 });

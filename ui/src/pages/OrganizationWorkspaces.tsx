@@ -95,6 +95,7 @@ const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
 const PROTECTED_AGENT_INSTRUCTIONS_FILE_NAMES = new Set(["HEARTBEAT.MD", "MEMORY.MD", "SOUL.MD", "TOOLS.MD"]);
+const PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES = new Set(["memory", "skills"]);
 const AGENT_MENTION_MARKDOWN_LINK_RE = /\[([^\]]*)]\((agent:\/\/[^)\s]+)\)/g;
 const WORKSPACE_ENTRY_DND_MIME = "application/x-rudder-workspace-entry";
 const WORKSPACE_TAB_DND_MIME = "application/x-rudder-workspace-tab";
@@ -373,23 +374,40 @@ function isProtectedAgentInstructionsEntryPath(filePath: string) {
   return false;
 }
 
+function isProtectedAgentManagedEntryPath(filePath: string) {
+  const segments = filePath.split("/").filter(Boolean);
+  return segments.length >= 3
+    && segments[0] === "agents"
+    && PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES.has(segments[2]?.toLowerCase() ?? "");
+}
+
+function isProtectedOrganizationSkillsEntryPath(filePath: string) {
+  return filePath.split("/").filter(Boolean)[0]?.toLowerCase() === "skills";
+}
+
 function canCreateInsideWorkspaceDirectory(directoryPath: string) {
   return !isProtectedAgentWorkspaceContainerPath(directoryPath);
 }
 
 function canMoveWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
   return !isProtectedAgentWorkspaceContainerPath(entry.path)
-    && !isProtectedAgentInstructionsEntryPath(entry.path);
+    && !isProtectedAgentInstructionsEntryPath(entry.path)
+    && !isProtectedAgentManagedEntryPath(entry.path)
+    && !isProtectedOrganizationSkillsEntryPath(entry.path);
 }
 
 function canRenameWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
   return !isProtectedAgentWorkspaceContainerPath(entry.path)
-    && !isProtectedAgentInstructionsEntryPath(entry.path);
+    && !isProtectedAgentInstructionsEntryPath(entry.path)
+    && !isProtectedAgentManagedEntryPath(entry.path)
+    && !isProtectedOrganizationSkillsEntryPath(entry.path);
 }
 
 function canDeleteWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
   return !isProtectedAgentWorkspaceContainerPath(entry.path)
-    && !isProtectedAgentInstructionsEntryPath(entry.path);
+    && !isProtectedAgentInstructionsEntryPath(entry.path)
+    && !isProtectedAgentManagedEntryPath(entry.path)
+    && !isProtectedOrganizationSkillsEntryPath(entry.path);
 }
 
 function parentWorkspaceDirectoryPath(entryPath: string) {

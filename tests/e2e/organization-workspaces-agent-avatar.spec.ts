@@ -40,10 +40,10 @@ test.describe("Organization workspaces agent avatar", () => {
     await expect(agentWorkspaceRow.getByTestId("org-workspaces-agent-badge")).toHaveText("Agent");
   });
 
-  test("hides delete actions for protected agent instruction entries", async ({ page, request }) => {
+  test("hides delete actions for protected managed Library entries", async ({ page, request }) => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
-        name: `Organization-Workspaces-Protected-Instructions-${Date.now()}`,
+        name: `Organization-Workspaces-Protected-Managed-Entries-${Date.now()}`,
       },
     });
     expect(organizationRes.ok()).toBe(true);
@@ -71,35 +71,76 @@ test.describe("Organization workspaces agent avatar", () => {
 
     const instructionsPath = `${agentWorkspace!.path}/instructions`;
     const heartbeatPath = `${instructionsPath}/HEARTBEAT.md`;
+    const memoryPath = `${agentWorkspace!.path}/memory/session-notes.md`;
+    const agentSkillDirPath = `${agentWorkspace!.path}/skills/agent-helper`;
+    const agentSkillPath = `${agentSkillDirPath}/SKILL.md`;
+    const orgSkillPath = "skills/org-helper/SKILL.md";
+
+    const memoryFileRes = await request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: memoryPath,
+        content: "# Memory\n",
+      },
+    });
+    expect(memoryFileRes.ok()).toBe(true);
+    const agentSkillDirRes = await request.post(`/api/orgs/${organization.id}/workspace/directory`, {
+      data: {
+        directoryPath: agentSkillDirPath,
+      },
+    });
+    expect(agentSkillDirRes.ok()).toBe(true);
+    const agentSkillFileRes = await request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: agentSkillPath,
+        content: "---\nname: agent-helper\ndescription: Agent helper skill.\n---\n",
+      },
+    });
+    expect(agentSkillFileRes.ok()).toBe(true);
+    const orgSkillRes = await request.post(`/api/orgs/${organization.id}/skills`, {
+      data: {
+        name: "Org Helper",
+        slug: "org-helper",
+        markdown: "---\nname: org-helper\ndescription: Org helper skill.\n---\n\n# Org Helper\n",
+      },
+    });
+    expect(orgSkillRes.ok()).toBe(true);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
+    async function expectProtectedMenu(entryPath: string, options?: { includesNewFile?: boolean }) {
+      const row = page.locator(`[data-workspace-entry-path="${entryPath}"]`);
+      await expect(row).toBeVisible();
+      await row.hover();
+      await page.getByTestId(`org-workspaces-entry-more-${entryPath}`).click();
+
+      const menu = page.getByRole("menu");
+      await expect(menu).toContainText("Copy file path");
+      if (options?.includesNewFile) {
+        await expect(menu).toContainText("New file");
+      }
+      await expect(menu.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+      await expect(menu.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+    }
+
     await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(heartbeatPath)}`);
+    await expectProtectedMenu(instructionsPath, { includesNewFile: true });
+    await expectProtectedMenu(heartbeatPath);
 
-    const instructionsRow = page.locator(`[data-workspace-entry-path="${instructionsPath}"]`);
-    await expect(instructionsRow).toBeVisible();
-    await instructionsRow.hover();
-    await page.getByTestId(`org-workspaces-entry-more-${instructionsPath}`).click();
+    await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(memoryPath)}`);
+    await expectProtectedMenu(`${agentWorkspace!.path}/memory`, { includesNewFile: true });
+    await expectProtectedMenu(memoryPath);
 
-    const instructionsMenu = page.getByRole("menu");
-    await expect(instructionsMenu).toContainText("Copy file path");
-    await expect(instructionsMenu).toContainText("New file");
-    await expect(instructionsMenu.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
-    await expect(instructionsMenu.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
-    await page.keyboard.press("Escape");
+    await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(agentSkillPath)}`);
+    await expectProtectedMenu(`${agentWorkspace!.path}/skills`, { includesNewFile: true });
+    await expectProtectedMenu(agentSkillPath);
 
-    const heartbeatRow = page.locator(`[data-workspace-entry-path="${heartbeatPath}"]`);
-    await expect(heartbeatRow).toBeVisible();
-    await heartbeatRow.hover();
-    await page.getByTestId(`org-workspaces-entry-more-${heartbeatPath}`).click();
-
-    const heartbeatMenu = page.getByRole("menu");
-    await expect(heartbeatMenu).toContainText("Copy file path");
-    await expect(heartbeatMenu.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
-    await expect(heartbeatMenu.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+    await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(orgSkillPath)}`);
+    await expectProtectedMenu("skills", { includesNewFile: true });
+    await expectProtectedMenu(orgSkillPath);
   });
 
   test("moves entries by drag-and-drop and supports VS Code-style tree keyboard selection", async ({ page, request }) => {

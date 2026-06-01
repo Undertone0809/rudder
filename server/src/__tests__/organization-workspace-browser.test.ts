@@ -381,9 +381,15 @@ describe("organization workspace browser", () => {
     const root = resolveOrganizationWorkspaceRoot(orgId);
     await fs.mkdir(path.join(root, "artifacts"), { recursive: true });
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, "skills", "org-helper"), { recursive: true });
     await fs.mkdir(path.join(root, "agents", workspaceKey, "instructions"), { recursive: true });
+    await fs.mkdir(path.join(root, "agents", workspaceKey, "memory"), { recursive: true });
+    await fs.mkdir(path.join(root, "agents", workspaceKey, "skills", "agent-helper"), { recursive: true });
     await fs.writeFile(path.join(root, "agents", workspaceKey, "instructions", "HEARTBEAT.md"), "# Heartbeat\n", "utf8");
     await fs.writeFile(path.join(root, "agents", workspaceKey, "instructions", "MEMORY.md"), "# Memory\n", "utf8");
+    await fs.writeFile(path.join(root, "agents", workspaceKey, "memory", "notes.md"), "# Notes\n", "utf8");
+    await fs.writeFile(path.join(root, "agents", workspaceKey, "skills", "agent-helper", "SKILL.md"), "# Agent skill\n", "utf8");
+    await fs.writeFile(path.join(root, "skills", "org-helper", "SKILL.md"), "# Org skill\n", "utf8");
 
     await expect(workspaceBrowser.createDirectory(orgId, "artifacts/new-folder")).resolves.toEqual({
       path: "artifacts/new-folder",
@@ -430,6 +436,33 @@ describe("organization workspace browser", () => {
       status: 422,
     });
     await expect(workspaceBrowser.moveEntry(orgId, `agents/${workspaceKey}/instructions/MEMORY.md`, "docs")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.renameEntry(orgId, `agents/${workspaceKey}/memory`, "notes")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}/memory/notes.md`)).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.moveEntry(orgId, `agents/${workspaceKey}/memory/notes.md`, "docs")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.renameEntry(orgId, `agents/${workspaceKey}/skills/agent-helper/SKILL.md`, "skill-old.md")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}/skills/agent-helper`)).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.moveEntry(orgId, `agents/${workspaceKey}/skills/agent-helper/SKILL.md`, "docs")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.renameEntry(orgId, "skills", "renamed-skills")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.deleteEntry(orgId, "skills/org-helper/SKILL.md")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.moveEntry(orgId, "skills/org-helper", "docs")).rejects.toMatchObject({
       status: 422,
     });
     await expect(workspaceBrowser.moveEntry(orgId, "artifacts/new-file.md", "agents")).rejects.toMatchObject({
