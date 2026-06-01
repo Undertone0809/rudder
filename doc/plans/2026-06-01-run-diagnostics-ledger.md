@@ -246,6 +246,8 @@ Passed:
   tool-result errors, and CLI usage signatures.
 - Focused server route coverage for listing, organization scoping, status
   updates, and manual recompute access checks.
+- Focused heartbeat scheduling coverage for setup-failed terminal runs when run
+  analysis is enabled.
 - Focused settings UI coverage for rendering the Developer toggle.
 - Focused Settings E2E coverage for enabling the Developer diagnostics setting
   and reading back the persisted value.
@@ -264,6 +266,11 @@ Review gate:
 - Spawned reviewer probe succeeded, but both spawned reviewers failed with a
   usage-limit error before producing verdicts. Do not treat this as completed
   spawned-review evidence.
+- After usage recovered, two spawned reviewers completed and both returned
+  conditional accept. Their blocking concern was missing automatic diagnostics
+  coverage for failed terminal paths and missing core-loop proof. The follow-up
+  implementation extracts shared scheduling and covers setup-failed terminal run
+  scheduling with an automated test.
 
 ## Documentation Changes
 

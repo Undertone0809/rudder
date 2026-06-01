@@ -126,6 +126,13 @@ const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTo
 export function createHeartbeatExecuteHandlers(context: any) {
   const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, documentsSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasConfirmedBlockedReviewerHandoff, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
 
+  function scheduleRunDiagnostics(runId: string) {
+    void runDiagnosticsService(db).analyzeRunIfEnabled(
+      runId,
+      async () => (await instanceSettings.getGeneral()).analyzeCompletedAgentRuns === true,
+    );
+  }
+
   async function executeRun(runId: string) {
     let run = await getRun(runId);
     if (!run) return;
@@ -1071,10 +1078,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           }
         }
         await emitHeartbeatLiveEval(finalizedRun.id);
-        void runDiagnosticsService(db).analyzeRunIfEnabled(
-          finalizedRun.id,
-          async () => (await instanceSettings.getGeneral()).analyzeCompletedAgentRuns === true,
-        );
+        scheduleRunDiagnostics(finalizedRun.id);
       }
       await finalizeAgentStatus(agent.id, outcome);
     } catch (err) {
@@ -1161,6 +1165,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           }
         }
         await emitHeartbeatLiveEval(failedRun.id);
+        scheduleRunDiagnostics(failedRun.id);
       }
 
       await finalizeAgentStatus(agent.id, "failed");
@@ -1254,6 +1259,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
               message,
             }).catch(() => undefined);
             await emitHeartbeatLiveEval(failedRun.id).catch(() => undefined);
+            scheduleRunDiagnostics(failedRun.id);
             await releaseIssueExecutionAndPromote(failedRun).catch(() => undefined);
           }
           // Ensure the agent is not left stuck in "running" if the inner catch handler's
