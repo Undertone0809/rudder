@@ -68,6 +68,7 @@ import {
   loadDefaultAgentInstructionsBundle,
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
+import { resolveStoredOrDerivedAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { registerAgentManagementRoutes } from "./agents.management-routes.js";
 
 const AGENT_AVATAR_CONTENT_TYPES = new Set([
@@ -267,11 +268,24 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       svc.getChainOfCommand(agent.id),
       buildAgentAccessState(agent),
     ]);
+    const internalAgent = options?.restricted || typeof svc.getInternalById !== "function"
+      ? null
+      : await svc.getInternalById(agent.id);
+    const publicAgent = internalAgent
+      ? (({ workspaceKey: _workspaceKey, ...rest }) => rest)(internalAgent)
+      : agent;
+    const instructionsBundle = options?.restricted
+      ? null
+      : await instructions.getBundle(internalAgent ?? agent);
+    const instructionsLibraryPath = instructionsBundle?.mode === "managed"
+      ? `agents/${resolveStoredOrDerivedAgentWorkspaceKey(internalAgent ?? agent)}/instructions`
+      : null;
 
     return {
-      ...(options?.restricted ? redactForRestrictedAgentView(agent) : agent),
+      ...(options?.restricted ? redactForRestrictedAgentView(agent) : publicAgent),
       chainOfCommand,
       access: accessState,
+      instructionsLibraryPath,
     };
   }
 

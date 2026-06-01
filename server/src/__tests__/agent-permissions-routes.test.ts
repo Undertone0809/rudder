@@ -34,6 +34,7 @@ const baseAgent = {
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+  getInternalById: vi.fn(),
   create: vi.fn(),
   updatePermissions: vi.fn(),
   getChainOfCommand: vi.fn(),
@@ -80,6 +81,7 @@ const mockSecretService = vi.hoisted(() => ({
 
 const mockAgentInstructionsService = vi.hoisted(() => ({
   materializeManagedBundle: vi.fn(),
+  getBundle: vi.fn(),
 }));
 const mockCompanySkillService = vi.hoisted(() => ({
   listRuntimeSkillEntries: vi.fn(),
@@ -157,6 +159,7 @@ describe("agent permission routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAgentService.getById.mockResolvedValue(baseAgent);
+    mockAgentService.getInternalById.mockResolvedValue(null);
     mockAgentService.getChainOfCommand.mockResolvedValue([]);
     mockAgentService.resolveByReference.mockResolvedValue({ ambiguous: false, agent: baseAgent });
     mockAgentService.create.mockResolvedValue(baseAgent);
@@ -197,6 +200,7 @@ describe("agent permission routes", () => {
         },
       }),
     );
+    mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "managed" });
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
     mockCompanySkillService.resolveRequestedSkillKeys.mockImplementation(
       async (_companyId: string, requested: string[]) => requested,
@@ -372,6 +376,77 @@ describe("agent permission routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.access.canAssignTasks).toBe(true);
     expect(res.body.access.taskAssignSource).toBe("explicit_grant");
+  });
+
+  it("exposes the instructions Library path for managed instruction bundles", async () => {
+    mockAgentService.getInternalById.mockResolvedValue({
+      ...baseAgent,
+      workspaceKey: "builder--11111111",
+    });
+
+    const app = createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.workspaceKey).toBeUndefined();
+    expect(res.body.instructionsLibraryPath).toBe("agents/builder--11111111/instructions");
+    expect(mockAgentInstructionsService.getBundle).toHaveBeenCalledWith(expect.objectContaining({
+      id: agentId,
+      workspaceKey: "builder--11111111",
+    }));
+  });
+
+  it("does not expose the instructions Library path for explicit external bundles", async () => {
+    mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "external" });
+
+    const app = createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.instructionsLibraryPath).toBeNull();
+  });
+
+  it("does not expose the instructions Library path for legacy external file configs", async () => {
+    mockAgentService.getInternalById.mockResolvedValue({
+      ...baseAgent,
+      workspaceKey: "builder--11111111",
+      agentRuntimeConfig: {
+        instructionsFilePath: "/tmp/external-agent-instructions/AGENTS.md",
+      },
+    });
+    mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "external" });
+
+    const app = createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.instructionsLibraryPath).toBeNull();
+    expect(mockAgentInstructionsService.getBundle).toHaveBeenCalledWith(expect.objectContaining({
+      agentRuntimeConfig: expect.objectContaining({
+        instructionsFilePath: "/tmp/external-agent-instructions/AGENTS.md",
+      }),
+    }));
   });
 
   it("keeps task assignment enabled when agent creation privilege is enabled", async () => {

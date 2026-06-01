@@ -1024,7 +1024,6 @@ export function AgentDetail() {
   const canFetchAgent = routeAgentRef.length > 0 && (isUuidLike(routeAgentRef) || Boolean(lookupCompanyId));
   const setSaveConfigAction = useCallback((fn: (() => void) | null) => { saveConfigActionRef.current = fn; }, []);
   const setCancelConfigAction = useCallback((fn: (() => void) | null) => { cancelConfigActionRef.current = fn; }, []);
-
   const { data: agent, isLoading, error } = useQuery<AgentDetailRecord>({
     queryKey: [...queryKeys.agents.detail(routeAgentRef), lookupCompanyId ?? null],
     queryFn: () => agentsApi.get(routeAgentRef, lookupCompanyId),
@@ -1034,6 +1033,16 @@ export function AgentDetail() {
   const canonicalAgentRef = agent ? agentRouteRef(agent) : routeAgentRef;
   const agentLookupRef = agent?.id ?? routeAgentRef;
   const resolvedAgentId = agent?.id ?? null;
+  const handleDetailTabChange = useCallback((value: string) => {
+    if (value === "instructions" && agent?.instructionsLibraryPath) {
+      navigate({
+        pathname: "/library",
+        search: `?directory=${encodeURIComponent(agent.instructionsLibraryPath)}`,
+      });
+      return;
+    }
+    navigate(`/agents/${canonicalAgentRef}/${value}`);
+  }, [agent?.instructionsLibraryPath, canonicalAgentRef, navigate]);
 
   const { data: runtimeState, isLoading: isRuntimeStateLoading } = useQuery({
     queryKey: queryKeys.agents.runtimeState(resolvedAgentId ?? routeAgentRef),
@@ -1557,7 +1566,7 @@ export function AgentDetail() {
       {!urlRunId && (
         <Tabs
           value={activeView}
-          onValueChange={(value) => navigate(`/agents/${canonicalAgentRef}/${value}`)}
+          onValueChange={handleDetailTabChange}
         >
           <div className="flex items-start justify-between gap-4">
             <PageTabBar
@@ -1570,7 +1579,7 @@ export function AgentDetail() {
                 { value: "budget", label: "Budget" },
               ]}
               value={activeView}
-              onValueChange={(value) => navigate(`/agents/${canonicalAgentRef}/${value}`)}
+              onValueChange={handleDetailTabChange}
             />
             {activeView === "dashboard" ? (
               <div className="hidden lg:block shrink-0">

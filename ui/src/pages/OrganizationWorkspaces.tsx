@@ -202,6 +202,15 @@ function parentDirectories(filePath: string) {
   return new Set(parents);
 }
 
+function directoryAndParentDirectories(directoryPath: string) {
+  const segments = directoryPath.split("/").filter(Boolean);
+  const directories: string[] = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    directories.push(segments.slice(0, index + 1).join("/"));
+  }
+  return new Set(directories);
+}
+
 function normalizeRequestedPath(value: string | null) {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
@@ -457,6 +466,7 @@ function updateSelectedPath(
   const next = new URLSearchParams(searchParams);
   if (filePath) next.set("path", filePath);
   else next.delete("path");
+  if (filePath) next.delete("directory");
   setSearchParams(next, { replace: true });
 }
 
@@ -848,6 +858,7 @@ export function OrganizationWorkspaceFilesSidebar() {
   const { viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedFilePath = normalizeRequestedPath(searchParams.get("path"));
+  const requestedDirectoryPath = normalizeRequestedPath(searchParams.get("directory"));
   const filesScrollRef = useScrollbarActivityRef("org-workspaces:files-sidebar");
   const [createTarget, setCreateTarget] = useState<{
     parent: OrganizationWorkspaceFileEntry;
@@ -858,7 +869,7 @@ export function OrganizationWorkspaceFilesSidebar() {
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [rootDropActive, setRootDropActive] = useState(false);
-  const [activeEntryPath, setActiveEntryPath] = useState<string | null>(selectedFilePath);
+  const [activeEntryPath, setActiveEntryPath] = useState<string | null>(selectedFilePath ?? requestedDirectoryPath);
   const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [lastWorkspaceLaunchTargetId, setLastWorkspaceLaunchTargetId] = useState<DesktopWorkspaceLaunchTarget["id"] | null>(
     () => readStoredWorkspaceLaunchTargetId(),
@@ -883,13 +894,18 @@ export function OrganizationWorkspaceFilesSidebar() {
     [],
   );
   const expandedDirectories = useMemo(
-    () => (selectedFilePath ? parentDirectories(selectedFilePath) : new Set<string>()),
-    [selectedFilePath],
+    () => {
+      if (selectedFilePath) return parentDirectories(selectedFilePath);
+      if (requestedDirectoryPath) return directoryAndParentDirectories(requestedDirectoryPath);
+      return new Set<string>();
+    },
+    [requestedDirectoryPath, selectedFilePath],
   );
 
   useEffect(() => {
     if (selectedFilePath) setActiveEntryPath(selectedFilePath);
-  }, [selectedFilePath]);
+    else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
+  }, [requestedDirectoryPath, selectedFilePath]);
 
   useEffect(() => {
     const clearRootDropState = () => setRootDropActive(false);
@@ -1563,6 +1579,7 @@ export function OrganizationWorkspaceBrowser({
   const { viewedOrganization, viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedFilePath = normalizeRequestedPath(searchParams.get("path"));
+  const requestedDirectoryPath = normalizeRequestedPath(searchParams.get("directory"));
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(requestedFilePath);
   const [openFilePaths, setOpenFilePaths] = useState<string[]>(() => requestedFilePath ? [requestedFilePath] : []);
   const [tabContextMenu, setTabContextMenu] = useState<{
@@ -1593,7 +1610,7 @@ export function OrganizationWorkspaceBrowser({
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [rootDropActive, setRootDropActive] = useState(false);
-  const [activeEntryPath, setActiveEntryPath] = useState<string | null>(requestedFilePath);
+  const [activeEntryPath, setActiveEntryPath] = useState<string | null>(requestedFilePath ?? requestedDirectoryPath);
   const [createTarget, setCreateTarget] = useState<{
     parent: OrganizationWorkspaceFileEntry;
     kind: "file" | "folder";
@@ -1613,7 +1630,8 @@ export function OrganizationWorkspaceBrowser({
 
   useEffect(() => {
     if (selectedFilePath) setActiveEntryPath(selectedFilePath);
-  }, [selectedFilePath]);
+    else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
+  }, [requestedDirectoryPath, selectedFilePath]);
 
   useEffect(() => {
     const clearRootDropState = () => setRootDropActive(false);
@@ -1734,17 +1752,19 @@ export function OrganizationWorkspaceBrowser({
     flushCurrentDraft();
     setSelectedFilePath(requestedFilePath);
     if (requestedFilePath) openWorkspaceFileTab(requestedFilePath);
-  }, [flushCurrentDraft, openWorkspaceFileTab, requestedFilePath, viewedOrganizationId]);
+    else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
+  }, [flushCurrentDraft, openWorkspaceFileTab, requestedDirectoryPath, requestedFilePath, viewedOrganizationId]);
 
   useEffect(() => {
     if (selectedFilePath) return;
+    if (requestedDirectoryPath) return;
     const preferredFile = rootQuery.data?.entries.find((entry) => !entry.isDirectory);
     if (preferredFile) {
       setSelectedFilePath(preferredFile.path);
       openWorkspaceFileTab(preferredFile.path);
       updateSelectedPath(searchParams, setSearchParams, preferredFile.path);
     }
-  }, [openWorkspaceFileTab, rootQuery.data?.entries, searchParams, selectedFilePath, setSearchParams]);
+  }, [openWorkspaceFileTab, requestedDirectoryPath, rootQuery.data?.entries, searchParams, selectedFilePath, setSearchParams]);
 
   useEffect(() => {
     if (!selectedFilePath) {
@@ -1766,8 +1786,12 @@ export function OrganizationWorkspaceBrowser({
   }, [draftContent, draftFilePath, fileQuery.data, selectedFilePath]);
 
   const expandedDirectories = useMemo(
-    () => (selectedFilePath ? parentDirectories(selectedFilePath) : new Set<string>()),
-    [selectedFilePath],
+    () => {
+      if (selectedFilePath) return parentDirectories(selectedFilePath);
+      if (requestedDirectoryPath) return directoryAndParentDirectories(requestedDirectoryPath);
+      return new Set<string>();
+    },
+    [requestedDirectoryPath, selectedFilePath],
   );
 
   const saveWorkspaceFile = useMutation({
