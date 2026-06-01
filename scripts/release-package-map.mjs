@@ -197,20 +197,39 @@ function usage() {
       "Usage:",
       "  node scripts/release-package-map.mjs list",
       "  node scripts/release-package-map.mjs set-version <version>",
-      "  node scripts/release-package-map.mjs set-publish-version <version>",
+      "  node scripts/release-package-map.mjs set-publish-version <version> --allow-source-mutation",
+      "",
+      "Notes:",
+      "  set-publish-version rewrites source package manifests into their publish shape.",
+      "  Use it only from release automation; normal development should use set-version.",
       "",
     ].join("\n"),
   );
 }
 
-const [command, arg] = process.argv.slice(2);
+const [command, arg, ...flags] = process.argv.slice(2);
+
+function hasFlag(name) {
+  return flags.includes(name);
+}
+
+function requireOnlyFlags(allowedFlags) {
+  const unexpected = flags.filter((flag) => !allowedFlags.includes(flag));
+  if (unexpected.length > 0) {
+    process.stderr.write(`Unexpected argument(s): ${unexpected.join(", ")}\n\n`);
+    usage();
+    process.exit(1);
+  }
+}
 
 if (command === "list") {
+  requireOnlyFlags([]);
   listPackages();
   process.exit(0);
 }
 
 if (command === "set-version") {
+  requireOnlyFlags([]);
   if (!arg) {
     usage();
     process.exit(1);
@@ -220,10 +239,24 @@ if (command === "set-version") {
 }
 
 if (command === "set-publish-version") {
+  requireOnlyFlags(["--allow-source-mutation"]);
   if (!arg) {
     usage();
     process.exit(1);
   }
+
+  if (!hasFlag("--allow-source-mutation")) {
+    process.stderr.write(
+      [
+        "Refusing to rewrite source package manifests into publish shape.",
+        "Use set-version for normal development version updates.",
+        "Release automation may pass --allow-source-mutation and must restore the working tree afterwards.",
+        "",
+      ].join("\n"),
+    );
+    process.exit(1);
+  }
+
   setVersion(arg, { publish: true });
   process.exit(0);
 }
