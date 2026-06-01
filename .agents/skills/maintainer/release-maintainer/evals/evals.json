@@ -36,6 +36,12 @@
       "prompt": "0.2.6 stable 准备发了，这次主要修 Desktop 点 Restart to update 后会弹 write EPIPE。CI、npm dry-run、Desktop assets 都绿了，可以 promote stable 吗？",
       "expected_output": "Requires a real Desktop update drill before stable promotion because the risk is installed in-app update behavior. The answer should choose a candidate canary, verify an older installed Rudder.app can Check update, download, Restart to update, reopen on the candidate version, preserve data/profile/workspace, and show no EPIPE or Electron main-process error. It must not treat npm dry-run, release assets, or ordinary smoke as enough proof.",
       "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "我要准备 v0.3.0 stable 的 GitHub Release notes。之前 release 页面顶部会重复显示 Rudder v0.2.9、Released 日期和一段概述，这次不用写那块了。你应该怎么要求 releases/v0.3.0.md？",
+      "expected_output": "Requires releases/v0.3.0.md to be suitable as the direct GitHub Release body: start with useful changelog sections such as ## Highlights, omit the duplicate # Rudder v0.3.0 heading, omit Released: YYYY-MM-DD, and omit the standalone summary paragraph before Highlights. It should still keep the substantive changelog, install or upgrade notes, and release verification workflow.",
+      "files": []
     }
   ]
 }

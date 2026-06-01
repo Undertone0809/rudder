@@ -71,6 +71,8 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 - stables publish from an explicitly chosen source ref
 - tags point at the original source commit, not a generated release commit
 - stable notes are always `releases/vX.Y.Z.md`
+- stable notes are used as the GitHub Release body; do not include a duplicate
+  top title, `Released: YYYY-MM-DD` line, or standalone summary paragraph
 - canary GitHub Releases are only for traceability and Desktop portable assets
 - canaries never require changelog generation
 
@@ -198,6 +200,25 @@ Stable changelog files live at:
 - `releases/vX.Y.Z.md`
 
 Canaries do not get changelog files.
+
+The file is used directly as the GitHub Release body. GitHub already renders
+the release title, tag, author, and publish date around that body, so the file
+should start with the useful changelog sections, usually:
+
+```md
+## Highlights
+
+- ...
+
+## Install
+
+...
+```
+
+Do not add an initial `# Rudder vX.Y.Z` heading, `Released: YYYY-MM-DD` line, or
+standalone prose summary before `## Highlights`. If an older draft has that
+front matter, remove it before publishing or manually updating the GitHub
+Release.
 
 Recommended local generation flow:
 
