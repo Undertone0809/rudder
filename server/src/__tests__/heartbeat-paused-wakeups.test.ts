@@ -352,7 +352,7 @@ describe("heartbeat paused wakeups", () => {
     expect(wakeups).toHaveLength(1);
     expect(wakeups[0]?.status).toBe("deferred_agent_paused");
     expect(wakeups[0]?.reason).toBe("issue_commented");
-    expect((wakeups[0]?.payload as Record<string, unknown>)._paperclipWakeContext).toMatchObject({
+    expect((wakeups[0]?.payload as Record<string, unknown>)._rudderWakeContext).toMatchObject({
       issueId,
       wakeCommentId: commentId,
       wakeReason: "issue_commented",
@@ -604,7 +604,7 @@ describe("heartbeat paused wakeups", () => {
     expect(wakeups).toHaveLength(1);
     expect(wakeups[0]?.status).toBe("deferred_agent_paused");
     expect(wakeups[0]?.coalescedCount).toBe(1);
-    expect((wakeups[0]?.payload as Record<string, unknown>)._paperclipWakeContext).toMatchObject({
+    expect((wakeups[0]?.payload as Record<string, unknown>)._rudderWakeContext).toMatchObject({
       commentId: latestCommentId,
       wakeCommentId: latestCommentId,
       comment: {

@@ -43,7 +43,7 @@ import {
   runDatabaseRestore,
 } from "@rudderhq/db";
 import type { Command } from "commander";
-import { ensureAgentJwtSecret, loadRudderEnvFile, mergePaperclipEnvEntries, readPaperclipEnvEntries, resolvePaperclipEnvFile } from "../config/env.js";
+import { ensureAgentJwtSecret, loadRudderEnvFile, mergeRudderEnvEntries, readRudderEnvEntries, resolveRudderEnvFile } from "../config/env.js";
 import { expandHomePrefix } from "../config/home.js";
 import type { RudderConfig } from "../config/schema.js";
 import { readConfig, resolveConfigPath, writeConfig } from "../config/store.js";

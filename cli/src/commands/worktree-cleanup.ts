@@ -43,7 +43,7 @@ import {
   runDatabaseRestore,
 } from "@rudderhq/db";
 import type { Command } from "commander";
-import { ensureAgentJwtSecret, loadRudderEnvFile, mergePaperclipEnvEntries, readPaperclipEnvEntries, resolvePaperclipEnvFile } from "../config/env.js";
+import { ensureAgentJwtSecret, loadRudderEnvFile, mergeRudderEnvEntries, readRudderEnvEntries, resolveRudderEnvFile } from "../config/env.js";
 import { expandHomePrefix } from "../config/home.js";
 import type { RudderConfig } from "../config/schema.js";
 import { readConfig, resolveConfigPath, writeConfig } from "../config/store.js";
@@ -339,8 +339,8 @@ export async function worktreeCleanupCommand(nameArg: string, opts: WorktreeClea
 
 export async function worktreeEnvCommand(opts: WorktreeEnvOptions): Promise<void> {
   const configPath = resolveConfigPath(opts.config);
-  const envPath = resolvePaperclipEnvFile(configPath);
-  const envEntries = readPaperclipEnvEntries(envPath);
+  const envPath = resolveRudderEnvFile(configPath);
+  const envEntries = readRudderEnvEntries(envPath);
   const out = {
     RUDDER_CONFIG: configPath,
     ...(envEntries.RUDDER_HOME ? { RUDDER_HOME: envEntries.RUDDER_HOME } : {}),
@@ -413,7 +413,7 @@ export async function openConfiguredDb(configPath: string): Promise<OpenDbHandle
   if (!config) {
     throw new Error(`Config not found at ${configPath}.`);
   }
-  const envEntries = readPaperclipEnvEntries(resolvePaperclipEnvFile(configPath));
+  const envEntries = readRudderEnvEntries(resolveRudderEnvFile(configPath));
   let embeddedHandle: EmbeddedPostgresHandle | null = null;
 
   try {

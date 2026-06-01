@@ -180,9 +180,9 @@ function normalizePortablePath(filePath: string): string {
 function shouldIncludePortableFile(filePath: string): boolean {
   const baseName = path.basename(filePath);
   const isMarkdown = baseName.endsWith(".md");
-  const isPaperclipYaml = baseName === ".rudder.yaml" || baseName === ".rudder.yml";
+  const isRudderYaml = baseName === ".rudder.yaml" || baseName === ".rudder.yml";
   const contentType = binaryContentTypeByExtension[path.extname(baseName).toLowerCase()];
-  return isMarkdown || isPaperclipYaml || Boolean(contentType);
+  return isMarkdown || isRudderYaml || Boolean(contentType);
 }
 
 function findPortableExtensionPath(files: Record<string, OrganizationPortabilityFileEntry>): string | null {

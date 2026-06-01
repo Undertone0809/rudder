@@ -43,7 +43,7 @@ import {
   runDatabaseRestore,
 } from "@rudderhq/db";
 import type { Command } from "commander";
-import { ensureAgentJwtSecret, loadRudderEnvFile, mergePaperclipEnvEntries, readPaperclipEnvEntries, resolvePaperclipEnvFile } from "../config/env.js";
+import { ensureAgentJwtSecret, loadRudderEnvFile, mergeRudderEnvEntries, readRudderEnvEntries, resolveRudderEnvFile } from "../config/env.js";
 import { expandHomePrefix } from "../config/home.js";
 import type { RudderConfig } from "../config/schema.js";
 import { readConfig, resolveConfigPath, writeConfig } from "../config/store.js";
@@ -713,8 +713,8 @@ export async function seedWorktreeDatabase(input: {
   seedMode: WorktreeSeedMode;
 }): Promise<SeedWorktreeDatabaseResult> {
   const seedPlan = resolveWorktreeSeedPlan(input.seedMode);
-  const sourceEnvFile = resolvePaperclipEnvFile(input.sourceConfigPath);
-  const sourceEnvEntries = readPaperclipEnvEntries(sourceEnvFile);
+  const sourceEnvFile = resolveRudderEnvFile(input.sourceConfigPath);
+  const sourceEnvEntries = readRudderEnvEntries(sourceEnvFile);
   copySeededSecretsKey({
     sourceConfigPath: input.sourceConfigPath,
     sourceConfig: input.sourceConfig,
@@ -824,11 +824,11 @@ export async function runWorktreeInit(opts: WorktreeInitOptions): Promise<void> 
   });
 
   writeConfig(targetConfig, paths.configPath);
-  const sourceEnvEntries = readPaperclipEnvEntries(resolvePaperclipEnvFile(sourceConfigPath));
+  const sourceEnvEntries = readRudderEnvEntries(resolveRudderEnvFile(sourceConfigPath));
   const existingAgentJwtSecret =
     nonEmpty(sourceEnvEntries.RUDDER_AGENT_JWT_SECRET) ??
     nonEmpty(process.env.RUDDER_AGENT_JWT_SECRET);
-  mergePaperclipEnvEntries(
+  mergeRudderEnvEntries(
     {
       ...buildWorktreeEnvEntries(paths, branding),
       ...(existingAgentJwtSecret ? { RUDDER_AGENT_JWT_SECRET: existingAgentJwtSecret } : {}),
