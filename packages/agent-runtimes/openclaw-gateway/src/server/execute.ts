@@ -314,7 +314,6 @@ function resolveRudderApiUrlOverride(value: unknown): string | null {
 }
 
 function buildRudderEnvForWake(ctx: AgentRuntimeExecutionContext, wakePayload: WakePayload): Record<string, string> {
-  // `paperclipApiUrl` is a legacy read-only alias. New adapter config must use `rudderApiUrl`.
   const rudderApiUrlOverride = resolveRudderApiUrlOverride(ctx.config.rudderApiUrl ?? ctx.config.paperclipApiUrl);
   const rudderEnv: Record<string, string> = {
     ...buildRudderEnv(ctx.agent),
@@ -424,9 +423,7 @@ function buildStandardRudderPayload(
   rudderEnv: Record<string, string>,
   payloadTemplate: Record<string, unknown>,
 ): Record<string, unknown> {
-  // `payloadTemplate.paperclip` and `context.paperclip*` are legacy read-only aliases.
-  // Rudder always sends the normalized outbound contract under `rudder`.
-  const templateRudder = stripLegacyPaperclipTemplateKeys(
+  const templateRudder = stripLegacyRuntimeTemplateKeys(
     parseObject(payloadTemplate.rudder ?? payloadTemplate.paperclip),
   );
   const workspace = asRecord(ctx.context.rudderWorkspace ?? ctx.context.paperclipWorkspace);
@@ -476,7 +473,7 @@ function buildStandardRudderPayload(
   };
 }
 
-function stripLegacyPaperclipTemplateKeys(payloadTemplate: Record<string, unknown>): Record<string, unknown> {
+function stripLegacyRuntimeTemplateKeys(payloadTemplate: Record<string, unknown>): Record<string, unknown> {
   const next: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payloadTemplate)) {
     if (key === "paperclip" || key.startsWith("paperclip")) continue;
@@ -1085,7 +1082,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const templateMessage = nonEmpty(payloadTemplate.message) ?? nonEmpty(payloadTemplate.text);
   const message = templateMessage ? appendWakeText(templateMessage, wakeText) : wakeText;
   const rudderPayload = buildStandardRudderPayload(ctx, wakePayload, rudderEnv, payloadTemplate);
-  const sanitizedPayloadTemplate = stripLegacyPaperclipTemplateKeys(payloadTemplate);
+  const sanitizedPayloadTemplate = stripLegacyRuntimeTemplateKeys(payloadTemplate);
 
   const agentParams: Record<string, unknown> = {
     ...sanitizedPayloadTemplate,
