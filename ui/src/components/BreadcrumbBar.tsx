@@ -68,6 +68,7 @@ export function BreadcrumbBar({
   const relativePath = useMemo(() => toOrganizationRelativePath(location.pathname), [location.pathname]);
   const activeIssueSource = useMemo(() => new URLSearchParams(location.search).get("source") ?? "", [location.search]);
   const isIssuesRoute = useMemo(() => /^\/issues(?:\/|$)/.test(relativePath), [relativePath]);
+  const isIssueDetailRoute = useMemo(() => /^\/issues\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
   const isPrimaryRailPage = useMemo(
     () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|library|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
     [relativePath],
@@ -81,7 +82,7 @@ export function BreadcrumbBar({
     if (/^\/dashboard(?:\/|$)/.test(relativePath)) return "Dashboard";
     if (/^\/messenger(?:\/|$)/.test(relativePath)) return "Messenger";
     if (/^\/inbox(?:\/|$)/.test(relativePath)) return "Inbox";
-    if (/^\/issues(?:\/|$)/.test(relativePath)) return activeIssueSource === "linear" ? "Linear Issues" : "Issue Tracker";
+    if (/^\/issues(?:\/|$)/.test(relativePath)) return activeIssueSource === "linear" ? "Linear Issues" : isIssueDetailRoute ? "Issues" : "Issue Tracker";
     if (/^\/chat(?:\/|$)/.test(relativePath)) return "Chat";
     if (/^\/projects(?:\/|$)/.test(relativePath)) return "Projects";
     if (/^\/agents(?:\/|$)/.test(relativePath)) return "Agents";
@@ -89,7 +90,7 @@ export function BreadcrumbBar({
     if (/^\/automations(?:\/|$)/.test(relativePath)) return "Automations";
     if (/^\/calendar(?:\/|$)/.test(relativePath)) return "Calendar";
     return null;
-  }, [activeIssueSource, relativePath]);
+  }, [activeIssueSource, isIssueDetailRoute, relativePath]);
   const { data: visibleProjects } = useQuery({
     queryKey: queryKeys.projects.list(selectedOrganizationId ?? "__none__"),
     queryFn: async () => {
@@ -234,6 +235,7 @@ export function BreadcrumbBar({
 
   if (threeColumnTitle) {
     const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
+    const showIssueDetailBreadcrumbs = isIssuesRoute && isIssueDetailRoute && breadcrumbs.length > 1;
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
     const isDashboardIndex = /^\/dashboard\/?$/.test(relativePath);
@@ -251,12 +253,48 @@ export function BreadcrumbBar({
         {openWorkspaceSidebarButton}
         {isDashboardIndex ? (
           <DashboardCalendarSwitcher />
+        ) : showIssueDetailBreadcrumbs ? (
+          <div className={cn("min-w-0 flex-1", desktopChrome && "desktop-window-no-drag")}>
+            <Breadcrumb className="min-w-0 overflow-hidden">
+              <BreadcrumbList className="flex-nowrap overflow-hidden">
+                {breadcrumbs.map((crumb, i) => {
+                  const isLast = i === breadcrumbs.length - 1;
+                  return (
+                    <Fragment key={`${crumb.href ?? crumb.label}-${i}`}>
+                      {i > 0 && <BreadcrumbSeparator className="shrink-0" />}
+                      <BreadcrumbItem className={isLast ? "min-w-0" : "max-w-[180px] shrink-0"}>
+                        {isLast || !crumb.href ? (
+                          <BreadcrumbPage
+                            className="truncate text-[13px] font-medium text-foreground"
+                            title={crumb.label}
+                          >
+                            {crumb.label}
+                          </BreadcrumbPage>
+                        ) : (
+                          <BreadcrumbLink asChild>
+                            <Link
+                              to={crumb.href}
+                              state={crumb.href.startsWith("/issues/") ? location.state : undefined}
+                              className="truncate"
+                              title={crumb.label}
+                            >
+                              {crumb.label}
+                            </Link>
+                          </BreadcrumbLink>
+                        )}
+                      </BreadcrumbItem>
+                    </Fragment>
+                  );
+                })}
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
         ) : (
           <div className="min-w-0 shrink-0">
             <h1 className="truncate text-[15px] font-semibold tracking-tight text-foreground">{threeColumnTitle}</h1>
           </div>
         )}
-        {desktopChrome ? <div className="desktop-window-drag hidden min-h-full flex-1 md:block" /> : null}
+        {desktopChrome && !showIssueDetailBreadcrumbs ? <div className="desktop-window-drag hidden min-h-full flex-1 md:block" /> : null}
         {isIssuesRoute ? (
           <div className={cn("hidden items-center gap-3 md:flex", desktopChrome && "desktop-window-no-drag")}>
             <div className="relative w-80">

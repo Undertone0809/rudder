@@ -43,14 +43,6 @@ import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -111,6 +103,36 @@ export function buildIssueChatHref(issue: IssueChatTarget) {
   if (issue.projectId) params.set("projectId", issue.projectId);
   if (issue.assigneeAgentId) params.set("agentId", issue.assigneeAgentId);
   return `/messenger/chat?${params.toString()}`;
+}
+
+type IssueHeaderBreadcrumb = {
+  label: string;
+  href?: string;
+};
+
+type IssueHeaderBreadcrumbSource = {
+  label: string;
+  href: string;
+};
+
+type IssueHeaderBreadcrumbTarget = Pick<Issue, "id" | "identifier" | "title" | "ancestors">;
+
+export function buildIssueHeaderBreadcrumbs(input: {
+  sourceBreadcrumb: IssueHeaderBreadcrumbSource;
+  issue?: IssueHeaderBreadcrumbTarget | null;
+  issueId?: string | null;
+}): IssueHeaderBreadcrumb[] {
+  const issueLabel = input.issue?.title ?? input.issueId ?? "Issue";
+  const issueRef = input.issue?.identifier ?? (input.issue?.id ? input.issue.id.slice(0, 8) : null);
+  const currentLabel = issueRef && input.issue?.title ? `${issueRef} ${input.issue.title}` : issueLabel;
+  return [
+    input.sourceBreadcrumb,
+    ...[...(input.issue?.ancestors ?? [])].reverse().map((ancestor) => ({
+      label: ancestor.title,
+      href: `/issues/${ancestor.identifier ?? ancestor.id}`,
+    })),
+    { label: currentLabel },
+  ];
 }
 
 const ISSUE_UPDATE_METADATA_KEYS = new Set([
@@ -1029,16 +1051,12 @@ export function IssueDetail() {
   );
   const ancestors = issue?.ancestors ?? [];
   const issueHeaderBreadcrumbs = useMemo(() => {
-    const currentLabel = issue?.title ?? issueId ?? "Issue";
-    return [
+    return buildIssueHeaderBreadcrumbs({
       sourceBreadcrumb,
-      ...[...ancestors].reverse().map((ancestor) => ({
-        label: ancestor.title,
-        href: `/issues/${ancestor.identifier ?? ancestor.id}`,
-      })),
-      { label: currentLabel, href: null },
-    ];
-  }, [ancestors, issue?.title, issueId, sourceBreadcrumb]);
+      issue,
+      issueId,
+    });
+  }, [ancestors, issue?.id, issue?.identifier, issue?.title, issueId, sourceBreadcrumb]);
 
   const timelineRuns = useMemo(() => {
     const liveIds = new Set<string>();
@@ -1603,12 +1621,12 @@ export function IssueDetail() {
   });
 
   useEffect(() => {
-    const titleLabel = issue?.title ?? issueId ?? "Issue";
-    setBreadcrumbs([
-      sourceBreadcrumb,
-      { label: hasLiveRuns ? `🔵 ${titleLabel}` : titleLabel },
-    ]);
-  }, [setBreadcrumbs, sourceBreadcrumb, issue, issueId, hasLiveRuns]);
+    setBreadcrumbs(issueHeaderBreadcrumbs.map((crumb, index) => (
+      hasLiveRuns && index === issueHeaderBreadcrumbs.length - 1
+        ? { ...crumb, label: `● ${crumb.label}` }
+        : crumb
+    )));
+  }, [setBreadcrumbs, issueHeaderBreadcrumbs, hasLiveRuns]);
 
   useEffect(() => {
     if (issue?.identifier && issueId !== issue.identifier) {
@@ -1813,37 +1831,6 @@ export function IssueDetail() {
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
       <div className="min-w-0 space-y-6">
-        <nav aria-label="Issue navigation" data-testid="issue-detail-breadcrumb">
-          <Breadcrumb>
-            <BreadcrumbList className="flex-wrap gap-y-1">
-              {issueHeaderBreadcrumbs.map((crumb, index) => {
-                const isLast = index === issueHeaderBreadcrumbs.length - 1;
-                return (
-                  <BreadcrumbItem key={`${crumb.label}-${index}`} className={isLast ? "min-w-0" : "max-w-[220px]"}>
-                    {index > 0 ? <BreadcrumbSeparator /> : null}
-                    {isLast || !crumb.href ? (
-                      <BreadcrumbPage className="truncate" title={crumb.label}>
-                        {crumb.label}
-                      </BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink asChild>
-                        <Link
-                          to={crumb.href}
-                          state={crumb.href.startsWith("/issues/") ? location.state : undefined}
-                          className="truncate"
-                          title={crumb.label}
-                        >
-                          {crumb.label}
-                        </Link>
-                      </BreadcrumbLink>
-                    )}
-                  </BreadcrumbItem>
-                );
-              })}
-            </BreadcrumbList>
-          </Breadcrumb>
-        </nav>
-
         {issue.hiddenAt && (
           <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             <EyeOff className="h-4 w-4 shrink-0" />

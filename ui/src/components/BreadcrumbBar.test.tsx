@@ -14,17 +14,21 @@ let pathname = "/RUD/messenger/issues";
 let search = "";
 let sidebarOpen = true;
 let cleanupFn: (() => void) | null = null;
+let mockBreadcrumbs: Array<{ label: string; href?: string }> = [];
+let locationState: unknown = null;
+let capturedLinks: Array<{ to: string; state?: unknown }> = [];
 
 vi.mock("@/lib/router", () => ({
-  Link: ({ to, children, ...props }: { to: string; children: import("react").ReactNode }) => (
-    <a href={to} {...props}>{children}</a>
-  ),
-  useLocation: () => ({ pathname, search }),
+  Link: ({ to, state, children, ...props }: { to: string; state?: unknown; children: import("react").ReactNode }) => {
+    capturedLinks.push({ to, state });
+    return <a href={to} {...props}>{children}</a>;
+  },
+  useLocation: () => ({ pathname, search, state: locationState }),
   useNavigate: () => vi.fn(),
 }));
 
 vi.mock("../context/BreadcrumbContext", () => ({
-  useBreadcrumbs: () => ({ breadcrumbs: [] }),
+  useBreadcrumbs: () => ({ breadcrumbs: mockBreadcrumbs }),
 }));
 
 vi.mock("../context/SidebarContext", () => ({
@@ -69,6 +73,9 @@ describe("BreadcrumbBar", () => {
     pathname = "/RUD/messenger/issues";
     search = "";
     sidebarOpen = true;
+    mockBreadcrumbs = [];
+    locationState = null;
+    capturedLinks = [];
     globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
       return 0;
@@ -124,6 +131,37 @@ describe("BreadcrumbBar", () => {
     expect(html).not.toContain("Issue Tracker");
     expect(html).toContain("Search Linear issues...");
     expect(html).not.toContain("Create Issue");
+  });
+
+  it("uses issue detail breadcrumbs in the issues header instead of the generic title", () => {
+    pathname = "/RUD/issues/RUD-197";
+    mockBreadcrumbs = [
+      { label: "Issues", href: "/issues" },
+      { label: "RUD-197 chat ai response thing 的动效换成这个" },
+    ];
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain('href="/issues"');
+    expect(html).toContain("RUD-197 chat ai response thing 的动效换成这个");
+    expect(html).not.toContain("Issue Tracker");
+    expect(html).toContain("Search issues...");
+    expect(html).toContain("Create Issue");
+  });
+
+  it("keeps issue detail source state on ancestor breadcrumb links", () => {
+    pathname = "/RUD/issues/RUD-197";
+    locationState = { issueDetailBreadcrumb: { label: "Inbox", href: "/inbox?scope=recent" } };
+    mockBreadcrumbs = [
+      { label: "Inbox", href: "/inbox?scope=recent" },
+      { label: "Parent issue", href: "/issues/RUD-100" },
+      { label: "RUD-197 chat ai response thing 的动效换成这个" },
+    ];
+
+    renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(capturedLinks).toContainEqual({ to: "/inbox?scope=recent", state: undefined });
+    expect(capturedLinks).toContainEqual({ to: "/issues/RUD-100", state: locationState });
   });
 
   it("does not let the issue search retain focus after the native find shortcut", async () => {

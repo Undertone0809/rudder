@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { IssueDetail, buildIssueChatHref } from "./IssueDetail";
+import { IssueDetail, buildIssueChatHref, buildIssueHeaderBreadcrumbs } from "./IssueDetail";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedCommentThreadProps: Record<string, unknown> | null = null;
@@ -504,6 +504,40 @@ describe("buildIssueChatHref", () => {
   });
 });
 
+describe("buildIssueHeaderBreadcrumbs", () => {
+  it("prefixes the current issue title with the human-readable identifier", () => {
+    expect(buildIssueHeaderBreadcrumbs({
+      sourceBreadcrumb: { label: "Issues", href: "/issues" },
+      issue: parentIssue,
+      issueId: "ORG2-1",
+    })).toEqual([
+      { label: "Issues", href: "/issues" },
+      { label: "ORG2-1 Parent issue" },
+    ]);
+  });
+
+  it("keeps parent issue links in hierarchy order", () => {
+    expect(buildIssueHeaderBreadcrumbs({
+      sourceBreadcrumb: { label: "Inbox", href: "/inbox?scope=recent" },
+      issue: {
+        ...parentIssue,
+        title: "Current child",
+        identifier: "ORG2-3",
+        ancestors: [
+          { ...parentIssue, id: "parent-2", identifier: "ORG2-2", title: "Direct parent" },
+          { ...parentIssue, id: "parent-1", identifier: "ORG2-1", title: "Root parent" },
+        ],
+      },
+      issueId: "ORG2-3",
+    })).toEqual([
+      { label: "Inbox", href: "/inbox?scope=recent" },
+      { label: "Root parent", href: "/issues/ORG2-1" },
+      { label: "Direct parent", href: "/issues/ORG2-2" },
+      { label: "ORG2-3 Current child" },
+    ]);
+  });
+});
+
 describe("IssueDetail", () => {
   beforeEach(() => {
     capturedMentions = [];
@@ -522,14 +556,14 @@ describe("IssueDetail", () => {
     ]));
   });
 
-  it("renders a clickable source breadcrumb in the issue header", () => {
+  it("does not duplicate the header-owned issue breadcrumb in the page body", () => {
     mockSourceBreadcrumb = { label: "Inbox", href: "/inbox?scope=recent" };
 
     const html = renderToStaticMarkup(<IssueDetail />);
 
-    expect(html).toContain("Issue navigation");
-    expect(html).toContain(">Inbox</a>");
-    expect(html).toContain('href="/inbox?scope=recent"');
+    expect(html).not.toContain("Issue navigation");
+    expect(html).not.toContain(">Inbox</a>");
+    expect(html).not.toContain('href="/inbox?scope=recent"');
     expect(html).toContain("Parent issue");
     mockSourceBreadcrumb = null;
   });
