@@ -23,6 +23,7 @@ import {
 } from "./resource-catalog.js";
 import {
   ensureOrganizationWorkspaceLayout,
+  ensureProjectLibraryLayout,
   resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
 
@@ -506,7 +507,12 @@ export function projectService(db: Db) {
         return created;
       });
 
-      await ensureOrganizationWorkspaceLayout(orgId);
+      await ensureProjectLibraryLayout({
+        orgId,
+        projectId: row.id,
+        projectName: row.name,
+        projectUrlKey: deriveProjectUrlKey(row.name, row.id),
+      });
       const [withGoals] = await attachGoals(db, [row]);
       const [withWorkspaces] = withGoals ? await attachWorkspaces(db, [withGoals]) : [];
       const [enriched] = withWorkspaces ? await attachResources(db, [withWorkspaces]) : [];
