@@ -34,6 +34,11 @@ import crypto from "node:crypto";
 import type { Db } from "@rudderhq/db";
 import { pluginRegistryService } from "../services/plugin-registry.js";
 import { logger } from "../middleware/logger.js";
+import {
+  isPathInsideDir,
+  resolvePluginPackageCandidateDirs,
+  type PluginPackageResolutionOptions,
+} from "../services/plugin-loader.worker-paths.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -111,55 +116,25 @@ export function resolvePluginUiDir(
   packageName: string,
   entrypointsUi: string,
   packagePath?: string | null,
+  options: PluginPackageResolutionOptions = {},
 ): string | null {
-  // For local-path installs, prefer the persisted package path.
-  if (packagePath) {
-    const resolvedPackagePath = path.resolve(packagePath);
-    if (fs.existsSync(resolvedPackagePath)) {
-      const uiDirFromPackagePath = path.resolve(resolvedPackagePath, entrypointsUi);
-      if (
-        uiDirFromPackagePath.startsWith(resolvedPackagePath)
-        && fs.existsSync(uiDirFromPackagePath)
-      ) {
-        return uiDirFromPackagePath;
-      }
+  for (const packageRoot of resolvePluginPackageCandidateDirs(
+    localPluginDir,
+    packageName,
+    packagePath,
+    options,
+  )) {
+    const uiDir = path.resolve(packageRoot, entrypointsUi);
+
+    if (
+      isPathInsideDir(uiDir, packageRoot)
+      && fs.existsSync(uiDir)
+    ) {
+      return uiDir;
     }
   }
 
-  // Resolve the package root within the local plugin directory's node_modules.
-  // npm installs go to <localPluginDir>/node_modules/<packageName>/
-  let packageRoot: string;
-  if (packageName.startsWith("@")) {
-    // Scoped package: @scope/name -> node_modules/@scope/name
-    packageRoot = path.join(localPluginDir, "node_modules", ...packageName.split("/"));
-  } else {
-    packageRoot = path.join(localPluginDir, "node_modules", packageName);
-  }
-
-  // If the standard location doesn't exist, the plugin may have been installed
-  // from a local path. Try to check if the package.json is accessible at the
-  // computed path or if the package is found elsewhere.
-  if (!fs.existsSync(packageRoot)) {
-    // For local-path installs, the packageName may be a directory that doesn't
-    // live inside node_modules. Check if the package exists directly at the
-    // localPluginDir level.
-    const directPath = path.join(localPluginDir, packageName);
-    if (fs.existsSync(directPath)) {
-      packageRoot = directPath;
-    } else {
-      return null;
-    }
-  }
-
-  // Resolve the UI directory relative to the package root
-  const uiDir = path.resolve(packageRoot, entrypointsUi);
-
-  // Verify the resolved UI directory exists and is actually inside the package
-  if (!fs.existsSync(uiDir)) {
-    return null;
-  }
-
-  return uiDir;
+  return null;
 }
 
 /**

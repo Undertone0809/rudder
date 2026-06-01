@@ -50,43 +50,80 @@ import type { PluginToolDispatcher } from "./plugin-tool-dispatcher.js";
 import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
 import { execFileAsync, __dirname, NPM_PLUGIN_PACKAGE_PREFIX, DEFAULT_LOCAL_PLUGIN_DIR, DEV_TSX_LOADER_PATH, DiscoveredPlugin, PluginSource, ParsedSemver, PluginDiscoveryResult, getDeclaredPageRoutePaths, PluginLoaderOptions, PluginInstallOptions, PluginRuntimeServices, PluginLoadResult, PluginLoadAllResult, PluginUiContributionMetadata, PluginLoader, isPluginPackageName, readPackageJson, resolveManifestPath, parseSemver, compareIdentifiers, compareSemver, getMinimumHostVersion, getPluginUiContributionMetadata } from "./plugin-loader.helpers.js";
 
+const SERVER_PACKAGE_ROOT = path.resolve(__dirname, "../..");
+
+export interface PluginPackageResolutionOptions {
+  serverPackageRoot?: string;
+}
+
+function getSafeBundledPluginDirName(packageName: string): string | null {
+  const localPackageName = packageName.startsWith("@")
+    ? packageName.split("/")[1]
+    : packageName;
+
+  if (!localPackageName || path.basename(localPackageName) !== localPackageName) {
+    return null;
+  }
+
+  return localPackageName;
+}
+
+export function resolvePluginPackageCandidateDirs(
+  localPluginDir: string,
+  packageName: string,
+  packagePath?: string | null,
+  options: PluginPackageResolutionOptions = {},
+): string[] {
+  const candidates: string[] = [];
+
+  if (packagePath && existsSync(packagePath)) {
+    candidates.push(path.resolve(packagePath));
+  }
+
+  if (packageName.startsWith("@")) {
+    candidates.push(path.join(localPluginDir, "node_modules", ...packageName.split("/")));
+  } else {
+    candidates.push(path.join(localPluginDir, "node_modules", packageName));
+  }
+
+  candidates.push(path.join(localPluginDir, packageName));
+
+  const bundledPluginDirName = getSafeBundledPluginDirName(packageName);
+  if (bundledPluginDirName) {
+    candidates.push(
+      path.join(
+        options.serverPackageRoot ?? SERVER_PACKAGE_ROOT,
+        "dist",
+        "bundled-plugins",
+        bundledPluginDirName,
+      ),
+    );
+  }
+
+  return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
+}
+
 export function resolveWorkerEntrypoint(
   plugin: PluginRecord & { packagePath?: string | null },
   localPluginDir: string,
+  options: PluginPackageResolutionOptions = {},
 ): string {
   const manifest = plugin.manifestJson;
   const workerRelPath = manifest.entrypoints.worker;
-
-  // For local-path installs we persist the resolved package path; use it first
-  if (plugin.packagePath && existsSync(plugin.packagePath)) {
-    const entrypoint = path.resolve(plugin.packagePath, workerRelPath);
-    if (entrypoint.startsWith(path.resolve(plugin.packagePath)) && existsSync(entrypoint)) {
-      return entrypoint;
-    }
-  }
-
-  // Try the local plugin directory (standard npm install location)
   const packageName = plugin.packageName;
-  let packageDir: string;
+  const checkedEntrypoints: string[] = [];
 
-  if (packageName.startsWith("@")) {
-    // Scoped package: @scope/plugin-name → localPluginDir/node_modules/@scope/plugin-name
-    const [scope, name] = packageName.split("/");
-    packageDir = path.join(localPluginDir, "node_modules", scope!, name!);
-  } else {
-    packageDir = path.join(localPluginDir, "node_modules", packageName);
-  }
-
-  // Also check if the package exists directly under localPluginDir
-  // (for direct local-path installs or symlinked packages)
-  const directDir = path.join(localPluginDir, packageName);
-
-  // Try in order: node_modules path, direct path
-  for (const dir of [packageDir, directDir]) {
+  for (const dir of resolvePluginPackageCandidateDirs(
+    localPluginDir,
+    packageName,
+    plugin.packagePath,
+    options,
+  )) {
     const entrypoint = path.resolve(dir, workerRelPath);
+    checkedEntrypoints.push(entrypoint);
 
     // Security: ensure entrypoint is actually inside the directory (prevent path traversal)
-    if (!entrypoint.startsWith(path.resolve(dir))) {
+    if (!isPathInsideDir(entrypoint, dir)) {
       continue;
     }
 
@@ -103,8 +140,7 @@ export function resolveWorkerEntrypoint(
 
   throw new Error(
     `Worker entrypoint not found for plugin "${plugin.pluginKey}". ` +
-      `Checked: ${path.resolve(packageDir, workerRelPath)}, ` +
-      `${path.resolve(directDir, workerRelPath)}`,
+      `Checked: ${checkedEntrypoints.join(", ")}`,
   );
 }
 
@@ -121,4 +157,3 @@ export function isPathInsideDir(candidatePath: string, parentDir: string): boole
   const relative = path.relative(resolvedParent, resolvedCandidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
-
