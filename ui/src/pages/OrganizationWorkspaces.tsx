@@ -870,11 +870,6 @@ export function OrganizationWorkspaceFilesSidebar() {
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [rootDropActive, setRootDropActive] = useState(false);
   const [activeEntryPath, setActiveEntryPath] = useState<string | null>(selectedFilePath ?? requestedDirectoryPath);
-  const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
-  const [lastWorkspaceLaunchTargetId, setLastWorkspaceLaunchTargetId] = useState<DesktopWorkspaceLaunchTarget["id"] | null>(
-    () => readStoredWorkspaceLaunchTargetId(),
-  );
-  const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<DesktopWorkspaceLaunchTarget["id"] | null>(null);
 
   const rootQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", ""),
@@ -884,11 +879,6 @@ export function OrganizationWorkspaceFilesSidebar() {
   });
 
   const workspaceRootPath = rootQuery.data?.rootExists ? rootQuery.data.rootPath : null;
-  const selectedWorkspaceLaunchTarget = (
-    lastWorkspaceLaunchTargetId
-      ? workspaceLaunchTargets.find((target) => target.id === lastWorkspaceLaunchTargetId)
-      : null
-  ) ?? workspaceLaunchTargets[0] ?? null;
   const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
     () => ({ name: "", path: "", isDirectory: true, displayLabel: "Library" }),
     [],
@@ -924,27 +914,6 @@ export function OrganizationWorkspaceFilesSidebar() {
       queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-file"] }),
     ]);
   }, [queryClient, viewedOrganizationId]);
-
-  useEffect(() => {
-    const desktopShell = readDesktopShell();
-    if (!desktopShell || typeof desktopShell.listWorkspaceLaunchTargets !== "function") {
-      setWorkspaceLaunchTargets([]);
-      return;
-    }
-
-    let cancelled = false;
-    desktopShell.listWorkspaceLaunchTargets()
-      .then((targets) => {
-        if (!cancelled) setWorkspaceLaunchTargets(targets);
-      })
-      .catch(() => {
-        if (!cancelled) setWorkspaceLaunchTargets([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const createWorkspaceEntry = useMutation({
     mutationFn: async (payload: {
@@ -1092,31 +1061,6 @@ export function OrganizationWorkspaceFilesSidebar() {
       });
     },
   });
-
-  const handleOpenWorkspace = useCallback(async (target: DesktopWorkspaceLaunchTarget) => {
-    if (!workspaceRootPath) return;
-    const desktopShell = readDesktopShell();
-    if (!desktopShell?.openWorkspace) return;
-
-    setOpeningWorkspaceTargetId(target.id);
-    try {
-      await desktopShell.openWorkspace(workspaceRootPath, target.id);
-      setLastWorkspaceLaunchTargetId(target.id);
-      writeStoredWorkspaceLaunchTargetId(target.id);
-      pushToast({
-        title: `Opened workspace in ${target.label}`,
-        tone: "info",
-      });
-    } catch (error) {
-      pushToast({
-        title: "Failed to open workspace",
-        body: error instanceof Error ? error.message : `Could not open the workspace in ${target.label}.`,
-        tone: "error",
-      });
-    } finally {
-      setOpeningWorkspaceTargetId(null);
-    }
-  }, [pushToast, workspaceRootPath]);
 
   async function handleCopyEntryPath(entry: OrganizationWorkspaceFileEntry) {
     const copyValue = joinWorkspacePath(workspaceRootPath, entry.path);
@@ -1273,69 +1217,6 @@ export function OrganizationWorkspaceFilesSidebar() {
               </TooltipTrigger>
               <TooltipContent>New folder</TooltipContent>
             </Tooltip>
-            {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
-              <div
-                className="inline-flex h-8 items-stretch overflow-hidden rounded-md border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
-                data-testid="org-workspaces-launcher"
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-full rounded-none border-0 px-2 text-sm text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
-                  aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
-                  onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
-                  disabled={openingWorkspaceTargetId !== null}
-                >
-                  {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <WorkspaceLaunchTargetIcon
-                      target={selectedWorkspaceLaunchTarget}
-                      className="h-3.5 w-3.5"
-                    />
-                  )}
-                  <span className="ml-1.5 max-w-16 truncate">{selectedWorkspaceLaunchTarget.label}</span>
-                </Button>
-                <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-full w-8 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                      aria-label="Open workspace menu"
-                      disabled={openingWorkspaceTargetId !== null}
-                    >
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-44">
-                    <DropdownMenuRadioGroup
-                      value={selectedWorkspaceLaunchTarget.id}
-                      onValueChange={(targetId) => {
-                        const target = workspaceLaunchTargets.find((candidate) => candidate.id === targetId);
-                        if (!target) return;
-                        setLastWorkspaceLaunchTargetId(target.id);
-                        writeStoredWorkspaceLaunchTargetId(target.id);
-                      }}
-                    >
-                      {workspaceLaunchTargets.map((target) => (
-                        <DropdownMenuRadioItem
-                          key={target.id}
-                          value={target.id}
-                          data-testid={`org-workspaces-launch-target-${target.id}`}
-                        >
-                          <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
-                          <span>{target.label}</span>
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ) : null}
           </div>
         </header>
 
