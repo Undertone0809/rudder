@@ -973,7 +973,9 @@ export function messengerService(db: Db) {
           latest_external_activity.created_at as "latestExternalActivityCreatedAt",
           latest_external_activity.run_id as "latestExternalActivityRunId"
         from tracked_issue_ids
-        inner join ${issues} issue_row on issue_row.id = tracked_issue_ids.id
+        inner join ${issues} issue_row
+          on issue_row.id = tracked_issue_ids.id
+          and issue_row.origin_kind <> 'automation_execution'
         left join lateral (
           select
             comment_row.body,
@@ -1151,9 +1153,7 @@ export function messengerService(db: Db) {
           where "attentionActivityAt" is not null
             and (${lastReadAtIso}::timestamptz is null or "attentionActivityAt" > ${lastReadAtIso}::timestamptz)
         )::int as "unreadCount",
-        max("attentionActivityAt") filter (
-          where ${lastReadAtIso}::timestamptz is null or "attentionActivityAt" > ${lastReadAtIso}::timestamptz
-        ) as "latestActivityAt"
+        max("attentionActivityAt") as "latestActivityAt"
       from (${issueEntryRowsQuery(orgId, userId)}) issue_entry_stats
     `)) as IssueThreadStats[];
     const row = rows[0];
@@ -1166,14 +1166,12 @@ export function messengerService(db: Db) {
       : { itemCount: 0, unreadCount: 0, latestActivityAt: null };
   }
 
-  async function loadLatestUnreadIssueEntry(orgId: string, userId: string, lastReadAt: Date | null) {
-    const lastReadAtIso = lastReadAt?.toISOString() ?? null;
+  async function loadLatestIssueAttentionEntry(orgId: string, userId: string) {
     const rows = (await db.execute(issueEntryRowsQuery(
       orgId,
       userId,
       sql`
         where "attentionActivityAt" is not null
-          and (${lastReadAtIso}::timestamptz is null or "attentionActivityAt" > ${lastReadAtIso}::timestamptz)
         order by "attentionActivityAt" desc, id asc
         limit 1
       `,
@@ -1223,7 +1221,7 @@ export function messengerService(db: Db) {
 
     const [stats, latestAttentionEntry, detailEntries] = await Promise.all([
       loadIssueThreadStats(orgId, userId, lastReadAt),
-      loadLatestUnreadIssueEntry(orgId, userId, lastReadAt),
+      loadLatestIssueAttentionEntry(orgId, userId),
       options.includeDetail
         ? loadIssueDetailEntries(orgId, userId, detailLimit, decodedCursor)
         : Promise.resolve([] as IssueThreadEntry[]),
@@ -1827,6 +1825,12 @@ export function messengerService(db: Db) {
     return loadIssueSummaryData(orgId, userId, undefined, options);
   }
 
+  async function countUnreadIssueThreadEntries(orgId: string, userId: string) {
+    const lastReadAt = await lastReadAtForThread(db, orgId, userId, "issues");
+    const stats = await loadIssueThreadStats(orgId, userId, lastReadAt);
+    return stats.unreadCount;
+  }
+
   async function getApprovalsThread(orgId: string, userId: string) {
     return loadApprovalSummaryData(orgId, userId);
   }
@@ -1904,6 +1908,7 @@ export function messengerService(db: Db) {
     listThreadSummaryPage,
     getChatThread,
     getIssuesThread,
+    countUnreadIssueThreadEntries,
     getApprovalsThread,
     getSystemThread,
     getThreadState,

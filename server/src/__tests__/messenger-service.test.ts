@@ -1253,6 +1253,21 @@ describe("messengerService and issue follows", () => {
     expect(issuesSummary?.preview).toBe("CMP-41 · Explain completed notification — Completed");
     expect(thread.detail.unreadCount).toBe(1);
     expect(thread.detail.needsAttention).toBe(true);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+
+    await messengerSvc.setThreadRead(orgId, userId, "issues", completedAt);
+
+    const readThread = await messengerSvc.getIssuesThread(orgId, userId);
+    const readSummaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const readIssuesSummary = readSummaries.find((entry) => entry.threadKey === "issues");
+    expect(readThread.detail.unreadCount).toBe(0);
+    expect(readThread.detail.needsAttention).toBe(false);
+    expect(readThread.summary.latestActivityAt?.toISOString()).toBe(completedAt.toISOString());
+    expect(readThread.summary.preview).toBe("CMP-41 · Explain completed notification — Completed");
+    expect(readIssuesSummary?.unreadCount).toBe(0);
+    expect(readIssuesSummary?.latestActivityAt?.toISOString()).toBe(completedAt.toISOString());
+    expect(readIssuesSummary?.preview).toBe("CMP-41 · Explain completed notification — Completed");
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
   it("does not count description-only issue updates as Messenger attention", async () => {

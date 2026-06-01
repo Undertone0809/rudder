@@ -1309,6 +1309,66 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId("rail-badge-messenger")).toHaveCount(0);
   });
 
+  test("opening unread Messenger issues clears the issue thread badge and the rail badge", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Issue-Read-${Date.now()}`);
+    const issueId = randomUUID();
+    const activityAt = new Date("2026-05-22T10:00:00.000Z");
+    await e2eDb.insert(issues).values({
+      id: issueId,
+      orgId: organization.id,
+      title: "Unread issue thread badge",
+      status: "done",
+      priority: "medium",
+      assigneeUserId: currentUserId,
+      identifier: `${organization.issuePrefix}-1`,
+      createdAt: new Date("2026-05-22T09:00:00.000Z"),
+      updatedAt: activityAt,
+      completedAt: activityAt,
+    });
+    await e2eDb.insert(activityLog).values({
+      orgId: organization.id,
+      actorType: "agent",
+      actorId: "issue-e2e-agent",
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: issueId,
+      details: { status: "done", identifier: `${organization.issuePrefix}-1`, _previous: { status: "in_progress" } },
+      createdAt: activityAt,
+    });
+    const initialBadgesRes = await page.request.get(`/api/orgs/${organization.id}/sidebar-badges`);
+    expect(initialBadgesRes.ok()).toBe(true);
+    await expect(initialBadgesRes.json()).resolves.toMatchObject({
+      inbox: 1,
+      unreadTouchedIssues: 1,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto("/messenger");
+
+    const issueThread = page.getByTestId(threadTestId("issues"));
+    await expect(issueThread).toContainText("Issues");
+    await expect(issueThread).toContainText("Unread issue thread badge");
+    await expect(page.getByTestId("issues-unread-badge")).toHaveText("1");
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
+
+    await issueThread.click();
+    await expect(page).toHaveURL(/\/messenger\/issues$/, { timeout: 15_000 });
+    await expect(page.getByTestId(`messenger-issue-card-${issueId}`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("issues-unread-badge")).toHaveCount(0);
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveCount(0);
+    await expect(page.getByTestId(threadTestId("issues"))).toContainText("Unread issue thread badge");
+  });
+
   test("keeps legacy entry points redirecting into Messenger routes", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Redirects-${Date.now()}`);
 
