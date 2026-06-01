@@ -24,7 +24,8 @@ related_code:
   - server/src/services/instance-settings.ts
   - ui/src/pages/InstanceGeneralSettings.tsx
   - .agents/skills/maintainer
-commit_refs: []
+commit_refs:
+  - 4dc75086
 updated_at: 2026-06-01
 ---
 
