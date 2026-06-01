@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react";
-import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
+import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDocMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
+import { FileText } from "lucide-react";
+import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
 import { getAgentIcon } from "./agent-icons";
 
 export type ParsedMentionChip =
@@ -21,6 +23,17 @@ export type ParsedMentionChip =
   | {
       kind: "chat";
       conversationId: string;
+      title: string | null;
+    }
+  | {
+      kind: "library_doc";
+      documentId: string;
+      title: string | null;
+    }
+  | {
+      kind: "library_file";
+      filePath: string;
+      title: string | null;
     };
 
 const iconMaskCache = new Map<string, string>();
@@ -62,6 +75,25 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
     return {
       kind: "chat",
       conversationId: chat.conversationId,
+      title: chat.title,
+    };
+  }
+
+  const libraryDoc = parseLibraryDocMentionHref(href);
+  if (libraryDoc) {
+    return {
+      kind: "library_doc",
+      documentId: libraryDoc.documentId,
+      title: libraryDoc.title,
+    };
+  }
+
+  const libraryFile = parseLibraryFileMentionHref(href);
+  if (libraryFile) {
+    return {
+      kind: "library_file",
+      filePath: libraryFile.filePath,
+      title: libraryFile.title,
     };
   }
 
@@ -76,7 +108,25 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
   }
 
   if (mention.kind === "agent") {
+    const avatarImageSrc = getAgentAvatarImageSrc(mention.icon);
+    if (avatarImageSrc) {
+      style["--rudder-mention-agent-avatar-background"] = `url("${escapeCssUrl(avatarImageSrc)}") center / cover no-repeat`;
+      const avatarShellStyle = getAgentAvatarBackgroundStyle(mention.icon);
+      if (typeof avatarShellStyle?.background === "string") {
+        style["--rudder-mention-agent-avatar-shell-background"] = avatarShellStyle.background;
+      }
+      style["--rudder-mention-icon-mask"] = "none";
+      return style as CSSProperties;
+    }
+
     const iconMask = buildAgentIconMask(mention.icon);
+    if (iconMask) {
+      style["--rudder-mention-icon-mask"] = iconMask;
+    }
+  }
+
+  if (mention.kind === "library_doc" || mention.kind === "library_file") {
+    const iconMask = buildLucideIconMask(FileText, "lucide:file-text");
     if (iconMask) {
       style["--rudder-mention-icon-mask"] = iconMask;
     }
@@ -120,6 +170,8 @@ export function clearMentionChipDecoration(element: HTMLElement) {
     "rudder-mention-chip--agent",
     "rudder-mention-chip--chat",
     "rudder-mention-chip--issue",
+    "rudder-mention-chip--library_doc",
+    "rudder-mention-chip--library_file",
     "rudder-mention-chip--project",
     "rudder-project-mention-chip",
   );
@@ -128,16 +180,28 @@ export function clearMentionChipDecoration(element: HTMLElement) {
   element.style.removeProperty("background-color");
   element.style.removeProperty("color");
   element.style.removeProperty("--rudder-mention-project-color");
+  element.style.removeProperty("--rudder-mention-agent-avatar-background");
+  element.style.removeProperty("--rudder-mention-agent-avatar-shell-background");
   element.style.removeProperty("--rudder-mention-icon-mask");
+}
+
+function escapeCssUrl(value: string) {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("\n", "");
 }
 
 function buildAgentIconMask(iconName: string | null): string | null {
   const cacheKey = iconName ?? "__default__";
+  return buildLucideIconMask(getAgentIcon(iconName), `agent:${cacheKey}`);
+}
+
+export function buildLucideIconMask(icon: unknown, cacheKey: string): string | null {
   const cached = iconMaskCache.get(cacheKey);
   if (cached) return cached;
 
-  const Icon = getAgentIcon(iconName);
-  const iconNode = resolveLucideIconNode(Icon);
+  const iconNode = resolveLucideIconNode(icon);
   if (!Array.isArray(iconNode) || iconNode.length === 0) return null;
 
   const body = iconNode.map(([tag, attrs]) => {

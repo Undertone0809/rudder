@@ -906,7 +906,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
         cwd: process.cwd(),
         source: "project_primary",
         projectId: "project-1",
-        orgResourcesPrompt: "## Project Resources\n\n- [primary] Launch playbook",
+        orgResourcesPrompt: "## Project Context Resources\n\n- [primary] Launch playbook",
     }));
 
     const svc = chatAssistantService({} as any);
@@ -928,7 +928,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("- Project ID: project-1");
     expect(prompt).toContain("- Name: Launch Ops");
     expect(prompt).toContain("- Description: Coordinate the launch workflow.");
-    expect(prompt).toContain("## Project Resources");
+    expect(prompt).toContain("## Project Context Resources");
     expect(prompt).toContain("[primary] Launch playbook");
   });
 

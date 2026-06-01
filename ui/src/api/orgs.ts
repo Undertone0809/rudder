@@ -1,8 +1,18 @@
 import type {
+  CreateLibraryDocument,
   CreateOrganizationResourceRequest,
+  LibraryDocument,
+  LibraryDocumentRevision,
+  LibraryDocumentSummary,
   Organization,
   OrganizationResource,
+  OrganizationWorkspaceDirectoryCreateRequest,
+  OrganizationWorkspaceEntryMutationResult,
+  OrganizationWorkspaceEntryMoveRequest,
+  OrganizationWorkspaceEntryRenameRequest,
+  OrganizationWorkspaceFileCreateRequest,
   OrganizationWorkspaceFileDetail,
+  OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList,
   OrganizationWorkspaceFileUpdateRequest,
   OrganizationPortabilityExportRequest,
@@ -23,6 +33,8 @@ import type {
   WorkspaceBackupRestoreRequest,
   WorkspaceBackupRestoreResult,
   WorkspaceBackupSummary,
+  RestoreLibraryDocumentRevision,
+  UpdateLibraryDocument,
   UpdateOrganizationBranding,
   UpdateOrganizationResourceRequest,
 } from "@rudderhq/shared";
@@ -66,6 +78,28 @@ export const organizationsApi = {
   ) => api.patch<Organization>(`/orgs/${orgId}`, data),
   updateBranding: (orgId: string, data: UpdateOrganizationBranding) =>
     api.patch<Organization>(`/orgs/${orgId}/branding`, data),
+  listLibraryDocuments: (orgId: string) =>
+    api.get<LibraryDocumentSummary[]>(`/orgs/${orgId}/library/documents`),
+  createLibraryDocument: (orgId: string, data: CreateLibraryDocument) =>
+    api.post<LibraryDocument>(`/orgs/${orgId}/library/documents`, data),
+  getLibraryDocument: (orgId: string, documentId: string) =>
+    api.get<LibraryDocument>(`/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}`),
+  updateLibraryDocument: (orgId: string, documentId: string, data: UpdateLibraryDocument) =>
+    api.patch<LibraryDocument>(`/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}`, data),
+  listLibraryDocumentRevisions: (orgId: string, documentId: string) =>
+    api.get<LibraryDocumentRevision[]>(
+      `/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}/revisions`,
+    ),
+  restoreLibraryDocumentRevision: (
+    orgId: string,
+    documentId: string,
+    revisionId: string,
+    data: RestoreLibraryDocumentRevision = {},
+  ) =>
+    api.post<LibraryDocument>(
+      `/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/restore`,
+      data,
+    ),
   listResources: (orgId: string) => api.get<OrganizationResource[]>(`/orgs/${orgId}/resources`),
   createResource: (orgId: string, data: CreateOrganizationResourceRequest) =>
     api.post<OrganizationResource>(`/orgs/${orgId}/resources`, data),
@@ -81,6 +115,16 @@ export const organizationsApi = {
       `/orgs/${orgId}/workspace/files${query ? `?${query}` : ""}`,
     );
   },
+  listWorkspaceMentionFiles: (orgId: string, options?: { query?: string | null; limit?: number | null }) => {
+    const search = new URLSearchParams();
+    const query = options?.query?.trim();
+    if (query) search.set("q", query);
+    if (options?.limit) search.set("limit", String(options.limit));
+    const suffix = search.toString();
+    return api.get<{ entries: OrganizationWorkspaceFileEntry[] }>(
+      `/orgs/${orgId}/workspace/mention-files${suffix ? `?${suffix}` : ""}`,
+    );
+  },
   readWorkspaceFile: (orgId: string, filePath: string) => {
     const search = new URLSearchParams();
     if (filePath) search.set("path", filePath);
@@ -89,6 +133,10 @@ export const organizationsApi = {
       `/orgs/${orgId}/workspace/file${query ? `?${query}` : ""}`,
     );
   },
+  createWorkspaceFile: (orgId: string, data: OrganizationWorkspaceFileCreateRequest) =>
+    api.post<OrganizationWorkspaceFileDetail>(`/orgs/${orgId}/workspace/file`, data),
+  createWorkspaceDirectory: (orgId: string, data: OrganizationWorkspaceDirectoryCreateRequest) =>
+    api.post<OrganizationWorkspaceEntryMutationResult>(`/orgs/${orgId}/workspace/directory`, data),
   updateWorkspaceFile: (orgId: string, filePath: string, data: OrganizationWorkspaceFileUpdateRequest) => {
     const search = new URLSearchParams();
     if (filePath) search.set("path", filePath);
@@ -96,6 +144,32 @@ export const organizationsApi = {
     return api.patch<OrganizationWorkspaceFileDetail>(
       `/orgs/${orgId}/workspace/file${query ? `?${query}` : ""}`,
       data,
+    );
+  },
+  renameWorkspaceEntry: (orgId: string, entryPath: string, data: OrganizationWorkspaceEntryRenameRequest) => {
+    const search = new URLSearchParams();
+    if (entryPath) search.set("path", entryPath);
+    const query = search.toString();
+    return api.patch<OrganizationWorkspaceEntryMutationResult>(
+      `/orgs/${orgId}/workspace/entry${query ? `?${query}` : ""}`,
+      data,
+    );
+  },
+  moveWorkspaceEntry: (orgId: string, entryPath: string, data: OrganizationWorkspaceEntryMoveRequest) => {
+    const search = new URLSearchParams();
+    if (entryPath) search.set("path", entryPath);
+    const query = search.toString();
+    return api.patch<OrganizationWorkspaceEntryMutationResult>(
+      `/orgs/${orgId}/workspace/entry/move${query ? `?${query}` : ""}`,
+      data,
+    );
+  },
+  deleteWorkspaceEntry: (orgId: string, entryPath: string) => {
+    const search = new URLSearchParams();
+    if (entryPath) search.set("path", entryPath);
+    const query = search.toString();
+    return api.delete<OrganizationWorkspaceEntryMutationResult>(
+      `/orgs/${orgId}/workspace/entry${query ? `?${query}` : ""}`,
     );
   },
   listWorkspaceBackups: (orgId: string) =>

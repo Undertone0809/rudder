@@ -4,6 +4,7 @@ import type {
   CreateProjectInlineResourceInput,
   OrganizationResource,
   OrganizationResourceKind,
+  OrganizationWorkspaceFileEntry,
   ProjectResourceAttachmentInput,
   ProjectResourceAttachmentRole,
 } from "@rudderhq/shared";
@@ -18,6 +19,7 @@ import { useNavigate } from "@/lib/router";
 import {
   organizationResourceKindOptions,
   organizationResourceKindLabel,
+  organizationResourceSourceTypeLabel,
   projectResourceRoleOptions,
 } from "../lib/resource-options";
 import {
@@ -39,6 +41,8 @@ import {
   X,
   Link2,
   Folder,
+  FileText,
+  LibraryBig,
   CircleHelp,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -71,6 +75,7 @@ type DraftInlineResource = {
   id: string;
   name: string;
   resourceKind: OrganizationResourceKind;
+  sourceType: "external" | "library";
   locator: string;
   description: string;
   role: ProjectResourceAttachmentRole;
@@ -89,11 +94,31 @@ function createInlineResourceDraft(): DraftInlineResource {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name: "",
     resourceKind: "directory",
+    sourceType: "external",
     locator: "",
     description: "",
     role: "working_set",
     note: "",
   };
+}
+
+const LIBRARY_PATH_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+const PROTECTED_LIBRARY_RESOURCE_ROOTS = new Set(["agents", "artifacts", "plans", "skills"]);
+
+function isValidLibraryRelativePath(locator: string) {
+  const trimmed = locator.trim();
+  if (!trimmed) return false;
+  if (LIBRARY_PATH_SCHEME_RE.test(trimmed)) return false;
+  if (trimmed.startsWith("/") || trimmed.startsWith("\\") || trimmed.startsWith("~")) return false;
+  if (trimmed.includes("\\")) return false;
+  const parts = trimmed.split("/");
+  if (!parts.every((part) => part.length > 0 && part !== "." && part !== "..")) return false;
+  return !PROTECTED_LIBRARY_RESOURCE_ROOTS.has(parts[0] ?? "");
+}
+
+function libraryNameFromPath(locator: string) {
+  const parts = locator.trim().split("/").filter(Boolean);
+  return parts.at(-1) ?? locator.trim();
 }
 
 export function NewProjectDialog() {
@@ -111,7 +136,9 @@ export function NewProjectDialog() {
 
   const [statusOpen, setStatusOpen] = useState(false);
   const [goalOpen, setGoalOpen] = useState(false);
-  const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
+  const [addResourcesOpen, setAddResourcesOpen] = useState(false);
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [resourceSearch, setResourceSearch] = useState("");
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
 
   const { data: goals } = useQuery({
@@ -124,6 +151,15 @@ export function NewProjectDialog() {
     queryKey: queryKeys.organizations.resources(selectedOrganizationId ?? "__none__"),
     queryFn: () => organizationsApi.listResources(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && newProjectOpen,
+  });
+
+  const { data: libraryMentionFiles } = useQuery({
+    queryKey: queryKeys.organizations.workspaceMentionFiles(selectedOrganizationId ?? "__none__", librarySearch),
+    queryFn: () => organizationsApi.listWorkspaceMentionFiles(selectedOrganizationId!, {
+      query: librarySearch,
+      limit: 24,
+    }),
+    enabled: !!selectedOrganizationId && newProjectOpen && addResourcesOpen,
   });
 
   const createProject = useMutation({
@@ -149,15 +185,49 @@ export function NewProjectDialog() {
     setTargetDate("");
     setExpanded(false);
     setResourceDrafts([]);
+    setLibrarySearch("");
+    setResourceSearch("");
   }
 
   const existingResourceMap = new Map((organizationResources ?? []).map((resource) => [resource.id, resource]));
+  const libraryResourceByLocator = new Map(
+    (organizationResources ?? [])
+      .filter((resource) => resource.sourceType === "library")
+      .map((resource) => [resource.locator, resource]),
+  );
   const selectedExistingResourceIds = new Set(
     resourceDrafts
       .filter((resource): resource is DraftAttachedResource => resource.kind === "existing")
       .map((resource) => resource.resourceId),
   );
+  const selectedLibraryLocators = new Set(
+    resourceDrafts.flatMap((resource) => {
+      if (resource.kind === "new" && resource.sourceType === "library") return [resource.locator];
+      if (resource.kind === "existing") {
+        const existing = existingResourceMap.get(resource.resourceId);
+        return existing?.sourceType === "library" ? [existing.locator] : [];
+      }
+      return [];
+    }),
+  );
   const availableResources = (organizationResources ?? []).filter((resource) => !selectedExistingResourceIds.has(resource.id));
+  const normalizedResourceSearch = resourceSearch.trim().toLowerCase();
+  const visibleAvailableResources = normalizedResourceSearch
+    ? availableResources.filter((resource) => [
+      resource.name,
+      resource.locator,
+      resource.description ?? "",
+      organizationResourceSourceTypeLabel(resource.sourceType),
+      organizationResourceKindLabel(resource.kind),
+    ].some((value) => value.toLowerCase().includes(normalizedResourceSearch)))
+    : availableResources;
+  const libraryFileEntries = Array.isArray(libraryMentionFiles?.entries) ? libraryMentionFiles.entries : [];
+  const availableLibraryFiles = libraryFileEntries.filter((entry) => !selectedLibraryLocators.has(entry.path));
+  const normalizedLibrarySearch = librarySearch.trim();
+  const canAddLibrarySearchPath =
+    isValidLibraryRelativePath(normalizedLibrarySearch)
+    && !selectedLibraryLocators.has(normalizedLibrarySearch)
+    && !availableLibraryFiles.some((entry) => entry.path === normalizedLibrarySearch);
   const hasInvalidInlineResources = resourceDrafts.some((resource) =>
     resource.kind === "new" && (!resource.name.trim() || !resource.locator.trim()),
   );
@@ -176,16 +246,73 @@ export function NewProjectDialog() {
   }
 
   function addExistingResource(resource: OrganizationResource) {
+    setResourceDrafts((current) => {
+      if (current.some((draft) => draft.kind === "existing" && draft.resourceId === resource.id)) return current;
+      return [
+        ...current,
+        {
+          kind: "existing",
+          resourceId: resource.id,
+          role: "reference",
+          note: "",
+        },
+      ];
+    });
+    setAddResourcesOpen(false);
+  }
+
+  function addLibraryResource(file: OrganizationWorkspaceFileEntry) {
+    const existing = libraryResourceByLocator.get(file.path);
+    if (existing) {
+      addExistingResource(existing);
+      return;
+    }
     setResourceDrafts((current) => [
       ...current,
       {
-        kind: "existing",
-        resourceId: resource.id,
+        kind: "new",
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: file.displayLabel ?? file.name,
+        resourceKind: file.isDirectory ? "directory" : "file",
+        sourceType: "library",
+        locator: file.path,
+        description: "",
+        role: file.isDirectory ? "working_set" : "reference",
+        note: "",
+      },
+    ]);
+    setAddResourcesOpen(false);
+  }
+
+  function addLibraryResourcePath(locator: string) {
+    const normalizedLocator = locator.trim();
+    if (!isValidLibraryRelativePath(normalizedLocator)) return;
+    const existing = libraryResourceByLocator.get(normalizedLocator);
+    if (existing) {
+      addExistingResource(existing);
+      return;
+    }
+    setResourceDrafts((current) => [
+      ...current,
+      {
+        kind: "new",
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: libraryNameFromPath(normalizedLocator),
+        resourceKind: "file",
+        sourceType: "library",
+        locator: normalizedLocator,
+        description: "",
         role: "reference",
         note: "",
       },
     ]);
-    setResourcePickerOpen(false);
+    setAddResourcesOpen(false);
+    setLibrarySearch("");
+  }
+
+  function addExternalResourceDraft() {
+    setResourceDrafts((current) => [...current, createInlineResourceDraft()]);
+    setAddResourcesOpen(false);
   }
 
   async function handleSubmit() {
@@ -205,6 +332,7 @@ export function NewProjectDialog() {
       .map((resource, index) => ({
         name: resource.name.trim(),
         kind: resource.resourceKind,
+        sourceType: resource.sourceType,
         locator: resource.locator.trim(),
         description: resource.description.trim() || undefined,
         role: resource.role,
@@ -324,69 +452,146 @@ export function NewProjectDialog() {
         <div className="border-t border-border px-4 py-3 space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-center gap-1.5">
-              <div className="text-sm font-medium">Resources</div>
+              <div className="text-sm font-medium">Project Context</div>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
                     className="inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label="About project resources"
+                    aria-label="About project context"
                   >
                     <CircleHelp className="h-3.5 w-3.5" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" sideOffset={8} className="max-w-[260px] px-3 py-2 text-xs leading-5">
-                  Attach the codebases, docs, URLs, and external systems agents should use for this project.
+                  Attach the codebases, Docs, URLs, and external systems agents should use for this project.
                 </TooltipContent>
               </Tooltip>
             </div>
             <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-              <Popover open={resourcePickerOpen} onOpenChange={setResourcePickerOpen}>
+              <Popover
+                open={addResourcesOpen}
+                onOpenChange={(open) => {
+                  setAddResourcesOpen(open);
+                  if (!open) {
+                    setLibrarySearch("");
+                    setResourceSearch("");
+                  }
+                }}
+              >
                 <PopoverTrigger asChild>
                   <Button
                     type="button"
-                    variant="outline"
                     size="xs"
                     className="h-7 rounded-[calc(var(--radius-sm)-1px)] px-2"
-                    disabled={!selectedOrganizationId || (organizationResources ?? []).length === 0 || availableResources.length === 0}
+                    disabled={!selectedOrganizationId}
                   >
-                    <Link2 className="mr-1.5 h-3 w-3" />
-                    Attach org resource
+                    <Plus className="mr-1.5 h-3 w-3" />
+                    Add resources
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-72 p-1" align="end">
-                  {availableResources.length === 0 ? (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      No unattached org resources available.
+                <PopoverContent className="max-h-[420px] w-80 overflow-y-auto p-1" align="end">
+                  <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Add from Docs
+                  </div>
+                  <div className="px-2 pb-2">
+                    <input
+                      value={librarySearch}
+                      onChange={(event) => setLibrarySearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && canAddLibrarySearchPath) {
+                          event.preventDefault();
+                          addLibraryResourcePath(normalizedLibrarySearch);
+                        }
+                      }}
+                      className="h-7 w-full rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background px-2 text-xs outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                      placeholder="Search Docs or paste relative path"
+                    />
+                  </div>
+                  {availableLibraryFiles.length === 0 ? (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">
+                      {librarySearch.trim() ? "No matching Docs files." : "No Library files available."}
                     </div>
-                  ) : (
-                    availableResources.map((resource) => (
+                  ) : availableLibraryFiles.map((file) => {
+                    const Icon = file.isDirectory ? Folder : FileText;
+                    return (
                       <button
-                        key={resource.id}
+                        key={file.path}
                         type="button"
-                        className="w-full rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                        onClick={() => addExistingResource(resource)}
+                        className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
+                        onClick={() => addLibraryResource(file)}
                       >
-                        <div className="text-xs font-medium">{resource.name}</div>
-                        <div className="truncate text-[11px] text-muted-foreground">
-                          {organizationResourceKindLabel(resource.kind)} · {resource.locator}
-                        </div>
+                        <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-medium">{file.displayLabel ?? file.name}</span>
+                          <span className="block truncate font-mono text-[11px] text-muted-foreground">{file.path}</span>
+                        </span>
                       </button>
-                    ))
-                  )}
+                    );
+                  })}
+                  {canAddLibrarySearchPath ? (
+                    <button
+                      type="button"
+                      className="mt-1 flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
+                      onClick={() => addLibraryResourcePath(normalizedLibrarySearch)}
+                    >
+                      <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-medium">Use this Docs path</span>
+                        <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                          {normalizedLibrarySearch}
+                        </span>
+                      </span>
+                    </button>
+                  ) : null}
+
+                  <div className="my-1 h-px bg-border" />
+                  <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Existing resources
+                  </div>
+                  <div className="px-2 pb-2">
+                    <input
+                      value={resourceSearch}
+                      onChange={(event) => setResourceSearch(event.target.value)}
+                      className="h-7 w-full rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background px-2 text-xs outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                      placeholder="Search existing resources"
+                    />
+                  </div>
+                  {visibleAvailableResources.length === 0 ? (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">
+                      {resourceSearch.trim() ? "No matching resources." : "No unattached resources available."}
+                    </div>
+                  ) : visibleAvailableResources.map((resource) => (
+                    <button
+                      key={resource.id}
+                      type="button"
+                      className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
+                      onClick={() => addExistingResource(resource)}
+                    >
+                      <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-medium">{resource.name}</span>
+                        <span className="block truncate text-[11px] text-muted-foreground">
+                          {organizationResourceSourceTypeLabel(resource.sourceType)} · {organizationResourceKindLabel(resource.kind)} · {resource.locator}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+
+                  <div className="my-1 h-px bg-border" />
+                  <button
+                    type="button"
+                    className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
+                    onClick={addExternalResourceDraft}
+                  >
+                    <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span>
+                      <span className="block text-xs font-medium">Create external resource</span>
+                      <span className="block text-[11px] text-muted-foreground">Add a URL, local path, repo path, or connector reference.</span>
+                    </span>
+                  </button>
                 </PopoverContent>
               </Popover>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                className="h-7 rounded-[calc(var(--radius-sm)-1px)] px-2"
-                onClick={() => setResourceDrafts((current) => [...current, createInlineResourceDraft()])}
-              >
-                <Plus className="mr-1.5 h-3 w-3" />
-                New resource
-              </Button>
             </div>
           </div>
 
@@ -409,21 +614,28 @@ export function NewProjectDialog() {
                           {resource.kind === "existing" ? (
                             <>
                               <Link2 className="h-3.5 w-3.5 text-muted-foreground" />
-                              <span className="truncate">{existingResource?.name ?? "Missing org resource"}</span>
+                              <span className="truncate">{existingResource?.name ?? "Missing resource"}</span>
+                            </>
+                          ) : resource.sourceType === "library" ? (
+                            <>
+                              <LibraryBig className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="truncate">{resource.name.trim() || resource.locator}</span>
                             </>
                           ) : (
                             <>
                               <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-                              <span>{resource.name.trim() || "New org resource"}</span>
+                              <span>{resource.name.trim() || "New resource"}</span>
                             </>
                           )}
                         </div>
                         <div className="truncate text-[11px] text-muted-foreground">
                           {resource.kind === "existing"
                             ? existingResource
-                              ? `${organizationResourceKindLabel(existingResource.kind)} · ${existingResource.locator}`
-                              : "This org resource is no longer available."
-                            : "Created in the org catalog and attached to this project on submit."}
+                              ? `${organizationResourceSourceTypeLabel(existingResource.sourceType)} · ${organizationResourceKindLabel(existingResource.kind)} · ${existingResource.locator}`
+                              : "This resource is no longer available."
+                            : resource.sourceType === "library"
+                              ? `Docs · ${organizationResourceKindLabel(resource.resourceKind)} · ${resource.locator}`
+                              : "Created as an external resource and attached to this project on submit."}
                         </div>
                       </div>
                       <Button
@@ -437,7 +649,7 @@ export function NewProjectDialog() {
                       </Button>
                     </div>
 
-                    {resource.kind === "new" ? (
+                    {resource.kind === "new" && resource.sourceType === "external" ? (
                       <div className="grid gap-2 md:grid-cols-2">
                         <label className="space-y-1">
                           <span className="text-[11px] text-muted-foreground">Name</span>
@@ -644,7 +856,7 @@ export function NewProjectDialog() {
             <p className="text-xs text-destructive">Failed to create project.</p>
           ) : (
             <span className="text-xs text-muted-foreground">
-              {resourceDrafts.length > 0 ? `${resourceDrafts.length} resource${resourceDrafts.length === 1 ? "" : "s"} queued` : ""}
+              {resourceDrafts.length > 0 ? `${resourceDrafts.length} context item${resourceDrafts.length === 1 ? "" : "s"} queued` : ""}
             </span>
           )}
           <Button

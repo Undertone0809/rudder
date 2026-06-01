@@ -4,13 +4,18 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { ThemeProvider } from "../context/ThemeContext";
 import { MarkdownBody } from "./MarkdownBody";
+import type { MentionOption } from "./MarkdownEditor";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+const markdownMentionsMock = vi.hoisted(() => ({
+  mentions: [] as MentionOption[],
+}));
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,
@@ -51,11 +56,19 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+vi.mock("../context/MarkdownMentionsContext", () => ({
+  useMarkdownMentions: () => ({
+    mentions: markdownMentionsMock.mentions,
+    onMentionQueryChange: vi.fn(),
+  }),
+}));
+
 let cleanupFn: (() => void) | null = null;
 
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
+  markdownMentionsMock.mentions = [];
   document.body.innerHTML = "";
 });
 
@@ -84,6 +97,73 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
+  });
+
+  it("renders library document mentions as live Docs links", () => {
+    const href = buildLibraryDocMentionHref("doc-123", "Product principles");
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{`[@Product principles](${href})`}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/library?doc=doc-123"');
+    expect(html).toContain('data-mention-kind="library_doc"');
+    expect(html).toContain("Product principles");
+  });
+
+  it("renders library file mentions as live Docs path links", () => {
+    const href = buildLibraryFileMentionHref("docs/product-brief.md", "product-brief.md");
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{`[@product-brief.md](${href})`}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
+    expect(html).toContain('data-mention-kind="library_file"');
+    expect(html).toContain("product-brief.md");
+  });
+
+  it("can copy rendered markdown as its source markdown", () => {
+    const href = buildLibraryFileMentionHref("docs/product-brief.md", "product-brief.md");
+    const source = `# Brief\n\n- Keep **syntax**\n- [@product-brief.md](${href})`;
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody copyMarkdownOnCopy>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const body = container.querySelector("[data-copy-markdown-source='true']");
+    expect(body).toBeTruthy();
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(body!);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const copyData = { setData: vi.fn() };
+    const copyEvent = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, "clipboardData", {
+      value: copyData,
+    });
+    body!.dispatchEvent(copyEvent);
+
+    expect(copyData.setData).toHaveBeenCalledWith("text/plain", source);
+    expect(copyEvent.defaultPrevented).toBe(true);
+  });
+
+  it("renders chat mentions as live Messenger links", () => {
+    const href = buildChatMentionHref("chat-123", "Launch planning");
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{`[@Launch planning](${href})`}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/messenger/chat/chat-123"');
+    expect(html).toContain('data-mention-kind="chat"');
+    expect(html).toContain("Launch planning");
   });
 
   it("resolves relative image paths when a resolver is provided", () => {
@@ -212,68 +292,27 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain(">@Rudder App</a>");
   });
 
-  it("renders bare agent @mentions as chips when agent metadata is provided", () => {
+  it("uses the current agent avatar when rendering existing agent mention links", () => {
+    markdownMentionsMock.mentions = [{
+      id: "agent:agent-123",
+      name: "CodexCoder",
+      kind: "agent",
+      agentId: "agent-123",
+      agentIcon: "dicebear:notionists:11111111-1111-4111-8111-111111111111",
+    }];
+
     const html = renderToStaticMarkup(
       <ThemeProvider>
-        <MarkdownBody agentMentions={[{ name: "Holden", agentId: "agent-123", agentIcon: "code" }]}>
-          {"@Holden please review this.\n\n`@Holden stays literal in code`"}
+        <MarkdownBody>
+          {`[@CodexCoder](${buildAgentMentionHref("agent-123", "user")})`}
         </MarkdownBody>
       </ThemeProvider>,
     );
 
-    expect(html).toContain('href="/agents/agent-123"');
     expect(html).toContain('data-mention-kind="agent"');
-    expect(html).toContain(">Holden</a>");
-    expect(html).toContain("@Holden stays literal in code");
-  });
-
-  it("does not rewrite bare agent names inside inline code or existing links", () => {
-    const html = renderToStaticMarkup(
-      <ThemeProvider>
-        <MarkdownBody agentMentions={[{ name: "Holden", agentId: "agent-123", agentIcon: "code" }]}>
-          {"`please @Holden review` and [ask @Holden](https://example.com), then @Holden should review."}
-        </MarkdownBody>
-      </ThemeProvider>,
-    );
-
-    expect(html).toContain("please @Holden review");
-    expect(html).toContain(">ask @Holden</a>");
-    expect(html).toContain('href="https://example.com"');
-    expect(html).toContain('href="/agents/agent-123"');
-    expect(html.match(/data-mention-kind="agent"/g)).toHaveLength(1);
-  });
-
-  it("uses backend-compatible punctuation boundaries for bare agent mentions", () => {
-    const html = renderToStaticMarkup(
-      <ThemeProvider>
-        <MarkdownBody agentMentions={[{ name: "Holden", agentId: "agent-123", agentIcon: "code" }]}>
-          {"@Holden, please look. @Holden: should stay text. @Holden) should stay text."}
-        </MarkdownBody>
-      </ThemeProvider>,
-    );
-
-    expect(html.match(/data-mention-kind="agent"/g)).toHaveLength(1);
-    expect(html).toContain('href="/agents/agent-123"');
-    expect(html).toContain("@Holden: should stay text");
-    expect(html).toContain("@Holden) should stay text");
-  });
-
-  it("keeps multi-word bare agent names as text while structured links still render as chips", () => {
-    const html = renderToStaticMarkup(
-      <ThemeProvider>
-        <MarkdownBody
-          agentMentions={[
-            { name: "Holden Reviewer", agentId: "agent-long", agentIcon: "search" },
-          ]}
-        >
-          {`@Holden Reviewer needs a structured link: [@Holden Reviewer](${buildAgentMentionHref("agent-long", "search")}).`}
-        </MarkdownBody>
-      </ThemeProvider>,
-    );
-
-    expect(html).toContain('href="/agents/agent-long"');
-    expect(html).toContain(">Holden Reviewer</a>");
-    expect(html).toContain("@Holden Reviewer needs a structured link");
+    expect(html).toContain("--rudder-mention-agent-avatar-background");
+    expect(html).toContain("data:image/svg+xml");
+    expect(html).toContain("--rudder-mention-icon-mask:none");
   });
 
   it("renders issue mentions as chips that link to the issue route", () => {
@@ -289,20 +328,6 @@ describe("MarkdownBody", () => {
     expect(html).toContain('data-mention-kind="issue"');
     expect(html).toContain(">PAP-123 auth flow</a>");
     expect(html).not.toContain(">@PAP-123 auth flow</a>");
-  });
-
-  it("renders chat mentions as chips that link to the Messenger chat route", () => {
-    const html = renderToStaticMarkup(
-      <ThemeProvider>
-        <MarkdownBody>
-          {`[Planning thread](${buildChatMentionHref("chat-123")})`}
-        </MarkdownBody>
-      </ThemeProvider>,
-    );
-
-    expect(html).toContain('href="/messenger/chat/chat-123"');
-    expect(html).toContain('data-mention-kind="chat"');
-    expect(html).toContain(">Planning thread</a>");
   });
 
   it("renders skill references as non-interactive tokens instead of links", () => {
@@ -347,7 +372,8 @@ describe("MarkdownBody", () => {
     expect(html).toContain("~/.agents/skills");
     expect(html).toContain("Turn vague build feedback into expert diagnosis.");
     expect(html).toContain('href="/skills/skill-1"');
-    expect(html).toContain(">build-advisor</span>");
+    expect(html).toContain('class="rudder-skill-token"');
+    expect(html).toContain(">build-advisor</a>");
     expect(html).not.toContain("rudder/build-advisor");
   });
 
@@ -361,7 +387,7 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain("<ol>");
-    expect(html).toContain("<li>Confirm positioning</li>");
+    expect(html).toContain(">Confirm positioning</li>");
     expect(html).not.toContain("\\n");
   });
 

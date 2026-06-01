@@ -121,7 +121,7 @@ test.describe("Issue detail sub-issues", () => {
     await expect(subIssuesSection.getByText("Sub-issues", { exact: true })).toBeVisible();
     await expect(subIssuesSection.getByText("Existing child issue", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Change status for Existing child issue" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "New document" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "New document" })).toHaveCount(0);
     await expect(page.getByRole("tab", { name: "Chat" })).toHaveCount(0);
     await expect(page.getByRole("tab", { name: "Activity" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: "Activity" })).toBeVisible();
@@ -144,10 +144,10 @@ test.describe("Issue detail sub-issues", () => {
     await expect(propertiesPanel.getByText("Existing child issue", { exact: true })).toBeVisible();
 
     const subIssuesBox = await page.getByLabel("Sub-issues").boundingBox();
-    const documentsBox = await page.getByRole("button", { name: "New document" }).boundingBox();
+    const activityBox = await page.getByRole("region", { name: "Activity" }).boundingBox();
     expect(subIssuesBox).not.toBeNull();
-    expect(documentsBox).not.toBeNull();
-    expect((subIssuesBox?.y ?? 0)).toBeLessThan(documentsBox?.y ?? 0);
+    expect(activityBox).not.toBeNull();
+    expect((subIssuesBox?.y ?? 0)).toBeLessThan(activityBox?.y ?? 0);
 
     await page.getByRole("button", { name: "Change status for Existing child issue" }).click();
     await expect(page).toHaveURL(new RegExp(`${issue.identifier ?? issue.id}$`));

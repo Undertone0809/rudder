@@ -3,6 +3,7 @@ const BOARD_ROUTE_ROOTS = new Set([
   "organizations",
   "organization",
   "heartbeats",
+  "library",
   "resources",
   "workspaces",
   "skills",

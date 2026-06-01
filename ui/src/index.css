@@ -84,6 +84,8 @@
   --accent-soft: oklch(0.93 0.015 162);
   --accent-base: oklch(0.59 0.055 166);
   --accent-strong: oklch(0.5 0.06 166);
+  --rudder-doc-link: #2563eb;
+  --rudder-doc-link-hover: #1d4ed8;
   --border-soft: oklch(0.9 0.003 95);
   --border-base: oklch(0.84 0.004 95);
   --border-strong: oklch(0.71 0.006 95);
@@ -152,6 +154,8 @@
   --accent-soft: oklch(0.33 0.022 166);
   --accent-base: oklch(0.73 0.052 166);
   --accent-strong: oklch(0.8 0.048 166);
+  --rudder-doc-link: #60a5fa;
+  --rudder-doc-link-hover: #93c5fd;
   --border-soft: oklch(0.35 0.004 95);
   --border-base: oklch(0.44 0.004 95);
   --border-strong: oklch(0.57 0.005 95);
@@ -475,6 +479,15 @@
       0 30px 66px -46px rgb(0 0 0 / 0.58),
       0 12px 22px -18px rgb(0 0 0 / 0.24),
       inset 0 1px 0 rgb(255 255 255 / 0.04);
+  }
+
+  .workspace-main-card--frameless,
+  .dark .workspace-main-card--frameless,
+  html.desktop-shell-macos .workspace-main-card--frameless,
+  html.dark.desktop-shell-macos .workspace-main-card--frameless {
+    border-width: 0;
+    border-color: transparent;
+    box-shadow: none;
   }
 
   .workspace-context-card .workspace-context-sidebar {
@@ -1743,6 +1756,520 @@ button[draggable="false"] {
   color: var(--foreground);
 }
 
+/* Milkdown editor integration */
+.rudder-milkdown-scope {
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+
+.rudder-milkdown-content {
+  padding: 0.375rem 0.625rem;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+.rudder-milkdown-content--borderless {
+  padding: 0;
+}
+
+.rudder-milkdown-content .milkdown {
+  min-height: inherit;
+}
+
+.rudder-milkdown-content .ProseMirror {
+  min-height: inherit;
+  outline: none;
+  white-space: pre-wrap;
+}
+
+.rudder-milkdown-content .ProseMirror > *:first-child {
+  margin-top: 0;
+}
+
+.rudder-milkdown-content .ProseMirror > *:last-child {
+  margin-bottom: 0;
+}
+
+.rudder-milkdown-content p {
+  margin: 0;
+  line-height: inherit;
+}
+
+.rudder-milkdown-content p + p {
+  margin-top: 1.1em;
+}
+
+.rudder-milkdown-content :where(h1, h2, h3, h4, h5, h6) {
+  color: var(--foreground);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+.rudder-milkdown-content h1 {
+  margin: 1.4em 0 0.55em;
+  font-size: 1.85em;
+}
+
+.rudder-milkdown-content h2 {
+  margin: 1.35em 0 0.5em;
+  font-size: 1.45em;
+}
+
+.rudder-milkdown-content h3 {
+  margin: 1.25em 0 0.45em;
+  font-size: 1.18em;
+}
+
+.rudder-milkdown-content h4 {
+  margin: 1.15em 0 0.4em;
+  font-size: 1.05em;
+}
+
+.rudder-milkdown-content :where(h5, h6) {
+  margin: 1em 0 0.35em;
+  font-size: 0.95em;
+  color: color-mix(in oklab, var(--foreground) 82%, var(--muted-foreground));
+}
+
+.rudder-milkdown-content :where(ul, ol) {
+  margin: 0.75em 0;
+  padding-left: 1.45em;
+}
+
+.rudder-milkdown-content li {
+  margin: 0.18em 0;
+  padding-left: 0.15em;
+}
+
+.rudder-milkdown-content li::marker {
+  color: var(--muted-foreground);
+}
+
+.rudder-milkdown-content blockquote {
+  margin: 1em 0;
+  border-left: 3px solid color-mix(in oklab, var(--foreground) 18%, transparent);
+  padding-left: 1em;
+  color: color-mix(in oklab, var(--foreground) 74%, var(--muted-foreground));
+}
+
+.rudder-milkdown-content hr {
+  margin: 1.4em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.rudder-milkdown-content table {
+  margin: 1em 0;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+
+.rudder-milkdown-content th,
+.rudder-milkdown-content td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.55rem;
+  vertical-align: top;
+}
+
+.rudder-milkdown-content th {
+  background-color: color-mix(in oklab, var(--accent) 42%, transparent);
+  font-weight: 600;
+}
+
+.rudder-library-document-editor {
+  --doc-muted-line: color-mix(in oklab, var(--border) 72%, transparent);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+}
+
+.rudder-library-document-editor .ProseMirror {
+  caret-color: var(--foreground);
+}
+
+.rudder-library-document-editor .ProseMirror:focus-visible {
+  outline: none;
+}
+
+.rudder-library-document-editor .ProseMirror > :first-child:is(h1, h2) {
+  margin-top: 0;
+}
+
+.rudder-library-document-editor h1 {
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--doc-muted-line);
+  font-size: 2rem;
+}
+
+.rudder-library-document-editor h2 {
+  font-size: 1.5rem;
+}
+
+.rudder-library-document-editor h3 {
+  font-size: 1.18rem;
+}
+
+.rudder-library-document-editor p {
+  min-height: 1.75em;
+}
+
+.rudder-library-document-editor pre {
+  margin: 0.9em 0;
+  background-color: var(--code-surface);
+  color: var(--code-foreground);
+  border-color: var(--code-border);
+}
+
+.rudder-doc-editor-tab-strip {
+  position: relative;
+  isolation: isolate;
+}
+
+.rudder-doc-editor-tab-strip::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--border-base);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.rudder-doc-editor-tab-scroller {
+  position: relative;
+  z-index: 1;
+}
+
+.rudder-doc-editor-tab {
+  isolation: isolate;
+}
+
+.rudder-doc-editor-tab--active {
+  z-index: 2;
+}
+
+.rudder-doc-editor-tab--active::before,
+.rudder-doc-editor-tab--active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  width: 24px;
+  height: 24px;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.rudder-doc-editor-tab--active::before {
+  left: -24px;
+  border-right: 1px solid var(--border-base);
+  border-bottom: 1px solid var(--border-base);
+  border-bottom-right-radius: 24px;
+  box-shadow: 12px 12px 0 10px var(--surface-elevated);
+}
+
+.rudder-doc-editor-tab--active::after {
+  right: -24px;
+  border-bottom: 1px solid var(--border-base);
+  border-left: 1px solid var(--border-base);
+  border-bottom-left-radius: 24px;
+  box-shadow: -12px 12px 0 10px var(--surface-elevated);
+}
+
+.rudder-doc-editor-tab--first-active::before {
+  display: none;
+}
+
+.rudder-doc-editor-tab--drop-before {
+  box-shadow: -3px 0 0 color-mix(in oklab, #2f80ed 72%, transparent);
+}
+
+.rudder-doc-editor-tab--drop-after {
+  box-shadow: 3px 0 0 color-mix(in oklab, #2f80ed 72%, transparent);
+}
+
+.rudder-inline-markdown-surface {
+  min-height: 2rem;
+  transition: background-color 120ms ease;
+}
+
+.rudder-inline-markdown-surface:focus-within {
+  background-color: transparent;
+}
+
+.rudder-inline-markdown-body {
+  overflow: visible;
+}
+
+.rudder-inline-markdown-body > :first-child,
+.rudder-edit-in-place-content .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.rudder-inline-markdown-body > :last-child,
+.rudder-edit-in-place-content .ProseMirror > :last-child {
+  margin-bottom: 0;
+}
+
+.rudder-edit-in-place-content {
+  min-height: 2rem;
+}
+
+.rudder-milkdown-content a[href^="agent://"],
+.rudder-milkdown-content a[href^="chat://"],
+.rudder-milkdown-content a[href^="issue://"],
+.rudder-milkdown-content a[href^="project://"],
+.rudder-milkdown-content a[href^="library-doc://"],
+.rudder-milkdown-content a[href^="library-file://"],
+.rudder-milkdown-content a[href^="skill://"],
+.rudder-milkdown-content a[href$="/SKILL.md"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0 0.1rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
+  border-radius: 999px;
+  background-color: color-mix(in oklab, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.3;
+  text-decoration: none;
+  vertical-align: 0.08em;
+  white-space: nowrap;
+}
+
+.rudder-milkdown-content a[href^="project://"]::before {
+  content: "";
+  flex: none;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.rudder-milkdown-content a[href^="agent://"]::before {
+  content: "";
+  flex: none;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.rudder-milkdown-content a[href^="chat://"]::before {
+  content: "";
+  flex: none;
+  width: 0.55rem;
+  height: 0.42rem;
+  border: 1px solid currentColor;
+  border-radius: 0.16rem;
+}
+
+.rudder-milkdown-content a[href^="library-doc://"]::before,
+.rudder-milkdown-content a[href^="library-file://"]::before {
+  content: "";
+  flex: none;
+  width: 0.95em;
+  height: 0.95em;
+  background-color: currentColor;
+  opacity: 0.95;
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.rudder-milkdown-content a[href^="library-doc://"],
+.rudder-milkdown-content a[href^="library-file://"] {
+  gap: 0.32em;
+  margin: 0 0.08em;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  color: var(--rudder-doc-link);
+  font-size: inherit;
+  font-weight: 500;
+  line-height: inherit;
+  vertical-align: -0.16em;
+}
+
+.rudder-milkdown-content a[href^="library-doc://"]:hover,
+.rudder-milkdown-content a[href^="library-file://"]:hover {
+  background-color: transparent;
+  color: var(--rudder-doc-link-hover);
+  text-decoration: none;
+}
+
+.rudder-milkdown-content a[href^="skill://"]::before,
+.rudder-milkdown-content a[href$="/SKILL.md"]::before {
+  content: "$";
+  flex: none;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  color: color-mix(in oklab, var(--primary) 75%, var(--foreground));
+}
+
+.rudder-milkdown-content :is(
+  a[href^="agent://"],
+  a[href^="chat://"],
+  a[href^="issue://"],
+  a[href^="project://"],
+  a[href^="library-doc://"],
+  a[href^="library-file://"],
+  a[href^="skill://"],
+  a[href$="/SKILL.md"]
+) {
+  gap: 0.28em;
+  margin: 0 0.05em;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in oklab, #2f80ed 82%, var(--foreground) 18%);
+  font-size: inherit;
+  font-weight: 560;
+  line-height: 1;
+  letter-spacing: 0;
+  text-decoration: none;
+  vertical-align: -0.16em;
+  white-space: nowrap;
+}
+
+.rudder-milkdown-content :is(
+  a[href^="agent://"],
+  a[href^="chat://"],
+  a[href^="issue://"],
+  a[href^="project://"],
+  a[href^="library-doc://"],
+  a[href^="library-file://"],
+  a[href^="skill://"],
+  a[href$="/SKILL.md"]
+):hover {
+  background: color-mix(in oklab, #2f80ed 10%, transparent);
+  border-radius: 4px;
+  color: color-mix(in oklab, #2f80ed 92%, var(--foreground) 8%);
+}
+
+.rudder-milkdown-content :is(
+  a[href^="agent://"],
+  a[href^="chat://"],
+  a[href^="issue://"],
+  a[href^="project://"],
+  a[href^="library-doc://"],
+  a[href^="library-file://"],
+  a[href^="skill://"],
+  a[href$="/SKILL.md"]
+)::before {
+  content: "";
+  flex: none;
+  display: inline-block;
+  width: 1.25em;
+  height: 1.25em;
+  background: currentColor;
+  opacity: 0.95;
+  transform: translateY(0.01em);
+}
+
+.rudder-milkdown-content a[href^="agent://"]::before {
+  border: 0;
+  border-radius: 999px;
+  background:
+    var(--rudder-mention-agent-avatar-background, currentColor),
+    var(--rudder-mention-agent-avatar-shell-background, transparent);
+  mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
+  -webkit-mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
+  mask-position: center;
+  -webkit-mask-position: center;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+  mask-size: contain;
+  -webkit-mask-size: contain;
+}
+
+.rudder-milkdown-content a[href^="issue://"]::before {
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-milkdown-content a[href^="chat://"]::before {
+  border: 0;
+  border-radius: 0;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-milkdown-content a[href^="skill://"]::before,
+.rudder-milkdown-content a[href$="/SKILL.md"]::before {
+  font-size: inherit;
+  font-weight: inherit;
+  color: currentColor;
+  mask: var(--rudder-skill-icon-mask, none) center / contain no-repeat;
+  -webkit-mask: var(--rudder-skill-icon-mask, none) center / contain no-repeat;
+}
+
+.rudder-milkdown-content a:has(> .rudder-mention-chip),
+.rudder-milkdown-content a:has(> .rudder-skill-token) {
+  display: inline;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-decoration: none;
+  vertical-align: baseline;
+  white-space: normal;
+}
+
+.rudder-milkdown-content a:has(> .rudder-mention-chip):hover,
+.rudder-milkdown-content a:has(> .rudder-skill-token):hover {
+  background: transparent;
+  color: inherit;
+  text-decoration: none;
+}
+
+.rudder-milkdown-content a:has(> .rudder-mention-chip)::before,
+.rudder-milkdown-content a:has(> .rudder-skill-token)::before {
+  content: none;
+  display: none;
+}
+
+.rudder-milkdown-content pre {
+  overflow-x: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background-color: color-mix(in oklab, var(--accent) 45%, transparent);
+  padding: 0.75rem;
+}
+
+.rudder-milkdown-content code {
+  border-radius: 0.25rem;
+  background-color: color-mix(in oklab, var(--accent) 45%, transparent);
+  padding: 0.05rem 0.25rem;
+  font-size: 0.86em;
+}
+
+.rudder-milkdown-content img {
+  max-width: 100%;
+  border-radius: var(--radius);
+}
+
 .rudder-mdxeditor-scope [class*="_iconButton_"],
 .rudder-mdxeditor [class*="_iconButton_"] {
   color: var(--baseText);
@@ -1818,7 +2345,7 @@ button[draggable="false"] {
   font-weight: 600;
   line-height: 1.3;
   text-decoration: none;
-  vertical-align: -0.1em;
+  vertical-align: 0.08em;
   white-space: nowrap;
   user-select: none;
 }
@@ -1837,11 +2364,34 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
 a.rudder-mention-chip[data-mention-kind="agent"]::before {
   content: "";
   flex: none;
-  width: 0.75rem;
-  height: 0.75rem;
+  width: 1.08em;
+  height: 1.08em;
+  border-radius: 999px;
+  background:
+    var(--rudder-mention-agent-avatar-background, currentColor),
+    var(--rudder-mention-agent-avatar-shell-background, transparent);
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before,
+a.rudder-mention-chip[data-mention-kind="library_doc"]::before,
+a.rudder-mention-chip[data-mention-kind="library_file"]::before {
+  content: "";
+  flex: none;
+  width: 0.95em;
+  height: 0.95em;
   background-color: currentColor;
-  -webkit-mask-image: var(--rudder-mention-icon-mask);
-  mask-image: var(--rudder-mention-icon-mask);
+  opacity: 0.95;
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
   -webkit-mask-position: center;
   mask-position: center;
   -webkit-mask-repeat: no-repeat;
@@ -1853,12 +2403,10 @@ a.rudder-mention-chip[data-mention-kind="agent"]::before {
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="chat"]::before,
 a.rudder-mention-chip[data-mention-kind="chat"]::before {
   content: "";
-  flex: none;
-  width: 0.65rem;
-  height: 0.65rem;
-  border: 1.5px solid currentColor;
+  width: 0.55rem;
+  height: 0.42rem;
+  border: 1px solid currentColor;
   border-radius: 0.16rem;
-  box-shadow: -0.16rem 0.16rem 0 -0.08rem currentColor;
 }
 
 .rudder-mdxeditor-content ul,
@@ -2208,6 +2756,7 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 }
 
 .rudder-mdxeditor-content .rudder-skill-token,
+.rudder-milkdown-content .rudder-skill-token,
 .rudder-markdown .rudder-skill-token,
 a.rudder-skill-token {
   display: inline-flex;
@@ -2224,23 +2773,24 @@ a.rudder-skill-token {
   line-height: 1;
   letter-spacing: 0;
   text-decoration: none;
-  vertical-align: baseline;
+  vertical-align: -0.16em;
   white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
 }
 
 .rudder-mdxeditor-content .rudder-skill-token::before,
+.rudder-milkdown-content .rudder-skill-token::before,
 .rudder-markdown .rudder-skill-token::before,
 a.rudder-skill-token::before {
   content: "";
   display: inline-block;
-  width: 0.86em;
-  height: 0.86em;
+  width: 1.25em;
+  height: 1.25em;
   background: currentColor;
   transform: translateY(0.01em);
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: var(--rudder-skill-icon-mask, none) center / contain no-repeat;
+  -webkit-mask: var(--rudder-skill-icon-mask, none) center / contain no-repeat;
 }
 
 .rudder-skill-token-wrap {
@@ -2248,7 +2798,7 @@ a.rudder-skill-token::before {
   display: inline-flex;
   max-width: 100%;
   line-height: 1;
-  vertical-align: baseline;
+  vertical-align: -0.16em;
 }
 
 .rudder-skill-token-wrap--preview {
@@ -2327,14 +2877,20 @@ a.rudder-skill-token::before {
 }
 
 .rudder-mdxeditor-content .rudder-skill-token:hover,
+.rudder-milkdown-content .rudder-skill-token:hover,
 .rudder-markdown a.rudder-skill-token:hover,
 a.rudder-skill-token:hover {
   text-decoration: none;
 }
 
 .rudder-mdxeditor-content .rudder-skill-token,
-a.rudder-skill-token {
+.rudder-milkdown-content .rudder-skill-token,
+a.rudder-skill-token:not([href]) {
   cursor: default;
+}
+
+a.rudder-skill-token[href] {
+  cursor: pointer;
 }
 
 .rudder-markdown blockquote {
@@ -2553,7 +3109,7 @@ a.rudder-project-mention-chip {
   font-weight: 600;
   line-height: 1.3;
   text-decoration: none;
-  vertical-align: -0.1em;
+  vertical-align: 0.08em;
   white-space: nowrap;
 }
 
@@ -2563,6 +3119,155 @@ a.rudder-mention-chip:hover,
 a.rudder-project-mention-chip:hover {
   background-color: color-mix(in oklab, var(--foreground) 10%, transparent);
   text-decoration: none;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"],
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"],
+a.rudder-mention-chip[data-mention-kind="library_doc"],
+a.rudder-mention-chip[data-mention-kind="library_file"] {
+  gap: 0.32em;
+  margin: 0 0.08em;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  color: var(--rudder-doc-link);
+  font-size: inherit;
+  font-weight: 500;
+  line-height: inherit;
+  vertical-align: -0.16em;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]:hover,
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]:hover,
+a.rudder-mention-chip[data-mention-kind="library_doc"]:hover,
+a.rudder-mention-chip[data-mention-kind="library_file"]:hover {
+  background-color: transparent;
+  color: var(--rudder-doc-link-hover);
+  text-decoration: none;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip,
+.rudder-mdxeditor-content .rudder-project-mention-chip,
+.rudder-milkdown-content .rudder-mention-chip,
+.rudder-milkdown-content .rudder-project-mention-chip,
+a.rudder-mention-chip,
+a.rudder-project-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28em;
+  margin: 0 0.05em;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in oklab, #2f80ed 82%, var(--foreground) 18%);
+  font-size: inherit;
+  font-weight: 560;
+  line-height: 1;
+  letter-spacing: 0;
+  text-decoration: none;
+  vertical-align: -0.16em;
+  white-space: nowrap;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip:hover,
+.rudder-mdxeditor-content .rudder-project-mention-chip:hover,
+.rudder-milkdown-content .rudder-mention-chip:hover,
+.rudder-milkdown-content .rudder-project-mention-chip:hover,
+a.rudder-mention-chip:hover,
+a.rudder-project-mention-chip:hover {
+  background: color-mix(in oklab, #2f80ed 10%, transparent);
+  border-radius: 4px;
+  color: color-mix(in oklab, #2f80ed 92%, var(--foreground) 8%);
+  text-decoration: none;
+}
+
+a.rudder-mention-chip,
+a.rudder-project-mention-chip {
+  cursor: pointer;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip::before,
+.rudder-milkdown-content .rudder-mention-chip::before,
+a.rudder-mention-chip::before,
+.rudder-mdxeditor-content .rudder-project-mention-chip::before,
+.rudder-milkdown-content .rudder-project-mention-chip::before,
+a.rudder-project-mention-chip::before {
+  content: "";
+  flex: none;
+  display: inline-block;
+  width: 1.25em;
+  height: 1.25em;
+  background: currentColor;
+  opacity: 0.95;
+  transform: translateY(0.01em);
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="agent"]::before,
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="agent"]::before,
+a.rudder-mention-chip[data-mention-kind="agent"]::before {
+  border-radius: 999px;
+  background:
+    var(--rudder-mention-agent-avatar-background, currentColor),
+    var(--rudder-mention-agent-avatar-shell-background, transparent);
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"]::before,
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="project"]::before,
+a.rudder-mention-chip[data-mention-kind="project"]::before {
+  width: 0.74em;
+  height: 0.74em;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"],
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="project"],
+a.rudder-mention-chip[data-mention-kind="project"] {
+  vertical-align: baseline;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="issue"]::before,
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="issue"]::before,
+a.rudder-mention-chip[data-mention-kind="issue"]::before {
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="chat"]::before,
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="chat"]::before,
+a.rudder-mention-chip[data-mention-kind="chat"]::before {
+  border: 0;
+  border-radius: 0;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before,
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="library_file"]::before,
+a.rudder-mention-chip[data-mention-kind="library_doc"]::before,
+a.rudder-mention-chip[data-mention-kind="library_file"]::before {
+  width: 1.25em;
+  height: 1.25em;
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
 }
 
 /* Keep MDXEditor popups above app dialogs, even when they portal to <body>. */

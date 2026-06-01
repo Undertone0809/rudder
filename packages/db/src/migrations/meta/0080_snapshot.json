@@ -1,5 +1,5 @@
 {
-  "id": "cc17b1d7-08a0-4430-a355-10170b9a8cf8",
+  "id": "3f6d6bbe-be3c-430f-b39d-33cc3afbe98b",
   "prevId": "f179ced9-8d6e-4831-a4f0-3742b1e96d5c",
   "version": "7",
   "dialect": "postgresql",
@@ -11447,6 +11447,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "source_type": {
+          "name": "source_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'external'"
+        },
         "locator": {
           "name": "locator",
           "type": "text",
@@ -11513,6 +11520,49 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "organization_resources_org_source_type_idx": {
+          "name": "organization_resources_org_source_type_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "organization_resources_org_library_locator_uq": {
+          "name": "organization_resources_org_library_locator_uq",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "locator",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"organization_resources\".\"source_type\" = 'library'",
           "concurrently": false,
           "method": "btree",
           "with": {}

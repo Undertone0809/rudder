@@ -787,14 +787,23 @@ Resource loading contract:
 - Organization Resources are an org-wide catalog. They are queryable by agents
   through organization-scoped APIs, but they are not injected into every
   instruction or prompt by default.
-- Project Resources are project attachments to org resources. When a heartbeat
-  or chat run resolves a `projectId`, Rudder loads only that project's
-  attachments into the runtime context and prompt resource block.
+- Project Context Resources are explicit project attachments to org resources.
+  Resources have a `sourceType`: `external` resources point to URLs, local
+  paths, repos, or connector objects; `library` resources point to a normalized
+  relative path under the organization Library workspace root. Library resource
+  locators must not be absolute paths, URL schemes, `..` paths, or protected
+  system roots such as `agents/`, `artifacts/`, `plans/`, and `skills/`.
+- When a heartbeat or chat run resolves a `projectId`, Rudder loads only that
+  project's attached resources into the runtime context and prompt resource
+  block.
 - Runs without project context receive no resource prompt by default.
 - `context.rudderWorkspace.orgResourcesPrompt` remains as a legacy runtime
   template field, but its current value is the compiled project-attached
   resources prompt. New code should prefer `context.rudderWorkspace.resourcesPrompt`
   or structured `context.rudderProjectResources`.
+- Project Context is a curated default, not a hard knowledge boundary. Agents
+  may still inspect broader Library know-how through explicit APIs or filesystem
+  access when the task calls for it.
 
 This policy keeps org-wide knowledge discoverable without paying the token and
 relevance cost of loading the whole org catalog into every agent run.

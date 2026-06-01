@@ -40,8 +40,10 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder issue release <issue>` | Release an issue back to todo and clear ownership. | yes | no | no | attached when available |
 | `rudder issue documents list <issue>` | List issue documents. | no | no | no | no |
 | `rudder issue documents get <issue> <key>` | Read one issue document by key. | no | no | no | no |
-| `rudder issue documents put <issue> <key> --body-file <path>` | Create or update an issue document. | yes | no | no | attached when available |
 | `rudder issue documents revisions <issue> <key>` | List revisions for an issue document. | no | no | no | no |
+| `rudder library file list [directory]` | List path-based Library files and folders. | no | required | no | no |
+| `rudder library file get <path>` | Read one path-based Library file. | no | required | no | no |
+| `rudder library file put <path> --body-file <path>` | Create or update one path-based Library file. | yes | required | no | attached when available |
 | `rudder approval get <approval-id>` | Read one approval request. | no | no | no | no |
 | `rudder approval issues <approval-id>` | List the issues linked to an approval. | no | no | no | no |
 | `rudder approval comment <approval-id> --body-file <path>` | Add a comment to an approval. | yes | no | no | attached when available |
@@ -96,6 +98,7 @@ Do not rely on a free-form reject or accept comment as the review outcome. The s
 - `rudder agent config list --org-id <id>` — List redacted agent configuration snapshots for an organization.
 - `rudder agent config get <agent-id-or-shortname>` — Read one redacted agent configuration snapshot by id or shortname.
 - `rudder agent icons` — List legacy named agent icons for compatibility/debugging; normal create and hire payloads should omit icon.
+- `rudder issue documents put <issue> <key> --body-file <path>` — Legacy create or update of a DB-backed issue document; prefer `rudder library file put` for new docs.
 - `rudder issue create --org-id <id> ... [--label-id <id> ...] [--label <name> ...]` — Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied.
 - `rudder issue labels list --org-id <id>` — List organization issue labels available for issue creation.
 - `rudder approval create --org-id <id> --type <type> --payload <json>` — Create a new approval request.

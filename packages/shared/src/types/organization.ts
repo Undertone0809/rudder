@@ -54,6 +54,29 @@ export interface OrganizationWorkspaceFileUpdateRequest {
   content: string;
 }
 
+export interface OrganizationWorkspaceFileCreateRequest {
+  filePath: string;
+  content?: string;
+}
+
+export interface OrganizationWorkspaceDirectoryCreateRequest {
+  directoryPath: string;
+}
+
+export interface OrganizationWorkspaceEntryRenameRequest {
+  name: string;
+}
+
+export interface OrganizationWorkspaceEntryMoveRequest {
+  destinationDirectoryPath: string;
+}
+
+export interface OrganizationWorkspaceEntryMutationResult {
+  path: string;
+  previousPath?: string;
+  isDirectory?: boolean;
+}
+
 export interface Organization {
   id: string;
   name: string;

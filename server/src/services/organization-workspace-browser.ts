@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { agents, type Db } from "@rudderhq/db";
 import type {
   AgentRole,
+  OrganizationWorkspaceEntryMutationResult,
   OrganizationWorkspaceFileDetail,
   OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList,
@@ -10,12 +11,12 @@ import type {
 } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { resolveStoredOrDerivedAgentWorkspaceKey } from "../agent-workspace-key.js";
-import { notFound, unprocessable } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { organizationService } from "./orgs.js";
 
-const MAX_PREVIEW_BYTES = 200_000;
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
+const PROTECTED_LIBRARY_RESOURCE_ROOTS = new Set(["agents", "artifacts", "plans", "skills"]);
 const WORKSPACE_TEXT_CONTENT_TYPES = new Map([
   [".md", "text/markdown"],
   [".markdown", "text/markdown"],
@@ -39,6 +40,8 @@ const WORKSPACE_IMAGE_CONTENT_TYPES = new Map([
 const WORKSPACE_BINARY_CONTENT_TYPES = new Map([
   [".pdf", "application/pdf"],
 ]);
+const DEFAULT_MENTIONABLE_WORKSPACE_FILES_LIMIT = 200;
+const MAX_MENTIONABLE_WORKSPACE_FILES_LIMIT = 500;
 
 type WorkspaceRootResolution = {
   source: OrganizationWorkspaceRootSource;
@@ -67,6 +70,52 @@ function resolveWithinRoot(rootPath: string, requestedPath: string) {
     resolvedTarget,
     normalizedPath: toPortableRelativePath(relative === "" ? "" : relative),
   };
+}
+
+function isProtectedAgentWorkspaceContainerPath(normalizedPath: string) {
+  if (normalizedPath === "agents") return true;
+  const segments = normalizedPath.split("/").filter(Boolean);
+  return segments.length === 2 && segments[0] === "agents";
+}
+
+function isProtectedLibraryResourcePath(normalizedPath: string) {
+  const root = normalizedPath.split("/").filter(Boolean)[0] ?? "";
+  return PROTECTED_LIBRARY_RESOURCE_ROOTS.has(root);
+}
+
+function assertMutableWorkspaceEntry(normalizedPath: string) {
+  if (!normalizedPath) {
+    throw unprocessable("The organization workspace root cannot be renamed or deleted");
+  }
+  if (isProtectedAgentWorkspaceContainerPath(normalizedPath)) {
+    throw unprocessable("Agent workspace entries can only be copied by path");
+  }
+}
+
+function assertCanCreateWorkspaceEntry(normalizedPath: string) {
+  const parentPath = toPortableRelativePath(path.dirname(normalizedPath));
+  if (isProtectedAgentWorkspaceContainerPath(parentPath === "." ? "" : parentPath)) {
+    throw unprocessable("Agent workspace root folders can only be copied by path");
+  }
+}
+
+function normalizeEntryName(name: string) {
+  const nextName = name.trim();
+  if (!nextName) throw unprocessable("Entry name is required");
+  if (nextName === "." || nextName === "..") {
+    throw unprocessable("Entry name cannot be a relative path segment");
+  }
+  if (nextName.includes("/") || nextName.includes("\\") || path.basename(nextName) !== nextName) {
+    throw unprocessable("Entry name must not include path separators");
+  }
+  return nextName;
+}
+
+async function statWorkspaceEntry(targetPath: string) {
+  return await fs.stat(targetPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
 }
 
 async function pathExistsAsDirectory(targetPath: string) {
@@ -243,6 +292,55 @@ export function organizationWorkspaceBrowserService(db: Db) {
       };
     },
 
+    async listMentionableFiles(orgId: string, options?: {
+      query?: string | null;
+      limit?: number | null;
+    }): Promise<OrganizationWorkspaceFileEntry[]> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot } = resolveWithinRoot(root.rootPath, "");
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) return [];
+
+      const entries: OrganizationWorkspaceFileEntry[] = [];
+      const normalizedQuery = options?.query?.trim().toLowerCase() ?? "";
+      const requestedLimit = options?.limit ?? DEFAULT_MENTIONABLE_WORKSPACE_FILES_LIMIT;
+      const limit = Math.max(1, Math.min(MAX_MENTIONABLE_WORKSPACE_FILES_LIMIT, requestedLimit));
+      async function visit(directoryPath: string) {
+        if (entries.length >= limit) return;
+        if (isProtectedLibraryResourcePath(directoryPath)) return;
+
+        const directoryAbsolutePath = directoryPath
+          ? path.join(resolvedRoot, ...directoryPath.split("/"))
+          : resolvedRoot;
+        const rawEntries = (await fs.readdir(directoryAbsolutePath, { withFileTypes: true }).catch(() => []))
+          .sort((left, right) => left.name.localeCompare(right.name));
+
+        for (const entry of rawEntries) {
+          if (entries.length >= limit) break;
+          if (shouldHideWorkspaceEntry(entry.name)) continue;
+          const entryPath = directoryPath ? `${directoryPath}/${entry.name}` : entry.name;
+          if (isProtectedLibraryResourcePath(entryPath)) continue;
+          if (entry.isDirectory()) {
+            await visit(entryPath);
+            continue;
+          }
+          if (!entry.isFile()) continue;
+          if (normalizedQuery) {
+            const searchable = `${entry.name} ${entryPath}`.toLowerCase();
+            if (!searchable.includes(normalizedQuery)) continue;
+          }
+          entries.push({
+            name: entry.name,
+            path: entryPath,
+            isDirectory: false,
+          });
+        }
+      }
+
+      await visit("");
+      return entries.sort((left, right) => left.path.localeCompare(right.path));
+    },
+
     async readFile(orgId: string, filePath: string): Promise<OrganizationWorkspaceFileDetail> {
       const root = await resolveWorkspaceRoot(orgId);
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, filePath);
@@ -296,25 +394,23 @@ export function organizationWorkspaceBrowserService(db: Db) {
           contentType,
           previewKind,
           contentPath: null,
-          message: "Binary files are not previewed in the organization workspace view.",
+          message: "Binary files cannot be rendered in Docs.",
           truncated: false,
         };
       }
 
-      const truncated = buffer.length > MAX_PREVIEW_BYTES;
-      const rawContent = buffer.subarray(0, MAX_PREVIEW_BYTES).toString("utf8");
       return {
         source: root.source,
         rootPath: resolvedRoot,
         repoUrl: root.repoUrl,
         filePath: normalizedPath,
         rootExists: true,
-        content: rawContent,
+        content: buffer.toString("utf8"),
         contentType,
         previewKind,
         contentPath: null,
-        message: truncated ? "Preview truncated to the first 200 KB." : null,
-        truncated,
+        message: null,
+        truncated: false,
       };
     },
 
@@ -372,6 +468,196 @@ export function organizationWorkspaceBrowserService(db: Db) {
         contentPath: null,
         message: null,
         truncated: false,
+      };
+    },
+
+    async createFile(
+      orgId: string,
+      filePath: string,
+      content: string,
+    ): Promise<OrganizationWorkspaceFileDetail> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, filePath);
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) {
+        throw notFound("The workspace root is not available on this machine yet.");
+      }
+      if (!normalizedPath) {
+        throw unprocessable("File path is required");
+      }
+      assertCanCreateWorkspaceEntry(normalizedPath);
+      if (await statWorkspaceEntry(resolvedTarget)) {
+        throw conflict("A file or folder already exists at that path");
+      }
+
+      await fs.mkdir(path.dirname(resolvedTarget), { recursive: true });
+      await fs.writeFile(resolvedTarget, content, { encoding: "utf8", flag: "wx" });
+
+      return {
+        source: root.source,
+        rootPath: resolvedRoot,
+        repoUrl: root.repoUrl,
+        filePath: normalizedPath,
+        rootExists: true,
+        content,
+        contentType: getWorkspaceFileContentType(normalizedPath || resolvedTarget) ?? "text/plain",
+        previewKind: "text",
+        contentPath: null,
+        message: null,
+        truncated: false,
+      };
+    },
+
+    async createDirectory(
+      orgId: string,
+      directoryPath: string,
+    ): Promise<OrganizationWorkspaceEntryMutationResult> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, directoryPath);
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) {
+        throw notFound("The workspace root is not available on this machine yet.");
+      }
+      if (!normalizedPath) {
+        throw unprocessable("Directory path is required");
+      }
+      assertCanCreateWorkspaceEntry(normalizedPath);
+      if (await statWorkspaceEntry(resolvedTarget)) {
+        throw conflict("A file or folder already exists at that path");
+      }
+
+      await fs.mkdir(resolvedTarget, { recursive: false });
+      return {
+        path: normalizedPath,
+        isDirectory: true,
+      };
+    },
+
+    async renameEntry(
+      orgId: string,
+      entryPath: string,
+      name: string,
+    ): Promise<OrganizationWorkspaceEntryMutationResult> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, entryPath);
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) {
+        throw notFound("The workspace root is not available on this machine yet.");
+      }
+      assertMutableWorkspaceEntry(normalizedPath);
+
+      const stat = await statWorkspaceEntry(resolvedTarget);
+      if (!stat) {
+        throw notFound("Entry not found inside the organization workspace");
+      }
+
+      const nextName = normalizeEntryName(name);
+      const nextTarget = path.resolve(path.dirname(resolvedTarget), nextName);
+      const relative = path.relative(resolvedRoot, nextTarget);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw unprocessable("Entry path must stay inside the organization workspace root");
+      }
+      const nextPath = toPortableRelativePath(relative);
+      if (isProtectedAgentWorkspaceContainerPath(nextPath)) {
+        throw unprocessable("Entries cannot be moved into the protected agent workspace area");
+      }
+      if (normalizedPath === nextPath) {
+        return {
+          previousPath: normalizedPath,
+          path: normalizedPath,
+          isDirectory: stat.isDirectory(),
+        };
+      }
+      if (await statWorkspaceEntry(nextTarget)) {
+        throw conflict("An entry with that name already exists");
+      }
+
+      await fs.rename(resolvedTarget, nextTarget);
+      return {
+        previousPath: normalizedPath,
+        path: nextPath,
+        isDirectory: stat.isDirectory(),
+      };
+    },
+
+    async moveEntry(
+      orgId: string,
+      entryPath: string,
+      destinationDirectoryPath: string,
+    ): Promise<OrganizationWorkspaceEntryMutationResult> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, entryPath);
+      const {
+        resolvedTarget: resolvedDestinationDirectory,
+        normalizedPath: normalizedDestinationDirectory,
+      } = resolveWithinRoot(root.rootPath, destinationDirectoryPath);
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) {
+        throw notFound("The workspace root is not available on this machine yet.");
+      }
+      assertMutableWorkspaceEntry(normalizedPath);
+      if (isProtectedAgentWorkspaceContainerPath(normalizedDestinationDirectory)) {
+        throw unprocessable("Entries cannot be moved into the protected agent workspace area");
+      }
+
+      const stat = await statWorkspaceEntry(resolvedTarget);
+      if (!stat) {
+        throw notFound("Entry not found inside the organization workspace");
+      }
+      if (!(await pathExistsAsDirectory(resolvedDestinationDirectory))) {
+        throw notFound("Destination directory not found inside the organization workspace");
+      }
+      if (stat.isDirectory()) {
+        const relativeDestination = path.relative(resolvedTarget, resolvedDestinationDirectory);
+        if (relativeDestination === "" || (!relativeDestination.startsWith("..") && !path.isAbsolute(relativeDestination))) {
+          throw unprocessable("A folder cannot be moved into itself or one of its children");
+        }
+      }
+
+      const nextTarget = path.resolve(resolvedDestinationDirectory, path.basename(resolvedTarget));
+      const nextRelativePath = path.relative(resolvedRoot, nextTarget);
+      if (nextRelativePath.startsWith("..") || path.isAbsolute(nextRelativePath)) {
+        throw unprocessable("Entry path must stay inside the organization workspace root");
+      }
+      const nextPath = toPortableRelativePath(nextRelativePath);
+      assertCanCreateWorkspaceEntry(nextPath);
+      if (normalizedPath === nextPath) {
+        return {
+          previousPath: normalizedPath,
+          path: normalizedPath,
+          isDirectory: stat.isDirectory(),
+        };
+      }
+      if (await statWorkspaceEntry(nextTarget)) {
+        throw conflict("An entry with that name already exists in the destination directory");
+      }
+
+      await fs.rename(resolvedTarget, nextTarget);
+      return {
+        previousPath: normalizedPath,
+        path: nextPath,
+        isDirectory: stat.isDirectory(),
+      };
+    },
+
+    async deleteEntry(orgId: string, entryPath: string): Promise<OrganizationWorkspaceEntryMutationResult> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, entryPath);
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) {
+        throw notFound("The workspace root is not available on this machine yet.");
+      }
+      assertMutableWorkspaceEntry(normalizedPath);
+
+      const stat = await statWorkspaceEntry(resolvedTarget);
+      if (!stat) {
+        throw notFound("Entry not found inside the organization workspace");
+      }
+
+      await fs.rm(resolvedTarget, { recursive: true, force: false });
+      return {
+        path: normalizedPath,
+        isDirectory: stat.isDirectory(),
       };
     },
   };

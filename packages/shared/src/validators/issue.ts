@@ -165,5 +165,27 @@ export const upsertIssueDocumentSchema = z.object({
   baseRevisionId: z.string().uuid().nullable().optional(),
 });
 
+export const createLibraryDocumentSchema = z.object({
+  title: z.string().trim().max(200).nullable().optional(),
+  format: issueDocumentFormatSchema.optional().default("markdown"),
+  body: z.string().max(524288).optional().default(""),
+  changeSummary: z.string().trim().max(500).nullable().optional(),
+});
+
+export const updateLibraryDocumentSchema = z.object({
+  title: z.string().trim().max(200).nullable().optional(),
+  format: issueDocumentFormatSchema.optional().default("markdown"),
+  body: z.string().max(524288),
+  changeSummary: z.string().trim().max(500).nullable().optional(),
+  baseRevisionId: z.string().uuid().nullable().optional(),
+});
+
+export const restoreLibraryDocumentRevisionSchema = z.object({
+  changeSummary: z.string().trim().max(500).nullable().optional(),
+});
+
 export type IssueDocumentFormat = z.infer<typeof issueDocumentFormatSchema>;
 export type UpsertIssueDocument = z.infer<typeof upsertIssueDocumentSchema>;
+export type CreateLibraryDocument = z.infer<typeof createLibraryDocumentSchema>;
+export type UpdateLibraryDocument = z.infer<typeof updateLibraryDocumentSchema>;
+export type RestoreLibraryDocumentRevision = z.infer<typeof restoreLibraryDocumentRevisionSchema>;

@@ -5,10 +5,17 @@ export const queryKeys = {
     stats: ["organizations", "stats"] as const,
     intelligenceProfiles: (orgId: string) => ["organizations", orgId, "intelligence-profiles"] as const,
     resources: (orgId: string) => ["organizations", orgId, "resources"] as const,
+    libraryDocuments: (orgId: string) => ["organizations", orgId, "library-documents"] as const,
+    libraryDocument: (orgId: string, documentId: string) =>
+      ["organizations", orgId, "library-document", documentId] as const,
+    libraryDocumentRevisions: (orgId: string, documentId: string) =>
+      ["organizations", orgId, "library-document-revisions", documentId] as const,
     workspaceFiles: (orgId: string, directoryPath: string) =>
       ["organizations", orgId, "workspace-files", directoryPath] as const,
     workspaceFile: (orgId: string, filePath: string) =>
       ["organizations", orgId, "workspace-file", filePath] as const,
+    workspaceMentionFiles: (orgId: string, query: string = "") =>
+      ["organizations", orgId, "workspace-mention-files", query] as const,
     workspaceBackups: (orgId: string) =>
       ["organizations", orgId, "workspace-backups"] as const,
     workspaceBackupFiles: (orgId: string, backupId: string, directoryPath: string) =>

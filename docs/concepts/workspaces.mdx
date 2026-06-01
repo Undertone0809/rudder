@@ -43,7 +43,9 @@ Use `/tmp` only for transient scratch files and verification artifacts.
 
 ## Project resources
 
-When a run is linked to a project, Rudder injects the relevant project resources into the runtime context. Agents should inspect those resources directly instead of assuming global repository layout.
+When a run is linked to a project, Rudder injects the explicitly attached Project Context resources into the runtime context. These resources can be external references or Docs files. Docs-backed resources use safe paths relative to the organization workspace root, so agents can read the file-native knowledge directly without treating protected system folders as project resources.
+
+Project Context is the curated starting point, not the full knowledge boundary. Agents can still inspect broader Docs and Library files when the attached context is not enough.
 
 ## Local development
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, forwardRef } from "react";
+import { act, forwardRef, type RefObject } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Automations } from "./Automations";
@@ -12,7 +12,12 @@ import { Automations } from "./Automations";
 const mockNavigate = vi.fn();
 const mockSetHeaderActions = vi.fn();
 const mockConfirm = vi.fn(async () => true);
-const markdownEditorProps = vi.hoisted(() => [] as Array<{ mentions?: Array<{ id: string; kind?: string; name: string }> }>);
+const markdownEditorProps = vi.hoisted(() => [] as Array<{
+  mentions?: Array<{ id: string; kind?: string; name: string }>;
+  mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
+  mentionMenuPlacement?: "caret" | "container";
+  plainText?: boolean;
+}>);
 const automationListState = vi.hoisted(() => ({ items: [] as unknown[] }));
 
 const automation = {
@@ -192,6 +197,9 @@ vi.mock("../components/MarkdownEditor", () => ({
       value?: string;
       onChange?: (value: string) => void;
       placeholder?: string;
+      mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
+      mentionMenuPlacement?: "caret" | "container";
+      plainText?: boolean;
     },
     _ref,
   ) {
@@ -385,12 +393,9 @@ describe("Automations", () => {
     });
 
     expect(runbookInput?.value).toContain("final result to a new Rudder chat");
-    expect(document.body.querySelector('[data-testid="automation-create-chat-destination"]')?.textContent).toContain("New chat");
-    expect(document.body.textContent).not.toContain("Search chats");
   });
 
-  it("defaults new custom automations to chat output", async () => {
-    automationListState.items = [];
+  it("opens the composer from the header as a blank prompt input", async () => {
     renderPage();
 
     await act(async () => {
@@ -400,54 +405,14 @@ describe("Automations", () => {
     const headerContainer = renderHeaderActions();
     await act(async () => {
       headerContainer.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    expect(document.body.querySelector('[data-testid="automation-create-chat-destination"]')?.textContent).toContain("New chat");
-    expect(
-      Array.from(document.body.querySelectorAll("button")).some((button) => button.textContent?.includes("Send to chat")),
-    ).toBe(true);
-  });
-
-  it("opens templates from the composer header and applies the dependency audit template", async () => {
-    renderPage();
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    const headerContainer = renderHeaderActions();
-    await act(async () => {
-      headerContainer.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    expect(document.body.textContent).toContain("Use template");
-
-    await act(async () => {
-      Array.from(document.body.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Use template"))
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    expect(document.body.textContent).toContain("Automation templates");
-    expect(document.body.textContent).not.toContain("Advisor review loop");
-    expect(document.body.textContent).toContain("Scan for security and maintenance risks.");
-
-    await act(async () => {
-      Array.from(document.body.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Dependency audit"))
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
     const titleInput = document.querySelector('textarea[placeholder="Automation title"]') as HTMLTextAreaElement | null;
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
-    expect(titleInput?.value).toBe("Dependency audit");
-    expect(runbookInput?.value).toContain("Inspect dependency and lockfile changes");
-    expect(runbookInput?.value).toContain("known vulnerabilities");
-    expect(document.body.textContent).not.toContain("Automation templates");
+    expect(titleInput?.value).toBe("");
+    expect(runbookInput?.value).toBe("");
+    expect(runbookInput?.placeholder).toBe("Add prompt e.g. look for crashes in Sentry");
   });
 
   it("renders localized use-case templates for Chinese UI", async () => {
@@ -514,6 +479,10 @@ describe("Automations", () => {
     });
 
     const baseMentionIds = markdownEditorProps.at(-1)?.mentions?.map((mention) => mention.id) ?? [];
+    expect(markdownEditorProps.at(-1)?.plainText).toBe(true);
+    expect(markdownEditorProps.at(-1)?.mentionMenuPlacement).toBe("container");
+    expect(markdownEditorProps.at(-1)?.mentionMenuAnchorRef?.current?.dataset.testid)
+      .toBe("automation-description-composer");
     expect(baseMentionIds).toEqual(expect.arrayContaining([
       "agent:agent-1",
       "project:project-1",
@@ -547,7 +516,7 @@ describe("Automations", () => {
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
     expect(titleInput).toBeTruthy();
     expect(runbookInput?.value).toBe("");
-    expect(runbookInput?.placeholder).toBe("Add instructions...");
+    expect(runbookInput?.placeholder).toBe("Add prompt e.g. look for crashes in Sentry");
 
     await act(async () => {
       setTextareaValue(titleInput!, "帮我 flomo 打 tag");

@@ -69,7 +69,7 @@ export function BreadcrumbBar({
   const activeIssueSource = useMemo(() => new URLSearchParams(location.search).get("source") ?? "", [location.search]);
   const isIssuesRoute = useMemo(() => /^\/issues(?:\/|$)/.test(relativePath), [relativePath]);
   const isPrimaryRailPage = useMemo(
-    () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
+    () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|library|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
     [relativePath],
   );
   const isAgentDetailRoute = useMemo(
@@ -198,8 +198,8 @@ export function BreadcrumbBar({
   const hideMessengerMainHeader = variant === "card" && /^\/messenger(?:\/|$)/.test(relativePath);
   const hideAgentDetailMainHeader = variant === "card" && isAgentDetailRoute;
   const workspacesHeaderTooltip = useMemo(() => {
-    if (/^\/resources(?:\/|$)/.test(relativePath)) {
-      return "Shared resource catalog for repos, docs, URLs, and connector objects. Keep entries canonical here, then attach them from projects.";
+    if (/^\/(?:library|resources)(?:\/|$)/.test(relativePath)) {
+      return "Shared Docs for markdown notes, codebases, references, outputs, and reusable context that humans and agents can both work with.";
     }
     if (/^\/workspaces(?:\/|$)/.test(relativePath)) {
       return "Shared workspace files, plans, and skill packages for this organization. Use this page for disk-backed context and editable files.";
@@ -207,7 +207,7 @@ export function BreadcrumbBar({
     return null;
   }, [relativePath]);
   const workspacesHeaderTooltipLabel = useMemo(() => {
-    if (/^\/resources(?:\/|$)/.test(relativePath)) return "About organization resources";
+    if (/^\/(?:library|resources)(?:\/|$)/.test(relativePath)) return "About Docs";
     if (/^\/workspaces(?:\/|$)/.test(relativePath)) return "About organization workspaces";
     return null;
   }, [relativePath]);

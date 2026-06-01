@@ -1,4 +1,5 @@
-import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations.js";
 
 export const organizationResources = pgTable(
@@ -8,6 +9,7 @@ export const organizationResources = pgTable(
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     kind: text("kind").notNull(),
+    sourceType: text("source_type").notNull().default("external"),
     locator: text("locator").notNull(),
     description: text("description"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
@@ -17,6 +19,9 @@ export const organizationResources = pgTable(
   (table) => ({
     orgIdx: index("organization_resources_org_idx").on(table.orgId),
     orgKindIdx: index("organization_resources_org_kind_idx").on(table.orgId, table.kind),
+    orgSourceTypeIdx: index("organization_resources_org_source_type_idx").on(table.orgId, table.sourceType),
+    orgLibraryLocatorUq: uniqueIndex("organization_resources_org_library_locator_uq")
+      .on(table.orgId, table.locator)
+      .where(sql`${table.sourceType} = 'library'`),
   }),
 );
-

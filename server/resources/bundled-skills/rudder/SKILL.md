@@ -1,6 +1,6 @@
 ---
 name: rudder
-description: Interact with the Rudder control plane through the `rudder` CLI to manage tasks, approvals, comments, issue documents, and organization skills during heartbeats. Use for Rudder coordination only, not for the domain work itself.
+description: Interact with the Rudder control plane through the `rudder` CLI to manage tasks, approvals, comments, Library files, and organization skills during heartbeats. Use for Rudder coordination only, not for the domain work itself.
 ---
 
 # Rudder Skill
@@ -51,9 +51,13 @@ Important files and conventions:
 
 - Structured shared references live in the org `Resources` catalog. Agents do not receive the whole org catalog automatically.
 - If a run or chat is linked to a project, Rudder injects only that project's attached resources into the runtime context.
-- If you need broader org-wide resources, query the org resource catalog explicitly instead of assuming it is already in the prompt.
+- Project Context is the explicit operator-curated starting set, not a knowledge boundary. If those resources are insufficient, inspect broader Library docs and other org workspace know-how before concluding context is missing.
+- Library-backed resources use `sourceType: "library"` and a safe `locator` relative to `$RUDDER_ORG_WORKSPACE_ROOT`, usually under `docs/` (for example `docs/product-brief.md`). Read them as files from `$RUDDER_ORG_WORKSPACE_ROOT/<locator>` when the shared workspace is available. Protected system roots such as `agents/`, `artifacts/`, `plans/`, and `skills/` are not valid project Library resources.
+- External resources use `sourceType: "external"` and keep their original URL, local path, repo path, or connector locator.
+- If you encounter older `library-file://...` or `library-doc://...` links, treat them as legacy Rudder Library references. Prefer path-based Library resources going forward; `library-file` points at a Library workspace file, while `library-doc` was an older document-id based link.
+- If you need broader org-wide resources, query the org resource catalog or inspect Library docs explicitly instead of assuming they are already in the prompt.
 - Use Workspaces for disk-backed shared files, plans, and skill packages.
-- When you need to place durable generated output on disk, prefer `$RUDDER_ORG_ARTIFACTS_DIR` for screenshots, images, mockups, reports, CSVs, handoff logs, and other user-visible files. Use `/tmp` only for transient scratch files and temporary verification artifacts.
+- When you need to place durable generated Markdown documents, plans, design docs, or decision notes on disk, write them under `docs/` with `rudder library file put docs/<file>.md --body-file <path> --json`. Use `$RUDDER_ORG_ARTIFACTS_DIR` for screenshots, images, mockups, reports, CSVs, handoff logs, and other user-visible non-doc files. Use `/tmp` only for transient scratch files and temporary verification artifacts.
 - For other shared output, prefer the managed workspace paths Rudder injected for this run such as `$RUDDER_ORG_PLANS_DIR`, `$RUDDER_ORG_SKILLS_DIR`, and the active `$RUDDER_WORKSPACE_CWD` or `$RUDDER_ORG_WORKSPACE_ROOT`. Do not invent new top-level `projects/` folders.
 - If a `resources.md` file exists, treat it like a normal workspace file rather than a reserved Rudder surface.
 - Agent-specific files live under `workspaces/agents/<workspace-key>/...`.
@@ -267,16 +271,19 @@ installed but not enabled; future runs will not load it until enabled.
 
 Do not fall back to raw `curl` for this workflow in local adapters or packaged desktop.
 
-## Planning And Issue Documents
+## Planning And Library Files
 
-If asked to make or revise a plan, update the issue document with key `plan` instead of appending plan text to the issue description.
+If asked to make or revise a plan or durable work document, write it as a path-based Library file under `docs/` instead of creating an issue document. Issues should reference Library files with normal Markdown links, for example:
+
+```md
+[Plan](library-file://file?p=docs%2FRUD-123-plan.md&t=Plan)
+```
 
 Typical flow:
 
 ```bash
-rudder issue documents get "<issue-id-or-identifier>" plan --json
-rudder issue documents revisions "<issue-id-or-identifier>" plan --json
-rudder issue documents put "<issue-id-or-identifier>" plan --title "Plan" --format markdown --body-file "<path>" --json
+rudder library file get "docs/<issue-identifier>-plan.md" --json
+rudder library file put "docs/<issue-identifier>-plan.md" --body-file "<path>" --json
 rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" --json
 ```
 
@@ -284,7 +291,8 @@ Planning rules:
 
 - do not mark the issue done when the request was only to create or revise a plan
 - reassign back to the requester if that is the expected workflow
-- when you reference the plan in comments, link directly to `#document-plan`
+- when you reference the plan in comments, link to the Library file with `library-file://file?p=<url-encoded-relative-path>`
+- `rudder issue documents ...` is a legacy compatibility surface for older DB-backed issue documents. Read it when a prompt explicitly points to an existing legacy issue document; do not use it for new docs.
 
 ## Critical Rules
 
@@ -325,7 +333,8 @@ Use concise markdown with:
 
 - issues: `/<prefix>/issues/<issue-identifier>`
 - issue comments: `/<prefix>/issues/<issue-identifier>#comment-<comment-id>`
-- issue documents: `/<prefix>/issues/<issue-identifier>#document-<document-key>`
+- Library files: `/<prefix>/library?path=<url-encoded-relative-path>`
+- legacy issue documents: `/<prefix>/issues/<issue-identifier>#document-<document-key>`
 - agents: `/<prefix>/agents/<agent-url-key>`
 - projects: `/<prefix>/projects/<project-url-key>`
 - approvals: `/<prefix>/messenger/approvals/<approval-id>`
@@ -338,7 +347,7 @@ Example:
 
 Plan updated and ready for review.
 
-- Plan: [PAP-142 plan](/PAP/issues/PAP-142#document-plan)
+- Plan: [PAP-142 plan](/PAP/library?path=docs%2FPAP-142-plan.md)
 - Depends on: [PAP-224](/PAP/issues/PAP-224)
 - Approval: [ca6ba09d](/PAP/messenger/approvals/ca6ba09d-b558-4a53-a552-e7ef87e54a1b)
 ```

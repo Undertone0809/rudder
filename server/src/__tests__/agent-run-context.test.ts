@@ -186,7 +186,8 @@ describe("agentRunContextService buildSceneContext", () => {
           orgId: "organization-1",
           name: "Rudder repo",
           kind: "directory",
-          locator: "~/projects/rudder",
+          sourceType: "library",
+          locator: "docs/product-brief.md",
           description: "Main monorepo checkout",
           metadata: null,
           createdAt: new Date("2026-04-16T09:00:00.000Z"),
@@ -220,9 +221,11 @@ describe("agentRunContextService buildSceneContext", () => {
       runtimeConfig: {},
     });
 
-    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("## Project Resources");
-    expect(context.rudderWorkspace.resourcesPrompt).toContain("## Project Resources");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("## Project Context Resources");
+    expect(context.rudderWorkspace.resourcesPrompt).toContain("## Project Context Resources");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("[working_set] Rudder repo");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Source type: library");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Library path: relative to the organization Library workspace root");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Work here first");
     expect(context.rudderOrganizationResources).toEqual([]);
     expect(context.rudderProjectResources).toEqual(expect.arrayContaining([

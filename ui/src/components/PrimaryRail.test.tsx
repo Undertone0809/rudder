@@ -273,6 +273,29 @@ describe("PrimaryRail active motion indicator", () => {
 
     expect(nav?.getAttribute("data-active-index")).toBe("2");
   });
+
+  it("surfaces Docs as a primary rail destination", async () => {
+    mockState.pathname = "/library";
+
+    await renderPrimaryRail();
+
+    const nav = document.querySelector(".motion-rail-nav");
+    const libraryLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Docs"));
+
+    expect(libraryLink?.getAttribute("href")).toBe("/library");
+    expect(nav?.getAttribute("data-active-index")).toBe("4");
+  });
+
+  it("keeps the legacy resources route active under Docs", async () => {
+    mockState.pathname = "/resources";
+
+    await renderPrimaryRail();
+
+    const nav = document.querySelector(".motion-rail-nav");
+
+    expect(nav?.getAttribute("data-active-index")).toBe("4");
+  });
 });
 
 describe("PrimaryRail Messenger double click", () => {

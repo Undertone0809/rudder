@@ -82,6 +82,45 @@ export interface IssueDocument extends IssueDocumentSummary {
   body: string;
 }
 
+export interface LibraryDocumentIssueLink {
+  issueId: string;
+  issueIdentifier: string | null;
+  issueTitle: string;
+  key: string;
+}
+
+export interface LibraryDocumentSummary {
+  id: string;
+  orgId: string;
+  title: string | null;
+  format: DocumentFormat;
+  latestRevisionId: string | null;
+  latestRevisionNumber: number;
+  createdByAgentId: string | null;
+  createdByUserId: string | null;
+  updatedByAgentId: string | null;
+  updatedByUserId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  issueLinks?: LibraryDocumentIssueLink[];
+}
+
+export interface LibraryDocument extends LibraryDocumentSummary {
+  body: string;
+}
+
+export interface LibraryDocumentRevision {
+  id: string;
+  orgId: string;
+  documentId: string;
+  revisionNumber: number;
+  body: string;
+  changeSummary: string | null;
+  createdByAgentId: string | null;
+  createdByUserId: string | null;
+  createdAt: Date;
+}
+
 export interface DocumentRevision {
   id: string;
   orgId: string;

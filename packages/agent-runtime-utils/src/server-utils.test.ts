@@ -242,7 +242,7 @@ describe("selectPromptTemplate", () => {
     expect(rendered).toContain("Locator: `~/projects/rudder`");
   });
 
-  it("renders issue documents in issue-aware prompts", () => {
+  it("renders issue document references in issue-aware prompts without inlining bodies", () => {
     const issueDocumentsPrompt = buildIssueDocumentsPrompt({
       planDocument: {
         issueId: "issue-3",
@@ -278,12 +278,15 @@ describe("selectPromptTemplate", () => {
       issue: context.issue,
     });
 
-    expect(issueDocumentsPrompt).toContain("## Issue Documents");
-    expect(issueDocumentsPrompt).toContain("Check the document-backed requirements.");
+    expect(issueDocumentsPrompt).toContain("## Legacy Issue Documents");
+    expect(issueDocumentsPrompt).toContain("These legacy issue documents are not inlined automatically.");
+    expect(issueDocumentsPrompt).toContain("rudder library file put docs/<file>.md --body-file <path> --json");
+    expect(issueDocumentsPrompt).toContain("rudder issue documents get issue-3 plan --json");
     expect(issueDocumentsPrompt).toContain("rudder issue documents get issue-3 design --json");
+    expect(issueDocumentsPrompt).not.toContain("Check the document-backed requirements.");
     expect(rendered).toContain("Use issue docs");
-    expect(rendered).toContain("## Issue Documents");
-    expect(rendered).toContain("Check the document-backed requirements.");
+    expect(rendered).toContain("## Legacy Issue Documents");
+    expect(rendered).not.toContain("Check the document-backed requirements.");
   });
 
   it("renders reviewer changes-requested comment context before generic assignment prompts", () => {

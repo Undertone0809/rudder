@@ -1,98 +1,47 @@
 import { expect, test } from "@playwright/test";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
 
-const ORG_NAME = `Issue-Detail-UX-${Date.now()}`;
-
-function resolveOrganizationWorkspaceRoot(orgId: string) {
-  return path.join(
-    E2E_HOME,
-    "instances",
-    E2E_INSTANCE_ID,
-    "organizations",
-    orgId,
-    "workspaces",
-  );
-}
-
-test.describe("Issue detail documents UX", () => {
-  test("shows a section outline in the focused document editor", async ({ page }) => {
-    await page.setViewportSize({ width: 1500, height: 900 });
+test.describe("Issue detail Docs UX", () => {
+  test("renders Doc mentions and migrated issue docs without issue-owned document creation", async ({ page, baseURL }) => {
     await page.goto("/");
 
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Issue-Detail-Outline-${Date.now()}` },
+      data: { name: `Issue-Docs-${Date.now()}` },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json();
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
 
-    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    const libraryDocRes = await page.request.post(`/api/orgs/${organization.id}/library/documents`, {
       data: {
-        title: "Document outline should use the right rail",
-        description: "Focused documents should expose their chapter list.",
-        status: "todo",
-        priority: "medium",
-      },
-    });
-    expect(issueRes.ok()).toBe(true);
-    const issue = await issueRes.json();
-
-    const documentRes = await page.request.put(`/api/issues/${issue.id}/documents/proposal`, {
-      data: {
-        title: "Proposal",
+        title: "Product brief",
         format: "markdown",
-        body: [
-          "# Overview",
-          "",
-          "## 1. 摘要",
-          "The first section should appear in the outline.",
-          "",
-          "### Decision details",
-          "Nested headings should stay visible.",
-        ].join("\n"),
-        baseRevisionId: null,
+        body: "# Product brief\n\nThe live Doc body stays outside issue context.",
       },
     });
-    expect(documentRes.ok()).toBe(true);
-
-    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
-    await page.locator("#document-proposal").getByRole("button", { name: "Expand editor" }).click();
-
-    const focusedEditor = page.getByRole("region", { name: "Focused document editor" });
-    await expect(focusedEditor.getByText("Sections", { exact: true })).toBeVisible();
-    await expect(focusedEditor.getByRole("button", { name: "Overview" })).toBeVisible();
-    await expect(focusedEditor.getByRole("button", { name: "1. 摘要" })).toBeVisible();
-    await expect(focusedEditor.getByRole("button", { name: "Decision details" })).toBeVisible();
-
-    await focusedEditor.getByRole("button", { name: "Decision details" }).click();
-    await expect(focusedEditor.getByRole("heading", { name: "Decision details" })).toBeVisible();
-  });
-
-  test("keeps document creation user-facing and exposes copyable issue id", async ({ page }) => {
-    await page.goto("/");
-
-    const orgRes = await page.request.post("/api/orgs", {
-      data: { name: ORG_NAME },
+    expect(libraryDocRes.ok()).toBe(true);
+    const libraryDoc = await libraryDocRes.json() as { id: string };
+    const workspaceFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: "docs/product-brief.md",
+        content: "# Product brief\n",
+      },
     });
-    expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json();
-    const workspaceRoot = resolveOrganizationWorkspaceRoot(organization.id);
-    await fs.mkdir(workspaceRoot, { recursive: true });
-    await fs.writeFile(path.join(workspaceRoot, "handoff-notes.md"), "# Handoff notes\n", "utf8");
+    expect(workspaceFileRes.ok()).toBe(true);
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
-        title: "Issue detail should stay compact",
-        description: "Document editing should not expose implementation details.",
+        title: "Issue should link docs from Docs",
+        description: [
+          `Use [@Product brief](library-doc://${libraryDoc.id}?t=Product%20brief) as the legacy source.`,
+          "Use [@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md) as the live file source.",
+        ].join("\n\n"),
         status: "todo",
         priority: "medium",
       },
     });
     expect(issueRes.ok()).toBe(true);
-    const issue = await issueRes.json();
+    const issue = await issueRes.json() as { id: string; identifier?: string };
 
-    const documentRes = await page.request.put(`/api/issues/${issue.id}/documents/ops-checklist`, {
+    const legacyDocRes = await page.request.put(`/api/issues/${issue.id}/documents/ops-checklist`, {
       data: {
         title: "Ops checklist",
         format: "markdown",
@@ -100,54 +49,107 @@ test.describe("Issue detail documents UX", () => {
         baseRevisionId: null,
       },
     });
-    expect(documentRes.ok()).toBe(true);
+    expect(legacyDocRes.ok()).toBe(true);
 
     await page.goto(`/issues/${issue.identifier ?? issue.id}`);
 
     await expect(page.getByRole("button", { name: "Copy ID" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Attach", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "New document" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Focused document editor" })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "New document" }).click();
-    const focusedEditor = page.getByRole("region", { name: "Focused document editor" });
-    await expect(page.getByPlaceholder("Document key")).toHaveCount(0);
-    await expect(focusedEditor.getByPlaceholder("Untitled document")).toBeVisible();
-    await expect(page.getByText("Add some content before creating the document")).toHaveCount(0);
-    await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(focusedEditor.getByRole("button", { name: "Back to issue" })).toBeVisible();
-    await expect(focusedEditor.getByRole("button", { name: "Done" })).toHaveCount(0);
-    await expect(focusedEditor.getByRole("button", { name: "Discard" })).toHaveCount(0);
-    await expect(focusedEditor.getByRole("button", { name: "Create" })).toHaveCount(0);
+    const productBriefLinks = page.getByRole("link", { name: "Product brief" });
+    await expect(productBriefLinks.first()).toHaveAttribute("href", new RegExp(`/library\\?doc=${libraryDoc.id}$`));
+    const fileMention = page.locator('a.rudder-mention-chip[data-mention-kind="library_file"]').first();
+    await expect(fileMention).toBeVisible();
+    await expect(fileMention).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(fileMention).toHaveCSS("border-top-style", "none");
+    const fileMentionColor = await fileMention.evaluate((node) => getComputedStyle(node).color);
+    expect(["rgb(37, 99, 235)", "rgb(96, 165, 250)"]).toContain(fileMentionColor);
 
-    await focusedEditor.getByPlaceholder("Untitled document").fill("Release notes");
-    const editor = focusedEditor.locator('[contenteditable="true"]');
-    await editor.click();
-    await editor.fill("Summarize what changed before handoff.");
-    await expect(focusedEditor.getByText("Draft", { exact: true })).toHaveCount(0);
-    await expect(focusedEditor.getByText("Created", { exact: true })).toHaveCount(0);
-    await expect(focusedEditor.getByText("Saved", { exact: true })).toBeVisible({ timeout: 5000 });
+    if (baseURL) {
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
+    }
+    const descriptionMarkdown = page.locator("[data-copy-markdown-source='true']").first();
+    await descriptionMarkdown.evaluate((node) => {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await page.keyboard.press("ControlOrMeta+C");
+    const copiedDescriptionMarkdown = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copiedDescriptionMarkdown).toContain("[@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md)");
+    await fileMention.evaluate((node) => {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await page.keyboard.press("ControlOrMeta+C");
+    await expect
+      .poll(async () => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe("[@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md)");
 
-    await focusedEditor.getByRole("button", { name: "Back to issue" }).click();
-    await expect(page.getByText("Release notes")).toBeVisible();
-    await expect(page.getByText("Document key", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Linked Docs")).toBeVisible();
+    await expect(page.getByLabel("Linked Docs").getByText("Product brief")).toBeVisible();
+    await expect(page.getByLabel("Linked Docs").getByRole("link", { name: "product-brief.md live Docs" })).toBeVisible();
+    await expect(page.getByLabel("Linked Docs").getByText("Ops checklist")).toBeVisible();
+    await expect(page.getByRole("link", { name: "product-brief.md" }).first())
+      .toHaveAttribute("href", new RegExp(`/library\\?path=docs%2Fproduct-brief\\.md$`));
 
-    await page.locator("#document-ops-checklist").getByRole("button", { name: "Expand editor" }).click();
-    const focusedExistingEditor = page.getByRole("region", { name: "Focused document editor" });
-    await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(focusedExistingEditor.getByRole("button", { name: "Done" })).toHaveCount(0);
-    await expect(focusedExistingEditor.getByRole("button", { name: "Discard" })).toHaveCount(0);
-    await expect(focusedExistingEditor.getByRole("button", { name: "Back to issue" })).toBeVisible();
-    await expect(page.getByText("Sub-issues")).toHaveCount(0);
-    await focusedExistingEditor.getByPlaceholder("Untitled document").fill("Ops checklist revised");
-    await expect(focusedExistingEditor.getByText("Ops checklist revised")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.getByText("Sub-issues")).toBeVisible();
+    await productBriefLinks.first().click();
+    await expect(page).toHaveURL(new RegExp(`/library\\?doc=${libraryDoc.id}$`));
+    await expect(page.getByTestId("org-workspaces-files-card")).toBeVisible();
+    await expect(page.getByTestId("org-library-resources-panel")).toHaveCount(0);
+
+    const clearDescriptionRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { description: "" },
+    });
+    expect(clearDescriptionRes.ok()).toBe(true);
+    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
+    await expect(page.getByText("Add a description...", { exact: true })).toBeVisible();
+    await page.getByText("Add a description...", { exact: true }).click();
+    await expect(page.locator(".rudder-edit-in-place-content .ProseMirror[contenteditable='true']").first()).toBeVisible();
+  });
+
+  test("attaches files from the Docs file tree", async ({ page }) => {
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Issue-Docs-Attach-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string };
+    const workspaceFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: "handoff-notes.md",
+        content: "# Handoff notes\n",
+      },
+    });
+    expect(workspaceFileRes.ok()).toBe(true);
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Issue can attach Docs files",
+        description: "Attachments come from the same Docs file tree.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier?: string };
+
+    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
 
     await page.getByRole("button", { name: "Attach", exact: true }).click();
-    await page.getByRole("menuitem", { name: "Attach from Workspaces" }).click();
-    const workspaceDialog = page.getByRole("dialog", { name: "Attach from Workspaces" });
-    await expect(workspaceDialog).toBeVisible();
-    await workspaceDialog.getByRole("button", { name: "handoff-notes.md" }).click();
-    await workspaceDialog.getByRole("button", { name: "Attach" }).click();
+    await page.getByRole("menuitem", { name: "Attach from Docs" }).click();
+    const libraryDialog = page.getByRole("dialog", { name: "Attach from Docs" });
+    await expect(libraryDialog).toBeVisible();
+    await libraryDialog.getByRole("button", { name: "handoff-notes.md" }).click();
+    await libraryDialog.getByRole("button", { name: "Attach" }).click();
     await expect(page.getByRole("link", { name: "handoff-notes.md" })).toBeVisible({ timeout: 5000 });
   });
 });

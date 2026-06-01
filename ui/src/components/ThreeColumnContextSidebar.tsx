@@ -14,7 +14,6 @@ import {
   DollarSign,
   Eye,
   EyeOff,
-  FolderTree,
   History,
   MessageSquare,
   MoreHorizontal,
@@ -75,16 +74,631 @@ import {
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CALENDAR_EVENT_STATUS_OPTIONS, useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
-import { buildChatMentionHref, type Agent, type CalendarEventStatus, type CalendarSource, type Issue } from "@rudderhq/shared";
-import { RECENT_ISSUES_COLLAPSED_LIMIT, LINEAR_PLUGIN_KEY, LINEAR_CATALOG_DATA_KEY, LINEAR_PLUGIN_ROUTE_PATH, SidebarIssue, LinearSidebarItem, LinearSidebarCatalog, resolveLinearPageContribution, linearIssueSourceHref, SectionLabel, ContextColumnHeader, resolveContextColumnHeader, calendarStatusLabel, CALENDAR_LAYER_COLORS, CALENDAR_WEEKDAY_LABELS, calendarStartOfDay, calendarAddDays, calendarDateKey, calendarStartOfMonthGrid, calendarMonthTitle, calendarHeatClass, setStringSetValue, CalendarMiniMonth, VisibilityLayerRow, activeConversationIdFromPath, ContextItem, activeContextStyle, SlidingContextNav, SidebarLiveCount, ProjectListSection, SidebarIssueListSection } from "./ThreeColumnContextSidebar.parts";
+import type { Agent, CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
 
-function escapeChatMarkdownLinkLabel(value: string) {
-  return value.replace(/\\/g, "\\\\").replace(/]/g, "\\]");
+const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
+const LINEAR_PLUGIN_KEY = "rudder.linear";
+const LINEAR_CATALOG_DATA_KEY = "linear-catalog";
+const LINEAR_PLUGIN_ROUTE_PATH = "linear";
+
+type SidebarIssue = Pick<Issue, "id" | "identifier" | "status" | "title">;
+
+type LinearSidebarItem = {
+  id: string;
+  name: string;
+  kind: "project" | "team";
+  teamId?: string;
+};
+
+type LinearSidebarCatalog = {
+  orgId: string;
+  projects: Array<{ id: string; name: string; teamIds?: string[] }>;
+  teams: Array<{ id: string; name: string }>;
+};
+
+function resolveLinearPageContribution(contributions: PluginUiContribution[] | undefined) {
+  const contribution = contributions?.find((entry) => entry.pluginKey === LINEAR_PLUGIN_KEY);
+  if (!contribution) return null;
+  const pageSlot = contribution.slots.find((slot) => slot.type === "page");
+  if (!pageSlot) return null;
+  return {
+    pluginId: contribution.pluginId,
+    routePath: pageSlot.routePath || LINEAR_PLUGIN_ROUTE_PATH,
+  };
 }
 
-function chatReferenceMarkdown(conversation: { id: string; title: string; summary?: string | null; latestReplyPreview?: string | null }) {
-  const label = escapeChatMarkdownLinkLabel(displayChatTitle(conversation).trim() || "Chat");
-  return `[${label}](${buildChatMentionHref(conversation.id)})`;
+function linearIssueSourceHref(item: LinearSidebarItem): string {
+  const params = new URLSearchParams();
+  params.set("source", "linear");
+  if (item.kind === "team") {
+    params.set("linearTeamId", item.id);
+  } else {
+    if (item.teamId) params.set("linearTeamId", item.teamId);
+    params.set("linearProjectId", item.id);
+  }
+  return `/issues?${params.toString()}`;
+}
+
+function SectionLabel({
+  children,
+  action,
+  testId,
+  collapsed,
+  onToggle,
+}: {
+  children: string;
+  action?: ReactNode;
+  testId?: string;
+  collapsed?: boolean;
+  onToggle?: () => void;
+}) {
+  const canToggle = typeof collapsed === "boolean" && onToggle;
+  return (
+    <div
+      data-testid={testId}
+      className="group flex items-center justify-between px-3.5 pt-3.5 text-[11px] font-medium tracking-normal text-muted-foreground/76"
+    >
+      <span>{children}</span>
+      {action || canToggle ? (
+        <div className="flex shrink-0 items-center gap-1">
+          {action}
+          {canToggle ? (
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-label={`${collapsed ? "Expand" : "Collapse"} ${children}`}
+              title={collapsed ? "Expand" : "Collapse"}
+              data-testid={testId ? `${testId}-toggle` : undefined}
+              className={cn(
+                "inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground/72 transition-[opacity,background-color,color]",
+                "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,transparent)] hover:text-foreground",
+                "opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100",
+                collapsed && "md:opacity-100",
+              )}
+            >
+              {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ContextColumnHeader({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children?: ReactNode;
+}) {
+  const { isMobile, setSidebarOpen } = useSidebar();
+
+  return (
+    <header
+      data-testid="workspace-context-header"
+      className="workspace-card-header workspace-context-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4 py-3"
+    >
+      <div className="min-w-0">
+        <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
+        <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
+      </div>
+      {children ? <div className="min-w-0 flex-1">{children}</div> : null}
+      {!isMobile ? (
+        <button
+          type="button"
+          aria-label="Collapse workspace sidebar"
+          title="Collapse workspace sidebar"
+          className="desktop-window-no-drag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground"
+          onClick={() => setSidebarOpen(false)}
+        >
+          <PanelLeftClose className="h-4 w-4" />
+        </button>
+      ) : null}
+    </header>
+  );
+}
+
+function resolveContextColumnHeader(relativePath: string): { title: string; description: string } {
+  if (/^\/issues(?:\/|$)/.test(relativePath) || /^\/linear(?:\/|$)/.test(relativePath)) {
+    return { title: "Issues", description: "Views and project slices" };
+  }
+  if (/^\/chat(?:\/|$)/.test(relativePath)) {
+    return { title: "Chats", description: "Recent conversations" };
+  }
+  if (/^\/calendar(?:\/|$)/.test(relativePath)) {
+    return { title: "Calendar", description: "Sources and filters" };
+  }
+  if (/^\/(?:org|projects|library|resources|workspaces|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
+    return { title: "Org", description: "Organization surfaces" };
+  }
+  return { title: "Agents", description: "" };
+}
+
+function calendarStatusLabel(status: CalendarEventStatus) {
+  if (status === "planned") return "Planned";
+  if (status === "in_progress") return "Running runs";
+  if (status === "actual") return "Run history";
+  if (status === "external") return "External calendar";
+  if (status === "projected") return "Projected heartbeats";
+  if (status === "cancelled") return "Cancelled";
+  return status;
+}
+
+const CALENDAR_LAYER_COLORS = [
+  "border-blue-400 bg-blue-500",
+  "border-emerald-400 bg-emerald-500",
+  "border-amber-400 bg-amber-500",
+  "border-rose-400 bg-rose-500",
+  "border-cyan-400 bg-cyan-500",
+  "border-violet-400 bg-violet-500",
+] as const;
+
+const CALENDAR_WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"] as const;
+
+function calendarStartOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+}
+
+function calendarAddDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function calendarDateKey(date: Date | string) {
+  const value = new Date(date);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+function calendarStartOfMonthGrid(date: Date) {
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const day = first.getDay();
+  return calendarStartOfDay(calendarAddDays(first, day === 0 ? -6 : 1 - day));
+}
+
+function calendarMonthTitle(date: Date) {
+  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(date);
+}
+
+function calendarHeatClass(count: number) {
+  if (count >= 8) return "bg-emerald-700 text-white";
+  if (count >= 5) return "bg-emerald-600 text-white";
+  if (count >= 3) return "bg-emerald-500/80 text-white";
+  if (count >= 1) return "bg-emerald-500/35 text-emerald-950 dark:text-emerald-50";
+  return "";
+}
+
+function setStringSetValue(setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string, visible: boolean) {
+  setter((current) => {
+    const next = new Set(current);
+    if (visible) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+}
+
+function CalendarMiniMonth({
+  cursor,
+  setCursor,
+  completedIssueCountByDay,
+}: {
+  cursor: Date;
+  setCursor: React.Dispatch<React.SetStateAction<Date>>;
+  completedIssueCountByDay: Map<string, number>;
+}) {
+  const gridStart = calendarStartOfMonthGrid(cursor);
+  const days = Array.from({ length: 42 }, (_, index) => calendarAddDays(gridStart, index));
+  const todayKey = calendarDateKey(new Date());
+  const selectedKey = calendarDateKey(cursor);
+
+  return (
+    <section className="px-3.5 pt-3" data-testid="calendar-mini-month">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          className="inline-flex min-w-0 items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-1.5 py-1 text-left text-sm font-medium text-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
+          onClick={() => setCursor((current) => new Date(current.getFullYear(), current.getMonth(), 1))}
+        >
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="truncate">{calendarMonthTitle(cursor)}</span>
+        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            aria-label="Previous month"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
+            onClick={() => setCursor((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Next month"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
+            onClick={() => setCursor((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-7 gap-y-1 text-center">
+        {CALENDAR_WEEKDAY_LABELS.map((label, index) => (
+          <div key={`${label}-${index}`} className="text-[10px] font-medium text-muted-foreground/72">
+            {label}
+          </div>
+        ))}
+        {days.map((day) => {
+          const key = calendarDateKey(day);
+          const outside = day.getMonth() !== cursor.getMonth();
+          const selected = key === selectedKey;
+          const today = key === todayKey;
+          const completedCount = completedIssueCountByDay.get(key) ?? 0;
+          const showHeat = completedCount > 0 && !today && !selected;
+          return (
+            <button
+              key={key}
+              type="button"
+              aria-label={`${key}${completedCount > 0 ? `, ${completedCount} completed agent issue${completedCount === 1 ? "" : "s"}` : ""}`}
+              title={completedCount > 0 ? `${completedCount} completed agent issue${completedCount === 1 ? "" : "s"}` : undefined}
+              className={cn(
+                "mx-auto flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-xs transition-[background-color,color,box-shadow]",
+                outside && !today ? "text-muted-foreground/45" : "text-foreground/88",
+                showHeat && calendarHeatClass(completedCount),
+                today && "bg-primary text-primary-foreground shadow-sm ring-2 ring-background",
+                !today && selected && "bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,var(--surface-active))] text-foreground ring-1 ring-primary/65",
+                !today && !selected && "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)]",
+              )}
+              onClick={() => setCursor(calendarStartOfDay(day))}
+            >
+              {day.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function VisibilityLayerRow({
+  label,
+  visible,
+  onToggle,
+  icon: Icon,
+  colorClass,
+  agent,
+}: {
+  label: string;
+  visible: boolean;
+  onToggle: () => void;
+  icon?: typeof UserRound;
+  colorClass?: string;
+  agent?: Pick<Agent, "id" | "icon" | "role" | "name">;
+}) {
+  const EyeIcon = visible ? Eye : EyeOff;
+  return (
+    <button
+      type="button"
+      aria-pressed={visible}
+      aria-label={`${visible ? "Hide" : "Show"} ${label}`}
+      onClick={onToggle}
+      className={cn(
+        "group mx-1.5 flex min-h-9 w-[calc(100%-0.75rem)] items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-2 text-left text-sm transition-[background-color,color]",
+        "text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]",
+        !visible && "text-muted-foreground",
+      )}
+    >
+      {agent ? (
+        <span
+          data-testid={`calendar-agent-avatar-${agent.id}`}
+          className={cn(
+            "inline-flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted ring-1 ring-border/80",
+            !visible && "opacity-40 grayscale",
+          )}
+          title={agent.name}
+        >
+          <AgentIcon icon={agent.icon} role={agent.role} className="h-full w-full" />
+        </span>
+      ) : colorClass ? (
+        <span className={cn("h-2.5 w-2.5 shrink-0 rounded-sm border", colorClass, !visible && "opacity-35 grayscale")} />
+      ) : Icon ? (
+        <Icon className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground", !visible && "opacity-45")} />
+      ) : null}
+      <span className="min-w-0 flex-1 truncate" title={label}>{label}</span>
+      <span
+        className={cn(
+          "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-[color:var(--surface-page)] hover:text-foreground group-hover:opacity-100 group-focus-visible:opacity-100",
+          !visible && "text-muted-foreground/70",
+        )}
+      >
+        <EyeIcon className="h-3.5 w-3.5" />
+      </span>
+    </button>
+  );
+}
+
+function activeConversationIdFromPath(pathname: string): string | null {
+  const match = pathname.match(/\/(?:messenger\/chat|chat)\/([^/]+)\/?/);
+  return match?.[1] ?? null;
+}
+
+function ContextItem({
+  to,
+  icon: Icon,
+  label,
+  active,
+  slidingActiveIndicator = false,
+  testId,
+}: {
+  to: string;
+  icon: typeof UserRound;
+  label: string;
+  active?: boolean;
+  slidingActiveIndicator?: boolean;
+  testId?: string;
+}) {
+  return (
+    <Link
+      to={to}
+      data-testid={testId}
+      className={cn(
+        "relative z-10 mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+        slidingActiveIndicator && "min-h-[var(--motion-context-item-height)]",
+        slidingActiveIndicator
+          ? active
+            ? "font-medium text-foreground"
+            : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
+          : active
+            ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
+            : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="truncate">{label}</span>
+    </Link>
+  );
+}
+
+function activeContextStyle(activeIndex: number): CSSProperties | undefined {
+  return activeIndex >= 0
+    ? ({ "--motion-context-active-index": activeIndex } as CSSProperties)
+    : undefined;
+}
+
+function SlidingContextNav({
+  activeIndex,
+  ariaLabel,
+  className,
+  scrollRef,
+  indicatorTestId,
+  testId,
+  children,
+}: {
+  activeIndex: number;
+  ariaLabel: string;
+  className?: string;
+  scrollRef?: RefCallback<HTMLElement>;
+  indicatorTestId?: string;
+  testId?: string;
+  children: ReactNode;
+}) {
+  return (
+    <nav
+      ref={scrollRef}
+      className={cn("motion-context-nav", className)}
+      style={activeContextStyle(activeIndex)}
+      data-active-index={activeIndex >= 0 ? activeIndex : undefined}
+      data-testid={testId}
+      aria-label={ariaLabel}
+    >
+      {activeIndex >= 0 ? (
+        <span
+          data-testid={indicatorTestId}
+          className="motion-context-active-indicator"
+          aria-hidden="true"
+        />
+      ) : null}
+      {children}
+    </nav>
+  );
+}
+
+function SidebarLiveCount({ count }: { count: number }) {
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-blue-400 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+      </span>
+      <span className="text-[11px] font-medium text-blue-600 dark:text-blue-400">{count} live</span>
+    </span>
+  );
+}
+
+function ProjectListSection({
+  visibleProjects,
+  activeProjectRef,
+  closeMobileSidebar,
+  onNewProject,
+  scrollRef,
+}: {
+  visibleProjects: Array<{ id: string; name: string; description: string | null; color?: string | null; urlKey?: string | null }>;
+  activeProjectRef: string | null;
+  closeMobileSidebar: () => void;
+  onNewProject: () => void;
+  scrollRef?: RefCallback<HTMLElement>;
+}) {
+  const activeProjectIndex = visibleProjects.findIndex((project) => activeProjectRef === projectRouteRef(project));
+
+  return (
+    <>
+      <SectionLabel
+        testId="workspace-projects-section"
+        action={(
+          <button
+            type="button"
+            onClick={onNewProject}
+            aria-label="New project"
+            title="Create project"
+            className={cn(
+              "inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground/72 transition-[opacity,background-color,color]",
+              "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,transparent)] hover:text-foreground",
+              "opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100",
+            )}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        )}
+      >
+        Projects
+      </SectionLabel>
+      <SlidingContextNav
+        activeIndex={activeProjectIndex}
+        ariaLabel="Project workspaces"
+        className="motion-context-nav--project-card-list scrollbar-auto-hide mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
+        scrollRef={scrollRef}
+        indicatorTestId="project-sidebar-active-indicator"
+        testId="workspace-projects-scroll"
+      >
+        {visibleProjects.map((project) => {
+          const routeRef = projectRouteRef(project);
+          const active = activeProjectRef === routeRef;
+          return (
+            <Link
+              key={project.id}
+              to={`/projects/${routeRef}/configuration`}
+              onClick={closeMobileSidebar}
+              className={cn(
+                "relative z-10 mx-1.5 min-h-[var(--motion-context-item-height)] rounded-[calc(var(--radius-sm)-1px)] px-3.5 py-2.5 transition-colors",
+                active
+                  ? "font-medium text-foreground"
+                  : "text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)]",
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  data-testid={`workspace-project-color-${project.id}`}
+                  className="h-4 w-4 shrink-0 rounded-[calc(var(--radius-sm)-3px)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_20%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_72%,transparent)]"
+                  style={projectColorBackgroundStyle(project.color)}
+                />
+                <span className="truncate text-sm font-medium text-foreground">{project.name}</span>
+              </div>
+              <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                {project.description || "Project workspace"}
+              </div>
+            </Link>
+          );
+        })}
+      </SlidingContextNav>
+    </>
+  );
+}
+
+function SidebarIssueListSection({
+  issues,
+  activeIssueRef,
+  closeMobileSidebar,
+  onOpenIssue,
+  collapsed,
+  onToggleCollapsed,
+  sectionLabel,
+  ariaLabel,
+  sectionTestId,
+  listTestId,
+  rowTestIdPrefix,
+  toggleTestId,
+  scrollActivityKey,
+}: {
+  issues: SidebarIssue[];
+  activeIssueRef: string | null;
+  closeMobileSidebar: () => void;
+  onOpenIssue?: (issue: SidebarIssue) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  sectionLabel: string;
+  ariaLabel: string;
+  sectionTestId: string;
+  listTestId: string;
+  rowTestIdPrefix: string;
+  toggleTestId: string;
+  scrollActivityKey: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const issueListScrollRef = useScrollbarActivityRef(scrollActivityKey);
+
+  if (issues.length === 0) return null;
+
+  const visibleLimit = expanded ? issues.length : RECENT_ISSUES_COLLAPSED_LIMIT;
+  const visibleIssues = issues.slice(0, visibleLimit);
+
+  return (
+    <section aria-label={ariaLabel} className="mt-1">
+      <SectionLabel
+        testId={sectionTestId}
+        collapsed={collapsed}
+        onToggle={onToggleCollapsed}
+      >
+        {sectionLabel}
+      </SectionLabel>
+      {collapsed ? null : (
+        <>
+          <div
+            ref={expanded ? issueListScrollRef : undefined}
+            data-testid={listTestId}
+            className={cn(
+              "mt-2 space-y-0.5",
+              expanded && "scrollbar-auto-hide max-h-72 overflow-y-auto pr-1",
+            )}
+          >
+            {visibleIssues.map((issue) => {
+              const issueRef = issue.identifier ?? issue.id;
+              const active = activeIssueRef === issueRef || activeIssueRef === issue.id;
+              return (
+                <Link
+                  key={issue.id}
+                  to={issueUrl(issue)}
+                  onClick={() => {
+                    onOpenIssue?.(issue);
+                    closeMobileSidebar();
+                  }}
+                  data-testid={`${rowTestIdPrefix}-${issue.id}`}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-2.5 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                    active
+                      ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
+                      : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+                  )}
+                >
+                  <span className="shrink-0">
+                    <StatusIcon status={issue.status} />
+                  </span>
+                  <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                    <span className="shrink-0 font-mono text-[11px] text-muted-foreground/78">{issueRef}</span>
+                    <span className="shrink-0 text-muted-foreground/55">·</span>
+                    <span className="min-w-0 truncate">{issue.title}</span>
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+          {issues.length > RECENT_ISSUES_COLLAPSED_LIMIT ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((current) => !current)}
+              data-testid={toggleTestId}
+              className="mx-1.5 mt-1 flex min-h-8 w-[calc(100%-0.75rem)] items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
+            >
+              {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              <span>{expanded ? "Show less" : "Show all"}</span>
+            </button>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
 }
 
 export function ThreeColumnContextSidebar() {
@@ -96,7 +710,7 @@ export function ThreeColumnContextSidebar() {
   const isCalendarRoute = /^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath);
   const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
   const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
-  const isOrgWorkspaceRoute = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const isOrgWorkspaceRoute = /^\/(?:org|projects|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
   const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isOrgWorkspaceRoute && !isChatRoute;
   const { selectedOrganizationId } = useOrganization();
@@ -151,7 +765,7 @@ export function ThreeColumnContextSidebar() {
   const { data: chats } = useQuery({
     queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
     queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
-    enabled: !!selectedOrganizationId && isChatRoute,
+    enabled: !!selectedOrganizationId,
   });
   const { data: calendarSources } = useQuery({
     queryKey: queryKeys.calendar.sources(selectedOrganizationId ?? "__none__"),
@@ -346,9 +960,7 @@ export function ThreeColumnContextSidebar() {
   });
   const orgContextItems = [
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
-    { key: "resources", to: "/resources", icon: Boxes, label: "Resources", active: /^\/resources(?:\/|$)/.test(relativePath) },
     { key: "heartbeats", to: "/heartbeats", icon: Clock3, label: "Heartbeats", active: /^\/heartbeats(?:\/|$)/.test(relativePath) },
-    { key: "workspaces", to: "/workspaces", icon: FolderTree, label: "Workspaces", active: /^\/workspaces(?:\/|$)/.test(relativePath) },
     { key: "goals", to: "/goals", icon: Target, label: "Goals", active: /^\/goals(?:\/|$)/.test(relativePath) },
     { key: "skills", to: "/skills", icon: Boxes, label: "Skills", active: /^\/skills(?:\/|$)/.test(relativePath) },
     { key: "costs", to: "/costs", icon: DollarSign, label: "Costs", active: /^\/costs(?:\/|$)/.test(relativePath) },
@@ -469,12 +1081,12 @@ export function ThreeColumnContextSidebar() {
     });
   };
 
-  const copyConversationLink = async (conversation: { id: string; title: string; summary?: string | null; latestReplyPreview?: string | null }) => {
+  const copyConversationId = async (conversationId: string) => {
     try {
-      await navigator.clipboard.writeText(chatReferenceMarkdown(conversation));
-      pushToast({ title: "Chat link copied", tone: "success" });
+      await navigator.clipboard.writeText(conversationId);
+      pushToast({ title: "Chat ID copied", tone: "success" });
     } catch {
-      pushToast({ title: "Could not copy chat link", tone: "error" });
+      pushToast({ title: "Could not copy chat ID", tone: "error" });
     }
   };
 
@@ -977,9 +1589,9 @@ export function ThreeColumnContextSidebar() {
                         <PinOff className="h-4 w-4" />
                         Unpin
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => void copyConversationLink(conversation)}>
+                      <DropdownMenuItem onClick={() => void copyConversationId(conversation.id)}>
                         <Copy className="h-4 w-4" />
-                        Copy Chat Link
+                        Copy chat ID
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => {
@@ -1086,9 +1698,9 @@ export function ThreeColumnContextSidebar() {
                         <Pin className="h-4 w-4" />
                         Pin
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => void copyConversationLink(conversation)}>
+                      <DropdownMenuItem onClick={() => void copyConversationId(conversation.id)}>
                         <Copy className="h-4 w-4" />
-                        Copy Chat Link
+                        Copy chat ID
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => {

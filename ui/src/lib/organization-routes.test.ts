@@ -31,6 +31,16 @@ describe("organization-routes", () => {
     );
   });
 
+  it("treats library as an unprefixed board route", () => {
+    expect(applyOrganizationPrefix("/library?doc=doc-123", "ACM")).toBe(
+      "/ACM/library?doc=doc-123",
+    );
+    expect(extractOrganizationPrefixFromPath("/library")).toBeNull();
+    expect(toOrganizationRelativePath("/ACM/library?doc=doc-123")).toBe(
+      "/library?doc=doc-123",
+    );
+  });
+
   it("treats workspaces as an unprefixed board route", () => {
     expect(applyOrganizationPrefix("/workspaces?path=resources.md", "ACM")).toBe(
       "/ACM/workspaces?path=resources.md",

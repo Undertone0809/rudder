@@ -51,3 +51,28 @@ export const updateOrganizationWorkspaceFileSchema = z.object({
 });
 
 export type UpdateOrganizationWorkspaceFile = z.infer<typeof updateOrganizationWorkspaceFileSchema>;
+
+export const createOrganizationWorkspaceFileSchema = z.object({
+  filePath: z.string().trim().min(1).max(1000),
+  content: z.string().optional().default(""),
+});
+
+export type CreateOrganizationWorkspaceFile = z.infer<typeof createOrganizationWorkspaceFileSchema>;
+
+export const createOrganizationWorkspaceDirectorySchema = z.object({
+  directoryPath: z.string().trim().min(1).max(1000),
+});
+
+export type CreateOrganizationWorkspaceDirectory = z.infer<typeof createOrganizationWorkspaceDirectorySchema>;
+
+export const renameOrganizationWorkspaceEntrySchema = z.object({
+  name: z.string().trim().min(1).max(255),
+});
+
+export type RenameOrganizationWorkspaceEntry = z.infer<typeof renameOrganizationWorkspaceEntrySchema>;
+
+export const moveOrganizationWorkspaceEntrySchema = z.object({
+  destinationDirectoryPath: z.string().trim().max(1000).default(""),
+});
+
+export type MoveOrganizationWorkspaceEntry = z.infer<typeof moveOrganizationWorkspaceEntrySchema>;

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-const TOKEN_TYPES = ["agent", "project", "issue", "skill"] as const;
-const SURFACES = ["editor", "markdown"] as const;
+const TOKEN_TYPES = ["agent", "project", "issue", "library_file", "skill"] as const;
+const SURFACES = ["editor", "milkdown", "markdown"] as const;
 
 test("mention tokens align with surrounding text on every rendered surface", async ({ page }) => {
   await page.goto("/");
@@ -32,6 +32,18 @@ test("mention tokens align with surrounding text on every rendered surface", asy
             <a class="rudder-mention-chip rudder-mention-chip--agent" data-token-kind="agent" data-mention-kind="agent" style="--rudder-mention-icon-mask: none;">Wesley</a>
             <a class="rudder-mention-chip rudder-mention-chip--project rudder-project-mention-chip" data-token-kind="project" data-mention-kind="project" style="--rudder-mention-project-color: #f59e0b;">Rudder mkt</a>
             <a class="rudder-mention-chip rudder-mention-chip--issue" data-token-kind="issue" data-mention-kind="issue">ZST-24</a>
+            <a class="rudder-mention-chip rudder-mention-chip--library_file" data-token-kind="library_file" data-mention-kind="library_file">product-brief.md</a>
+            <span class="rudder-skill-token" data-token-kind="skill" data-skill-token="true">build-advisor</span>
+            after text.
+          </p>
+        </div>
+        <div class="rudder-milkdown-content">
+          <p class="alignment-row" data-surface="milkdown">
+            <span data-reference-text="milkdown">Before text</span>
+            <a class="rudder-mention-chip rudder-mention-chip--agent" data-token-kind="agent" data-mention-kind="agent" style="--rudder-mention-icon-mask: none;">Wesley</a>
+            <a class="rudder-mention-chip rudder-mention-chip--project rudder-project-mention-chip" data-token-kind="project" data-mention-kind="project" style="--rudder-mention-project-color: #f59e0b;">Rudder mkt</a>
+            <a class="rudder-mention-chip rudder-mention-chip--issue" data-token-kind="issue" data-mention-kind="issue">ZST-24</a>
+            <a class="rudder-mention-chip rudder-mention-chip--library_file" data-token-kind="library_file" data-mention-kind="library_file">product-brief.md</a>
             <span class="rudder-skill-token" data-token-kind="skill" data-skill-token="true">build-advisor</span>
             after text.
           </p>
@@ -42,6 +54,7 @@ test("mention tokens align with surrounding text on every rendered surface", asy
             <a class="rudder-mention-chip rudder-mention-chip--agent" data-token-kind="agent" data-mention-kind="agent" style="--rudder-mention-icon-mask: none;">Wesley</a>
             <a class="rudder-mention-chip rudder-mention-chip--project rudder-project-mention-chip" data-token-kind="project" data-mention-kind="project" style="--rudder-mention-project-color: #f59e0b;">Rudder mkt</a>
             <a class="rudder-mention-chip rudder-mention-chip--issue" data-token-kind="issue" data-mention-kind="issue">ZST-24</a>
+            <a class="rudder-mention-chip rudder-mention-chip--library_file" data-token-kind="library_file" data-mention-kind="library_file">product-brief.md</a>
             <span class="rudder-skill-token-wrap">
               <span class="rudder-skill-token" data-token-kind="skill" data-skill-token="true">build-advisor</span>
             </span>
@@ -65,5 +78,21 @@ test("mention tokens align with surrounding text on every rendered surface", asy
       const tokenCenter = tokenBox!.y + tokenBox!.height / 2;
       expect(Math.abs(tokenCenter - textCenter), `${surface} ${type} token center`).toBeLessThanOrEqual(1.5);
     }
+
+    const libraryFileStyles = await page
+      .locator(`[data-surface="${surface}"] [data-token-kind="library_file"]`)
+      .evaluate((element) => {
+        const styles = getComputedStyle(element);
+        return {
+          backgroundColor: styles.backgroundColor,
+          borderTopStyle: styles.borderTopStyle,
+          borderTopWidth: styles.borderTopWidth,
+          color: styles.color,
+        };
+      });
+    expect(libraryFileStyles.backgroundColor, `${surface} library file background`).toBe("rgba(0, 0, 0, 0)");
+    expect(libraryFileStyles.borderTopStyle, `${surface} library file border style`).toBe("none");
+    expect(libraryFileStyles.borderTopWidth, `${surface} library file border width`).toBe("0px");
+    expect(libraryFileStyles.color, `${surface} library file link color`).toBe("rgb(37, 99, 235)");
   }
 });

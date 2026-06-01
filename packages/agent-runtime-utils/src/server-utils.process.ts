@@ -302,6 +302,7 @@ export type IssueDocumentPromptInput = {
     title?: string | null;
     body?: string | null;
     issueId?: string | null;
+    latestRevisionNumber?: number | null;
   } | null;
   documentSummaries?: Array<{
     key?: string | null;
@@ -337,40 +338,56 @@ export function readIssueDocumentPromptIssueId(input: IssueDocumentPromptInput) 
   return "<issue-id>";
 }
 
+export function formatIssueDocumentReference(input: {
+  issueId: string;
+  key?: string | null;
+  title?: string | null;
+  latestRevisionNumber?: number | null;
+}) {
+  const key = input.key?.trim() || "document";
+  const title = input.title?.trim();
+  const titlePart = title ? ` — ${title}` : "";
+  const revision = typeof input.latestRevisionNumber === "number" ? `, revision ${input.latestRevisionNumber}` : "";
+  return `- \`${key}\`${titlePart}${revision}. Legacy issue document; fetch with \`rudder issue documents get ${input.issueId} ${key} --json\`.`;
+}
+
 export function buildIssueDocumentsPrompt(input: IssueDocumentPromptInput | null | undefined) {
   if (!input) return "";
 
-  const sections: string[] = [];
-  const planKey = input.planDocument?.key?.trim() || input.legacyPlanDocument?.key?.trim() || "plan";
-  const planBody = input.planDocument?.body?.trim() || input.legacyPlanDocument?.body?.trim() || "";
-  if (planBody) {
-    sections.push([
-      formatDocumentHeading(planKey, input.planDocument?.title),
-      input.legacyPlanDocument ? "Source: legacy `<plan>` block in the issue description." : `Source: issue document \`${planKey}\`.`,
-      "",
-      truncateIssueDocumentBody(planBody),
-    ].join("\n"));
+  const issueId = readIssueDocumentPromptIssueId(input);
+  const references: string[] = [];
+  const planKey = input.planDocument?.key?.trim() || "plan";
+
+  if (input.planDocument) {
+    references.push(formatIssueDocumentReference({
+      issueId,
+      key: planKey,
+      title: input.planDocument.title,
+      latestRevisionNumber: input.planDocument.latestRevisionNumber,
+    }));
   }
 
   const otherDocuments = (input.documentSummaries ?? []).filter((doc) => {
     const key = typeof doc.key === "string" ? doc.key.trim() : "";
     return key && key !== planKey;
   });
-  if (otherDocuments.length > 0) {
-    const issueId = readIssueDocumentPromptIssueId(input);
-    sections.push([
-      "### Additional Issue Documents",
-      ...otherDocuments.map((doc) => {
-        const key = doc.key?.trim() || "document";
-        const title = doc.title?.trim();
-        const revision = typeof doc.latestRevisionNumber === "number" ? `, revision ${doc.latestRevisionNumber}` : "";
-        const titlePart = title ? ` — ${title}` : "";
-        return `- \`${key}\`${titlePart}${revision}. Fetch with \`rudder issue documents get ${issueId} ${key} --json\`.`;
-      }),
-    ].join("\n"));
+  references.push(...otherDocuments.map((doc) => formatIssueDocumentReference({
+    issueId,
+    key: doc.key,
+    title: doc.title,
+    latestRevisionNumber: doc.latestRevisionNumber,
+  })));
+
+  if (input.legacyPlanDocument && references.length === 0) {
+    references.push("- `plan` — legacy `<plan>` block in the issue description. Treat it as issue text, not an attached document body.");
   }
 
-  if (sections.length === 0) return "";
-  return ["## Issue Documents", ...sections].join("\n\n");
+  if (references.length === 0) return "";
+  return [
+    "## Legacy Issue Documents",
+    "These legacy issue documents are not inlined automatically. Fetch one only when you need its contents.",
+    "For new or revised durable docs, write a path-based Library file with `rudder library file put docs/<file>.md --body-file <path> --json`, then link it in issue text or comments with `library-file://file?p=docs%2F<file>.md`.",
+    "",
+    ...references,
+  ].join("\n");
 }
-

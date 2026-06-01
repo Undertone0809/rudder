@@ -122,14 +122,21 @@ function labelForResourceKind(
 function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
   if (resources.length === 0) return "";
   return [
-    "## Project Resources",
+    "## Project Context Resources",
     "",
     ...resources.flatMap((attachment) => {
+      const sourceType = attachment.resource.sourceType ?? "external";
       const lines = [
         `- [${attachment.role}] ${attachment.resource.name}`,
+        `  - Source type: ${sourceType}`,
         `  - Kind: ${labelForResourceKind(attachment.resource.kind)}`,
         `  - Locator: \`${attachment.resource.locator}\``,
       ];
+      if (sourceType === "library") {
+        lines.push(
+          "  - Library path: relative to the organization Library workspace root",
+        );
+      }
       if (attachment.resource.description?.trim()) {
         lines.push(
           `  - Description: ${attachment.resource.description.trim()}`,
