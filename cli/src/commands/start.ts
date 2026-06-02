@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants, createWriteStream, mkdirSync, readFileSync } from "node:fs";
-import { access, chmod, copyFile, cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -18,7 +18,7 @@ import {
 } from "../install.js";
 import { resolveRudderHomeDir } from "../config/home.js";
 import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError } from "../runtime/install.js";
-import { createByteProgress, type ByteProgressReporter } from "../utils/progress.js";
+import { createByteProgress, formatBytes, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
 
 export const DEFAULT_DESKTOP_RELEASE_REPO = "Undertone0809/rudder";
@@ -86,6 +86,29 @@ export interface DesktopInstallMetadata {
   installedAt: string;
 }
 
+export interface DesktopAssetCacheRetentionOptions {
+  now?: Date;
+  protectedChecksums?: string[];
+  maxEntries?: number;
+  maxAgeMs?: number;
+  maxTotalBytes?: number;
+  keepPreviousEntries?: number;
+}
+
+export interface DesktopAssetCachePruneEntry {
+  cacheDir: string;
+  checksum: string;
+  sizeBytes: number;
+}
+
+export interface DesktopAssetCachePruneResult {
+  scanned: number;
+  deleted: DesktopAssetCachePruneEntry[];
+  protectedChecksums: string[];
+  freedBytes: number;
+  warnings: string[];
+}
+
 type UpdateQuitResponse =
   | { ok: true; status: "quitting"; pid?: number }
   | { ok: true; status: "not_running" }
@@ -127,6 +150,10 @@ const DESKTOP_METADATA_FILE = ".rudder-desktop-install.json";
 const DESKTOP_CHECKSUM_ASSET_NAME = "SHASUMS256.txt";
 const DESKTOP_ASSET_CACHE_DIR = "desktop-assets";
 const GITHUB_ASSET_DOWNLOAD_ACCEPT = "application/octet-stream";
+const DEFAULT_DESKTOP_ASSET_CACHE_MAX_ENTRIES = 2;
+const DEFAULT_DESKTOP_ASSET_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const DEFAULT_DESKTOP_ASSET_CACHE_MAX_BYTES = 768 * 1024 * 1024;
+const DEFAULT_DESKTOP_ASSET_CACHE_KEEP_PREVIOUS = 1;
 
 function normalizeProgressTotal(totalBytes: number | null | undefined): number | null {
   return typeof totalBytes === "number" && Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
@@ -746,6 +773,200 @@ export function resolveDesktopCachedAssetPath(
   return path.join(resolveDesktopAssetCacheDir(assetChecksum, homeDir), path.basename(assetName));
 }
 
+interface DesktopAssetCacheEntry {
+  cacheDir: string;
+  checksum: string;
+  lastUsedAtMs: number;
+  sizeBytes: number;
+}
+
+export async function pruneDesktopAssetCache(
+  options: DesktopAssetCacheRetentionOptions & { homeDir?: string } = {},
+): Promise<DesktopAssetCachePruneResult> {
+  const homeDir = options.homeDir ?? resolveRudderHomeDir();
+  const entries = await scanDesktopAssetCacheEntries(homeDir);
+  const protectedChecksums = resolveProtectedDesktopAssetChecksums(entries, {
+    protectedChecksums: options.protectedChecksums ?? [],
+    keepPreviousEntries: options.keepPreviousEntries ?? DEFAULT_DESKTOP_ASSET_CACHE_KEEP_PREVIOUS,
+  });
+  const protectedSet = new Set(protectedChecksums);
+  const deletions = planDesktopAssetCacheDeletions(entries, {
+    nowMs: (options.now ?? new Date()).getTime(),
+    protectedChecksums: protectedSet,
+    maxEntries: options.maxEntries ?? DEFAULT_DESKTOP_ASSET_CACHE_MAX_ENTRIES,
+    maxAgeMs: options.maxAgeMs ?? DEFAULT_DESKTOP_ASSET_CACHE_MAX_AGE_MS,
+    maxTotalBytes: options.maxTotalBytes ?? DEFAULT_DESKTOP_ASSET_CACHE_MAX_BYTES,
+  });
+  const deleted: DesktopAssetCachePruneEntry[] = [];
+  const warnings: string[] = [];
+
+  for (const entry of deletions) {
+    try {
+      await rm(entry.cacheDir, { recursive: true, force: true });
+      deleted.push({
+        cacheDir: entry.cacheDir,
+        checksum: entry.checksum,
+        sizeBytes: entry.sizeBytes,
+      });
+    } catch (error) {
+      warnings.push(
+        `Failed to remove Desktop asset cache ${entry.cacheDir}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return {
+    scanned: entries.length,
+    deleted,
+    protectedChecksums,
+    freedBytes: deleted.reduce((total, entry) => total + entry.sizeBytes, 0),
+    warnings,
+  };
+}
+
+async function maybePruneDesktopAssetCache(options: {
+  homeDir?: string;
+  protectedChecksums: string[];
+}): Promise<DesktopAssetCachePruneResult | null> {
+  const result = await pruneDesktopAssetCache(options);
+  return result.deleted.length > 0 || result.warnings.length > 0 ? result : null;
+}
+
+async function scanDesktopAssetCacheEntries(homeDir: string): Promise<DesktopAssetCacheEntry[]> {
+  const cacheRoot = path.join(homeDir, DESKTOP_ASSET_CACHE_DIR);
+  const dirents = await readdir(cacheRoot, { withFileTypes: true }).catch(() => null);
+  if (!dirents) return [];
+
+  const entries: DesktopAssetCacheEntry[] = [];
+  for (const dirent of dirents) {
+    if (!dirent.isDirectory()) continue;
+    let checksum: string;
+    try {
+      checksum = normalizeDesktopAssetChecksum(dirent.name);
+    } catch {
+      continue;
+    }
+    const cacheDir = path.join(cacheRoot, dirent.name);
+    const stats = await desktopCacheDirectoryStats(cacheDir);
+    entries.push({
+      cacheDir,
+      checksum,
+      lastUsedAtMs: stats.lastUsedAtMs,
+      sizeBytes: stats.sizeBytes,
+    });
+  }
+  return entries;
+}
+
+async function desktopCacheDirectoryStats(targetPath: string): Promise<{ sizeBytes: number; lastUsedAtMs: number }> {
+  const fallbackStat = await stat(targetPath).catch(() => null);
+  const dirents = await readdir(targetPath, { withFileTypes: true }).catch(() => null);
+  if (!dirents) {
+    return {
+      sizeBytes: 0,
+      lastUsedAtMs: Number(fallbackStat?.mtimeMs ?? 0),
+    };
+  }
+
+  let sizeBytes = 0;
+  let lastUsedAtMs = Number(fallbackStat?.mtimeMs ?? 0);
+  for (const dirent of dirents) {
+    if (dirent.isSymbolicLink()) continue;
+    const entryPath = path.join(targetPath, dirent.name);
+    const entryStat = await stat(entryPath).catch(() => null);
+    if (!entryStat) continue;
+    lastUsedAtMs = Math.max(lastUsedAtMs, Number(entryStat.mtimeMs ?? 0));
+    if (dirent.isDirectory()) {
+      const nested = await desktopCacheDirectoryStats(entryPath);
+      sizeBytes += nested.sizeBytes;
+      lastUsedAtMs = Math.max(lastUsedAtMs, nested.lastUsedAtMs);
+      continue;
+    }
+    sizeBytes += Number(entryStat.size ?? 0);
+  }
+  return { sizeBytes, lastUsedAtMs };
+}
+
+function resolveProtectedDesktopAssetChecksums(
+  entries: DesktopAssetCacheEntry[],
+  options: {
+    protectedChecksums: string[];
+    keepPreviousEntries: number;
+  },
+): string[] {
+  const protectedChecksums = new Set<string>();
+  for (const checksum of options.protectedChecksums) {
+    try {
+      protectedChecksums.add(normalizeDesktopAssetChecksum(checksum));
+    } catch {
+      continue;
+    }
+  }
+
+  const previousEntries = [...entries]
+    .filter((entry) => !protectedChecksums.has(entry.checksum))
+    .sort((a, b) => b.lastUsedAtMs - a.lastUsedAtMs);
+  for (const entry of previousEntries.slice(0, Math.max(0, options.keepPreviousEntries))) {
+    protectedChecksums.add(entry.checksum);
+  }
+
+  return [...protectedChecksums].sort();
+}
+
+function planDesktopAssetCacheDeletions(
+  entries: DesktopAssetCacheEntry[],
+  options: {
+    nowMs: number;
+    protectedChecksums: Set<string>;
+    maxEntries: number;
+    maxAgeMs: number;
+    maxTotalBytes: number;
+  },
+): DesktopAssetCacheEntry[] {
+  const deletions = new Set<string>();
+  const oldestFirst = [...entries].sort((a, b) => a.lastUsedAtMs - b.lastUsedAtMs);
+  const canDelete = (entry: DesktopAssetCacheEntry): boolean =>
+    !options.protectedChecksums.has(entry.checksum) && !deletions.has(entry.cacheDir);
+  const mark = (entry: DesktopAssetCacheEntry): void => {
+    if (canDelete(entry)) deletions.add(entry.cacheDir);
+  };
+
+  if (options.maxAgeMs >= 0) {
+    for (const entry of oldestFirst) {
+      if (options.nowMs - entry.lastUsedAtMs > options.maxAgeMs) mark(entry);
+    }
+  }
+
+  if (options.maxEntries > 0) {
+    for (const entry of oldestFirst) {
+      if (entries.length - deletions.size <= options.maxEntries) break;
+      mark(entry);
+    }
+  }
+
+  if (options.maxTotalBytes > 0) {
+    let remainingBytes = entries.reduce((total, entry) => total + entry.sizeBytes, 0)
+      - [...deletions].reduce((total, cacheDir) => total + (entries.find((entry) => entry.cacheDir === cacheDir)?.sizeBytes ?? 0), 0);
+    for (const entry of oldestFirst) {
+      if (remainingBytes <= options.maxTotalBytes) break;
+      if (!canDelete(entry)) continue;
+      deletions.add(entry.cacheDir);
+      remainingBytes -= entry.sizeBytes;
+    }
+  }
+
+  return entries.filter((entry) => deletions.has(entry.cacheDir));
+}
+
+async function touchDesktopCachedAsset(cachePath: string): Promise<void> {
+  try {
+    const now = new Date();
+    await utimes(cachePath, now, now);
+  } catch {
+    // Cache recency should not make a verified Desktop asset unusable.
+  }
+}
+
 export async function downloadDesktopAssetWithCache(
   asset: GithubReleaseAsset,
   expectedChecksum: string,
@@ -761,6 +982,7 @@ export async function downloadDesktopAssetWithCache(
   if (await pathExists(cachePath)) {
     try {
       const checksum = assertChecksumMatch(cachePath, normalizedChecksum);
+      await touchDesktopCachedAsset(cachePath);
       return { path: cachePath, checksum, cacheStatus: "hit" };
     } catch {
       await rm(cachePath, { force: true });
@@ -1501,6 +1723,18 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         desktopProgressJson ? "preparing_restart" : null,
       );
       await writeInstallMetadata(installPaths, releaseTag, selectedAsset.name, checksum, selectedAssetKind);
+    }
+
+    const desktopAssetPrune = await maybePruneDesktopAssetCache({
+      protectedChecksums: [expectedChecksum],
+    });
+    if (desktopAssetPrune) {
+      if (desktopAssetPrune.deleted.length > 0) {
+        p.log.success(
+          `Pruned ${desktopAssetPrune.deleted.length} old Desktop asset cache(s), freed ${formatBytes(desktopAssetPrune.freedBytes)}.`,
+        );
+      }
+      for (const warning of desktopAssetPrune.warnings) p.log.warn(warning);
     }
 
     if (opts.open !== false) {
