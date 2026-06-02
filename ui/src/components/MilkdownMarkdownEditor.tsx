@@ -35,6 +35,7 @@ import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import {
   mentionChipInlineStyle,
   parseMentionChipHref,
+  stripMentionChipLabelPrefix,
   type ParsedMentionChip,
 } from "../lib/mention-chips";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
@@ -642,6 +643,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   mentionMenuPlacement = "caret",
   onSubmit,
   submitShortcut = "mod-enter",
+  onInlineTokenClick,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1021,6 +1023,26 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         const href = anchor.getAttribute("href") ?? "";
         if (!href || !isRudderTokenHref(href, label)) return;
         event.preventDefault();
+        if (onInlineTokenClick) {
+          const skillReference = parseSkillReference(href, label);
+          onInlineTokenClick(
+            skillReference
+              ? {
+                  element: anchor,
+                  href: skillReference.href,
+                  kind: "skill",
+                  label: skillReference.label,
+                }
+              : {
+                  element: anchor,
+                  href,
+                  kind: "mention",
+                  label: stripMentionChipLabelPrefix(label),
+                },
+            event,
+          );
+          return;
+        }
         const navigationPath = rudderTokenNavigationPath(href);
         if (!navigationPath) return;
         window.location.assign(navigationPath);

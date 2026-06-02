@@ -14,6 +14,9 @@ const mockState = vi.hoisted(() => ({
   setHeaderActions: vi.fn(),
   pushToast: vi.fn(),
   setSearchParams: vi.fn(),
+  searchParams: "path=artifacts/chat-ui-review/image.png",
+  viewedOrganizationId: "org-1",
+  viewedOrganizationIssuePrefix: "RUD",
   desktopShell: null as unknown,
 }));
 
@@ -56,6 +59,13 @@ vi.mock("@tanstack/react-query", () => ({
             isDirectory: false,
             entityType: "organization_workspace",
           },
+          {
+            name: "README.md",
+            displayLabel: "README.md",
+            path: "artifacts/chat-ui-review/README.md",
+            isDirectory: false,
+            entityType: "organization_workspace",
+          },
         ],
       } as const;
       return {
@@ -70,11 +80,27 @@ vi.mock("@tanstack/react-query", () => ({
       };
     }
     if (key[2] === "workspace-file") {
+      const filePath = key[3] ?? "artifacts/chat-ui-review/image.png";
+      if (String(filePath).endsWith(".md")) {
+        return {
+          data: {
+            filePath,
+            content: String(filePath).endsWith("notes.md")
+              ? "[README.md](library-file://file?p=artifacts%2Fchat-ui-review%2FREADME.md&t=README.md)\n"
+              : `# ${filePath}\n`,
+            contentType: "text/markdown",
+            previewKind: "text",
+            truncated: false,
+          },
+          isLoading: false,
+          error: null,
+        };
+      }
       return {
         data: {
-          filePath: "artifacts/chat-ui-review/image.png",
+          filePath,
           content: null,
-          contentPath: "/api/orgs/org-1/workspace/file-content/artifacts/chat-ui-review/image.png",
+          contentPath: `/api/orgs/org-1/workspace/file-content/${filePath}`,
           contentType: "image/png",
           previewKind: "image",
           truncated: false,
@@ -99,7 +125,7 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@/lib/router", () => ({
   useNavigate: () => vi.fn(),
   useSearchParams: () => [
-    new URLSearchParams("path=artifacts/chat-ui-review/image.png"),
+    new URLSearchParams(mockState.searchParams),
     mockState.setSearchParams,
   ],
 }));
@@ -119,11 +145,11 @@ vi.mock("../context/ToastContext", () => ({
 
 vi.mock("../hooks/useViewedOrganization", () => ({
   useViewedOrganization: () => ({
-    viewedOrganizationId: "org-1",
+    viewedOrganizationId: mockState.viewedOrganizationId,
     viewedOrganization: {
-      id: "org-1",
+      id: mockState.viewedOrganizationId,
       name: "Rudder",
-      issuePrefix: "RUD",
+      issuePrefix: mockState.viewedOrganizationIssuePrefix,
     },
   }),
 }));
@@ -133,8 +159,39 @@ vi.mock("../lib/desktop-shell", () => ({
 }));
 
 vi.mock("../components/MarkdownEditor", () => ({
-  MarkdownEditor: ({ value }: { value?: string }) => (
-    <textarea aria-label="Markdown editor" readOnly value={value ?? ""} />
+  MarkdownEditor: ({
+    value,
+    onInlineTokenClick,
+  }: {
+    value?: string;
+    onInlineTokenClick?: (
+      token: {
+        element: HTMLElement;
+        href: string;
+        kind: "mention";
+        label: string;
+      },
+      event: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean },
+    ) => void;
+  }) => (
+    <div>
+      <textarea aria-label="Markdown editor" readOnly value={value ?? ""} />
+      <button
+        type="button"
+        data-testid="mock-library-file-token"
+        onClick={(event) => onInlineTokenClick?.(
+          {
+            element: event.currentTarget,
+            href: "library-file://file?p=artifacts%2Fchat-ui-review%2FREADME.md&t=README.md",
+            kind: "mention",
+            label: "README.md",
+          },
+          event,
+        )}
+      >
+        README.md
+      </button>
+    </div>
   ),
 }));
 
@@ -145,10 +202,15 @@ vi.mock("@/components/ui/tooltip", () => ({
 }));
 
 let cleanupFn: (() => void) | null = null;
+let currentRoot: Root | null = null;
+let currentContainer: HTMLDivElement | null = null;
 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  mockState.searchParams = "path=artifacts/chat-ui-review/image.png";
+  mockState.viewedOrganizationId = "org-1";
+  mockState.viewedOrganizationIssuePrefix = "RUD";
   Object.defineProperty(window, "localStorage", {
     configurable: true,
     value: {
@@ -184,19 +246,22 @@ afterEach(() => {
     cleanupFn?.();
   });
   cleanupFn = null;
+  currentRoot = null;
+  currentContainer = null;
   document.body.innerHTML = "";
   vi.useRealTimers();
 });
 
 function renderWorkspacesPage() {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  let root: Root | null = null;
+  if (!currentContainer) {
+    currentContainer = document.createElement("div");
+    document.body.appendChild(currentContainer);
+  }
   act(() => {
-    root = createRoot(container);
-    root.render(<OrganizationWorkspaces />);
+    currentRoot ??= createRoot(currentContainer!);
+    currentRoot.render(<OrganizationWorkspaces />);
   });
-  cleanupFn = () => root?.unmount();
+  cleanupFn = () => currentRoot?.unmount();
 }
 
 function createTabDragEvent(type: string, dataTransfer: DataTransferStub, clientX = 75) {
@@ -344,6 +409,152 @@ describe("OrganizationWorkspaces scroll regions", () => {
       Array.from(document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"))
         .map((tab) => tab.textContent?.trim()),
     ).toEqual(["notes.md", "image.png"]);
+  });
+
+  it("opens Library file tokens inside the current editor tab set", async () => {
+    renderWorkspacesPage();
+
+    const notesFileButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "notes.md",
+    );
+    expect(notesFileButton).toBeTruthy();
+
+    await act(async () => {
+      notesFileButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(
+      Array.from(document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"))
+        .map((tab) => tab.textContent?.trim()),
+    ).toEqual(["image.png", "notes.md"]);
+
+    await act(async () => {
+      document.querySelector("[data-testid='mock-library-file-token']")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    const fileTabs = Array.from(
+      document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"),
+    );
+    expect(fileTabs.map((tab) => tab.textContent?.trim())).toEqual(["image.png", "notes.md", "README.md"]);
+    expect(fileTabs.map((tab) => tab.querySelector("[role='tab']")?.getAttribute("aria-selected"))).toEqual([
+      "false",
+      "false",
+      "true",
+    ]);
+  });
+
+  it("restores open Library file tabs from session storage when no file path is requested", () => {
+    mockState.searchParams = "";
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => JSON.stringify([
+          "artifacts/chat-ui-review/notes.md",
+          "artifacts/chat-ui-review/README.md",
+        ])),
+        setItem: vi.fn(),
+      },
+    });
+
+    renderWorkspacesPage();
+
+    const fileTabs = Array.from(
+      document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"),
+    );
+    expect(fileTabs.map((tab) => tab.textContent?.trim())).toEqual(["notes.md", "README.md"]);
+    expect(fileTabs.map((tab) => tab.querySelector("[role='tab']")?.getAttribute("aria-selected"))).toEqual([
+      "true",
+      "false",
+    ]);
+  });
+
+  it("replaces retained Library tabs when switching organizations without unmounting", () => {
+    mockState.searchParams = "";
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => {
+          if (key.endsWith(":org-1")) {
+            return JSON.stringify({
+              openFilePaths: ["artifacts/chat-ui-review/notes.md"],
+              selectedFilePath: "artifacts/chat-ui-review/notes.md",
+            });
+          }
+          if (key.endsWith(":org-2")) {
+            return JSON.stringify({
+              openFilePaths: ["artifacts/chat-ui-review/README.md"],
+              selectedFilePath: "artifacts/chat-ui-review/README.md",
+            });
+          }
+          return null;
+        }),
+        setItem: vi.fn(),
+      },
+    });
+
+    renderWorkspacesPage();
+    expect(
+      Array.from(document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"))
+        .map((tab) => tab.textContent?.trim()),
+    ).toEqual(["notes.md"]);
+
+    mockState.viewedOrganizationId = "org-2";
+    mockState.viewedOrganizationIssuePrefix = "ALT";
+    renderWorkspacesPage();
+
+    const fileTabs = Array.from(
+      document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"),
+    );
+    expect(fileTabs.map((tab) => tab.textContent?.trim())).toEqual(["README.md"]);
+    expect(fileTabs.map((tab) => tab.querySelector("[role='tab']")?.getAttribute("aria-selected"))).toEqual(["true"]);
+  });
+
+  it("does not let retained Library tabs override a directory deep link", () => {
+    mockState.searchParams = "directory=artifacts/chat-ui-review";
+    const setItem = vi.fn();
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => JSON.stringify({
+          openFilePaths: ["artifacts/chat-ui-review/notes.md", "artifacts/chat-ui-review/README.md"],
+          selectedFilePath: "artifacts/chat-ui-review/README.md",
+        })),
+        setItem,
+      },
+    });
+
+    renderWorkspacesPage();
+
+    expect(document.querySelector("[data-testid='org-workspaces-path-breadcrumb']")).toBeNull();
+    expect(
+      document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] [role='tab'][aria-selected='true']"),
+    ).toHaveLength(0);
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it("does not let retained Library tabs override a resource deep link", () => {
+    mockState.searchParams = "resource=resource-1";
+    const setItem = vi.fn();
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => JSON.stringify({
+          openFilePaths: ["artifacts/chat-ui-review/notes.md", "artifacts/chat-ui-review/README.md"],
+          selectedFilePath: "artifacts/chat-ui-review/README.md",
+        })),
+        setItem,
+      },
+    });
+
+    renderWorkspacesPage();
+
+    expect(document.querySelector("[data-testid='org-workspaces-path-breadcrumb']")).toBeNull();
+    expect(
+      document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] [role='tab'][aria-selected='true']"),
+    ).toHaveLength(0);
+    expect(setItem).not.toHaveBeenCalled();
   });
 
 });

@@ -39,9 +39,11 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
-import { MarkdownEditor, type MentionOption } from "../components/MarkdownEditor";
+import { MarkdownEditor, type InlineTokenClickEvent, type MentionOption } from "../components/MarkdownEditor";
 import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
+import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
+import { parseMentionChipHref } from "../lib/mention-chips";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -77,6 +79,8 @@ import {
 } from "lucide-react";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
+const WORKSPACE_OPEN_FILE_TABS_STORAGE_PREFIX = "rudder.workspace.openFileTabs";
+const WORKSPACE_OPEN_FILE_TABS_LIMIT = 24;
 const MOBILE_BREAKPOINT = 768;
 const WORKSPACE_FLUSH_DRAFT_EVENT = "rudder:workspace-flush-draft";
 const WORKSPACE_TREE_ENTRY_SELECTOR = "[data-workspace-entry-path]";
@@ -229,6 +233,82 @@ function directoryAndParentDirectories(directoryPath: string) {
 function normalizeRequestedPath(value: string | null) {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeWorkspaceOpenFilePaths(paths: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const path of paths) {
+    const filePath = normalizeRequestedPath(path ?? null);
+    if (!filePath || seen.has(filePath)) continue;
+    seen.add(filePath);
+    normalized.push(filePath);
+  }
+  return normalized.slice(-WORKSPACE_OPEN_FILE_TABS_LIMIT);
+}
+
+function workspaceOpenFileTabsStorageKey(orgId: string) {
+  return `${WORKSPACE_OPEN_FILE_TABS_STORAGE_PREFIX}:${orgId}`;
+}
+
+function normalizeWorkspaceOpenFileTabState(
+  openFilePaths: Array<string | null | undefined>,
+  selectedFilePath: string | null | undefined,
+) {
+  const normalizedOpenFilePaths = normalizeWorkspaceOpenFilePaths([...openFilePaths, selectedFilePath]);
+  const normalizedSelectedFilePath = normalizeRequestedPath(selectedFilePath ?? null);
+  return {
+    openFilePaths: normalizedOpenFilePaths,
+    selectedFilePath: normalizedSelectedFilePath && normalizedOpenFilePaths.includes(normalizedSelectedFilePath)
+      ? normalizedSelectedFilePath
+      : normalizedOpenFilePaths[0] ?? null,
+  };
+}
+
+function readStoredWorkspaceOpenFileTabState(orgId: string | null | undefined) {
+  if (!orgId || typeof window === "undefined") {
+    return normalizeWorkspaceOpenFileTabState([], null);
+  }
+  try {
+    const raw = window.sessionStorage?.getItem(workspaceOpenFileTabsStorageKey(orgId));
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed)) {
+      return normalizeWorkspaceOpenFileTabState(parsed, parsed[0]);
+    }
+    if (parsed && typeof parsed === "object") {
+      const stored = parsed as { openFilePaths?: unknown; selectedFilePath?: unknown };
+      return normalizeWorkspaceOpenFileTabState(
+        Array.isArray(stored.openFilePaths) ? stored.openFilePaths as Array<string | null | undefined> : [],
+        typeof stored.selectedFilePath === "string" ? stored.selectedFilePath : null,
+      );
+    }
+  } catch {
+    return normalizeWorkspaceOpenFileTabState([], null);
+  }
+  return normalizeWorkspaceOpenFileTabState([], null);
+}
+
+function writeStoredWorkspaceOpenFileTabState(
+  orgId: string | null | undefined,
+  filePaths: string[],
+  selectedFilePath: string | null,
+) {
+  if (!orgId || typeof window === "undefined") return;
+  try {
+    const state = normalizeWorkspaceOpenFileTabState(filePaths, selectedFilePath);
+    window.sessionStorage?.setItem(
+      workspaceOpenFileTabsStorageKey(orgId),
+      JSON.stringify(state),
+    );
+  } catch {
+    // Session restoration is a convenience; tab state still works in memory.
+  }
+}
+
+function appendWorkspaceOpenFilePath(current: string[], filePath: string) {
+  return current.includes(filePath)
+    ? current
+    : normalizeWorkspaceOpenFilePaths([...current, filePath]);
 }
 
 function getWorkspaceFileExtension(filePath: string | null) {
@@ -2286,8 +2366,17 @@ export function OrganizationWorkspaceBrowser({
   const requestedFilePath = normalizeRequestedPath(searchParams.get("path"));
   const requestedResourceAttachmentId = normalizeRequestedPath(searchParams.get("resource"));
   const requestedDirectoryPath = normalizeRequestedPath(searchParams.get("directory"));
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(requestedFilePath);
-  const [openFilePaths, setOpenFilePaths] = useState<string[]>(() => requestedFilePath ? [requestedFilePath] : []);
+  const initialOpenFileTabState = useMemo(
+    () => readStoredWorkspaceOpenFileTabState(viewedOrganizationId),
+    [viewedOrganizationId],
+  );
+  const initialSelectedFilePath = requestedResourceAttachmentId || requestedDirectoryPath
+    ? null
+    : requestedFilePath ?? initialOpenFileTabState.selectedFilePath;
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialSelectedFilePath);
+  const [openFilePaths, setOpenFilePaths] = useState<string[]>(
+    () => normalizeWorkspaceOpenFilePaths([...initialOpenFileTabState.openFilePaths, initialSelectedFilePath]),
+  );
   const [tabContextMenu, setTabContextMenu] = useState<{
     filePath: string;
     left: number;
@@ -2329,6 +2418,8 @@ export function OrganizationWorkspaceBrowser({
   const syncedFileRef = useRef<{ filePath: string | null; content: string }>({ filePath: null, content: "" });
   const saveWorkspaceFileMutateRef = useRef<((payload: { filePath: string; content: string }) => void) | null>(null);
   const editorScrollElementRef = useRef<HTMLElement | null>(null);
+  const restoredOpenTabsOrgRef = useRef<string | null>(null);
+  const allowDefaultFileOpenRef = useRef(true);
   const filesScrollRef = useScrollbarActivityRef("org-workspaces:files");
   const editorScrollRef = useScrollbarActivityRef(
     selectedFilePath ? `org-workspaces:editor:${selectedFilePath}` : "org-workspaces:editor",
@@ -2368,7 +2459,7 @@ export function OrganizationWorkspaceBrowser({
   }, []);
 
   const openWorkspaceFileTab = useCallback((filePath: string) => {
-    setOpenFilePaths((current) => current.includes(filePath) ? current : [...current, filePath]);
+    setOpenFilePaths((current) => appendWorkspaceOpenFilePath(current, filePath));
   }, []);
 
   useEffect(() => {
@@ -2473,9 +2564,16 @@ export function OrganizationWorkspaceBrowser({
       setDraftFilePath(null);
       return;
     }
-    setSelectedFilePath(requestedFilePath);
-    if (requestedFilePath) openWorkspaceFileTab(requestedFilePath);
-    else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
+    if (requestedFilePath) {
+      setSelectedFilePath(requestedFilePath);
+      openWorkspaceFileTab(requestedFilePath);
+      return;
+    }
+    if (requestedDirectoryPath) {
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      setActiveEntryPath(requestedDirectoryPath);
+    }
   }, [
     flushCurrentDraft,
     openWorkspaceFileTab,
@@ -2486,9 +2584,64 @@ export function OrganizationWorkspaceBrowser({
   ]);
 
   useEffect(() => {
+    if (!viewedOrganizationId) return;
+    if (restoredOpenTabsOrgRef.current !== viewedOrganizationId) return;
+    if (requestedResourceAttachmentId || requestedDirectoryPath) return;
+    writeStoredWorkspaceOpenFileTabState(viewedOrganizationId, openFilePaths, selectedFilePath);
+  }, [openFilePaths, requestedDirectoryPath, requestedResourceAttachmentId, selectedFilePath, viewedOrganizationId]);
+
+  useEffect(() => {
+    if (!viewedOrganizationId || restoredOpenTabsOrgRef.current === viewedOrganizationId) return;
+    restoredOpenTabsOrgRef.current = viewedOrganizationId;
+    allowDefaultFileOpenRef.current = true;
+    const storedTabState = readStoredWorkspaceOpenFileTabState(viewedOrganizationId);
+
+    const nextOpenFilePaths = requestedFilePath
+      ? normalizeWorkspaceOpenFilePaths([...storedTabState.openFilePaths, requestedFilePath])
+      : storedTabState.openFilePaths;
+    setOpenFilePaths(nextOpenFilePaths);
+
+    if (requestedResourceAttachmentId) {
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      return;
+    }
+
+    if (requestedFilePath) {
+      setSelectedFilePath(requestedFilePath);
+      setActiveEntryPath(requestedFilePath);
+      return;
+    }
+
+    if (requestedDirectoryPath) {
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      setActiveEntryPath(requestedDirectoryPath);
+      return;
+    }
+
+    const restoredFilePath = storedTabState.selectedFilePath ?? storedTabState.openFilePaths[0] ?? null;
+    setSelectedFilePath(restoredFilePath);
+    setDraftFilePath(restoredFilePath);
+    setActiveEntryPath(restoredFilePath);
+    if (restoredFilePath) {
+      updateSelectedPath(searchParams, setSearchParams, restoredFilePath);
+    }
+  }, [
+    requestedDirectoryPath,
+    requestedFilePath,
+    requestedResourceAttachmentId,
+    searchParams,
+    setSearchParams,
+    viewedOrganizationId,
+  ]);
+
+  useEffect(() => {
     if (selectedFilePath) return;
     if (requestedResourceAttachmentId) return;
     if (requestedDirectoryPath) return;
+    if (openFilePaths.length > 0) return;
+    if (!allowDefaultFileOpenRef.current) return;
     const preferredFile = rootQuery.data?.entries.find((entry) => !entry.isDirectory);
     if (preferredFile) {
       setSelectedFilePath(preferredFile.path);
@@ -2499,6 +2652,7 @@ export function OrganizationWorkspaceBrowser({
     openWorkspaceFileTab,
     requestedDirectoryPath,
     requestedResourceAttachmentId,
+    openFilePaths.length,
     rootQuery.data?.entries,
     searchParams,
     selectedFilePath,
@@ -3023,6 +3177,7 @@ export function OrganizationWorkspaceBrowser({
   const handleSelectFile = (filePath: string) => {
     setTabContextMenu(null);
     flushCurrentDraft();
+    allowDefaultFileOpenRef.current = true;
     openWorkspaceFileTab(filePath);
     setActiveEntryPath(filePath);
     setSelectedFilePath(filePath);
@@ -3039,6 +3194,26 @@ export function OrganizationWorkspaceBrowser({
     updateSelectedResource(searchParams, setSearchParams, attachmentId);
   };
 
+  const handleLibraryInlineTokenClick = (token: AtomicInlineTokenElement, _event: InlineTokenClickEvent) => {
+    if (token.kind !== "mention") return;
+    const parsed = parseMentionChipHref(token.href);
+    if (!parsed) return;
+    if (parsed.kind === "library_file") {
+      handleSelectFile(parsed.filePath);
+      return;
+    }
+    const target = parsed.kind === "agent"
+      ? `/agents/${parsed.agentId}`
+      : parsed.kind === "issue"
+        ? `/issues/${parsed.ref ?? parsed.issueId}`
+        : parsed.kind === "chat"
+          ? `/messenger/chat/${parsed.conversationId}`
+          : parsed.kind === "library_doc"
+            ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
+            : `/projects/${parsed.projectId}`;
+    navigate(target);
+  };
+
   function handleCloseFileTab(filePath: string) {
     flushCurrentDraft();
     setOpenFilePaths((current) => {
@@ -3046,6 +3221,7 @@ export function OrganizationWorkspaceBrowser({
       if (selectedFilePath === filePath) {
         const closedIndex = current.indexOf(filePath);
         const nextSelectedPath = next[Math.max(0, closedIndex - 1)] ?? next[0] ?? null;
+        if (!nextSelectedPath) allowDefaultFileOpenRef.current = false;
         setSelectedFilePath(nextSelectedPath);
         setDraftFilePath(nextSelectedPath);
         updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
@@ -3079,6 +3255,7 @@ export function OrganizationWorkspaceBrowser({
 
   function handleCloseAllFileTabs() {
     flushCurrentDraft();
+    allowDefaultFileOpenRef.current = false;
     setOpenFilePaths([]);
     setSelectedFilePath(null);
     setDraftFilePath(null);
@@ -3816,6 +3993,7 @@ export function OrganizationWorkspaceBrowser({
                             value={selectedMarkdownBodyForEditor}
                             onChange={(nextContent) => handleMarkdownBodyDraftChange(selectedFilePath, nextContent)}
                             mentions={agentWorkspaceMentionOptions}
+                            onInlineTokenClick={handleLibraryInlineTokenClick}
                             bordered={false}
                             placeholder="Write in Markdown..."
                             contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"
