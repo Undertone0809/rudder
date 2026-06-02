@@ -122,4 +122,10 @@ describe("index.css motion rules", () => {
     expect(indexCss).not.toMatch(/^\s*\.rudder-doc-editor-tab-strip--desktop-chrome\s*\{\s*-webkit-app-region:\s*drag/m);
     expect(indexCss).not.toMatch(/^\s*html\.desktop-shell-macos\s+\.rudder-doc-editor-tab-strip--desktop-chrome\s*\{\s*-webkit-app-region:\s*drag/m);
   });
+
+  it("keeps the Library file-tab horizontal scrollbar compact", () => {
+    const tabScrollerScrollbar = cssBlock(".rudder-doc-editor-tab-scroller::-webkit-scrollbar");
+
+    expect(tabScrollerScrollbar).toContain("height: 4px !important");
+  });
 });

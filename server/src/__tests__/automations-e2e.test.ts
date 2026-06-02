@@ -3,7 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import express from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -31,7 +31,6 @@ import {
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { errorHandler } from "../middleware/index.js";
 import { accessService } from "../services/access.js";
-import { publishAutomationRunOutputToChat } from "../services/automation-chat-output.js";
 
 function mockServicesIndex() {
   vi.doMock("../services/index.js", async () => {
@@ -77,6 +76,35 @@ function mockServicesIndex() {
                 })
                 .where(eq(issues.id, issueId));
               return { id: queuedRunId };
+            },
+          },
+          chatAssistant: {
+            enrichConversation: async (conversation: any) => ({
+              ...conversation,
+              chatRuntime: {
+                sourceType: "agent",
+                sourceLabel: "Automation Agent",
+                runtimeAgentId: conversation.preferredAgentId,
+                agentRuntimeType: "codex_local",
+                model: "test",
+                available: true,
+                error: null,
+              },
+            }),
+            streamChatAssistantReply: async (input: any) => {
+              await input.onTranscriptEntry?.({ type: "message", message: "Generated result" });
+              await input.onAssistantDelta?.("Final result ");
+              await input.onAssistantDelta?.("ready for follow-up.");
+              return {
+                outcome: "completed",
+                reply: {
+                  kind: "message",
+                  body: "Final result ready for follow-up.",
+                  structuredPayload: null,
+                },
+                partialBody: "Final result ready for follow-up.",
+                replyingAgentId: input.conversation.preferredAgentId ?? null,
+              };
             },
           },
         }),
@@ -160,6 +188,20 @@ async function startTempDatabase() {
   return { connectionString, dataDir, instance };
 }
 
+async function waitFor<T>(
+  fn: () => Promise<T | null | false | undefined>,
+  timeoutMs = 5_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue: T | null | false | undefined;
+  while (Date.now() < deadline) {
+    lastValue = await fn();
+    if (lastValue) return lastValue;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for condition; last value: ${JSON.stringify(lastValue)}`);
+}
+
 describe("automation routes end-to-end", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -222,10 +264,11 @@ describe("automation routes end-to-end", () => {
     const userId = randomUUID();
     const issuePrefix = `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 
+    const orgName = `Rudder ${orgId.slice(0, 8)}`;
     await db.insert(organizations).values({
       id: orgId,
-      name: "Rudder",
-      urlKey: deriveOrganizationUrlKey("Rudder"),
+      name: orgName,
+      urlKey: deriveOrganizationUrlKey(orgName),
       issuePrefix,
       requireBoardApprovalForNewAgents: false,
     });
@@ -279,6 +322,7 @@ describe("automation routes end-to-end", () => {
         description: "Summarize blockers and open PRs",
         assigneeAgentId: agentId,
         priority: "high",
+        outputMode: "track_issue",
         concurrencyPolicy: "coalesce_if_active",
         catchUpPolicy: "skip_missed",
       });
@@ -379,6 +423,7 @@ describe("automation routes end-to-end", () => {
         description: "Prepare report slices independently",
         assigneeAgentId: agentId,
         priority: "medium",
+        outputMode: "track_issue",
         concurrencyPolicy: "always_enqueue",
         catchUpPolicy: "skip_missed",
       });
@@ -445,9 +490,15 @@ describe("automation routes end-to-end", () => {
       .send({ source: "manual" });
 
     expect(runRes.status).toBe(202);
-    expect(runRes.body.status).toBe("issue_created");
-    expect(runRes.body.linkedIssueId).toBeTruthy();
+    expect(runRes.body.status).toBe("running");
+    expect(runRes.body.linkedIssueId).toBeNull();
     expect(runRes.body.linkedChatConversationId).toBeTruthy();
+
+    const [organizationAfterRun] = await db
+      .select({ issueCounter: organizations.issueCounter })
+      .from(organizations)
+      .where(eq(organizations.id, orgId));
+    expect(organizationAfterRun?.issueCounter).toBe(0);
 
     const [automationRow] = await db
       .select({ chatConversationId: automations.chatConversationId })
@@ -455,15 +506,42 @@ describe("automation routes end-to-end", () => {
       .where(eq(automations.id, createRes.body.id));
     expect(automationRow?.chatConversationId).toBeNull();
 
-    const outputMessage = await publishAutomationRunOutputToChat(db, {
-      issueId: runRes.body.linkedIssueId,
-      output: "Final result ready for follow-up.",
-      status: "succeeded",
-      transcript: [],
+    await waitFor(async () => {
+      const [run] = await db.select().from(automationRuns).where(eq(automationRuns.id, runRes.body.id));
+      return run?.status === "completed" ? run : null;
     });
 
-    expect(outputMessage?.conversationId).toBe(runRes.body.linkedChatConversationId);
-    expect(outputMessage?.body).toBe("Final result ready for follow-up.");
-    expect(outputMessage?.replyingAgentId).toBe(agentId);
+    const automationIssues = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.originRunId, runRes.body.id));
+    expect(automationIssues).toHaveLength(0);
+
+    const messages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, runRes.body.linkedChatConversationId))
+      .orderBy(asc(chatMessages.createdAt));
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      role: "user",
+      kind: "message",
+      conversationId: runRes.body.linkedChatConversationId,
+    });
+    expect(messages[0]?.body).toContain("Send the final result to chat.");
+    expect(messages[1]).toMatchObject({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Final result ready for follow-up.",
+      replyingAgentId: agentId,
+    });
+    expect(messages[1]?.structuredPayload).toMatchObject({
+      automationChatRun: {
+        runId: runRes.body.id,
+        status: "completed",
+      },
+    });
   }, 20_000);
 });

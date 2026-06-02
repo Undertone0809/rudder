@@ -3,12 +3,15 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { asc, eq } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
   agents,
   applyPendingMigrations,
+  approvals,
+  assets,
+  chatAttachments,
   organizations,
   organizationSecrets,
   organizationSecretVersions,
@@ -27,7 +30,7 @@ import {
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { issueService } from "../services/issues.ts";
 import { automationService } from "../services/automations.ts";
-import { publishAutomationRunOutputToChat } from "../services/automation-chat-output.ts";
+import { claimChatGeneration } from "../services/chat-generation-locks.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -123,8 +126,11 @@ describe("automation service live-execution coalescing", () => {
     await db.delete(automationTriggers);
     await db.delete(automations);
     await db.delete(chatContextLinks);
+    await db.delete(chatAttachments);
     await db.delete(chatMessages);
     await db.delete(chatConversations);
+    await db.delete(approvals);
+    await db.delete(assets);
     await db.delete(organizationSecretVersions);
     await db.delete(organizationSecrets);
     await db.delete(heartbeatRuns);
@@ -154,6 +160,11 @@ describe("automation service live-execution coalescing", () => {
         contextSnapshot?: Record<string, unknown>;
       },
     ) => Promise<unknown>;
+    chatAssistant?: {
+      enrichConversation: (conversation: any) => Promise<any>;
+      streamChatAssistantReply: (input: any) => Promise<any>;
+    };
+    storage?: any;
   }) {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -172,10 +183,11 @@ describe("automation service live-execution coalescing", () => {
       };
     }> = [];
 
+    const orgName = `Rudder ${orgId.slice(0, 8)}`;
     await db.insert(organizations).values({
       id: orgId,
-      name: "Rudder",
-      urlKey: deriveOrganizationUrlKey("Rudder"),
+      name: orgName,
+      urlKey: deriveOrganizationUrlKey(orgName),
       issuePrefix,
       requireBoardApprovalForNewAgents: false,
     });
@@ -229,6 +241,9 @@ describe("automation service live-execution coalescing", () => {
           return { id: queuedRunId };
         },
       },
+      chatAssistant: opts?.chatAssistant,
+      storage: opts?.storage,
+      autoStartChatOutputRuns: false,
     });
     const issueSvc = issueService(db);
     const automation = await svc.create(
@@ -251,6 +266,56 @@ describe("automation service live-execution coalescing", () => {
     );
 
     return { orgId, agentId, issueSvc, projectId, automation, svc, wakeups };
+  }
+
+  function createChatAssistantStub(finalBody = "Final daily standup summary.", replyPatch?: Record<string, unknown>) {
+    return {
+      enrichConversation: vi.fn(async (conversation: any) => ({
+        ...conversation,
+        chatRuntime: {
+          sourceType: "agent",
+          sourceLabel: "CodexCoder",
+          runtimeAgentId: conversation.preferredAgentId,
+          agentRuntimeType: "codex_local",
+          model: "test",
+          available: true,
+          error: null,
+        },
+      })),
+      streamChatAssistantReply: vi.fn(async (input: any) => {
+        await input.onTranscriptEntry?.({ type: "message", message: "Checked active work" });
+        await input.onAssistantDelta?.("Final daily ");
+        await input.onAssistantDelta?.("standup summary.");
+        return {
+          outcome: "completed",
+          reply: {
+            kind: "message",
+            body: finalBody,
+            structuredPayload: null,
+            ...replyPatch,
+          },
+          partialBody: finalBody,
+          replyingAgentId: input.conversation.preferredAgentId ?? null,
+        };
+      }),
+    };
+  }
+
+  function createStorageStub() {
+    return {
+      provider: "local_disk" as const,
+      putFile: vi.fn(async (input: { body: Buffer; contentType: string; originalFilename: string | null }) => ({
+        provider: "local_disk" as const,
+        objectKey: `test/${randomUUID()}`,
+        contentType: input.contentType,
+        byteSize: input.body.length,
+        sha256: "0".repeat(64),
+        originalFilename: input.originalFilename,
+      })),
+      getObject: vi.fn(),
+      headObject: vi.fn(),
+      deleteObject: vi.fn(),
+    };
   }
 
   it("creates a fresh execution issue when the previous automation issue is open but idle", async () => {
@@ -432,8 +497,9 @@ describe("automation service live-execution coalescing", () => {
     ).rejects.toThrow("Chat output creates an automation-owned conversation");
   });
 
-  it("posts chat output final results while preserving issue-backed execution", async () => {
-    const { agentId, orgId, projectId, svc } = await seedFixture();
+  it("runs chat output through a chat-native user and assistant turn", async () => {
+    const chatAssistant = createChatAssistantStub();
+    const { agentId, orgId, projectId, svc } = await seedFixture({ chatAssistant });
     const automation = await svc.create(
       orgId,
       {
@@ -455,80 +521,432 @@ describe("automation service live-execution coalescing", () => {
 
     const run = await svc.runAutomation(automation.id, { source: "manual" });
 
-    expect(run.status).toBe("issue_created");
-    expect(run.linkedIssueId).toBeTruthy();
+    expect(run.status).toBe("running");
+    expect(run.linkedIssueId).toBeNull();
     expect(run.linkedChatConversationId).toBeTruthy();
-    expect(run.startedChatMessageId).toBeTruthy();
-    expect(run.lastChatMessageId).toBe(run.startedChatMessageId);
+    expect(run.startedChatMessageId).toBeNull();
+    expect(run.lastChatMessageId).toBeNull();
 
-    const startedMessage = await db
+    const automationIssues = await db
       .select()
-      .from(chatMessages)
-      .where(eq(chatMessages.id, run.startedChatMessageId!))
+      .from(issues)
+      .where(eq(issues.originRunId, run.id));
+    expect(automationIssues).toHaveLength(0);
+    const organizationAfterRun = await db
+      .select({ issueCounter: organizations.issueCounter })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
       .then((rows) => rows[0] ?? null);
-    expect(startedMessage?.kind).toBe("system_event");
-    expect(startedMessage?.body).toBe("From automation Daily standup.");
-    expect(startedMessage?.structuredPayload).toMatchObject({
-      eventType: "automation_source",
-      automationId: automation.id,
-      runId: run.id,
-      issueId: run.linkedIssueId,
-      status: "issue_created",
-    });
+    expect(organizationAfterRun?.issueCounter).toBe(0);
 
-    await db.update(issues).set({ status: "done" }).where(eq(issues.id, run.linkedIssueId!));
-    const completed = await svc.syncRunStatusForIssue(run.linkedIssueId!);
+    await svc.executeChatOutputAutomationRun(run.id);
 
-    expect(completed?.status).toBe("completed");
-    expect(completed?.terminalChatMessageId).toBeNull();
-    const outputMessage = await publishAutomationRunOutputToChat(db, {
-      issueId: run.linkedIssueId,
-      output: "Final daily standup summary.",
-      status: "succeeded",
-      transcript: [{ type: "message", message: "Checked active work" } as any],
-    });
-    expect(outputMessage?.role).toBe("assistant");
-    expect(outputMessage?.kind).toBe("message");
-    expect(outputMessage?.body).toBe("Final daily standup summary.");
-    const withOutput = await db
+    const completed = await db
       .select()
       .from(automationRuns)
       .where(eq(automationRuns.id, run.id))
       .then((rows) => rows[0] ?? null);
-    expect(withOutput?.terminalChatMessageId).toBe(outputMessage?.id);
-    expect(withOutput?.lastChatMessageId).toBe(outputMessage?.id);
-    const terminalMessage = await db
+    expect(completed?.status).toBe("completed");
+    expect(completed?.linkedIssueId).toBeNull();
+    expect(completed?.startedChatMessageId).toBeTruthy();
+    expect(completed?.terminalChatMessageId).toBeTruthy();
+    expect(completed?.lastChatMessageId).toBe(completed?.terminalChatMessageId);
+
+    const messages = await db
       .select()
       .from(chatMessages)
-      .where(eq(chatMessages.id, outputMessage!.id))
-      .then((rows) => rows[0] ?? null);
-    expect(terminalMessage?.structuredPayload).toMatchObject({
-      eventType: "automation_run_result",
-      automationId: automation.id,
-      runId: run.id,
-      issueId: run.linkedIssueId,
-      status: "succeeded",
+      .where(eq(chatMessages.conversationId, run.linkedChatConversationId!))
+      .orderBy(asc(chatMessages.createdAt));
+    expect(messages).toHaveLength(2);
+
+    const userMessage = messages[0]!;
+    expect(userMessage.role).toBe("user");
+    expect(userMessage.kind).toBe("message");
+    expect(userMessage.body).toContain("Summarize active work.");
+    expect(userMessage.body).toContain("Automation: Daily standup");
+    expect(completed?.startedChatMessageId).toBe(userMessage.id);
+
+    const assistantMessage = messages[1]!;
+    expect(assistantMessage.role).toBe("assistant");
+    expect(assistantMessage.kind).toBe("message");
+    expect(assistantMessage.status).toBe("completed");
+    expect(assistantMessage.body).toBe("Final daily standup summary.");
+    expect(assistantMessage.replyingAgentId).toBe(agentId);
+    expect(assistantMessage.chatTurnId).toBe(userMessage.chatTurnId);
+    expect(assistantMessage.structuredPayload).toMatchObject({
+      automationChatRun: {
+        automationId: automation.id,
+        runId: run.id,
+        status: "completed",
+      },
     });
-    expect((terminalMessage?.structuredPayload as Record<string, unknown>).__chatTranscript).toHaveLength(1);
-    const duplicateOutputMessage = await publishAutomationRunOutputToChat(db, {
-      issueId: run.linkedIssueId,
-      output: "Duplicate result should not post.",
-      status: "succeeded",
-      transcript: [],
-    });
-    expect(duplicateOutputMessage?.id).toBe(outputMessage?.id);
-    const resultMessages = await db
-      .select()
-      .from(chatMessages)
-      .where(eq(chatMessages.conversationId, outputMessage!.conversationId));
-    expect(resultMessages.filter((message) =>
-      (message.structuredPayload as Record<string, unknown> | null)?.eventType === "automation_run_result" &&
-      (message.structuredPayload as Record<string, unknown> | null)?.runId === run.id,
-    )).toHaveLength(1);
+    expect((assistantMessage.structuredPayload as Record<string, unknown>).__chatTranscript).toHaveLength(1);
+    expect(chatAssistant.streamChatAssistantReply).toHaveBeenCalledTimes(1);
   });
 
-  it("creates a separate chat output destination for each execution run", async () => {
+  it("preserves non-message chat assistant result kinds for chat output", async () => {
+    const chatAssistant = createChatAssistantStub("Which path should the automation take?", {
+      kind: "ask_user",
+      body: "Which path should the automation take?",
+      structuredPayload: {
+        requestUserInput: {
+          questions: [
+            {
+              id: "path",
+              question: "Which path should the automation take?",
+              options: [
+                { id: "summarize", label: "Summarize" },
+                { id: "escalate", label: "Escalate" },
+              ],
+              selectionMode: "single",
+            },
+          ],
+        },
+      },
+    });
+    const { agentId, orgId, projectId, svc } = await seedFixture({ chatAssistant });
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Ask operator",
+        description: "Ask the operator for the next path.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+    await svc.executeChatOutputAutomationRun(run.id);
+
+    const messages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, run.linkedChatConversationId!))
+      .orderBy(asc(chatMessages.createdAt));
+    const assistantMessage = messages[1]!;
+    expect(assistantMessage.kind).toBe("ask_user");
+    expect(assistantMessage.status).toBe("completed");
+    expect(assistantMessage.structuredPayload).toMatchObject({
+      requestUserInput: {
+        questions: [
+          {
+            id: "path",
+            selectionMode: "single",
+          },
+        ],
+      },
+      automationChatRun: {
+        automationId: automation.id,
+        runId: run.id,
+        status: "completed",
+      },
+    });
+  });
+
+  it("preserves chat proposal approvals and generated attachments for chat output", async () => {
+    const storage = createStorageStub();
+    const issueProposalAssistant = createChatAssistantStub("I drafted the follow-up issue.", {
+      kind: "issue_proposal",
+      body: "I drafted the follow-up issue.",
+      structuredPayload: {
+        issueProposal: {
+          title: "Follow up on blockers",
+          description: "Review the blockers from the automation digest.",
+          status: "todo",
+          priority: "medium",
+          assigneeUnassignedReason: "The operator should choose the owner after reviewing the digest.",
+        },
+        planDocument: {
+          title: "Blocker follow-up plan",
+          body: "Review the blocker list and assign owners.",
+        },
+      },
+      generatedAttachments: [
+        {
+          originalFilename: "blockers.md",
+          contentType: "text/markdown",
+          body: Buffer.from("blocker report"),
+        },
+      ],
+    });
+    const issueFixture = await seedFixture({ chatAssistant: issueProposalAssistant, storage });
+    const issueAutomation = await issueFixture.svc.create(
+      issueFixture.orgId,
+      {
+        projectId: issueFixture.projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Propose issue",
+        description: "Propose a follow-up issue.",
+        assigneeAgentId: issueFixture.agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+    const issueRun = await issueFixture.svc.runAutomation(issueAutomation.id, { source: "manual" });
+    await issueFixture.svc.executeChatOutputAutomationRun(issueRun.id);
+
+    const issueMessages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, issueRun.linkedChatConversationId!))
+      .orderBy(asc(chatMessages.createdAt));
+    const issueAssistantMessage = issueMessages[1]!;
+    expect(issueAssistantMessage.kind).toBe("issue_proposal");
+    expect(issueAssistantMessage.approvalId).toBeTruthy();
+    expect(issueAssistantMessage.structuredPayload).toMatchObject({
+      issueProposal: {
+        title: "Follow up on blockers",
+      },
+      planDocument: {
+        title: "Blocker follow-up plan",
+      },
+      automationChatRun: {
+        automationId: issueAutomation.id,
+        runId: issueRun.id,
+      },
+    });
+
+    const issueApproval = await db
+      .select()
+      .from(approvals)
+      .where(eq(approvals.id, issueAssistantMessage.approvalId!))
+      .then((rows) => rows[0] ?? null);
+    expect(issueApproval).toMatchObject({
+      type: "chat_issue_creation",
+      requestedByUserId: null,
+    });
+    expect(issueApproval?.payload).toMatchObject({
+      chatConversationId: issueRun.linkedChatConversationId,
+      proposedByAgentId: issueFixture.agentId,
+      proposedIssue: {
+        title: "Follow up on blockers",
+      },
+      planDocument: {
+        title: "Blocker follow-up plan",
+      },
+    });
+
+    const attachmentRows = await db
+      .select()
+      .from(chatAttachments)
+      .where(eq(chatAttachments.messageId, issueAssistantMessage.id));
+    expect(attachmentRows).toHaveLength(1);
+    expect(storage.putFile).toHaveBeenCalledWith(expect.objectContaining({
+      originalFilename: "blockers.md",
+      contentType: "text/markdown",
+    }));
+
+    const operationAssistant = createChatAssistantStub("I can rename the organization.", {
+      kind: "operation_proposal",
+      body: "I can rename the organization.",
+      structuredPayload: {
+        operationProposal: {
+          targetType: "organization",
+          targetId: issueFixture.orgId,
+          summary: "Rename organization",
+          patch: { name: "Rudder Ops" },
+        },
+      },
+    });
+    const operationFixture = await seedFixture({ chatAssistant: operationAssistant });
+    const operationAutomation = await operationFixture.svc.create(
+      operationFixture.orgId,
+      {
+        projectId: operationFixture.projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Propose operation",
+        description: "Propose a lightweight operation.",
+        assigneeAgentId: operationFixture.agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+    const operationRun = await operationFixture.svc.runAutomation(operationAutomation.id, { source: "manual" });
+    await operationFixture.svc.executeChatOutputAutomationRun(operationRun.id);
+
+    const operationMessages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, operationRun.linkedChatConversationId!))
+      .orderBy(asc(chatMessages.createdAt));
+    const operationAssistantMessage = operationMessages[1]!;
+    expect(operationAssistantMessage.kind).toBe("operation_proposal");
+    expect(operationAssistantMessage.approvalId).toBeTruthy();
+    expect(operationAssistantMessage.structuredPayload).toMatchObject({
+      operationProposal: {
+        summary: "Rename organization",
+      },
+      operationProposalState: {
+        status: "pending",
+      },
+      automationChatRun: {
+        automationId: operationAutomation.id,
+        runId: operationRun.id,
+      },
+    });
+    const operationApproval = await db
+      .select()
+      .from(approvals)
+      .where(eq(approvals.id, operationAssistantMessage.approvalId!))
+      .then((rows) => rows[0] ?? null);
+    expect(operationApproval?.payload).toMatchObject({
+      chatConversationId: operationRun.linkedChatConversationId,
+      operationProposal: {
+        summary: "Rename organization",
+        patch: { name: "Rudder Ops" },
+      },
+    });
+  });
+
+  it("expires stale running chat output runs before coalescing", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture({
+      chatAssistant: createChatAssistantStub("Fresh result after stale run."),
+    });
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Recover chat run",
+        description: "Run after an interrupted chat output.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+    const staleConversationId = randomUUID();
+    const staleRunId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: staleConversationId,
+      orgId,
+      title: "Recover chat run",
+      preferredAgentId: agentId,
+      status: "active",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      updatedAt: new Date("2026-03-20T09:00:00.000Z"),
+    });
+    await db.insert(automationRuns).values({
+      id: staleRunId,
+      orgId,
+      automationId: automation.id,
+      triggerId: null,
+      source: "manual",
+      status: "running",
+      triggeredAt: new Date("2026-03-20T09:00:00.000Z"),
+      linkedChatConversationId: staleConversationId,
+      updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(run.status).toBe("running");
+    expect(run.coalescedIntoRunId).toBeNull();
+    expect(run.linkedChatConversationId).not.toBe(staleConversationId);
+    const staleRun = await db
+      .select()
+      .from(automationRuns)
+      .where(eq(automationRuns.id, staleRunId))
+      .then((rows) => rows[0] ?? null);
+    expect(staleRun?.status).toBe("failed");
+    expect(staleRun?.failureReason).toBe("Automation chat run was interrupted before completion");
+  });
+
+  it("does not expire a stale-dated chat output run while chat generation is active", async () => {
     const { agentId, orgId, projectId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Long chat run",
+        description: "Keep generating a long answer.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+    const activeConversationId = randomUUID();
+    const activeRunId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: activeConversationId,
+      orgId,
+      title: "Long chat run",
+      preferredAgentId: agentId,
+      status: "active",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
+    await db.insert(automationRuns).values({
+      id: activeRunId,
+      orgId,
+      automationId: automation.id,
+      triggerId: null,
+      source: "manual",
+      status: "running",
+      triggeredAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      linkedChatConversationId: activeConversationId,
+      updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
+
+    const releaseGeneration = claimChatGeneration(activeConversationId, new AbortController());
+    expect(releaseGeneration).toBeTruthy();
+    try {
+      const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+      expect(run.status).toBe("coalesced");
+      expect(run.coalescedIntoRunId).toBe(activeRunId);
+      expect(run.linkedChatConversationId).toBe(activeConversationId);
+      const activeRun = await db
+        .select()
+        .from(automationRuns)
+        .where(eq(automationRuns.id, activeRunId))
+        .then((rows) => rows[0] ?? null);
+      expect(activeRun?.status).toBe("running");
+      expect(activeRun?.failureReason).toBeNull();
+    } finally {
+      releaseGeneration?.();
+    }
+  });
+
+  it("creates a separate chat output destination for each completed chat run", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture({
+      chatAssistant: createChatAssistantStub("Fresh digest result."),
+    });
     const automation = await svc.create(
       orgId,
       {
@@ -550,9 +968,10 @@ describe("automation service live-execution coalescing", () => {
 
     const run = await svc.runAutomation(automation.id, { source: "manual" });
 
-    expect(run.status).toBe("issue_created");
+    expect(run.status).toBe("running");
+    expect(run.linkedIssueId).toBeNull();
     expect(run.linkedChatConversationId).toBeTruthy();
-    expect(run.startedChatMessageId).toBeTruthy();
+    expect(run.startedChatMessageId).toBeNull();
     const updatedAutomation = await db
       .select({ chatConversationId: automations.chatConversationId })
       .from(automations)
@@ -582,35 +1001,20 @@ describe("automation service live-execution coalescing", () => {
       entityId: projectId,
     });
 
-    const startedMessage = await db
+    await svc.executeChatOutputAutomationRun(run.id);
+
+    const completed = await db
       .select()
-      .from(chatMessages)
-      .where(eq(chatMessages.id, run.startedChatMessageId!))
+      .from(automationRuns)
+      .where(eq(automationRuns.id, run.id))
       .then((rows) => rows[0] ?? null);
-    expect(startedMessage?.conversationId).toBe(run.linkedChatConversationId);
-
-    await db.update(issues).set({ status: "done" }).where(eq(issues.id, run.linkedIssueId!));
-    const completed = await svc.syncRunStatusForIssue(run.linkedIssueId!);
-
     expect(completed?.linkedChatConversationId).toBe(run.linkedChatConversationId);
-    expect(completed?.terminalChatMessageId).toBeNull();
-    const outputMessage = await publishAutomationRunOutputToChat(db, {
-      issueId: run.linkedIssueId,
-      output: "Fresh digest result.",
-      status: "succeeded",
-      transcript: [],
-    });
-    expect(outputMessage?.conversationId).toBe(run.linkedChatConversationId);
-    const terminalMessage = await db
-      .select()
-      .from(chatMessages)
-      .where(eq(chatMessages.id, outputMessage!.id))
-      .then((rows) => rows[0] ?? null);
-    expect(terminalMessage?.conversationId).toBe(run.linkedChatConversationId);
+    expect(completed?.terminalChatMessageId).toBeTruthy();
 
     const secondRun = await svc.runAutomation(automation.id, { source: "manual" });
 
-    expect(secondRun.status).toBe("issue_created");
+    expect(secondRun.status).toBe("running");
+    expect(secondRun.linkedIssueId).toBeNull();
     expect(secondRun.linkedChatConversationId).toBeTruthy();
     expect(secondRun.linkedChatConversationId).not.toBe(run.linkedChatConversationId);
 
@@ -645,10 +1049,12 @@ describe("automation service live-execution coalescing", () => {
     const firstRun = await svc.runAutomation(automation.id, { source: "manual" });
     const secondRun = await svc.runAutomation(automation.id, { source: "manual" });
 
-    expect(firstRun.status).toBe("issue_created");
+    expect(firstRun.status).toBe("running");
+    expect(firstRun.linkedIssueId).toBeNull();
     expect(firstRun.linkedChatConversationId).toBeTruthy();
     expect(secondRun.status).toBe("coalesced");
-    expect(secondRun.linkedChatConversationId).toBeNull();
+    expect(secondRun.linkedIssueId).toBeNull();
+    expect(secondRun.linkedChatConversationId).toBe(firstRun.linkedChatConversationId);
 
     const chats = await db
       .select()
@@ -688,10 +1094,12 @@ describe("automation service live-execution coalescing", () => {
     const firstRun = await svc.runAutomation(automation.id, { source: "manual" });
     const secondRun = await svc.runAutomation(automation.id, { source: "manual" });
 
-    expect(firstRun.status).toBe("issue_created");
+    expect(firstRun.status).toBe("running");
+    expect(firstRun.linkedIssueId).toBeNull();
     expect(firstRun.linkedChatConversationId).toBeTruthy();
     expect(secondRun.status).toBe("skipped");
-    expect(secondRun.linkedChatConversationId).toBeNull();
+    expect(secondRun.linkedIssueId).toBeNull();
+    expect(secondRun.linkedChatConversationId).toBe(firstRun.linkedChatConversationId);
 
     const chats = await db
       .select()

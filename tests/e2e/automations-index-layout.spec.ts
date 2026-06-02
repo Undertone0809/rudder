@@ -279,38 +279,64 @@ test.describe("Automations index layout", () => {
     expect(automationRes.ok()).toBe(true);
     const automation = (await automationRes.json()) as { id: string };
 
-    const runRes = await page.request.post(`${E2E_BASE_URL}/api/automations/${automation.id}/run`, {
-      data: { source: "manual" },
-    });
-    expect(runRes.ok()).toBe(true);
-    const run = (await runRes.json()) as { linkedIssueId: string | null; linkedChatConversationId: string | null };
-    expect(run.linkedIssueId).toBeTruthy();
-    expect(run.linkedChatConversationId).toBeTruthy();
-
     await selectOrganization(page, organization.id);
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${run.linkedChatConversationId}`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations/${automation.id}`);
+    await page.getByRole("button", { name: "Run now" }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat\/[0-9a-f-]+/);
+    const linkedChatConversationId = page.url().match(/\/messenger\/chat\/([^/?#]+)/)?.[1] ?? null;
+    expect(linkedChatConversationId).toBeTruthy();
 
-    await expect(page.getByText("From automation").first()).toBeVisible();
-    await expect(page.getByText("Daily digest", { exact: true }).first()).toBeVisible();
+    let run: {
+      id: string;
+      status: string;
+      linkedIssueId: string | null;
+      linkedChatConversationId: string | null;
+    } | null = null;
+    await expect.poll(async () => {
+      const runsRes = await page.request.get(`${E2E_BASE_URL}/api/automations/${automation.id}/runs?limit=10`);
+      expect(runsRes.ok()).toBe(true);
+      const runs = (await runsRes.json()) as Array<{
+        id: string;
+        status: string;
+        linkedIssueId: string | null;
+        linkedChatConversationId: string | null;
+      }>;
+      run = runs.find((item) => item.linkedChatConversationId === linkedChatConversationId) ?? null;
+      return run ? "ready" : "pending";
+    }, { timeout: 20_000 }).toBe("ready");
+    expect(run!.status).toMatch(/running|completed/);
+    expect(run!.linkedIssueId).toBeNull();
+    expect(run!.linkedChatConversationId).toBe(linkedChatConversationId);
 
-    const completeFirstIssueRes = await page.request.patch(`${E2E_BASE_URL}/api/issues/${run.linkedIssueId}`, {
-      data: { status: "done" },
-    });
-    expect(completeFirstIssueRes.ok()).toBe(true);
+    await expect(page.getByText("Summarize the latest organization updates.").first()).toBeVisible();
+    await expect(page.getByText("Automation: Daily digest").first()).toBeVisible();
+    await expect(page.getByText("Streaming reply for chat.").first()).toBeVisible({ timeout: 20_000 });
+
+    await expect.poll(async () => {
+      const runsRes = await page.request.get(`${E2E_BASE_URL}/api/automations/${automation.id}/runs?limit=10`);
+      expect(runsRes.ok()).toBe(true);
+      const runs = (await runsRes.json()) as Array<{ id: string; status: string }>;
+      return runs.find((item) => item.id === run!.id)?.status ?? null;
+    }, { timeout: 20_000 }).toBe("completed");
 
     const secondRunRes = await page.request.post(`${E2E_BASE_URL}/api/automations/${automation.id}/run`, {
       data: { source: "manual" },
     });
     expect(secondRunRes.ok()).toBe(true);
-    const secondRun = (await secondRunRes.json()) as { linkedIssueId: string | null; linkedChatConversationId: string | null };
-    expect(secondRun.linkedIssueId).toBeTruthy();
+    const secondRun = (await secondRunRes.json()) as {
+      status: string;
+      linkedIssueId: string | null;
+      linkedChatConversationId: string | null;
+    };
+    expect(secondRun.status).toBe("running");
+    expect(secondRun.linkedIssueId).toBeNull();
     expect(secondRun.linkedChatConversationId).toBeTruthy();
     expect(secondRun.linkedChatConversationId).not.toBe(run.linkedChatConversationId);
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${secondRun.linkedChatConversationId}`);
 
-    await expect(page.getByText("From automation").first()).toBeVisible();
-    await expect(page.getByText("Daily digest", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Automation: Daily digest").first()).toBeVisible();
+    await expect(page.getByText("Streaming reply for chat.").first()).toBeVisible({ timeout: 20_000 });
   });
 
   test("deletes an automation from the row menu without exposing archive lifecycle actions", async ({ page }) => {

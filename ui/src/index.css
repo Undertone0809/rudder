@@ -1954,6 +1954,10 @@ button[draggable="false"] {
   z-index: 1;
 }
 
+.rudder-doc-editor-tab-scroller::-webkit-scrollbar {
+  height: 4px !important;
+}
+
 .rudder-doc-editor-tab {
   isolation: isolate;
 }

@@ -79,12 +79,12 @@ Learning is not a hidden background rewrite. It is a governed product path for t
 
 ### Chat and Messenger
 
-Chat is a first-class intake and clarification surface in Rudder.
+Chat is a first-class intake, clarification, and lightweight run surface in Rudder.
 
 - It helps clarify requests before work starts.
 - It can suggest routing, draft issue proposals, and propose lightweight approval-gated actions.
-- It is not the long-running execution surface.
-- Durable execution and tracking remain issue-centric.
+- It can host chat-native automation runs when the configured output is `Send to chat`.
+- Durable tracked work remains issue-centric; chat-native automation runs keep their audit trail on `automation_runs` and the chat transcript instead of creating execution issues.
 
 Chat is part of the broader board communication shell surfaced as `Messenger`. Messenger unifies chat conversations with issue threads, blockers, failed runs, review prompts, budget alerts, and decision requests without turning Rudder into a generic chat product.
 

@@ -648,11 +648,12 @@ Chat behavior requirements:
 - a conversation can exist without any issue
 - a conversation can convert into at most one primary issue
 - chat-driven issue creation and lightweight operations reuse the approval system
-- automation runs may post status/result events into an explicit Messenger chat,
-  but durable automation execution remains issue-backed
-- for `chat_output` automations, a successful issue-backed execution auto-closes
-  the execution issue as `done` after the run succeeds so result delivery is not
-  reinterpreted as missing issue close-out
+- `track_issue` automations create normal issue-backed execution work
+- `chat_output` automations execute as chat-native runs: Rudder creates or
+  reuses the run-owned chat conversation, appends the automation prompt as a
+  user message, streams the agent process into a normal assistant message, and
+  preserves the durable run record on `automation_runs` without creating a user
+  visible execution issue or consuming an issue number
 - board users can optionally store a personal chat profile with `nickname` and `more_about_you`
 - the selected chat agent may use that per-user profile as prompt context only when at least one profile field is non-empty
 - assistant turns require an explicit `preferred_agent_id`; the UI defaults editable conversations to the last selected available agent or first available agent, while conversations with no selected chat agent remain discussable/editable but cannot invoke a runtime until one is chosen
@@ -790,11 +791,9 @@ Resource loading contract:
 - Project Context Resources are explicit project attachments to org resources.
   Resources have a `sourceType`: `external` resources point to URLs, local
   paths, repos, or connector objects; `library` resources point to a normalized
-  relative path under the organization Library workspace root, commonly below
-  `projects/<project>/` for project files or `docs/` for shared docs. Library
-  resource locators must not be absolute paths, URL schemes, `..` paths, or
-  protected system roots such as `agents/`, `artifacts/`, `plans/`, and
-  `skills/`.
+  project Library path represented to agents as
+  `library:projects/<project-name>/`. Library resource locators must not be
+  absolute paths, URL schemes, `..` paths, or non-project Library roots.
 - When a heartbeat or chat run resolves a `projectId`, Rudder loads only that
   project's attached resources into the runtime context and prompt resource
   block.

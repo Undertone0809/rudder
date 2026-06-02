@@ -97,7 +97,7 @@ export function runStatusTitle(status: string): string {
     case "failed":
       return "Run failed";
     case "coalesced":
-      return "Run joined an existing issue";
+      return "Run joined an existing run";
     case "skipped":
       return "Run skipped";
     case "completed":
@@ -112,15 +112,15 @@ export function runStatusDetail(status: string): string | null {
     case "issue_created":
       return "Execution issue was opened";
     case "running":
-      return "Execution issue is active";
+      return "Run is active";
     case "failed":
       return "Execution failed";
     case "coalesced":
-      return "A live execution already exists";
+      return "A live run already exists";
     case "skipped":
-      return "Skipped because an execution is already active";
+      return "Skipped because a run is already active";
     case "completed":
-      return "Execution issue completed";
+      return "Run completed";
     default:
       return null;
   }
