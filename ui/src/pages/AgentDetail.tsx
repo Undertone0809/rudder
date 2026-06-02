@@ -1572,9 +1572,9 @@ export function AgentDetail() {
             <PageTabBar
               items={[
                 { value: "dashboard", label: "Dashboard" },
+                { value: "configuration", label: "Configuration" },
                 { value: "instructions", label: "Instructions" },
                 { value: "skills", label: "Skills" },
-                { value: "configuration", label: "Configuration" },
                 { value: "runs", label: "Runs" },
                 { value: "budget", label: "Budget" },
               ]}
