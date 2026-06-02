@@ -77,6 +77,10 @@ const mockAutomationService = vi.hoisted(() => ({
   createTrigger: vi.fn(),
 }));
 
+const mockHeartbeatService = vi.hoisted(() => ({
+  wakeup: vi.fn(),
+}));
+
 const mockGoalService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
@@ -104,6 +108,7 @@ vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
   automationService: () => mockAutomationService,
   chatService: () => mockChatService,
+  heartbeatService: () => mockHeartbeatService,
   organizationService: () => mockCompanyService,
   goalService: () => mockGoalService,
   issueService: () => mockIssueService,
@@ -253,6 +258,7 @@ describe("chat routes", () => {
       error: null,
     });
     mockLogActivity.mockResolvedValue(undefined);
+    mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(true);
     mockAutomationService.create.mockResolvedValue({
@@ -2142,6 +2148,10 @@ describe("chat routes", () => {
       orgId: "organization-1",
       identifier: "ISS-1",
       title: "Implement auth flow",
+      description: "Track the auth rollout plan in an issue.",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: "agent-1",
     };
     const systemMessage = {
       ...createMessage("message-system", "system", "system_event", "Created issue ISS-1 from this chat conversation."),
@@ -2183,6 +2193,23 @@ describe("chat routes", () => {
         metadata: expect.objectContaining({
           issueId: "issue-1",
           issueIdentifier: "ISS-1",
+        }),
+      }),
+    );
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "agent-1",
+      expect.objectContaining({
+        source: "assignment",
+        triggerDetail: "system",
+        reason: "issue_assigned",
+        payload: { issueId: "issue-1", mutation: "chat_convert" },
+        requestedByActorType: "user",
+        requestedByActorId: "user-1",
+        contextSnapshot: expect.objectContaining({
+          issueId: "issue-1",
+          source: "chat.convert_to_issue",
+          wakeSource: "assignment",
+          wakeReason: "issue_assigned",
         }),
       }),
     );

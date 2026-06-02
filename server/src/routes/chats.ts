@@ -48,6 +48,7 @@ import {
   agentService,
   automationService,
   chatService,
+  heartbeatService,
   operatorProfileService,
   organizationService,
   goalService,
@@ -60,6 +61,7 @@ import { validateCron } from "../services/cron.js";
 import { summarizeRuntimeSkillsForTrace } from "../services/runtime-trace-metadata.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { registerChatStreamRoutes } from "./chats.stream-routes.js";
+import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
 
 export function chatRoutes(db: Db, storage: StorageService) {
   const router = Router();
@@ -73,6 +75,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
   const access = accessService(db);
   const assistantSvc = chatAssistantService(db, storage);
   const operatorProfiles = operatorProfileService(db);
+  const heartbeat = heartbeatService(db);
 
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -812,6 +815,16 @@ export function chatRoutes(db: Db, storage: StorageService) {
           createdByAgentId: replyingAgentId,
           messageId: proposalMessage.id,
         });
+        await wakeIssueAssigneeAfterChatConversion({
+          db,
+          heartbeat,
+          issue,
+          reason: "issue_assigned",
+          mutation: "chat_auto_create",
+          contextSource: "chat.auto_create",
+          requestedByActorType: "system",
+          requestedByActorId: "chat-assistant",
+        });
         const systemMessage = await svc.addMessage(conversation.id, {
           orgId: conversation.orgId,
           role: "system",
@@ -1391,6 +1404,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
     goalsSvc,
     access,
     operatorProfiles,
+    heartbeat,
     assertConversationAccess,
     boardUserId,
     assertCanAssignTasks,

@@ -55,6 +55,7 @@ import {
 } from "../services/index.js";
 import { summarizeRuntimeSkillsForTrace } from "../services/runtime-trace-metadata.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
 
 type ChatStreamRouteContext = {
   router: Router;
@@ -76,6 +77,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     goalsSvc,
     access,
     operatorProfiles,
+    heartbeat,
     assertConversationAccess,
     boardUserId,
     assertCanAssignTasks,
@@ -687,6 +689,16 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           actorUserId: actor.actorType === "user" ? actor.actorId : null,
           messageId: req.body.messageId ?? null,
           proposal: req.body.proposal ?? null,
+        });
+        await wakeIssueAssigneeAfterChatConversion({
+          db,
+          heartbeat,
+          issue,
+          reason: "issue_assigned",
+          mutation: "chat_convert",
+          contextSource: "chat.convert_to_issue",
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
         });
         const systemMessage = await svc.addMessage(conversation.id, {
           orgId: conversation.orgId,

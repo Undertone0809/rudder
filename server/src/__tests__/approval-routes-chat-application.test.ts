@@ -112,6 +112,17 @@ describe("approval routes chat application", () => {
   });
 
   it("applies chat approval side effects when a chat issue proposal is approved", async () => {
+    mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
+    mockChatService.applyApprovedApproval.mockResolvedValue({
+      id: "issue-1",
+      orgId: "organization-1",
+      identifier: "ISS-1",
+      title: "Approved chat issue",
+      description: "Create the issue after approval.",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: "agent-1",
+    });
     mockApprovalService.approve.mockResolvedValue({
       approval: {
         id: "approval-1",
@@ -163,6 +174,38 @@ describe("approval routes chat application", () => {
       }),
       expect.objectContaining({
         name: "chat.approval.applied",
+      }),
+    );
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "agent-1",
+      expect.objectContaining({
+        source: "assignment",
+        triggerDetail: "system",
+        reason: "issue_assigned",
+        payload: { issueId: "issue-1", mutation: "chat_approval_approved" },
+        requestedByActorType: "user",
+        requestedByActorId: "user-1",
+        contextSnapshot: expect.objectContaining({
+          issueId: "issue-1",
+          source: "chat.approval_approved",
+          wakeSource: "assignment",
+          wakeReason: "issue_assigned",
+        }),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        orgId: "organization-1",
+        action: "chat.issue_assignee_wakeup_queued",
+        entityType: "chat",
+        entityId: "chat-1",
+        details: expect.objectContaining({
+          issueId: "issue-1",
+          assigneeAgentId: "agent-1",
+          wakeRunId: "wake-1",
+          approvalId: "approval-1",
+        }),
       }),
     );
   });

@@ -26,6 +26,10 @@ import {
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { redactEventPayload } from "../redaction.js";
 import { forbidden, unprocessable } from "../errors.js";
+import {
+  wakeIssueAssigneeAfterChatConversion,
+  type ChatConvertedIssue,
+} from "./chat-issue-assignment-wakeup.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
@@ -70,6 +74,21 @@ function buildChatApprovalObservabilityContext(
       ...(input.metadata ?? {}),
     },
   };
+}
+
+function isChatConvertedIssue(value: unknown): value is ChatConvertedIssue & { identifier?: string | null } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { orgId?: unknown }).orgId === "string" &&
+    typeof (value as { title?: unknown }).title === "string" &&
+    typeof (value as { status?: unknown }).status === "string" &&
+    (
+      (value as { assigneeAgentId?: unknown }).assigneeAgentId === null ||
+      typeof (value as { assigneeAgentId?: unknown }).assigneeAgentId === "string"
+    )
+  );
 }
 
 async function withChatApprovalObservation<T>(
@@ -358,6 +377,7 @@ export function approvalRoutes(db: Db) {
     );
 
     if (applied) {
+      let chatAppliedIssue: Awaited<ReturnType<typeof chatsSvc.applyApprovedApproval>> = null;
       if (approval.type === "chat_issue_creation" || approval.type === "chat_operation") {
         const chatObservation = buildChatApprovalObservabilityContext(approval, {
           status: approval.status,
@@ -376,7 +396,7 @@ export function approvalRoutes(db: Db) {
             },
           },
           async () => {
-            await chatsSvc.applyApprovedApproval(approval, req.actor.userId ?? "board");
+            chatAppliedIssue = await chatsSvc.applyApprovedApproval(approval, req.actor.userId ?? "board");
             await emitChatApprovalObservationEvent(chatObservation, {
               name: "chat.approval.applied",
               metadata: {
@@ -386,7 +406,29 @@ export function approvalRoutes(db: Db) {
           },
         );
       } else {
-        await chatsSvc.applyApprovedApproval(approval, req.actor.userId ?? "board");
+        chatAppliedIssue = await chatsSvc.applyApprovedApproval(approval, req.actor.userId ?? "board");
+      }
+
+      if (approval.type === "chat_issue_creation" && isChatConvertedIssue(chatAppliedIssue)) {
+        await wakeIssueAssigneeAfterChatConversion({
+          db,
+          heartbeat,
+          issue: chatAppliedIssue,
+          reason: "issue_assigned",
+          mutation: "chat_approval_approved",
+          contextSource: "chat.approval_approved",
+          requestedByActorType: "user",
+          requestedByActorId: req.actor.userId ?? "board",
+          activityAction: "chat.issue_assignee_wakeup_queued",
+          activityEntityType: "chat",
+          activityEntityId:
+            typeof approval.payload?.chatConversationId === "string" ? approval.payload.chatConversationId : approval.id,
+          activityDetails: {
+            approvalId: approval.id,
+            issueIdentifier: chatAppliedIssue.identifier ?? null,
+          },
+          logActivityFn: logActivity,
+        });
       }
       const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(approval.id);
       const linkedIssueIds = linkedIssues.map((issue) => issue.id);
