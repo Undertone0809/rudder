@@ -423,7 +423,7 @@ function buildStandardRudderPayload(
   rudderEnv: Record<string, string>,
   payloadTemplate: Record<string, unknown>,
 ): Record<string, unknown> {
-  const templateRudder = stripLegacyRuntimeTemplateKeys(
+  const templateRudder = stripRuntimeManagedTemplateKeys(
     parseObject(payloadTemplate.rudder ?? payloadTemplate.paperclip),
   );
   const workspace = asRecord(ctx.context.rudderWorkspace ?? ctx.context.paperclipWorkspace);
@@ -435,6 +435,12 @@ function buildStandardRudderPayload(
   const runtimeServiceEntries = ctx.context.rudderRuntimeServiceIntents ?? ctx.context.paperclipRuntimeServiceIntents;
   const runtimeServiceIntents = Array.isArray(runtimeServiceEntries)
     ? runtimeServiceEntries.filter(
+        (entry): entry is Record<string, unknown> => Boolean(asRecord(entry)),
+      )
+    : [];
+  const rudderSkillSync = parseObject(ctx.config.rudderSkillSync);
+  const runtimeSkillEntries = Array.isArray(ctx.config.rudderRuntimeSkills)
+    ? ctx.config.rudderRuntimeSkills.filter(
         (entry): entry is Record<string, unknown> => Boolean(asRecord(entry)),
       )
     : [];
@@ -466,6 +472,12 @@ function buildStandardRudderPayload(
       ...(runtimeServiceIntents.length > 0 ? { services: runtimeServiceIntents } : {}),
     };
   }
+  if (Object.keys(rudderSkillSync).length > 0) {
+    standardRudder.rudderSkillSync = rudderSkillSync;
+  }
+  if (runtimeSkillEntries.length > 0) {
+    standardRudder.rudderRuntimeSkills = runtimeSkillEntries;
+  }
 
   return {
     ...templateRudder,
@@ -473,10 +485,11 @@ function buildStandardRudderPayload(
   };
 }
 
-function stripLegacyRuntimeTemplateKeys(payloadTemplate: Record<string, unknown>): Record<string, unknown> {
+function stripRuntimeManagedTemplateKeys(payloadTemplate: Record<string, unknown>): Record<string, unknown> {
   const next: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payloadTemplate)) {
     if (key === "paperclip" || key.startsWith("paperclip")) continue;
+    if (key === "rudderSkillSync" || key === "rudderRuntimeSkills") continue;
     next[key] = value;
   }
   return next;
@@ -1082,7 +1095,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const templateMessage = nonEmpty(payloadTemplate.message) ?? nonEmpty(payloadTemplate.text);
   const message = templateMessage ? appendWakeText(templateMessage, wakeText) : wakeText;
   const rudderPayload = buildStandardRudderPayload(ctx, wakePayload, rudderEnv, payloadTemplate);
-  const sanitizedPayloadTemplate = stripLegacyRuntimeTemplateKeys(payloadTemplate);
+  const sanitizedPayloadTemplate = stripRuntimeManagedTemplateKeys(payloadTemplate);
 
   const agentParams: Record<string, unknown> = {
     ...sanitizedPayloadTemplate,

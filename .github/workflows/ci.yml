@@ -54,23 +54,6 @@ jobs:
       - name: Typecheck
         run: pnpm -r typecheck
 
-      - name: Build workspace packages for tests
-        run: |
-          pnpm -r \
-            --filter @rudderhq/shared \
-            --filter @rudderhq/agent-runtime-utils \
-            --filter @rudderhq/agent-runtime-claude-local \
-            --filter @rudderhq/agent-runtime-codex-local \
-            --filter @rudderhq/agent-runtime-cursor-local \
-            --filter @rudderhq/agent-runtime-gemini-local \
-            --filter @rudderhq/agent-runtime-openclaw-gateway \
-            --filter @rudderhq/agent-runtime-opencode-local \
-            --filter @rudderhq/agent-runtime-pi-local \
-            --filter @rudderhq/db \
-            --filter @rudderhq/plugin-sdk \
-            --filter @rudderhq/run-intelligence-core \
-            build
-
       - name: Unit tests
         if: matrix.test == 'full'
         run: pnpm test:run --maxWorkers=1

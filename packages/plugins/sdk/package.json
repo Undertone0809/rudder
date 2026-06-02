@@ -16,48 +16,48 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
     },
     "./protocol": {
       "types": "./src/protocol.ts",
-      "import": "./dist/protocol.js",
-      "default": "./dist/protocol.js"
+      "import": "./src/protocol.ts",
+      "default": "./src/protocol.ts"
     },
     "./types": {
       "types": "./src/types.ts",
-      "import": "./dist/types.js",
-      "default": "./dist/types.js"
+      "import": "./src/types.ts",
+      "default": "./src/types.ts"
     },
     "./ui": {
       "types": "./src/ui/index.ts",
-      "import": "./dist/ui/index.js",
-      "default": "./dist/ui/index.js"
+      "import": "./src/ui/index.ts",
+      "default": "./src/ui/index.ts"
     },
     "./ui/hooks": {
       "types": "./src/ui/hooks.ts",
-      "import": "./dist/ui/hooks.js",
-      "default": "./dist/ui/hooks.js"
+      "import": "./src/ui/hooks.ts",
+      "default": "./src/ui/hooks.ts"
     },
     "./ui/types": {
       "types": "./src/ui/types.ts",
-      "import": "./dist/ui/types.js",
-      "default": "./dist/ui/types.js"
+      "import": "./src/ui/types.ts",
+      "default": "./src/ui/types.ts"
     },
     "./testing": {
       "types": "./src/testing.ts",
-      "import": "./dist/testing.js",
-      "default": "./dist/testing.js"
+      "import": "./src/testing.ts",
+      "default": "./src/testing.ts"
     },
     "./bundlers": {
       "types": "./src/bundlers.ts",
-      "import": "./dist/bundlers.js",
-      "default": "./dist/bundlers.js"
+      "import": "./src/bundlers.ts",
+      "default": "./src/bundlers.ts"
     },
     "./dev-server": {
       "types": "./src/dev-server.ts",
-      "import": "./dist/dev-server.js",
-      "default": "./dist/dev-server.js"
+      "import": "./src/dev-server.ts",
+      "default": "./src/dev-server.ts"
     }
   },
   "bin": {

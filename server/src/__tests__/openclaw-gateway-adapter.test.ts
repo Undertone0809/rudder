@@ -504,10 +504,29 @@ describe("openclaw gateway adapter execute", () => {
             },
             rudderApiUrl: "https://current-rudder.example.test",
             paperclipApiUrl: "https://legacy-paperclip.example.test",
+            rudderSkillSync: {
+              desiredSkills: ["organization/build-advisor"],
+            },
+            rudderRuntimeSkills: [
+              {
+                key: "organization/build-advisor",
+                runtimeName: "build-advisor",
+                managed: true,
+                desired: true,
+                state: "configured",
+              },
+            ],
             payloadTemplate: {
               message: "wake now",
               rudder: {
                 preferred: true,
+                runId: "template-run",
+                orgId: "template-org",
+                agentId: "template-agent",
+                rudderSkillSync: {
+                  desiredSkills: ["template/skill"],
+                },
+                rudderRuntimeSkills: [{ key: "template/skill" }],
                 apiUrl: "https://template-rudder.example.test",
               },
               paperclip: {
@@ -517,6 +536,10 @@ describe("openclaw gateway adapter execute", () => {
               paperclipSkillSync: {
                 desiredSkills: ["legacy/skill"],
               },
+              rudderSkillSync: {
+                desiredSkills: ["template/top-level-skill"],
+              },
+              rudderRuntimeSkills: [{ key: "template/top-level-skill" }],
             },
             waitTimeoutMs: 2000,
           },
@@ -542,7 +565,19 @@ describe("openclaw gateway adapter execute", () => {
       expect(payload?.rudder).toEqual(
         expect.objectContaining({
           preferred: true,
+          runId: "run-123",
+          orgId: "organization-123",
+          agentId: "agent-123",
           apiUrl: "https://current-rudder.example.test/",
+          rudderSkillSync: {
+            desiredSkills: ["organization/build-advisor"],
+          },
+          rudderRuntimeSkills: [
+            expect.objectContaining({
+              key: "organization/build-advisor",
+              runtimeName: "build-advisor",
+            }),
+          ],
           workspace: expect.objectContaining({
             cwd: "/tmp/rudder-workspace",
           }),
@@ -554,6 +589,8 @@ describe("openclaw gateway adapter execute", () => {
           key.startsWith("paperclip"),
         ),
       ).toEqual([]);
+      expect(payload).not.toHaveProperty("rudderSkillSync");
+      expect(payload).not.toHaveProperty("rudderRuntimeSkills");
       expect(Object.keys(payload ?? {}).filter((key) => key.startsWith("paperclip"))).toEqual([]);
     } finally {
       await gateway.close();

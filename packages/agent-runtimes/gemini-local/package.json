@@ -15,23 +15,23 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
     },
     "./server": {
       "types": "./src/server/index.ts",
-      "import": "./dist/server/index.js",
-      "default": "./dist/server/index.js"
+      "import": "./src/server/index.ts",
+      "default": "./src/server/index.ts"
     },
     "./ui": {
       "types": "./src/ui/index.ts",
-      "import": "./dist/ui/index.js",
-      "default": "./dist/ui/index.js"
+      "import": "./src/ui/index.ts",
+      "default": "./src/ui/index.ts"
     },
     "./cli": {
       "types": "./src/cli/index.ts",
-      "import": "./dist/cli/index.js",
-      "default": "./dist/cli/index.js"
+      "import": "./src/cli/index.ts",
+      "default": "./src/cli/index.ts"
     }
   },
   "publishConfig": {
