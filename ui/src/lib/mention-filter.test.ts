@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterMentionOptions } from "./mention-filter";
+import { MENTION_OPTION_RENDER_LIMIT, filterMentionOptions } from "./mention-filter";
 import type { MentionOption } from "@/components/MarkdownEditor";
 
 describe("filterMentionOptions", () => {
@@ -35,7 +35,23 @@ describe("filterMentionOptions", () => {
       id: "library-file:docs/product.md",
       kind: "library_file",
     });
-    expect(filtered).toHaveLength(8);
+    expect(filtered).toHaveLength(10);
+  });
+
+  it("keeps enough matches for smooth menu scrolling without rendering unbounded result sets", () => {
+    const mentions: MentionOption[] = Array.from({ length: MENTION_OPTION_RENDER_LIMIT + 20 }, (_, index) => ({
+      id: `library-file:docs/result-${index}.md`,
+      name: `result-${index}.md`,
+      kind: "library_file",
+      libraryFilePath: `docs/result-${index}.md`,
+      searchText: `result-${index}.md docs/result-${index}.md`,
+    }));
+
+    const filtered = filterMentionOptions(mentions, "@", "md");
+
+    expect(filtered).toHaveLength(MENTION_OPTION_RENDER_LIMIT);
+    expect(filtered[0]?.id).toBe("library-file:docs/result-0.md");
+    expect(filtered.at(-1)?.id).toBe(`library-file:docs/result-${MENTION_OPTION_RENDER_LIMIT - 1}.md`);
   });
 
   it("keeps dollar mentions scoped to skills", () => {

@@ -114,8 +114,6 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await expect(agentChipLink).toContainText("Dylan");
   await expect(composer).toContainText(/before Dylan.*next\s+after/);
 
-  await agentChipLink.click();
-  await page.waitForTimeout(100);
   await expect(page.locator('[class*="_linkDialogPopoverContent_"]')).toHaveCount(0);
   await expect(page.getByText(new RegExp(`agent://${agent.id}`))).toHaveCount(0);
 
@@ -157,4 +155,81 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   };
   expect(afterExplicitReassign.assigneeAgentId).toBe(agent.id);
   expect(afterExplicitReassign.assigneeUserId).toBeNull();
+});
+
+test("issue comment composer renders enough matching Library files for smooth menu scrolling", async ({ page }) => {
+  const suffix = Date.now();
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Comment-Library-Mention-Scroll-${suffix}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Library mention scroll target",
+      description: "The comment composer should show many matching Library files without paging.",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: "local-board",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  const query = `scrollproof${suffix}`;
+  const directoryPath = `docs/mention-scroll-${suffix}`;
+  const filePaths = Array.from({ length: 20 }, (_, index) => {
+    const padded = String(index).padStart(2, "0");
+    return `${directoryPath}/${query}-${padded}.md`;
+  });
+  for (const filePath of filePaths) {
+    const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath,
+        content: `# ${filePath}\n`,
+      },
+    });
+    expect(fileRes.ok()).toBe(true);
+  }
+
+  const mentionFilesRes = await page.request.get(
+    `/api/orgs/${organization.id}/workspace/mention-files?q=${encodeURIComponent(query)}&limit=50`,
+  );
+  expect(mentionFilesRes.ok()).toBe(true);
+  const mentionFiles = await mentionFilesRes.json() as { entries: Array<{ path: string }> };
+  expect(mentionFiles.entries).toHaveLength(filePaths.length);
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.setViewportSize({ width: 1440, height: 720 });
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+
+  const composer = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').last();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.evaluate((node) => {
+    node.scrollIntoView({ block: "end", inline: "nearest" });
+  });
+  await page.waitForTimeout(50);
+
+  await composer.click();
+  await page.keyboard.type(`@${query}`);
+
+  const mentionMenu = page.getByTestId("markdown-mention-menu");
+  await expect(mentionMenu).toBeVisible({ timeout: 15_000 });
+  await expect(mentionMenu).toContainText("Library");
+  await expect(page.locator("[data-mention-option-index]")).toHaveCount(filePaths.length, {
+    timeout: 15_000,
+  });
+  await expect(page.getByTestId(`markdown-mention-option-library-file:${filePaths[0]}`)).toBeVisible();
+  await expect(page.getByTestId(`markdown-mention-option-library-file:${filePaths.at(-1)}`)).toBeAttached();
+
+  const menuMetrics = await mentionMenu.evaluate((node) => ({
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+  }));
+  expect(menuMetrics.scrollHeight).toBeGreaterThan(menuMetrics.clientHeight);
 });

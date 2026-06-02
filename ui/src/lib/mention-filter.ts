@@ -2,6 +2,8 @@ import type { MentionOption } from "@/components/MarkdownEditor";
 
 type MentionTrigger = "@" | "$";
 
+export const MENTION_OPTION_RENDER_LIMIT = 50;
+
 function normalizedText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
 }
@@ -41,7 +43,7 @@ export function filterMentionOptions(
   mentions: MentionOption[] | null | undefined,
   trigger: MentionTrigger,
   query: string,
-  limit = 8,
+  limit = MENTION_OPTION_RENDER_LIMIT,
 ) {
   if (!mentions) return [];
   const normalizedQuery = normalizedText(query);
