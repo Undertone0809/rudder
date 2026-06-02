@@ -306,7 +306,7 @@ export function AutomationDetail() {
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.activity(selectedOrganizationId!, automationId!) }),
       ]);
-      if (run.linkedChatConversationId && run.lastChatMessageId) {
+      if (run.linkedChatConversationId) {
         navigate(`/messenger/chat/${run.linkedChatConversationId}`);
       }
     },
@@ -658,17 +658,17 @@ export function AutomationDetail() {
       return summary && summary !== kind ? `${kind}: ${summary}` : kind;
     };
 
-    const formatRunActivityTitle = (source: string, status: string) => {
+    const formatRunActivityTitle = (source: string, status: string, outputMode?: string | null) => {
       const sourceLabel = runSourceLabel(source);
       switch (status) {
         case "issue_created":
           return `${sourceLabel} opened an execution issue`;
         case "running":
-          return `${sourceLabel} is in progress`;
+          return outputMode === "chat_output" ? `${sourceLabel} started a chat run` : `${sourceLabel} is in progress`;
         case "failed":
           return `${sourceLabel} failed`;
         case "coalesced":
-          return `${sourceLabel} joined an active execution`;
+          return `${sourceLabel} joined an active run`;
         case "skipped":
           return `${sourceLabel} skipped`;
         case "completed":
@@ -738,7 +738,7 @@ export function AutomationDetail() {
       } else if (event.action === "automation.run_triggered") {
         const source = getActivityDetailString(details, "source") ?? "run";
         const status = getActivityDetailString(details, "status") ?? "started";
-        title = formatRunActivityTitle(source, status);
+        title = formatRunActivityTitle(source, status, getActivityDetailString(details, "outputMode") ?? automation?.outputMode);
         const triggerDescription = describeTrigger(getActivityDetailString(details, "triggerId"), null);
         eventDetails.push(detailText(formatTriggerContext(triggerDescription), "trigger"));
       } else {
@@ -794,7 +794,7 @@ export function AutomationDetail() {
 
       items.push({
         id: `run:${run.id}`,
-        title: formatRunActivityTitle(run.source, run.status),
+        title: formatRunActivityTitle(run.source, run.status, automation?.outputMode),
         details,
         createdAt: run.triggeredAt,
         sortAt: new Date(run.triggeredAt).getTime(),

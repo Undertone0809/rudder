@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { automationsApi } from "../api/automations";
 import { agentsApi } from "../api/agents";
-import { chatsApi } from "../api/chats";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
@@ -385,8 +384,8 @@ export function Automations() {
     setDraft((current) => ({
       ...current,
       outputMode,
-      chatConversationId: outputMode === "chat_output" ? current.chatConversationId : "",
-      allowAssigneeChatMismatch: outputMode === "chat_output" ? current.allowAssigneeChatMismatch : false,
+      chatConversationId: "",
+      allowAssigneeChatMismatch: false,
       description: withOutputInstruction(removeOutputInstruction(current.description), outputMode),
     }));
   }, []);
@@ -425,11 +424,6 @@ export function Automations() {
     queryKey: queryKeys.projects.list(selectedOrganizationId!),
     queryFn: () => projectsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
-  });
-  const { data: chats } = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId!, "active"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
-    enabled: !!selectedOrganizationId && composerOpen && draft.outputMode === "chat_output",
   });
   const { data: issues } = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId!),
@@ -578,15 +572,6 @@ export function Automations() {
       })),
     [projects],
   );
-  const chatOptions = useMemo<InlineEntityOption[]>(
-    () =>
-      (chats ?? []).map((chat) => ({
-        id: chat.id,
-        label: chat.title,
-        searchText: chat.summary ?? chat.latestReplyPreview ?? "",
-      })),
-    [chats],
-  );
   const agentById = useMemo(
     () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
     [agents],
@@ -597,9 +582,6 @@ export function Automations() {
   );
   const currentAssignee = draft.assigneeAgentId ? agentById.get(draft.assigneeAgentId) ?? null : null;
   const currentProject = draft.projectId ? projectById.get(draft.projectId) ?? null : null;
-  const currentChat = draft.chatConversationId
-    ? (chats ?? []).find((chat) => chat.id === draft.chatConversationId) ?? null
-    : null;
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
       agent: currentAssignee,
@@ -907,49 +889,16 @@ export function Automations() {
 
 
               {draft.outputMode === "chat_output" ? (
-                <InlineEntitySelector
-                  value={draft.chatConversationId}
-                  options={chatOptions}
-                  placeholder="New chat"
-                  noneLabel="New chat"
-                  searchPlaceholder="Search chats..."
-                  emptyMessage="No active chats found."
-                  className={cn(automationComposerChipClass, "max-w-[240px] bg-transparent")}
-                  disablePortal
-                  side="top"
-                  sideOffset={8}
-                  onChange={(chatConversationId) => setDraft((current) => ({
-                    ...current,
-                    chatConversationId,
-                    allowAssigneeChatMismatch: false,
-                  }))}
-                  renderTriggerValue={(option) =>
-                    option && currentChat ? (
-                      <>
-                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{option.label}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">New chat</span>
-                      </>
-                    )
-                  }
-                  renderOption={(option) =>
-                    option.id ? (
-                      <>
-                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{option.label}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{option.label}</span>
-                      </>
-                    )
-                  }
-                />
+                <div
+                  data-testid="automation-create-chat-destination"
+                  className={cn(
+                    "inline-flex items-center gap-1.5 border border-border bg-transparent text-muted-foreground",
+                    automationComposerChipClass,
+                  )}
+                >
+                  <Plus className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">New chat per run</span>
+                </div>
               ) : null}
 
               <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>

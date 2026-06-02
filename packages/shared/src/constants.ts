@@ -268,6 +268,7 @@ export type AutomationTriggerSigningMode = (typeof AUTOMATION_TRIGGER_SIGNING_MO
 
 export const AUTOMATION_RUN_STATUSES = [
   "received",
+  "running",
   "coalesced",
   "skipped",
   "issue_created",
