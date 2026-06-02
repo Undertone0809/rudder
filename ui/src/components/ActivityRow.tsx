@@ -49,9 +49,58 @@ const ACTION_VERBS: Record<string, string> = {
   "organization.budget_updated": "updated budget for",
 };
 
+const ISSUE_UPDATE_METADATA_KEYS = new Set([
+  "identifier",
+  "issueIdentifier",
+  "_previous",
+  "source",
+  "reopened",
+  "reopenedFrom",
+  "normalizedFromStatus",
+  "normalizedReason",
+]);
+
+const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
+  assigneeAgentId: "assignee",
+  assigneeUserId: "assignee",
+  assigneeAgentRuntimeOverrides: "assignee runtime overrides",
+  billingCode: "billing code",
+  executionWorkspaceId: "execution workspace",
+  executionWorkspacePreference: "execution workspace preference",
+  executionWorkspaceSettings: "execution workspace settings",
+  goalId: "goal",
+  hiddenAt: "visibility",
+  labelIds: "labels",
+  parentId: "parent issue",
+  projectId: "project",
+  projectWorkspaceId: "project workspace",
+  requestDepth: "request depth",
+  reviewerAgentId: "reviewer",
+  reviewerUserId: "reviewer",
+};
+
 function humanizeValue(value: unknown): string {
   if (typeof value !== "string") return String(value ?? "none");
   return value.replace(/_/g, " ");
+}
+
+function issueUpdatedChangedKeys(details: Record<string, unknown>): string[] {
+  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+}
+
+function humanizeIssueUpdateField(key: string): string {
+  return ISSUE_UPDATE_FIELD_LABELS[key] ?? key.replace(/Id$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+
+function hasIssueUpdateValue(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
+
+function formatIssueFieldVerb(fieldLabel: string, next: unknown, previous: unknown): string {
+  if (hasIssueUpdateValue(next) && hasIssueUpdateValue(previous)) return `changed ${fieldLabel} on`;
+  if (hasIssueUpdateValue(next)) return `set ${fieldLabel} on`;
+  if (hasIssueUpdateValue(previous)) return `cleared ${fieldLabel} on`;
+  return `updated ${fieldLabel} on`;
 }
 
 function formatVerb(action: string, details?: Record<string, unknown> | null): string {
@@ -74,6 +123,11 @@ function formatVerb(action: string, details?: Record<string, unknown> | null): s
       return from
         ? `changed priority from ${formatPriorityLabel(humanizeValue(from))} to ${formatPriorityLabel(humanizeValue(details.priority))} on`
         : `changed priority to ${formatPriorityLabel(humanizeValue(details.priority))} on`;
+    }
+    const handledKeys = new Set(["priority", "status"]);
+    const changedKey = issueUpdatedChangedKeys(details).find((key) => !handledKeys.has(key));
+    if (changedKey) {
+      return formatIssueFieldVerb(humanizeIssueUpdateField(changedKey), details[changedKey], previous[changedKey]);
     }
   }
   return ACTION_VERBS[action] ?? action.replace(/[._]/g, " ");

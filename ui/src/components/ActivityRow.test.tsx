@@ -103,6 +103,34 @@ describe("ActivityRow", () => {
     expect(html).toContain("Add agent-reported commit activity");
   });
 
+  it("renders issue goal updates as field-specific activity", () => {
+    const html = renderToStaticMarkup(
+      <ActivityRow
+        event={{
+          id: "activity-goal-update",
+          orgId: "org-1",
+          actorType: "user",
+          actorId: "user-1",
+          action: "issue.updated",
+          entityType: "issue",
+          entityId: "issue-1",
+          agentId: null,
+          runId: null,
+          details: { goalId: "goal-new", _previous: { goalId: "goal-old" } },
+          createdAt: new Date("2026-04-09T10:00:00.000Z"),
+        }}
+        agentMap={new Map()}
+        entityNameMap={new Map([["issue:issue-1", "ZST-363"]])}
+        entityTitleMap={new Map([["issue:issue-1", "issue update activity is too coarse"]])}
+        currentBoardUserId="user-1"
+      />,
+    );
+
+    expect(html).toContain("changed goal on");
+    expect(html).toContain("ZST-363");
+    expect(html).not.toContain("updated ");
+  });
+
   it("renders agent activity with a production-shaped avatar image", () => {
     const html = renderToStaticMarkup(
       <ActivityRow

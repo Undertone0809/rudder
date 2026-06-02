@@ -399,6 +399,44 @@ function humanizeIssueStatus(status: string) {
   return status.replaceAll("_", " ");
 }
 
+const ISSUE_UPDATE_METADATA_KEYS = new Set([
+  "identifier",
+  "issueIdentifier",
+  "_previous",
+  "source",
+  "reopened",
+  "reopenedFrom",
+  "normalizedFromStatus",
+  "normalizedReason",
+]);
+
+const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
+  assigneeAgentId: "assignee",
+  assigneeUserId: "assignee",
+  assigneeAgentRuntimeOverrides: "assignee runtime overrides",
+  billingCode: "billing code",
+  executionWorkspaceId: "execution workspace",
+  executionWorkspacePreference: "execution workspace preference",
+  executionWorkspaceSettings: "execution workspace settings",
+  goalId: "goal",
+  hiddenAt: "visibility",
+  labelIds: "labels",
+  parentId: "parent issue",
+  projectId: "project",
+  projectWorkspaceId: "project workspace",
+  requestDepth: "request depth",
+  reviewerAgentId: "reviewer",
+  reviewerUserId: "reviewer",
+};
+
+function humanizeIssueUpdateField(key: string): string {
+  return ISSUE_UPDATE_FIELD_LABELS[key] ?? key.replace(/Id$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+
+function issueUpdatedChangedKeys(details: Record<string, unknown>): string[] {
+  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+}
+
 function issueStatusChangeFromActivity(activity: IssueActivityRow | null | undefined): IssueStatusChange | null {
   if (!activity || activity.action !== "issue.updated") return null;
   const details = activity.details ?? {};
@@ -462,7 +500,8 @@ function summarizeIssueActivity(activity: IssueActivityRow, issue: IssueUniverse
       if (typeof details.reviewerUserId !== "undefined" || typeof details.reviewerAgentId !== "undefined") {
         return "Reviewer changed";
       }
-      return "Issue updated";
+      const changedField = issueUpdatedChangedKeys(details)[0];
+      return changedField ? `${humanizeIssueUpdateField(changedField)} changed` : "Issue details changed";
     }
     case "issue.approval_linked":
       return "Approval linked";

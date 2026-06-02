@@ -147,6 +147,25 @@ const ISSUE_UPDATE_METADATA_KEYS = new Set([
   "normalizedReason",
 ]);
 
+const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
+  assigneeAgentId: "assignee",
+  assigneeUserId: "assignee",
+  assigneeAgentRuntimeOverrides: "assignee runtime overrides",
+  billingCode: "billing code",
+  executionWorkspaceId: "execution workspace",
+  executionWorkspacePreference: "execution workspace preference",
+  executionWorkspaceSettings: "execution workspace settings",
+  goalId: "goal",
+  hiddenAt: "visibility",
+  labelIds: "labels",
+  parentId: "parent issue",
+  projectId: "project",
+  projectWorkspaceId: "project workspace",
+  requestDepth: "request depth",
+  reviewerAgentId: "reviewer",
+  reviewerUserId: "reviewer",
+};
+
 const ACTION_LABELS: Record<string, string> = {
   "issue.created": "created the issue",
   "issue.updated": "updated the issue",
@@ -180,6 +199,21 @@ const ACTION_LABELS: Record<string, string> = {
 function humanizeValue(value: unknown): string {
   if (typeof value !== "string") return String(value ?? "none");
   return value.replace(/_/g, " ");
+}
+
+function humanizeIssueUpdateField(key: string): string {
+  return ISSUE_UPDATE_FIELD_LABELS[key] ?? key.replace(/Id$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+
+function hasIssueUpdateValue(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
+
+function describeIssueFieldChange(fieldLabel: string, next: unknown, previous: unknown): string {
+  if (hasIssueUpdateValue(next) && hasIssueUpdateValue(previous)) return `changed the ${fieldLabel}`;
+  if (hasIssueUpdateValue(next)) return `set the ${fieldLabel}`;
+  if (hasIssueUpdateValue(previous)) return `cleared the ${fieldLabel}`;
+  return `updated the ${fieldLabel}`;
 }
 
 function formatIssueUserLabel(userId: string, currentBoardUserId?: string | null): string {
@@ -570,6 +604,19 @@ function formatAction(
     }
     if (details.title !== undefined) parts.push("updated the title");
     if (details.description !== undefined) parts.push("updated the description");
+    const handledKeys = new Set([
+      "assigneeAgentId",
+      "assigneeUserId",
+      "description",
+      "priority",
+      "reviewerAgentId",
+      "reviewerUserId",
+      "status",
+      "title",
+    ]);
+    for (const key of issueUpdatedChangedKeys(details).filter((changedKey) => !handledKeys.has(changedKey))) {
+      parts.push(describeIssueFieldChange(humanizeIssueUpdateField(key), details[key], previous[key]));
+    }
 
     if (parts.length > 0) return parts.join(", ");
   }
