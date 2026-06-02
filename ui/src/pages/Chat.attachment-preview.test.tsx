@@ -888,6 +888,55 @@ describe("Chat ask_user panel", () => {
 });
 
 describe("Chat project context selector", () => {
+  it("does not render resource counts in the project context menu", () => {
+    mockState.conversations = [chat({ id: "chat-1", lastMessageAt: null })];
+    mockState.messagesByChatId = { "chat-1": [] };
+    mockState.projects = [
+      project({
+        name: "Rudder mkt",
+        resources: [
+          {
+            id: "attachment-1",
+            orgId: "org-1",
+            projectId: "10000000-0000-4000-8000-000000000010",
+            resourceId: "resource-1",
+            role: "working_set",
+            note: null,
+            sortOrder: 0,
+            resource: {
+              id: "resource-1",
+              orgId: "org-1",
+              name: "Main repo",
+              kind: "directory",
+              sourceType: "external",
+              locator: "/Users/zeeland/projects/rudder-oss",
+              description: null,
+              metadata: null,
+              createdAt: new Date("2026-05-12T09:00:00.000Z"),
+              updatedAt: new Date("2026-05-12T09:00:00.000Z"),
+            },
+            createdAt: new Date("2026-05-12T09:00:00.000Z"),
+            updatedAt: new Date("2026-05-12T09:00:00.000Z"),
+          },
+        ],
+      }),
+    ];
+
+    const { container } = renderChat();
+
+    const projectSelector = container.querySelector<HTMLButtonElement>("[data-testid='chat-project-selector']");
+    expect(projectSelector).not.toBeNull();
+
+    act(() => {
+      projectSelector?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const projectMenu = document.body.querySelector("[data-testid='chat-project-menu']");
+    expect(projectMenu).not.toBeNull();
+    expect(projectMenu?.textContent).toContain("Rudder mkt");
+    expect(projectMenu?.textContent).not.toMatch(/\b\d+\s+resources\b/u);
+  });
+
   it("locks the project selector after a conversation already has project context", () => {
     mockState.conversations = [
       chat({

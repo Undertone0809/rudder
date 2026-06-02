@@ -852,8 +852,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     <span className="project-context-swatch h-3 w-3 shrink-0" style={projectContextSwatchStyle(project.color)} aria-hidden="true" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">{projectDisplayName(project)}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {project.resources.length} resources </span> </span> </button>
+                    </span> </button>
                 ))} </div> ) : null} </> ) : null}
         {agentMenuOpen && !agentSelectionLocked ? ( <>
             <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Agents</div>
