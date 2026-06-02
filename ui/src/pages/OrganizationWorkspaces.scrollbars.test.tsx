@@ -445,6 +445,66 @@ describe("OrganizationWorkspaces scroll regions", () => {
     ]);
   });
 
+  it("scrolls the selected editor tab into view when opening a file from the tree", async () => {
+    renderWorkspacesPage();
+
+    const tabScroller = document.querySelector(".rudder-doc-editor-tab-scroller") as HTMLDivElement | null;
+    expect(tabScroller).not.toBeNull();
+    Object.defineProperty(tabScroller, "scrollLeft", {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+    Object.defineProperty(tabScroller, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        bottom: 40,
+        height: 40,
+        left: 0,
+        right: 240,
+        top: 0,
+        width: 240,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+    });
+
+    const notesFileButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "notes.md",
+    );
+    expect(notesFileButton).toBeTruthy();
+
+    await act(async () => {
+      notesFileButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const notesTab = Array.from(
+      document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"),
+    ).find((tab) => tab.textContent?.trim() === "notes.md");
+    expect(notesTab).toBeTruthy();
+    Object.defineProperty(notesTab!, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        bottom: 40,
+        height: 40,
+        left: 260,
+        right: 392,
+        top: 0,
+        width: 132,
+        x: 260,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect(tabScroller?.scrollLeft).toBe(152);
+  });
+
   it("restores open Library file tabs from session storage when no file path is requested", () => {
     mockState.searchParams = "";
     Object.defineProperty(window, "sessionStorage", {

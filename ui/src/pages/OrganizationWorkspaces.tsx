@@ -804,7 +804,7 @@ function DirectoryChildren({
           onSelectResource={onSelectResource}
           onFocusEntry={onFocusEntry}
           onCopyLink={onCopyLink}
-              onCopyAbsolutePath={onCopyAbsolutePath}
+          onCopyAbsolutePath={onCopyAbsolutePath}
           onOpenEntry={onOpenEntry}
           onStartCreateEntry={onStartCreateEntry}
           onStartRename={onStartRename}
@@ -2418,16 +2418,27 @@ export function OrganizationWorkspaceBrowser({
   const syncedFileRef = useRef<{ filePath: string | null; content: string }>({ filePath: null, content: "" });
   const saveWorkspaceFileMutateRef = useRef<((payload: { filePath: string; content: string }) => void) | null>(null);
   const editorScrollElementRef = useRef<HTMLElement | null>(null);
+  const openFileTabScrollerElementRef = useRef<HTMLDivElement | null>(null);
+  const openFileTabElementsRef = useRef(new Map<string, HTMLDivElement>());
   const restoredOpenTabsOrgRef = useRef<string | null>(null);
   const allowDefaultFileOpenRef = useRef(true);
   const filesScrollRef = useScrollbarActivityRef("org-workspaces:files");
   const editorScrollRef = useScrollbarActivityRef(
     selectedFilePath ? `org-workspaces:editor:${selectedFilePath}` : "org-workspaces:editor",
   );
+  const openFileTabsScrollerActivityRef = useScrollbarActivityRef("org-workspaces:editor-tabs");
   const setEditorScrollElementRef = useCallback((element: HTMLElement | null) => {
     editorScrollElementRef.current = element;
     editorScrollRef(element);
   }, [editorScrollRef]);
+  const setOpenFileTabsScrollerRef = useCallback((element: HTMLDivElement | null) => {
+    openFileTabScrollerElementRef.current = element;
+    openFileTabsScrollerActivityRef(element);
+  }, [openFileTabsScrollerActivityRef]);
+  const setOpenFileTabElementRef = useCallback((filePath: string) => (element: HTMLDivElement | null) => {
+    if (element) openFileTabElementsRef.current.set(filePath, element);
+    else openFileTabElementsRef.current.delete(filePath);
+  }, []);
   selectedFilePathRef.current = selectedFilePath;
 
   useEffect(() => {
@@ -2677,6 +2688,27 @@ export function OrganizationWorkspaceBrowser({
     setDraftContent(nextContent);
     setDraftFilePath(selectedFilePath);
   }, [draftContent, draftFilePath, fileQuery.data, selectedFilePath]);
+
+  useEffect(() => {
+    if (!selectedFilePath) return;
+    const scroller = openFileTabScrollerElementRef.current;
+    const selectedTab = openFileTabElementsRef.current.get(selectedFilePath);
+    if (!scroller || !selectedTab) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const scrollerRect = scroller.getBoundingClientRect();
+      const tabRect = selectedTab.getBoundingClientRect();
+      const leftOverflow = tabRect.left - scrollerRect.left;
+      const rightOverflow = tabRect.right - scrollerRect.right;
+      if (leftOverflow < 0) {
+        scroller.scrollLeft += leftOverflow;
+      } else if (rightOverflow > 0) {
+        scroller.scrollLeft += rightOverflow;
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [openFilePaths, selectedFilePath]);
 
   const expandedDirectories = useMemo(
     () => {
@@ -3732,7 +3764,11 @@ export function OrganizationWorkspaceBrowser({
               aria-label="Open files"
               className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-page)]"
             >
-              <div className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-0 pr-2 pt-1">
+              <div
+                ref={setOpenFileTabsScrollerRef}
+                data-testid="org-workspaces-editor-tab-scroller"
+                className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-0 pr-2 pt-1"
+              >
                 {openFilePaths.length > 0 ? (
                   <>
                     {openFilePaths.map((filePath, index) => {
@@ -3743,6 +3779,7 @@ export function OrganizationWorkspaceBrowser({
                       const dropAfter = tabDropPreview?.targetPath === filePath && tabDropPreview.position === "after";
                       return (
                         <div
+                          ref={setOpenFileTabElementRef(filePath)}
                           key={filePath}
                           data-testid={`org-workspaces-editor-tab-${filePath}`}
                           draggable={openFilePaths.length > 1}
