@@ -335,12 +335,34 @@ const ISSUE_UPDATE_METADATA_KEYS = new Set([
   "normalizedFromStatus",
   "normalizedReason",
 ]);
+const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
+  assigneeAgentId: "assignee",
+  assigneeUserId: "assignee",
+  assigneeAgentRuntimeOverrides: "assignee runtime overrides",
+  billingCode: "billing code",
+  executionWorkspaceId: "execution workspace",
+  executionWorkspacePreference: "execution workspace preference",
+  executionWorkspaceSettings: "execution workspace settings",
+  goalId: "goal",
+  hiddenAt: "visibility",
+  labelIds: "labels",
+  parentId: "parent issue",
+  projectId: "project",
+  projectWorkspaceId: "project workspace",
+  requestDepth: "request depth",
+  reviewerAgentId: "reviewer",
+  reviewerUserId: "reviewer",
+};
 const AGENT_TOAST_STATUSES = new Set(["running", "error"]);
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "timed_out", "cancelled"]);
 
 function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
   if (!details) return [];
   return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+}
+
+function humanizeIssueUpdateField(key: string): string {
+  return ISSUE_UPDATE_FIELD_LABELS[key] ?? key.replace(/Id$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
 }
 
 function isDescriptionOnlyIssueUpdate(action: string, details: Record<string, unknown> | null): boolean {
@@ -370,6 +392,20 @@ function describeIssueUpdate(details: Record<string, unknown> | null): string | 
   }
   if (typeof details.title === "string") changes.push("title changed");
   if (typeof details.description === "string") changes.push("description changed");
+  const handledKeys = new Set([
+    "status",
+    "priority",
+    "assigneeAgentId",
+    "assigneeUserId",
+    "reviewerAgentId",
+    "reviewerUserId",
+    "reopened",
+    "title",
+    "description",
+  ]);
+  for (const key of issueUpdatedChangedKeys(details).filter((changedKey) => !handledKeys.has(changedKey))) {
+    changes.push(`${humanizeIssueUpdateField(key)} changed`);
+  }
   if (changes.length > 0) return changes.join(", ");
   return null;
 }

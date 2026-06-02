@@ -403,6 +403,56 @@ describe("messengerService and issue follows", () => {
     expect(issuesSummary?.preview).toBe("Status transition issue — Status changed to in review");
   });
 
+  it("summarizes issue goal updates in Messenger issue cards and thread summaries", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-goal-update";
+    const issueId = randomUUID();
+    const goalId = randomUUID();
+    const previousGoalId = randomUUID();
+    const activityAt = new Date("2026-04-20T10:30:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Goal Update Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Goal Update Org"),
+      issuePrefix: `G${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Goal routing issue",
+      status: "todo",
+      priority: "medium",
+      createdByUserId: userId,
+      updatedAt: activityAt,
+    });
+
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "system",
+      actorId: "system",
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: issueId,
+      details: {
+        goalId,
+        _previous: { goalId: previousGoalId },
+      },
+      createdAt: activityAt,
+    });
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const item = thread.detail.items.find((entry) => entry.issueId === issueId);
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const issuesSummary = summaries.find((entry) => entry.threadKey === "issues");
+
+    expect(item?.preview).toBe("goal changed");
+    expect(thread.summary.preview).toBe("Goal routing issue — goal changed");
+    expect(issuesSummary?.preview).toBe("Goal routing issue — goal changed");
+  });
+
   it("keeps status transition metadata on comment-backed issue update cards", async () => {
     const orgId = randomUUID();
     const userId = "board-user-comment-status";

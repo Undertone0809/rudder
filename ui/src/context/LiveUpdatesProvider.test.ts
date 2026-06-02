@@ -192,6 +192,64 @@ describe("LiveUpdatesProvider notification preferences", () => {
     expect(toasts).toEqual([]);
   });
 
+  it("labels field-level issue update toasts for goals, projects, and unknown fields", () => {
+    const toasts: Array<{ body?: string; title?: string }> = [];
+    const gate = { cooldownHits: new Map(), suppressUntil: 0 };
+    const queryClient = {
+      invalidateQueries: () => {},
+      getQueryData: (key: unknown) => {
+        if (JSON.stringify(key) === JSON.stringify(queryKeys.issues.detail("issue-1"))) {
+          return {
+            id: "issue-1",
+            identifier: "ORG-1",
+            title: "Issue update activity is too coarse",
+          };
+        }
+        return undefined;
+      },
+    };
+
+    for (const [field, value] of [
+      ["goalId", "goal-new"],
+      ["projectId", "project-new"],
+      ["customWorkflowId", "workflow-new"],
+    ]) {
+      __liveUpdatesTestUtils.handleLiveEvent(
+        queryClient as never,
+        "organization-1",
+        "/ORG/dashboard",
+        {
+          type: "activity.logged",
+          orgId: "organization-1",
+          payload: {
+            entityType: "issue",
+            entityId: "issue-1",
+            action: "issue.updated",
+            actorType: "user",
+            actorId: "user-2",
+            details: {
+              [field]: value,
+              _previous: { [field]: `${value}-previous` },
+            },
+          },
+        } as never,
+        (toast) => {
+          toasts.push(toast);
+          return `toast-${toasts.length}`;
+        },
+        gate,
+        { userId: "user-1", agentId: null },
+        { issueNotifications: true, chatNotifications: true },
+      );
+    }
+
+    expect(toasts.map((toast) => toast.body)).toEqual([
+      "Issue update activity is too coarse - goal changed",
+      "Issue update activity is too coarse - project changed",
+      "Issue update activity is too coarse - custom workflow changed",
+    ]);
+  });
+
   it("does not push chat toasts when chat notifications are disabled", () => {
     const toasts: unknown[] = [];
 
