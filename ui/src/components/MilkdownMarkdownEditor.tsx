@@ -9,7 +9,9 @@ import {
   type ClipboardEvent,
   type CSSProperties,
   type DragEvent,
+  type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from "@milkdown/react";
 import { Editor, defaultValueCtx, editorViewCtx, rootCtx } from "@milkdown/kit/core";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
@@ -624,6 +626,10 @@ function firstImageFile(files: FileList | null | undefined) {
   return Array.from(files ?? []).find((file) => file.type.startsWith("image/")) ?? null;
 }
 
+function BrowserPortal({ children }: { children: ReactNode }) {
+  return typeof document === "undefined" ? <>{children}</> : createPortal(children, document.body);
+}
+
 function statusLabel(status: string): string {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -719,6 +725,14 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   const [loading, getInstance] = useInstance();
 
   useEffect(() => {
+    const activeElement = typeof document !== "undefined" ? document.activeElement : null;
+    const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+    const shouldRestoreFocus = Boolean(
+      mentionStateRef.current
+      && editable instanceof HTMLElement
+      && activeElement instanceof Node
+      && editable.contains(activeElement),
+    );
     mentionsRef.current = mentions ?? [];
     const editor = loading ? get() : getInstance();
     editor?.action((ctx) => {
@@ -726,6 +740,14 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       view.dispatch(view.state.tr.setMeta("rudderMentionOptionsUpdated", true));
     });
     requestAnimationFrame(() => refreshMilkdownMentionTokenStyles(containerRef.current, mentionsRef.current));
+    if (shouldRestoreFocus) {
+      requestAnimationFrame(() => {
+        const currentEditor = loading ? get() : getInstance();
+        currentEditor?.action((ctx) => {
+          ctx.get(editorViewCtx).focus();
+        });
+      });
+    }
   }, [get, getInstance, loading, mentions]);
 
   useEffect(() => {
@@ -1102,18 +1124,19 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         </div>
       ) : null}
       {mentionState && filteredMentions.length > 0 && mentionMenuPosition ? (
-        <div
-          ref={mentionMenuRef}
-          role={mentionMenuPlacement === "container" ? "menu" : "listbox"}
-          data-testid="markdown-mention-menu"
-          className={cn(
-            "scrollbar-auto-hide fixed z-[70] overflow-y-auto rounded-lg border border-border p-1.5 shadow-lg",
-            mentionMenuPlacement === "container"
-              ? "chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay text-foreground"
-              : "bg-popover text-popover-foreground",
-          )}
-          style={mentionMenuPosition}
-        >
+        <BrowserPortal>
+          <div
+            ref={mentionMenuRef}
+            role={mentionMenuPlacement === "container" ? "menu" : "listbox"}
+            data-testid="markdown-mention-menu"
+            className={cn(
+              "scrollbar-auto-hide fixed z-[70] overflow-y-auto rounded-lg border border-border p-1.5 shadow-lg",
+              mentionMenuPlacement === "container"
+                ? "chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay text-foreground"
+                : "bg-popover text-popover-foreground",
+            )}
+            style={mentionMenuPosition}
+          >
           {(() => {
             let optionIndex = 0;
             return groupedMentionOptions.map((group) => (
@@ -1280,7 +1303,8 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
               </div>
             ));
           })()}
-        </div>
+          </div>
+        </BrowserPortal>
       ) : null}
     </div>
   );
