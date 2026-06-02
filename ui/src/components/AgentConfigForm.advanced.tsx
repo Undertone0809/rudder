@@ -58,7 +58,7 @@ import { getUIAdapter } from "../agent-runtimes";
 import type { AgentRuntimeConfigFieldsProps } from "../agent-runtimes/types";
 import { ClaudeLocalAdvancedFields } from "../agent-runtimes/claude-local/config-fields";
 import { MarkdownEditor } from "./MarkdownEditor";
-import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
+import { RuntimeLogoIcon } from "./RuntimeLogoIcon";
 import { ReportsToPicker } from "./ReportsToPicker";
 
 /* ---- Create mode values ---- */
@@ -190,7 +190,7 @@ export function AdapterTypeDropdown({
       <PopoverTrigger asChild>
         <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between">
           <span className="inline-flex items-center gap-1.5">
-            {value === "opencode_local" ? <OpenCodeLogoIcon className="h-3.5 w-3.5" /> : null}
+            <RuntimeLogoIcon runtimeType={value} />
             <span>{adapterLabels[value] ?? value}</span>
           </span>
           <ChevronDown className="h-3 w-3 text-muted-foreground" />
@@ -213,7 +213,7 @@ export function AdapterTypeDropdown({
             }}
           >
             <span className="inline-flex items-center gap-1.5">
-              {item.value === "opencode_local" ? <OpenCodeLogoIcon className="h-3.5 w-3.5" /> : null}
+              <RuntimeLogoIcon runtimeType={item.value} />
               <span>{item.label}</span>
             </span>
             {item.comingSoon && (
