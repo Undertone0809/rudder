@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { useParams, useNavigate, Link, Navigate, useBeforeUnload } from "@/lib/router";
+import { useParams, useNavigate, Link, Navigate, useBeforeUnload, useSearchParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   agentsApi,
@@ -147,6 +147,15 @@ import { agentRouteRef } from "../lib/utils";
 import { heartbeatRunEventText, heartbeatRunEventToTranscriptEntry, mergeTranscriptEntries } from "../lib/run-detail-events";
 import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
 import { hasBrowserBackStackEntry, shouldHandleDetailEscape } from "../lib/detail-escape";
+import {
+  applyRunFilters,
+  applyRunSort,
+  hasRunFilters,
+  parseRunFilterState,
+  runFilterChips,
+  RunFiltersToolbar,
+  writeRunFilterState,
+} from "./AgentDetail.run-filters";
 import {
   arraysEqual,
   canManageSkillEntry,
@@ -4127,6 +4136,8 @@ function RunsTab({
   agentRuntimeType: string;
 }) {
   const { isMobile } = useSidebar();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterState = useMemo(() => parseRunFilterState(searchParams), [searchParams]);
 
   if (runs.length === 0) {
     return <p className="text-sm text-muted-foreground">No runs yet.</p>;
@@ -4136,16 +4147,51 @@ function RunsTab({
   const sorted = [...runs].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
+  const filtered = applyRunSort(applyRunFilters(sorted, filterState), filterState.sort);
+  const activeFilterChips = runFilterChips(filterState);
+  const filtersActive = hasRunFilters(filterState);
+  const updateRunFilters = (patch: Parameters<typeof writeRunFilterState>[1]) => {
+    setSearchParams(writeRunFilterState(searchParams, patch), { replace: true });
+  };
+  const clearRunFilters = () => {
+    setSearchParams(writeRunFilterState(searchParams, {
+      view: "all",
+      q: "",
+      statuses: [],
+      sources: [],
+      contexts: [],
+      skills: [],
+      date: "all",
+      cost: [],
+    }), { replace: true });
+  };
 
   // On mobile, don't auto-select so the list shows first; on desktop, auto-select latest
-  const effectiveRunId = isMobile ? selectedRunId : (selectedRunId ?? sorted[0]?.id ?? null);
+  const effectiveRunId = isMobile ? selectedRunId : (selectedRunId ?? filtered[0]?.id ?? sorted[0]?.id ?? null);
   const selectedRun = sorted.find((r) => r.id === effectiveRunId) ?? null;
+  const selectedRunOutsideFilters = Boolean(selectedRun && filtersActive && !filtered.some((run) => run.id === selectedRun.id));
+  const listRuns = selectedRunOutsideFilters && selectedRun
+    ? [selectedRun, ...filtered.filter((run) => run.id !== selectedRun.id)]
+    : filtered;
+  const listEmptyMessage = filtersActive
+    ? "No runs match the current filters."
+    : "No runs yet.";
+  const toolbar = (
+    <RunFiltersToolbar
+      runs={sorted}
+      filteredCount={filtered.length}
+      state={filterState}
+      onChange={updateRunFilters}
+      onClear={clearRunFilters}
+    />
+  );
 
   // Mobile: show either run list OR run detail with back button
   if (isMobile) {
     if (selectedRun) {
       return (
         <div className="space-y-3 min-w-0 overflow-x-hidden">
+          {toolbar}
           <Link
             to={`/agents/${agentRouteId}/runs`}
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors no-underline"
@@ -4158,41 +4204,93 @@ function RunsTab({
       );
     }
     return (
-      <div className="border border-border rounded-lg overflow-x-hidden">
-        {sorted.map((run) => (
-          <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
-        ))}
+      <div className="space-y-3">
+        {toolbar}
+        {activeFilterChips.length > 0 && (
+          <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
+        )}
+        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
+          {listRuns.length > 0 ? listRuns.map((run) => (
+            <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
+          )) : (
+            <RunListEmptyState message={listEmptyMessage} />
+          )}
+        </div>
       </div>
     );
   }
 
   if (!selectedRun) {
     return (
-      <div className="border border-border rounded-lg overflow-x-hidden">
-        {sorted.map((run) => (
-          <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
-        ))}
+      <div className="space-y-3">
+        {toolbar}
+        {activeFilterChips.length > 0 && (
+          <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
+        )}
+        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
+          {listRuns.length > 0 ? listRuns.map((run) => (
+            <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
+          )) : (
+            <RunListEmptyState message={listEmptyMessage} />
+          )}
+        </div>
       </div>
     );
   }
 
   // Desktop: detail pane first, compact navigation rail on the right.
   return (
-    <div className="flex min-w-0 items-start gap-4">
-      <div className="min-w-0 flex-1 basis-0" data-testid="agent-runs-detail-pane">
-        <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
-      </div>
+    <div className="min-w-0">
+      {toolbar}
+      {activeFilterChips.length > 0 && (
+        <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} className="mb-3 justify-end" />
+      )}
+      <div className="flex min-w-0 items-start gap-4">
+        <div className="min-w-0 flex-1 basis-0" data-testid="agent-runs-detail-pane">
+          <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
+        </div>
 
-      <div
-        className="w-[14rem] shrink-0 border border-border rounded-lg xl:w-[14.5rem] 2xl:w-[15rem]"
-        data-testid="agent-runs-list-pane"
-      >
-        <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>
-          {sorted.map((run) => (
-            <RunListItem key={run.id} run={run} isSelected={run.id === effectiveRunId} agentId={agentRouteId} />
-          ))}
+        <div
+          className="w-[clamp(18rem,24vw,24rem)] shrink-0 border border-border rounded-lg"
+          data-testid="agent-runs-list-pane"
+        >
+          <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>
+            {selectedRunOutsideFilters && (
+              <div className="border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                Selected run is outside the current filters.
+              </div>
+            )}
+            {listRuns.length > 0 ? listRuns.map((run) => (
+              <RunListItem key={run.id} run={run} isSelected={run.id === effectiveRunId} agentId={agentRouteId} />
+            )) : (
+              <RunListEmptyState message={listEmptyMessage} />
+            )}
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RunFilterChipRow({ chips, onClear, className }: { chips: string[]; onClear: () => void; className?: string }) {
+  return (
+    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+      {chips.map((chip) => (
+        <span key={chip} className="inline-flex h-6 items-center rounded-md border border-border bg-muted/30 px-2 text-xs text-muted-foreground">
+          {chip}
+        </span>
+      ))}
+      <button type="button" className="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground" onClick={onClear}>
+        Clear
+      </button>
+    </div>
+  );
+}
+
+function RunListEmptyState({ message }: { message: string }) {
+  return (
+    <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+      {message}
     </div>
   );
 }
