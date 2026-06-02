@@ -138,8 +138,8 @@ describe("workspace backup service", () => {
   it("creates a backup and reads files from the selected version", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
-    await fs.mkdir(path.join(workspaceRoot, "plans"), { recursive: true });
-    await fs.writeFile(path.join(workspaceRoot, "plans", "roadmap.md"), "# Roadmap\n", "utf8");
+    await fs.mkdir(path.join(workspaceRoot, "projects", "roadmap"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "projects", "roadmap", "roadmap.md"), "# Roadmap\n", "utf8");
 
     const backup = await service.create({ orgId });
 
@@ -150,23 +150,23 @@ describe("workspace backup service", () => {
 
     const root = await service.listFiles(orgId, backup.id);
     expect(root.entries).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "plans", path: "plans", isDirectory: true }),
+      expect.objectContaining({ name: "projects", path: "projects", isDirectory: true }),
     ]));
 
-    const plans = await service.listFiles(orgId, backup.id, "plans");
-    expect(plans.entries).toEqual([
-      expect.objectContaining({ name: "roadmap.md", path: "plans/roadmap.md", isDirectory: false }),
+    const projectFiles = await service.listFiles(orgId, backup.id, "projects/roadmap");
+    expect(projectFiles.entries).toEqual([
+      expect.objectContaining({ name: "roadmap.md", path: "projects/roadmap/roadmap.md", isDirectory: false }),
     ]);
 
-    const file = await service.readFile(orgId, backup.id, "plans/roadmap.md");
+    const file = await service.readFile(orgId, backup.id, "projects/roadmap/roadmap.md");
     expect(file.content).toBe("# Roadmap\n");
   });
 
   it("skips runtime and cache directories when creating workspace backups", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
-    await fs.mkdir(path.join(workspaceRoot, "plans"), { recursive: true });
-    await fs.writeFile(path.join(workspaceRoot, "plans", "roadmap.md"), "# Roadmap\n", "utf8");
+    await fs.mkdir(path.join(workspaceRoot, "projects", "roadmap"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "projects", "roadmap", "roadmap.md"), "# Roadmap\n", "utf8");
     await fs.mkdir(path.join(workspaceRoot, "agents", "vera--12345678", "Library", "Caches"), { recursive: true });
     await fs.writeFile(path.join(workspaceRoot, "agents", "vera--12345678", "Library", "Caches", "cache.bin"), "cache\n", "utf8");
     await fs.mkdir(path.join(workspaceRoot, "agents", "vera--12345678", ".rudder", "instances"), { recursive: true });
@@ -181,9 +181,9 @@ describe("workspace backup service", () => {
       "Skipped agents/vera--12345678/Library",
     ]));
 
-    const plans = await service.listFiles(orgId, backup.id, "plans");
-    expect(plans.entries).toEqual([
-      expect.objectContaining({ name: "roadmap.md", path: "plans/roadmap.md", isDirectory: false }),
+    const projectFiles = await service.listFiles(orgId, backup.id, "projects/roadmap");
+    expect(projectFiles.entries).toEqual([
+      expect.objectContaining({ name: "roadmap.md", path: "projects/roadmap/roadmap.md", isDirectory: false }),
     ]);
   });
 

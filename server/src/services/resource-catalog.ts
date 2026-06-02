@@ -57,9 +57,8 @@ function normalizeNullableText(value: string | null | undefined) {
 }
 
 const LIBRARY_PATH_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
-const PROTECTED_LIBRARY_RESOURCE_ROOTS = new Set(["agents", "artifacts", "plans", "skills"]);
 
-function isValidLibraryRelativePath(locator: string) {
+function isValidLibraryProjectPath(locator: string, kind: string) {
   const trimmed = locator.trim();
   if (!trimmed) return false;
   if (LIBRARY_PATH_SCHEME_RE.test(trimmed)) return false;
@@ -67,7 +66,8 @@ function isValidLibraryRelativePath(locator: string) {
   if (trimmed.includes("\\")) return false;
   const parts = trimmed.split("/");
   if (!parts.every((part) => part.length > 0 && part !== "." && part !== "..")) return false;
-  return !PROTECTED_LIBRARY_RESOURCE_ROOTS.has(parts[0] ?? "");
+  if (parts[0] !== "projects") return false;
+  return kind === "directory" ? parts.length >= 2 : parts.length >= 3;
 }
 
 function assertValidLibraryResource(input: {
@@ -79,8 +79,8 @@ function assertValidLibraryResource(input: {
   if (input.kind !== "file" && input.kind !== "directory") {
     throw badRequest("Library resources must be file or directory resources.");
   }
-  if (!isValidLibraryRelativePath(input.locator)) {
-    throw badRequest("Library resource locator must be a normalized relative path inside the organization Library.");
+  if (!isValidLibraryProjectPath(input.locator, input.kind)) {
+    throw badRequest("Library resource locator must be a normalized project Library path.");
   }
 }
 

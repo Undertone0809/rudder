@@ -112,14 +112,6 @@ export function resolveOrganizationSkillsDir(orgId: string): string {
   return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "skills");
 }
 
-export function resolveOrganizationPlansDir(orgId: string): string {
-  return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "plans");
-}
-
-export function resolveOrganizationArtifactsDir(orgId: string): string {
-  return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "artifacts");
-}
-
 export function resolveOrganizationAgentsDir(orgId: string): string {
   return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "agents");
 }
@@ -174,15 +166,11 @@ export async function ensureOrganizationWorkspaceLayout(orgId: string): Promise<
   root: string;
   agentsDir: string;
   skillsDir: string;
-  plansDir: string;
-  artifactsDir: string;
   projectsDir: string;
 }> {
   const root = resolveOrganizationWorkspaceRoot(orgId);
   const agentsDir = resolveOrganizationAgentsDir(orgId);
   const skillsDir = resolveOrganizationSkillsDir(orgId);
-  const plansDir = resolveOrganizationPlansDir(orgId);
-  const artifactsDir = resolveOrganizationArtifactsDir(orgId);
   const projectsDir = resolveOrganizationProjectsDir(orgId);
   await Promise.all([
     fs.mkdir(root, { recursive: true }),
@@ -190,7 +178,7 @@ export async function ensureOrganizationWorkspaceLayout(orgId: string): Promise<
     fs.mkdir(skillsDir, { recursive: true }),
     fs.mkdir(projectsDir, { recursive: true }),
   ]);
-  return { root, agentsDir, skillsDir, plansDir, artifactsDir, projectsDir };
+  return { root, agentsDir, skillsDir, projectsDir };
 }
 
 export async function ensureProjectLibraryLayout(input: {

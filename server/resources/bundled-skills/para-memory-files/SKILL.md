@@ -5,10 +5,10 @@ description: >
   whenever you need to store, retrieve, update, or organize knowledge across
   sessions. Covers three memory layers: (1) Knowledge graph in PARA folders
   with atomic YAML facts, (2) Daily notes as raw timeline, (3) Tacit
-  knowledge about user patterns. Also handles planning files, memory decay,
+  knowledge about user patterns. Also handles shared work files, memory decay,
   weekly synthesis, and file-based recall. Trigger on any memory operation:
   saving facts, writing daily notes, creating entities, running weekly
-  synthesis, recalling past context, or managing plans.
+  synthesis, recalling past context, or managing shared work notes.
 allowed-tools: []
 disable: true
 ---
@@ -111,6 +111,6 @@ rg -n "specific phrase" "$AGENT_HOME/life" "$AGENT_HOME/memory"
 The files are the source of truth. Search is only a way to locate the right
 file, then verify against the stored fact or note.
 
-## Planning
+## Shared Work Notes
 
-Keep shared plans in timestamped files under `$RUDDER_ORG_PLANS_DIR` when that path is available, not in ad-hoc repo or project-root `plans/` folders. These plan files are shared workspace artifacts, not personal memory. Use `rg` to search plan files and prefer the newest dated file when several match. Plans go stale -- if a newer plan exists, do not confuse yourself with an older version. If you notice staleness, update the file to note what it is supersededBy.
+Keep durable project work notes under `library:projects/<project-name>/` when a project is in scope. These files are shared project context, not personal memory. Use `rg` to search relevant Library files and prefer the newest dated file when several match. Shared notes go stale; if a newer note exists, do not confuse yourself with an older version. If you notice staleness, update the file to note what supersedes it.

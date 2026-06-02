@@ -98,7 +98,6 @@ describe("opencode execute", () => {
           rudderWorkspace: {
             orgWorkspaceRoot: path.join(root, "org-workspace"),
             orgSkillsDir: path.join(root, "org-workspace", "skills"),
-            orgPlansDir: path.join(root, "org-workspace", "plans"),
           },
         },
         authToken: "run-jwt-token",
@@ -119,9 +118,6 @@ describe("opencode execute", () => {
       expectPreparedGitConfigCapture(capture);
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
-      expect(capture.rudderEnvKeys).toEqual(
-        expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
-      );
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);

@@ -325,7 +325,7 @@ test.describe("Primary rail create menu", () => {
 
     const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
       data: {
-        filePath: "docs/project-brief.md",
+        filePath: "projects/create-menu/project-brief.md",
         content: "# Project brief\n\nUse this as project context.",
       },
     });
@@ -346,7 +346,7 @@ test.describe("Primary rail create menu", () => {
 
     await dialog.getByRole("button", { name: "Add resources" }).click();
     await page.getByRole("button", { name: /project-brief\.md/ }).click();
-    await expect(dialog.getByText("Library · File · docs/project-brief.md")).toBeVisible();
+    await expect(dialog.getByText("Library · File · projects/create-menu/project-brief.md")).toBeVisible();
 
     const createResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"
@@ -368,7 +368,7 @@ test.describe("Primary rail create menu", () => {
         name: "project-brief.md",
         kind: "file",
         sourceType: "library",
-        locator: "docs/project-brief.md",
+        locator: "projects/create-menu/project-brief.md",
       }),
     }));
   });

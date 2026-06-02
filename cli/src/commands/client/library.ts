@@ -26,7 +26,7 @@ export function registerLibraryCommands(program: Command): void {
     file
       .command("list")
       .description(getAgentCliCapabilityById("library.file.list").description)
-      .argument("[directoryPath]", "Library directory path", "docs")
+      .argument("[directoryPath]", "Library directory path", "projects")
       .action(async (directoryPath: string, opts: BaseClientOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });

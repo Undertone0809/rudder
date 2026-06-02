@@ -103,9 +103,8 @@ function createInlineResourceDraft(): DraftInlineResource {
 }
 
 const LIBRARY_PATH_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
-const PROTECTED_LIBRARY_RESOURCE_ROOTS = new Set(["agents", "artifacts", "plans", "skills"]);
 
-function isValidLibraryRelativePath(locator: string) {
+function isValidLibraryProjectPath(locator: string, kind: OrganizationResourceKind = "file") {
   const trimmed = locator.trim();
   if (!trimmed) return false;
   if (LIBRARY_PATH_SCHEME_RE.test(trimmed)) return false;
@@ -113,7 +112,8 @@ function isValidLibraryRelativePath(locator: string) {
   if (trimmed.includes("\\")) return false;
   const parts = trimmed.split("/");
   if (!parts.every((part) => part.length > 0 && part !== "." && part !== "..")) return false;
-  return !PROTECTED_LIBRARY_RESOURCE_ROOTS.has(parts[0] ?? "");
+  if (parts[0] !== "projects") return false;
+  return kind === "directory" ? parts.length >= 2 : parts.length >= 3;
 }
 
 function libraryNameFromPath(locator: string) {
@@ -222,14 +222,21 @@ export function NewProjectDialog() {
     ].some((value) => value.toLowerCase().includes(normalizedResourceSearch)))
     : availableResources;
   const libraryFileEntries = Array.isArray(libraryMentionFiles?.entries) ? libraryMentionFiles.entries : [];
-  const availableLibraryFiles = libraryFileEntries.filter((entry) => !selectedLibraryLocators.has(entry.path));
+  const availableLibraryFiles = libraryFileEntries.filter((entry) =>
+    isValidLibraryProjectPath(entry.path, entry.isDirectory ? "directory" : "file")
+    && !selectedLibraryLocators.has(entry.path),
+  );
   const normalizedLibrarySearch = librarySearch.trim();
   const canAddLibrarySearchPath =
-    isValidLibraryRelativePath(normalizedLibrarySearch)
+    isValidLibraryProjectPath(normalizedLibrarySearch)
     && !selectedLibraryLocators.has(normalizedLibrarySearch)
     && !availableLibraryFiles.some((entry) => entry.path === normalizedLibrarySearch);
   const hasInvalidInlineResources = resourceDrafts.some((resource) =>
-    resource.kind === "new" && (!resource.name.trim() || !resource.locator.trim()),
+    resource.kind === "new" && (
+      !resource.name.trim()
+      || !resource.locator.trim()
+      || (resource.sourceType === "library" && !isValidLibraryProjectPath(resource.locator, resource.resourceKind))
+    ),
   );
 
   function updateDraftResource(
@@ -286,7 +293,7 @@ export function NewProjectDialog() {
 
   function addLibraryResourcePath(locator: string) {
     const normalizedLocator = locator.trim();
-    if (!isValidLibraryRelativePath(normalizedLocator)) return;
+    if (!isValidLibraryProjectPath(normalizedLocator)) return;
     const existing = libraryResourceByLocator.get(normalizedLocator);
     if (existing) {
       addExistingResource(existing);

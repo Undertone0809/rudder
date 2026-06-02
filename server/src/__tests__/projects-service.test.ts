@@ -473,7 +473,7 @@ describe("project service workspace resolution", () => {
       name: "Existing spec",
       kind: "file",
       sourceType: "library",
-      locator: "docs/SPEC-implementation.md",
+      locator: "projects/resourceful-project/SPEC-implementation.md",
       description: "Implementation contract",
     }).returning().then((rows) => rows[0]!);
 
@@ -551,7 +551,7 @@ describe("project service workspace resolution", () => {
       name: "Existing spec",
       kind: "file",
       sourceType: "library",
-      locator: "docs/spec.md",
+      locator: "projects/path-based-context/spec.md",
     }).returning().then((rows) => rows[0]!);
 
     const created = await projectSvc.create(orgId, {
@@ -562,7 +562,7 @@ describe("project service workspace resolution", () => {
           name: "Spec copy",
           kind: "file",
           sourceType: "library",
-          locator: "docs/spec.md",
+          locator: "projects/path-based-context/spec.md",
           role: "reference",
         },
       ],

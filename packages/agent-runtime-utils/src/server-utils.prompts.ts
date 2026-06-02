@@ -207,7 +207,6 @@ Before changing the issue, inspect the current issue state and any side effects 
  * - Keep behavior deterministic across runtimes: template selection is centralized here.
  *
  * See also:
- * - doc/plans/2026-04-07-agent-prompt-context-injection.md
  * - doc/DEVELOPING.md
  */
 export function selectPromptTemplate(
@@ -276,15 +275,11 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "- Personal skills live under `$AGENT_HOME/skills`.",
   "- Shared organization workspace root lives under `$RUDDER_ORG_WORKSPACE_ROOT`.",
   "- Shared organization skills live under `$RUDDER_ORG_SKILLS_DIR`.",
-  "- Shared organization plans live under `$RUDDER_ORG_PLANS_DIR`.",
-  "- Shared organization artifacts live under `$RUDDER_ORG_ARTIFACTS_DIR`.",
-  "- Library-backed project resources use `sourceType: \"library\"`; their `locator` is a safe path relative to `$RUDDER_ORG_WORKSPACE_ROOT`, usually under `docs/`, so read them from `$RUDDER_ORG_WORKSPACE_ROOT/<locator>` when that root is available. Rudder does not use protected system roots such as `agents/`, `artifacts/`, `plans/`, or `skills/` as project Library resources.",
-  "- Project Context is explicit operator-curated context, not the whole knowledge boundary. When it is insufficient, inspect broader Library docs and org workspace know-how before concluding context is missing.",
-  "- Durable generated Markdown documents, plans, design docs, and decision notes should be written under `$RUDDER_ORG_WORKSPACE_ROOT/docs/` when available, preferably through `rudder library file put docs/<file>.md --body-file <path> --json`.",
-  "- Durable generated assets such as screenshots, images, mockups, reports, CSVs, handoff logs, and other user-visible non-doc files should be written under `$RUDDER_ORG_ARTIFACTS_DIR` when available.",
-  "- Use `/tmp` only for transient scratch files and temporary verification artifacts; do not put durable work product there.",
+  "- Library-backed project resources use `sourceType: \"library\"`; their `locator` points into `library:projects/<project-name>/`.",
+  "- Project Context is explicit operator-curated context, not the whole knowledge boundary. When it is insufficient, inspect broader Library and org workspace know-how before concluding context is missing.",
+  "- Durable generated project work files should be written under `library:projects/<project-name>/`.",
+  "- Use `/tmp` only for transient scratch files and temporary verification files; do not put durable work product there.",
   "- Local trusted runtimes may expose the host operator home as `$RUDDER_OPERATOR_HOME`; use it only when a local skill or script intentionally needs operator-owned desktop app or CLI state. Do not replace `$HOME` with it.",
-  "- Durable shared work output should prefer these managed workspace paths instead of ad-hoc top-level `projects/` folders.",
   "",
   "When you create or copy a skill under `$AGENT_HOME/skills/<slug>/`, check the agent's Skills snapshot before claiming it will load in future runs. If it is installed but not enabled, say exactly that future runs will not load it until enabled, and offer to enable it with `rudder agent skills enable <agent-id> <selection-ref>` when you have permission.",
   "",
@@ -294,9 +289,9 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "",
   "When an issue comment, done comment, or blocker comment cites visual evidence from a local screenshot/image path, attach the image with the Rudder CLI `--image <path>` option instead of leaving only the filesystem path in the text.",
   "",
-  "## Memory and Planning",
+  "## Memory and Shared Work Notes",
   "",
-  "You MUST use the `para-memory-files` skill for all memory operations: storing facts, writing daily notes, creating entities, running weekly synthesis, recalling past context, and managing plans. The skill defines your three-layer memory system (knowledge graph, daily notes, tacit knowledge), the PARA folder structure, atomic fact schemas, memory decay rules, and recall/planning conventions.",
+  "You MUST use the `para-memory-files` skill for all memory operations: storing facts, writing daily notes, creating entities, running weekly synthesis, recalling past context, and managing shared work notes. The skill defines your three-layer memory system (knowledge graph, daily notes, tacit knowledge), the PARA folder structure, atomic fact schemas, memory decay rules, and recall conventions.",
   "",
   "Keep stable preferences and operating lessons in `$AGENT_HOME/instructions/MEMORY.md`. Use `$AGENT_HOME/memory/YYYY-MM-DD.md` for daily notes and `$AGENT_HOME/life/` for structured long-term memory; those files are not auto-loaded.",
   "",

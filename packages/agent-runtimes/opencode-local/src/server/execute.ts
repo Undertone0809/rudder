@@ -187,11 +187,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const agentSkillsDir = asString(workspaceContext.agentSkillsDir, "");
   const orgWorkspaceRoot = asString(workspaceContext.orgWorkspaceRoot, "");
   const orgSkillsDir = asString(workspaceContext.orgSkillsDir, "");
-  const orgPlansDir = asString(workspaceContext.orgPlansDir, "");
-  const orgArtifactsDir = asString(
-    workspaceContext.orgArtifactsDir,
-    orgWorkspaceRoot ? path.join(orgWorkspaceRoot, "artifacts") : "",
-  );
   const workspaceHints = Array.isArray(context.rudderWorkspaces)
     ? context.rudderWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -251,8 +246,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (agentSkillsDir) env.RUDDER_AGENT_SKILLS_DIR = agentSkillsDir;
   if (orgWorkspaceRoot) env.RUDDER_ORG_WORKSPACE_ROOT = orgWorkspaceRoot;
   if (orgSkillsDir) env.RUDDER_ORG_SKILLS_DIR = orgSkillsDir;
-  if (orgPlansDir) env.RUDDER_ORG_PLANS_DIR = orgPlansDir;
-  if (orgArtifactsDir) env.RUDDER_ORG_ARTIFACTS_DIR = orgArtifactsDir;
   if (workspaceHints.length > 0) env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
 
   for (const [key, value] of Object.entries(envConfig)) {
@@ -377,7 +370,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
    * "what changed?" discovery.
    *
    * Traceability:
-   * - doc/plans/2026-04-07-agent-prompt-context-injection.md
    * - doc/DEVELOPING.md
    */
   const bootstrapPromptTemplate = asString(config.bootstrapPromptTemplate, "");

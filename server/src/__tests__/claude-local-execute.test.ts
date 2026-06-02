@@ -176,7 +176,6 @@ describe("claude execute", () => {
           rudderWorkspace: {
             orgWorkspaceRoot: path.join(root, "org-workspace"),
             orgSkillsDir: path.join(root, "org-workspace", "skills"),
-            orgPlansDir: path.join(root, "org-workspace", "plans"),
           },
         },
         authToken: "run-jwt-token",
@@ -213,9 +212,6 @@ describe("claude execute", () => {
       expectPreparedGitConfigCapture(capture);
       expect(capture.appendedSystemPrompt).toContain("# Agent Instructions");
       expect(capture.appendedSystemPrompt).toContain("# Tacit Memory");
-      expect(capture.rudderEnvKeys).toEqual(
-        expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
-      );
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;

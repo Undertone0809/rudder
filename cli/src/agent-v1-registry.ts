@@ -383,7 +383,7 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     id: "issue.documents.put",
     command: "rudder issue documents put <issue> <key> --body-file <path>",
     category: "issue",
-    description: "Legacy create or update of a DB-backed issue document; prefer `rudder library file put` for new docs.",
+    description: "Legacy create or update of a DB-backed issue document; prefer `rudder library file put` for durable project files.",
     mutating: true,
     contract: "compat",
     requiresOrgId: false,

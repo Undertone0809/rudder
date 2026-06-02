@@ -102,7 +102,7 @@ Do not rely on a free-form reject or accept comment as the review outcome. The s
 - `rudder agent config list --org-id <id>` — List redacted agent configuration snapshots for an organization.
 - `rudder agent config get <agent-id-or-shortname>` — Read one redacted agent configuration snapshot by id or shortname.
 - `rudder agent icons` — List legacy named agent icons for compatibility/debugging; normal create and hire payloads should omit icon.
-- `rudder issue documents put <issue> <key> --body-file <path>` — Legacy create or update of a DB-backed issue document; prefer `rudder library file put` for new docs.
+- `rudder issue documents put <issue> <key> --body-file <path>` — Legacy create or update of a DB-backed issue document; prefer `rudder library file put` for durable project files.
 - `rudder issue create --org-id <id> ... [--label-id <id> ...] [--label <name> ...]` — Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied.
 - `rudder issue labels list --org-id <id>` — List organization issue labels available for issue creation.
 - `rudder approval create --org-id <id> --type <type> --payload <json>` — Create a new approval request.

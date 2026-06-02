@@ -280,7 +280,7 @@ describe("selectPromptTemplate", () => {
 
     expect(issueDocumentsPrompt).toContain("## Legacy Issue Documents");
     expect(issueDocumentsPrompt).toContain("These legacy issue documents are not inlined automatically.");
-    expect(issueDocumentsPrompt).toContain("rudder library file put docs/<file>.md --body-file <path> --json");
+    expect(issueDocumentsPrompt).toContain("library:projects/<project-name>/");
     expect(issueDocumentsPrompt).toContain("rudder issue documents get issue-3 plan --json");
     expect(issueDocumentsPrompt).toContain("rudder issue documents get issue-3 design --json");
     expect(issueDocumentsPrompt).not.toContain("Check the document-backed requirements.");
@@ -378,7 +378,7 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
     expect(loaded.prefix).toContain(RUDDER_AGENT_OPERATING_CONTRACT);
     expect(loaded.prefix).toContain("installed but not enabled");
-    expect(loaded.prefix).toContain("Shared organization artifacts live under `$RUDDER_ORG_ARTIFACTS_DIR`");
+    expect(loaded.prefix).toContain("library:projects/<project-name>/");
     expect(loaded.prefix).toContain("Use `/tmp` only for transient scratch files");
     expect(loaded.prefix).toContain("Local trusted runtimes may expose the host operator home as `$RUDDER_OPERATOR_HOME`");
     expect(loaded.prefix).toContain("structured markdown link like `[@AgentName](agent://agent-id)`");

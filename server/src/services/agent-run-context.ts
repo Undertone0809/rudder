@@ -134,7 +134,7 @@ function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
       ];
       if (sourceType === "library") {
         lines.push(
-          "  - Library path: relative to the organization Library workspace root",
+          `  - Library path: \`library:${attachment.resource.locator}\``,
         );
       }
       if (attachment.resource.description?.trim()) {
@@ -458,8 +458,6 @@ export function agentRunContextService(db: Db) {
       orgWorkspaceRoot: organizationWorkspace.root,
       orgAgentsDir: organizationWorkspace.agentsDir,
       orgSkillsDir: organizationWorkspace.skillsDir,
-      orgPlansDir: organizationWorkspace.plansDir,
-      orgArtifactsDir: organizationWorkspace.artifactsDir,
       resourcesPrompt: compiledResourcesPrompt,
       orgResourcesPrompt: compiledResourcesPrompt,
     } satisfies Record<string, unknown>;

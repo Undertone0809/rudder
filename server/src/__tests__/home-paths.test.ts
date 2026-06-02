@@ -14,8 +14,6 @@ import {
   resolveAgentSkillsDir,
   resolveDefaultAgentWorkspaceDir,
   resolveOrganizationAgentsDir,
-  resolveOrganizationArtifactsDir,
-  resolveOrganizationPlansDir,
   resolveOrganizationProjectsDir,
   resolveOrganizationSkillsDir,
   resolveProjectLibraryDir,
@@ -69,8 +67,6 @@ describe("home paths", () => {
       ),
       agentsDir: resolveOrganizationAgentsDir(orgId),
       skillsDir: resolveOrganizationSkillsDir(orgId),
-      plansDir: resolveOrganizationPlansDir(orgId),
-      artifactsDir: resolveOrganizationArtifactsDir(orgId),
       projectsDir: resolveOrganizationProjectsDir(orgId),
     });
     expect(agentWorkspace).toEqual({
@@ -83,8 +79,8 @@ describe("home paths", () => {
 
     await expect(fs.stat(resolveOrganizationAgentsDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveOrganizationSkillsDir(orgId))).resolves.toBeDefined();
-    await expect(fs.stat(resolveOrganizationPlansDir(orgId))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.stat(resolveOrganizationArtifactsDir(orgId))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(path.join(organization.root, "plans"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(path.join(organization.root, "artifacts"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.stat(resolveOrganizationProjectsDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveDefaultAgentWorkspaceDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentInstructionsDir(orgId, workspaceKey))).resolves.toBeDefined();

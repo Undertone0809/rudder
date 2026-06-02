@@ -113,7 +113,6 @@ describe("pi execute", () => {
           rudderWorkspace: {
             orgWorkspaceRoot: path.join(root, "org-workspace"),
             orgSkillsDir: path.join(root, "org-workspace", "skills"),
-            orgPlansDir: path.join(root, "org-workspace", "plans"),
           },
         },
         authToken: "run-jwt-token",
@@ -133,9 +132,6 @@ describe("pi execute", () => {
       const systemPrompt = capture.argv[appendSystemPromptIndex + 1];
       expect(systemPrompt).toContain("# Agent Instructions");
       expect(systemPrompt).toContain("# Tacit Memory");
-      expect(capture.rudderEnvKeys).toEqual(
-        expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
-      );
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);

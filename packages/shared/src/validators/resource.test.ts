@@ -10,10 +10,22 @@ describe("organization resource validators", () => {
       name: "Spec",
       kind: "file",
       sourceType: "library",
-      locator: "docs/spec.md",
+      locator: "projects/product/spec.md",
     })).toMatchObject({
       sourceType: "library",
-      locator: "docs/spec.md",
+      locator: "projects/product/spec.md",
+    });
+  });
+
+  it("accepts project Library root locators for directory resources", () => {
+    expect(createOrganizationResourceSchema.parse({
+      name: "Product folder",
+      kind: "directory",
+      sourceType: "library",
+      locator: "projects/product",
+    })).toMatchObject({
+      sourceType: "library",
+      locator: "projects/product",
     });
   });
 
@@ -22,7 +34,7 @@ describe("organization resource validators", () => {
       name: "Website",
       kind: "url",
       sourceType: "library",
-      locator: "docs/spec.md",
+      locator: "projects/product/spec.md",
     })).toThrow(/file or directory/);
   });
 
@@ -30,6 +42,8 @@ describe("organization resource validators", () => {
     "https://example.com/spec.md",
     "/Users/acme/spec.md",
     "../spec.md",
+    "docs/spec.md",
+    "projects/spec.md",
     "docs/../spec.md",
     "docs//spec.md",
     "docs/./spec.md",
@@ -44,7 +58,7 @@ describe("organization resource validators", () => {
       kind: "file",
       sourceType: "library",
       locator,
-    })).toThrow(/normalized relative path/);
+    })).toThrow(/normalized project Library path/);
   });
 
   it("validates library update patches when the updated fields are present", () => {
@@ -52,6 +66,23 @@ describe("organization resource validators", () => {
       sourceType: "library",
       kind: "file",
       locator: "../outside.md",
-    })).toThrow(/normalized relative path/);
+    })).toThrow(/normalized project Library path/);
+  });
+
+  it("requires update patches to include a project child path unless they declare a directory resource", () => {
+    expect(() => updateOrganizationResourceSchema.parse({
+      sourceType: "library",
+      locator: "projects/spec.md",
+    })).toThrow(/normalized project Library path/);
+
+    expect(updateOrganizationResourceSchema.parse({
+      sourceType: "library",
+      kind: "directory",
+      locator: "projects/product",
+    })).toMatchObject({
+      sourceType: "library",
+      kind: "directory",
+      locator: "projects/product",
+    });
   });
 });

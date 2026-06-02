@@ -205,7 +205,7 @@ test.describe("Chat message layout", () => {
     const collapsedHeight = await longBody.evaluate((node) => node.getBoundingClientRect().height);
     expect(collapsedHeight).toBeLessThanOrEqual(396);
     await page.screenshot({
-      path: `${process.env.RUDDER_ORG_ARTIFACTS_DIR ?? "/tmp"}/rudder-zst244-long-message-collapsed.png`,
+      path: `/tmp/rudder-zst244-long-message-collapsed.png`,
       fullPage: true,
     });
 

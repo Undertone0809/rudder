@@ -180,9 +180,9 @@ Default disposable profile used by `pnpm dev`:
 - embedded PostgreSQL on `54329`
 - data under `~/.rudder/instances/dev/`
 - agent runs start from the per-agent canonical workspace at `~/.rudder/instances/dev/organizations/<org-id>/workspaces/agents/<workspaceKey>`
-- managed organization-shared runtime artifacts live under `~/.rudder/instances/dev/organizations/<org-id>/workspaces/`
+- managed organization Library files live under `~/.rudder/instances/dev/organizations/<org-id>/workspaces/`
 
-Repo `doc/plans/` remains contributor planning documentation. Rudder-generated organization plans live under the org workspace `plans/` root, not in the repo.
+Repo `doc/plans/` remains contributor planning documentation. Rudder-generated project work files should use the relevant project Library folder, represented to agents as `library:projects/<project-name>/`.
 
 When the current repo has worktree-local `.rudder/.env` and `.rudder/config.json`,
 the same `pnpm dev` entrypoint respects that isolated instance instead of forcing the shared `dev` instance.

@@ -16,7 +16,7 @@ import { ensureOrganizationWorkspaceLayout, resolveOrganizationWorkspaceRoot } f
 import { organizationService } from "./orgs.js";
 
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
-const PROTECTED_LIBRARY_RESOURCE_ROOTS = new Set(["agents", "artifacts", "plans", "skills"]);
+const PROTECTED_LIBRARY_SYSTEM_ROOTS = new Set(["agents", "skills"]);
 const PROTECTED_AGENT_INSTRUCTIONS_FILE_NAMES = new Set(["HEARTBEAT.MD", "MEMORY.MD", "SOUL.MD", "TOOLS.MD"]);
 const PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES = new Set(["memory", "skills"]);
 const WORKSPACE_TEXT_CONTENT_TYPES = new Map([
@@ -104,7 +104,7 @@ function isProtectedOrganizationSkillsEntryPath(normalizedPath: string) {
 
 function isProtectedLibraryResourcePath(normalizedPath: string) {
   const root = normalizedPath.split("/").filter(Boolean)[0] ?? "";
-  return PROTECTED_LIBRARY_RESOURCE_ROOTS.has(root);
+  return PROTECTED_LIBRARY_SYSTEM_ROOTS.has(root);
 }
 
 function assertMutableWorkspaceEntry(normalizedPath: string) {

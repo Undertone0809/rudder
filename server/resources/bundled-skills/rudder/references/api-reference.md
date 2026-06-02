@@ -166,9 +166,8 @@ Loading policy:
 - Project Context is explicit, curated context; agents may still inspect broader
   Library workspace files when the attached resources are not enough.
 - Resource `sourceType` values:
-  - `library`: `locator` is a safe relative path under the organization Library
-    workspace root. Protected roots such as `agents/`, `artifacts/`, `plans/`,
-    and `skills/` are not valid project Library resources.
+  - `library`: `locator` is a safe project Library path under
+    `library:projects/<project-name>/`.
   - `external`: `locator` is the original URL, local path, repo path, or
     connector object reference.
 - If you need org-wide background that was not attached to the current project,

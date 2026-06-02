@@ -218,14 +218,14 @@ describe("organization workspace browser", () => {
       requireBoardApprovalForNewAgents: false,
     });
 
-    const imagePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "artifacts", "cost-trend.png");
+    const imagePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "costs", "cost-trend.png");
     await fs.mkdir(path.dirname(imagePath), { recursive: true });
     await fs.writeFile(imagePath, ONE_BY_ONE_PNG);
 
-    const detail = await workspaceBrowser.readFile(orgId, "artifacts/cost-trend.png");
+    const detail = await workspaceBrowser.readFile(orgId, "projects/costs/cost-trend.png");
 
     expect(detail).toEqual(expect.objectContaining({
-      filePath: "artifacts/cost-trend.png",
+      filePath: "projects/costs/cost-trend.png",
       rootExists: true,
       content: null,
       contentType: "image/png",
@@ -234,7 +234,7 @@ describe("organization workspace browser", () => {
       truncated: false,
     }));
     expect(detail.contentPath).toContain(`/api/orgs/${orgId}/workspace/file/content?`);
-    expect(detail.contentPath).toContain("path=artifacts%2Fcost-trend.png");
+    expect(detail.contentPath).toContain("path=projects%2Fcosts%2Fcost-trend.png");
   });
 
   it("keeps non-image binary files out of inline preview", async () => {
@@ -252,14 +252,14 @@ describe("organization workspace browser", () => {
       requireBoardApprovalForNewAgents: false,
     });
 
-    const binaryPath = path.join(resolveOrganizationWorkspaceRoot(orgId), "artifacts", "archive.bin");
+    const binaryPath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "costs", "archive.bin");
     await fs.mkdir(path.dirname(binaryPath), { recursive: true });
     await fs.writeFile(binaryPath, Buffer.from([0, 1, 2, 3]));
 
-    const detail = await workspaceBrowser.readFile(orgId, "artifacts/archive.bin");
+    const detail = await workspaceBrowser.readFile(orgId, "projects/costs/archive.bin");
 
     expect(detail).toEqual(expect.objectContaining({
-      filePath: "artifacts/archive.bin",
+      filePath: "projects/costs/archive.bin",
       rootExists: true,
       content: null,
       contentType: "application/octet-stream",
@@ -270,7 +270,7 @@ describe("organization workspace browser", () => {
     }));
   });
 
-  it("returns full text file content instead of truncating Docs files", async () => {
+  it("returns full text file content instead of truncating Library files", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);
     process.env.RUDDER_HOME = rudderHome;
@@ -285,15 +285,15 @@ describe("organization workspace browser", () => {
       requireBoardApprovalForNewAgents: false,
     });
 
-    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "docs", "large.md");
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "long-form", "large.md");
     const content = `# Large file\n\n${"Line with enough content to exceed the old limit.\n".repeat(4_500)}`;
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, content, "utf8");
 
-    const detail = await workspaceBrowser.readFile(orgId, "docs/large.md");
+    const detail = await workspaceBrowser.readFile(orgId, "projects/long-form/large.md");
 
     expect(detail).toEqual(expect.objectContaining({
-      filePath: "docs/large.md",
+      filePath: "projects/long-form/large.md",
       rootExists: true,
       content,
       contentType: "text/markdown",
@@ -319,32 +319,24 @@ describe("organization workspace browser", () => {
     });
 
     const root = resolveOrganizationWorkspaceRoot(orgId);
-    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, "projects", "product"), { recursive: true });
     await Promise.all(
       Array.from({ length: 220 }, (_, index) =>
-        fs.writeFile(path.join(root, "docs", `plain-${String(index).padStart(3, "0")}.md`), "# Plain\n", "utf8"),
+        fs.writeFile(path.join(root, "projects", "product", `plain-${String(index).padStart(3, "0")}.md`), "# Plain\n", "utf8"),
       ),
     );
-    await fs.writeFile(path.join(root, "docs", "z-special-product-brief.md"), "# Product brief\n", "utf8");
+    await fs.writeFile(path.join(root, "projects", "product", "z-special-product-brief.md"), "# Product brief\n", "utf8");
     await fs.mkdir(path.join(root, "agents", "worker--1234"), { recursive: true });
     await fs.writeFile(path.join(root, "agents", "worker--1234", "secret-product-brief.md"), "# Agent memory\n", "utf8");
-    await Promise.all([
-      fs.mkdir(path.join(root, "artifacts"), { recursive: true }),
-      fs.mkdir(path.join(root, "plans"), { recursive: true }),
-      fs.mkdir(path.join(root, "skills", "writer"), { recursive: true }),
-    ]);
-    await Promise.all([
-      fs.writeFile(path.join(root, "artifacts", "special-product-report.md"), "# Report\n", "utf8"),
-      fs.writeFile(path.join(root, "plans", "special-product-plan.md"), "# Plan\n", "utf8"),
-      fs.writeFile(path.join(root, "skills", "writer", "special-product-skill.md"), "# Skill\n", "utf8"),
-    ]);
+    await fs.mkdir(path.join(root, "skills", "writer"), { recursive: true });
+    await fs.writeFile(path.join(root, "skills", "writer", "special-product-skill.md"), "# Skill\n", "utf8");
 
     const defaultEntries = await workspaceBrowser.listMentionableFiles(orgId);
     expect(defaultEntries).toHaveLength(200);
-    expect(defaultEntries.map((entry) => entry.path)).not.toContain("docs/z-special-product-brief.md");
+    expect(defaultEntries.map((entry) => entry.path)).not.toContain("projects/product/z-special-product-brief.md");
 
     const searchEntries = await workspaceBrowser.listMentionableFiles(orgId, { query: "special-product", limit: 20 });
-    expect(searchEntries.map((entry) => entry.path)).toEqual(["docs/z-special-product-brief.md"]);
+    expect(searchEntries.map((entry) => entry.path)).toEqual(["projects/product/z-special-product-brief.md"]);
   });
 
   it("allows normal entry actions below agent workspaces while protecting agent workspace handles", async () => {
@@ -390,14 +382,16 @@ describe("organization workspace browser", () => {
     await fs.writeFile(path.join(root, "agents", workspaceKey, "memory", "notes.md"), "# Notes\n", "utf8");
     await fs.writeFile(path.join(root, "agents", workspaceKey, "skills", "agent-helper", "SKILL.md"), "# Agent skill\n", "utf8");
     await fs.writeFile(path.join(root, "skills", "org-helper", "SKILL.md"), "# Org skill\n", "utf8");
+    await fs.mkdir(path.join(root, "projects", "work"), { recursive: true });
+    await fs.mkdir(path.join(root, "projects", "final"), { recursive: true });
 
-    await expect(workspaceBrowser.createDirectory(orgId, "artifacts/new-folder")).resolves.toEqual({
-      path: "artifacts/new-folder",
+    await expect(workspaceBrowser.createDirectory(orgId, "projects/work/new-folder")).resolves.toEqual({
+      path: "projects/work/new-folder",
       isDirectory: true,
     });
-    await expect(workspaceBrowser.createFile(orgId, "artifacts/new-file.md", "# New\n")).resolves.toEqual(
+    await expect(workspaceBrowser.createFile(orgId, "projects/work/new-file.md", "# New\n")).resolves.toEqual(
       expect.objectContaining({
-        filePath: "artifacts/new-file.md",
+        filePath: "projects/work/new-file.md",
         content: "# New\n",
       }),
     );
@@ -465,19 +459,19 @@ describe("organization workspace browser", () => {
     await expect(workspaceBrowser.moveEntry(orgId, "skills/org-helper", "docs")).rejects.toMatchObject({
       status: 422,
     });
-    await expect(workspaceBrowser.moveEntry(orgId, "artifacts/new-file.md", "agents")).rejects.toMatchObject({
+    await expect(workspaceBrowser.moveEntry(orgId, "projects/work/new-file.md", "agents")).rejects.toMatchObject({
       status: 422,
     });
-    await expect(workspaceBrowser.moveEntry(orgId, "artifacts/new-file.md", `agents/${workspaceKey}`)).rejects.toMatchObject({
+    await expect(workspaceBrowser.moveEntry(orgId, "projects/work/new-file.md", `agents/${workspaceKey}`)).rejects.toMatchObject({
       status: 422,
     });
 
-    await expect(workspaceBrowser.moveEntry(orgId, "artifacts/new-file.md", "docs")).resolves.toEqual({
-      previousPath: "artifacts/new-file.md",
-      path: "docs/new-file.md",
+    await expect(workspaceBrowser.moveEntry(orgId, "projects/work/new-file.md", "projects/final")).resolves.toEqual({
+      previousPath: "projects/work/new-file.md",
+      path: "projects/final/new-file.md",
       isDirectory: false,
     });
-    await expect(fs.readFile(path.join(root, "docs", "new-file.md"), "utf8")).resolves.toBe("# New\n");
+    await expect(fs.readFile(path.join(root, "projects", "final", "new-file.md"), "utf8")).resolves.toBe("# New\n");
 
     await expect(
       workspaceBrowser.createFile(orgId, `agents/${workspaceKey}/instructions/NOTES.md`, "# Notes\n"),

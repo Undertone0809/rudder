@@ -101,7 +101,7 @@ Notes:
 - Rudder now uses one fixed org workspace root at `~/.rudder/instances/<instance>/organizations/<org-id>/workspaces`.
 - `scan-projects` should be treated as a compatibility command that scans the shared org workspace plus any legacy project workspace records that still exist.
 - The org `Resources` catalog is the canonical place to register shared repos, docs, URLs, and connector objects for agents.
-- Workspaces remains the disk-backed shared file surface for plans, notes, and skill packages.
+- Workspaces remains the disk-backed shared file surface; durable project work belongs under `library:projects/<project-name>/`.
 
 ## Inspect Imported Skills
 

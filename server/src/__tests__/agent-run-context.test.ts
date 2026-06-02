@@ -15,8 +15,6 @@ vi.mock("../home-paths.js", async (importOriginal) => {
       root: "/tmp/org-home",
       agentsDir: "/tmp/org-home/agents",
       skillsDir: "/tmp/org-home/skills",
-      plansDir: "/tmp/org-home/plans",
-      artifactsDir: "/tmp/org-home/artifacts",
     })),
   };
 });
@@ -86,8 +84,6 @@ describe("agentRunContextService buildSceneContext", () => {
       agentSkillsDir: "/tmp/agent-home/skills",
       orgAgentsDir: "/tmp/org-home/agents",
       orgSkillsDir: "/tmp/org-home/skills",
-      orgPlansDir: "/tmp/org-home/plans",
-      orgArtifactsDir: "/tmp/org-home/artifacts",
     }));
   });
 
@@ -187,7 +183,7 @@ describe("agentRunContextService buildSceneContext", () => {
           name: "Rudder repo",
           kind: "directory",
           sourceType: "library",
-          locator: "docs/product-brief.md",
+          locator: "projects/product/product-brief.md",
           description: "Main monorepo checkout",
           metadata: null,
           createdAt: new Date("2026-04-16T09:00:00.000Z"),
@@ -225,7 +221,7 @@ describe("agentRunContextService buildSceneContext", () => {
     expect(context.rudderWorkspace.resourcesPrompt).toContain("## Project Context Resources");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("[working_set] Rudder repo");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Source type: library");
-    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Library path: relative to the organization Library workspace root");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Library path: `library:projects/product/product-brief.md`");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Work here first");
     expect(context.rudderOrganizationResources).toEqual([]);
     expect(context.rudderProjectResources).toEqual(expect.arrayContaining([
