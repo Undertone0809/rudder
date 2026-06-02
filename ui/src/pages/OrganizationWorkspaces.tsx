@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   buildAgentMentionHref,
+  buildLibraryFileMentionHref,
   parseAgentMentionHref,
   type Project,
   type ProjectResourceAttachment,
@@ -513,6 +514,36 @@ function joinWorkspacePath(rootPath: string | null, entryPath: string) {
   return `${rootPath.replace(/\/+$/, "")}/${entryPath}`;
 }
 
+function escapeMarkdownLinkLabel(label: string) {
+  return label.replace(/([\\\]])/g, "\\$1");
+}
+
+function buildWorkspaceFileLinkMarkdown(filePath: string, label: string) {
+  return `[${escapeMarkdownLinkLabel(label)}](${buildLibraryFileMentionHref(filePath, label)})`;
+}
+
+function buildWorkspaceDirectoryLinkMarkdown(directoryPath: string, label: string) {
+  return `[${escapeMarkdownLinkLabel(label)}](/library?directory=${encodeURIComponent(directoryPath)})`;
+}
+
+function buildWorkspaceEntryLinkMarkdown(entry: OrganizationWorkspaceFileEntry) {
+  const label = displayWorkspaceEntryLabel(entry);
+  return entry.isDirectory
+    ? buildWorkspaceDirectoryLinkMarkdown(entry.path, label)
+    : buildWorkspaceFileLinkMarkdown(entry.path, label);
+}
+
+async function copyWorkspaceText(copyValue: string) {
+  const desktopShell = readDesktopShell();
+  if (desktopShell?.copyText) {
+    await desktopShell.copyText(copyValue);
+  } else if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(copyValue);
+  } else {
+    throw new Error("Clipboard is not available in this environment.");
+  }
+}
+
 function displayWorkspaceFileTabLabel(filePath: string) {
   return filePath.split("/").filter(Boolean).at(-1) ?? filePath;
 }
@@ -629,7 +660,8 @@ function DirectoryChildren({
   onSelectFile,
   onSelectResource,
   onFocusEntry,
-  onCopyPath,
+  onCopyLink,
+  onCopyAbsolutePath,
   onOpenEntry,
   onStartCreateEntry,
   onStartRename,
@@ -652,7 +684,8 @@ function DirectoryChildren({
   onSelectFile: (filePath: string) => void;
   onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
-  onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
+  onCopyLink: (entry: OrganizationWorkspaceFileEntry) => void;
+  onCopyAbsolutePath: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -690,7 +723,8 @@ function DirectoryChildren({
           onSelectFile={onSelectFile}
           onSelectResource={onSelectResource}
           onFocusEntry={onFocusEntry}
-          onCopyPath={onCopyPath}
+          onCopyLink={onCopyLink}
+              onCopyAbsolutePath={onCopyAbsolutePath}
           onOpenEntry={onOpenEntry}
           onStartCreateEntry={onStartCreateEntry}
           onStartRename={onStartRename}
@@ -719,7 +753,8 @@ function WorkspaceTreeNode({
   onSelectFile,
   onSelectResource,
   onFocusEntry,
-  onCopyPath,
+  onCopyLink,
+  onCopyAbsolutePath,
   onOpenEntry,
   onStartCreateEntry,
   onStartRename,
@@ -742,7 +777,8 @@ function WorkspaceTreeNode({
   onSelectFile: (filePath: string) => void;
   onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
-  onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
+  onCopyLink: (entry: OrganizationWorkspaceFileEntry) => void;
+  onCopyAbsolutePath: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -876,9 +912,13 @@ function WorkspaceTreeNode({
           event.stopPropagation();
         }}
       >
-        <DropdownMenuItem onSelect={() => onCopyPath(entry)}>
+        <DropdownMenuItem onSelect={() => onCopyLink(entry)}>
+          <Link2 className="h-3.5 w-3.5" />
+          Copy link
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onCopyAbsolutePath(entry)}>
           <Copy className="h-3.5 w-3.5" />
-          Copy file path
+          Copy absolute path
         </DropdownMenuItem>
         {!isProtectedContainer ? (
           <>
@@ -999,7 +1039,8 @@ function WorkspaceTreeNode({
               onSelectFile={onSelectFile}
               onSelectResource={onSelectResource}
               onFocusEntry={onFocusEntry}
-              onCopyPath={onCopyPath}
+              onCopyLink={onCopyLink}
+              onCopyAbsolutePath={onCopyAbsolutePath}
               onOpenEntry={onOpenEntry}
               onStartCreateEntry={onStartCreateEntry}
               onStartRename={onStartRename}
@@ -1762,25 +1803,36 @@ export function OrganizationWorkspaceFilesSidebar() {
     },
   });
 
-  async function handleCopyEntryPath(entry: OrganizationWorkspaceFileEntry) {
-    const copyValue = joinWorkspacePath(workspaceRootPath, entry.path);
-    const desktopShell = readDesktopShell();
+  async function handleCopyEntryLink(entry: OrganizationWorkspaceFileEntry) {
+    const copyValue = buildWorkspaceEntryLinkMarkdown(entry);
     try {
-      if (desktopShell?.copyText) {
-        await desktopShell.copyText(copyValue);
-      } else if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(copyValue);
-      } else {
-        throw new Error("Clipboard is not available in this environment.");
-      }
+      await copyWorkspaceText(copyValue);
       pushToast({
-        title: "File path copied",
+        title: "Library link copied",
         body: copyValue,
         tone: "info",
       });
     } catch (error) {
       pushToast({
-        title: "Failed to copy file path",
+        title: "Failed to copy Library link",
+        body: error instanceof Error ? error.message : copyValue,
+        tone: "error",
+      });
+    }
+  }
+
+  async function handleCopyEntryAbsolutePath(entry: OrganizationWorkspaceFileEntry) {
+    const copyValue = joinWorkspacePath(workspaceRootPath, entry.path);
+    try {
+      await copyWorkspaceText(copyValue);
+      pushToast({
+        title: "Absolute path copied",
+        body: copyValue,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to copy absolute path",
         body: error instanceof Error ? error.message : copyValue,
         tone: "error",
       });
@@ -2025,7 +2077,8 @@ export function OrganizationWorkspaceFilesSidebar() {
                       onSelectFile={handleSelectFile}
                       onSelectResource={handleSelectResource}
                       onFocusEntry={setActiveEntryPath}
-                      onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
+                      onCopyLink={(entryToCopy) => void handleCopyEntryLink(entryToCopy)}
+                      onCopyAbsolutePath={(entryToCopy) => void handleCopyEntryAbsolutePath(entryToCopy)}
                       onOpenEntry={readDesktopShell()?.openPath
                         ? (entryToOpen) => void handleOpenEntryDefault(entryToOpen)
                         : undefined}
@@ -3087,33 +3140,63 @@ export function OrganizationWorkspaceBrowser({
     }
   }
 
-  async function handleCopyWorkspacePath(entryPath: string) {
-    const copyValue = joinWorkspacePath(workspaceRootPath, entryPath);
-    const desktopShell = readDesktopShell();
+  async function handleCopyWorkspaceLink(filePath: string) {
+    const label = displayWorkspaceFileTabLabel(filePath);
+    const copyValue = buildWorkspaceFileLinkMarkdown(filePath, label);
     try {
-      if (desktopShell?.copyText) {
-        await desktopShell.copyText(copyValue);
-      } else if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(copyValue);
-      } else {
-        throw new Error("Clipboard is not available in this environment.");
-      }
+      await copyWorkspaceText(copyValue);
       pushToast({
-        title: "File path copied",
+        title: "Library link copied",
         body: copyValue,
         tone: "info",
       });
     } catch (error) {
       pushToast({
-        title: "Failed to copy file path",
+        title: "Failed to copy Library link",
         body: error instanceof Error ? error.message : copyValue,
         tone: "error",
       });
     }
   }
 
-  async function handleCopyEntryPath(entry: OrganizationWorkspaceFileEntry) {
-    await handleCopyWorkspacePath(entry.path);
+  async function handleCopyWorkspaceAbsolutePath(entryPath: string) {
+    const copyValue = joinWorkspacePath(workspaceRootPath, entryPath);
+    try {
+      await copyWorkspaceText(copyValue);
+      pushToast({
+        title: "Absolute path copied",
+        body: copyValue,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to copy absolute path",
+        body: error instanceof Error ? error.message : copyValue,
+        tone: "error",
+      });
+    }
+  }
+
+  async function handleCopyEntryLink(entry: OrganizationWorkspaceFileEntry) {
+    const copyValue = buildWorkspaceEntryLinkMarkdown(entry);
+    try {
+      await copyWorkspaceText(copyValue);
+      pushToast({
+        title: "Library link copied",
+        body: copyValue,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to copy Library link",
+        body: error instanceof Error ? error.message : copyValue,
+        tone: "error",
+      });
+    }
+  }
+
+  async function handleCopyEntryAbsolutePath(entry: OrganizationWorkspaceFileEntry) {
+    await handleCopyWorkspaceAbsolutePath(entry.path);
   }
 
   async function handleOpenEntryDefault(entry: OrganizationWorkspaceFileEntry) {
@@ -3440,7 +3523,8 @@ export function OrganizationWorkspaceBrowser({
                           onSelectFile={handleSelectFile}
                           onSelectResource={handleSelectResource}
                           onFocusEntry={setActiveEntryPath}
-                          onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
+                          onCopyLink={(entryToCopy) => void handleCopyEntryLink(entryToCopy)}
+                          onCopyAbsolutePath={(entryToCopy) => void handleCopyEntryAbsolutePath(entryToCopy)}
                           onOpenEntry={readDesktopShell()?.openPath
                             ? (entryToOpen) => void handleOpenEntryDefault(entryToOpen)
                             : undefined}
@@ -3828,12 +3912,25 @@ export function OrganizationWorkspaceBrowser({
             data-chat-composer-menu-item
             className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
             onClick={() => {
-              void handleCopyWorkspacePath(tabContextMenu.filePath);
+              void handleCopyWorkspaceLink(tabContextMenu.filePath);
+              setTabContextMenu(null);
+            }}
+          >
+            <Link2 className="h-4 w-4 text-muted-foreground" />
+            Copy link
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-chat-composer-menu-item
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
+            onClick={() => {
+              void handleCopyWorkspaceAbsolutePath(tabContextMenu.filePath);
               setTabContextMenu(null);
             }}
           >
             <Copy className="h-4 w-4 text-muted-foreground" />
-            Copy file path
+            Copy absolute path
           </button>
           <button
             type="button"
