@@ -30,6 +30,8 @@ function hasOpenEscapeLayer(): boolean {
         '[data-slot="popover-content"]',
         '[data-slot="dropdown-menu-content"]',
         '[data-slot="command-dialog"]',
+        '[role="menu"]',
+        '[role="listbox"]',
       ].join(", "),
     ),
   );

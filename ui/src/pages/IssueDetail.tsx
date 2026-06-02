@@ -20,6 +20,7 @@ import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { queryKeys } from "../lib/queryKeys";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
+import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/detail-escape";
 import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
@@ -651,37 +652,6 @@ function renderActivityDescription(
   }
 
   return formatAction(evt.action, details, agentMap, currentBoardUserId);
-}
-
-function shouldHandleIssueDetailEscape(event: KeyboardEvent) {
-  if (event.key !== "Escape") return false;
-  if (event.defaultPrevented) return false;
-  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
-
-  const target = event.target instanceof HTMLElement ? event.target : null;
-  if (target) {
-    const editable = target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='plaintext-only']");
-    if (target.isContentEditable || editable) {
-      const emptyEscapeBackSurface = target.closest("[data-issue-detail-escape-back='empty']");
-      const isContentEditableTarget = target.isContentEditable
-        || Boolean(target.closest("[contenteditable='true'], [contenteditable='plaintext-only']"));
-      if (!emptyEscapeBackSurface || !isContentEditableTarget) return false;
-    }
-  }
-
-  if (typeof document !== "undefined") {
-    if (document.querySelector("[data-issue-find-ui]")) return false;
-    if (document.querySelector("[role='dialog']")) return false;
-    if (document.querySelector("[data-radix-popper-content-wrapper]")) return false;
-  }
-
-  return true;
-}
-
-function hasBrowserBackStackEntry() {
-  if (typeof window === "undefined") return false;
-  const index = (window.history.state as { idx?: unknown } | null)?.idx;
-  return typeof index === "number" && index > 0;
 }
 
 function ActorIdentity({
@@ -1646,8 +1616,8 @@ export function IssueDetail() {
       navigate(sourceBreadcrumb.href);
     };
 
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [navigate, navigateBack, sourceBreadcrumb.href]);
 
   useEffect(() => {
