@@ -51,7 +51,7 @@ function normalizeEnv(input: unknown): Record<string, string> {
 }
 
 const PI_AUTH_REQUIRED_RE =
-  /(?:auth(?:entication)?\s+required|api\s*key|invalid\s*api\s*key|not\s+logged\s+in|free\s+usage\s+exceeded)/i;
+  /(?:auth(?:entication)?\s+required|api\s*key|x-api-key|invalid\s*api\s*key|not\s+logged\s+in|free\s+usage\s+exceeded)/i;
 const PI_STALE_PACKAGE_RE = /pi-driver|npm:\s*pi-driver/i;
 
 function buildPiModelDiscoveryFailureCheck(message: string): AgentRuntimeEnvironmentCheck {
@@ -288,13 +288,24 @@ export async function testEnvironment(
         });
       }
     } catch (err) {
-      checks.push({
-        code: "pi_hello_probe_failed",
-        level: "error",
-        message: "Pi hello probe failed.",
-        detail: err instanceof Error ? err.message : String(err),
-        hint: "Run `pi --mode json` manually in this working directory to debug.",
-      });
+      const detail = err instanceof Error ? err.message : String(err);
+      if (PI_AUTH_REQUIRED_RE.test(detail)) {
+        checks.push({
+          code: "pi_hello_probe_auth_required",
+          level: "warn",
+          message: "Pi is installed, but provider authentication is not ready.",
+          detail,
+          hint: "Set provider API key environment variable (e.g., ANTHROPIC_API_KEY, XAI_API_KEY) and retry.",
+        });
+      } else {
+        checks.push({
+          code: "pi_hello_probe_failed",
+          level: "error",
+          message: "Pi hello probe failed.",
+          detail,
+          hint: "Run `pi --mode json` manually in this working directory to debug.",
+        });
+      }
     }
   }
 

@@ -55,4 +55,20 @@ describe("agent config defaults", () => {
       { code: "error_check", level: "error", message: "Command failed" },
     ]);
   });
+
+  it("classifies local setup failures separately from runtime failures", () => {
+    const result = {
+      checks: [
+        { code: "opencode_command_resolvable", level: "info" as const, message: "Command exists" },
+        { code: "opencode_model_invalid", level: "error" as const, message: "Model unavailable" },
+        { code: "opencode_hello_probe_auth_required", level: "warn" as const, message: "Auth required" },
+      ],
+    };
+
+    expect(normalizeRuntimeEnvironmentDisplayStatus("fail", result)).toBe("setup");
+    expect(filterRuntimeEnvironmentDisplayChecks(result, { includeWarnings: true })).toEqual([
+      { code: "opencode_model_invalid", level: "error", message: "Model unavailable" },
+      { code: "opencode_hello_probe_auth_required", level: "warn", message: "Auth required" },
+    ]);
+  });
 });

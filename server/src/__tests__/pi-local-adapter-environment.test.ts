@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { testEnvironment } from "@rudderhq/agent-runtime-pi-local/server";
 
-async function writeFakePiCommand(binDir: string, mode: "success" | "stale-package"): Promise<void> {
+async function writeFakePiCommand(binDir: string, mode: "success" | "stale-package" | "auth-error"): Promise<void> {
   const commandPath = path.join(binDir, "pi");
   const script =
     mode === "success"
@@ -35,6 +35,16 @@ console.log(JSON.stringify({
   },
   toolResults: []
 }));
+`
+      : mode === "auth-error"
+      ? `#!/usr/bin/env node
+if (process.argv.includes("--list-models")) {
+  console.log("provider  model");
+  console.log("anthropic  claude-haiku-4-5");
+  process.exit(0);
+}
+console.error('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}');
+process.exit(1);
 `
       : `#!/usr/bin/env node
 if (process.argv.includes("--list-models")) {
@@ -129,6 +139,37 @@ describe("pi_local environment diagnostics", () => {
     expect(result.status).toBe("fail");
     expect(stalePackageCheck?.level).toBe("error");
     expect(stalePackageCheck?.hint).toContain("Remove `npm:pi-driver`");
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("reports provider authentication failures as setup warnings", async () => {
+    const root = path.join(
+      os.tmpdir(),
+      `rudder-pi-local-auth-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const binDir = path.join(root, "bin");
+    const cwd = path.join(root, "workspace");
+    await fs.mkdir(binDir, { recursive: true });
+    await fs.mkdir(cwd, { recursive: true });
+    await writeFakePiCommand(binDir, "auth-error");
+
+    const result = await testEnvironment({
+      orgId: "organization-1",
+      agentRuntimeType: "pi_local",
+      config: {
+        command: "pi",
+        cwd,
+        model: "anthropic/claude-haiku-4-5",
+        env: {
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+      },
+    });
+
+    const authCheck = result.checks.find((check) => check.code === "pi_hello_probe_auth_required");
+    expect(result.status).toBe("warn");
+    expect(authCheck?.level).toBe("warn");
+    expect(authCheck?.message).toContain("provider authentication");
     await fs.rm(root, { recursive: true, force: true });
   });
 });

@@ -10,6 +10,7 @@ import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
 import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
 import type {
   Agent,
+  AgentRuntimeAvailability,
   AgentRuntimeEnvironmentTestResult,
   OrganizationSecret,
   EnvBinding,
@@ -78,13 +79,17 @@ export function AdapterEnvironmentResult({
   result: AgentRuntimeEnvironmentTestResult;
   label?: string;
 }) {
-  const displayStatus = normalizeRuntimeEnvironmentDisplayStatus(result.status) ?? "pass";
-  const visibleChecks = filterRuntimeEnvironmentDisplayChecks(result);
+  const displayStatus = normalizeRuntimeEnvironmentDisplayStatus(result.status, result) ?? "pass";
+  const visibleChecks = filterRuntimeEnvironmentDisplayChecks(result, {
+    includeWarnings: displayStatus === "setup",
+  });
   const statusLabel =
-    displayStatus === "pass" ? "Passed" : "Failed";
+    displayStatus === "pass" ? "Passed" : displayStatus === "setup" ? "Setup needed" : "Failed";
   const statusClass =
     displayStatus === "pass"
       ? "text-green-700 dark:text-green-300 border-green-300 dark:border-green-500/40 bg-green-50 dark:bg-green-500/10"
+      : displayStatus === "setup"
+        ? "text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10"
       : "text-red-700 dark:text-red-300 border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/10";
 
   return (
@@ -141,12 +146,16 @@ export function RuntimeEnvironmentStatusBadge({
       ? "Env passed"
       : displayStatus === "testing"
         ? "Testing env"
-        : "Env failed";
+        : displayStatus === "setup"
+          ? "Setup needed"
+          : "Env failed";
   const className =
     displayStatus === "pass"
       ? "border-green-300 bg-green-50 text-green-700 dark:border-green-500/40 dark:bg-green-500/10 dark:text-green-300"
       : displayStatus === "testing"
         ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-300"
+        : displayStatus === "setup"
+          ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
         : "border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300";
   return (
     <span className={cn("shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium", className)}>
@@ -179,6 +188,7 @@ export function RuntimeProviderCard({
   createValues,
   createSet,
   environmentStatus,
+  runtimeAvailability,
   triggerTestId,
 }: {
   title: string;
@@ -204,6 +214,7 @@ export function RuntimeProviderCard({
   createValues?: CreateConfigValues | null;
   createSet?: ((patch: Partial<CreateConfigValues>) => void) | null;
   environmentStatus?: RuntimeEnvironmentStatus;
+  runtimeAvailability?: Map<string, AgentRuntimeAvailability>;
   triggerTestId?: string;
 }) {
   const [modelOpen, setModelOpen] = useState(false);
@@ -280,7 +291,11 @@ export function RuntimeProviderCard({
       <div className="space-y-3">
         {!hideRuntimeType && (
           <Field label={runtimeTypeLabel} hint={runtimeTypeHint}>
-            <AdapterTypeDropdown value={runtimeType} onChange={onRuntimeTypeChange} />
+            <AdapterTypeDropdown
+              value={runtimeType}
+              onChange={onRuntimeTypeChange}
+              runtimeAvailability={runtimeAvailability}
+            />
           </Field>
         )}
         <ModelDropdown

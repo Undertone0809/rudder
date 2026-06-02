@@ -72,6 +72,7 @@ import { AdapterEnvironmentResult, AdapterEnvironmentError, RuntimeEnvironmentSt
 import { RuntimeAdvancedOptions, ENABLED_ADAPTER_TYPES, ADAPTER_DISPLAY_LIST, AdapterTypeDropdown } from "./AgentConfigForm.advanced";
 import { EnvVarEditor } from "./AgentConfigForm.env-editor";
 import { ModelDropdown, ThinkingEffortDropdown } from "./AgentConfigForm.model-dropdown";
+import { buildRuntimeAvailabilityMap } from "./onboarding-runtime-availability";
 
 export {
   filterRuntimeEnvironmentDisplayChecks,
@@ -97,6 +98,17 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => secretsApi.list(selectedOrganizationId!),
     enabled: Boolean(selectedOrganizationId),
   });
+  const { data: runtimeAvailabilityResponse } = useQuery({
+    queryKey: selectedOrganizationId
+      ? queryKeys.agents.runtimeAvailability(selectedOrganizationId)
+      : ["agents", "none", "runtime-availability"],
+    queryFn: () => agentsApi.runtimeAvailability(selectedOrganizationId!),
+    enabled: Boolean(selectedOrganizationId && showAdapterTypeField),
+  });
+  const runtimeAvailability = useMemo(
+    () => buildRuntimeAvailabilityMap(runtimeAvailabilityResponse?.runtimes),
+    [runtimeAvailabilityResponse],
+  );
 
   const createSecret = useMutation({
     mutationFn: (input: { name: string; value: string }) => {
@@ -367,7 +379,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     const item = runtimeEnvironmentResultsByKey.get(key);
     if (!item) return undefined;
     if (item.error) return "error";
-    return item.result?.status;
+    return item.result
+      ? normalizeRuntimeEnvironmentDisplayStatus(item.result.status, item.result)
+      : undefined;
   }
 
   function updateFallbackModels(next: ModelFallbackConfig[]) {
@@ -572,6 +586,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               hideInstructionsFile={hideInstructionsFile}
               createValues={isCreate ? val! : null}
               createSet={isCreate ? set : null}
+              runtimeAvailability={runtimeAvailability}
               onRuntimeTypeChange={(nextRuntimeType) => {
                 if (isCreate) {
                   set!(createValuesForRuntime(nextRuntimeType));
@@ -627,6 +642,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 availableSecrets={availableSecrets}
                 onCreateSecret={(name, value) => createSecret.mutateAsync({ name, value })}
                 hideInstructionsFile={hideInstructionsFile}
+                runtimeAvailability={runtimeAvailability}
                 onRemove={() =>
                   updateFallbackModels(currentFallbackModels.filter((_, itemIndex) => itemIndex !== index))
                 }

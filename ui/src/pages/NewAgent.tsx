@@ -22,6 +22,9 @@ import { defaultCreateValues } from "../components/agent-config-defaults";
 import { getUIAdapter } from "../agent-runtimes";
 import { ReportsToPicker } from "../components/ReportsToPicker";
 import {
+  buildRuntimeAvailabilityMap,
+} from "../components/onboarding-runtime-availability";
+import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_SEARCH,
@@ -116,6 +119,26 @@ export function NewAgent() {
     queryFn: () => organizationSkillsApi.list(selectedOrganizationId!),
     enabled: Boolean(selectedOrganizationId),
   });
+  const {
+    data: runtimeAvailabilityResponse,
+    error: runtimeAvailabilityError,
+    isLoading: runtimeAvailabilityLoading,
+  } = useQuery({
+    queryKey: selectedOrganizationId
+      ? queryKeys.agents.runtimeAvailability(selectedOrganizationId)
+      : ["agents", "none", "runtime-availability"],
+    queryFn: () => agentsApi.runtimeAvailability(selectedOrganizationId!),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const runtimeAvailability = useMemo(
+    () => buildRuntimeAvailabilityMap(runtimeAvailabilityResponse?.runtimes),
+    [runtimeAvailabilityResponse],
+  );
+  const runtimeAvailabilityPending =
+    Boolean(selectedOrganizationId) && runtimeAvailabilityLoading && !runtimeAvailabilityResponse;
+  const selectedRuntimeAvailability = runtimeAvailability.get(configValues.agentRuntimeType);
+  const selectedRuntimeUnavailable =
+    selectedRuntimeAvailability && !selectedRuntimeAvailability.available;
 
   const organizationUrlKey = selectedOrganization?.urlKey ?? "organization";
   const organizationSkillPickerItems = useMemo(() => {
@@ -236,6 +259,24 @@ export function NewAgent() {
     const trimmedName = name.trim();
     if (!trimmedName) {
       setFormError("Agent name is required.");
+      return;
+    }
+    if (runtimeAvailabilityPending) {
+      setFormError("Checking local runtime availability. Please wait and try again.");
+      return;
+    }
+    if (runtimeAvailabilityError) {
+      setFormError(
+        runtimeAvailabilityError instanceof Error
+          ? runtimeAvailabilityError.message
+          : "Failed to check local runtime availability.",
+      );
+      return;
+    }
+    if (selectedRuntimeUnavailable && selectedRuntimeAvailability) {
+      setFormError(
+        `${selectedRuntimeAvailability.label} is not installed on this machine. Install it before creating an agent with this runtime.`,
+      );
       return;
     }
     if (configValues.agentRuntimeType === "opencode_local") {
@@ -379,6 +420,28 @@ export function NewAgent() {
           hideInstructionsFile
         />
 
+        {runtimeAvailabilityError ? (
+          <div className="border-t border-border px-4 py-3 text-xs text-destructive">
+            {runtimeAvailabilityError instanceof Error
+              ? runtimeAvailabilityError.message
+              : "Failed to check local runtime availability."}
+          </div>
+        ) : selectedRuntimeUnavailable && selectedRuntimeAvailability ? (
+          <div className="border-t border-border px-4 py-3 text-xs text-amber-900 dark:text-amber-200">
+            <div className="rounded-md border border-amber-300/60 bg-amber-50/60 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+              <span className="font-medium">{selectedRuntimeAvailability.label} is not installed on this machine.</span>{" "}
+              <a
+                className="underline underline-offset-2 hover:text-foreground"
+                href={selectedRuntimeAvailability.installUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {selectedRuntimeAvailability.installLabel}
+              </a>
+            </div>
+          </div>
+        ) : null}
+
         {organizationSkillsPending || showOrganizationSkillPicker ? (
           <div className="border-t border-border px-4 py-4">
             <div className="space-y-3">
@@ -450,7 +513,13 @@ export function NewAgent() {
             </Button>
             <Button
               size="sm"
-              disabled={createAgent.isPending || !hasLoadedAgents}
+              disabled={
+                createAgent.isPending
+                || !hasLoadedAgents
+                || runtimeAvailabilityPending
+                || Boolean(runtimeAvailabilityError)
+                || Boolean(selectedRuntimeUnavailable)
+              }
               onClick={handleSubmit}
             >
               {createAgent.isPending ? "Creating…" : "Create agent"}

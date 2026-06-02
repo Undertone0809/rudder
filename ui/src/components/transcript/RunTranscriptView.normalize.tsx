@@ -341,9 +341,10 @@ export function normalizeTranscript(
         }
       }
 
-      const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
+      const isAssistantDelta = entry.kind === "assistant" && entry.delta === true;
+      const isStreaming = streaming && isAssistantDelta;
       if (previous?.type === "message" && previous.role === entry.kind) {
-        previous.text += entry.delta === true || previous.text.endsWith("\n") || entry.text.startsWith("\n")
+        previous.text += isAssistantDelta || previous.text.endsWith("\n") || entry.text.startsWith("\n")
           ? entry.text
           : `\n${entry.text}`;
         previous.ts = entry.ts;

@@ -305,7 +305,7 @@ export type RuntimeEnvironmentTestItemResult = RuntimeEnvironmentTestTarget & {
   error?: Error;
 };
 
-export type RuntimeEnvironmentStatus = AgentRuntimeEnvironmentTestResult["status"] | "testing" | "error";
+export type RuntimeEnvironmentStatus = AgentRuntimeEnvironmentTestResult["status"] | "testing" | "setup" | "error";
 export type RuntimeEnvironmentDisplayStatus = Exclude<RuntimeEnvironmentStatus, "warn">;
 
 export function formatRuntimeEnvironmentLabel(target: Pick<RuntimeEnvironmentTestTarget, "title" | "runtimeType" | "model">) {
@@ -317,15 +317,31 @@ export function formatRuntimeEnvironmentLabel(target: Pick<RuntimeEnvironmentTes
 
 export function normalizeRuntimeEnvironmentDisplayStatus(
   status?: RuntimeEnvironmentStatus,
+  result?: Pick<AgentRuntimeEnvironmentTestResult, "checks">,
 ): RuntimeEnvironmentDisplayStatus | undefined {
   if (status === "warn") return "pass";
+  if (status === "fail" && result && isRuntimeEnvironmentSetupFailure(result)) return "setup";
   return status;
+}
+
+const RUNTIME_ENVIRONMENT_SETUP_ERROR_CODE_RE =
+  /(?:cwd_invalid|command_unresolvable|api_key_missing|auth_required|model_required|model_invalid|model_not_found|model_unavailable|models_empty|models_discovery_failed|hello_probe_model_unavailable|package_install_failed)$/;
+
+export function isRuntimeEnvironmentSetupFailure(
+  result: Pick<AgentRuntimeEnvironmentTestResult, "checks">,
+) {
+  const errorChecks = result.checks.filter((check) => check.level === "error");
+  if (errorChecks.length === 0) return false;
+  return errorChecks.every((check) => RUNTIME_ENVIRONMENT_SETUP_ERROR_CODE_RE.test(check.code));
 }
 
 export function filterRuntimeEnvironmentDisplayChecks(
   result: Pick<AgentRuntimeEnvironmentTestResult, "checks">,
+  options: { includeWarnings?: boolean } = {},
 ) {
-  return result.checks.filter((check) => check.level === "error");
+  return result.checks.filter((check) => (
+    check.level === "error" || (options.includeWarnings === true && check.level === "warn")
+  ));
 }
 
 /* ---- Form ---- */

@@ -57,7 +57,7 @@ function hasOpenCodePureArg(args: string[]): boolean {
 }
 
 const OPENCODE_AUTH_REQUIRED_RE =
-  /(?:auth(?:entication)?\s+required|api\s*key|invalid\s*api\s*key|not\s+logged\s+in|opencode\s+auth\s+login|free\s+usage\s+exceeded)/i;
+  /(?:auth(?:entication)?\s+required|api\s*key|x-api-key|invalid\s*api\s*key|not\s+logged\s+in|opencode\s+auth\s+login|free\s+usage\s+exceeded)/i;
 
 export async function testEnvironment(
   ctx: AgentRuntimeEnvironmentTestContext,

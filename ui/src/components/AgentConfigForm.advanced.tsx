@@ -10,6 +10,7 @@ import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
 import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
 import type {
   Agent,
+  AgentRuntimeAvailability,
   AgentRuntimeEnvironmentTestResult,
   OrganizationSecret,
   EnvBinding,
@@ -181,10 +182,13 @@ export const ADAPTER_DISPLAY_LIST: { value: string; label: string; comingSoon: b
 export function AdapterTypeDropdown({
   value,
   onChange,
+  runtimeAvailability,
 }: {
   value: string;
   onChange: (type: string) => void;
+  runtimeAvailability?: Map<string, AgentRuntimeAvailability>;
 }) {
+  const selectedAvailability = runtimeAvailability?.get(value);
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -192,35 +196,64 @@ export function AdapterTypeDropdown({
           <span className="inline-flex items-center gap-1.5">
             {value === "opencode_local" ? <OpenCodeLogoIcon className="h-3.5 w-3.5" /> : null}
             <span>{adapterLabels[value] ?? value}</span>
+            {selectedAvailability && !selectedAvailability.available ? (
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                Not installed
+              </span>
+            ) : null}
           </span>
           <ChevronDown className="h-3 w-3 text-muted-foreground" />
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
-        {ADAPTER_DISPLAY_LIST.map((item) => (
-          <button
-            key={item.value}
-            disabled={item.comingSoon}
-            className={cn(
-              "flex items-center justify-between w-full px-2 py-1.5 text-sm rounded",
-              item.comingSoon
-                ? "opacity-40 cursor-not-allowed"
-                : "hover:bg-accent/50",
-              item.value === value && !item.comingSoon && "bg-accent",
-            )}
-            onClick={() => {
-              if (!item.comingSoon) onChange(item.value);
-            }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              {item.value === "opencode_local" ? <OpenCodeLogoIcon className="h-3.5 w-3.5" /> : null}
-              <span>{item.label}</span>
-            </span>
-            {item.comingSoon && (
-              <span className="text-[10px] text-muted-foreground">Coming soon</span>
-            )}
-          </button>
-        ))}
+        {ADAPTER_DISPLAY_LIST.map((item) => {
+          const availability = runtimeAvailability?.get(item.value);
+          const unavailable = Boolean(availability && !availability.available);
+          const disabled = item.comingSoon || unavailable;
+          return (
+            <div
+              key={item.value}
+              className={cn(
+                "flex items-center gap-2 rounded",
+                item.value === value && !disabled && "bg-accent",
+              )}
+            >
+              <button
+                type="button"
+                disabled={disabled}
+                className={cn(
+                  "flex min-w-0 flex-1 items-center justify-between px-2 py-1.5 text-sm rounded text-left",
+                  disabled
+                    ? "opacity-45 cursor-not-allowed"
+                    : "hover:bg-accent/50",
+                )}
+                onClick={() => {
+                  if (!disabled) onChange(item.value);
+                }}
+              >
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  {item.value === "opencode_local" ? <OpenCodeLogoIcon className="h-3.5 w-3.5" /> : null}
+                  <span className="truncate">{item.label}</span>
+                </span>
+                {item.comingSoon ? (
+                  <span className="shrink-0 text-[10px] text-muted-foreground">Coming soon</span>
+                ) : unavailable ? (
+                  <span className="shrink-0 text-[10px] text-amber-700 dark:text-amber-300">Not installed</span>
+                ) : null}
+              </button>
+              {unavailable && availability ? (
+                <a
+                  className="shrink-0 px-2 py-1.5 text-[11px] font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                  href={availability.installUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Install
+                </a>
+              ) : null}
+            </div>
+          );
+        })}
       </PopoverContent>
     </Popover>
   );
