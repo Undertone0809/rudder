@@ -1115,8 +1115,8 @@ describe("desktop start command helpers", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-targeted-quit-test."));
     const installRoot = path.join(dir, "Applications");
     const appPath = path.join(installRoot, "Rudder.app");
-    const executablePath = path.join(appPath, "Contents", "MacOS", "Rudder");
-    await mkdir(path.dirname(executablePath), { recursive: true });
+    const executablePath = path.join(dir, "rudder-update-quit-shim");
+    await mkdir(appPath, { recursive: true });
     await writeFile(
       executablePath,
       [
