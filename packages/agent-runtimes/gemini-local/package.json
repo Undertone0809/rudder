@@ -14,22 +14,22 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./server": {
-      "types": "./dist/server/index.d.ts",
+      "types": "./src/server/index.ts",
       "import": "./dist/server/index.js",
       "default": "./dist/server/index.js"
     },
     "./ui": {
-      "types": "./dist/ui/index.d.ts",
+      "types": "./src/ui/index.ts",
       "import": "./dist/ui/index.js",
       "default": "./dist/ui/index.js"
     },
     "./cli": {
-      "types": "./dist/cli/index.d.ts",
+      "types": "./src/cli/index.ts",
       "import": "./dist/cli/index.js",
       "default": "./dist/cli/index.js"
     }

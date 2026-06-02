@@ -1055,22 +1055,20 @@ describe("desktop start command helpers", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-targeted-quit-test."));
     const installRoot = path.join(dir, "Applications");
     const appPath = path.join(installRoot, "Rudder.app");
-    const executablePath = path.join(appPath, "Contents", "MacOS", "Rudder");
-    await mkdir(path.dirname(executablePath), { recursive: true });
+    const executablePath = path.join(dir, "fake-rudder-quit");
+    await mkdir(appPath, { recursive: true });
     await writeFile(
       executablePath,
       [
-        "#!/usr/bin/env node",
-        'const fs = require("node:fs");',
-        `const prefix = ${JSON.stringify("--rudder-update-quit=")};`,
-        "const arg = process.argv.find((value) => value.startsWith(prefix));",
-        [
-          "if (arg) fs.writeFileSync(",
-          "arg.slice(prefix.length),",
-          "JSON.stringify({ ok: true, status: 'quitting', pid: 4242 }) + '\\n',",
-          "'utf8'",
-          ");",
-        ].join(" "),
+        "#!/bin/sh",
+        "for arg in \"$@\"; do",
+        "  case \"$arg\" in",
+        "    --rudder-update-quit=*)",
+        "      response=\"${arg#--rudder-update-quit=}\"",
+        "      printf '%s\\n' '{\"ok\":true,\"status\":\"quitting\",\"pid\":4242}' > \"$response\"",
+        "      ;;",
+        "  esac",
+        "done",
       ].join("\n"),
       "utf8",
     );

@@ -15,47 +15,47 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./protocol": {
-      "types": "./dist/protocol.d.ts",
+      "types": "./src/protocol.ts",
       "import": "./dist/protocol.js",
       "default": "./dist/protocol.js"
     },
     "./types": {
-      "types": "./dist/types.d.ts",
+      "types": "./src/types.ts",
       "import": "./dist/types.js",
       "default": "./dist/types.js"
     },
     "./ui": {
-      "types": "./dist/ui/index.d.ts",
+      "types": "./src/ui/index.ts",
       "import": "./dist/ui/index.js",
       "default": "./dist/ui/index.js"
     },
     "./ui/hooks": {
-      "types": "./dist/ui/hooks.d.ts",
+      "types": "./src/ui/hooks.ts",
       "import": "./dist/ui/hooks.js",
       "default": "./dist/ui/hooks.js"
     },
     "./ui/types": {
-      "types": "./dist/ui/types.d.ts",
+      "types": "./src/ui/types.ts",
       "import": "./dist/ui/types.js",
       "default": "./dist/ui/types.js"
     },
     "./testing": {
-      "types": "./dist/testing.d.ts",
+      "types": "./src/testing.ts",
       "import": "./dist/testing.js",
       "default": "./dist/testing.js"
     },
     "./bundlers": {
-      "types": "./dist/bundlers.d.ts",
+      "types": "./src/bundlers.ts",
       "import": "./dist/bundlers.js",
       "default": "./dist/bundlers.js"
     },
     "./dev-server": {
-      "types": "./dist/dev-server.d.ts",
+      "types": "./src/dev-server.ts",
       "import": "./dist/dev-server.js",
       "default": "./dist/dev-server.js"
     }

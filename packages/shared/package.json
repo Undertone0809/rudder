@@ -14,12 +14,12 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./*": {
-      "types": "./dist/*.d.ts",
+      "types": "./src/*.ts",
       "import": "./dist/*.js",
       "default": "./dist/*.js"
     }
