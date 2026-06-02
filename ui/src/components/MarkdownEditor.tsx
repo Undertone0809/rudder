@@ -74,6 +74,7 @@ import {
   removeAtomicInlineTokenFromMarkdown,
   type AtomicInlineTokenElement,
 } from "../lib/inline-token-dom";
+import { filterMentionOptions } from "../lib/mention-filter";
 import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
@@ -1010,16 +1011,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
 
   const filteredMentions = useMemo(() => {
     if (!mentionState || !mentions) return [];
-    const q = mentionState.query.toLowerCase();
-    return mentions
-      .filter((mention) => {
-        if (mentionState.trigger === "$") {
-          if (mention.kind !== "skill") return false;
-        }
-        const searchText = (mention.searchText ?? mention.name).toLowerCase();
-        return searchText.includes(q);
-      })
-      .slice(0, 8);
+    return filterMentionOptions(mentions, mentionState.trigger, mentionState.query);
   }, [mentionState?.query, mentionState?.trigger, mentions]);
   useEffect(() => {
     onMentionQueryChange?.(mentionState?.trigger === "@" ? mentionState.query : null);

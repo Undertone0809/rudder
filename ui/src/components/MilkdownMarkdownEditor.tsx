@@ -43,6 +43,7 @@ import {
   parseSkillReference,
   skillTokenIconInlineStyle,
 } from "../lib/skill-reference";
+import { filterMentionOptions } from "../lib/mention-filter";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
 import type { MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
@@ -759,14 +760,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
 
   const filteredMentions = useMemo(() => {
     if (!mentionState || !mentions) return [];
-    const query = mentionState.query.toLowerCase();
-    return mentions
-      .filter((mention) => {
-        if (mentionState.trigger === "$") return mention.kind === "skill";
-        const searchText = (mention.searchText ?? mention.name).toLowerCase();
-        return searchText.includes(query);
-      })
-      .slice(0, 8);
+    return filterMentionOptions(mentions, mentionState.trigger, mentionState.query);
   }, [mentionState, mentions]);
 
   const mentionMenuPosition = useMemo(() => {
