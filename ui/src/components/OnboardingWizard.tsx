@@ -36,13 +36,24 @@ import {
   filterRuntimeEnvironmentDisplayChecks,
   normalizeRuntimeEnvironmentDisplayStatus,
 } from "./AgentConfigForm";
+import {
+  ONBOARDING_RUNTIME_INSTALL_HINTS,
+  buildRuntimeAvailabilityMap,
+  isOnboardingLocalRuntime,
+  isRuntimeSelectable,
+  listMissingRuntimes,
+  pickFirstAvailableRuntime,
+} from "./onboarding-runtime-availability";
 import { parseOnboardingGoalInput } from "../lib/onboarding-goal";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_SEARCH
 } from "@rudderhq/agent-runtime-codex-local";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
+import {
+  DEFAULT_CURSOR_LOCAL_COMMAND,
+  DEFAULT_CURSOR_LOCAL_MODEL
+} from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
 import { markProductTourPending } from "./ProductTourOverlay";
@@ -330,6 +341,40 @@ export function OnboardingWizard() {
       cancelled = true;
     };
   }, [effectiveOnboardingOpen, queryClient]);
+  const {
+    data: runtimeAvailabilityResponse,
+    error: runtimeAvailabilityError,
+    isLoading: runtimeAvailabilityLoading,
+  } = useQuery({
+    queryKey: createdCompanyId
+      ? queryKeys.agents.runtimeAvailability(createdCompanyId)
+      : ["agents", "none", "runtime-availability"],
+    queryFn: () => agentsApi.runtimeAvailability(createdCompanyId!),
+    enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 2,
+    staleTime: 30_000,
+  });
+  const runtimeAvailability = useMemo(
+    () => buildRuntimeAvailabilityMap(runtimeAvailabilityResponse?.runtimes),
+    [runtimeAvailabilityResponse]
+  );
+  const runtimeAvailabilityPending =
+    Boolean(createdCompanyId) &&
+    effectiveOnboardingOpen &&
+    step === 2 &&
+    (runtimeAvailabilityLoading || !runtimeAvailabilityResponse);
+  const runtimeAvailabilityBlocked = Boolean(runtimeAvailabilityError);
+  const selectedRuntimeSelectable =
+    !runtimeAvailabilityPending &&
+    !runtimeAvailabilityBlocked &&
+    isRuntimeSelectable(agentRuntimeType, runtimeAvailability);
+  const missingRuntimeOptions = useMemo(
+    () => listMissingRuntimes(runtimeAvailability),
+    [runtimeAvailability]
+  );
+  const runtimeInstallLinks =
+    runtimeAvailabilityBlocked && missingRuntimeOptions.length === 0
+      ? ONBOARDING_RUNTIME_INSTALL_HINTS
+      : missingRuntimeOptions;
   const adapterModelsConfig = buildAdapterConfig();
   const adapterModelsConfigKey = adapterModelConfigCacheKey(adapterModelsConfig);
   const {
@@ -342,7 +387,11 @@ export function OnboardingWizard() {
       ? [...queryKeys.agents.adapterModels(createdCompanyId, agentRuntimeType), adapterModelsConfigKey]
       : ["agents", "none", "adapter-models", agentRuntimeType, adapterModelsConfigKey],
     queryFn: () => agentsApi.adapterModels(createdCompanyId!, agentRuntimeType, adapterModelsConfig),
-    enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 2
+    enabled:
+      Boolean(createdCompanyId) &&
+      effectiveOnboardingOpen &&
+      step === 2 &&
+      selectedRuntimeSelectable
   });
   const { data: nameSuggestion } = useQuery({
     queryKey: createdCompanyId
@@ -360,13 +409,7 @@ export function OnboardingWizard() {
     setAutoSuggestedAgentName(suggestedName);
     hasAppliedInitialAgentNameRef.current = true;
   }, [agentName, nameSuggestion, step]);
-  const isLocalAdapter =
-    agentRuntimeType === "claude_local" ||
-    agentRuntimeType === "codex_local" ||
-    agentRuntimeType === "gemini_local" ||
-    agentRuntimeType === "opencode_local" ||
-    agentRuntimeType === "pi_local" ||
-    agentRuntimeType === "cursor";
+  const isLocalAdapter = isOnboardingLocalRuntime(agentRuntimeType);
   const effectiveAdapterCommand =
     command.trim() ||
     (agentRuntimeType === "codex_local"
@@ -376,7 +419,7 @@ export function OnboardingWizard() {
       : agentRuntimeType === "pi_local"
       ? "pi"
       : agentRuntimeType === "cursor"
-      ? "agent"
+      ? DEFAULT_CURSOR_LOCAL_COMMAND
       : agentRuntimeType === "opencode_local"
       ? "opencode"
       : "claude");
@@ -444,6 +487,48 @@ export function OnboardingWizard() {
         entries: [...entries].sort((a, b) => a.id.localeCompare(b.id))
       }));
   }, [filteredModels, agentRuntimeType]);
+  function selectAgentRuntimeType(nextType: AdapterType) {
+    setError(null);
+    setAdapterType(nextType);
+    if (nextType === "codex_local") {
+      if (agentRuntimeType !== "codex_local" || !model) {
+        setModel(DEFAULT_CODEX_LOCAL_MODEL);
+      }
+      return;
+    }
+    if (nextType === "gemini_local") {
+      if (agentRuntimeType !== "gemini_local" || !model) {
+        setModel(DEFAULT_GEMINI_LOCAL_MODEL);
+      }
+      return;
+    }
+    if (nextType === "cursor") {
+      if (agentRuntimeType !== "cursor" || !model) {
+        setModel(DEFAULT_CURSOR_LOCAL_MODEL);
+      }
+      return;
+    }
+    if (nextType === "opencode_local") {
+      if (agentRuntimeType !== "opencode_local" || !model.includes("/")) setModel("");
+      return;
+    }
+    setModel("");
+  }
+  useEffect(() => {
+    if (step !== 2 || runtimeAvailabilityPending || runtimeAvailabilityBlocked) return;
+    if (!isOnboardingLocalRuntime(agentRuntimeType)) return;
+    if (isRuntimeSelectable(agentRuntimeType, runtimeAvailability)) return;
+    const firstAvailable = pickFirstAvailableRuntime(runtimeAvailability);
+    if (firstAvailable) {
+      selectAgentRuntimeType(firstAvailable);
+    }
+  }, [
+    agentRuntimeType,
+    runtimeAvailability,
+    runtimeAvailabilityBlocked,
+    runtimeAvailabilityPending,
+    step,
+  ]);
   function reset() {
     setStep(1);
     setLoading(false);
@@ -666,6 +751,24 @@ export function OnboardingWizard() {
       const trimmedAgentName = agentName.trim();
       if (!trimmedAgentName) {
         setError("Agent name is required.");
+        return;
+      }
+      if (runtimeAvailabilityPending) {
+        setError("Still checking local runtime availability. Please wait.");
+        return;
+      }
+      if (runtimeAvailabilityBlocked) {
+        setError(
+          runtimeAvailabilityError instanceof Error
+            ? runtimeAvailabilityError.message
+            : "Failed to check local runtime availability."
+        );
+        return;
+      }
+      if (!selectedRuntimeSelectable) {
+        const availability = runtimeAvailability.get(agentRuntimeType);
+        const label = availability?.label ?? getUIAdapter(agentRuntimeType).label;
+        setError(`${label} is not installed on this machine. Install it before selecting this runtime.`);
         return;
       }
       if (agentRuntimeType === "opencode_local") {
@@ -1028,31 +1131,38 @@ export function OnboardingWizard() {
                           desc: "Local Codex agent",
                           recommended: true
                         }
-                      ].map((opt) => (
-                        <button key={opt.value} className={cn(
+                      ].map((opt) => {
+                        const availability = runtimeAvailability.get(opt.value);
+                        const unavailable = Boolean(availability && !availability.available);
+                        const disabled = runtimeAvailabilityPending || unavailable;
+                        const selected = agentRuntimeType === opt.value && !disabled;
+                        return (
+                        <button key={opt.value} disabled={disabled} className={cn(
                             "flex flex-col items-center gap-1.5 rounded-md border p-3 text-xs transition-colors relative",
-                            agentRuntimeType === opt.value
+                            disabled
+                              ? "border-border opacity-55 cursor-not-allowed"
+                              : selected
                               ? "border-foreground bg-accent"
                               : "border-border hover:bg-accent/50"
                           )} onClick={() => {
-                            const nextType = opt.value as AdapterType;
-                            setAdapterType(nextType);
-                            if (nextType === "codex_local" && !model) {
-                              setModel(DEFAULT_CODEX_LOCAL_MODEL);
-                            }
-                            if (nextType !== "codex_local") {
-                              setModel("");
-                            }
+                            if (disabled) return;
+                            selectAgentRuntimeType(opt.value as AdapterType);
                           }} >
-                          {opt.recommended && (
+                          {runtimeAvailabilityPending ? (
+                            <span className="absolute -top-1.5 right-1.5 bg-muted text-muted-foreground text-[9px] font-semibold px-1.5 py-0.5 rounded-full leading-none">
+                              Checking </span>
+                          ) : unavailable ? (
+                            <span className="absolute -top-1.5 right-1.5 bg-amber-500 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded-full leading-none">
+                              Install </span>
+                          ) : opt.recommended ? (
                             <span className="absolute -top-1.5 right-1.5 bg-green-500 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded-full leading-none">
                               Recommended </span>
-                          )}
+                          ) : null}
                           <opt.icon className="h-4 w-4" />
                           <span className="font-medium">{opt.label}</span>
                           <span className="text-muted-foreground text-[10px]">
-                            {opt.desc} </span> </button>
-                      ))} </div>
+                            {unavailable ? "Install required" : opt.desc} </span> </button>
+                      )})} </div>
                     <button className="flex items-center gap-1.5 mt-3 text-xs text-muted-foreground hover:text-foreground transition-colors" onClick={() => setShowMoreAdapters((v) => !v)} >
                       <ChevronDown className={cn(
                           "h-3 w-3 transition-transform",
@@ -1094,49 +1204,65 @@ export function OnboardingWizard() {
                             comingSoon: true,
                             disabledLabel: "Configure OpenClaw within the App"
                           }
-                        ].map((opt) => (
-                          <button key={opt.value} disabled={!!opt.comingSoon} className={cn(
+                        ].map((opt) => {
+                          const availability = runtimeAvailability.get(opt.value);
+                          const unavailable = Boolean(availability && !availability.available);
+                          const disabled = Boolean(opt.comingSoon) || runtimeAvailabilityPending || unavailable;
+                          const selected = agentRuntimeType === opt.value && !disabled;
+                          return (
+                          <button key={opt.value} disabled={disabled} className={cn(
                               "flex flex-col items-center gap-1.5 rounded-md border p-3 text-xs transition-colors relative",
-                              opt.comingSoon
+                              disabled
                                 ? "border-border opacity-40 cursor-not-allowed"
-                                : agentRuntimeType === opt.value
+                                : selected
                                 ? "border-foreground bg-accent"
                                 : "border-border hover:bg-accent/50"
                             )} onClick={() => {
-                              if (opt.comingSoon) return;
-                              const nextType = opt.value as AdapterType;
-                              setAdapterType(nextType);
-                              if (nextType === "gemini_local" && !model) {
-                                setModel(DEFAULT_GEMINI_LOCAL_MODEL);
-                                return;
-                              }
-                              if (nextType === "cursor" && !model) {
-                                setModel(DEFAULT_CURSOR_LOCAL_MODEL);
-                                return;
-                              }
-                              if (nextType === "opencode_local") {
-                                if (!model.includes("/")) {
-                                  setModel("");
-                                }
-                                return;
-                              }
-                              setModel("");
+                              if (disabled) return;
+                              selectAgentRuntimeType(opt.value as AdapterType);
                             }} >
+                            {runtimeAvailabilityPending && !opt.comingSoon ? (
+                              <span className="absolute -top-1.5 right-1.5 bg-muted text-muted-foreground text-[9px] font-semibold px-1.5 py-0.5 rounded-full leading-none">
+                                Checking </span>
+                            ) : unavailable ? (
+                              <span className="absolute -top-1.5 right-1.5 bg-amber-500 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded-full leading-none">
+                                Install </span>
+                            ) : null}
                             <opt.icon className="h-4 w-4" />
                             <span className="font-medium">{opt.label}</span>
                             <span className="text-muted-foreground text-[10px]">
-                              {opt.comingSoon
+                              {unavailable
+                                ? "Install required"
+                                : opt.comingSoon
                                 ? (opt as { disabledLabel?: string })
                                     .disabledLabel ?? "Coming soon"
                                 : opt.desc} </span> </button>
-                        ))} </div>
+                        )})} </div>
+                    )}
+                    {runtimeAvailabilityError && (
+                      <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
+                        {runtimeAvailabilityError instanceof Error
+                          ? runtimeAvailabilityError.message
+                          : "Failed to check local runtime availability."}
+                      </div>
+                    )}
+                    {!runtimeAvailabilityPending && runtimeInstallLinks.length > 0 && (
+                      <div className="mt-3 rounded-md border border-amber-300/50 bg-amber-50/40 px-2.5 py-2 text-[11px] text-amber-900/90 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                        <p className="font-medium">
+                          {runtimeAvailabilityBlocked
+                            ? "Install local runtimes"
+                            : "Unavailable on this machine"}
+                        </p>
+                        <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
+                          {runtimeInstallLinks.map((runtime) => (
+                            <a key={runtime.agentRuntimeType} className="underline underline-offset-2 hover:text-foreground" href={runtime.installUrl} target="_blank" rel="noreferrer">
+                              {runtime.label}: {runtime.installLabel}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
                     )} </div>
-                  {(agentRuntimeType === "claude_local" ||
-                    agentRuntimeType === "codex_local" ||
-                    agentRuntimeType === "gemini_local" ||
-                    agentRuntimeType === "opencode_local" ||
-                    agentRuntimeType === "pi_local" ||
-                    agentRuntimeType === "cursor") && (
+                  {isLocalAdapter && selectedRuntimeSelectable && (
                     <div className="space-y-3">
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">
@@ -1205,7 +1331,7 @@ export function OnboardingWizard() {
                           </PopoverContent>
                         </Popover> </div> </div>
                   )}
-                  {isLocalAdapter && (
+                  {isLocalAdapter && selectedRuntimeSelectable && (
                     <div className="space-y-2 rounded-md border border-border p-3">
                       <div className="flex items-center justify-between gap-2">
                         <div>
@@ -1425,7 +1551,7 @@ export function OnboardingWizard() {
                     </Button>
                   )}
                   {step === 2 && (
-                    <Button size="sm" disabled={loading || adapterEnvLoading} onClick={handleStep2Next} >
+                    <Button size="sm" disabled={loading || adapterEnvLoading || runtimeAvailabilityPending || runtimeAvailabilityBlocked || !selectedRuntimeSelectable} onClick={handleStep2Next} >
                       {loading ? (
                         <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                       ) : (

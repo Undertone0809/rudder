@@ -49,7 +49,11 @@ import { assetService } from "../services/assets.js";
 import type { StorageService } from "../storage/types.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
-import { findServerAdapter, listAgentRuntimeModels } from "../agent-runtimes/index.js";
+import {
+  findServerAdapter,
+  listAgentRuntimeModels,
+  listLocalAgentRuntimeAvailability,
+} from "../agent-runtimes/index.js";
 import { REDACTED_EVENT_VALUE, redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
@@ -877,6 +881,13 @@ export function agentRoutes(db: Db, storage?: StorageService) {
 
     const models = await listAgentRuntimeModels(type, { orgId, config: runtimeAdapterConfig });
     res.json(models);
+  });
+
+  router.get("/orgs/:orgId/adapters/availability", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const runtimes = await listLocalAgentRuntimeAvailability();
+    res.json({ runtimes });
   });
 
   router.post(

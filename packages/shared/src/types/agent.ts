@@ -129,3 +129,17 @@ export interface AgentRuntimeEnvironmentTestResult {
   checks: AgentRuntimeEnvironmentCheck[];
   testedAt: string;
 }
+
+export type AgentRuntimeAvailabilityStatus = "available" | "missing";
+
+export interface AgentRuntimeAvailability {
+  agentRuntimeType: string;
+  label: string;
+  command: string;
+  status: AgentRuntimeAvailabilityStatus;
+  available: boolean;
+  installUrl: string;
+  installLabel: string;
+  detail?: string | null;
+  checkedAt: string;
+}

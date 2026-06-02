@@ -62,6 +62,8 @@ Most runtime setup lives in `agentRuntimeConfig`. Change `runtimeConfig` only wh
 
 Prefer a local CLI runtime when the agent needs a familiar coding-agent environment. Prefer Shell Process or HTTP Webhook when you want Rudder to call your own runtime contract.
 
+During onboarding, Rudder checks whether each local CLI is actually installed on the Rudder host. Missing local runtimes are shown as unavailable and link to their official installation page instead of being selectable.
+
 ## Configure a local CLI runtime
 
 Use a local CLI runtime for Codex, Claude Code, Gemini CLI, OpenCode, Pi, or Cursor-backed agents.

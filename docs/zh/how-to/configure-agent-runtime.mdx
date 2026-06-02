@@ -58,6 +58,8 @@ npx @rudderhq/cli@latest start
 
 如果不确定，先选 Codex 或 Claude Code。它们最接近大家平时手动使用 coding agent 的方式，也最适合新手开始。
 
+在 onboarding 里，Rudder 会先检查 Rudder 运行所在机器是否真的装了对应本地 CLI。缺失的 local runtime 会显示为不可用，并给出官方安装入口，不会作为可直接选择的 runtime。
+
 ## 配置本地 CLI runtime
 
 Codex、Claude Code、Gemini CLI、OpenCode、Pi、Cursor 这类本地 CLI agent 都走这个路径。你可以把它理解成：Rudder 帮你按规则叫醒这个本地 agent，让它去处理 issue。

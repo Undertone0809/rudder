@@ -24,7 +24,10 @@ import {
   DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudderhq/agent-runtime-codex-local";
 import { models as CLAUDE_LOCAL_MODELS } from "@rudderhq/agent-runtime-claude-local";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
+import {
+  DEFAULT_CURSOR_LOCAL_COMMAND,
+  DEFAULT_CURSOR_LOCAL_MODEL,
+} from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import {
   Popover,
@@ -202,7 +205,7 @@ export function defaultCommandForRuntime(agentRuntimeType: string) {
   if (agentRuntimeType === "codex_local") return "codex";
   if (agentRuntimeType === "gemini_local") return "gemini";
   if (agentRuntimeType === "pi_local") return "pi";
-  if (agentRuntimeType === "cursor") return "agent";
+  if (agentRuntimeType === "cursor") return DEFAULT_CURSOR_LOCAL_COMMAND;
   if (agentRuntimeType === "opencode_local") return "opencode";
   return "claude";
 }
@@ -326,4 +329,3 @@ export function filterRuntimeEnvironmentDisplayChecks(
 }
 
 /* ---- Form ---- */
-

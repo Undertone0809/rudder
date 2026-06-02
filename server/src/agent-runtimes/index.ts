@@ -1,4 +1,5 @@
 export { getServerAdapter, listAgentRuntimeModels, listServerAdapters, findServerAdapter } from "./registry.js";
+export { listLocalAgentRuntimeAvailability } from "./availability.js";
 export type {
   ServerAgentRuntimeModule,
   AgentRuntimeExecutionContext,

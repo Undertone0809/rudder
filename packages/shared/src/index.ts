@@ -293,6 +293,8 @@ export type {
   AgentRuntimeEnvironmentTestStatus,
   AgentRuntimeEnvironmentCheck,
   AgentRuntimeEnvironmentTestResult,
+  AgentRuntimeAvailabilityStatus,
+  AgentRuntimeAvailability,
   AssetImage,
   Project,
   ProjectCodebase,

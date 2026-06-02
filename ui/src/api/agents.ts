@@ -7,6 +7,7 @@ import type {
   AgentSkillAnalytics,
   AgentSkillSnapshot,
   AgentRuntimeEnvironmentTestResult,
+  AgentRuntimeAvailability,
   AgentKeyCreated,
   AgentRuntimeState,
   AgentTaskSession,
@@ -226,6 +227,10 @@ export const agentsApi = {
       : api.get<AgentRuntimeModel[]>(
       `/orgs/${encodeURIComponent(orgId)}/adapters/${encodeURIComponent(type)}/models`,
         ),
+  runtimeAvailability: (orgId: string) =>
+    api.get<{ runtimes: AgentRuntimeAvailability[] }>(
+      `/orgs/${encodeURIComponent(orgId)}/adapters/availability`,
+    ),
   agentAdapterModels: (
     agentId: string,
     orgId: string | undefined,

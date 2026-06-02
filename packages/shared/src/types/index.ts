@@ -111,6 +111,8 @@ export type {
   AgentRuntimeEnvironmentTestStatus,
   AgentRuntimeEnvironmentCheck,
   AgentRuntimeEnvironmentTestResult,
+  AgentRuntimeAvailabilityStatus,
+  AgentRuntimeAvailability,
 } from "./agent.js";
 export type { AssetImage } from "./asset.js";
 export type {
