@@ -459,20 +459,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     try {
       reply = parseCompletedAssistantReply(raw, resultSentinel, { requireSentinel: true });
     } catch (error) {
-      const fallbackBody = safeTrim(partialBody);
-      if (fallbackBody) {
-        reply = {
-          kind: "message",
-          body: fallbackBody,
-          structuredPayload: null,
-        };
-      } else {
-        throw new ChatAssistantStreamError(
-          error instanceof Error ? error.message : "Chat adapter returned an invalid final reply",
-          partialBody,
-          generatedAttachments,
-        );
-      }
+      const message = error instanceof Error ? error.message : "Chat adapter returned an invalid final reply";
+      throw new ChatAssistantStreamError(message, partialBody, generatedAttachments);
     }
     const finalBody = reply.body;
     reply.replyingAgentId = runtimeAgentId;

@@ -1492,7 +1492,38 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(result.reply.generatedAttachments?.[0]?.body.equals(Buffer.from("fake-png"))).toBe(true);
   });
 
-  it("recovers a plain chat message when the adapter omits the required result sentinel", async () => {
+  it("fails a complete plain chat message when the adapter omits the required result sentinel", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: "Here is the final answer." },
+        })}\n`,
+      );
+      return {
+        summary: "Here is the final answer.",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      partialBody: "Here is the final answer.",
+      message: "Chat adapter completed without the required Rudder result sentinel",
+    });
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails instead of repairing an English progress draft without the required result sentinel", async () => {
     const svc = chatAssistantService({} as any);
 
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
@@ -1512,19 +1543,46 @@ describe("chatAssistantService operator profile prompt injection", () => {
       };
     });
 
-    const result = await svc.streamChatAssistantReply({
+    await expect(svc.streamChatAssistantReply({
       conversation: makeConversation(),
       messages: makeMessages(),
       contextLinks: [],
+    })).rejects.toMatchObject({
+      partialBody: "I am still working.",
+      message: "Chat adapter completed without the required Rudder result sentinel",
+    });
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails instead of completing a Chinese progress draft without the required result sentinel", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: "我正在整理已启用的技能列表。" },
+        })}\n`,
+      );
+      return {
+        summary: "我正在整理已启用的技能列表。",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
     });
 
-    expect(result.outcome).toBe("completed");
-    if (result.outcome !== "completed") throw new Error("expected completed");
-    expect(result.reply).toMatchObject({
-      kind: "message",
-      body: "I am still working.",
-      structuredPayload: null,
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      partialBody: "我正在整理已启用的技能列表。",
+      message: "Chat adapter completed without the required Rudder result sentinel",
     });
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
   });
 
   it("returns a stopped partial reply when the runtime abort signal fires", async () => {

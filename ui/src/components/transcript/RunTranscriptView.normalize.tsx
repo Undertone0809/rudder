@@ -343,7 +343,9 @@ export function normalizeTranscript(
 
       const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
       if (previous?.type === "message" && previous.role === entry.kind) {
-        previous.text += previous.text.endsWith("\n") || entry.text.startsWith("\n") ? entry.text : `\n${entry.text}`;
+        previous.text += entry.delta === true || previous.text.endsWith("\n") || entry.text.startsWith("\n")
+          ? entry.text
+          : `\n${entry.text}`;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
       } else {
@@ -361,7 +363,9 @@ export function normalizeTranscript(
     if (entry.kind === "thinking") {
       const isStreaming = streaming && entry.delta === true;
       if (previous?.type === "thinking") {
-        previous.text += previous.text.endsWith("\n") || entry.text.startsWith("\n") ? entry.text : `\n${entry.text}`;
+        previous.text += entry.delta === true || previous.text.endsWith("\n") || entry.text.startsWith("\n")
+          ? entry.text
+          : `\n${entry.text}`;
         previous.ts = entry.ts;
         previous.streaming = previous.streaming || isStreaming;
       } else {

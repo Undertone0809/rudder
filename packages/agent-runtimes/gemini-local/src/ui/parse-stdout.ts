@@ -48,18 +48,28 @@ function errorText(value: unknown): string {
   }
 }
 
-function collectTextEntries(messageRaw: unknown, ts: string, kind: "assistant" | "user"): TranscriptEntry[] {
+function normalizeText(value: string, preserveWhitespace: boolean): string {
+  return preserveWhitespace ? value : value.trim();
+}
+
+function collectTextEntries(
+  messageRaw: unknown,
+  ts: string,
+  kind: "assistant" | "user",
+  opts: { delta?: boolean } = {},
+): TranscriptEntry[] {
+  const preserveWhitespace = opts.delta === true;
   if (typeof messageRaw === "string") {
-    const text = messageRaw.trim();
-    return text ? [{ kind, ts, text }] : [];
+    const text = normalizeText(messageRaw, preserveWhitespace);
+    return text ? [{ kind, ts, text, ...(opts.delta && kind === "assistant" ? { delta: true } : {}) }] : [];
   }
 
   const message = asRecord(messageRaw);
   if (!message) return [];
 
   const entries: TranscriptEntry[] = [];
-  const directText = asString(message.text).trim();
-  if (directText) entries.push({ kind, ts, text: directText });
+  const directText = normalizeText(asString(message.text), preserveWhitespace);
+  if (directText) entries.push({ kind, ts, text: directText, ...(opts.delta && kind === "assistant" ? { delta: true } : {}) });
 
   const content = Array.isArray(message.content) ? message.content : [];
   for (const partRaw of content) {
@@ -67,25 +77,26 @@ function collectTextEntries(messageRaw: unknown, ts: string, kind: "assistant" |
     if (!part) continue;
     const type = asString(part.type).trim();
     if (type !== "output_text" && type !== "text" && type !== "content") continue;
-    const text = asString(part.text).trim() || asString(part.content).trim();
-    if (text) entries.push({ kind, ts, text });
+    const text = normalizeText(asString(part.text), preserveWhitespace) || normalizeText(asString(part.content), preserveWhitespace);
+    if (text) entries.push({ kind, ts, text, ...(opts.delta && kind === "assistant" ? { delta: true } : {}) });
   }
 
   return entries;
 }
 
-function parseAssistantMessage(messageRaw: unknown, ts: string): TranscriptEntry[] {
+function parseAssistantMessage(messageRaw: unknown, ts: string, opts: { delta?: boolean } = {}): TranscriptEntry[] {
+  const preserveWhitespace = opts.delta === true;
   if (typeof messageRaw === "string") {
-    const text = messageRaw.trim();
-    return text ? [{ kind: "assistant", ts, text }] : [];
+    const text = normalizeText(messageRaw, preserveWhitespace);
+    return text ? [{ kind: "assistant", ts, text, ...(opts.delta ? { delta: true } : {}) }] : [];
   }
 
   const message = asRecord(messageRaw);
   if (!message) return [];
 
   const entries: TranscriptEntry[] = [];
-  const directText = asString(message.text).trim();
-  if (directText) entries.push({ kind: "assistant", ts, text: directText });
+  const directText = normalizeText(asString(message.text), preserveWhitespace);
+  if (directText) entries.push({ kind: "assistant", ts, text: directText, ...(opts.delta ? { delta: true } : {}) });
 
   const content = Array.isArray(message.content) ? message.content : [];
   for (const partRaw of content) {
@@ -94,8 +105,8 @@ function parseAssistantMessage(messageRaw: unknown, ts: string): TranscriptEntry
     const type = asString(part.type).trim();
 
     if (type === "output_text" || type === "text" || type === "content") {
-      const text = asString(part.text).trim() || asString(part.content).trim();
-      if (text) entries.push({ kind: "assistant", ts, text });
+      const text = normalizeText(asString(part.text), preserveWhitespace) || normalizeText(asString(part.content), preserveWhitespace);
+      if (text) entries.push({ kind: "assistant", ts, text, ...(opts.delta ? { delta: true } : {}) });
       continue;
     }
 
@@ -211,7 +222,7 @@ function readUsage(parsed: Record<string, unknown>) {
 function parseMessageEvent(parsed: Record<string, unknown>, ts: string): TranscriptEntry[] {
   const role = asString(parsed.role).trim().toLowerCase();
   const content = parsed.content ?? parsed.message;
-  if (role === "assistant") return parseAssistantMessage(content, ts);
+  if (role === "assistant") return parseAssistantMessage(content, ts, { delta: parsed.delta === true });
   if (role === "user") return collectTextEntries(content, ts, "user");
   const text = stringifyUnknown(content).trim();
   return text ? [{ kind: "assistant", ts, text }] : [];
@@ -274,7 +285,7 @@ export function parseGeminiStdoutLine(line: string, ts: string): TranscriptEntry
   }
 
   if (type === "assistant") {
-    return parseAssistantMessage(parsed.message, ts);
+    return parseAssistantMessage(parsed.message, ts, { delta: parsed.delta === true });
   }
 
   if (type === "user") {

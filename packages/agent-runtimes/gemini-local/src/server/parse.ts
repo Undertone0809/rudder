@@ -1,21 +1,26 @@
 import { asNumber, asString, parseJson, parseObject } from "@rudderhq/agent-runtime-utils/server-utils";
 
-function collectMessageText(message: unknown): string[] {
+function normalizeText(value: string, preserveWhitespace: boolean): string {
+  return preserveWhitespace ? value : value.trim();
+}
+
+function collectMessageText(message: unknown, opts: { preserveWhitespace?: boolean } = {}): string[] {
+  const preserveWhitespace = opts.preserveWhitespace === true;
   if (typeof message === "string") {
-    const trimmed = message.trim();
-    return trimmed ? [trimmed] : [];
+    const text = normalizeText(message, preserveWhitespace);
+    return text ? [text] : [];
   }
 
   if (Array.isArray(message)) {
     const lines: string[] = [];
     for (const partRaw of message) {
-      lines.push(...collectMessageText(partRaw));
+      lines.push(...collectMessageText(partRaw, opts));
     }
     return lines;
   }
 
   const record = parseObject(message);
-  const direct = asString(record.text, "").trim();
+  const direct = normalizeText(asString(record.text, ""), preserveWhitespace);
   const lines: string[] = direct ? [direct] : [];
   const content = Array.isArray(record.content) ? record.content : [];
 
@@ -23,12 +28,25 @@ function collectMessageText(message: unknown): string[] {
     const part = parseObject(partRaw);
     const type = asString(part.type, "").trim();
     if (type === "output_text" || type === "text" || type === "content") {
-      const text = asString(part.text, "").trim() || asString(part.content, "").trim();
+      const text =
+        normalizeText(asString(part.text, ""), preserveWhitespace) ||
+        normalizeText(asString(part.content, ""), preserveWhitespace);
       if (text) lines.push(text);
     }
   }
 
   return lines;
+}
+
+function appendMessageText(messages: string[], parts: string[], opts: { delta?: boolean } = {}) {
+  if (parts.length === 0) return;
+  const text = parts.join(opts.delta ? "" : "\n\n");
+  if (!text) return;
+  if (opts.delta && messages.length > 0) {
+    messages[messages.length - 1] += text;
+    return;
+  }
+  messages.push(text);
 }
 
 function readSessionId(event: Record<string, unknown>): string | null {
@@ -106,7 +124,8 @@ export function parseGeminiJsonl(stdout: string) {
     const type = asString(event.type, "").trim();
 
     if (type === "assistant") {
-      messages.push(...collectMessageText(event.message));
+      const isDelta = event.delta === true;
+      appendMessageText(messages, collectMessageText(event.message, { preserveWhitespace: isDelta }), { delta: isDelta });
       const messageObj = parseObject(event.message);
       const content = Array.isArray(messageObj.content) ? messageObj.content : [];
       for (const partRaw of content) {
@@ -132,7 +151,8 @@ export function parseGeminiJsonl(stdout: string) {
     if (type === "message") {
       const role = asString(event.role, "").trim();
       if (role === "assistant") {
-        messages.push(...collectMessageText(event.content));
+        const isDelta = event.delta === true;
+        appendMessageText(messages, collectMessageText(event.content, { preserveWhitespace: isDelta }), { delta: isDelta });
       }
       continue;
     }

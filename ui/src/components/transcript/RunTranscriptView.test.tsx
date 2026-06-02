@@ -266,6 +266,36 @@ describe("RunTranscriptView", () => {
     expect(rawHtml).not.toContain("Phase 2 no changes");
   });
 
+  it("does not render benign Gemini runtime diagnostics as errors", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "stderr",
+        ts: "2026-06-02T10:28:50.058Z",
+        text: [
+          "YOLO mode is enabled. All tool calls will be automatically approved.",
+          "Skill \"skill-creator\" from \"/tmp/rudder/.gemini/skills/skill-creator/SKILL.md\" is overriding the built-in skill.",
+          "Attempt 1 failed: You have exhausted your capacity on this model. Your quota will reset after 7s.. Retrying after 8696ms...",
+        ].join("\n"),
+      },
+      {
+        kind: "assistant",
+        ts: "2026-06-02T10:29:41.274Z",
+        text: "I have **conversation-to-skill** enabled.",
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView entries={entries} />
+      </ThemeProvider>,
+    );
+
+    expect(html).not.toContain("YOLO mode is enabled");
+    expect(html).not.toContain("overriding the built-in skill");
+    expect(html).not.toContain("exhausted your capacity");
+    expect(html).toContain("conversation-to-skill");
+  });
+
   it("collapses long stderr by default while keeping a short summary visible", () => {
     const longError = [
       "Error: provider returned a long diagnostic",
@@ -428,6 +458,32 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Read ui/src/pages/Chat.tsx");
     expect(html).not.toContain("Final answer shown");
     expect(html).not.toContain("in the assistant message.");
+  });
+
+  it("merges streamed assistant deltas without inserting markdown-breaking newlines", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "assistant",
+        ts: "2026-06-02T12:19:40.000Z",
+        text: "I have conversation-",
+        delta: true,
+      },
+      {
+        kind: "assistant",
+        ts: "2026-06-02T12:19:41.000Z",
+        text: "to-skill enabled.",
+        delta: true,
+      },
+    ], true);
+
+    expect(blocks).toEqual([
+      expect.objectContaining({
+        type: "message",
+        role: "assistant",
+        text: "I have conversation-to-skill enabled.",
+        streaming: true,
+      }),
+    ]);
   });
 
   it("renders chat thinking inline instead of behind a collapsed summary", () => {
