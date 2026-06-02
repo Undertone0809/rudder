@@ -18,6 +18,7 @@ import {
   issueComments,
   issueReadStates,
   issues,
+  messengerThreadUserStates,
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
@@ -120,6 +121,7 @@ describe("sidebarBadgeService", () => {
     await db.delete(chatConversations);
     await db.delete(approvals);
     await db.delete(heartbeatRuns);
+    await db.delete(messengerThreadUserStates);
     await db.delete(issueComments);
     await db.delete(issueReadStates);
     await db.delete(issues);
@@ -162,7 +164,7 @@ describe("sidebarBadgeService", () => {
     return agentId;
   }
 
-  it("counts unread touched issues without hydrating issue rows", async () => {
+  it("counts unread issue thread entries from the Messenger thread read marker", async () => {
     const orgId = await createOrg("Sidebar Issues");
     const otherOrgId = await createOrg("Other Sidebar Issues");
     const userId = "board-user";
@@ -320,7 +322,17 @@ describe("sidebarBadgeService", () => {
       { orgId: otherOrgId, issueId: otherOrgIssueId, body: "other org update", createdAt: unreadAt },
     ]);
 
-    await expect(svc.countUnreadTouchedIssues(orgId, userId)).resolves.toBe(5);
+    await expect(svc.countUnreadTouchedIssues(orgId, userId)).resolves.toBe(6);
+
+    await db.insert(messengerThreadUserStates).values({
+      orgId,
+      userId,
+      threadKey: "issues",
+      lastReadAt: rereadAt,
+      updatedAt: rereadAt,
+    });
+
+    await expect(svc.countUnreadTouchedIssues(orgId, userId)).resolves.toBe(0);
   });
 
   it("counts active chat attention while preserving first-read state creation", async () => {

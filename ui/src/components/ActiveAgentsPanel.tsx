@@ -139,7 +139,7 @@ export function ActiveAgentsPanel({ orgId }: ActiveAgentsPanelProps) {
           <p className="text-sm text-muted-foreground">No recent agent runs.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-4">
           {runs.map((run) => (
             <AgentRunCard
               key={run.id}
@@ -188,12 +188,12 @@ function AgentRunCard({
 
   return (
     <div className={cn(
-      "motion-list-enter flex h-[320px] flex-col overflow-hidden rounded-[var(--radius-lg)] border",
+      "motion-list-enter flex h-[292px] flex-col overflow-hidden rounded-[var(--radius-lg)] border",
       isActive
         ? "motion-live-surface border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-proposal)_68%,transparent)] shadow-[var(--shadow-md)]"
         : "surface-panel",
     )}>
-      <div className="border-b panel-divider px-3 py-3">
+      <div className="border-b panel-divider px-3 py-2.5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -210,7 +210,7 @@ function AgentRunCard({
                 <Identity name={run.agentName} size="sm" className="[&>span:last-child]:!text-[11px]" />
               )}
             </div>
-            <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
               <span>{isActive ? `Live for ${activeDuration ?? "now"}` : run.finishedAt ? `Finished ${relativeTime(run.finishedAt)}` : `Started ${relativeTime(run.createdAt)}`}</span>
             </div>
           </div>
@@ -224,7 +224,7 @@ function AgentRunCard({
         </div>
 
         {run.issueId && (
-          <div className="surface-inset mt-3 rounded-[var(--radius-md)] px-2.5 py-2 text-xs">
+          <div className="surface-inset mt-2 rounded-[var(--radius-md)] px-2.5 py-1.5 text-xs">
             <Link
               to={`/issues/${issue?.identifier ?? run.issueId}`}
               className={cn(
@@ -240,7 +240,7 @@ function AgentRunCard({
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
         <RunTranscriptView
           className="dashboard-run-preview"
           entries={previewTranscript}

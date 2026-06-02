@@ -206,6 +206,53 @@ describe("messengerService and issue follows", () => {
     expect(secondPage.pageInfo).toEqual({ limit: 3, nextCursor: null, hasMore: false });
   });
 
+  it("keeps older pinned chats in the first Messenger thread summary page", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-pinned-pagination";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Pinned Pagination Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Pinned Pagination Org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const baseTime = Date.parse("2026-05-02T12:00:00.000Z");
+    const conversationIds = Array.from({ length: 45 }, () => randomUUID());
+    await db.insert(chatConversations).values(
+      conversationIds.map((conversationId, index) => {
+        const activityAt = new Date(baseTime - index * 60_000);
+        return {
+          id: conversationId,
+          orgId,
+          title: `Pinned pagination chat ${String(index + 1).padStart(2, "0")}`,
+          summary: `Summary ${index + 1}`,
+          issueCreationMode: "manual_approval" as const,
+          planMode: false,
+          createdByUserId: userId,
+          lastMessageAt: activityAt,
+          createdAt: activityAt,
+          updatedAt: activityAt,
+        };
+      }),
+    );
+    await chatSvc.setPinned(conversationIds[44]!, orgId, userId, true);
+
+    const firstPage = await messengerSvc.listThreadSummaryPage(orgId, userId, { limit: 40 });
+    const secondPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 40,
+      cursor: firstPage.pageInfo.nextCursor,
+    });
+
+    expect(firstPage.items[0]).toMatchObject({
+      threadKey: `chat:${conversationIds[44]}`,
+      isPinned: true,
+    });
+    expect(firstPage.items.map((item) => item.threadKey)).toContain(`chat:${conversationIds[44]}`);
+    expect(secondPage.items.map((item) => item.threadKey)).not.toContain(`chat:${conversationIds[44]}`);
+  });
+
   it("persists follows and includes followed plus assigned issues in the Messenger issues thread", async () => {
     const orgId = randomUUID();
     const userId = "board-user-1";
@@ -1253,6 +1300,21 @@ describe("messengerService and issue follows", () => {
     expect(issuesSummary?.preview).toBe("CMP-41 · Explain completed notification — Completed");
     expect(thread.detail.unreadCount).toBe(1);
     expect(thread.detail.needsAttention).toBe(true);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+
+    await messengerSvc.setThreadRead(orgId, userId, "issues", completedAt);
+
+    const readThread = await messengerSvc.getIssuesThread(orgId, userId);
+    const readSummaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const readIssuesSummary = readSummaries.find((entry) => entry.threadKey === "issues");
+    expect(readThread.detail.unreadCount).toBe(0);
+    expect(readThread.detail.needsAttention).toBe(false);
+    expect(readThread.summary.latestActivityAt?.toISOString()).toBe(completedAt.toISOString());
+    expect(readThread.summary.preview).toBe("CMP-41 · Explain completed notification — Completed");
+    expect(readIssuesSummary?.unreadCount).toBe(0);
+    expect(readIssuesSummary?.latestActivityAt?.toISOString()).toBe(completedAt.toISOString());
+    expect(readIssuesSummary?.preview).toBe("CMP-41 · Explain completed notification — Completed");
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
   it("does not count description-only issue updates as Messenger attention", async () => {

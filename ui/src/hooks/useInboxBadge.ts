@@ -124,19 +124,14 @@ export function useInboxBadge(orgId: string | null | undefined) {
   );
 
   return useMemo(() => {
-    const chatAttention = serverBadges?.chatAttention ?? 0;
-    const legacyWithChatAttention = {
-      ...legacyBadge,
-      chatAttention,
-      inbox: legacyBadge.inbox + chatAttention,
-    };
+    const badgeCounts = serverBadges ?? legacyBadge;
 
     return {
-      ...legacyWithChatAttention,
+      ...badgeCounts,
       notificationContent: getInboxNotificationContent({
-        unreadCount: legacyWithChatAttention.inbox,
+        unreadCount: badgeCounts.inbox,
         messengerThreads,
       }),
     };
-  }, [legacyBadge, messengerThreads, serverBadges?.chatAttention]);
+  }, [legacyBadge, messengerThreads, serverBadges]);
 }

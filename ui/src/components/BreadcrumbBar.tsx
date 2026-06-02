@@ -255,7 +255,7 @@ export function BreadcrumbBar({
           <DashboardCalendarSwitcher />
         ) : showIssueDetailBreadcrumbs ? (
           <div className={cn("min-w-0 flex-1", desktopChrome && "desktop-window-no-drag")}>
-            <Breadcrumb className="min-w-0 overflow-hidden">
+            <Breadcrumb className="min-w-0 overflow-hidden" data-testid="issue-detail-breadcrumb">
               <BreadcrumbList className="flex-nowrap overflow-hidden">
                 {breadcrumbs.map((crumb, i) => {
                   const isLast = i === breadcrumbs.length - 1;

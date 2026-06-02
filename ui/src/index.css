@@ -2787,6 +2787,15 @@ a.rudder-skill-token {
   -webkit-user-select: none;
 }
 
+.chat-composer .rudder-mdxeditor-content .rudder-skill-token {
+  vertical-align: -0.34em;
+}
+
+.chat-composer .rudder-mdxeditor-content .rudder-skill-token::before {
+  width: 1.42em;
+  height: 1.42em;
+}
+
 .rudder-mdxeditor-content .rudder-skill-token::before,
 .rudder-milkdown-content .rudder-skill-token::before,
 .rudder-markdown .rudder-skill-token::before,
@@ -2916,7 +2925,7 @@ a.rudder-skill-token[href] {
 /* Dashboard run cards are compact previews, not transcript detail panes. */
 .dashboard-run-preview .rudder-markdown {
   font-size: 0.75rem;
-  line-height: 1.45;
+  line-height: 1.38;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -2930,13 +2939,13 @@ a.rudder-skill-token[href] {
 }
 
 .dashboard-run-preview .rudder-markdown :where(p, ul, ol, blockquote, pre) {
-  margin-top: 0.25rem;
-  margin-bottom: 0.25rem;
+  margin-top: 0.125rem;
+  margin-bottom: 0.125rem;
 }
 
 .dashboard-run-preview .rudder-markdown :where(p, li) {
   font-size: 0.75rem !important;
-  line-height: 1.45 !important;
+  line-height: 1.38 !important;
 }
 
 .dashboard-run-preview .rudder-markdown :where(a, code) {
@@ -3269,6 +3278,17 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
   background: currentColor;
 }
 
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip::before,
+.chat-composer .rudder-mdxeditor-content .rudder-project-mention-chip::before {
+  width: 1.42em;
+  height: 1.42em;
+}
+
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"]::before {
+  width: 0.92em;
+  height: 0.92em;
+}
+
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"],
 .rudder-milkdown-content .rudder-mention-chip[data-mention-kind="project"],
 a.rudder-mention-chip[data-mention-kind="project"] {
@@ -3307,6 +3327,12 @@ a.rudder-mention-chip[data-mention-kind="library_file"]::before {
   mask-repeat: no-repeat;
   -webkit-mask-size: contain;
   mask-size: contain;
+}
+
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before {
+  width: 1.42em;
+  height: 1.42em;
 }
 
 /* Keep MDXEditor popups above app dialogs, even when they portal to <body>. */

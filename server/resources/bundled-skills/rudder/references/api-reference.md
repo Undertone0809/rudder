@@ -136,6 +136,8 @@ When updating an existing document, send the latest `baseRevisionId` or the API 
 - `GET /api/orgs/:orgId/dashboard`
 - `GET /api/orgs/:orgId/projects`
 - `POST /api/orgs/:orgId/projects`
+- `GET /api/projects/:projectIdOrShortname?orgId=:orgId`
+- `PATCH /api/projects/:projectIdOrShortname?orgId=:orgId`
 - `GET /api/orgs/:orgId/goals`
 - `POST /api/orgs/:orgId/goals`
 - `GET /api/orgs/:orgId/activity`
@@ -171,6 +173,13 @@ Loading policy:
     connector object reference.
 - If you need org-wide background that was not attached to the current project,
   query the org catalog explicitly.
+
+Project mutation policy:
+
+- Agent keys may create and update projects inside their own organization. They
+  cannot access or mutate projects in another organization.
+- Project create/update requests write activity log entries with the agent
+  actor and run id when the CLI attaches one.
 
 ## Approval Workflows
 

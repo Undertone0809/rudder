@@ -854,6 +854,7 @@ export function MessengerContextSidebar() {
       activeThreadReadAt ? new Date(activeThreadReadAt).toISOString() : null,
     ).then(async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(orgId) });
       if (route.kind === "issues") {
         await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(orgId) });
       }

@@ -181,11 +181,14 @@ function ContextColumnHeader({
       data-testid="workspace-context-header"
       className="workspace-card-header workspace-context-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4 py-3"
     >
-      <div className="min-w-0">
-        <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
-        <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
+      <div className="min-w-0 flex-1">
+        {children ?? (
+          <>
+            <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
+            <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
+          </>
+        )}
       </div>
-      {children ? <div className="min-w-0 flex-1">{children}</div> : null}
       {!isMobile ? (
         <button
           type="button"

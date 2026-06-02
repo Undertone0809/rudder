@@ -96,3 +96,57 @@ test("mention tokens align with surrounding text on every rendered surface", asy
     expect(libraryFileStyles.color, `${surface} library file link color`).toBe("rgb(37, 99, 235)");
   }
 });
+
+test("composer reference tokens align inside the chat input line", async ({ page }) => {
+  await page.goto("/");
+
+  await page.evaluate(() => {
+    document.body.innerHTML = `
+      <style>
+        body {
+          margin: 0;
+          padding: 48px;
+          background: white;
+          color: black;
+        }
+        .composer-alignment-fixture {
+          width: 760px;
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 15px;
+          line-height: 28px;
+        }
+      </style>
+      <div class="chat-composer composer-alignment-fixture">
+        <div class="rudder-mdxeditor-content" data-surface="composer">
+          <p>
+            <span data-reference-text="composer">你能看到里面的内容吗?</span>
+            <span class="rudder-skill-token" data-token-kind="skill" data-skill-token="true">你有权限创建一个新项目吗?</span>
+          </p>
+        </div>
+      </div>
+    `;
+  });
+
+  await page.evaluate(() => document.fonts?.ready);
+
+  const textBox = await page.locator('[data-reference-text="composer"]').boundingBox();
+  expect(textBox, "composer reference text should render").not.toBeNull();
+  const tokenBox = await page.locator('[data-surface="composer"] [data-token-kind="skill"]').boundingBox();
+  expect(tokenBox, "composer skill token should render").not.toBeNull();
+  const tokenTextBox = await page.locator('[data-surface="composer"] [data-token-kind="skill"]').evaluate((element) => {
+    const textNode = Array.from(element.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
+    if (!textNode) return null;
+    const range = document.createRange();
+    range.selectNodeContents(textNode);
+    const box = range.getBoundingClientRect();
+    range.detach();
+    return { y: box.y, height: box.height };
+  });
+  expect(tokenTextBox, "composer skill token text should render").not.toBeNull();
+
+  const textCenter = textBox!.y + textBox!.height / 2;
+  const tokenCenter = tokenBox!.y + tokenBox!.height / 2;
+  const tokenTextCenter = tokenTextBox!.y + tokenTextBox!.height / 2;
+  expect(Math.abs(tokenCenter - textCenter), "composer skill token center").toBeLessThanOrEqual(1.5);
+  expect(Math.abs(tokenTextCenter - textCenter), "composer skill token text center").toBeLessThanOrEqual(1);
+});

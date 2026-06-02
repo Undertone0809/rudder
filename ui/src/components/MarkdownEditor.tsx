@@ -74,6 +74,7 @@ import {
   removeAtomicInlineTokenFromMarkdown,
   type AtomicInlineTokenElement,
 } from "../lib/inline-token-dom";
+import { filterMentionOptions } from "../lib/mention-filter";
 import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
@@ -132,6 +133,13 @@ export interface MentionOption {
 
 /* ---- Editor props ---- */
 
+export interface InlineTokenClickEvent {
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+}
+
 export interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -153,7 +161,7 @@ export interface MarkdownEditorProps {
   /** Composer mode that preserves normal Markdown syntax as literal text. */
   plainText?: boolean;
   /** Optional handler for activating decorated inline reference tokens. */
-  onInlineTokenClick?: (token: AtomicInlineTokenElement) => void;
+  onInlineTokenClick?: (token: AtomicInlineTokenElement, event: InlineTokenClickEvent) => void;
   /** Experimental editor engine for true Markdown surfaces. */
   engine?: "legacy" | "milkdown";
 }
@@ -534,6 +542,10 @@ type AtomicInlineTokenEvent = {
   nativeEvent: Event & { stopImmediatePropagation?: () => void };
   preventDefault: () => void;
   stopPropagation: () => void;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
   clientX?: number;
 };
 
@@ -999,16 +1011,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
 
   const filteredMentions = useMemo(() => {
     if (!mentionState || !mentions) return [];
-    const q = mentionState.query.toLowerCase();
-    return mentions
-      .filter((mention) => {
-        if (mentionState.trigger === "$") {
-          if (mention.kind !== "skill") return false;
-        }
-        const searchText = (mention.searchText ?? mention.name).toLowerCase();
-        return searchText.includes(q);
-      })
-      .slice(0, 8);
+    return filterMentionOptions(mentions, mentionState.trigger, mentionState.query);
   }, [mentionState?.query, mentionState?.trigger, mentions]);
   useEffect(() => {
     onMentionQueryChange?.(mentionState?.trigger === "@" ? mentionState.query : null);
@@ -1583,7 +1586,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   }
 
   const canDropImage = Boolean(imageUploadHandler);
-  const handleDefaultInlineTokenClick = useCallback((token: AtomicInlineTokenElement) => {
+  const handleDefaultInlineTokenClick = useCallback((token: AtomicInlineTokenElement, _event: InlineTokenClickEvent) => {
     if (token.kind === "mention") {
       const parsed = parseMentionChipHref(token.href);
       if (!parsed) return;
@@ -1611,7 +1614,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     const token = readAtomicInlineTokenElement(event.target instanceof Node ? event.target : null);
     if (!token) return false;
     stopAtomicInlineTokenEvent(event);
-    (onInlineTokenClick ?? handleDefaultInlineTokenClick)(token);
+    (onInlineTokenClick ?? handleDefaultInlineTokenClick)(token, event);
     return true;
   }, [handleDefaultInlineTokenClick, onInlineTokenClick]);
 

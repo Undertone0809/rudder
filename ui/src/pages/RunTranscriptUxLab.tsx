@@ -175,12 +175,12 @@ function DashboardPreview({
   return (
     <div className="max-w-md">
       <div className={cn(
-        "flex h-[320px] flex-col overflow-hidden rounded-xl border shadow-[0_20px_40px_rgba(15,23,42,0.10)]",
+        "flex h-[292px] flex-col overflow-hidden rounded-xl border shadow-[0_20px_40px_rgba(15,23,42,0.10)]",
         streaming
           ? "border-cyan-500/25 bg-cyan-500/[0.04]"
           : "border-border bg-background/75",
       )}>
-        <div className="border-b border-border/60 px-4 py-4">
+        <div className="border-b border-border/60 px-3 py-2.5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -190,7 +190,7 @@ function DashboardPreview({
                 )} />
                 <Identity name={runTranscriptFixtureMeta.agentName} size="sm" />
               </div>
-              <div className="mt-2 text-[11px] text-muted-foreground">
+              <div className="mt-1.5 text-[11px] text-muted-foreground">
                 {fixtureElapsedLabel(streaming)}
               </div>
             </div>
@@ -198,12 +198,13 @@ function DashboardPreview({
               <ExternalLink className="h-2.5 w-2.5" />
             </span>
           </div>
-          <div className="mt-3 rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-xs text-cyan-700 dark:text-cyan-300">
+          <div className="mt-2 rounded-lg border border-border/60 bg-background/60 px-2.5 py-1.5 text-xs text-cyan-700 dark:text-cyan-300">
             {runTranscriptFixtureMeta.issueIdentifier} - {runTranscriptFixtureMeta.issueTitle}
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
           <RunTranscriptView
+            className="dashboard-run-preview"
             entries={previewEntries("dashboard")}
             mode={mode}
             density={density}

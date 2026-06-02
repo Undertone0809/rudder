@@ -107,6 +107,7 @@ describe("index.css motion rules", () => {
     const previewHeadings = cssBlock(".dashboard-run-preview .rudder-markdown :where(h1, h2, h3, h4, h5, h6)");
 
     expect(previewMarkdown).toContain("font-size: 0.75rem");
+    expect(previewMarkdown).toContain("line-height: 1.38");
     expect(previewMarkdown).toContain("overflow-wrap: anywhere");
     expect(previewHeadings).toContain("font-size: 0.75rem !important");
     expect(previewHeadings).toContain("letter-spacing: 0");

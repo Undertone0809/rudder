@@ -187,6 +187,19 @@ and screenshot evidence. Pass `-` to read the body from stdin.
 If a comment cites a screenshot path or visual validation artifact, attach that
 file with `--image <path>` instead of leaving only the local path in the text.
 
+## Project Commands
+
+```sh
+pnpm rudder project list --org-id <org-id>
+pnpm rudder project get <project-id-or-shortname> [--org-id <org-id>]
+pnpm rudder project create --org-id <org-id> --name "..." [--description "..."] [--status planned] [--goal-id <goal-id>] [--lead-agent-id <agent-id>]
+pnpm rudder project update <project-id-or-shortname> [--org-id <org-id>] [--name "..."] [--status in_progress] [--archived-at null]
+```
+
+Project commands are part of the agent-facing CLI contract. Agent-authenticated
+mutating calls attach `RUDDER_AGENT_ID` and `RUDDER_RUN_ID` when available and
+remain scoped to the authenticated organization.
+
 ## Agent Commands
 
 ```sh

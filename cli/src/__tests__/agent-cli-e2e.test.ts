@@ -31,6 +31,7 @@ import type {
   IssueCommitReport,
   IssueDocument,
   IssueLabel,
+  Project,
   OrganizationWorkspaceFileDetail,
   OrganizationWorkspaceFileList,
   OrganizationSkillDetail,
@@ -764,6 +765,89 @@ describe("agent CLI e2e", () => {
     expect(boardIssue.createdByAgentId).toBeNull();
     expect(boardIssue.assigneeAgentId).toBeNull();
     expect(boardIssue.assigneeUserId).toBeNull();
+  });
+
+  it("lets agents create, read, list, and update projects through the CLI", { timeout: 60_000 }, async () => {
+    const env = {
+      RUDDER_API_KEY: agentKey,
+      RUDDER_ORG_ID: orgId,
+      RUDDER_AGENT_ID: agentId,
+      RUDDER_RUN_ID: runId,
+    };
+
+    const created = await runCliJson<Project>(
+      [
+        "project",
+        "create",
+        "--name",
+        "Agent Planned Project",
+        "--description",
+        "Created from the agent CLI e2e path.",
+        "--status",
+        "planned",
+        "--lead-agent-id",
+        agentId,
+      ],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(created.orgId).toBe(orgId);
+    expect(created.name).toBe("Agent Planned Project");
+    expect(created.status).toBe("planned");
+    expect(created.leadAgentId).toBe(agentId);
+
+    const listed = await runCliJson<Project[]>(["project", "list"], {
+      apiBase,
+      configPath,
+      env,
+    });
+    expect(listed.some((project) => project.id === created.id)).toBe(true);
+
+    const fetched = await runCliJson<Project>(["project", "get", created.id], {
+      apiBase,
+      configPath,
+      env,
+    });
+    expect(fetched.id).toBe(created.id);
+
+    const updated = await runCliJson<Project>(
+      ["project", "update", created.id, "--status", "in_progress", "--target-date", "2026-07-01"],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(updated.id).toBe(created.id);
+    expect(updated.status).toBe("in_progress");
+    expect(updated.targetDate).toBe("2026-07-01");
+
+    const db = createDb(connectionString);
+    const projectActivities = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityId, created.id));
+    expect(projectActivities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "project.created",
+          actorType: "agent",
+          actorId: agentId,
+          agentId,
+          runId,
+        }),
+        expect.objectContaining({
+          action: "project.updated",
+          actorType: "agent",
+          actorId: agentId,
+          agentId,
+          runId,
+        }),
+      ]),
+    );
   });
 
   it("lists issue labels and requires agent-created issues to choose one once the label taxonomy is mature", { timeout: 60_000 }, async () => {
