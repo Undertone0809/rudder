@@ -2925,7 +2925,7 @@ a.rudder-skill-token[href] {
 /* Dashboard run cards are compact previews, not transcript detail panes. */
 .dashboard-run-preview .rudder-markdown {
   font-size: 0.75rem;
-  line-height: 1.45;
+  line-height: 1.38;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -2939,13 +2939,13 @@ a.rudder-skill-token[href] {
 }
 
 .dashboard-run-preview .rudder-markdown :where(p, ul, ol, blockquote, pre) {
-  margin-top: 0.25rem;
-  margin-bottom: 0.25rem;
+  margin-top: 0.125rem;
+  margin-bottom: 0.125rem;
 }
 
 .dashboard-run-preview .rudder-markdown :where(p, li) {
   font-size: 0.75rem !important;
-  line-height: 1.45 !important;
+  line-height: 1.38 !important;
 }
 
 .dashboard-run-preview .rudder-markdown :where(a, code) {
