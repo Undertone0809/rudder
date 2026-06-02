@@ -83,8 +83,8 @@ describe("home paths", () => {
 
     await expect(fs.stat(resolveOrganizationAgentsDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveOrganizationSkillsDir(orgId))).resolves.toBeDefined();
-    await expect(fs.stat(resolveOrganizationPlansDir(orgId))).resolves.toBeDefined();
-    await expect(fs.stat(resolveOrganizationArtifactsDir(orgId))).resolves.toBeDefined();
+    await expect(fs.stat(resolveOrganizationPlansDir(orgId))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(resolveOrganizationArtifactsDir(orgId))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.stat(resolveOrganizationProjectsDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveDefaultAgentWorkspaceDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentInstructionsDir(orgId, workspaceKey))).resolves.toBeDefined();

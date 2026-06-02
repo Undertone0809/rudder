@@ -156,7 +156,7 @@ export function WorkspaceLaunchTargetIcon({
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   const slotClassName = cn(
-    "inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-[color:var(--border-soft)] bg-white shadow-[0_0_0_1px_color-mix(in_oklab,var(--surface-page)_70%,transparent)] dark:bg-white",
+    "inline-flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-[color:var(--border-soft)] bg-white shadow-[0_0_0_1px_color-mix(in_oklab,var(--surface-page)_70%,transparent)] dark:bg-white",
     className,
   );
 
@@ -183,7 +183,7 @@ export function WorkspaceLaunchTargetIcon({
       <span
         aria-hidden="true"
         className={cn(
-          "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-[color:var(--border-base)] text-[8px] font-semibold leading-none",
+          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-[color:var(--border-base)] text-[9px] font-semibold leading-none",
           appSpecificFallback.className,
           className,
         )}
@@ -201,7 +201,7 @@ export function WorkspaceLaunchTargetIcon({
     <span
       aria-hidden="true"
       className={cn(
-        "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-[color:var(--border-base)] bg-[color:var(--surface-page)] text-foreground",
+        "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-[color:var(--border-base)] bg-[color:var(--surface-page)] text-foreground",
         className,
       )}
       data-workspace-launch-target-icon={target.id}
@@ -985,7 +985,7 @@ function WorkspaceTreeNode({
       <DropdownMenuContent
         align="end"
         sideOffset={6}
-        className="w-44 will-change-[opacity,transform] data-[state=open]:duration-150 data-[state=open]:ease-out data-[state=closed]:duration-100 data-[state=closed]:ease-in"
+        className="w-60 whitespace-nowrap will-change-[opacity,transform] data-[state=open]:duration-150 data-[state=open]:ease-out data-[state=closed]:duration-100 data-[state=closed]:ease-in"
         onClick={(event) => event.stopPropagation()}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -1560,22 +1560,22 @@ function ProjectResourceDetailPanel({
             ) : null}
             {canOpenAsWorkspace && selectedWorkspaceLaunchTarget && resourceOpenPath ? (
               <div
-                className="inline-flex h-8 items-stretch overflow-hidden rounded-[18px] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
+                className="inline-flex h-9 items-stretch overflow-hidden rounded-[18px] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
                 data-testid="org-workspaces-resource-launcher"
               >
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-full w-8 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
+                  className="h-full w-9 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
                   aria-label={`Open resource in ${selectedWorkspaceLaunchTarget.label}`}
                   onClick={() => onOpenWorkspaceTarget(resourceOpenPath, selectedWorkspaceLaunchTarget, "resource")}
                   disabled={openingWorkspaceTargetId !== null}
                 >
                   {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <WorkspaceLaunchTargetIcon target={selectedWorkspaceLaunchTarget} className="h-3.5 w-3.5" />
+                    <WorkspaceLaunchTargetIcon target={selectedWorkspaceLaunchTarget} />
                   )}
                 </Button>
                 <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
@@ -1585,14 +1585,14 @@ function ProjectResourceDetailPanel({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-full w-8 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                      className="h-full w-9 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
                       aria-label="Open resource menu"
                       disabled={openingWorkspaceTargetId !== null}
                     >
-                      <ChevronDown className="h-3.5 w-3.5" />
+                      <ChevronDown className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuContent align="end" className="w-56 whitespace-nowrap">
                     <DropdownMenuRadioGroup
                       value={selectedWorkspaceLaunchTarget.id}
                       onValueChange={(targetId) => {
@@ -1606,7 +1606,7 @@ function ProjectResourceDetailPanel({
                           value={target.id}
                           data-testid={`org-workspaces-resource-launch-target-${target.id}`}
                         >
-                          <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
+                          <WorkspaceLaunchTargetIcon target={target} />
                           <span>{target.label}</span>
                         </DropdownMenuRadioItem>
                       ))}
@@ -3084,25 +3084,22 @@ export function OrganizationWorkspaceBrowser({
         </Button>
         {workspaceRootPath && selectedWorkspaceLaunchTarget && !selectedProjectResource ? (
           <div
-            className="inline-flex h-8 items-stretch overflow-hidden rounded-md border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
+            className="inline-flex h-9 items-stretch overflow-hidden rounded-md border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
             data-testid="org-workspaces-launcher"
           >
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-full w-8 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
+              className="h-full w-9 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
               aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
               onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
               disabled={openingWorkspaceTargetId !== null}
             >
               {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <WorkspaceLaunchTargetIcon
-                  target={selectedWorkspaceLaunchTarget}
-                  className="h-3.5 w-3.5"
-                />
+                <WorkspaceLaunchTargetIcon target={selectedWorkspaceLaunchTarget} />
               )}
             </Button>
             <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
@@ -3112,14 +3109,14 @@ export function OrganizationWorkspaceBrowser({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-full w-8 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                  className="h-full w-9 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
                   aria-label="Open workspace menu"
                   disabled={openingWorkspaceTargetId !== null}
                 >
-                  <ChevronDown className="h-3.5 w-3.5" />
+                  <ChevronDown className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuContent align="end" className="w-56 whitespace-nowrap">
                 <DropdownMenuRadioGroup
                   value={selectedWorkspaceLaunchTarget.id}
                   onValueChange={(targetId) => {
@@ -3133,7 +3130,7 @@ export function OrganizationWorkspaceBrowser({
                       value={target.id}
                       data-testid={`org-workspaces-launch-target-${target.id}`}
                     >
-                      <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
+                      <WorkspaceLaunchTargetIcon target={target} />
                       <span>{target.label}</span>
                     </DropdownMenuRadioItem>
                   ))}
@@ -3807,42 +3804,39 @@ export function OrganizationWorkspaceBrowser({
               {workspaceRootPath && selectedWorkspaceLaunchTarget && !selectedProjectResource ? (
                 <div className="flex shrink-0 items-center border-l border-border px-2 text-xs text-muted-foreground">
                   <div
-                    className="inline-flex h-8 items-stretch overflow-hidden rounded-[18px] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
+                    className="inline-flex h-9 items-stretch overflow-hidden rounded-[18px] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
                     data-testid="org-workspaces-editor-launcher"
                   >
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-full w-8 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
+                      className="h-full w-9 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
                       aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
                       onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
                       disabled={openingWorkspaceTargetId !== null}
                     >
                       {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <WorkspaceLaunchTargetIcon
-                          target={selectedWorkspaceLaunchTarget}
-                          className="h-3.5 w-3.5"
-                        />
+                        <WorkspaceLaunchTargetIcon target={selectedWorkspaceLaunchTarget} />
                       )}
                     </Button>
                     <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-full w-8 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                        aria-label="Open workspace menu"
-                        disabled={openingWorkspaceTargetId !== null}
-                      >
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-full w-9 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                          aria-label="Open workspace menu"
+                          disabled={openingWorkspaceTargetId !== null}
+                        >
+                          <ChevronDown className="h-4 w-4" />
+                        </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuContent align="end" className="w-56 whitespace-nowrap">
                         <DropdownMenuRadioGroup
                           value={selectedWorkspaceLaunchTarget.id}
                           onValueChange={(targetId) => {
@@ -3856,7 +3850,7 @@ export function OrganizationWorkspaceBrowser({
                               value={target.id}
                               data-testid={`org-workspaces-editor-launch-target-${target.id}`}
                             >
-                              <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
+                              <WorkspaceLaunchTargetIcon target={target} />
                               <span>{target.label}</span>
                             </DropdownMenuRadioItem>
                           ))}

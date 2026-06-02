@@ -188,8 +188,6 @@ export async function ensureOrganizationWorkspaceLayout(orgId: string): Promise<
     fs.mkdir(root, { recursive: true }),
     fs.mkdir(agentsDir, { recursive: true }),
     fs.mkdir(skillsDir, { recursive: true }),
-    fs.mkdir(plansDir, { recursive: true }),
-    fs.mkdir(artifactsDir, { recursive: true }),
     fs.mkdir(projectsDir, { recursive: true }),
   ]);
   return { root, agentsDir, skillsDir, plansDir, artifactsDir, projectsDir };

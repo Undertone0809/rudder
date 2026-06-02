@@ -178,6 +178,46 @@ async function installDesktopShellWorkspaceIdeStub(page: Page) {
 }
 
 test.describe("Workspace shell", () => {
+  test("starts new organization Library roots without legacy plans or artifacts folders", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Library-Roots-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(organization.id);
+
+    await expect(async () => fs.stat(path.join(workspaceRoot, "agents"))).toPass();
+    await expect(async () => fs.stat(path.join(workspaceRoot, "skills"))).toPass();
+    await expect(async () => fs.stat(path.join(workspaceRoot, "projects"))).toPass();
+    await expect(fs.stat(path.join(workspaceRoot, "plans"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(path.join(workspaceRoot, "artifacts"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    await installDesktopShellWorkspaceIdeStub(page);
+    await gotoOrganizationPath(page, organization, "/library");
+    const filesCard = page.getByTestId("org-workspaces-files-card");
+    await expect(filesCard.getByRole("button", { name: "agents", exact: true })).toBeVisible();
+    await expect(filesCard.getByRole("button", { name: "skills", exact: true })).toBeVisible();
+    await expect(filesCard.getByRole("button", { name: "projects", exact: true })).toBeVisible();
+    await expect(filesCard.getByRole("button", { name: "plans", exact: true })).toHaveCount(0);
+    await expect(filesCard.getByRole("button", { name: "artifacts", exact: true })).toHaveCount(0);
+
+    await filesCard.getByRole("button", { name: "agents", exact: true }).hover();
+    await page.getByTestId("org-workspaces-entry-more-agents").click();
+    const copyAbsolutePathItem = page.getByRole("menuitem", { name: "Copy absolute path" });
+    await expect(copyAbsolutePathItem).toBeVisible();
+    const menuBox = await page.locator('[data-slot="dropdown-menu-content"]').boundingBox();
+    const copyItemMetrics = await copyAbsolutePathItem.evaluate((element) => ({
+      height: element.getBoundingClientRect().height,
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+    }));
+    expect(menuBox?.width).toBeGreaterThanOrEqual(230);
+    expect(copyItemMetrics.height).toBeLessThan(36);
+    expect(copyItemMetrics.scrollWidth).toBeLessThanOrEqual(copyItemMetrics.clientWidth + 1);
+  });
+
   test("keeps the shared desktop wrapper visually neutral", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
