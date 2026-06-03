@@ -21,6 +21,10 @@ export function resolvePiAgentDir(homeDir: string): string {
   return path.join(resolvePiRoot(homeDir), "agent");
 }
 
+function resolvePiModelsFile(homeDir: string): string {
+  return path.join(resolvePiAgentDir(homeDir), "models.json");
+}
+
 export function resolvePiSessionsDir(homeDir: string): string {
   return path.join(resolvePiAgentDir(homeDir), "rudder-sessions");
 }
@@ -31,6 +35,36 @@ export function resolvePiSkillsDir(homeDir: string): string {
 
 function resolvePiDefaultSessionsDir(homeDir: string): string {
   return path.join(resolvePiAgentDir(homeDir), "sessions");
+}
+
+function hasDeepSeekKey(env: Record<string, string | undefined>): boolean {
+  return typeof env.DEEPSEEK_API_KEY === "string" && env.DEEPSEEK_API_KEY.trim().length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readModelList(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).map((entry) => ({ ...entry }));
+}
+
+function mergeModelList(
+  existing: Array<Record<string, unknown>>,
+  additions: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const model of [...additions, ...existing]) {
+    const id = readString(model.id);
+    if (!id) continue;
+    byId.set(id, { ...model, id });
+  }
+  return Array.from(byId.values());
 }
 
 export function applyManagedPiEnv(
@@ -105,4 +139,34 @@ export async function prepareManagedPiHome(input: {
     `[rudder] Using Rudder-managed Pi home "${targetHome}" (credential/config snapshots seeded from "${sourceHome}").\n`,
   );
   return targetHome;
+}
+
+export async function ensureManagedPiDeepSeekConfig(input: {
+  env: Record<string, string | undefined>;
+  homeDir: string;
+}): Promise<void> {
+  if (!hasDeepSeekKey(input.env)) return;
+
+  const modelsFile = resolvePiModelsFile(input.homeDir);
+  await fs.mkdir(path.dirname(modelsFile), { recursive: true });
+
+  let config: Record<string, unknown> = { providers: {} };
+  try {
+    const parsed = JSON.parse(await fs.readFile(modelsFile, "utf8"));
+    if (isRecord(parsed)) config = parsed;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") return;
+  }
+
+  const providers = isRecord(config.providers) ? { ...config.providers } : {};
+  const deepseek = isRecord(providers.deepseek) ? { ...providers.deepseek } : {};
+  deepseek.apiKey = "DEEPSEEK_API_KEY";
+  deepseek.models = mergeModelList(readModelList(deepseek.models), [
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+  ]);
+  providers.deepseek = deepseek;
+  config.providers = providers;
+
+  await fs.writeFile(modelsFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }

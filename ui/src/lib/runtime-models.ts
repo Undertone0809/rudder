@@ -2,6 +2,7 @@ import { models as claudeLocalModels } from "@rudderhq/agent-runtime-claude-loca
 import { models as codexLocalModels } from "@rudderhq/agent-runtime-codex-local";
 import { models as cursorLocalModels } from "@rudderhq/agent-runtime-cursor-local";
 import { models as geminiLocalModels } from "@rudderhq/agent-runtime-gemini-local";
+import { models as piLocalModels } from "@rudderhq/agent-runtime-pi-local";
 import type { AgentRuntimeModel } from "../api/agents";
 
 const FALLBACK_MODELS_BY_RUNTIME: Record<string, readonly AgentRuntimeModel[]> = {
@@ -9,6 +10,7 @@ const FALLBACK_MODELS_BY_RUNTIME: Record<string, readonly AgentRuntimeModel[]> =
   codex_local: codexLocalModels,
   cursor: cursorLocalModels,
   gemini_local: geminiLocalModels,
+  pi_local: piLocalModels,
 };
 
 export function resolveRuntimeModels(

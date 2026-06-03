@@ -14,7 +14,7 @@ import {
 import {
   asStringArray,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { applyManagedPiEnv, prepareManagedPiHome } from "./home.js";
+import { applyManagedPiEnv, ensureManagedPiDeepSeekConfig, prepareManagedPiHome } from "./home.js";
 import { discoverPiModelsCached } from "./models.js";
 import { parsePiJsonl } from "./parse.js";
 
@@ -108,6 +108,7 @@ export async function testEnvironment(
     orgId: ctx.orgId,
     agentId: "environment-test",
   });
+  await ensureManagedPiDeepSeekConfig({ env: baseEnv, homeDir: managedHome });
   const runtimeEnv = normalizeEnv(ensurePathInEnv(applyManagedPiEnv(baseEnv, managedHome)));
 
   const cwdInvalid = checks.some((check) => check.code === "pi_cwd_invalid");
@@ -276,7 +277,7 @@ export async function testEnvironment(
           level: "warn",
           message: "Pi is installed, but provider authentication is not ready.",
           ...(detail ? { detail } : {}),
-          hint: "Set provider API key environment variable (e.g., ANTHROPIC_API_KEY, XAI_API_KEY) and retry.",
+          hint: "Set provider API key environment variable (e.g., ANTHROPIC_API_KEY, XAI_API_KEY, DEEPSEEK_API_KEY) and retry.",
         });
       } else {
         checks.push({
@@ -295,7 +296,7 @@ export async function testEnvironment(
           level: "warn",
           message: "Pi is installed, but provider authentication is not ready.",
           detail,
-          hint: "Set provider API key environment variable (e.g., ANTHROPIC_API_KEY, XAI_API_KEY) and retry.",
+          hint: "Set provider API key environment variable (e.g., ANTHROPIC_API_KEY, XAI_API_KEY, DEEPSEEK_API_KEY) and retry.",
         });
       } else {
         checks.push({

@@ -86,7 +86,10 @@ const fs = require("node:fs");
 fs.writeFileSync(process.env.RUDDER_TEST_ENV_PATH, JSON.stringify({
   home: process.env.HOME,
   piAgentDir: process.env.PI_CODING_AGENT_DIR,
-  piSessionDir: process.env.PI_CODING_AGENT_SESSION_DIR
+  piSessionDir: process.env.PI_CODING_AGENT_SESSION_DIR,
+  modelsConfig: fs.existsSync(process.env.PI_CODING_AGENT_DIR + "/models.json")
+    ? JSON.parse(fs.readFileSync(process.env.PI_CODING_AGENT_DIR + "/models.json", "utf8"))
+    : null
 }), "utf8");
 console.log("provider  model");
 console.log("deepseek  deepseek-v4-pro");
@@ -104,6 +107,7 @@ console.log("deepseek  deepseek-v4-pro");
             RUDDER_HOME: rudderHome,
             RUDDER_INSTANCE_ID: "test-instance",
             RUDDER_TEST_ENV_PATH: envCapturePath,
+            DEEPSEEK_API_KEY: "sk-test-secret",
           },
         },
       }),
@@ -113,6 +117,14 @@ console.log("deepseek  deepseek-v4-pro");
       home: string;
       piAgentDir: string;
       piSessionDir: string;
+      modelsConfig: {
+        providers?: {
+          deepseek?: {
+            apiKey?: string;
+            models?: Array<{ id?: string }>;
+          };
+        };
+      } | null;
     };
     const managedHome = path.join(
       rudderHome,
@@ -127,6 +139,11 @@ console.log("deepseek  deepseek-v4-pro");
     expect(capturedEnv.home).toBe(managedHome);
     expect(capturedEnv.piAgentDir).toBe(path.join(managedHome, ".pi", "agent"));
     expect(capturedEnv.piSessionDir).toBe(path.join(managedHome, ".pi", "agent", "rudder-sessions"));
+    expect(capturedEnv.modelsConfig?.providers?.deepseek?.apiKey).toBe("DEEPSEEK_API_KEY");
+    expect(capturedEnv.modelsConfig?.providers?.deepseek?.models?.map((model) => model.id)).toEqual([
+      "deepseek-v4-flash",
+      "deepseek-v4-pro",
+    ]);
     await fs.rm(root, { recursive: true, force: true });
   });
 });

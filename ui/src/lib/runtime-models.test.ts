@@ -27,4 +27,8 @@ describe("resolveRuntimeModels", () => {
   it("does not add fallback models for runtimes without them", () => {
     expect(resolveRuntimeModels("opencode_local")).toEqual([]);
   });
+
+  it("keeps Pi DeepSeek suggestions available when live discovery is empty", () => {
+    expect(resolveRuntimeModels("pi_local").map((model) => model.id)).toContain("deepseek/deepseek-v4-flash");
+  });
 });

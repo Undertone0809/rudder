@@ -18,6 +18,7 @@ describe("adapter model listing", () => {
     else process.env.HOME = ORIGINAL_HOME;
     delete process.env.OPENAI_API_KEY;
     delete process.env.RUDDER_OPENCODE_COMMAND;
+    delete process.env.RUDDER_PI_COMMAND;
     resetCodexModelsCacheForTests();
     resetCursorModelsCacheForTests();
     setCursorModelsRunnerForTests(null);
@@ -290,5 +291,15 @@ process.exit(1);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("returns Pi suggested models when live discovery is unavailable", async () => {
+    process.env.RUDDER_PI_COMMAND = "__rudder_missing_pi_command__";
+
+    const models = await listAgentRuntimeModels("pi_local");
+    expect(models).toEqual([
+      { id: "deepseek/deepseek-v4-flash", label: "deepseek/deepseek-v4-flash" },
+      { id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" },
+    ]);
   });
 });

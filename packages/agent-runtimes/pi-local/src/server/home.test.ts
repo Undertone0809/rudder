@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { prepareManagedPiHome, resolvePiSessionsDir } from "./home.js";
+import { ensureManagedPiDeepSeekConfig, prepareManagedPiHome, resolvePiSessionsDir } from "./home.js";
 
 describe("managed Pi home", () => {
   it("does not copy host Pi sessions and removes stale default session copies", async () => {
@@ -44,6 +44,55 @@ describe("managed Pi home", () => {
       });
       await expect(fs.access(resolvePiSessionsDir(managedHome))).resolves.toBeUndefined();
       await expect(fs.readdir(resolvePiSessionsDir(managedHome))).resolves.toEqual([]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes DeepSeek models into the managed home without persisting the key", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-home-deepseek-"));
+    const managedHome = path.join(root, "managed-home");
+
+    try {
+      await ensureManagedPiDeepSeekConfig({
+        env: { DEEPSEEK_API_KEY: "sk-test-secret" },
+        homeDir: managedHome,
+      });
+
+      const modelsPath = path.join(managedHome, ".pi", "agent", "models.json");
+      const raw = await fs.readFile(modelsPath, "utf8");
+      expect(raw).not.toContain("sk-test-secret");
+      const config = JSON.parse(raw) as {
+        providers?: {
+          deepseek?: {
+            apiKey?: string;
+            models?: Array<{ id?: string; name?: string }>;
+          };
+        };
+      };
+      expect(config.providers?.deepseek?.apiKey).toBe("DEEPSEEK_API_KEY");
+      expect(config.providers?.deepseek?.models?.map((model) => model.id)).toEqual([
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+      ]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not write DeepSeek config unless the key is available", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-home-no-deepseek-"));
+    const managedHome = path.join(root, "managed-home");
+
+    try {
+      await ensureManagedPiDeepSeekConfig({
+        env: {},
+        homeDir: managedHome,
+      });
+
+      await expect(fs.access(path.join(managedHome, ".pi", "agent", "models.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

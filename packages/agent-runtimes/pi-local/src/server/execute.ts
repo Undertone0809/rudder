@@ -27,7 +27,13 @@ import {
   runChildProcess,
   selectPromptTemplate,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { applyManagedPiEnv, prepareManagedPiHome, resolvePiSessionsDir, resolvePiSkillsDir } from "./home.js";
+import {
+  applyManagedPiEnv,
+  ensureManagedPiDeepSeekConfig,
+  prepareManagedPiHome,
+  resolvePiSessionsDir,
+  resolvePiSkillsDir,
+} from "./home.js";
 import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
 
@@ -164,6 +170,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     agentId: agent.id,
     onPrepared: (message) => onLog("stdout", message),
   });
+  await ensureManagedPiDeepSeekConfig({ env: sourceEnv, homeDir: managedHome });
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,

@@ -71,6 +71,7 @@ import {
 } from "@rudderhq/agent-runtime-pi-local/server";
 import {
   agentConfigurationDoc as piAgentConfigurationDoc,
+  models as piModels,
 } from "@rudderhq/agent-runtime-pi-local";
 import { parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
 import {
@@ -203,7 +204,7 @@ const piLocalAdapter: ServerAgentRuntimeModule = {
   syncSkills: syncPiSkills,
   sessionCodec: piSessionCodec,
   sessionManagement: getAgentRuntimeSessionManagement("pi_local") ?? undefined,
-  models: [],
+  models: piModels,
   listModels: listPiModels,
   supportsLocalAgentJwt: true,
   agentConfigurationDoc: piAgentConfigurationDoc,

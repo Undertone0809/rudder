@@ -1,7 +1,10 @@
 export const type = "pi_local";
 export const label = "Pi (local)";
 
-export const models: Array<{ id: string; label: string }> = [];
+export const models: Array<{ id: string; label: string }> = [
+  { id: "deepseek/deepseek-v4-flash", label: "deepseek/deepseek-v4-flash" },
+  { id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" },
+];
 
 export const agentConfigurationDoc = `# pi_local agent configuration
 
@@ -22,7 +25,7 @@ Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is appended separately at runtime
 - promptTemplate (string, optional): user prompt template passed via -p flag
-- model (string, required): Pi model id in provider/model format (for example xai/grok-4)
+- model (string, required): Pi model id in provider/model format (for example deepseek/deepseek-v4-flash)
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
 - thinking (string, optional): thinking level (off, minimal, low, medium, high, xhigh)
 - command (string, optional): defaults to "pi"
@@ -33,7 +36,8 @@ Operational fields:
 - graceSec (number, optional): SIGTERM grace period in seconds
 
 Notes:
-- Pi supports multiple providers and models. Use \`pi --list-models\` to list available options.
+- Pi supports multiple providers and models. Use \`pi --list-models\` to list currently authenticated options.
+- To use DeepSeek without changing the user's global Pi profile, set \`env.DEEPSEEK_API_KEY\` on the Rudder agent and select a \`deepseek/...\` model.
 - Rudder requires an explicit \`model\` value for \`pi_local\` agents.
 - Sessions created by Rudder are stored in the managed Pi home under .pi/agent/rudder-sessions and resumed with --session.
 - Rudder realizes only the skills explicitly enabled on the agent's Skills page, including bundled Rudder skills when selected there.
