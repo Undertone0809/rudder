@@ -7,6 +7,7 @@ import {
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
   MarkdownEditor,
+  splitPlainTextMarkdownSourceByAtomicReferences,
 } from "./MarkdownEditor";
 
 const mdxEditorMocks = vi.hoisted(() => ({
@@ -299,6 +300,17 @@ afterEach(() => {
 });
 
 describe("MarkdownEditor", () => {
+  it("keeps Rudder mention tokens inside plain-text list markdown", () => {
+    const href = "agent://1f3882fb-d535-4ac9-a9ad-b3f404865fd6?i=dicebear%3Anotionists%3A220939ed-91d3-454a-8a34-4abf4cf62162%3Fbg%3Dmist";
+
+    expect(splitPlainTextMarkdownSourceByAtomicReferences(
+      `- 关于你的职责，之前是 [Orion (Product Release Agent)](${href})`,
+    )).toEqual([
+      { kind: "text", text: "- 关于你的职责，之前是 " },
+      { kind: "mention", href, label: "Orion (Product Release Agent)" },
+    ]);
+  });
+
   it("opens upward when the composer is close to the viewport bottom", () => {
     const position = getMentionMenuPositionForViewport(
       {

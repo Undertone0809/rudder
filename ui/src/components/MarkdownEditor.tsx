@@ -229,18 +229,69 @@ function getMdastLinkLabel(node: unknown) {
     .trim();
 }
 
-function appendPlainTextMarkdownNode(lexicalParent: LexicalNode, text: string) {
-  const textNode = $createTextNode(text);
+export type PlainTextMarkdownSourcePart =
+  | { kind: "text"; text: string }
+  | { kind: "mention"; href: string; label: string }
+  | { kind: "skill"; href: string; label: string };
+
+export function splitPlainTextMarkdownSourceByAtomicReferences(markdown: string): PlainTextMarkdownSourcePart[] {
+  const parts: PlainTextMarkdownSourcePart[] = [];
+  let cursor = 0;
+
+  for (const match of findCanonicalReferenceCandidates(markdown)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    const label = match[1] ?? "";
+    const href = match[2] ?? "";
+    const parsedMention = parseMentionChipHref(href);
+    const parsedSkill = parseSkillReference(href, label);
+
+    if (!parsedMention && !parsedSkill) continue;
+
+    if (start > cursor) {
+      parts.push({ kind: "text", text: markdown.slice(cursor, start) });
+    }
+    if (parsedSkill) {
+      parts.push({ kind: "skill", href: parsedSkill.href, label: parsedSkill.label });
+    } else {
+      parts.push({ kind: "mention", href, label });
+    }
+    cursor = end;
+  }
+
+  if (cursor < markdown.length) {
+    parts.push({ kind: "text", text: markdown.slice(cursor) });
+  }
+
+  return parts.length > 0 ? parts : [{ kind: "text", text: markdown }];
+}
+
+function appendPlainTextMarkdownNodes(lexicalParent: LexicalNode, nodes: LexicalNode[]) {
+  if (nodes.length === 0) return;
   if ($isElementNode(lexicalParent) && lexicalParent.getType() !== "root") {
-    lexicalParent.append(textNode);
+    lexicalParent.append(...nodes);
     return;
   }
 
   const paragraph = $createParagraphNode();
-  paragraph.append(textNode);
+  paragraph.append(...nodes);
   if ($isElementNode(lexicalParent)) {
     lexicalParent.append(paragraph);
   }
+}
+
+function appendPlainTextMarkdownNode(lexicalParent: LexicalNode, text: string) {
+  const nodes: LexicalNode[] = [];
+  for (const part of splitPlainTextMarkdownSourceByAtomicReferences(text)) {
+    if (part.kind === "mention") {
+      nodes.push($createMentionTokenNode(part.label, part.href));
+    } else if (part.kind === "skill") {
+      nodes.push($createSkillTokenNode(part.label, part.href));
+    } else if (part.text) {
+      nodes.push($createTextNode(part.text));
+    }
+  }
+  appendPlainTextMarkdownNodes(lexicalParent, nodes);
 }
 
 function plainTextMarkdownImportPlugin(getMarkdown: () => string): RealmPlugin {
