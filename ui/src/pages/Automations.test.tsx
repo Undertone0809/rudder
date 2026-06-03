@@ -63,9 +63,20 @@ const automation = {
     completedAt: "2026-05-11T12:35:20",
     createdAt: "2026-05-11T12:35:18",
     updatedAt: "2026-05-11T12:35:20",
-    linkedIssue: null,
+    linkedIssue: {
+      id: "issue-1",
+      identifier: "AUT-7",
+      title: "Review automation output",
+      status: "todo",
+      priority: "medium",
+      updatedAt: "2026-05-11T12:35:20",
+    },
     linkedChatConversation: null,
-    trigger: null,
+    trigger: {
+      id: "trigger-1",
+      kind: "schedule",
+      label: null,
+    },
   },
 };
 
@@ -442,7 +453,7 @@ describe("Automations", () => {
     expect(runbookInput?.value).toContain("发送到新的 Rudder chat");
   });
 
-  it("renders last run as a fixed timestamp without the run status caption", async () => {
+  it("renders last run with trigger source, status, timestamp, and destination", async () => {
     const container = renderPage();
 
     await act(async () => {
@@ -450,7 +461,9 @@ describe("Automations", () => {
     });
 
     expect(container.textContent).toContain("2026-05-11 12:35:18");
-    expect(container.textContent).not.toContain("issue created");
+    expect(container.textContent).toContain("Opened issue");
+    expect(container.textContent).toContain("Scheduled run");
+    expect(container.textContent).toContain("Issue AUT-7");
   });
 
   it("does not expose the archived lifecycle in the list", async () => {

@@ -30,6 +30,7 @@ import { useToast } from "../context/ToastContext";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
+import { getAutomationRunDisplay } from "../lib/automation-run-display";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
@@ -1039,6 +1040,7 @@ export function Automations() {
                 {(automations ?? []).map((automation) => {
                   const enabled = automation.status === "active";
                   const isStatusPending = statusMutationAutomationId === automation.id;
+                  const lastRunDisplay = automation.lastRun ? getAutomationRunDisplay(automation.lastRun) : null;
                   return (
                     <tr
                       key={automation.id}
@@ -1085,8 +1087,33 @@ export function Automations() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-muted-foreground">
-                        <span className="tabular-nums">{formatLastRunTimestamp(automation.lastRun?.triggeredAt)}</span>
+                      <td className="px-3 py-2.5">
+                        {automation.lastRun && lastRunDisplay ? (
+                          <div className="min-w-[260px] max-w-[380px] space-y-1">
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                              <span className={cn(
+                                "inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium leading-none",
+                                lastRunDisplay.statusClassName,
+                              )}>
+                                {lastRunDisplay.statusLabel}
+                              </span>
+                              <span className="tabular-nums text-xs text-muted-foreground">
+                                {formatLastRunTimestamp(automation.lastRun.triggeredAt)}
+                              </span>
+                            </div>
+                            <div className="truncate text-xs text-muted-foreground" title={lastRunDisplay.title}>
+                              <span className="font-medium text-foreground/80">{lastRunDisplay.sourceLabel}</span>
+                              {lastRunDisplay.context ? <span> · {lastRunDisplay.context}</span> : null}
+                            </div>
+                            {lastRunDisplay.destinationLabel ? (
+                              <div className="truncate text-[11px] text-muted-foreground/80" title={lastRunDisplay.destinationLabel}>
+                                {lastRunDisplay.destinationLabel}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Never</span>
+                        )}
                       </td>
                       <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-3">

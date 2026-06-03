@@ -45,6 +45,72 @@ async function createAutomationFixture(page: Page) {
   return { organization, automation };
 }
 
+async function createCiWebhookAutomationFixture(page: Page) {
+  const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+    data: {
+      name: `Automations-CI-${Date.now()}`,
+    },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+
+  const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "CI Trigger Agent",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+      },
+    },
+  });
+  expect(agentRes.ok()).toBe(true);
+  const agent = (await agentRes.json()) as { id: string };
+
+  const automationRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`, {
+    data: {
+      title: "CI regression gate",
+      description: "Review CI failures and open tracked work when a regression needs action.",
+      assigneeAgentId: agent.id,
+      priority: "medium",
+      outputMode: "track_issue",
+    },
+  });
+  expect(automationRes.ok()).toBe(true);
+  const automation = (await automationRes.json()) as { id: string };
+
+  const triggerRes = await page.request.post(`${E2E_BASE_URL}/api/automations/${automation.id}/triggers`, {
+    data: {
+      kind: "webhook",
+      label: "ci",
+      signingMode: "bearer",
+    },
+  });
+  expect(triggerRes.ok()).toBe(true);
+  const trigger = (await triggerRes.json()) as {
+    trigger: { publicId: string };
+    secretMaterial: { webhookSecret: string };
+  };
+
+  const fireRes = await page.request.post(`${E2E_BASE_URL}/api/automation-triggers/public/${trigger.trigger.publicId}/fire`, {
+    headers: {
+      authorization: `Bearer ${trigger.secretMaterial.webhookSecret}`,
+    },
+    data: {
+      action: "completed",
+      repository: { full_name: "rudderhq/rudder" },
+      workflow_run: {
+        name: "E2E",
+        head_branch: "main",
+        head_sha: "1234567890abcdef1234567890abcdef12345678",
+      },
+    },
+  });
+  expect(fireRes.ok()).toBe(true);
+
+  return { organization, automation };
+}
+
 test.describe("Automations index layout", () => {
   test("places the create action in the workspace header", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -237,6 +303,29 @@ test.describe("Automations index layout", () => {
 
     await page.screenshot({
       path: testInfo.outputPath("automations-template-composer.png"),
+      fullPage: true,
+    });
+  });
+
+  test("summarizes CI webhook trigger runs in the list", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const { organization } = await createCiWebhookAutomationFixture(page);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
+
+    const row = page.getByRole("row").filter({ hasText: "CI regression gate" });
+    await expect(row).toBeVisible();
+    await expect(row).toContainText("Opened issue");
+    await expect(row).toContainText("CI webhook");
+    await expect(row).toContainText("rudderhq/rudder");
+    await expect(row).toContainText("E2E");
+    await expect(row).toContainText("main");
+    await expect(row).toContainText("1234567");
+    await expect(row).toContainText(new RegExp(`Issue ${organization.issuePrefix}-\\d+`));
+
+    await page.screenshot({
+      path: testInfo.outputPath("automations-ci-webhook-run-summary.png"),
       fullPage: true,
     });
   });
