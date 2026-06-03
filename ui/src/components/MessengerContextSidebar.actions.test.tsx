@@ -15,6 +15,7 @@ const mockStopMessageStream = vi.hoisted(() => vi.fn());
 const mockAbortChatStream = vi.hoisted(() => vi.fn());
 const mockSetChatSendInFlight = vi.hoisted(() => vi.fn());
 const mockSetStreamDraftForChat = vi.hoisted(() => vi.fn());
+const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
 const invalidateQueries = vi.fn();
 
 let messengerModel: any;
@@ -92,6 +93,10 @@ vi.mock("@/context/ChatGenerationContext", () => ({
     setChatSendInFlight: mockSetChatSendInFlight,
     setStreamDraftForChat: mockSetStreamDraftForChat,
   }),
+}));
+
+vi.mock("@/context/DialogContext", () => ({
+  useDialog: () => ({ confirm: mockConfirm }),
 }));
 
 vi.mock("@/hooks/useMessenger", () => ({
@@ -177,7 +182,7 @@ describe("MessengerContextSidebar chat actions", () => {
       id: chatId,
     }));
     mockStopMessageStream.mockResolvedValue({ stopped: true });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockConfirm.mockResolvedValue(true);
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: {
@@ -199,6 +204,7 @@ describe("MessengerContextSidebar chat actions", () => {
     cleanupFn = null;
     document.body.innerHTML = "";
     vi.restoreAllMocks();
+    mockConfirm.mockClear();
   });
 
   it("marks a read chat thread unread from the actions menu", () => {
@@ -259,9 +265,15 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(deleteButton?.dataset.variant).toBe("destructive");
     await act(async () => {
       deleteButton?.click();
+      await Promise.resolve();
     });
 
-    expect(window.confirm).toHaveBeenCalledWith('Delete "hi"? This cannot be undone.');
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Delete chat",
+      description: 'Delete "hi"? This cannot be undone.',
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
     expect(mockRemove).toHaveBeenCalledWith("chat-1");
   });
 
@@ -276,9 +288,15 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(deleteButton?.disabled).toBe(false);
     await act(async () => {
       deleteButton?.click();
+      await Promise.resolve();
     });
 
-    expect(window.confirm).toHaveBeenCalledWith('Delete "hi"? This cannot be undone.');
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Delete chat",
+      description: 'Delete "hi"? This cannot be undone.',
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
     expect(mockAbortChatStream).toHaveBeenCalledWith("chat-1");
     expect(mockStopMessageStream).toHaveBeenCalledWith("chat-1");
     expect(mockSetStreamDraftForChat).toHaveBeenCalledWith("chat-1", null);

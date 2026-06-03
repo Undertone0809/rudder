@@ -31,6 +31,7 @@ import { displayChatTitle } from "@/lib/chat-title";
 import { cn, relativeTime } from "@/lib/utils";
 import { useSidebar } from "@/context/SidebarContext";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
+import { useDialog } from "@/context/DialogContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
@@ -667,6 +668,7 @@ export function MessengerContextSidebar() {
   const relativePath = toOrganizationRelativePath(location.pathname);
   const model = useMessengerModel();
   const { isMobile, setSidebarOpen } = useSidebar();
+  const { confirm } = useDialog();
   const {
     abortChatStream,
     isChatGenerationActive,
@@ -1050,8 +1052,14 @@ export function MessengerContextSidebar() {
                         data: { status: "archived" },
                       });
                     }}
-                    onDelete={() => {
-                      if (typeof window !== "undefined" && !window.confirm(`Delete "${conversationDisplayTitle(conversation)}"? This cannot be undone.`)) return;
+                    onDelete={async () => {
+                      const confirmed = await confirm({
+                        title: "Delete chat",
+                        description: `Delete "${conversationDisplayTitle(conversation)}"? This cannot be undone.`,
+                        confirmLabel: "Delete",
+                        tone: "destructive",
+                      });
+                      if (!confirmed) return;
                       deleteConversationMutation.mutate({
                         chatId: conversation.id,
                         generating: isChatGenerationActive(conversation.id),

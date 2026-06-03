@@ -112,6 +112,10 @@ vi.mock("@/context/ToastContext", () => ({
   useToast: () => ({ pushToast: mockState.pushToast }),
 }));
 
+vi.mock("@/context/DialogContext", () => ({
+  useDialog: () => ({ confirm: vi.fn(async () => true) }),
+}));
+
 vi.mock("@/context/SidebarContext", () => ({
   useSidebar: () => ({ isMobile: false }),
 }));

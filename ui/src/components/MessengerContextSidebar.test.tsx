@@ -44,6 +44,10 @@ vi.mock("@/context/ChatGenerationContext", () => ({
   }),
 }));
 
+vi.mock("@/context/DialogContext", () => ({
+  useDialog: () => ({ confirm: vi.fn(async () => true) }),
+}));
+
 vi.mock("@/hooks/useMessenger", () => ({
   useMessengerModel: () => messengerModel,
   messengerThreadKindLabel: (kind: string) => kind,

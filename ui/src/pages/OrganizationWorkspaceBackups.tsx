@@ -10,6 +10,7 @@ import { organizationsApi } from "../api/orgs";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
 import { useToast } from "../context/ToastContext";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
 import { queryKeys } from "../lib/queryKeys";
@@ -122,6 +123,7 @@ function BackupVersionButton({
 export function OrganizationWorkspaceBackups() {
   const { viewedOrganization, viewedOrganizationId } = useViewedOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { confirm } = useDialog();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -275,16 +277,28 @@ export function OrganizationWorkspaceBackups() {
   );
   const canDelete = Boolean(selectedBackup && selectedBackup.status !== "running" && deleteBackup.variables !== selectedBackup.id);
 
-  function handleRestore() {
+  async function handleRestore() {
     if (!selectedBackup) return;
-    const confirmed = window.confirm(`Restore workspace backup from ${formatBackupTime(selectedBackup.finishedAt ?? selectedBackup.createdAt)}?`);
+    const backupTime = formatBackupTime(selectedBackup.finishedAt ?? selectedBackup.createdAt);
+    const confirmed = await confirm({
+      title: "Restore workspace backup",
+      description: `Restore workspace files from ${backupTime}? Rudder will create a safety backup before replacing the current files.`,
+      confirmLabel: "Restore",
+      tone: "destructive",
+    });
     if (!confirmed) return;
     restoreBackup.mutate(selectedBackup.id);
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!selectedBackup) return;
-    const confirmed = window.confirm(`Delete workspace backup from ${formatBackupTime(selectedBackup.finishedAt ?? selectedBackup.createdAt)}?`);
+    const backupTime = formatBackupTime(selectedBackup.finishedAt ?? selectedBackup.createdAt);
+    const confirmed = await confirm({
+      title: "Delete workspace backup",
+      description: `Delete workspace backup from ${backupTime}? This cannot be undone.`,
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
     if (!confirmed) return;
     deleteBackup.mutate(selectedBackup.id);
   }
