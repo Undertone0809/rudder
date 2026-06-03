@@ -274,6 +274,37 @@ describe("ChatSystemMessageBody", () => {
   });
 });
 
+describe("ChatMessageItem", () => {
+  it("renders empty streaming assistant messages as the normal thinking state", () => {
+    const html = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "streaming",
+      body: "",
+      replyingAgentId: "agent-1",
+    }));
+
+    expect(html).toContain("Thinking");
+    expect(html).toContain('aria-label="Thinking..."');
+    expect(html).not.toContain(">Streaming</span>");
+    expect(html).not.toContain('aria-label="Copy message"');
+  });
+
+  it("keeps non-empty streaming assistant messages copyable with a status label", () => {
+    const html = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "streaming",
+      body: "Partial automation response.",
+      replyingAgentId: "agent-1",
+    }));
+
+    expect(html).toContain(">Streaming</span>");
+    expect(html).toContain("Partial automation response.");
+    expect(html).toContain('aria-label="Copy message"');
+  });
+});
+
 describe("draft issue chat context", () => {
   it("resolves pending issue context by id or identifier", () => {
     const issue = {

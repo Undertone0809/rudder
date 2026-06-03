@@ -1485,6 +1485,7 @@ export function ChatMessageItem({
   const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
   const canContinueInterrupted = canContinueInterruptedChatMessage(message);
   const canRetryFailed = canRetryFailedChatMessage(message);
+  const isEmptyStreamingAssistant = !isUser && message.status === "streaming" && message.body.trim().length === 0;
 
   if (!isUser) {
     return (
@@ -1495,7 +1496,7 @@ export function ChatMessageItem({
             conversation={conversation}
             agents={agents}
           />
-          {statusLabel ? (
+          {statusLabel && !isEmptyStreamingAssistant ? (
             <div className="mb-2 flex items-center gap-2">
               <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(message.status))}>
                 {statusLabel}
@@ -1521,38 +1522,46 @@ export function ChatMessageItem({
               ) : null}
             </div>
           ) : null}
-          <ChatLongMessageBody
-            body={message.body}
-            skillReferences={skillReferences}
-            onMarkdownLinkClick={onMarkdownLinkClick}
-            className="max-w-[72ch] text-[15px] leading-7 text-foreground"
-          />
+          {isEmptyStreamingAssistant ? (
+            <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
+              <TextDots text="Thinking" className="text-muted-foreground" />
+            </div>
+          ) : (
+            <ChatLongMessageBody
+              body={message.body}
+              skillReferences={skillReferences}
+              onMarkdownLinkClick={onMarkdownLinkClick}
+              className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+            />
+          )}
           <ChatRichReferences message={message} />
           <ChatAttachmentList
             attachments={message.attachments}
             onOpenImage={onOpenImage}
             onOpenFile={onOpenFile}
           />
-          <div
-            className={cn(
-              "mt-2 flex h-7 items-center gap-1 text-muted-foreground",
-              chatMessageHoverBarClass,
-            )}
-          >
-            <HoverTimestampLabel
-              date={message.createdAt}
-              label={relativeTime(message.createdAt)}
-              className="text-[11px] tracking-normal"
-            />
-            <button
-              type="button"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-              aria-label="Copy message"
-              onClick={() => void onCopyMessageText(message.body)}
+          {!isEmptyStreamingAssistant ? (
+            <div
+              className={cn(
+                "mt-2 flex h-7 items-center gap-1 text-muted-foreground",
+                chatMessageHoverBarClass,
+              )}
             >
-              <Copy className="h-4 w-4" />
-            </button>
-          </div>
+              <HoverTimestampLabel
+                date={message.createdAt}
+                label={relativeTime(message.createdAt)}
+                className="text-[11px] tracking-normal"
+              />
+              <button
+                type="button"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                aria-label="Copy message"
+                onClick={() => void onCopyMessageText(message.body)}
+              >
+                <Copy className="h-4 w-4" />
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     );
