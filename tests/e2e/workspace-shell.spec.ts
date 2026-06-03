@@ -606,6 +606,9 @@ test.describe("Workspace shell", () => {
     await expect(mainContent.getByText("Project Context", { exact: true }).nth(1)).toBeVisible();
     await expect(mainContent.getByRole("button", { name: "Add resources" })).toBeVisible();
     await expect(mainContent.getByText("Rudder repo", { exact: true })).toBeVisible();
+    await expect(mainContent.getByText("Project role", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByText("Working Set", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByText("Reference", { exact: true })).toHaveCount(0);
     await expect(
       mainContent.getByRole("textbox", { name: "Optional project-specific guidance for agents" }),
     ).toHaveValue("Primary codebase for shipping changes.");

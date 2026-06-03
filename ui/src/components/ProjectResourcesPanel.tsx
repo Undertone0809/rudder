@@ -13,8 +13,6 @@ import { queryKeys } from "@/lib/queryKeys";
 import {
   organizationResourceKindLabel,
   organizationResourceSourceTypeLabel,
-  projectResourceRoleLabel,
-  projectResourceRoleOptions,
 } from "@/lib/resource-options";
 import { DraftInput } from "@/components/agent-config-primitives";
 import { Button } from "@/components/ui/button";
@@ -75,10 +73,6 @@ function resourceKindIcon(kind: Project["resources"][number]["resource"]["kind"]
     default:
       return Link2;
   }
-}
-
-function roleCount(resources: Project["resources"], role: ProjectResourceAttachmentRole) {
-  return resources.filter((resource) => resource.role === role).length;
 }
 
 export function ProjectResourcesPanel({ project }: { project: Project }) {
@@ -486,21 +480,11 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
           </div>
         </div>
 
-        <div className="grid gap-3 px-5 py-4 md:grid-cols-3">
+        <div className="px-5 py-4">
           <div className="rounded-[var(--radius-md)] border border-border/70 bg-background/45 px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Attached</div>
             <div className="mt-1 text-2xl font-semibold text-foreground">{attachedResources.length}</div>
             <div className="mt-1 text-xs text-muted-foreground">Shared context visible from this project.</div>
-          </div>
-          <div className="rounded-[var(--radius-md)] border border-border/70 bg-background/45 px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Working Set</div>
-            <div className="mt-1 text-2xl font-semibold text-foreground">{roleCount(attachedResources, "working_set")}</div>
-            <div className="mt-1 text-xs text-muted-foreground">The context agents should actively work inside.</div>
-          </div>
-          <div className="rounded-[var(--radius-md)] border border-border/70 bg-background/45 px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Reference</div>
-            <div className="mt-1 text-2xl font-semibold text-foreground">{roleCount(attachedResources, "reference")}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Background material that frames decisions and output.</div>
           </div>
         </div>
       </section>
@@ -510,7 +494,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
           <div>
             <div className="text-sm font-medium text-foreground">Attached context</div>
             <div className="text-xs text-muted-foreground">
-              Roles and notes here are project-local. They do not change the shared resource.
+              Project notes here are local to this project. They do not change the shared resource.
             </div>
           </div>
         </div>
@@ -541,9 +525,6 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                             <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border/70 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
                               {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
                             </span>
-                            <span className="rounded-[calc(var(--radius-sm)-1px)] border border-emerald-300/50 bg-emerald-500/8 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-emerald-700 dark:text-emerald-300">
-                              {projectResourceRoleLabel(attachment.role)}
-                            </span>
                           </div>
                           <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
                             {attachment.resource.locator}
@@ -566,25 +547,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                     </Button>
                   </div>
 
-                  <div className="mt-4 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)]">
-                    <label className="space-y-1.5">
-                      <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Project role</span>
-                      <select
-                        value={attachment.role}
-                        onChange={(event) => updateAttachment.mutate({
-                          attachmentId: attachment.id,
-                          role: event.target.value as typeof attachment.role,
-                          note: attachment.note,
-                          sortOrder: attachment.sortOrder,
-                        })}
-                        className="h-10 w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)] px-3 text-sm outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                      >
-                        {projectResourceRoleOptions.map((option) => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </label>
-
+                  <div className="mt-4">
                     <div className="space-y-1.5">
                       <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Project note</span>
                       <DraftInput
