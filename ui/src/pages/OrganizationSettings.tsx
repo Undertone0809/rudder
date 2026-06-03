@@ -15,6 +15,7 @@ import { Settings, Check, Download, Upload, ArchiveRestore, Trash2, Tags, Plus }
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { OrganizationPatternIcon } from "../components/OrganizationPatternIcon";
 import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
+import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { applyOrganizationPrefix } from "@/lib/organization-routes";
 import { normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { cn } from "../lib/utils";
@@ -147,7 +148,7 @@ export function OrganizationSettings() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "active") });
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "archived") });
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "all") });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(viewedOrganizationId!) });
+      await invalidateMessengerThreadSummaryQueries(queryClient, viewedOrganizationId!);
     },
   });
 
@@ -157,7 +158,7 @@ export function OrganizationSettings() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "active") });
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "archived") });
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "all") });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(viewedOrganizationId!) });
+      await invalidateMessengerThreadSummaryQueries(queryClient, viewedOrganizationId!);
     },
   });
 

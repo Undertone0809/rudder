@@ -1246,11 +1246,12 @@ describe("messengerService and issue follows", () => {
     expect(thread.detail.items[0]?.metadata).not.toHaveProperty("sourceCommentAuthorLabel");
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
-    expect(thread.summary.latestActivityAt).toBeNull();
-    expect(thread.summary.preview).toBe("Cross-issue activity feed");
+    expect(thread.summary.latestActivityAt).not.toBeNull();
+    expect(thread.summary.preview).toContain("Self-created issue");
     expect(issuesSummary?.unreadCount).toBe(0);
     expect(issuesSummary?.needsAttention).toBe(false);
-    expect(issuesSummary?.latestActivityAt).toBeNull();
+    expect(issuesSummary?.latestActivityAt).not.toBeNull();
+    expect(issuesSummary?.preview).toContain("Self-created issue");
   });
 
   it("uses the latest non-self issue comment for Messenger issue previews", async () => {
@@ -1293,6 +1294,8 @@ describe("messengerService and issue follows", () => {
     await issueSvc.addComment(issueId, "My later note should stay out of Messenger", { userId });
 
     const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const issuesSummary = summaries.find((entry) => entry.threadKey === "issues");
     const item = thread.detail.items.find((entry) => entry.issueId === issueId);
 
     expect(item?.sourceCommentId).toBe(agentComment.id);
@@ -1300,6 +1303,8 @@ describe("messengerService and issue follows", () => {
     expect(item?.sourceCommentAuthorLabel).toBe("Build Agent");
     expect(item?.body).toContain("Agent-visible update");
     expect(item?.body).not.toContain("My later note should stay out of Messenger");
+    expect(thread.summary.preview).toBe("Created issue with comments — Agent-visible update");
+    expect(issuesSummary?.preview).toBe("Created issue with comments — Agent-visible update");
   });
 
   it("includes the issue title in completion previews for unread Messenger issue notifications", async () => {
@@ -1466,10 +1471,12 @@ describe("messengerService and issue follows", () => {
     expect(item?.metadata).toMatchObject({ assignedToMe: true });
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
-    expect(thread.summary.latestActivityAt).toBeNull();
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(updatedAt.toISOString());
+    expect(thread.summary.preview).toContain("Description-only update issue");
     expect(issuesSummary?.unreadCount).toBe(0);
     expect(issuesSummary?.needsAttention).toBe(false);
-    expect(issuesSummary?.latestActivityAt).toBeNull();
+    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(updatedAt.toISOString());
+    expect(issuesSummary?.preview).toContain("Description-only update issue");
   });
 
   it("does not count self-authored issue status updates as Messenger attention", async () => {
@@ -1520,10 +1527,77 @@ describe("messengerService and issue follows", () => {
     expect(thread.detail.items[0]?.sourceCommentBody).toBeNull();
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
-    expect(thread.summary.latestActivityAt).toBeNull();
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(updatedAt.toISOString());
+    expect(thread.summary.preview).toBe("Self-updated status issue — Status changed to in review");
     expect(issuesSummary?.unreadCount).toBe(0);
     expect(issuesSummary?.needsAttention).toBe(false);
-    expect(issuesSummary?.latestActivityAt).toBeNull();
+    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(updatedAt.toISOString());
+    expect(issuesSummary?.preview).toBe("Self-updated status issue — Status changed to in review");
+  });
+
+  it("keeps the Messenger issues summary aligned to the latest visible issue while unread stays attention-based", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-summary-display";
+    const olderIssueId = randomUUID();
+    const newerIssueId = randomUUID();
+    const olderActivityAt = new Date("2026-04-10T09:00:00.000Z");
+    const newerActivityAt = new Date("2026-04-10T10:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Summary Display Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Summary Display Org"),
+      issuePrefix: `M${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: olderIssueId,
+        orgId,
+        title: "Older assigned attention issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: olderActivityAt,
+        updatedAt: olderActivityAt,
+      },
+      {
+        id: newerIssueId,
+        orgId,
+        title: "Newer visible self update",
+        status: "in_review",
+        priority: "medium",
+        createdByUserId: userId,
+        createdAt: olderActivityAt,
+        updatedAt: newerActivityAt,
+      },
+    ]);
+
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "user",
+      actorId: userId,
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: newerIssueId,
+      details: { status: "in_review", _previous: { status: "todo" } },
+      createdAt: newerActivityAt,
+    });
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const issuesSummary = summaries.find((item) => item.threadKey === "issues");
+
+    expect(thread.detail.items.map((item) => item.issueId)).toEqual([olderIssueId, newerIssueId]);
+    expect(thread.detail.unreadCount).toBe(1);
+    expect(thread.detail.needsAttention).toBe(true);
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+    expect(thread.summary.preview).toBe("Newer visible self update — Status changed to in review");
+    expect(issuesSummary?.unreadCount).toBe(1);
+    expect(issuesSummary?.needsAttention).toBe(true);
+    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+    expect(issuesSummary?.preview).toBe("Newer visible self update — Status changed to in review");
   });
 
   it("returns Messenger issue detail items in chronological order while keeping the summary pinned to latest activity", async () => {

@@ -1199,7 +1199,7 @@ export function messengerService(db: Db) {
           where "attentionActivityAt" is not null
             and (${lastReadAtIso}::timestamptz is null or "attentionActivityAt" > ${lastReadAtIso}::timestamptz)
         )::int as "unreadCount",
-        max("attentionActivityAt") as "latestActivityAt"
+        max("latestActivityAt") as "latestActivityAt"
       from (${issueEntryRowsQuery(orgId, userId)}) issue_entry_stats
     `)) as IssueThreadStats[];
     const row = rows[0];
@@ -1221,17 +1221,32 @@ export function messengerService(db: Db) {
     return normalizeDate(rows[0]?.latestActivityAt ?? null);
   }
 
-  async function loadLatestIssueAttentionEntry(orgId: string, userId: string) {
+  async function loadLatestIssueDisplayEntry(orgId: string, userId: string) {
     const rows = (await db.execute(issueEntryRowsQuery(
       orgId,
       userId,
       sql`
-        where "attentionActivityAt" is not null
-        order by "attentionActivityAt" desc, id asc
+        order by "latestActivityAt" desc, id asc
         limit 1
       `,
     ))) as IssueThreadEntryRow[];
     return rows[0] ? issueThreadEntryFromRow(rows[0], userId) : null;
+  }
+
+  function issueSummaryPreviewFromEntry(entry: IssueThreadEntry | null, userId: string) {
+    if (!entry) return null;
+    if (entry.attentionPreview) return entry.attentionPreview;
+    const fallbackPreview = entry.latestActivity
+      ? summarizeIssueActivity(entry.latestActivity, entry.issue)
+      : issueBodyFromSnapshot(
+        entry.issue,
+        null,
+        entry.issue.followed,
+        entry.issue.createdByUserId === userId,
+        entry.issue.assigneeUserId === userId,
+        entry.issue.reviewerUserId === userId && entry.issue.status === "in_review",
+      );
+    return issueThreadPreview(entry.issue, fallbackPreview);
   }
 
   async function loadIssueDetailEntries(
@@ -1274,13 +1289,14 @@ export function messengerService(db: Db) {
       throw conflict("Messenger issues cursor is invalid or expired");
     }
 
-    const [stats, latestAttentionEntry, detailEntries] = await Promise.all([
+    const [stats, latestDisplayEntry, detailEntries] = await Promise.all([
       loadIssueThreadStats(orgId, userId, lastReadAt),
-      loadLatestIssueAttentionEntry(orgId, userId),
+      loadLatestIssueDisplayEntry(orgId, userId),
       options.includeDetail
         ? loadIssueDetailEntries(orgId, userId, detailLimit, decodedCursor)
         : Promise.resolve([] as IssueThreadEntry[]),
     ]);
+    const summaryPreview = issueSummaryPreviewFromEntry(latestDisplayEntry, userId);
     const hasMoreDetailEntries = options.includeDetail && detailEntries.length > detailLimit;
     const pageEntries = hasMoreDetailEntries ? detailEntries.slice(0, detailLimit) : detailEntries;
     const cursorEntry = hasMoreDetailEntries ? pageEntries.at(-1) ?? null : null;
@@ -1319,7 +1335,7 @@ export function messengerService(db: Db) {
       });
 
     const data: IssueThreadData = {
-      summary: issueSummary(stats.itemCount, stats.latestActivityAt, stats.unreadCount, lastReadAt, latestAttentionEntry?.attentionPreview ?? null),
+      summary: issueSummary(stats.itemCount, stats.latestActivityAt, stats.unreadCount, lastReadAt, summaryPreview),
       itemCount: stats.itemCount,
     };
     if (options.includeDetail) {
@@ -1328,7 +1344,7 @@ export function messengerService(db: Db) {
         kind: "issues",
         title: "Issues",
         subtitle: `${stats.itemCount} tracked issue${stats.itemCount === 1 ? "" : "s"}`,
-        preview: latestAttentionEntry?.attentionPreview ?? null,
+        preview: summaryPreview,
         latestActivityAt: stats.latestActivityAt,
         lastReadAt,
         unreadCount: stats.unreadCount,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "@/api/issues";
+import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { queryKeys } from "@/lib/queryKeys";
 
 export const LEGACY_STARRED_ISSUES_KEY = "rudder:starred-issues";
@@ -72,7 +73,7 @@ export function useIssueFollows(orgId: string | null) {
       migratedRef.current = orgId;
       await queryClient.invalidateQueries({ queryKey: queryKeys.issues.follows(orgId) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(orgId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) });
+      await invalidateMessengerThreadSummaryQueries(queryClient, orgId);
       await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(orgId) });
     });
   }, [followedIssueIds, followsQuery.isSuccess, orgId, queryClient]);
@@ -86,7 +87,7 @@ export function useIssueFollows(orgId: string | null) {
     }
     await queryClient.invalidateQueries({ queryKey: queryKeys.issues.follows(orgId) });
     await queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(orgId) });
-    await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) });
+    await invalidateMessengerThreadSummaryQueries(queryClient, orgId);
     await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(orgId) });
   }, [followedIssueIds, orgId, queryClient]);
 

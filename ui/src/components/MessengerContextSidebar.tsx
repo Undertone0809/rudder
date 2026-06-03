@@ -33,6 +33,7 @@ import { useSidebar } from "@/context/SidebarContext";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
+import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { getMessengerUnreadScrollRequestId, MESSENGER_SCROLL_TO_UNREAD_EVENT } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
@@ -782,7 +783,7 @@ export function MessengerContextSidebar() {
   const refreshChatViews = async (chatId?: string) => {
     if (!model.selectedOrganizationId) return;
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(model.selectedOrganizationId) }),
+      invalidateMessengerThreadSummaryQueries(queryClient, model.selectedOrganizationId),
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(model.selectedOrganizationId, "all") }),
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(model.selectedOrganizationId, "active") }),
     ]);
@@ -895,7 +896,7 @@ export function MessengerContextSidebar() {
       activeThreadKey,
       activeThreadReadAt ? new Date(activeThreadReadAt).toISOString() : null,
     ).then(async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) });
+      await invalidateMessengerThreadSummaryQueries(queryClient, orgId);
       await queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(orgId) });
       if (route.kind === "issues") {
         await queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(orgId) });

@@ -1096,6 +1096,72 @@ test.describe("Messenger unified threads contract", () => {
     await expect(issueCard).toContainText("Completed");
   });
 
+  test("refreshes the sidebar Issues preview when the Issues feed loads newer content", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Issue-Summary-Refresh-${Date.now()}`);
+    const olderIssueId = randomUUID();
+    const newerIssueId = randomUUID();
+    const olderActivityAt = new Date("2026-04-09T09:00:00.000Z");
+    const newerActivityAt = new Date("2026-04-10T10:00:00.000Z");
+
+    await e2eDb.insert(issues).values({
+      id: olderIssueId,
+      orgId: organization.id,
+      title: "Old sidebar attention issue",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: currentUserId,
+      createdAt: olderActivityAt,
+      updatedAt: olderActivityAt,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    const issuesThread = page.getByTestId(threadTestId("issues"));
+    await expect(issuesThread).toBeVisible({ timeout: 15_000 });
+    await expect(issuesThread).toContainText("Old sidebar attention issue");
+    await expect(page.getByTestId("messenger-time-issues")).toContainText("Apr 9");
+
+    await e2eDb.insert(issues).values({
+      id: newerIssueId,
+      orgId: organization.id,
+      title: "Latest sidebar-aligned issue",
+      status: "in_review",
+      priority: "medium",
+      createdByUserId: currentUserId,
+      createdAt: olderActivityAt,
+      updatedAt: newerActivityAt,
+    });
+    await e2eDb.insert(activityLog).values({
+      orgId: organization.id,
+      actorType: "user",
+      actorId: currentUserId,
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: newerIssueId,
+      details: { status: "in_review", _previous: { status: "todo" } },
+      createdAt: newerActivityAt,
+    });
+
+    await issuesThread.click();
+    await expect(page.locator("#main-content").getByRole("heading", { name: "Issues" })).toBeVisible({ timeout: 15_000 });
+    const newerIssueCard = page.locator(`[data-testid="messenger-issue-card-${newerIssueId}"]`);
+    await expect(newerIssueCard).toContainText("Latest sidebar-aligned issue");
+    await expect(newerIssueCard).toContainText("Status changed to in review");
+    await expect(issuesThread).toContainText("Latest sidebar-aligned issue");
+    await expect(issuesThread).not.toContainText("Old sidebar attention issue");
+    await expect(page.getByTestId("messenger-time-issues")).toContainText("Apr 10");
+  });
+
   test("renders failed-run issue titles as links without exposing raw issue ids", async ({ page }, testInfo) => {
     const organization = await createConfiguredOrganization(page, `Messenger-Failed-${Date.now()}`);
 

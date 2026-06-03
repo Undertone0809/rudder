@@ -29,6 +29,7 @@ import { heartbeatsApi } from "@/api/heartbeats";
 import { issuesApi } from "@/api/issues";
 import { messengerApi } from "@/api/messenger";
 import { projectsApi } from "@/api/projects";
+import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
 import {
@@ -74,7 +75,7 @@ function firstNonEmptyLine(value: string | null | undefined): string | null {
 
 function invalidateMessengerQueries(queryClient: ReturnType<typeof useQueryClient>, orgId: string) {
   return Promise.all([
-    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
+    invalidateMessengerThreadSummaryQueries(queryClient, orgId),
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(orgId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.approvals(orgId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.system(orgId, "failed-runs") }),
