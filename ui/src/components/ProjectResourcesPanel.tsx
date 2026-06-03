@@ -28,7 +28,15 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { ResourceLocatorField, suggestResourceNameFromLocator } from "@/components/ResourceLocatorField";
-import { Boxes, FileText, Folder, FolderPlus, Link2, Loader2, Trash2 } from "lucide-react";
+import { Boxes, FileText, Folder, FolderPlus, Link2, Loader2, Pencil, Trash2, X } from "lucide-react";
+
+type ProjectResourceAttachment = Project["resources"][number];
+type ProjectResourceEditDraft = {
+  name: string;
+  locator: string;
+  description: string;
+  note: string;
+};
 
 function createNewResourceDraft() {
   return {
@@ -75,6 +83,15 @@ function resourceKindIcon(kind: Project["resources"][number]["resource"]["kind"]
   }
 }
 
+function createResourceEditDraft(attachment: ProjectResourceAttachment): ProjectResourceEditDraft {
+  return {
+    name: attachment.resource.name,
+    locator: attachment.resource.locator,
+    description: attachment.resource.description ?? "",
+    note: attachment.note ?? "",
+  };
+}
+
 export function ProjectResourcesPanel({ project }: { project: Project }) {
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
@@ -83,6 +100,8 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
   const [newResourceDraft, setNewResourceDraft] = useState(createNewResourceDraft());
   const [librarySearch, setLibrarySearch] = useState("");
   const [resourceSearch, setResourceSearch] = useState("");
+  const [editingAttachmentId, setEditingAttachmentId] = useState<string | null>(null);
+  const [resourceEditDraft, setResourceEditDraft] = useState<ProjectResourceEditDraft | null>(null);
 
   const attachedResources = useMemo(
     () => [...project.resources].sort((left, right) => left.sortOrder - right.sortOrder),
@@ -202,6 +221,42 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     onError: (error) => {
       pushToast({
         title: error instanceof Error ? error.message : "Failed to update project context",
+        tone: "error",
+      });
+    },
+  });
+
+  const updateResourceDetails = useMutation({
+    mutationFn: async (payload: {
+      attachment: ProjectResourceAttachment;
+      draft: ProjectResourceEditDraft;
+    }) => {
+      const { attachment, draft } = payload;
+      const name = draft.name.trim();
+      const locator = draft.locator.trim();
+      if (!name) throw new Error("Resource name is required.");
+      if (!locator) throw new Error("Resource locator is required.");
+      const updatedResource = await organizationsApi.updateResource(project.orgId, attachment.resourceId, {
+        name,
+        locator,
+        description: draft.description.trim() || null,
+      });
+      const updatedAttachment = await projectsApi.updateResourceAttachment(project.id, attachment.id, {
+        role: attachment.role,
+        note: draft.note.trim() || null,
+        sortOrder: attachment.sortOrder,
+      }, project.orgId);
+      return { updatedResource, updatedAttachment };
+    },
+    onSuccess: () => {
+      setEditingAttachmentId(null);
+      setResourceEditDraft(null);
+      invalidateProjectResourceQueries();
+      pushToast({ title: "Resource updated", tone: "success" });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to update resource",
         tone: "error",
       });
     },
@@ -485,6 +540,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
             <div className="divide-y divide-border">
               {attachedResources.map((attachment) => {
                 const Icon = resourceKindIcon(attachment.resource.kind);
+                const isEditing = editingAttachmentId === attachment.id;
                 return (
                   <div key={attachment.id} className="px-5 py-4">
                     <div className="flex items-start justify-between gap-4">
@@ -509,33 +565,120 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                           <p className="mt-3 text-sm text-muted-foreground">{attachment.resource.description}</p>
                         ) : null}
                       </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className="text-muted-foreground"
-                        onClick={() => removeAttachment.mutate(attachment.id)}
-                        disabled={removeAttachment.isPending}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          className="text-muted-foreground"
+                          aria-label={`Edit ${attachment.resource.name}`}
+                          onClick={() => {
+                            setEditingAttachmentId(attachment.id);
+                            setResourceEditDraft(createResourceEditDraft(attachment));
+                          }}
+                          disabled={updateResourceDetails.isPending}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          className="text-muted-foreground"
+                          aria-label={`Remove ${attachment.resource.name}`}
+                          onClick={() => removeAttachment.mutate(attachment.id)}
+                          disabled={removeAttachment.isPending || updateResourceDetails.isPending}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
 
-                    <div className="mt-4 space-y-1.5">
-                      <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Project note</span>
-                      <DraftInput
-                        value={attachment.note ?? ""}
-                        onCommit={(note) => updateAttachment.mutate({
-                          attachmentId: attachment.id,
-                          role: attachment.role,
-                          note,
-                          sortOrder: attachment.sortOrder,
-                        })}
-                        immediate
-                        className="h-10 w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)] px-3 text-sm outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                        placeholder="Optional project-specific guidance for agents"
-                      />
-                    </div>
+                    {isEditing && resourceEditDraft ? (
+                      <div
+                        className="mt-4 grid gap-3 rounded-[var(--radius-md)] border border-border/70 bg-background/45 p-3 md:grid-cols-2"
+                        data-testid="project-resource-edit-form"
+                      >
+                        <label className="space-y-1.5">
+                          <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Name</span>
+                          <Input
+                            value={resourceEditDraft.name}
+                            onChange={(event) => setResourceEditDraft((current) => current ? ({ ...current, name: event.target.value }) : current)}
+                            disabled={updateResourceDetails.isPending}
+                          />
+                        </label>
+                        <label className="space-y-1.5">
+                          <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Locator</span>
+                          <Input
+                            value={resourceEditDraft.locator}
+                            onChange={(event) => setResourceEditDraft((current) => current ? ({ ...current, locator: event.target.value }) : current)}
+                            disabled={updateResourceDetails.isPending}
+                          />
+                        </label>
+                        <label className="space-y-1.5 md:col-span-2">
+                          <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Description</span>
+                          <Textarea
+                            value={resourceEditDraft.description}
+                            onChange={(event) => setResourceEditDraft((current) => current ? ({ ...current, description: event.target.value }) : current)}
+                            placeholder="What this resource contains and when agents should use it."
+                            disabled={updateResourceDetails.isPending}
+                          />
+                        </label>
+                        <label className="space-y-1.5 md:col-span-2">
+                          <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Project note</span>
+                          <Input
+                            value={resourceEditDraft.note}
+                            onChange={(event) => setResourceEditDraft((current) => current ? ({ ...current, note: event.target.value }) : current)}
+                            placeholder="Optional project-specific guidance for agents"
+                            disabled={updateResourceDetails.isPending}
+                          />
+                        </label>
+                        <div className="flex justify-end gap-2 md:col-span-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setEditingAttachmentId(null);
+                              setResourceEditDraft(null);
+                            }}
+                            disabled={updateResourceDetails.isPending}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                            Cancel
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => updateResourceDetails.mutate({ attachment, draft: resourceEditDraft })}
+                            disabled={
+                              updateResourceDetails.isPending
+                              || !resourceEditDraft.name.trim()
+                              || !resourceEditDraft.locator.trim()
+                            }
+                          >
+                            {updateResourceDetails.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                            Save
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-4 space-y-1.5">
+                        <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Project note</span>
+                        <DraftInput
+                          value={attachment.note ?? ""}
+                          onCommit={(note) => updateAttachment.mutate({
+                            attachmentId: attachment.id,
+                            role: attachment.role,
+                            note,
+                            sortOrder: attachment.sortOrder,
+                          })}
+                          immediate
+                          className="h-10 w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)] px-3 text-sm outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                          placeholder="Optional project-specific guidance for agents"
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}

@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
@@ -50,7 +51,6 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import {
   organizationResourceKindLabel,
   organizationResourceSourceTypeLabel,
-  projectResourceRoleLabel,
 } from "../lib/resource-options";
 import {
   Boxes,
@@ -1426,6 +1426,22 @@ function ResourceMetadataRow({
   );
 }
 
+type ProjectResourceEditDraft = {
+  name: string;
+  locator: string;
+  description: string;
+  note: string;
+};
+
+function createProjectResourceEditDraft(attachment: ProjectResourceAttachment): ProjectResourceEditDraft {
+  return {
+    name: attachment.resource.name,
+    locator: attachment.resource.locator,
+    description: attachment.resource.description ?? "",
+    note: attachment.note ?? "",
+  };
+}
+
 function ProjectResourceDetailPanel({
   project,
   attachment,
@@ -1446,6 +1462,9 @@ function ProjectResourceDetailPanel({
   onOpenWorkspaceTarget: (rootPath: string, target: DesktopWorkspaceLaunchTarget, toastLabel?: string) => void;
 }) {
   const { pushToast } = useToast();
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [resourceDraft, setResourceDraft] = useState(() => createProjectResourceEditDraft(attachment));
   const [openingPath, setOpeningPath] = useState(false);
   const [openingExternal, setOpeningExternal] = useState(false);
   const locator = attachment.resource.locator.trim();
@@ -1458,6 +1477,45 @@ function ProjectResourceDetailPanel({
   );
   const canOpenStandalonePath = Boolean(resourceOpenPath && readDesktopShell()?.openPath && !canOpenAsWorkspace);
   const canOpenExternal = attachment.resource.kind === "url" || isHttpUrl(locator);
+
+  useEffect(() => {
+    setEditing(false);
+    setResourceDraft(createProjectResourceEditDraft(attachment));
+  }, [attachment.id, attachment.note, attachment.resource.description, attachment.resource.locator, attachment.resource.name]);
+
+  const updateResourceDetails = useMutation({
+    mutationFn: async (draft: ProjectResourceEditDraft) => {
+      const name = draft.name.trim();
+      const nextLocator = draft.locator.trim();
+      if (!name) throw new Error("Resource name is required.");
+      if (!nextLocator) throw new Error("Resource locator is required.");
+      const updatedResource = await organizationsApi.updateResource(project.orgId, attachment.resourceId, {
+        name,
+        locator: nextLocator,
+        description: draft.description.trim() || null,
+      });
+      const updatedAttachment = await projectsApi.updateResourceAttachment(project.id, attachment.id, {
+        role: attachment.role,
+        note: draft.note.trim() || null,
+        sortOrder: attachment.sortOrder,
+      }, project.orgId);
+      return { updatedResource, updatedAttachment };
+    },
+    onSuccess: () => {
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(project.orgId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(project.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.resources(project.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.organizations.resources(project.orgId) });
+      pushToast({ title: "Resource updated", tone: "success" });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to update resource",
+        tone: "error",
+      });
+    },
+  });
 
   async function handleOpenPath() {
     if (!resourceOpenPath) return;
@@ -1523,15 +1581,26 @@ function ProjectResourceDetailPanel({
               <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
                 {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
               </span>
-              <span className="rounded-[calc(var(--radius-sm)-1px)] border border-emerald-300/50 bg-emerald-500/8 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
-                {projectResourceRoleLabel(attachment.role)}
-              </span>
             </div>
             <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
               {locator}
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant={editing ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => {
+                setResourceDraft(createProjectResourceEditDraft(attachment));
+                setEditing(true);
+              }}
+              disabled={updateResourceDetails.isPending}
+              data-testid="org-workspaces-resource-edit"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </Button>
             {canOpenExternal ? (
               <Button
                 type="button"
@@ -1621,18 +1690,86 @@ function ProjectResourceDetailPanel({
 
       <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto px-5 py-4">
         <div className="max-w-3xl">
-          <ResourceMetadataRow label="Project">{project.name}</ResourceMetadataRow>
-          <ResourceMetadataRow label="Role">{projectResourceRoleLabel(attachment.role)}</ResourceMetadataRow>
-          <ResourceMetadataRow label="Source">
-            {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
-          </ResourceMetadataRow>
-          <ResourceMetadataRow label="Locator" mono>{locator}</ResourceMetadataRow>
-          <ResourceMetadataRow label="Description">
-            {attachment.resource.description?.trim() || <span className="text-muted-foreground">No description.</span>}
-          </ResourceMetadataRow>
-          <ResourceMetadataRow label="Project note">
-            {attachment.note?.trim() || <span className="text-muted-foreground">No project-specific note.</span>}
-          </ResourceMetadataRow>
+          {editing ? (
+            <div className="grid gap-4 md:grid-cols-2" data-testid="org-workspaces-resource-edit-form">
+              <label className="space-y-1.5">
+                <span className="text-xs text-muted-foreground">Name</span>
+                <Input
+                  value={resourceDraft.name}
+                  onChange={(event) => setResourceDraft((current) => ({ ...current, name: event.target.value }))}
+                  disabled={updateResourceDetails.isPending}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs text-muted-foreground">Locator</span>
+                <Input
+                  value={resourceDraft.locator}
+                  onChange={(event) => setResourceDraft((current) => ({ ...current, locator: event.target.value }))}
+                  disabled={updateResourceDetails.isPending}
+                />
+              </label>
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-xs text-muted-foreground">Description</span>
+                <Textarea
+                  value={resourceDraft.description}
+                  onChange={(event) => setResourceDraft((current) => ({ ...current, description: event.target.value }))}
+                  placeholder="What this resource contains and when agents should use it."
+                  disabled={updateResourceDetails.isPending}
+                />
+              </label>
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-xs text-muted-foreground">Project note</span>
+                <Input
+                  value={resourceDraft.note}
+                  onChange={(event) => setResourceDraft((current) => ({ ...current, note: event.target.value }))}
+                  placeholder="Optional project-specific guidance for agents"
+                  disabled={updateResourceDetails.isPending}
+                />
+              </label>
+              <div className="flex justify-end gap-2 md:col-span-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setResourceDraft(createProjectResourceEditDraft(attachment));
+                    setEditing(false);
+                  }}
+                  disabled={updateResourceDetails.isPending}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => updateResourceDetails.mutate(resourceDraft)}
+                  disabled={
+                    updateResourceDetails.isPending
+                    || !resourceDraft.name.trim()
+                    || !resourceDraft.locator.trim()
+                  }
+                >
+                  {updateResourceDetails.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  Save
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <ResourceMetadataRow label="Project">{project.name}</ResourceMetadataRow>
+              <ResourceMetadataRow label="Source">
+                {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
+              </ResourceMetadataRow>
+              <ResourceMetadataRow label="Locator" mono>{locator}</ResourceMetadataRow>
+              <ResourceMetadataRow label="Description">
+                {attachment.resource.description?.trim() || <span className="text-muted-foreground">No description.</span>}
+              </ResourceMetadataRow>
+              <ResourceMetadataRow label="Project note">
+                {attachment.note?.trim() || <span className="text-muted-foreground">No project-specific note.</span>}
+              </ResourceMetadataRow>
+            </>
+          )}
         </div>
       </div>
     </div>

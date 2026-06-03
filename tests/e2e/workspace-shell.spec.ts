@@ -597,6 +597,7 @@ test.describe("Workspace shell", () => {
       },
     });
     expect(attachRepoRes.ok()).toBe(true);
+    const repoAttachment = await attachRepoRes.json() as { id: string };
 
     await gotoOrganizationPath(page, organization, `/projects/${project.urlKey ?? project.id}/resources`);
 
@@ -614,6 +615,31 @@ test.describe("Workspace shell", () => {
     await expect(
       mainContent.getByRole("textbox", { name: "Optional project-specific guidance for agents" }),
     ).toHaveValue("Primary codebase for shipping changes.");
+
+    await mainContent.getByRole("button", { name: "Edit Rudder repo" }).click();
+    const editForm = mainContent.getByTestId("project-resource-edit-form");
+    await expect(editForm).toBeVisible();
+    await editForm.getByLabel("Name").fill("Rudder codebase");
+    await editForm.getByLabel("Locator").fill("~/projects/rudder-oss");
+    await editForm.getByLabel("Description").fill("Canonical monorepo for implementation work.");
+    await editForm.getByLabel("Project note").fill("Main project checkout.");
+    const updateResourceResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/orgs/${organization.id}/resources/${repoResource.id}`)
+      && response.ok(),
+    );
+    const updateAttachmentResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/projects/${project.id}/resources/${repoAttachment.id}`)
+      && response.ok(),
+    );
+    await editForm.getByRole("button", { name: "Save" }).click();
+    await Promise.all([updateResourceResponse, updateAttachmentResponse]);
+    await expect(mainContent.getByText("Rudder codebase", { exact: true })).toBeVisible();
+    await expect(mainContent.getByText("~/projects/rudder-oss", { exact: true })).toBeVisible();
+    await expect(
+      mainContent.getByRole("textbox", { name: "Optional project-specific guidance for agents" }),
+    ).toHaveValue("Main project checkout.");
 
     const attachResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"
@@ -708,16 +734,41 @@ test.describe("Workspace shell", () => {
     await expect(resourceDetail.getByText("New Zealand repo", { exact: true })).toBeVisible();
     await expect(resourceDetail.getByText("~/projects/new-zealand", { exact: true }).first()).toBeVisible();
     await expect(resourceDetail.getByText("Primary implementation checkout.", { exact: true })).toBeVisible();
+    await expect(resourceDetail.getByText("Role", { exact: true })).toHaveCount(0);
+    await expect(resourceDetail.getByText("Reference", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("org-workspaces-resource-launcher").getByRole("button", { name: "Open resource in Cursor" })).toBeVisible();
     await expect(page.getByText("No file open")).toHaveCount(0);
     await expect(page.getByTestId("org-workspaces-editor-launcher")).toHaveCount(0);
     await expect(resourceDetail.getByTestId("org-workspaces-resource-open-path")).toHaveCount(0);
 
+    await resourceDetail.getByTestId("org-workspaces-resource-edit").click();
+    const resourceEditForm = resourceDetail.getByTestId("org-workspaces-resource-edit-form");
+    await expect(resourceEditForm).toBeVisible();
+    await resourceEditForm.getByLabel("Name").fill("New Zealand codebase");
+    await resourceEditForm.getByLabel("Locator").fill("~/projects/new-zealand-main");
+    await resourceEditForm.getByLabel("Description").fill("Updated local checkout for project implementation.");
+    await resourceEditForm.getByLabel("Project note").fill("Primary local checkout.");
+    const updateLibraryResourceResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/orgs/${organization.id}/resources/${repoResource.id}`)
+      && response.ok(),
+    );
+    const updateLibraryAttachmentResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/projects/${project.id}/resources/${attachment.id}`)
+      && response.ok(),
+    );
+    await resourceEditForm.getByRole("button", { name: "Save" }).click();
+    await Promise.all([updateLibraryResourceResponse, updateLibraryAttachmentResponse]);
+    await expect(resourceDetail.getByText("New Zealand codebase", { exact: true })).toBeVisible();
+    await expect(resourceDetail.getByText("~/projects/new-zealand-main", { exact: true }).first()).toBeVisible();
+    await expect(resourceDetail.getByText("Primary local checkout.", { exact: true })).toBeVisible();
+
     const projectFolderRow = page.locator(`[data-workspace-entry-path="projects/${project.urlKey}"]`);
     await projectFolderRow.hover();
     await page.getByTestId(`org-workspaces-entry-more-projects/${project.urlKey}`).click();
     let treeMenu = page.getByRole("menu");
-    await expect(treeMenu).toContainText("Copy file path");
+    await expect(treeMenu.getByRole("menuitem", { name: "Copy absolute path" })).toBeVisible();
     await expect(treeMenu.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
     await page.keyboard.press("Escape");
 
@@ -746,7 +797,7 @@ test.describe("Workspace shell", () => {
     );
     expect(workspaceCalls).toEqual([
       {
-        rootPath: "~/projects/new-zealand",
+        rootPath: "~/projects/new-zealand-main",
         targetId: "terminal",
       },
     ]);
