@@ -235,7 +235,7 @@ describe("CommentThread", () => {
     expect(html.indexOf("Middle comment.")).toBeLessThan(html.indexOf("Last activity"));
   });
 
-  it("presents linked run transcript cards as agent run output", () => {
+  it("presents linked run transcript rows as collapsible agent runs", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -254,12 +254,15 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("Run output");
+    expect(html).toContain("Run");
     expect(html).not.toContain("Not an issue comment");
-    expect(html).toContain('aria-label="Agent run output"');
+    expect(html).toContain('aria-label="Agent run"');
+    expect(html).toContain('data-run-id="55555555-5555-4555-8555-555555555555"');
+    expect(html).toContain('aria-label="Show details"');
+    expect(html).not.toContain("No run output captured.");
   });
 
-  it("renders inactive linked run details with an empty output state", () => {
+  it("collapses inactive linked run details by default", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -285,10 +288,11 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain('aria-label="Agent run output"');
+    expect(html).toContain('aria-label="Agent run"');
     expect(html).toContain("succeeded");
-    expect(html).toContain("No run output captured.");
-    expect(html).toContain('data-streaming="false"');
+    expect(html).toContain('aria-label="Show details"');
+    expect(html).not.toContain("No run output captured.");
+    expect(html).not.toContain('data-streaming="false"');
   });
 
   it("renders active linked run details in streaming mode", () => {
@@ -310,7 +314,8 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain('aria-label="Agent run output"');
+    expect(html).toContain('aria-label="Agent run"');
+    expect(html).toContain('aria-label="Hide details"');
     expect(html).toContain("Run running. Waiting for output...");
     expect(html).toContain('data-streaming="true"');
   });
