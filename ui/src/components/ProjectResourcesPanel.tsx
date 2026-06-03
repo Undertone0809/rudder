@@ -607,11 +607,12 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                             disabled={updateResourceDetails.isPending}
                           />
                         </label>
-                        <label className="space-y-1.5">
+                        <label className="space-y-1.5 md:col-span-2">
                           <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Locator</span>
-                          <Input
+                          <ResourceLocatorField
+                            kind={attachment.resource.kind}
                             value={resourceEditDraft.locator}
-                            onChange={(event) => setResourceEditDraft((current) => current ? ({ ...current, locator: event.target.value }) : current)}
+                            onChange={(locator) => setResourceEditDraft((current) => current ? ({ ...current, locator }) : current)}
                             disabled={updateResourceDetails.isPending}
                           />
                         </label>

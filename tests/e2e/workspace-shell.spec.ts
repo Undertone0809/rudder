@@ -105,8 +105,8 @@ async function expectDualCardWorkspace(page: Page) {
   expect(gutter).toBeLessThanOrEqual(14);
 }
 
-async function installDesktopShellWorkspaceIdeStub(page: Page) {
-  await page.addInitScript(() => {
+async function installDesktopShellWorkspaceIdeStub(page: Page, options?: { pickedPath?: string }) {
+  await page.addInitScript((pickedPath) => {
     const ideCalls: Array<{ rootPath: string; filePath: string; ideId?: string }> = [];
     const workspaceCalls: Array<{ rootPath: string; targetId?: string }> = [];
     const pathCalls: string[] = [];
@@ -167,14 +167,16 @@ async function installDesktopShellWorkspaceIdeStub(page: Page) {
       openNotificationSettings: async () => ({ opened: false, platform: "darwin" }),
       setBadgeCount: async () => {},
       showNotification: async () => {},
-      pickPath: async () => ({ canceled: true, path: null }),
+      pickPath: async () => pickedPath
+        ? ({ canceled: false, path: pickedPath })
+        : ({ canceled: true, path: null }),
     };
 
     Object.defineProperty(window, "desktopShell", {
       configurable: true,
       value: desktopShell,
     });
-  });
+  }, options?.pickedPath ?? null);
 }
 
 test.describe("Workspace shell", () => {
@@ -599,6 +601,7 @@ test.describe("Workspace shell", () => {
     expect(attachRepoRes.ok()).toBe(true);
     const repoAttachment = await attachRepoRes.json() as { id: string };
 
+    await installDesktopShellWorkspaceIdeStub(page, { pickedPath: "/Users/zeeland/projects/rudder-oss" });
     await gotoOrganizationPath(page, organization, `/projects/${project.urlKey ?? project.id}/resources`);
 
     const mainContent = page.locator("#main-content");
@@ -620,7 +623,9 @@ test.describe("Workspace shell", () => {
     const editForm = mainContent.getByTestId("project-resource-edit-form");
     await expect(editForm).toBeVisible();
     await editForm.getByLabel("Name").fill("Rudder codebase");
-    await editForm.getByLabel("Locator").fill("~/projects/rudder-oss");
+    await expect(editForm.getByRole("button", { name: "Browse for directory" })).toBeVisible();
+    await editForm.getByRole("button", { name: "Browse for directory" }).click();
+    await expect(editForm.getByLabel("Locator")).toHaveValue("/Users/zeeland/projects/rudder-oss");
     await editForm.getByLabel("Description").fill("Canonical monorepo for implementation work.");
     await editForm.getByLabel("Project note").fill("Main project checkout.");
     const updateResourceResponse = page.waitForResponse((response) =>
@@ -636,7 +641,7 @@ test.describe("Workspace shell", () => {
     await editForm.getByRole("button", { name: "Save" }).click();
     await Promise.all([updateResourceResponse, updateAttachmentResponse]);
     await expect(mainContent.getByText("Rudder codebase", { exact: true })).toBeVisible();
-    await expect(mainContent.getByText("~/projects/rudder-oss", { exact: true })).toBeVisible();
+    await expect(mainContent.getByText("/Users/zeeland/projects/rudder-oss", { exact: true })).toBeVisible();
     await expect(
       mainContent.getByRole("textbox", { name: "Optional project-specific guidance for agents" }),
     ).toHaveValue("Main project checkout.");
@@ -724,7 +729,7 @@ test.describe("Workspace shell", () => {
     );
     expect(virtualFileRes.ok()).toBe(false);
 
-    await installDesktopShellWorkspaceIdeStub(page);
+    await installDesktopShellWorkspaceIdeStub(page, { pickedPath: "/Users/zeeland/projects/new-zealand-main" });
     await gotoOrganizationPath(page, organization, `/library?resource=${attachment.id}`);
 
     await expect(page.getByTestId(`org-workspaces-project-resources-folder-${project.id}`)).toBeVisible();
@@ -745,7 +750,9 @@ test.describe("Workspace shell", () => {
     const resourceEditForm = resourceDetail.getByTestId("org-workspaces-resource-edit-form");
     await expect(resourceEditForm).toBeVisible();
     await resourceEditForm.getByLabel("Name").fill("New Zealand codebase");
-    await resourceEditForm.getByLabel("Locator").fill("~/projects/new-zealand-main");
+    await expect(resourceEditForm.getByRole("button", { name: "Browse for directory" })).toBeVisible();
+    await resourceEditForm.getByRole("button", { name: "Browse for directory" }).click();
+    await expect(resourceEditForm.getByLabel("Locator")).toHaveValue("/Users/zeeland/projects/new-zealand-main");
     await resourceEditForm.getByLabel("Description").fill("Updated local checkout for project implementation.");
     await resourceEditForm.getByLabel("Project note").fill("Primary local checkout.");
     const updateLibraryResourceResponse = page.waitForResponse((response) =>
@@ -761,7 +768,7 @@ test.describe("Workspace shell", () => {
     await resourceEditForm.getByRole("button", { name: "Save" }).click();
     await Promise.all([updateLibraryResourceResponse, updateLibraryAttachmentResponse]);
     await expect(resourceDetail.getByText("New Zealand codebase", { exact: true })).toBeVisible();
-    await expect(resourceDetail.getByText("~/projects/new-zealand-main", { exact: true }).first()).toBeVisible();
+    await expect(resourceDetail.getByText("/Users/zeeland/projects/new-zealand-main", { exact: true }).first()).toBeVisible();
     await expect(resourceDetail.getByText("Primary local checkout.", { exact: true })).toBeVisible();
 
     const projectFolderRow = page.locator(`[data-workspace-entry-path="projects/${project.urlKey}"]`);
@@ -797,7 +804,7 @@ test.describe("Workspace shell", () => {
     );
     expect(workspaceCalls).toEqual([
       {
-        rootPath: "~/projects/new-zealand-main",
+        rootPath: "/Users/zeeland/projects/new-zealand-main",
         targetId: "terminal",
       },
     ]);

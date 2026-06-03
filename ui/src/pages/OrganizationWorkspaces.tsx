@@ -48,6 +48,7 @@ import { parseMentionChipHref } from "../lib/mention-chips";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { ResourceLocatorField } from "../components/ResourceLocatorField";
 import {
   organizationResourceKindLabel,
   organizationResourceSourceTypeLabel,
@@ -1700,11 +1701,12 @@ function ProjectResourceDetailPanel({
                   disabled={updateResourceDetails.isPending}
                 />
               </label>
-              <label className="space-y-1.5">
+              <label className="space-y-1.5 md:col-span-2">
                 <span className="text-xs text-muted-foreground">Locator</span>
-                <Input
+                <ResourceLocatorField
+                  kind={attachment.resource.kind}
                   value={resourceDraft.locator}
-                  onChange={(event) => setResourceDraft((current) => ({ ...current, locator: event.target.value }))}
+                  onChange={(locator) => setResourceDraft((current) => ({ ...current, locator }))}
                   disabled={updateResourceDetails.isPending}
                 />
               </label>
