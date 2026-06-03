@@ -4,6 +4,7 @@ import {
   activityLog,
   agents,
   approvals,
+  automations,
   calendarEvents,
   calendarSources,
   goals,
@@ -442,6 +443,8 @@ export function calendarService(db: Db) {
     issueTitle: string | null;
     issueStatus: string | null;
     issuePriority: string | null;
+    automationId: string | null;
+    automationTitle: string | null;
   }): CalendarEvent {
     return {
       ...row.event,
@@ -475,6 +478,12 @@ export function calendarService(db: Db) {
           title: row.issueTitle,
           status: row.issueStatus ?? "todo",
           priority: row.issuePriority ?? "medium",
+        }
+        : null,
+      automation: row.automationId && row.automationTitle
+        ? {
+          id: row.automationId,
+          title: row.automationTitle,
         }
         : null,
     };
@@ -516,11 +525,21 @@ export function calendarService(db: Db) {
         issueTitle: issues.title,
         issueStatus: issues.status,
         issuePriority: issues.priority,
+        automationId: automations.id,
+        automationTitle: automations.title,
       })
       .from(calendarEvents)
       .leftJoin(calendarSources, eq(calendarEvents.sourceId, calendarSources.id))
       .leftJoin(agents, eq(calendarEvents.ownerAgentId, agents.id))
       .leftJoin(issues, eq(calendarEvents.issueId, issues.id))
+      .leftJoin(
+        automations,
+        and(
+          eq(issues.originKind, "automation_execution"),
+          sql`${issues.originId} = cast(${automations.id} as text)`,
+          eq(automations.orgId, issues.orgId),
+        ),
+      )
       .where(and(...conditions))
       .orderBy(asc(calendarEvents.startAt), asc(calendarEvents.title));
 
@@ -531,6 +550,7 @@ export function calendarService(db: Db) {
     if (runIds.length === 0) return new Map<string, {
       activityId: string;
       issue: NonNullable<CalendarEvent["issue"]>;
+      automation: NonNullable<CalendarEvent["automation"]> | null;
     }>();
     const rows = await db
       .selectDistinctOn([activityLog.runId], {
@@ -541,9 +561,19 @@ export function calendarService(db: Db) {
         title: issues.title,
         status: issues.status,
         priority: issues.priority,
+        automationId: automations.id,
+        automationTitle: automations.title,
       })
       .from(activityLog)
       .innerJoin(issues, eq(activityLog.entityId, issueIdAsText))
+      .leftJoin(
+        automations,
+        and(
+          eq(issues.originKind, "automation_execution"),
+          sql`${issues.originId} = cast(${automations.id} as text)`,
+          eq(automations.orgId, issues.orgId),
+        ),
+      )
       .where(
         and(
           eq(activityLog.orgId, orgId),
@@ -567,6 +597,12 @@ export function calendarService(db: Db) {
               status: row.status,
               priority: row.priority,
             },
+            automation: row.automationId && row.automationTitle
+              ? {
+                id: row.automationId,
+                title: row.automationTitle,
+              }
+              : null,
           },
         ]),
     );
@@ -610,6 +646,8 @@ export function calendarService(db: Db) {
         issueTitle: issues.title,
         issueStatus: issues.status,
         issuePriority: issues.priority,
+        automationId: automations.id,
+        automationTitle: automations.title,
       })
       .from(heartbeatRuns)
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
@@ -618,6 +656,14 @@ export function calendarService(db: Db) {
         and(
           eq(issueIdAsText, contextIssueId),
           isNull(issues.hiddenAt),
+        ),
+      )
+      .leftJoin(
+        automations,
+        and(
+          eq(issues.originKind, "automation_execution"),
+          sql`${issues.originId} = cast(${automations.id} as text)`,
+          eq(automations.orgId, issues.orgId),
         ),
       )
       .where(and(...conditions))
@@ -643,6 +689,12 @@ export function calendarService(db: Db) {
           priority: row.issuePriority ?? "medium",
         }
         : fallback?.issue ?? null;
+      const automation = row.automationId && row.automationTitle
+        ? {
+          id: row.automationId,
+          title: row.automationTitle,
+        }
+        : fallback?.automation ?? null;
       const title = issue ? `${row.agentName} · ${issue.title}` : `${row.agentName} · Heartbeat run`;
       return [{
         id: `run:${row.id}`,
@@ -692,6 +744,7 @@ export function calendarService(db: Db) {
           urlKey: row.agentUrlKey,
         },
         issue,
+        automation,
       }];
     });
   }
@@ -810,11 +863,21 @@ export function calendarService(db: Db) {
         issueTitle: issues.title,
         issueStatus: issues.status,
         issuePriority: issues.priority,
+        automationId: automations.id,
+        automationTitle: automations.title,
       })
       .from(calendarEvents)
       .leftJoin(calendarSources, eq(calendarEvents.sourceId, calendarSources.id))
       .leftJoin(agents, eq(calendarEvents.ownerAgentId, agents.id))
       .leftJoin(issues, eq(calendarEvents.issueId, issues.id))
+      .leftJoin(
+        automations,
+        and(
+          eq(issues.originKind, "automation_execution"),
+          sql`${issues.originId} = cast(${automations.id} as text)`,
+          eq(automations.orgId, issues.orgId),
+        ),
+      )
       .where(and(eq(calendarEvents.id, id), eq(calendarEvents.orgId, orgId), isNull(calendarEvents.deletedAt)));
     return rows[0] ? mapPersistedEvent(rows[0]) : null;
   }

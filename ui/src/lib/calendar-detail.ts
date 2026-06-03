@@ -54,3 +54,7 @@ export function calendarEventRunHref(event: CalendarEvent) {
   if (!event.heartbeatRunId || !event.agent) return null;
   return `${agentUrl(event.agent)}/runs/${event.heartbeatRunId}`;
 }
+
+export function shouldShowCalendarAutomationBadge(event: CalendarEvent | null) {
+  return Boolean(event?.automation);
+}

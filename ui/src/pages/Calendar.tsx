@@ -20,6 +20,7 @@ import { agentsApi } from "@/api/agents";
 import { calendarApi } from "@/api/calendar";
 import { issuesApi } from "@/api/issues";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -43,6 +44,7 @@ import {
   calendarEventRunHref,
   calendarEventSourceLabel,
   formatCalendarDetailTimeRange,
+  shouldShowCalendarAutomationBadge,
 } from "@/lib/calendar-detail";
 import { CalendarView, DraftKind, DragMode, CreatePreview, SelectedDisplayCluster, HOUR_HEIGHT, TIME_GUTTER_WIDTH, DAY_MIN_WIDTH, SNAP_MINUTES, MIN_EVENT_MINUTES, DAY_HOURS, AGENT_ACCENTS, MONTH_AGENT_DOTS, STATUS_DOTS, startOfDay, endOfDay, addDays, startOfWeek, startOfMonthGrid, dateKey, sameDay, toInputDateTime, formatDayLabel, formatWeekday, formatMonthDay, formatRangeTitle, rangeForView, moveCursor, minuteOfDay, durationMinutes, clamp, snapMinute, dateAtMinutes, statusLabel, agentAccent, eventAccent, agentById, eventAgent, displayItemAccent, primaryEvent, statusSummary, clusterActivityLabel, collisionParticipantLabel, clusterTitle, clusterParticipantText, formatShortTime, formatTimeRange, displayItemTitle, displayItemSubtitle, monthEventDot, CalendarAgentMarker, CalendarAgentStack, CalendarEventMarker, eventIntersectsDay, formatMonthEventTime, isWritableEvent, visibleEventTitle, defaultDraftStart, newDraft, CalendarDetailLink, CalendarDetailRow, buildEventPayload, EventBlock, CalendarGridView, MonthView, AgendaView } from "./Calendar.parts";
 
@@ -967,7 +969,20 @@ export function Calendar() {
       <Sheet open={!!selectedEvent} onOpenChange={(open) => !open && setSelectedEvent(null)}>
         <SheetContent className="w-full sm:max-w-md">
           <SheetHeader>
-            <SheetTitle>{selectedEvent ? visibleEventTitle(selectedEvent) : "Calendar block"}</SheetTitle>
+            <SheetTitle>
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="min-w-0 truncate">{selectedEvent ? visibleEventTitle(selectedEvent) : "Calendar block"}</span>
+                {shouldShowCalendarAutomationBadge(selectedEvent) ? (
+                  <Badge
+                    variant="outline"
+                    className="h-5 px-1.5 py-0 text-[10px] uppercase tracking-normal text-muted-foreground"
+                    title={selectedEvent?.automation?.title ?? "Automation"}
+                  >
+                    Automation
+                  </Badge>
+                ) : null}
+              </span>
+            </SheetTitle>
           </SheetHeader>
           {selectedEvent ? (
             <div className="space-y-5 overflow-y-auto px-4 pb-4 text-sm">

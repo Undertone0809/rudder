@@ -5,6 +5,7 @@ import {
   calendarEventSourceLabel,
   formatCalendarDetailDateTime,
   formatCalendarDetailTimeRange,
+  shouldShowCalendarAutomationBadge,
 } from "./calendar-detail";
 
 describe("calendar-detail", () => {
@@ -36,5 +37,15 @@ describe("calendar-detail", () => {
 
     expect(calendarEventSourceLabel(event)).toBe("run history");
     expect(calendarEventRunHref(event)).toBe("/agents/wesley/runs/run-1");
+  });
+
+  it("shows the automation badge only for automation-backed events", () => {
+    const event = {
+      automation: { id: "automation-1", title: "Daily summary" },
+    } as CalendarEvent;
+
+    expect(shouldShowCalendarAutomationBadge(event)).toBe(true);
+    expect(shouldShowCalendarAutomationBadge({ automation: null } as CalendarEvent)).toBe(false);
+    expect(shouldShowCalendarAutomationBadge(null)).toBe(false);
   });
 });

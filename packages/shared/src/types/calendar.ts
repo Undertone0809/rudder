@@ -42,6 +42,11 @@ export interface CalendarEventLinkedIssue {
   priority: string;
 }
 
+export interface CalendarEventLinkedAutomation {
+  id: string;
+  title: string;
+}
+
 export interface CalendarEvent {
   id: string;
   orgId: string;
@@ -78,6 +83,7 @@ export interface CalendarEvent {
   source?: Pick<CalendarSource, "id" | "type" | "name" | "visibilityDefault" | "externalProvider"> | null;
   agent?: CalendarEventLinkedAgent | null;
   issue?: CalendarEventLinkedIssue | null;
+  automation?: CalendarEventLinkedAutomation | null;
 }
 
 export interface CalendarEventListResponse {
