@@ -20,7 +20,6 @@ import {
   organizationResourceKindOptions,
   organizationResourceKindLabel,
   organizationResourceSourceTypeLabel,
-  projectResourceRoleOptions,
 } from "../lib/resource-options";
 import {
   Dialog,
@@ -721,35 +720,18 @@ export function NewProjectDialog() {
                       </div>
                     ) : null}
 
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <label className="space-y-1">
-                        <span className="text-[11px] text-muted-foreground">Project role</span>
-                        <select
-                          value={resource.role}
-                          onChange={(event) => updateDraftResource(key, (current) => ({
-                            ...current,
-                            role: event.target.value as ProjectResourceAttachmentRole,
-                          }))}
-                          className={cn(resourceControlClass, "h-8")}
-                        >
-                          {projectResourceRoleOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-1">
-                        <span className="text-[11px] text-muted-foreground">Project note</span>
-                        <input
-                          value={resource.note}
-                          onChange={(event) => updateDraftResource(key, (current) => ({
-                            ...current,
-                            note: event.target.value,
-                          }))}
-                          className={resourceControlClass}
-                          placeholder="Optional guidance specific to this project"
-                        />
-                      </label>
-                    </div>
+                    <label className="block space-y-1">
+                      <span className="text-[11px] text-muted-foreground">Project note</span>
+                      <input
+                        value={resource.note}
+                        onChange={(event) => updateDraftResource(key, (current) => ({
+                          ...current,
+                          note: event.target.value,
+                        }))}
+                        className={resourceControlClass}
+                        placeholder="Optional guidance specific to this project"
+                      />
+                    </label>
 
                     {resource.kind === "new" && (!resource.name.trim() || !resource.locator.trim()) ? (
                       <p className="text-[11px] text-amber-600 dark:text-amber-300">

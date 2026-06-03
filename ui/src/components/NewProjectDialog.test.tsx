@@ -170,6 +170,22 @@ describe("NewProjectDialog", () => {
     expect(buttons.some((text) => text.includes("New resource"))).toBe(false);
   });
 
+  it("keeps resource draft project settings to a single note field", () => {
+    const container = renderDialog();
+    const createExternalResourceButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes("Create external resource"));
+
+    expect(createExternalResourceButton).not.toBeUndefined();
+
+    act(() => {
+      createExternalResourceButton!.click();
+    });
+
+    expect(container.textContent).toContain("Project note");
+    expect(container.textContent).not.toContain("Project role");
+    expect(container.querySelector<HTMLInputElement>("input[placeholder='Optional guidance specific to this project']")).not.toBeNull();
+  });
+
   it("opens the created project's issue board slice after creation", async () => {
     const container = renderDialog();
     const nameInput = container.querySelector<HTMLInputElement>("input[placeholder='Project name']");

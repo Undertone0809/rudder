@@ -665,22 +665,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                 placeholder="What this resource contains and when agents should use it."
               />
             </label>
-            <label className="space-y-1.5">
-              <span className="text-xs text-muted-foreground">Project role</span>
-              <select
-                value={newResourceDraft.role}
-                onChange={(event) => setNewResourceDraft((current) => ({
-                  ...current,
-                  role: event.target.value as typeof current.role,
-                }))}
-                className="h-10 w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)] px-3 text-sm outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              >
-                {projectResourceRoleOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-1.5">
+            <label className="space-y-1.5 md:col-span-2">
               <span className="text-xs text-muted-foreground">Project note</span>
               <Input
                 value={newResourceDraft.note}

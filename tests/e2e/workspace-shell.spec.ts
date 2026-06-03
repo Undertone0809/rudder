@@ -615,9 +615,23 @@ test.describe("Workspace shell", () => {
       && response.url().includes(`/api/projects/${project.id}/resources?orgId=${organization.id}`)
       && response.ok(),
     );
-    await mainContent.getByRole("button", { name: "Add resources" }).click();
+    const addResourcesButton = mainContent.getByRole("button", { name: "Add resources" });
+    const createExternalResourceAction = page.getByRole("button", { name: /Create external resource/ });
+    await expect(async () => {
+      await addResourcesButton.click({ force: true });
+      await expect(createExternalResourceAction).toBeVisible({ timeout: 1_000 });
+    }).toPass();
     await expect(page.getByText("Existing resources", { exact: true })).toBeVisible();
-    await expect(page.getByText("Create external resource")).toBeVisible();
+    await createExternalResourceAction.click();
+    const createExternalDialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("Create external resource") }).first();
+    await expect(createExternalDialog.getByLabel("Project role")).toHaveCount(0);
+    await expect(createExternalDialog.getByText("Project note", { exact: true })).toBeVisible();
+    await createExternalDialog.getByRole("button", { name: "Cancel" }).click();
+
+    await expect(async () => {
+      await addResourcesButton.click({ force: true });
+      await expect(page.getByRole("button", { name: /SPEC doc/i })).toBeVisible({ timeout: 1_000 });
+    }).toPass();
     await page.getByRole("button", { name: /SPEC doc/i }).click();
     await attachResponse;
     await expect(mainContent.getByText("SPEC doc", { exact: true })).toBeVisible();

@@ -252,23 +252,27 @@ test.describe("Primary rail create menu", () => {
     await expect(page.getByText(resourceHelpText)).toBeVisible();
 
     const addResourcesButton = dialog.getByRole("button", { name: "Add resources" });
-    await addResourcesButton.click();
-    await page.getByRole("button", { name: /Create external resource/ }).click();
+    const createExternalResourceAction = page.getByRole("button", { name: /Create external resource/ });
+    await expect(async () => {
+      await addResourcesButton.click({ force: true });
+      await expect(createExternalResourceAction).toBeVisible({ timeout: 1_000 });
+    }).toPass();
+    await createExternalResourceAction.click();
 
     const sharedControlRadius = await computedBorderRadius(addResourcesButton);
     const resourceNameInput = dialog.getByPlaceholder("Rudder repo");
     const resourceKindSelect = dialog.getByLabel("Kind");
     const resourceLocatorInput = dialog.getByPlaceholder("~/projects/rudder or https://linear.app/acme/project/...");
     const resourceDescriptionInput = dialog.getByPlaceholder("What this resource contains and when agents should use it.");
-    const projectRoleSelect = dialog.getByLabel("Project role");
     const projectNoteInput = dialog.getByPlaceholder("Optional guidance specific to this project");
+    await expect(dialog.getByLabel("Project role")).toHaveCount(0);
+    await expect(dialog.getByText("Project note", { exact: true })).toBeVisible();
 
     for (const control of [
       resourceNameInput,
       resourceKindSelect,
       resourceLocatorInput,
       resourceDescriptionInput,
-      projectRoleSelect,
       projectNoteInput,
     ]) {
       expect(await computedBorderRadius(control)).toBe(sharedControlRadius);
@@ -279,6 +283,7 @@ test.describe("Primary rail create menu", () => {
     await resourceDescriptionInput.fill(
       "Main monorepo checkout for implementation work.",
     );
+    await projectNoteInput.fill("Primary working set for implementation.");
 
     const createResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"
@@ -298,7 +303,7 @@ test.describe("Primary rail create menu", () => {
     expect(created.resources).toHaveLength(1);
     expect(created.resources[0]).toEqual(expect.objectContaining({
       role: "working_set",
-      note: null,
+      note: "Primary working set for implementation.",
       resource: expect.objectContaining({
         name: "Rudder repo",
         kind: "directory",
