@@ -1386,8 +1386,9 @@ export function AgentDetail() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandleDetailEscape(event)) return;
-      if (configDirty || configSaving) return;
       event.preventDefault();
+      event.stopPropagation();
+      if (configDirty || configSaving) return;
       if (navigateBack?.()) return;
       if (hasBrowserBackStackEntry()) {
         navigate(-1);
@@ -1396,8 +1397,8 @@ export function AgentDetail() {
       navigate("/agents");
     };
 
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [configDirty, configSaving, navigate, navigateBack]);
 
   if (isLoading) return <PageSkeleton variant="detail" />;

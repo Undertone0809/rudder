@@ -109,6 +109,7 @@ type ProseMirrorState = {
 type ProseMirrorView = {
   state: ProseMirrorState;
   dispatch: (transaction: ProseMirrorTransaction) => void;
+  focus?: () => void;
 };
 
 type RudderTokenRange = {
@@ -198,6 +199,18 @@ export function rudderTokenNavigationPath(href: string) {
   }
 
   return null;
+}
+
+export function shouldParsePastedMarkdown(markdown: string) {
+  const trimmed = markdown.trim();
+  if (!trimmed) return false;
+  if (hasRudderMarkdownReference(markdown)) return true;
+  return /(^|\n)\s{0,3}#{1,6}\s+\S/.test(markdown)
+    || /(^|\n)\s{0,3}(?:[-*+]\s+\S|\d+[.)]\s+\S|>\s+\S)/.test(markdown)
+    || /(^|\n)\s{0,3}(?:```|~~~)/.test(markdown)
+    || /!\[[^\]]*]\([^)]+\)/.test(markdown)
+    || /\[[^\]]+]\([^)]+\)/.test(markdown)
+    || /(^|\n)\s*\|.+\|\s*(?:\n|$)/.test(markdown);
 }
 
 function serializeInlineStyle(style: CSSProperties | undefined) {
@@ -559,6 +572,18 @@ export function moveSelectionAfterRudderTokenBoundary(view: ProseMirrorView) {
   return true;
 }
 
+export function focusProseMirrorViewAtEnd(view: ProseMirrorView) {
+  const endPos = Math.max(1, view.state.doc.content.size);
+  const tr = view.state.tr
+    .setSelection(TextSelection.create(
+      view.state.doc as unknown as Parameters<typeof TextSelection.create>[0],
+      endPos,
+    ))
+    .setStoredMarks([]);
+  view.dispatch(tr);
+  view.focus?.();
+}
+
 export function insertMissingRudderTokenBoundarySpaces(view: ProseMirrorView) {
   if (!view.state.selection.empty) return false;
   const selectionFrom = view.state.selection.from;
@@ -788,7 +813,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   const focus = useCallback(() => {
     const editor = loading ? get() : getInstance();
     editor?.action((ctx) => {
-      ctx.get(editorViewCtx).focus();
+      focusProseMirrorViewAtEnd(ctx.get(editorViewCtx) as unknown as ProseMirrorView);
     });
   }, [get, getInstance, loading]);
 
@@ -1112,7 +1137,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         }
 
         const markdown = event.clipboardData.getData("text/plain");
-        if (!markdown || !hasRudderMarkdownReference(markdown)) return;
+        if (!markdown || !shouldParsePastedMarkdown(markdown)) return;
         event.preventDefault();
         const editor = loading ? get() : getInstance();
         editor?.action(insert(markdown, false));

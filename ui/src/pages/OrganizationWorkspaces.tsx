@@ -39,7 +39,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
-import { MarkdownEditor, type InlineTokenClickEvent, type MentionOption } from "../components/MarkdownEditor";
+import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
 import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
 import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
@@ -2418,6 +2418,7 @@ export function OrganizationWorkspaceBrowser({
   const syncedFileRef = useRef<{ filePath: string | null; content: string }>({ filePath: null, content: "" });
   const saveWorkspaceFileMutateRef = useRef<((payload: { filePath: string; content: string }) => void) | null>(null);
   const editorScrollElementRef = useRef<HTMLElement | null>(null);
+  const markdownEditorRef = useRef<MarkdownEditorRef | null>(null);
   const openFileTabScrollerElementRef = useRef<HTMLDivElement | null>(null);
   const openFileTabElementsRef = useRef(new Map<string, HTMLDivElement>());
   const restoredOpenTabsOrgRef = useRef<string | null>(null);
@@ -3317,11 +3318,27 @@ export function OrganizationWorkspaceBrowser({
   const canCloseTabsToRight = tabContextMenuIndex >= 0 && tabContextMenuIndex < openFilePaths.length - 1;
 
   function scrollToSelectedMarkdownOutlineItem(item: DocumentOutlineItem) {
+    const editorScrollElement = editorScrollElementRef.current;
+    if (!editorScrollElement) return;
     const headings = Array.from(editorScrollElementRef.current?.querySelectorAll("h1,h2,h3,h4,h5,h6") ?? []);
     const targetHeading = headings[item.headingIndex];
     if (targetHeading instanceof HTMLElement) {
-      targetHeading.scrollIntoView({ block: "center", behavior: "smooth" });
+      const editorRect = editorScrollElement.getBoundingClientRect();
+      const headingRect = targetHeading.getBoundingClientRect();
+      editorScrollElement.scrollTo({
+        top: Math.max(0, editorScrollElement.scrollTop + headingRect.top - editorRect.top),
+        behavior: "smooth",
+      });
     }
+  }
+
+  function handleMarkdownEditorBlankClick(event: MouseEvent<HTMLDivElement>) {
+    if (!(event.target instanceof HTMLElement)) return;
+    if (event.target.closest("button, a, input, textarea, select, [role='button'], [role='menu'], [role='listbox']")) {
+      return;
+    }
+    if (event.target.closest(".ProseMirror")) return;
+    markdownEditorRef.current?.focus();
   }
 
   async function handleOpenFileInIde(filePath: string) {
@@ -3990,6 +4007,7 @@ export function OrganizationWorkspaceBrowser({
                       ref={setEditorScrollElementRef}
                       data-testid="org-workspaces-markdown-editor"
                       className="scrollbar-auto-hide min-h-[280px] flex-1 overflow-auto bg-[color:var(--surface-elevated)]"
+                      onClick={handleMarkdownEditorBlankClick}
                     >
                       <div
                         className={cn(
@@ -4019,6 +4037,7 @@ export function OrganizationWorkspaceBrowser({
                             </details>
                           ) : null}
                           <MarkdownEditor
+                            ref={markdownEditorRef}
                             key={selectedFilePath}
                             engine="milkdown"
                             value={selectedMarkdownBodyForEditor}

@@ -42,6 +42,7 @@ import {
 } from "../lib/settings-overlay-state";
 import { prefetchSettingsQueries } from "../lib/settings-prefetch";
 import { findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/organization-routes";
+import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 import { NotFoundPage } from "../pages/NotFound";
@@ -644,9 +645,10 @@ export function Layout() {
       navigate(-1);
       return true;
     }
-    const previousPath = stack[stack.length - 2];
+    const targetIndex = resolveInAppBackStackTargetIndex(stack);
+    const previousPath = targetIndex >= 0 ? stack[targetIndex] : null;
     if (!previousPath) return false;
-    stack.pop();
+    stack.splice(targetIndex + 1);
     navigate(previousPath);
     return true;
   }, [navigate]);

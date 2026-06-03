@@ -32,11 +32,11 @@ describe("shouldHandleDetailEscape", () => {
     expect(shouldHandleDetailEscape(keyboardEvent("Enter", document.body))).toBe(false);
   });
 
-  it("does not navigate away while focused inside editable fields", () => {
+  it("handles plain Escape while focused inside editable fields", () => {
     const input = document.createElement("input");
     document.body.append(input);
 
-    expect(shouldHandleDetailEscape(keyboardEvent("Escape", input))).toBe(false);
+    expect(shouldHandleDetailEscape(keyboardEvent("Escape", input))).toBe(true);
   });
 
   it("does not navigate away while dialogs or popovers are open", () => {

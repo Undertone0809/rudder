@@ -2270,11 +2270,28 @@ button[draggable="false"] {
   padding: 0.75rem;
 }
 
+.rudder-milkdown-content.rudder-library-document-editor {
+  padding-bottom: min(80vh, 48rem);
+}
+
+.rudder-milkdown-content.rudder-library-document-editor pre {
+  background-color: var(--code-surface);
+  color: var(--code-foreground);
+  border-color: var(--code-border);
+}
+
 .rudder-milkdown-content code {
   border-radius: 0.25rem;
   background-color: color-mix(in oklab, var(--accent) 45%, transparent);
   padding: 0.05rem 0.25rem;
   font-size: 0.86em;
+}
+
+.rudder-milkdown-content pre code {
+  background-color: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
 }
 
 .rudder-milkdown-content img {
@@ -2789,6 +2806,19 @@ a.rudder-skill-token {
   white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.rudder-library-document-editor .rudder-skill-token,
+.rudder-library-document-editor .rudder-mention-chip,
+.rudder-library-document-editor .rudder-project-mention-chip {
+  line-height: 1.2;
+  vertical-align: -0.06em;
+}
+
+.rudder-library-document-editor .rudder-skill-token::before,
+.rudder-library-document-editor .rudder-mention-chip::before,
+.rudder-library-document-editor .rudder-project-mention-chip::before {
+  transform: translateY(0);
 }
 
 .chat-composer .rudder-mdxeditor-content .rudder-skill-token {

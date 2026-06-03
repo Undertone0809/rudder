@@ -19,6 +19,7 @@ import {
   moveSelectionAfterRudderTokenBoundary,
   readCanonicalFragmentMarkdown,
   rudderTokenNavigationPath,
+  shouldParsePastedMarkdown,
 } from "./MilkdownMarkdownEditor";
 import type { MentionOption } from "./MarkdownEditor";
 
@@ -118,6 +119,14 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     expect(hasRudderMarkdownReference("[docs-proposal.md](library-file://file?p=docs-proposal.md\\&t=docs-proposal.md)")).toBe(true);
     expect(hasRudderMarkdownReference("[skill-creator](/Users/zeeland/rudder/server/resources/bundled-skills/skill-creator/SKILL.md)")).toBe(true);
     expect(hasRudderMarkdownReference("[Example](https://example.com)")).toBe(false);
+  });
+
+  it("detects markdown syntax that should be parsed on paste", () => {
+    expect(shouldParsePastedMarkdown("## HEAD2")).toBe(true);
+    expect(shouldParsePastedMarkdown("- checklist item")).toBe(true);
+    expect(shouldParsePastedMarkdown("```md\n# Context\n```")).toBe(true);
+    expect(shouldParsePastedMarkdown("[Winter](agent://agent-1?i=bot)")).toBe(true);
+    expect(shouldParsePastedMarkdown("plain sentence")).toBe(false);
   });
 
   it("replaces the active repeated mention query instead of the last matching text", () => {

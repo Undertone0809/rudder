@@ -48,16 +48,17 @@ export function useKeyboardShortcuts({
     function handleKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented || e.isComposing) return;
 
-      // Don't fire shortcuts when typing in inputs
-      if (isEditableShortcutTarget(e.target)) {
-        return;
-      }
-
-      // Escape → previous page. Existing layers get first claim on Escape.
+      // Escape is a navigation command once overlays/menus had a chance to
+      // claim it. Do not suppress it just because focus is inside an editor.
       if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && onNavigateBack) {
         if (hasOpenEscapeLayer()) return;
         if (!onNavigateBack()) return;
         e.preventDefault();
+        return;
+      }
+
+      // Don't fire shortcuts when typing in inputs
+      if (isEditableShortcutTarget(e.target)) {
         return;
       }
 

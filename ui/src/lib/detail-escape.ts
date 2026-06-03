@@ -24,11 +24,6 @@ function hasBlockingEscapeLayer(extraSelectors: string[] = []) {
 
 export function shouldHandleDetailEscape(event: KeyboardEvent) {
   if (!isPlainUnhandledEscape(event)) return false;
-  const target = event.target instanceof HTMLElement ? event.target : null;
-  if (target) {
-    const editable = target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='plaintext-only']");
-    if (target.isContentEditable || editable) return false;
-  }
 
   if (hasBlockingEscapeLayer()) return false;
 

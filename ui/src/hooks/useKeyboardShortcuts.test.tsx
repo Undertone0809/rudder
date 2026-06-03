@@ -37,6 +37,16 @@ function dispatchEscape() {
   return event;
 }
 
+function dispatchEscapeFrom(target: HTMLElement) {
+  const event = new KeyboardEvent("keydown", {
+    key: "Escape",
+    bubbles: true,
+    cancelable: true,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
 describe("useKeyboardShortcuts", () => {
   afterEach(() => {
     act(() => {
@@ -74,5 +84,19 @@ describe("useKeyboardShortcuts", () => {
     expect(dispatchEscape().defaultPrevented).toBe(false);
 
     expect(onNavigateBack).not.toHaveBeenCalled();
+  });
+
+  it("navigates back on Escape from editable content when no inner layer handled it", async () => {
+    const onNavigateBack = vi.fn(() => true);
+    await renderShortcutHarness(onNavigateBack);
+
+    const editable = document.createElement("div");
+    editable.contentEditable = "true";
+    document.body.append(editable);
+
+    const event = dispatchEscapeFrom(editable);
+
+    expect(onNavigateBack).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
   });
 });
