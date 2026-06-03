@@ -9,18 +9,18 @@
 // Issue status colors
 // ---------------------------------------------------------------------------
 
-/** StatusIcon circle: text + border classes */
+/** StatusIcon glyph color classes */
 export const issueStatusIcon: Record<string, string> = {
-  backlog: "text-muted-foreground border-muted-foreground",
-  todo: "text-blue-600 border-blue-600 dark:text-blue-400 dark:border-blue-400",
-  in_progress: "text-yellow-600 border-yellow-600 dark:text-yellow-400 dark:border-yellow-400",
-  in_review: "text-violet-600 border-violet-600 dark:text-violet-400 dark:border-violet-400",
-  done: "text-green-600 border-green-600 dark:text-green-400 dark:border-green-400",
-  cancelled: "text-neutral-500 border-neutral-500",
-  blocked: "text-red-600 border-red-600 dark:text-red-400 dark:border-red-400",
+  backlog: "text-orange-500 dark:text-orange-400",
+  todo: "text-muted-foreground",
+  in_progress: "text-yellow-600 dark:text-yellow-400",
+  in_review: "text-violet-600 dark:text-violet-400",
+  done: "text-green-600 dark:text-green-400",
+  cancelled: "text-neutral-500 dark:text-neutral-400",
+  blocked: "text-red-600 dark:text-red-400",
 };
 
-export const issueStatusIconDefault = "text-muted-foreground border-muted-foreground";
+export const issueStatusIconDefault = "text-muted-foreground";
 
 /** Text-only color for issue statuses (dropdowns, labels) */
 export const issueStatusText: Record<string, string> = {
