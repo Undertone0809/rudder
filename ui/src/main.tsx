@@ -20,9 +20,12 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { initPluginBridge } from "./plugins/bridge-init";
 import { PluginLauncherProvider } from "./plugins/launchers";
+import { ConsoleRingBuffer } from "@/lib/console-ring-buffer";
 import "@mdxeditor/editor/style.css";
 import "./index.css";
 import "./motion.css";
+
+ConsoleRingBuffer.install();
 
 initPluginBridge(React, ReactDOM);
 

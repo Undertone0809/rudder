@@ -33,4 +33,37 @@ describe("AppErrorBoundary", () => {
     expect(container.textContent).toContain("Copy diagnostic");
     expect(container.textContent).toContain("composer exploded");
   });
+
+  it("copies route and component stack context with the diagnostic", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    window.history.pushState({}, "", "/issues/ORG-1?tab=activity");
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+
+    createRoot(container).render(
+      <AppErrorBoundary>
+        <ThrowingChild />
+      </AppErrorBoundary>,
+    );
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("Copy diagnostic");
+    });
+
+    container.querySelector<HTMLButtonElement>("button:last-of-type")?.click();
+
+    await vi.waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Route: http://localhost:3000/issues/ORG-1?tab=activity"));
+    });
+    const diagnostic = writeText.mock.calls[0]?.[0] as string;
+    expect(diagnostic).toContain("composer exploded");
+    expect(diagnostic).toContain("Time:");
+    expect(diagnostic).toContain("User agent:");
+    expect(diagnostic).toContain("ThrowingChild");
+  });
 });

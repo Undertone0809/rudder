@@ -118,6 +118,8 @@ type IssueHeaderBreadcrumbSource = {
 
 type IssueHeaderBreadcrumbTarget = Pick<Issue, "id" | "identifier" | "title" | "ancestors">;
 
+const EMPTY_ISSUE_ANCESTORS: Issue["ancestors"] = [];
+
 export function buildIssueHeaderBreadcrumbs(input: {
   sourceBreadcrumb: IssueHeaderBreadcrumbSource;
   issue?: IssueHeaderBreadcrumbTarget | null;
@@ -1066,7 +1068,7 @@ export function IssueDetail() {
     () => readIssueDetailBreadcrumb(location.state) ?? { label: "Issues", href: "/issues" },
     [location.state],
   );
-  const ancestors = issue?.ancestors ?? [];
+  const ancestors = issue?.ancestors ?? EMPTY_ISSUE_ANCESTORS;
   const issueHeaderBreadcrumbs = useMemo(() => {
     return buildIssueHeaderBreadcrumbs({
       sourceBreadcrumb,

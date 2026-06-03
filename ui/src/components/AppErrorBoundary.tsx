@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { readDesktopShell } from "@/lib/desktop-shell";
+import { ConsoleRingBuffer } from "@/lib/console-ring-buffer";
 
 type AppErrorBoundaryProps = {
   children: ReactNode;
@@ -48,8 +49,13 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   };
 
   private copyDiagnostic = () => {
+    const recentConsole = ConsoleRingBuffer.formatRecent(20);
     const diagnostic = [
       this.state.error?.stack ?? this.state.error?.message ?? "Unknown render error",
+      `Route: ${window.location.href}`,
+      `Time: ${new Date().toISOString()}`,
+      `User agent: ${navigator.userAgent}`,
+      recentConsole ? `Recent console:\n${recentConsole}` : "",
       this.state.info?.componentStack ?? "",
     ].filter(Boolean).join("\n\n");
     const desktopShell = readDesktopShell();
