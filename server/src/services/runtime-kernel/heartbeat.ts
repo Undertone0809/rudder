@@ -127,6 +127,18 @@ import { createHeartbeatRecoveryHandlers } from "./heartbeat.recovery.js";
 import { createHeartbeatReleaseHandlers } from "./heartbeat.release.js";
 import { createHeartbeatWakeupHandlers } from "./heartbeat.wakeup.js";
 
+const DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+
+function formatDurationMs(ms: number) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 export function heartbeatService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
   const getCurrentUserRedactionOptions = async () => ({
@@ -1081,6 +1093,90 @@ export function heartbeatService(db: Db) {
     return { reaped: reaped.length, runIds: reaped };
   }
 
+  async function reapTimedOutRuns(opts?: { maxRuntimeMs?: number; now?: Date }) {
+    const maxRuntimeMs = opts?.maxRuntimeMs ?? DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS;
+    if (!Number.isFinite(maxRuntimeMs) || maxRuntimeMs <= 0) {
+      return { timedOut: 0, runIds: [] };
+    }
+
+    const now = opts?.now ?? new Date();
+    const activeRuns = await db
+      .select({
+        run: heartbeatRuns,
+        agentRuntimeType: agents.agentRuntimeType,
+      })
+      .from(heartbeatRuns)
+      .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
+      .where(eq(heartbeatRuns.status, "running"));
+
+    const timedOut: string[] = [];
+
+    for (const { run, agentRuntimeType } of activeRuns) {
+      const startedAt = run.startedAt ? new Date(run.startedAt).getTime() : null;
+      if (!startedAt || !Number.isFinite(startedAt)) continue;
+
+      const runtimeMs = now.getTime() - startedAt;
+      if (runtimeMs < maxRuntimeMs) continue;
+
+      const message = `Run exceeded maximum duration of ${formatDurationMs(maxRuntimeMs)}`;
+      const running = runningProcesses.get(run.id);
+      if (running) {
+        const pid = running.child.pid;
+        running.child.kill("SIGTERM");
+        const graceMs = Math.max(1, running.graceSec) * 1000;
+        setTimeout(() => {
+          if (typeof pid === "number" && isProcessAlive(pid)) {
+            running.child.kill("SIGKILL");
+          }
+        }, graceMs);
+      } else if (isTrackedLocalChildProcessAdapter(agentRuntimeType) && run.processPid && isProcessAlive(run.processPid)) {
+        await terminateOrphanedProcess(run.processPid);
+      }
+
+      const finalizedRun = await setRunStatus(run.id, "timed_out", {
+        finishedAt: now,
+        error: message,
+        errorCode: "timeout",
+      });
+      await setWakeupStatus(run.wakeupRequestId, "timed_out", {
+        finishedAt: now,
+        error: message,
+      });
+
+      const terminalRun = finalizedRun ?? await getRun(run.id);
+      if (!terminalRun) continue;
+
+      await appendRunEvent(terminalRun, await nextRunEventSeq(terminalRun.id), {
+        eventType: "lifecycle",
+        stream: "system",
+        level: "error",
+        message,
+        payload: {
+          maxRuntimeMs,
+          runtimeMs,
+          startedAt: run.startedAt ? new Date(run.startedAt).toISOString() : null,
+          timedOutAt: now.toISOString(),
+          ...(run.processPid ? { processPid: run.processPid } : {}),
+        },
+      });
+      await releaseIssueExecutionAndPromote(terminalRun);
+      await emitHeartbeatLiveEval(terminalRun.id);
+      await finalizeAgentStatus(run.agentId, "timed_out");
+      await startNextQueuedRunForAgent(run.agentId);
+      runningProcesses.delete(run.id);
+      timedOut.push(run.id);
+    }
+
+    if (timedOut.length > 0) {
+      logger.warn(
+        { timedOutCount: timedOut.length, runIds: timedOut, maxRuntimeMs },
+        "timed out long-running heartbeat runs",
+      );
+    }
+
+    return { timedOut: timedOut.length, runIds: timedOut };
+  }
+
   async function resumeQueuedRuns() {
     const queuedRuns = await db
       .select({ agentId: heartbeatRuns.agentId })
@@ -1207,7 +1303,7 @@ export function heartbeatService(db: Db) {
 
   const baseContext = {
     db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, documentsSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets,
-    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
+    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
   const wakeupHandlers = createHeartbeatWakeupHandlers({ ...baseContext, ...recoveryHandlers, startNextQueuedRunForAgent });
@@ -1436,6 +1532,8 @@ export function heartbeatService(db: Db) {
     reportRunActivity: clearDetachedRunWarning,
 
     reapOrphanedRuns,
+
+    reapTimedOutRuns,
 
     resumeQueuedRuns,
 

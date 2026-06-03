@@ -172,6 +172,8 @@ describe("heartbeat orphaned process recovery", () => {
     runErrorCode?: string | null;
     runError?: string | null;
     contextSnapshot?: Record<string, unknown> | null;
+    startedAt?: Date;
+    updatedAt?: Date;
   }) {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -249,8 +251,8 @@ describe("heartbeat orphaned process recovery", () => {
       processLossRetryCount: input?.processLossRetryCount ?? 0,
       errorCode: input?.runErrorCode ?? null,
       error: input?.runError ?? null,
-      startedAt: now,
-      updatedAt: new Date("2026-03-19T00:00:00.000Z"),
+      startedAt: input?.startedAt ?? now,
+      updatedAt: input?.updatedAt ?? new Date("2026-03-19T00:00:00.000Z"),
     });
 
     if (input?.includeIssue !== false) {
@@ -270,6 +272,61 @@ describe("heartbeat orphaned process recovery", () => {
 
     return { orgId, agentId, runId, wakeupRequestId, issueId };
   }
+
+  it("times out long-running active runs and releases issue execution locks", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const timedOutAt = new Date("2026-03-19T13:00:00.000Z");
+    const { agentId, runId, wakeupRequestId, issueId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.reapTimedOutRuns({
+      maxRuntimeMs: 12 * 60 * 60 * 1000,
+      now: timedOutAt,
+    });
+
+    expect(result).toEqual({ timedOut: 1, runIds: [runId] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+
+    const run = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(run?.status).toBe("timed_out");
+    expect(run?.errorCode).toBe("timeout");
+    expect(run?.finishedAt?.toISOString()).toBe(timedOutAt.toISOString());
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupRequestId))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup?.status).toBe("timed_out");
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBeNull();
+    expect(issue?.executionLockedAt).toBeNull();
+
+    const agent = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .then((rows) => rows[0] ?? null);
+    expect(agent?.status).toBe("error");
+  });
 
   it("terminates a detached local child and queues a retry instead of leaving the run stuck", async () => {
     const child = spawnAliveProcess();

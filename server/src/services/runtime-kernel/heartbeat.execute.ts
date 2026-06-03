@@ -910,6 +910,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
       const latestRun = await getRun(run.id);
       if (latestRun?.status === "cancelled") {
         outcome = "cancelled";
+      } else if (latestRun?.status === "timed_out") {
+        outcome = "timed_out";
       } else if (adapterResult.timedOut) {
         outcome = "timed_out";
       } else if ((adapterResult.exitCode ?? 0) === 0 && !adapterResult.errorMessage) {
@@ -1090,6 +1092,23 @@ export function createHeartbeatExecuteHandlers(context: any) {
         errors: [message],
       };
       logger.error({ err, runId }, "heartbeat execution failed");
+
+      const latestRun = await getRun(run.id);
+      if (latestRun?.status === "cancelled" || latestRun?.status === "timed_out") {
+        const terminalStatus = latestRun.status as "cancelled" | "timed_out";
+        heartbeatObservationContext.status = terminalStatus;
+        finalObservationStatus = terminalStatus;
+        transcriptFallbackResult = {
+          ts: new Date().toISOString(),
+          output: latestRun.error ?? message,
+          subtype: terminalStatus,
+          isError: terminalStatus === "timed_out",
+          errors: latestRun.error ? [latestRun.error] : [],
+        };
+        await emitHeartbeatLiveEval(latestRun.id);
+        await finalizeAgentStatus(agent.id, terminalStatus);
+        return;
+      }
 
       let logSummary: { bytes: number; sha256?: string; compressed: boolean } | null = null;
       if (handle) {

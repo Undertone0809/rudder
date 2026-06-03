@@ -126,6 +126,7 @@ export interface Config {
   storageS3ForcePathStyle: boolean;
   heartbeatSchedulerEnabled: boolean;
   heartbeatSchedulerIntervalMs: number;
+  heartbeatRunTimeoutMs: number;
   companyDeletionEnabled: boolean;
   langfuse: {
     enabled: boolean;
@@ -319,6 +320,15 @@ export function loadConfig(): Config {
       localEnv,
     ) ?? undefined;
 
+  const heartbeatRunTimeoutMsValue = process.env.HEARTBEAT_RUN_TIMEOUT_MS?.trim();
+  const heartbeatRunTimeoutMsRaw = Number(heartbeatRunTimeoutMsValue);
+  const heartbeatRunTimeoutMs =
+    !heartbeatRunTimeoutMsValue
+      ? 12 * 60 * 60 * 1000
+      : Number.isFinite(heartbeatRunTimeoutMsRaw)
+        ? Math.max(0, heartbeatRunTimeoutMsRaw)
+        : 12 * 60 * 60 * 1000;
+
   return {
     deploymentMode,
     deploymentExposure,
@@ -361,6 +371,7 @@ export function loadConfig(): Config {
     storageS3ForcePathStyle,
     heartbeatSchedulerEnabled: process.env.HEARTBEAT_SCHEDULER_ENABLED !== "false",
     heartbeatSchedulerIntervalMs: Math.max(10000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000),
+    heartbeatRunTimeoutMs,
     companyDeletionEnabled,
     langfuse: {
       enabled: process.env.LANGFUSE_ENABLED !== undefined
