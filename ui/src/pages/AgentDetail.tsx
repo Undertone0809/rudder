@@ -64,7 +64,7 @@ import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { formatCents, formatDate, formatDateTime, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { cn } from "../lib/utils";
-import { formatRunDurationLabel, formatRunTimingTitle } from "../lib/run-duration-label";
+import { formatRunDurationLabel, formatRunOccurrenceLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs } from "@/components/ui/tabs";
@@ -4041,6 +4041,7 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
   const isActive = run.status === "running" || run.status === "queued";
   const now = useRunDurationNow(isActive);
   const durationLabel = formatRunDurationLabel(run, now) ?? relativeTime(run.createdAt);
+  const occurrenceLabel = formatRunOccurrenceLabel(run, now);
   const timingTitle = formatRunTimingTitle(run);
 
   const openRun = () => {
@@ -4077,7 +4078,7 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
     <div
       role="link"
       tabIndex={0}
-      aria-label={`Open run ${runLabel}`}
+      aria-label={`Open run ${runLabel}${occurrenceLabel ? ` from ${occurrenceLabel}` : ""}${durationLabel ? `, ${durationLabel}` : ""}`}
       className={cn(
         "flex flex-col gap-1 w-full px-3 py-2.5 text-left border-b border-border last:border-b-0 transition-colors no-underline text-inherit",
         isSelected ? "bg-accent/40" : "hover:bg-accent/20",
@@ -4085,25 +4086,40 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
       onClick={openRun}
       onKeyDown={handleRowKeyDown}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, run.status === "running" && "animate-spin")} />
-        <button
-          type="button"
-          className="min-w-0 truncate font-mono text-xs text-muted-foreground hover:text-foreground transition-colors cursor-copy"
-          aria-label={`Copy run ID ${runLabel}`}
-          title="Copy run ID"
-          onClick={handleCopyRunId}
-        >
-          {runLabel}
-        </button>
-        <span className={cn(
-          "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0",
-          runReasonBadgeClassName(runReason.tone)
-        )} title={runReason.description}>
-          {runReason.label}
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, run.status === "running" && "animate-spin")} />
+          <button
+            type="button"
+            className="min-w-0 truncate font-mono text-xs text-muted-foreground hover:text-foreground transition-colors cursor-copy"
+            aria-label={`Copy run ID ${runLabel}`}
+            title="Copy run ID"
+            onClick={handleCopyRunId}
+          >
+            {runLabel}
+          </button>
+          <span className={cn(
+            "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0",
+            runReasonBadgeClassName(runReason.tone)
+          )} title={runReason.description}>
+            {runReason.label}
+          </span>
         </span>
-        <span className="ml-auto shrink-0 text-[11px] font-medium tabular-nums text-foreground" title={timingTitle || undefined}>
-          {durationLabel}
+        <span
+          className="flex shrink-0 flex-col items-end gap-0.5 text-right tabular-nums"
+          title={timingTitle || undefined}
+          data-testid="run-list-timing"
+        >
+          {occurrenceLabel && (
+            <span className="whitespace-nowrap text-[11px] font-semibold leading-none text-foreground">
+              {occurrenceLabel}
+            </span>
+          )}
+          {durationLabel && (
+            <span className="whitespace-nowrap text-[10px] font-medium leading-none text-muted-foreground">
+              {durationLabel}
+            </span>
+          )}
         </span>
       </div>
       {summary && (
