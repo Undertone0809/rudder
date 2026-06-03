@@ -8,10 +8,10 @@ import { resolveRudderHomeDir } from "../config/home.js";
 
 export const RUNTIME_NPM_PACKAGE_NAME = "@rudderhq/server";
 export const RUNTIME_METADATA_FILE = "runtime.json";
-export const DEFAULT_RUNTIME_CACHE_MAX_ENTRIES = 5;
+export const DEFAULT_RUNTIME_CACHE_MAX_ENTRIES = 2;
 export const DEFAULT_RUNTIME_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 export const DEFAULT_RUNTIME_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
-export const DEFAULT_RUNTIME_CACHE_KEEP_PREVIOUS = 1;
+export const DEFAULT_RUNTIME_CACHE_KEEP_PREVIOUS = 0;
 const RUNTIME_NPM_INSTALL_FLAGS = ["--omit=dev", "--include=optional", "--no-audit", "--no-fund"];
 
 export interface RuntimeInstallMetadata {

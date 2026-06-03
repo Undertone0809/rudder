@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -36,6 +36,7 @@ import {
   isSuccessfulRobocopyExitCode,
   parseChecksumFile,
   prepareForDesktopReplace,
+  pruneDesktopAssetCache,
   resolveAssetChecksum,
   resolveCliInstallSpec,
   resolveCurrentCliVersion,
@@ -101,6 +102,23 @@ async function writeRuntimeCacheEntry(
   );
   await writeFile(path.join(cacheDir, "payload.txt"), options.payload ?? version, "utf8");
   return cacheDir;
+}
+
+async function writeDesktopAssetCacheEntry(
+  homeDir: string,
+  assetName: string,
+  payload: string,
+  mtime: string,
+): Promise<{ cacheDir: string; checksum: string; path: string }> {
+  const checksum = sha256(payload);
+  const cacheDir = resolveDesktopAssetCacheDir(checksum, homeDir);
+  const assetPath = path.join(cacheDir, assetName);
+  const timestamp = new Date(mtime);
+  await mkdir(cacheDir, { recursive: true });
+  await writeFile(assetPath, payload, "utf8");
+  await utimes(assetPath, timestamp, timestamp);
+  await utimes(cacheDir, timestamp, timestamp);
+  return { cacheDir, checksum, path: assetPath };
 }
 
 function responseFromChunks(chunks: string[], headers: Record<string, string> = {}): Response {
@@ -901,6 +919,48 @@ describe("desktop start command helpers", () => {
     }
   });
 
+  it("prunes old desktop asset caches while retaining current and previous entries", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-asset-prune-test."));
+    try {
+      const oldAsset = await writeDesktopAssetCacheEntry(
+        homeDir,
+        "Rudder-0.3.0-macos-arm64-portable.zip",
+        "old-desktop-asset",
+        "2026-01-01T00:00:00.000Z",
+      );
+      const previousAsset = await writeDesktopAssetCacheEntry(
+        homeDir,
+        "Rudder-0.3.1-macos-arm64-shell.zip",
+        "previous-desktop-asset",
+        "2026-01-02T00:00:00.000Z",
+      );
+      const currentAsset = await writeDesktopAssetCacheEntry(
+        homeDir,
+        "Rudder-0.3.2-macos-arm64-shell.zip",
+        "current-desktop-asset",
+        "2026-01-03T00:00:00.000Z",
+      );
+
+      const result = await pruneDesktopAssetCache({
+        homeDir,
+        protectedChecksums: [currentAsset.checksum],
+        now: new Date("2026-01-04T00:00:00.000Z"),
+        maxEntries: 2,
+        maxAgeMs: 365 * 24 * 60 * 60 * 1000,
+        maxTotalBytes: Number.POSITIVE_INFINITY,
+        keepPreviousEntries: 1,
+      });
+
+      expect(result.deleted.map((entry) => entry.checksum)).toEqual([oldAsset.checksum]);
+      expect(result.protectedChecksums).toEqual(expect.arrayContaining([currentAsset.checksum, previousAsset.checksum]));
+      await expect(access(oldAsset.cacheDir)).rejects.toThrow();
+      await expect(access(previousAsset.path)).resolves.toBeUndefined();
+      await expect(access(currentAsset.path)).resolves.toBeUndefined();
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("compares stable semver versions", () => {
     expect(compareStableSemver("0.3.2", "0.3.1")).toBeGreaterThan(0);
     expect(compareStableSemver("0.3.1", "0.3.1")).toBe(0);
@@ -1055,8 +1115,8 @@ describe("desktop start command helpers", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-targeted-quit-test."));
     const installRoot = path.join(dir, "Applications");
     const appPath = path.join(installRoot, "Rudder.app");
-    const executablePath = path.join(appPath, "Contents", "MacOS", "Rudder");
-    await mkdir(path.dirname(executablePath), { recursive: true });
+    const executablePath = path.join(dir, "rudder-update-quit-shim");
+    await mkdir(appPath, { recursive: true });
     await writeFile(
       executablePath,
       [

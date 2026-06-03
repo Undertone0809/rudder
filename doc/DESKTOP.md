@@ -142,9 +142,9 @@ Electron `userData` now stores only desktop-shell preferences such as window sta
 Published CLI and Desktop starts install the server runtime into a versioned
 cache under `~/.rudder/runtimes/<version>`. Rudder automatically prunes old
 runtime cache entries after runtime preparation while protecting the requested
-version, a recent previous version, the latest stable/canary entries, and
-versions referenced by live local-runtime descriptors. This cache is
-reconstructable from npm and is separate from instance data.
+version, the latest stable/canary entries, and versions referenced by live
+local-runtime descriptors. This cache is reconstructable from npm and is
+separate from instance data.
 
 ## Runtime coordination
 
@@ -249,6 +249,10 @@ cache first, or install the full portable asset.
 Downloaded Desktop assets are cached under `~/.rudder/desktop-assets/` by
 SHA-256 checksum so repeated installs or retries can reuse an already verified
 portable asset instead of downloading the full release again.
+After a successful start or update, Rudder prunes old Desktop asset cache
+entries while protecting the just-resolved asset and one recent previous asset.
+The asset cache is reconstructable from GitHub Releases and is separate from
+installed app files and instance data.
 The current Desktop channel is an unsigned portable alpha; signed/notarized
 installer distribution can be restored after Apple and Windows code signing are
 available.
