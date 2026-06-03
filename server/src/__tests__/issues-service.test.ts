@@ -13,6 +13,7 @@ import {
   organizations,
   createDb,
   ensurePostgresDatabase,
+  executionWorkspaces,
   goals,
   heartbeatRuns,
   issueComments,
@@ -21,6 +22,7 @@ import {
   labels,
   organizationMemberships,
   projects,
+  projectWorkspaces,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { issueService } from "../services/issues.ts";
@@ -819,6 +821,80 @@ describe("issueService.list participantAgentId", () => {
         .where(eq(issues.id, child.id))
         .then((rows) => rows[0]?.projectId ?? null),
     ).resolves.toBe(projectId);
+  });
+
+  it("rejects workspace ids from another project when inheriting a parent project", async () => {
+    const orgId = randomUUID();
+    const parentProjectId = randomUUID();
+    const otherProjectId = randomUUID();
+    const otherProjectWorkspaceId = randomUUID();
+    const otherExecutionWorkspaceId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Inherited Workspace Boundary Org",
+      urlKey: deriveOrganizationUrlKey("Inherited Workspace Boundary Org"),
+      issuePrefix: `W${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values([
+      {
+        id: parentProjectId,
+        orgId,
+        name: "Parent Project",
+        status: "in_progress",
+      },
+      {
+        id: otherProjectId,
+        orgId,
+        name: "Other Project",
+        status: "in_progress",
+      },
+    ]);
+    await db.insert(projectWorkspaces).values({
+      id: otherProjectWorkspaceId,
+      orgId,
+      projectId: otherProjectId,
+      name: "Other workspace",
+      sourceType: "local_path",
+      cwd: "/tmp/rudder-other-workspace",
+    });
+    await db.insert(executionWorkspaces).values({
+      id: otherExecutionWorkspaceId,
+      orgId,
+      projectId: otherProjectId,
+      projectWorkspaceId: otherProjectWorkspaceId,
+      mode: "shared_workspace",
+      strategyType: "project_primary",
+      name: "Other execution workspace",
+    });
+
+    const parent = await svc.create(orgId, {
+      title: "Parent issue",
+      status: "todo",
+      priority: "medium",
+      projectId: parentProjectId,
+    });
+
+    await expect(
+      svc.create(orgId, {
+        title: "Child issue with foreign project workspace",
+        status: "todo",
+        priority: "medium",
+        parentId: parent.id,
+        projectWorkspaceId: otherProjectWorkspaceId,
+      }),
+    ).rejects.toThrow("Project workspace must belong to the selected project");
+
+    await expect(
+      svc.create(orgId, {
+        title: "Child issue with foreign execution workspace",
+        status: "todo",
+        priority: "medium",
+        parentId: parent.id,
+        executionWorkspaceId: otherExecutionWorkspaceId,
+      }),
+    ).rejects.toThrow("Execution workspace must belong to the selected project");
   });
 
   it("rejects parent issue relationships outside the organization or through descendants", async () => {

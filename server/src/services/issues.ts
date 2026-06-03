@@ -268,16 +268,19 @@ export function issueService(db: Db) {
     }
 
     const parent = await dbOrTx
-      .select({ id: issues.id, orgId: issues.orgId, parentId: issues.parentId })
+      .select({ id: issues.id, orgId: issues.orgId, parentId: issues.parentId, projectId: issues.projectId })
       .from(issues)
       .where(eq(issues.id, parentId))
-      .then((rows: Array<{ id: string; orgId: string; parentId: string | null }>) => rows[0] ?? null);
+      .then(
+        (rows: Array<{ id: string; orgId: string; parentId: string | null; projectId: string | null }>) =>
+          rows[0] ?? null,
+      );
 
     if (!parent || parent.orgId !== orgId) {
       throw unprocessable("Parent issue must belong to the same organization");
     }
 
-    if (!issueId) return;
+    if (!issueId) return parent;
 
     const visited = new Set<string>();
     let currentParentId: string | null = parent.parentId ?? null;
@@ -297,6 +300,7 @@ export function issueService(db: Db) {
         .then((rows: Array<{ parentId: string | null }>) => rows[0] ?? null);
       currentParentId = next?.parentId ?? null;
     }
+    return parent;
   }
 
   async function isTerminalOrMissingHeartbeatRun(runId: string) {
@@ -766,28 +770,21 @@ export function issueService(db: Db) {
       if (data.goalId) {
         await assertValidGoal(orgId, data.goalId);
       }
-      if (data.projectWorkspaceId) {
-        await assertValidProjectWorkspace(orgId, data.projectId, data.projectWorkspaceId);
+      const parentIssue = await assertValidParentIssue(orgId, null, issueData.parentId);
+      if (issueData.parentId && issueData.projectId === undefined && parentIssue?.projectId) {
+        issueData.projectId = parentIssue.projectId;
       }
-      if (data.executionWorkspaceId) {
-        await assertValidExecutionWorkspace(orgId, data.projectId, data.executionWorkspaceId);
+      if (issueData.projectWorkspaceId) {
+        await assertValidProjectWorkspace(orgId, issueData.projectId, issueData.projectWorkspaceId);
+      }
+      if (issueData.executionWorkspaceId) {
+        await assertValidExecutionWorkspace(orgId, issueData.projectId, issueData.executionWorkspaceId);
       }
       if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
       }
-      await assertValidParentIssue(orgId, null, data.parentId);
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, orgId);
-        if (issueData.parentId && issueData.projectId === undefined) {
-          const parent = await tx
-            .select({ projectId: issues.projectId })
-            .from(issues)
-            .where(and(eq(issues.id, issueData.parentId), eq(issues.orgId, orgId)))
-            .then((rows) => rows[0] ?? null);
-          if (parent?.projectId) {
-            issueData.projectId = parent.projectId;
-          }
-        }
         let executionWorkspaceSettings =
           (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
         if (executionWorkspaceSettings == null && issueData.projectId) {
