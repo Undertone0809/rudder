@@ -316,13 +316,9 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       <section className="rounded-[var(--radius-lg)] border border-border bg-card">
         <div className="flex flex-col gap-4 border-b border-border px-5 py-4 md:flex-row md:items-start md:justify-between">
           <div className="space-y-1.5">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Project Context
-            </div>
             <div className="text-base font-semibold text-foreground">Project Context</div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Choose the repos, Library files, URLs, and connector objects agents should actually use on this project. Shared resources
-              stay canonical; this tab decides what matters here.
+              Choose the resources agents should use for this project. Add a project note only when the resource needs local guidance.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -480,75 +476,52 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
           </div>
         </div>
 
-        <div className="px-5 py-4">
-          <div className="rounded-[var(--radius-md)] border border-border/70 bg-background/45 px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Attached</div>
-            <div className="mt-1 text-2xl font-semibold text-foreground">{attachedResources.length}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Shared context visible from this project.</div>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-[var(--radius-lg)] border border-border bg-card">
-        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-          <div>
-            <div className="text-sm font-medium text-foreground">Attached context</div>
-            <div className="text-xs text-muted-foreground">
-              Project notes here are local to this project. They do not change the shared resource.
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-3 px-5 py-4">
+        <div>
           {attachedResources.length === 0 ? (
-            <div className="rounded-[var(--radius-md)] border border-dashed border-border/80 bg-background/35 px-4 py-5 text-sm text-muted-foreground">
-              No context attached yet. Start with the repo, spec, tracking system, or any shared reference agents
-              should not miss when working on this project.
+            <div className="px-5 py-5 text-sm text-muted-foreground">
+              No context attached yet. Add the repo, spec, or URLs agents need for this project.
             </div>
           ) : (
-            attachedResources.map((attachment) => {
-              const Icon = resourceKindIcon(attachment.resource.kind);
-              return (
-                <div
-                  key={attachment.id}
-                  className="rounded-[var(--radius-md)] border border-border/75 bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,transparent)] px-4 py-4"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="rounded-md border border-border/70 bg-background/85 p-1.5 text-muted-foreground">
-                          <Icon className="h-3.5 w-3.5" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="truncate text-sm font-medium text-foreground">{attachment.resource.name}</span>
-                            <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border/70 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
-                              {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
-                            </span>
+            <div className="divide-y divide-border">
+              {attachedResources.map((attachment) => {
+                const Icon = resourceKindIcon(attachment.resource.kind);
+                return (
+                  <div key={attachment.id} className="px-5 py-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="rounded-md border border-border/70 bg-background/85 p-1.5 text-muted-foreground">
+                            <Icon className="h-3.5 w-3.5" />
                           </div>
-                          <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-                            {attachment.resource.locator}
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate text-sm font-medium text-foreground">{attachment.resource.name}</span>
+                              <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border/70 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+                                {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
+                              </span>
+                            </div>
+                            <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                              {attachment.resource.locator}
+                            </div>
                           </div>
                         </div>
+                        {attachment.resource.description ? (
+                          <p className="mt-3 text-sm text-muted-foreground">{attachment.resource.description}</p>
+                        ) : null}
                       </div>
-                      {attachment.resource.description ? (
-                        <p className="mt-3 text-sm text-muted-foreground">{attachment.resource.description}</p>
-                      ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="text-muted-foreground"
+                        onClick={() => removeAttachment.mutate(attachment.id)}
+                        disabled={removeAttachment.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      className="text-muted-foreground"
-                      onClick={() => removeAttachment.mutate(attachment.id)}
-                      disabled={removeAttachment.isPending}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
 
-                  <div className="mt-4">
-                    <div className="space-y-1.5">
+                    <div className="mt-4 space-y-1.5">
                       <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Project note</span>
                       <DraftInput
                         value={attachment.note ?? ""}
@@ -564,9 +537,9 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                       />
                     </div>
                   </div>
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           )}
         </div>
       </section>
