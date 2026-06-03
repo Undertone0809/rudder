@@ -176,6 +176,25 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
   },
   {
     kind: "assistant",
+    ts: "2026-03-11T15:22:26.760Z",
+    text: "I’m validating the generic tool row against the live issue card before tightening the spacing.",
+  },
+  {
+    kind: "tool_call",
+    ts: "2026-03-11T15:22:26.800Z",
+    name: "tool",
+    toolUseId: "generic_tool_fixture",
+    input: {},
+  },
+  {
+    kind: "tool_result",
+    ts: "2026-03-11T15:22:26.860Z",
+    toolUseId: "generic_tool_fixture",
+    content: "ok",
+    isError: false,
+  },
+  {
+    kind: "assistant",
     ts: "2026-03-11T15:22:26.900Z",
     text: "I’m checking the remaining transcript action shapes so the fixture covers exploration, inspection, and edits in the same visual pass.",
   },

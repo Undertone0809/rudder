@@ -592,7 +592,7 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("space-y-1.5");
     expect(html).toContain("Tool");
     const rowClass = classValueForText(html, "Tool");
-    const wrapperClass = html.match(/<div class="([^"]*)" title="08:00:02"><button[^>]*>[\s\S]*?Tool/)?.[1] ?? "";
+    const wrapperClass = html.match(/<div class="([^"]*)" title="[^"]*"><button[^>]*>[\s\S]*?Tool/)?.[1] ?? "";
     expect(wrapperClass.split(" ")).toContain("py-0.5");
     expect(wrapperClass.split(" ")).not.toContain("py-1");
     expect(wrapperClass.split(" ")).not.toContain("py-1.5");

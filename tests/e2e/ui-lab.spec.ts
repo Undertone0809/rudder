@@ -84,5 +84,43 @@ test.describe("UI Lab", () => {
     await page.goto(`/${organization.issuePrefix}/tests/ux/runs`);
     await expect(page.getByText("Run transcript UX lab")).toBeVisible();
     await expect(page.getByText("Run Transcript Fixtures")).toBeVisible();
+
+    await page.locator("button").filter({ hasText: /^compact$/i }).click();
+    await page.locator("button").filter({ hasText: "Issue Widget" }).click();
+    await expect(page.getByText("I’m validating the generic tool row", { exact: false })).toBeVisible();
+
+    const genericToolRow = page.locator("button").filter({ hasText: /^Tool/ });
+    await expect(genericToolRow).toBeVisible();
+    const metrics = await genericToolRow.evaluate((button) => {
+      const rect = (element: Element) => {
+        const box = element.getBoundingClientRect();
+        return {
+          bottom: box.bottom,
+          centerY: box.top + box.height / 2,
+          top: box.top,
+        };
+      };
+      const icon = button.querySelector('[data-transcript-action-icon-slot="true"]');
+      const label = Array.from(button.querySelectorAll("span"))
+        .find((element) => element.textContent?.trim() === "Tool");
+      const next = Array.from(document.querySelectorAll("body *"))
+        .filter((element) => element.textContent?.includes("I’m checking the remaining transcript action shapes"))
+        .sort((left, right) => (left.textContent?.length ?? 0) - (right.textContent?.length ?? 0))[0];
+      const wrapper = button.parentElement;
+      if (!icon || !label || !next || !wrapper) {
+        throw new Error("Generic transcript tool row geometry target missing");
+      }
+      return {
+        buttonClass: button.getAttribute("class") ?? "",
+        iconLabelCenterDelta: Math.abs(rect(icon).centerY - rect(label).centerY),
+        rowToNextGap: rect(next).top - rect(wrapper).bottom,
+        wrapperClass: wrapper.getAttribute("class") ?? "",
+      };
+    });
+    expect(metrics.buttonClass).toContain("items-center");
+    expect(metrics.buttonClass).toContain("gap-1.5");
+    expect(metrics.wrapperClass).toContain("py-0.5");
+    expect(metrics.iconLabelCenterDelta).toBeLessThanOrEqual(1);
+    expect(metrics.rowToNextGap).toBeLessThanOrEqual(6);
   });
 });
