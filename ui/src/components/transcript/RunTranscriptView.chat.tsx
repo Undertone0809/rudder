@@ -91,6 +91,29 @@ export function shouldHideChatToolResult(semantic: TranscriptToolSemanticInfo): 
   return semantic.category === "read" || semantic.category === "skill";
 }
 
+function TranscriptChatActionIconCell({
+  category,
+  status,
+  compact,
+}: {
+  category: TranscriptActionIconCategory;
+  status: TranscriptActionIconStatus;
+  compact: boolean;
+}) {
+  if (!compact) {
+    return <TranscriptActionIconSlot category={category} status={status} />;
+  }
+
+  return (
+    <span
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center"
+      data-transcript-action-icon-slot="true"
+    >
+      <TranscriptActionIcon category={category} status={status} />
+    </span>
+  );
+}
+
 export function TranscriptChatStdoutActionRow({
   block,
   density,
@@ -103,14 +126,16 @@ export function TranscriptChatStdoutActionRow({
   const [open, setOpen] = useState(inline);
   const preview = truncate(compactWhitespace(block.text), density === "compact" ? 80 : 120) || "Output";
   const compact = density === "compact";
-  const rowPaddingClass = compact ? "py-1" : "py-1.5";
+  const rowPaddingClass = compact ? "py-0.5" : "py-1.5";
   const rowAlignmentClass = compact ? "items-center" : "items-start";
+  const rowGapClass = compact ? "gap-1.5" : "gap-2";
+  const chevronOffsetClass = compact ? "" : "mt-0.5";
 
   if (inline) {
     return (
       <div className={rowPaddingClass} title={getTranscriptTimestampTitle(block.ts)}>
-        <div className={cn("flex w-full gap-2 text-left", rowAlignmentClass)}>
-          <TranscriptActionIconSlot category="stdout" status="completed" />
+        <div className={cn("flex w-full text-left", rowAlignmentClass, rowGapClass)}>
+          <TranscriptChatActionIconCell category="stdout" status="completed" compact={compact} />
           <pre className={cn(
             "min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-foreground/80",
             compact ? "text-[11px] leading-5" : "text-xs leading-6",
@@ -126,16 +151,16 @@ export function TranscriptChatStdoutActionRow({
     <div className={rowPaddingClass} title={getTranscriptTimestampTitle(block.ts)}>
       <button
         type="button"
-        className={cn("flex w-full gap-2 text-left", rowAlignmentClass)}
+        className={cn("flex w-full text-left", rowAlignmentClass, rowGapClass)}
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-label={open ? "Collapse output details" : "Expand output details"}
       >
-        <TranscriptActionIconSlot category="stdout" status="completed" />
+        <TranscriptChatActionIconCell category="stdout" status="completed" compact={compact} />
         <span className={cn("min-w-0 flex-1 break-words text-foreground/82", compact ? "text-xs leading-5" : "text-sm leading-6")}>
           {preview}
         </span>
-        <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
+        <span className={cn("inline-flex h-5 w-5 items-center justify-center text-muted-foreground", chevronOffsetClass)}>
           <DisclosureChevron open={open} className="h-4 w-4" />
         </span>
       </button>
@@ -194,8 +219,11 @@ export function TranscriptChatToolActionRow({
       ? "text-cyan-700 dark:text-cyan-300"
       : "text-muted-foreground";
   const iconStatus = block.status === "error" ? "error" : block.status === "running" ? "running" : "completed";
-  const rowPaddingClass = compact ? "py-1" : "py-1.5";
+  const rowPaddingClass = compact ? "py-0.5" : "py-1.5";
   const rowAlignmentClass = compact ? "items-center" : "items-start";
+  const rowGapClass = compact ? "gap-1.5" : "gap-2";
+  const trailingOffsetClass = compact ? "" : "pt-0.5";
+  const chevronOffsetClass = compact ? "" : "mt-0.5";
 
   return (
     <div
@@ -204,7 +232,7 @@ export function TranscriptChatToolActionRow({
     >
       <button
         type="button"
-        className={cn("flex w-full gap-2 text-left", rowAlignmentClass)}
+        className={cn("flex w-full text-left", rowAlignmentClass, rowGapClass)}
         onClick={() => {
           if (inline) return;
           if (!canExpand) return;
@@ -219,22 +247,22 @@ export function TranscriptChatToolActionRow({
             : undefined
         }
       >
-        <TranscriptActionIconSlot category={semantic.category} status={iconStatus} />
+        <TranscriptChatActionIconCell category={semantic.category} status={iconStatus} compact={compact} />
         <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
           {semantic.summary}
         </span>
         {duration ? (
-          <span className="pt-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+          <span className={cn("text-[10px] font-medium tabular-nums text-muted-foreground", trailingOffsetClass)}>
             {duration}
           </span>
         ) : null}
         {statusText ? (
-          <span className={cn("pt-0.5 text-[10px] font-medium", rowTone)}>
+          <span className={cn("text-[10px] font-medium", rowTone, trailingOffsetClass)}>
             {statusText}
           </span>
         ) : null}
         {canExpand && !inline ? (
-          <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
+          <span className={cn("inline-flex h-5 w-5 items-center justify-center text-muted-foreground", chevronOffsetClass)}>
             <DisclosureChevron open={open} className="h-4 w-4" />
           </span>
         ) : null}
@@ -499,7 +527,7 @@ export function TranscriptChatTurn({
   const segments = segmentChatTranscriptBlocks(turn.blocks);
   const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
   const content = segments.length > 0 ? (
-    <div className={cn(density === "compact" ? "space-y-1.5" : "space-y-3")} title={getTranscriptTimestampTitle(turn.ts)}>
+    <div className={cn(density === "compact" ? "space-y-1" : "space-y-3")} title={getTranscriptTimestampTitle(turn.ts)}>
       {segments.map((segment, index) => (
         segment.type === "block"
           ? renderTranscriptBlock({

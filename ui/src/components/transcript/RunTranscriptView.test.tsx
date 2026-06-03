@@ -588,12 +588,16 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("space-y-1.5");
+    expect(html).toContain("space-y-1");
+    expect(html).not.toContain("space-y-1.5");
     expect(html).toContain("Tool");
     const rowClass = classValueForText(html, "Tool");
     const wrapperClass = html.match(/<div class="([^"]*)" title="08:00:02"><button[^>]*>[\s\S]*?Tool/)?.[1] ?? "";
-    expect(wrapperClass.split(" ")).toContain("py-1");
+    expect(wrapperClass.split(" ")).toContain("py-0.5");
+    expect(wrapperClass.split(" ")).not.toContain("py-1");
     expect(wrapperClass.split(" ")).not.toContain("py-1.5");
+    expect(rowClass.split(" ")).toContain("gap-1.5");
+    expect(rowClass.split(" ")).not.toContain("gap-2");
     expect(rowClass.split(" ")).toContain("items-center");
     expect(rowClass.split(" ")).not.toContain("items-start");
     expect(html).toContain("The next progress note should sit close to the tool row.");

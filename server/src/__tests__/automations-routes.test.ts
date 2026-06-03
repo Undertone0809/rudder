@@ -295,7 +295,7 @@ describe("automation routes", () => {
       projectId,
       title: "Daily automation",
       assigneeAgentId: agentId,
-      outputMode: "chat_output",
+      outputMode: "track_issue",
     }), {
       agentId: null,
       userId: "board-user",
