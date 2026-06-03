@@ -54,6 +54,74 @@ type IssueMutationRouteContext = {
   [key: string]: any;
 };
 
+const ISSUE_UPDATE_ACTIVITY_FIELDS = [
+  "assigneeAgentId",
+  "assigneeUserId",
+  "assigneeAgentRuntimeOverrides",
+  "billingCode",
+  "description",
+  "executionWorkspaceId",
+  "executionWorkspacePreference",
+  "executionWorkspaceSettings",
+  "goalId",
+  "hiddenAt",
+  "labelIds",
+  "parentId",
+  "priority",
+  "projectId",
+  "projectWorkspaceId",
+  "requestDepth",
+  "reviewerAgentId",
+  "reviewerUserId",
+  "status",
+  "title",
+] as const;
+
+function activityValueEquals(a: unknown, b: unknown): boolean {
+  if (a instanceof Date || b instanceof Date) {
+    const aTime = a instanceof Date ? a.getTime() : new Date(String(a)).getTime();
+    const bTime = b instanceof Date ? b.getTime() : new Date(String(b)).getTime();
+    return Number.isFinite(aTime) && Number.isFinite(bTime) && aTime === bTime;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, index) => activityValueEquals(item, b[index]));
+  }
+  if (
+    typeof a === "object" &&
+    a !== null &&
+    typeof b === "object" &&
+    b !== null
+  ) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  return a === b;
+}
+
+function buildIssueUpdateActivityDetails(
+  existing: Record<string, unknown>,
+  updated: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+) {
+  const previous: Record<string, unknown> = {};
+  const changed: Record<string, unknown> = {};
+  for (const key of ISSUE_UPDATE_ACTIVITY_FIELDS) {
+    if (!(key in existing) && !(key in updated)) continue;
+    if (!activityValueEquals(existing[key], updated[key])) {
+      changed[key] = updated[key];
+      previous[key] = existing[key];
+    }
+  }
+  return {
+    hasFieldChanges: Object.keys(changed).length > 0,
+    details: {
+      ...changed,
+      ...metadata,
+      ...(Object.keys(previous).length > 0 ? { _previous: previous } : {}),
+    },
+  };
+}
+
 export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
   const {
     router,
@@ -267,45 +335,44 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
         logger.warn({ err, runId: actor.runId }, "failed to clear detached run warning after issue activity"));
     }
 
-    // Build activity details with previous values for changed fields
-    const previous: Record<string, unknown> = {};
-    for (const key of Object.keys(updateFields)) {
-      if (key in existing && (existing as Record<string, unknown>)[key] !== (updateFields as Record<string, unknown>)[key]) {
-        previous[key] = (existing as Record<string, unknown>)[key];
-      }
-    }
-
-    const hasFieldChanges = Object.keys(previous).length > 0;
-    const reopened =
-      commentBody &&
-      reopenRequested === true &&
-      isClosed &&
-      previous.status !== undefined &&
-      issue.status === "todo";
-    const reopenFromStatus = reopened ? existing.status : null;
-    await logActivity(db, {
-      orgId: issue.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "issue.updated",
-      entityType: "issue",
-      entityId: issue.id,
-      details: {
-        ...updateFields,
+    const issueUpdateActivity = buildIssueUpdateActivityDetails(
+      existing as Record<string, unknown>,
+      issue as Record<string, unknown>,
+      {
         identifier: issue.identifier,
         ...(commentBody ? { source: "comment" } : {}),
-        ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
         ...(reviewedCompletionNormalized
           ? {
               normalizedFromStatus: "done",
               normalizedReason: "reviewed_issue_assignee_completion",
             }
           : {}),
-        _previous: hasFieldChanges ? previous : undefined,
       },
-    });
+    );
+    const hasFieldChanges = issueUpdateActivity.hasFieldChanges;
+    const reopened =
+      commentBody &&
+      reopenRequested === true &&
+      isClosed &&
+      (issueUpdateActivity.details._previous as Record<string, unknown> | undefined)?.status !== undefined &&
+      issue.status === "todo";
+    const reopenFromStatus = reopened ? existing.status : null;
+    if (hasFieldChanges || reopened || reviewedCompletionNormalized) {
+      await logActivity(db, {
+        orgId: issue.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          ...issueUpdateActivity.details,
+          ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
+        },
+      });
+    }
 
     let comment = null;
     if (commentBody) {

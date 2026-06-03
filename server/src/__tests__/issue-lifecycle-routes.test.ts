@@ -124,6 +124,7 @@ function makeIssue(overrides?: Partial<{
   checkoutRunId: string | null;
   executionRunId: string | null;
   identifier: string;
+  goalId: string | null;
   projectId: string | null;
   boardOrder: number;
   status: "backlog" | "todo" | "in_progress" | "in_review" | "blocked" | "done";
@@ -143,6 +144,7 @@ function makeIssue(overrides?: Partial<{
     checkoutRunId: null,
     executionRunId: null,
     identifier: "RUD-5",
+    goalId: null,
     projectId: null,
     boardOrder: 1000,
     status: "todo" as const,
@@ -893,6 +895,73 @@ describe("issue lifecycle routes", () => {
           wakeSource: "review",
           wakeReason: "issue_review_requested",
           role: "reviewer",
+        }),
+      }),
+    );
+  });
+
+  it("logs activity details from the final persisted issue changes", async () => {
+    const oldProjectId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    const newProjectId = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
+    const oldGoalId = "cccccccc-cccc-4ccc-cccc-cccccccccccc";
+    const newGoalId = "dddddddd-dddd-4ddd-dddd-dddddddddddd";
+
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        projectId: oldProjectId,
+        goalId: oldGoalId,
+      }),
+    );
+    mockIssueService.update.mockResolvedValue(
+      makeIssue({
+        projectId: newProjectId,
+        goalId: newGoalId,
+      }),
+    );
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ projectId: newProjectId });
+
+    expect(res.status).toBe(200);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.updated",
+        details: expect.objectContaining({
+          identifier: "RUD-5",
+          projectId: newProjectId,
+          goalId: newGoalId,
+          _previous: expect.objectContaining({
+            projectId: oldProjectId,
+            goalId: oldGoalId,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("does not log a generic issue update for comment-only patches", async () => {
+    const issue = makeIssue();
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockResolvedValue(issue);
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ comment: "Leaving an evidence note." });
+
+    expect(res.status).toBe(200);
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.updated" }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.comment_added",
+        details: expect.objectContaining({
+          bodySnippet: "Leaving an evidence note.",
+          identifier: "RUD-5",
         }),
       }),
     );

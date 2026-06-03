@@ -67,6 +67,61 @@ test.describe("Issue activity", () => {
     await expect(activity.getByText("updated a document note", { exact: false })).toHaveCount(0);
   });
 
+  test("names goal updates instead of rendering generic issue updates", async ({ page }) => {
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `${ORG_NAME}-GoalActivity` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const originalGoalRes = await page.request.post(`/api/orgs/${organization.id}/goals`, {
+      data: {
+        title: "Original activity goal",
+        description: "Initial goal for issue activity.",
+        level: "organization",
+        status: "active",
+      },
+    });
+    expect(originalGoalRes.ok()).toBe(true);
+    const originalGoal = await originalGoalRes.json();
+
+    const nextGoalRes = await page.request.post(`/api/orgs/${organization.id}/goals`, {
+      data: {
+        title: "Specific activity goal",
+        description: "Updated goal for issue activity.",
+        level: "organization",
+        status: "active",
+      },
+    });
+    expect(nextGoalRes.ok()).toBe(true);
+    const nextGoal = await nextGoalRes.json();
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Goal update activity should be specific",
+        description: "Activity should say what changed.",
+        status: "todo",
+        priority: "medium",
+        goalId: originalGoal.id,
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json();
+
+    const updateGoalRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { goalId: nextGoal.id },
+    });
+    expect(updateGoalRes.ok()).toBe(true);
+
+    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
+    const activity = page.getByRole("region", { name: "Activity" });
+    await expect(activity).toBeVisible();
+    await expect(activity.getByText("changed the goal", { exact: false })).toBeVisible();
+    await expect(activity.getByText("updated the issue", { exact: false })).toHaveCount(0);
+  });
+
   test("shows chat conversations that created or linked an issue", async ({ page }) => {
     await page.goto("/");
 
