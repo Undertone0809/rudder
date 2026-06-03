@@ -78,3 +78,45 @@ test("Library markdown file links open as retained editor tabs", async ({ page }
   await expect(tabStrip).toContainText("linked.md");
   await expect(tabStrip.locator("[role='tab'][aria-selected='true']")).toContainText("linked.md");
 });
+
+test("Library command-w closes the current editor tab instead of the Rudder page", async ({ page }) => {
+  const suffix = Date.now();
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Library-Close-Shortcut-${suffix}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const firstPath = `projects/close-shortcut-${suffix}/first.md`;
+  const secondPath = `projects/close-shortcut-${suffix}/second.md`;
+  for (const file of [
+    { filePath: firstPath, content: "# First\n" },
+    { filePath: secondPath, content: "# Second\n" },
+  ]) {
+    const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: file,
+    });
+    expect(fileRes.ok()).toBe(true);
+  }
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(firstPath)}`);
+  const tabStrip = page.getByTestId("org-workspaces-editor-tabs");
+  await expect(tabStrip).toContainText("first.md", { timeout: 15_000 });
+
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(secondPath)}`);
+  await expect(tabStrip).toContainText("first.md");
+  await expect(tabStrip).toContainText("second.md");
+  await expect(tabStrip.locator("[role='tab'][aria-selected='true']")).toContainText("second.md");
+
+  await page.keyboard.press("ControlOrMeta+W");
+
+  await expect(tabStrip).toContainText("first.md");
+  await expect(tabStrip).not.toContainText("second.md");
+  await expect(tabStrip.locator("[role='tab'][aria-selected='true']")).toContainText("first.md");
+  expect(page.isClosed()).toBe(false);
+});
