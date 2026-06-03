@@ -298,6 +298,7 @@ Planning rules:
 
 - do not mark the issue done when the request was only to create or revise a plan
 - reassign back to the requester if that is the expected workflow
+- when you create or update a durable Library file, always include a user-visible Markdown link to that file in your final chat reply or issue comment
 - when you reference the plan in comments, link to the Library file with `library-file://file?p=<url-encoded-relative-path>`
 - `rudder issue documents ...` is a legacy compatibility surface for older DB-backed issue documents. Read it when a prompt explicitly points to an existing legacy issue document; do not use it for new durable files.
 

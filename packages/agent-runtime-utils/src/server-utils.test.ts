@@ -379,6 +379,8 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).toContain(RUDDER_AGENT_OPERATING_CONTRACT);
     expect(loaded.prefix).toContain("installed but not enabled");
     expect(loaded.prefix).toContain("library:projects/<project-name>/");
+    expect(loaded.prefix).toContain("always include a user-visible Markdown link");
+    expect(loaded.prefix).toContain("library-file://file?p=<url-encoded-relative-path>&t=<url-encoded-title>");
     expect(loaded.prefix).toContain("Use `/tmp` only for transient scratch files");
     expect(loaded.prefix).toContain("Local trusted runtimes may expose the host operator home as `$RUDDER_OPERATOR_HOME`");
     expect(loaded.prefix).toContain("structured markdown link like `[@AgentName](agent://agent-id)`");

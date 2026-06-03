@@ -278,6 +278,7 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "- Library-backed project resources use `sourceType: \"library\"`; their `locator` points into `library:projects/<project-name>/`.",
   "- Project Context is explicit operator-curated context, not the whole knowledge boundary. When it is insufficient, inspect broader Library and org workspace know-how before concluding context is missing.",
   "- Durable generated project work files should be written under `library:projects/<project-name>/`.",
+  "- When you create or update a durable Library file, always include a user-visible Markdown link to that file in your final chat reply or issue comment. Use `library-file://file?p=<url-encoded-relative-path>&t=<url-encoded-title>` for Library file links.",
   "- Use `/tmp` only for transient scratch files and temporary verification files; do not put durable work product there.",
   "- Local trusted runtimes may expose the host operator home as `$RUDDER_OPERATOR_HOME`; use it only when a local skill or script intentionally needs operator-owned desktop app or CLI state. Do not replace `$HOME` with it.",
   "",
