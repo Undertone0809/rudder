@@ -248,6 +248,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     asString(config.promptTemplate, ""),
     context,
   );
+  const runtimeScene = asString(context.rudderScene, "");
   const command = asString(config.command, "agent");
   const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
   const mode = normalizeMode(asString(config.mode, ""));
@@ -425,6 +426,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const loadedInstructions = await loadAgentInstructionsPrefix({
     instructionsFilePath,
+    includeHeartbeatInstructions: runtimeScene === "heartbeat",
     onLog,
   });
   const instructionsPrefix = loadedInstructions.prefix;

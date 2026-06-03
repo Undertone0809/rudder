@@ -436,11 +436,13 @@ describe("loadAgentInstructionsPrefix", () => {
     const soulPath = path.join(root, "instructions", "SOUL.md");
     const toolsPath = path.join(root, "instructions", "TOOLS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
+    const heartbeatPath = path.join(root, "instructions", "HEARTBEAT.md");
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(soulPath, "# Persona\n\nYou are QA.\n", "utf8");
     await fs.writeFile(toolsPath, "# Tools\n\n- Use rudder.\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer concise updates.\n", "utf8");
+    await fs.writeFile(heartbeatPath, "# Heartbeat\n\n- Check assignments.\n", "utf8");
 
     try {
       const loaded = await loadAgentInstructionsPrefix({
@@ -452,19 +454,48 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(loaded.prefix).toContain("# Persona");
       expect(loaded.prefix).toContain("# Tools");
       expect(loaded.prefix).toContain("# Tacit Memory");
+      expect(loaded.prefix).not.toContain("# Heartbeat");
       expect(loaded.commandNotes).toContain("Loaded agent instructions from $AGENT_HOME/instructions/AGENTS.md");
       expect(loaded.commandNotes).toContain("Loaded agent soul instructions from $AGENT_HOME/instructions/SOUL.md");
       expect(loaded.commandNotes).toContain("Loaded agent tool notes from $AGENT_HOME/instructions/TOOLS.md");
       expect(loaded.commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
+      expect(loaded.commandNotes).not.toContain("Loaded agent heartbeat instructions from $AGENT_HOME/instructions/HEARTBEAT.md");
       expect(loaded.soulFilePath).toBe(soulPath);
       expect(loaded.toolsFilePath).toBe(toolsPath);
       expect(loaded.memoryFilePath).toBe(memoryPath);
+      expect(loaded.heartbeatFilePath).toBeNull();
       expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
       expect(loaded.metrics.operatingContractChars).toBeGreaterThan(0);
       expect(loaded.metrics.instructionEntryChars).toBeGreaterThan(0);
       expect(loaded.metrics.soulChars).toBeGreaterThan(0);
       expect(loaded.metrics.toolsChars).toBeGreaterThan(0);
       expect(loaded.metrics.memoryChars).toBeGreaterThan(0);
+      expect(loaded.metrics.heartbeatChars).toBe(0);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("loads sibling HEARTBEAT.md only when heartbeat instructions are requested", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-heartbeat-"));
+    const instructionsPath = path.join(root, "instructions", "SOUL.md");
+    const heartbeatPath = path.join(root, "instructions", "HEARTBEAT.md");
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Persona\n\nYou are QA.\n", "utf8");
+    await fs.writeFile(heartbeatPath, "# Heartbeat\n\n- Check assignments.\n", "utf8");
+
+    try {
+      const loaded = await loadAgentInstructionsPrefix({
+        instructionsFilePath: instructionsPath,
+        includeHeartbeatInstructions: true,
+        onLog: async () => {},
+      });
+
+      expect(loaded.prefix).toContain("# Persona");
+      expect(loaded.prefix).toContain("# Heartbeat");
+      expect(loaded.commandNotes).toContain("Loaded agent heartbeat instructions from $AGENT_HOME/instructions/HEARTBEAT.md");
+      expect(loaded.heartbeatFilePath).toBe(heartbeatPath);
+      expect(loaded.metrics.heartbeatChars).toBeGreaterThan(0);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

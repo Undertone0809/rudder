@@ -225,6 +225,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     asString(config.promptTemplate, ""),
     context,
   );
+  const runtimeScene = asString(context.rudderScene, "");
   const command = asString(config.command, "gemini");
   const model = asString(config.model, DEFAULT_GEMINI_LOCAL_MODEL).trim();
   const sandbox = asBoolean(config.sandbox, false);
@@ -381,6 +382,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const loadedInstructions = await loadAgentInstructionsPrefix({
     instructionsFilePath,
+    includeHeartbeatInstructions: runtimeScene === "heartbeat",
     onLog,
   });
   const instructionsPrefix = loadedInstructions.prefix;

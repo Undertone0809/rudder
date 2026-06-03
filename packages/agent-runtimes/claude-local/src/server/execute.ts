@@ -454,6 +454,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     asString(config.promptTemplate, ""),
     context,
   );
+  const runtimeScene = asString(context.rudderScene, "");
   const model = asString(config.model, "");
   const effort = asString(config.effort, "");
   const chrome = asBoolean(config.chrome, false);
@@ -498,6 +499,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const loadedInstructions = await loadAgentInstructionsPrefix({
     instructionsFilePath,
+    includeHeartbeatInstructions: runtimeScene === "heartbeat",
     onLog,
     warningStream: "stderr",
   });

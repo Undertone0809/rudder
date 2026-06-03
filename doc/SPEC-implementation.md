@@ -771,6 +771,8 @@ Stable instruction inputs:
   instructions
 - sibling `SOUL.md`, `TOOLS.md`, and `MEMORY.md` files when present beside the
   configured instruction entry file
+- sibling `HEARTBEAT.md` when present beside the configured instruction entry
+  file for `heartbeat` scene runs
 - enabled Rudder skills resolved for the agent/runtime
 - scene-level invariant rules for `heartbeat` or `chat`
 

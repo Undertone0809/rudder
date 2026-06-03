@@ -18,6 +18,7 @@ export interface LoadedAgentInstructionsPrefix {
   soulFilePath: string | null;
   toolsFilePath: string | null;
   memoryFilePath: string | null;
+  heartbeatFilePath: string | null;
   readFailed: boolean;
   metrics: {
     instructionsChars: number;
@@ -26,6 +27,7 @@ export interface LoadedAgentInstructionsPrefix {
     soulChars: number;
     toolsChars: number;
     memoryChars: number;
+    heartbeatChars: number;
   };
 }
 
@@ -60,6 +62,7 @@ export function displayInstructionDir(filePath: string, instructionsFilePath: st
 
 export async function loadAgentInstructionsPrefix(input: {
   instructionsFilePath: string;
+  includeHeartbeatInstructions?: boolean;
   onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   warningStream?: "stdout" | "stderr";
 }): Promise<LoadedAgentInstructionsPrefix> {
@@ -83,6 +86,7 @@ export async function loadAgentInstructionsPrefix(input: {
     soulFilePath: null,
     toolsFilePath: null,
     memoryFilePath: null,
+    heartbeatFilePath: null,
     readFailed: false,
     metrics: {
       instructionsChars: operatingContractSection.length,
@@ -91,6 +95,7 @@ export async function loadAgentInstructionsPrefix(input: {
       soulChars: 0,
       toolsChars: 0,
       memoryChars: 0,
+      heartbeatChars: 0,
     },
   } satisfies LoadedAgentInstructionsPrefix;
 
@@ -184,11 +189,22 @@ export async function loadAgentInstructionsPrefix(input: {
     commandNotes.push(`Loaded agent memory instructions from ${displayInstructionPath(memory.path, instructionsFilePath)}`);
   }
 
+  const heartbeat = input.includeHeartbeatInstructions
+    ? await loadSiblingInstructionFile({
+        fileName: "HEARTBEAT.md",
+        label: "agent heartbeat instructions",
+        logLabel: "agent heartbeat instructions file",
+      })
+    : { path: null, section: "" };
+  if (heartbeat.section && heartbeat.path) {
+    commandNotes.push(`Loaded agent heartbeat instructions from ${displayInstructionPath(heartbeat.path, instructionsFilePath)}`);
+  }
+
   const memoryFilePath = memory.section ? memory.path : null;
   const memorySection = memory.section;
   if (entrySection) commandNotes.splice(1, 0, `Loaded agent instructions from ${displayInstructionsFilePath}`);
 
-  const prefix = joinPromptSections([operatingContractSection, entrySection, soul.section, tools.section, memorySection]);
+  const prefix = joinPromptSections([operatingContractSection, entrySection, soul.section, tools.section, memorySection, heartbeat.section]);
   return {
     prefix,
     commandNotes,
@@ -197,6 +213,7 @@ export async function loadAgentInstructionsPrefix(input: {
     soulFilePath: soul.section ? soul.path : null,
     toolsFilePath: tools.section ? tools.path : null,
     memoryFilePath,
+    heartbeatFilePath: heartbeat.section ? heartbeat.path : null,
     readFailed: !entrySection,
     metrics: {
       instructionsChars: prefix.length,
@@ -205,6 +222,7 @@ export async function loadAgentInstructionsPrefix(input: {
       soulChars: soul.section.length,
       toolsChars: tools.section.length,
       memoryChars: memorySection.length,
+      heartbeatChars: heartbeat.section.length,
     },
   };
 }
@@ -324,4 +342,3 @@ export async function resolveSpawnTarget(
 
   return { command: executable, args };
 }
-

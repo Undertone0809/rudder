@@ -418,6 +418,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const loadedInstructions = await loadAgentInstructionsPrefix({
     instructionsFilePath,
+    includeHeartbeatInstructions: runtimeScene === "heartbeat",
     onLog,
   });
   const instructionsPrefix = loadedInstructions.prefix;
