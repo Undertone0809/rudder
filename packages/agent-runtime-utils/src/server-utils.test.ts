@@ -503,6 +503,60 @@ describe("loadAgentInstructionsPrefix", () => {
     }
   });
 
+  it("skips HEARTBEAT.md when it is the entry file outside heartbeat runs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-heartbeat-entry-skip-"));
+    const instructionsPath = path.join(root, "instructions", "HEARTBEAT.md");
+    const logs: Array<{ stream: "stdout" | "stderr"; chunk: string }> = [];
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Heartbeat\n\n- Check assignments.\n", "utf8");
+
+    try {
+      const loaded = await loadAgentInstructionsPrefix({
+        instructionsFilePath: instructionsPath,
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
+      expect(loaded.prefix).not.toContain("# Heartbeat");
+      expect(loaded.commandNotes).toContain("Skipped configured heartbeat instructions outside heartbeat scene: $AGENT_HOME/instructions/HEARTBEAT.md");
+      expect(loaded.heartbeatFilePath).toBeNull();
+      expect(loaded.readFailed).toBe(false);
+      expect(loaded.metrics.instructionEntryChars).toBe(0);
+      expect(loaded.metrics.heartbeatChars).toBe(0);
+      expect(logs).toContainEqual(expect.objectContaining({
+        stream: "stdout",
+        chunk: expect.stringContaining("[rudder] Skipped agent heartbeat instructions file outside heartbeat scene: $AGENT_HOME/instructions/HEARTBEAT.md"),
+      }));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("loads HEARTBEAT.md when it is the entry file for heartbeat runs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-heartbeat-entry-load-"));
+    const instructionsPath = path.join(root, "instructions", "HEARTBEAT.md");
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Heartbeat\n\n- Check assignments.\n", "utf8");
+
+    try {
+      const loaded = await loadAgentInstructionsPrefix({
+        instructionsFilePath: instructionsPath,
+        includeHeartbeatInstructions: true,
+        onLog: async () => {},
+      });
+
+      expect(loaded.prefix).toContain("# Heartbeat");
+      expect(loaded.commandNotes).toContain("Loaded agent heartbeat instructions from $AGENT_HOME/instructions/HEARTBEAT.md");
+      expect(loaded.heartbeatFilePath).toBe(instructionsPath);
+      expect(loaded.metrics.instructionEntryChars).toBeGreaterThan(0);
+      expect(loaded.metrics.heartbeatChars).toBe(loaded.metrics.instructionEntryChars);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the existing warning behavior when the entry file is missing", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-missing-"));
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
