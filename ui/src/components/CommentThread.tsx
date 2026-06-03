@@ -2,7 +2,13 @@ import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type Keyb
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { IssueComment, Agent } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
-import { Check, ChevronDown, Copy, Paperclip, TerminalSquare } from "lucide-react";
+import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, TerminalSquare } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { LiveRunForIssue } from "../api/heartbeats";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { Identity } from "./Identity";
@@ -140,22 +146,71 @@ function shouldSkipRunRowNavigation(target: EventTarget | null): boolean {
     : false;
 }
 
-function CopyMarkdownButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+function buildCommentLink(commentId: string, location: ReturnType<typeof useLocation>) {
+  const path = `${location.pathname}${location.search}`;
+  if (typeof window === "undefined") return `${path}#comment-${commentId}`;
+  return `${window.location.origin}${path}#comment-${commentId}`;
+}
+
+function CommentActionsMenu({
+  comment,
+  orgId,
+  projectId,
+  location,
+}: {
+  comment: CommentWithRunMeta;
+  orgId?: string | null;
+  projectId?: string | null;
+  location: ReturnType<typeof useLocation>;
+}) {
+  const [copiedAction, setCopiedAction] = useState<"content" | "link" | null>(null);
+
+  const copyToClipboard = (action: "content" | "link", value: string) => {
+    navigator.clipboard.writeText(value).then(() => {
+      setCopiedAction(action);
+      setTimeout(() => setCopiedAction(null), 2000);
+    });
+  };
+
   return (
-    <button
-      type="button"
-      className="text-muted-foreground hover:text-foreground transition-colors"
-      title="Copy as markdown"
-      onClick={() => {
-        navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        });
-      }}
-    >
-      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-    </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          aria-label="Comment actions"
+          title="Comment actions"
+        >
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40 whitespace-nowrap">
+        <DropdownMenuItem onSelect={() => copyToClipboard("content", comment.body)}>
+          {copiedAction === "content" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          Copy content
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => copyToClipboard("link", buildCommentLink(comment.id, location))}>
+          {copiedAction === "link" ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
+          Copy link
+        </DropdownMenuItem>
+        {orgId ? (
+          <PluginSlotOutlet
+            slotTypes={["commentContextMenuItem"]}
+            entityType="comment"
+            context={{
+              orgId,
+              projectId: projectId ?? null,
+              entityId: comment.id,
+              entityType: "comment",
+              parentEntityId: comment.issueId,
+            }}
+            className="flex flex-col"
+            itemClassName="inline-flex"
+            missingBehavior="placeholder"
+          />
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -413,29 +468,18 @@ const TimelineList = memo(function TimelineList({
                 <Identity name={resolveOperatorDisplayName(operatorDisplayName)} size="sm" />
               )}
               <span className="flex items-center gap-1.5">
-                {orgId ? (
-                  <PluginSlotOutlet
-                    slotTypes={["commentContextMenuItem"]}
-                    entityType="comment"
-                    context={{
-                      orgId,
-                      projectId: projectId ?? null,
-                      entityId: comment.id,
-                      entityType: "comment",
-                      parentEntityId: comment.issueId,
-                    }}
-                    className="flex flex-wrap items-center gap-1.5"
-                    itemClassName="inline-flex"
-                    missingBehavior="placeholder"
-                  />
-                ) : null}
                 <a
                   href={`#comment-${comment.id}`}
                   className="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
                 >
                   {formatDateTime(comment.createdAt)}
                 </a>
-                <CopyMarkdownButton text={comment.body} />
+                <CommentActionsMenu
+                  comment={comment}
+                  orgId={orgId}
+                  projectId={projectId}
+                  location={location}
+                />
               </span>
             </div>
             <MarkdownBody className="text-sm" agentMentions={agentMentions} skillReferences={skillReferences}>{comment.body}</MarkdownBody>
