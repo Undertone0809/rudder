@@ -127,11 +127,14 @@ test.describe("Automations index layout", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
 
     const headerActions = page.getByTestId("workspace-main-header-actions");
+    const workspaceCard = page.getByTestId("workspace-main-card");
+    const pageContent = page.getByTestId("automations-page-content");
     const createButton = headerActions.getByRole("button", { name: "Create automation" });
     const emptyState = page.getByText("No automations yet");
     const templateGrid = page.getByTestId("automation-template-grid");
 
     await expect(headerActions).toBeVisible();
+    await expect(pageContent).toBeVisible();
     await expect(createButton).toBeVisible();
     await expect(emptyState).toBeVisible();
     await expect(templateGrid).toBeVisible();
@@ -143,12 +146,21 @@ test.describe("Automations index layout", () => {
     await expect(page.getByText("Start from scratch")).toHaveCount(0);
 
     const headerActionsBox = await headerActions.boundingBox();
+    const workspaceCardBox = await workspaceCard.boundingBox();
+    const pageContentBox = await pageContent.boundingBox();
     const createButtonBox = await createButton.boundingBox();
     const emptyStateBox = await emptyState.boundingBox();
 
     expect(headerActionsBox).not.toBeNull();
+    expect(workspaceCardBox).not.toBeNull();
+    expect(pageContentBox).not.toBeNull();
     expect(createButtonBox).not.toBeNull();
     expect(emptyStateBox).not.toBeNull();
+    expect(pageContentBox!.width).toBeLessThan(workspaceCardBox!.width - 80);
+    const pageContentLeftGap = pageContentBox!.x - workspaceCardBox!.x;
+    const pageContentRightGap = workspaceCardBox!.x + workspaceCardBox!.width - (pageContentBox!.x + pageContentBox!.width);
+    expect(pageContentLeftGap).toBeGreaterThan(48);
+    expect(Math.abs(pageContentLeftGap - pageContentRightGap)).toBeLessThanOrEqual(8);
     expect(createButtonBox!.x).toBeGreaterThanOrEqual(headerActionsBox!.x - 2);
     expect(createButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
     expect(createButtonBox!.y + createButtonBox!.height).toBeLessThanOrEqual(headerActionsBox!.y + headerActionsBox!.height + 2);

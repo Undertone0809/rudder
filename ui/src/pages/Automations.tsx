@@ -579,7 +579,7 @@ export function Automations() {
   }
 
   return (
-    <div className="space-y-6">
+    <div data-testid="automations-page-content" className="mx-auto w-full max-w-[1120px] space-y-6 px-1 py-4 sm:px-2 md:py-6">
       <Dialog
         open={composerOpen}
         onOpenChange={(open) => {
@@ -904,7 +904,7 @@ export function Automations() {
 
       <div>
         {(automations ?? []).length === 0 ? (
-          <div className="mx-auto flex min-h-[min(680px,calc(100vh-12rem))] max-w-5xl flex-col items-center justify-center px-4 py-12 text-center">
+          <div className="mx-auto flex min-h-[min(620px,calc(100vh-14rem))] max-w-4xl flex-col items-center justify-center px-4 py-16 text-center md:py-20">
             <h1 className="text-xl font-semibold">No automations yet</h1>
             <p className="mt-2 max-w-xl text-sm text-muted-foreground">
               Turn repeated board work into a scheduled agent run. Choose a workflow or create your own.
