@@ -144,6 +144,7 @@ describe("BreadcrumbBar", () => {
 
     expect(html).toContain('href="/issues"');
     expect(html).toContain("RUD-197 chat ai response thing 的动效换成这个");
+    expect(html).toContain("list-none");
     expect(html).not.toContain("Issue Tracker");
     expect(html).toContain("Search issues...");
     expect(html).toContain("Create Issue");
