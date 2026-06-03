@@ -10,6 +10,12 @@ function countOccurrences(value: string, needle: string) {
   return value.split(needle).length - 1;
 }
 
+function classValueForText(html: string, text: string) {
+  const escapedText = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = html.match(new RegExp(`<button[^>]*class="([^"]*)"[^>]*>[\\s\\S]*?${escapedText}`));
+  return match?.[1] ?? "";
+}
+
 function renderCommandSummary(command: string) {
   return renderToStaticMarkup(
     <ThemeProvider>
@@ -583,9 +589,13 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("space-y-1.5");
-    expect(html).toContain("py-1");
-    expect(html).toContain("items-center");
     expect(html).toContain("Tool");
+    const rowClass = classValueForText(html, "Tool");
+    const wrapperClass = html.match(/<div class="([^"]*)" title="08:00:02"><button[^>]*>[\s\S]*?Tool/)?.[1] ?? "";
+    expect(wrapperClass.split(" ")).toContain("py-1");
+    expect(wrapperClass.split(" ")).not.toContain("py-1.5");
+    expect(rowClass.split(" ")).toContain("items-center");
+    expect(rowClass.split(" ")).not.toContain("items-start");
     expect(html).toContain("The next progress note should sit close to the tool row.");
   });
 
