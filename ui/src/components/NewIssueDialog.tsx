@@ -253,6 +253,7 @@ export function NewIssueDialog() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
+  const descriptionComposerRef = useRef<HTMLDivElement | null>(null);
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
@@ -1529,6 +1530,7 @@ export function NewIssueDialog() {
           onDrop={handleFileDrop}
         >
           <div
+            ref={descriptionComposerRef}
             className={cn(
               "rounded-md transition-colors",
               isFileDragOver && "bg-accent/20",
@@ -1543,6 +1545,8 @@ export function NewIssueDialog() {
               bordered={false}
               mentions={mentionOptions}
               onMentionQueryChange={setLibraryFileMentionQuery}
+              mentionMenuAnchorRef={descriptionComposerRef}
+              mentionMenuPlacement="container"
               contentClassName="text-sm text-muted-foreground pb-12 min-h-[88px]"
               imageUploadHandler={async (file) => {
                 const asset = await uploadDescriptionImage.mutateAsync(file);

@@ -87,6 +87,13 @@ test.describe("New issue skill mentions", () => {
     await page.keyboard.type("Use @advisor");
     const atMentionMenu = page.getByTestId("markdown-mention-menu");
     await expect(atMentionMenu).toBeVisible({ timeout: 15_000 });
+    const composerBox = await composer.boundingBox();
+    const atMentionMenuBox = await atMentionMenu.boundingBox();
+    expect(composerBox).not.toBeNull();
+    expect(atMentionMenuBox).not.toBeNull();
+    expect(atMentionMenuBox!.x).toBeGreaterThanOrEqual(composerBox!.x - 8);
+    expect(atMentionMenuBox!.x).toBeLessThanOrEqual(composerBox!.x + 8);
+    expect(Math.abs(atMentionMenuBox!.width - composerBox!.width)).toBeLessThanOrEqual(16);
     await expect(atMentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first()).toContainText("build-advisor");
 
     await composer.press("ControlOrMeta+A");

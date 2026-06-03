@@ -7,6 +7,10 @@ import type { NewIssueDefaults } from "@/context/DialogContext";
 import { NewIssueDialog } from "./NewIssueDialog";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
+let capturedMarkdownEditorProps: {
+  mentionMenuAnchorRef?: { current: unknown };
+  mentionMenuPlacement?: string;
+} | null = null;
 const dialogState = vi.hoisted(() => ({
   newIssueDefaults: { assigneeAgentId: "agent-1" } as NewIssueDefaults,
   labels: [
@@ -178,11 +182,19 @@ vi.mock("./MarkdownEditor", () => ({
   MarkdownEditor: ({
     mentions,
     contentClassName,
+    mentionMenuAnchorRef,
+    mentionMenuPlacement,
   }: {
     mentions?: Array<Record<string, unknown>>;
     contentClassName?: string;
+    mentionMenuAnchorRef?: { current: unknown };
+    mentionMenuPlacement?: string;
   }) => {
     capturedMentions = mentions ?? [];
+    capturedMarkdownEditorProps = {
+      mentionMenuAnchorRef,
+      mentionMenuPlacement,
+    };
     return <textarea aria-label="Description" className={contentClassName} />;
   },
 }));
@@ -280,6 +292,8 @@ vi.mock("../api/assets", () => ({
 
 describe("NewIssueDialog", () => {
   beforeEach(() => {
+    capturedMentions = [];
+    capturedMarkdownEditorProps = null;
     dialogState.newIssueDefaults = { assigneeAgentId: "agent-1" };
     dialogState.labels = [
       { id: "label-1", orgId: "org-1", name: "backend", color: "#2563eb", createdAt: "", updatedAt: "" },
@@ -355,6 +369,13 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("sm:max-w-[920px]");
     expect(html).toContain("min-h-[88px]");
     expect(html).not.toContain("min-h-[120px]");
+  });
+
+  it("anchors description mention suggestions to the composer shell", () => {
+    renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(capturedMarkdownEditorProps?.mentionMenuPlacement).toBe("container");
+    expect(capturedMarkdownEditorProps?.mentionMenuAnchorRef).toEqual(expect.objectContaining({ current: null }));
   });
 
   it("does not render the execution workspace controls", () => {
