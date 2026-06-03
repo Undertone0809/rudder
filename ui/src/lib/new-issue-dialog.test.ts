@@ -153,6 +153,25 @@ describe("buildNewIssueCreateRequest", () => {
       }),
     );
   });
+
+  it("includes explicit null when no goal is selected", () => {
+    expect(
+      buildNewIssueCreateRequest({
+        title: "Start unanchored",
+        description: "",
+        status: "todo",
+        priority: "medium",
+        projectId: "",
+        goalId: "",
+        labelIds: [],
+        projectWorkspaceId: "",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        goalId: null,
+      }),
+    );
+  });
 });
 
 describe("resolveDraftBackedNewIssueValues", () => {

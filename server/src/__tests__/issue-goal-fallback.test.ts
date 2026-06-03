@@ -9,10 +9,20 @@ describe("issue goal fallback", () => {
     expect(
       resolveIssueGoalId({
         projectId: null,
-        goalId: null,
+        goalId: undefined,
         defaultGoalId: "goal-1",
       }),
     ).toBe("goal-1");
+  });
+
+  it("honors an explicit goal clear when creating a projectless issue", () => {
+    expect(
+      resolveIssueGoalId({
+        projectId: null,
+        goalId: null,
+        defaultGoalId: "goal-1",
+      }),
+    ).toBeNull();
   });
 
   it("keeps an explicit goal when creating an issue", () => {

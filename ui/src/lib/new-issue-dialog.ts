@@ -63,7 +63,7 @@ export interface BuildNewIssueCreateRequestInput {
   reviewerAgentId?: string | null;
   reviewerUserId?: string | null;
   projectId: string;
-  goalId?: string;
+  goalId?: string | null;
   labelIds: string[];
   projectWorkspaceId: string;
   assigneeAgentRuntimeOverrides?: Record<string, unknown> | null;
@@ -397,7 +397,7 @@ export function buildNewIssueCreateRequest(input: BuildNewIssueCreateRequestInpu
     ...(input.reviewerAgentId ? { reviewerAgentId: input.reviewerAgentId } : {}),
     ...(input.reviewerUserId ? { reviewerUserId: input.reviewerUserId } : {}),
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    ...(input.goalId ? { goalId: input.goalId } : {}),
+    goalId: input.goalId || null,
     ...(input.labelIds.length > 0 ? { labelIds: input.labelIds } : {}),
     ...(input.projectWorkspaceId ? { projectWorkspaceId: input.projectWorkspaceId } : {}),
     ...(input.assigneeAgentRuntimeOverrides ? { assigneeAgentRuntimeOverrides: input.assigneeAgentRuntimeOverrides } : {}),

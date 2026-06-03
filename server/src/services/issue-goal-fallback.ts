@@ -5,10 +5,14 @@ export function resolveIssueGoalId(input: {
   goalId: MaybeId;
   defaultGoalId: MaybeId;
 }): string | null {
-  if (!input.projectId && !input.goalId) {
+  if (input.goalId !== undefined) {
+    return input.goalId ?? null;
+  }
+
+  if (!input.projectId) {
     return input.defaultGoalId ?? null;
   }
-  return input.goalId ?? null;
+  return null;
 }
 
 export function resolveNextIssueGoalId(input: {

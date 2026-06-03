@@ -205,11 +205,6 @@ function defaultProjectWorkspaceIdForProject(project: {
     ?? "";
 }
 
-function soleGoalIdForProject(project: { goalIds?: string[]; goalId?: string | null } | null | undefined) {
-  const goalIds = project?.goalIds?.length ? project.goalIds : project?.goalId ? [project.goalId] : [];
-  return goalIds.length === 1 ? goalIds[0]! : "";
-}
-
 export function NewIssueDialog() {
   const { newIssueOpen, newIssueDefaults, closeNewIssue } = useDialog();
   const { organizations, selectedOrganizationId, selectedOrganization } = useOrganization();
@@ -620,7 +615,6 @@ export function NewIssueDialog() {
       });
       const restoredProjectId = restoredValues.projectId;
       const restoredProject = orderedProjects.find((project) => project.id === restoredProjectId);
-      const restoredGoalId = restoredValues.goalId || soleGoalIdForProject(restoredProject);
       setTitle(savedDraft.title);
       setDescription(savedDraft.description);
       setStatus(restoredValues.status);
@@ -630,7 +624,7 @@ export function NewIssueDialog() {
       setAssigneeValue(restoredValues.assigneeValue);
       setReviewerValue(restoredValues.reviewerValue);
       setProjectId(restoredProjectId);
-      setGoalId(restoredGoalId);
+      setGoalId(restoredValues.goalId);
       setProjectWorkspaceId(savedDraft.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(restoredProject));
       setAssigneeModelOverride(savedDraft.assigneeModelOverride ?? "");
       setAssigneeThinkingEffort(savedDraft.assigneeThinkingEffort ?? "");
@@ -643,9 +637,8 @@ export function NewIssueDialog() {
       setSelectedLabelIds(newIssueDefaults.labelIds ?? []);
       setLabelSearch("");
       const defaultProject = orderedProjects.find((project) => project.id === preferredProjectId);
-      const preferredGoalId = newIssueDefaults.goalId ?? soleGoalIdForProject(defaultProject);
       setProjectId(preferredProjectId);
-      setGoalId(preferredGoalId);
+      setGoalId(newIssueDefaults.goalId ?? "");
       setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(defaultProject));
       setAssigneeValue(preferredAssigneeValue);
       setReviewerValue(preferredReviewerValue);
@@ -662,7 +655,6 @@ export function NewIssueDialog() {
       });
       const restoredProjectId = restoredValues.projectId;
       const restoredProject = orderedProjects.find((project) => project.id === restoredProjectId);
-      const restoredGoalId = restoredValues.goalId || soleGoalIdForProject(restoredProject);
       setTitle(draft.title);
       setDescription(draft.description);
       setStatus(restoredValues.status);
@@ -672,7 +664,7 @@ export function NewIssueDialog() {
       setAssigneeValue(restoredValues.assigneeValue);
       setReviewerValue(restoredValues.reviewerValue);
       setProjectId(restoredProjectId);
-      setGoalId(restoredGoalId);
+      setGoalId(restoredValues.goalId);
       setProjectWorkspaceId(draft.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(restoredProject));
       setAssigneeModelOverride(draft.assigneeModelOverride ?? "");
       setAssigneeThinkingEffort(draft.assigneeThinkingEffort ?? "");
@@ -685,9 +677,8 @@ export function NewIssueDialog() {
       setPriority(newIssueDefaults.priority ?? "");
       setSelectedLabelIds(newIssueDefaults.labelIds ?? []);
       setLabelSearch("");
-      const preferredGoalId = newIssueDefaults.goalId ?? soleGoalIdForProject(defaultProject);
       setProjectId(preferredProjectId);
-      setGoalId(preferredGoalId);
+      setGoalId(newIssueDefaults.goalId ?? "");
       setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(defaultProject));
       setAssigneeValue(preferredAssigneeValue);
       setReviewerValue(preferredReviewerValue);
@@ -1101,10 +1092,6 @@ export function NewIssueDialog() {
     setProjectId(nextProjectId);
     const nextProject = orderedProjects.find((project) => project.id === nextProjectId);
     setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(nextProject));
-    const nextGoalId = soleGoalIdForProject(nextProject);
-    if (nextGoalId) {
-      setGoalId((current) => current || nextGoalId);
-    }
   }, [orderedProjects]);
   const modelOverrideOptions = useMemo<InlineEntityOption[]>(
     () => {
