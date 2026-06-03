@@ -1015,7 +1015,7 @@ export function Calendar() {
                   )}
                 </CalendarDetailRow>
               </dl>
-              {selectedEvent.description ? (
+              {isWritableEvent(selectedEvent) && selectedEvent.description ? (
                 <p className="rounded-[var(--radius-sm)] border border-border bg-muted/30 p-3 text-sm leading-6">
                   {selectedEvent.description}
                 </p>
@@ -1036,11 +1036,7 @@ export function Calendar() {
                     Delete
                   </Button>
                 </div>
-              ) : (
-                <div className="rounded-[var(--radius-sm)] border border-border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
-                  Only My Calendar events can be edited. Agent schedules, run history, projected heartbeats, and Google Calendar blocks are read-only here.
-                </div>
-              )}
+              ) : null}
             </div>
           ) : null}
         </SheetContent>
