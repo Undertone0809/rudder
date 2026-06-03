@@ -791,7 +791,7 @@ export function NewIssueDialog() {
   }
 
   function handleSubmit() {
-    if (!effectiveCompanyId || !title.trim() || createIssue.isPending || redirectingIssueRef) return;
+    if (!effectiveCompanyId || !hasIssueTitle || createIssue.isPending || redirectingIssueRef) return;
     setRedirectingIssueRef(null);
     const assigneeAgentRuntimeOverrides = buildAssigneeAdapterOverrides({
       agentRuntimeType: assigneeAdapterType,
@@ -1015,6 +1015,7 @@ export function NewIssueDialog() {
   const createIssueErrorMessage =
     createIssue.error instanceof Error ? createIssue.error.message : "Failed to create issue. Try again.";
   const isCreatingOrRedirecting = createIssue.isPending || Boolean(redirectingIssueRef);
+  const hasIssueTitle = title.trim().length > 0;
   const labelPickerScrollRef = useScrollbarActivityRef();
   const isSubIssueDraft = Boolean(newIssueDefaults.parentId);
   const parentIssueSnapshot = newIssueDefaults.parentIssue;
@@ -1808,8 +1809,11 @@ export function NewIssueDialog() {
             </div>
             <Button
               size="sm"
-              className="min-w-[8.5rem] disabled:opacity-100"
-              disabled={!title.trim() || isCreatingOrRedirecting}
+              className={cn(
+                "min-w-[8.5rem] disabled:opacity-100",
+                !hasIssueTitle && "disabled:border-border/40 disabled:bg-muted/40 disabled:text-muted-foreground/70 disabled:shadow-none",
+              )}
+              disabled={!hasIssueTitle || isCreatingOrRedirecting}
               onClick={handleSubmit}
               aria-busy={isCreatingOrRedirecting}
             >

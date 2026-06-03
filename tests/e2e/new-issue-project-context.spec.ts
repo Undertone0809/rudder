@@ -22,14 +22,17 @@ test.describe("New issue project context", () => {
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     const title = `Redirected issue ${Date.now()}`;
     await expect(dialog).toBeVisible();
+    const createIssueButton = dialog.getByRole("button", { name: "Create Issue" });
+    await expect(createIssueButton).toBeDisabled();
     await dialog.getByPlaceholder("Issue title").fill(title);
+    await expect(createIssueButton).toBeEnabled();
 
     const createResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"
       && response.url().endsWith(`/api/orgs/${organization.id}/issues`)
       && response.ok(),
     );
-    await dialog.getByRole("button", { name: "Create Issue" }).click();
+    await createIssueButton.click();
     const response = await createResponse;
     const requestBody = response.request().postDataJSON() as { goalId?: string | null };
     expect(requestBody.goalId).toBeNull();
