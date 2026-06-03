@@ -21,6 +21,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import type {
+  Agent,
   AgentDetail,
   AgentSkillEntry,
   AgentSkillSnapshot,
@@ -689,6 +690,53 @@ describe("agent CLI e2e", () => {
       env,
     });
     expect(done.status).toBe("done");
+  });
+
+  it("lets an agent update its own visible identity through the CLI", { timeout: 60_000 }, async () => {
+    const env = {
+      RUDDER_API_KEY: agentKey,
+      RUDDER_ORG_ID: orgId,
+      RUDDER_AGENT_ID: agentId,
+      RUDDER_RUN_ID: runId,
+    };
+
+    const updated = await runCliJson<Agent>(
+      [
+        "agent",
+        "update",
+        "--title",
+        "Review Owner",
+        "--description",
+        "Owns structured review decisions and review workflow quality.",
+      ],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+
+    expect(updated.id).toBe(agentId);
+    expect(updated.title).toBe("Review Owner");
+    expect(updated.capabilities).toBe("Owns structured review decisions and review workflow quality.");
+
+    const db = createDb(connectionString);
+    const activities = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "agent.updated"));
+    const activity = activities.find((row) => row.entityId === agentId);
+    expect(activity).toMatchObject({
+      actorType: "agent",
+      actorId: agentId,
+      agentId,
+      runId,
+      entityType: "agent",
+      entityId: agentId,
+    });
+    expect(activity?.details).toMatchObject({
+      changedTopLevelKeys: ["capabilities", "title"],
+    });
   });
 
   it("defaults agent-created issues to the creating agent", { timeout: 60_000 }, async () => {

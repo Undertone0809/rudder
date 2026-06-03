@@ -2,6 +2,7 @@ import { Command } from "commander";
 import {
   organizationSkillCreateSchema,
   createAgentHireSchema,
+  updateAgentSchema,
   type Agent,
   type AgentDetail,
   type AgentSkillEntry,
@@ -62,6 +63,22 @@ interface AgentCapabilitiesOptions extends BaseClientOptions {
 interface AgentHireOptions extends BaseClientOptions {
   orgId?: string;
   payload: string;
+}
+
+interface AgentUpdateOptions extends BaseClientOptions {
+  orgId?: string;
+  name?: string;
+  role?: string;
+  title?: string;
+  clearTitle?: boolean;
+  capabilities?: string;
+  capabilitiesFile?: string;
+  description?: string;
+  descriptionFile?: string;
+  clearCapabilities?: boolean;
+  clearDescription?: boolean;
+  reportsTo?: string;
+  clearReportsTo?: boolean;
 }
 
 interface AgentSkillSyncOptions extends BaseClientOptions {
@@ -597,6 +614,52 @@ export function registerAgentCommands(program: Command): void {
 
   addCommonClientOptions(
     agent
+      .command("update")
+      .description(getAgentCliCapabilityById("agent.update").description)
+      .argument("[agentId]", "Agent ID or shortname/url-key; defaults to RUDDER_AGENT_ID")
+      .option("-O, --org-id <id>", "Organization ID")
+      .option("--name <name>", "Agent display name")
+      .option("--role <role>", "Agent organization role")
+      .option("--title <title>", "Agent title shown in mentions and agent labels")
+      .option("--clear-title", "Clear the agent title")
+      .option("--capabilities <text>", "Agent capabilities/description text")
+      .option("--capabilities-file <path>", "Read agent capabilities/description from a local file")
+      .option("--description <text>", "Alias for --capabilities")
+      .option("--description-file <path>", "Alias for --capabilities-file")
+      .option("--clear-capabilities", "Clear the agent capabilities/description")
+      .option("--clear-description", "Alias for --clear-capabilities")
+      .option("--reports-to <agent-id>", "Manager agent ID")
+      .option("--clear-reports-to", "Clear the manager relationship")
+      .action(async (agentIdArg: string | undefined, opts: AgentUpdateOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts);
+          const agentId = agentIdArg?.trim() || ctx.agentId;
+          if (!agentId) {
+            throw new Error("Agent ID is required. Pass [agent-id] or set RUDDER_AGENT_ID.");
+          }
+
+          const patch = await buildAgentUpdatePatch(opts);
+          if (Object.keys(patch).length === 0) {
+            throw new Error(
+              "No agent fields to update. Pass --name, --role, --title, --capabilities, --description, or --reports-to.",
+            );
+          }
+
+          const query = new URLSearchParams();
+          if (ctx.orgId) query.set("orgId", ctx.orgId);
+          const updated = await ctx.api.patch<Agent>(
+            `/api/agents/${encodeURIComponent(agentId)}${query.size > 0 ? `?${query.toString()}` : ""}`,
+            patch,
+          );
+          printOutput(updated, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+  );
+
+  addCommonClientOptions(
+    agent
       .command("hire")
       .description(getAgentCliCapabilityById("agent.hire").description)
       .option("-O, --org-id <id>", "Organization ID")
@@ -712,6 +775,52 @@ export function registerAgentCommands(program: Command): void {
       }),
     { includeCompany: false },
   );
+}
+
+async function buildAgentUpdatePatch(opts: AgentUpdateOptions) {
+  const rawPatch: Record<string, unknown> = {};
+
+  if (opts.name !== undefined) rawPatch.name = opts.name;
+  if (opts.role !== undefined) rawPatch.role = opts.role;
+
+  if (opts.title !== undefined && opts.clearTitle) {
+    throw new Error("Pass only one of --title or --clear-title.");
+  }
+  if (opts.title !== undefined) rawPatch.title = opts.title;
+  if (opts.clearTitle) rawPatch.title = null;
+
+  if (opts.reportsTo !== undefined && opts.clearReportsTo) {
+    throw new Error("Pass only one of --reports-to or --clear-reports-to.");
+  }
+  if (opts.reportsTo !== undefined) rawPatch.reportsTo = opts.reportsTo;
+  if (opts.clearReportsTo) rawPatch.reportsTo = null;
+
+  const capabilitiesInputs = [
+    opts.capabilities !== undefined ? "--capabilities" : null,
+    opts.capabilitiesFile !== undefined ? "--capabilities-file" : null,
+    opts.description !== undefined ? "--description" : null,
+    opts.descriptionFile !== undefined ? "--description-file" : null,
+  ].filter(Boolean);
+  const clearCapabilities = opts.clearCapabilities || opts.clearDescription;
+  if (capabilitiesInputs.length > 1) {
+    throw new Error(
+      "Pass only one of --capabilities, --capabilities-file, --description, or --description-file.",
+    );
+  }
+  if (capabilitiesInputs.length > 0 && clearCapabilities) {
+    throw new Error("Pass either capabilities/description input or a clear flag, not both.");
+  }
+  if (opts.capabilities !== undefined) rawPatch.capabilities = opts.capabilities;
+  if (opts.description !== undefined) rawPatch.capabilities = opts.description;
+  if (opts.capabilitiesFile !== undefined) {
+    rawPatch.capabilities = await fs.readFile(path.resolve(opts.capabilitiesFile), "utf8");
+  }
+  if (opts.descriptionFile !== undefined) {
+    rawPatch.capabilities = await fs.readFile(path.resolve(opts.descriptionFile), "utf8");
+  }
+  if (clearCapabilities) rawPatch.capabilities = null;
+
+  return updateAgentSchema.parse(rawPatch);
 }
 
 function parseCsv(value: string | undefined): string[] {

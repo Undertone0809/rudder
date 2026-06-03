@@ -92,6 +92,19 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     attachesRunIdWhenAvailable: false,
   },
   {
+    id: "agent.update",
+    command: "rudder agent update [agent-id] [--title <title>] [--description <text>]",
+    category: "agent",
+    description:
+      "Update an agent's control-plane identity fields; defaults to the authenticated agent.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: false,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
     id: "agent.skills.create",
     command: "rudder agent skills create [agent-id] --name <name> [--enable]",
     category: "agent",

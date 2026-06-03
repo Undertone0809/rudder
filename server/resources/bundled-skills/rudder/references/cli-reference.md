@@ -22,6 +22,7 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder agent me` | Show the authenticated agent identity, budget, and chain of command. | no | no | no | no |
 | `rudder agent inbox` | List the compact assignee and reviewer work inbox for the authenticated agent. | no | no | no | no |
 | `rudder agent capabilities` | List the stable Rudder agent command contract. | no | no | no | no |
+| `rudder agent update [agent-id] [--title <title>] [--description <text>]` | Update an agent's control-plane identity fields; defaults to the authenticated agent. | yes | no | no | attached when available |
 | `rudder agent skills create [agent-id] --name <name> [--enable]` | Create an agent-private skill package under AGENT_HOME/skills. | yes | no | no | attached when available |
 | `rudder agent skills enable <agent-id> <selection-ref...>` | Add skill selections to an agent without replacing existing enabled skills. | yes | no | no | attached when available |
 | `rudder agent skills sync <agent-id>` | Sync the desired enabled skill set for an agent. | yes | no | no | attached when available |

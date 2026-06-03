@@ -30,6 +30,7 @@ describe("agent-v1 registry", () => {
       "agent.me",
       "agent.inbox",
       "agent.capabilities",
+      "agent.update",
       "agent.skills.create",
       "agent.skills.enable",
       "agent.skills.sync",
