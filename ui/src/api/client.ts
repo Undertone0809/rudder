@@ -12,6 +12,29 @@ export class ApiError extends Error {
   }
 }
 
+function readErrorMessage(body: unknown, fallback: string): string {
+  if (!body || typeof body !== "object") return fallback;
+  const error = "error" in body ? (body as { error?: unknown }).error : undefined;
+  const base = typeof error === "string" && error.trim() ? error.trim() : fallback;
+  const details = "details" in body ? (body as { details?: unknown }).details : undefined;
+  if (!Array.isArray(details)) return base;
+
+  const detailMessages = details
+    .map((detail) => {
+      if (!detail || typeof detail !== "object") return null;
+      const message = "message" in detail ? (detail as { message?: unknown }).message : undefined;
+      if (typeof message !== "string" || !message.trim()) return null;
+      const path = "path" in detail ? (detail as { path?: unknown }).path : undefined;
+      const pathLabel = Array.isArray(path)
+        ? path.filter((part) => typeof part === "string" || typeof part === "number").join(".")
+        : "";
+      return pathLabel ? `${pathLabel}: ${message.trim()}` : message.trim();
+    })
+    .filter((message): message is string => Boolean(message));
+
+  return detailMessages.length > 0 ? `${base}: ${detailMessages.join("; ")}` : base;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
   const body = init?.body;
@@ -27,7 +50,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const errorBody = await res.json().catch(() => null);
     throw new ApiError(
-      (errorBody as { error?: string } | null)?.error ?? `Request failed: ${res.status}`,
+      readErrorMessage(errorBody, `Request failed: ${res.status}`),
       res.status,
       errorBody,
     );

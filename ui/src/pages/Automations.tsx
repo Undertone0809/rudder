@@ -346,7 +346,6 @@ export function Automations() {
     scheduleCron: "0 9 * * *",
     outputMode: "chat_output" as AutomationOutputMode,
     chatConversationId: "",
-    allowAssigneeChatMismatch: false,
   });
 
   const resetDraft = useCallback(() => {
@@ -361,7 +360,6 @@ export function Automations() {
       scheduleCron: "0 9 * * *",
       outputMode: "chat_output",
       chatConversationId: "",
-      allowAssigneeChatMismatch: false,
     });
   }, []);
 
@@ -374,7 +372,6 @@ export function Automations() {
       scheduleCron: template.scheduleCron,
       outputMode: template.outputMode,
       chatConversationId: "",
-      allowAssigneeChatMismatch: false,
     }));
     setAdvancedOpen(false);
     setComposerOpen(true);
@@ -385,7 +382,6 @@ export function Automations() {
       ...current,
       outputMode,
       chatConversationId: "",
-      allowAssigneeChatMismatch: false,
       description: withOutputInstruction(removeOutputInstruction(current.description), outputMode),
     }));
   }, []);
@@ -457,7 +453,6 @@ export function Automations() {
         catchUpPolicy: draft.catchUpPolicy,
         outputMode: draft.outputMode,
         chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId || null : null,
-        allowAssigneeChatMismatch: draft.allowAssigneeChatMismatch,
       });
 
       if (draft.scheduleCron.trim()) {
