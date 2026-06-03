@@ -25,8 +25,8 @@ describe("SkillTokenNode", () => {
       expect(node.getTextContent()).toBe(SKILL_LABEL);
       expect(node.getHref()).toBe(SKILL_HREF);
       expect(node.getMode()).toBe("token");
-      expect(node.canInsertTextBefore()).toBe(true);
-      expect(node.canInsertTextAfter()).toBe(true);
+      expect(node.canInsertTextBefore()).toBe(false);
+      expect(node.canInsertTextAfter()).toBe(false);
       expect(node.isTextEntity()).toBe(true);
     });
   });

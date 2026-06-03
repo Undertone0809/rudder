@@ -16,6 +16,7 @@ import {
   insertTextAfterRudderTokenBoundary,
   isRudderTokenHref,
   mentionMarkdown,
+  moveSelectionAfterRudderTokenBoundary,
   readCanonicalFragmentMarkdown,
   rudderTokenNavigationPath,
 } from "./MilkdownMarkdownEditor";
@@ -366,6 +367,66 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
 
     expect(insertTextAfterRudderTokenBoundary(view, "，")).toBe(true);
     expect(inserted).toEqual([{ pos: label.length, content: { text: "，", marks: [] } }]);
+  });
+
+  it("moves composition input to an editable boundary before the token text changes", () => {
+    const label = "Wesley (Engineer)";
+    const inserted: Array<{ pos: number; content: unknown }> = [];
+    const tr = {
+      delete() {
+        return this;
+      },
+      insert(pos: number, content: unknown) {
+        inserted.push({ pos, content });
+        return this;
+      },
+      insertText() {
+        return this;
+      },
+      replaceWith() {
+        return this;
+      },
+      setSelection() {
+        return this;
+      },
+      setStoredMarks() {
+        return this;
+      },
+    };
+    const doc = {
+      content: { size: label.length },
+      descendants(callback: (node: {
+        isText?: boolean;
+        nodeSize: number;
+        text?: string;
+        marks?: Array<{ type?: { name?: string }; attrs?: { href?: string | null } }>;
+      }, pos: number) => boolean | void) {
+        callback({
+          isText: true,
+          nodeSize: label.length,
+          text: label,
+          marks: [{ type: { name: "link" }, attrs: { href: "agent://agent-1" } }],
+        }, 0);
+      },
+      textBetween() {
+        return "";
+      },
+    };
+    const view = {
+      state: {
+        doc,
+        schema: {
+          marks: {},
+          text: (text: string) => ({ text, marks: [] }),
+        },
+        selection: { empty: true, from: 1, to: 1 },
+        tr,
+      },
+      dispatch: () => undefined,
+    };
+
+    expect(moveSelectionAfterRudderTokenBoundary(view)).toBe(true);
+    expect(inserted).toEqual([{ pos: label.length, content: { text: " ", marks: [] } }]);
   });
 
   it("copies selected Rudder token links as canonical Markdown", () => {

@@ -79,11 +79,11 @@ export class SkillTokenNode extends TextNode {
   }
 
   canInsertTextBefore(): boolean {
-    return true;
+    return false;
   }
 
   canInsertTextAfter(): boolean {
-    return true;
+    return false;
   }
 
   isTextEntity(): boolean {

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { E2E_CODEX_STUB } from "./support/e2e-env";
 
 test("issue comment agent mention keeps following typed text outside the token", async ({ page }) => {
   await page.goto("/");
@@ -158,6 +159,111 @@ test("issue comment mention keeps punctuation attached while ending the mention 
   await expect(composer).toContainText("Griffin (CEO)，");
   await expect(composer).not.toContainText("Griffin (CEO) ，");
   await expect(token).not.toContainText("，");
+});
+
+test("issue comment skill mention keeps following typed text outside the token", async ({ page }) => {
+  const suffix = Date.now();
+  await page.goto("/");
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Comment-Skill-Mention-Boundary-${suffix}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Boundary Engineer",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+        command: E2E_CODEX_STUB,
+      },
+    },
+  });
+  expect(agentRes.ok()).toBe(true);
+  const agent = await agentRes.json() as { id: string };
+
+  const skillName = `Boundary Skill ${suffix}`;
+  const skillSlug = `boundary-skill-${suffix}`;
+  const skillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
+    data: {
+      name: skillName,
+      slug: skillSlug,
+      markdown: `---\nname: ${skillName}\ndescription: Skill mention boundary regression.\n---\n\n# Boundary Skill\n`,
+    },
+  });
+  expect(skillRes.ok()).toBe(true);
+  const skill = await skillRes.json() as { key: string; sourceLocator?: string | null; sourcePath?: string | null };
+
+  const syncRes = await page.request.post(`/api/agents/${agent.id}/skills/sync?orgId=${encodeURIComponent(organization.id)}`, {
+    data: { desiredSkills: [`org:${skill.key}`] },
+  });
+  expect(syncRes.ok()).toBe(true);
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Skill mention boundary regression",
+      description: "Typing after a skill mention should not extend the token.",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: agent.id,
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(page.url()).origin });
+  const activity = page.getByRole("region", { name: "Activity" });
+  await expect(activity).toBeVisible();
+
+  const composer = activity.locator(".rudder-milkdown-content [contenteditable='true']").last();
+  await expect(composer).toBeVisible();
+  await composer.click();
+  await page.keyboard.type("$boundary");
+  const mentionMenu = page.getByTestId("markdown-mention-menu");
+  await expect(mentionMenu).toBeVisible({ timeout: 15_000 });
+  const skillOption = mentionMenu
+    .locator('[data-testid^="markdown-mention-option-skill:"]')
+    .filter({ hasText: skillName })
+    .first();
+  await expect(skillOption).toContainText(skillName, { timeout: 15_000 });
+  await skillOption.dispatchEvent("mousedown");
+  await page.keyboard.type("可以这么说");
+
+  const token = composer.locator("[data-skill-token='true']").filter({ hasText: skillSlug }).first();
+  await expect(token).toBeVisible();
+  await expect(composer).toContainText(`${skillSlug} 可以这么说`);
+  await expect(token).not.toContainText("可以这么说");
+
+  await composer.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
+  const copiedMarkdown = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copiedMarkdown).toContain(`[${skillSlug}](`);
+  expect(copiedMarkdown).toContain("SKILL.md)");
+  expect(copiedMarkdown).toContain(" 可以这么说");
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+
+  const commentButton = activity.getByRole("button", { name: "Comment" }).last();
+  await expect(commentButton).toBeEnabled();
+  const [commentResponse] = await Promise.all([
+    page.waitForResponse((response) =>
+      /\/api\/issues\/[^/]+\/comments$/.test(new URL(response.url()).pathname)
+      && response.request().method() === "POST",
+    ),
+    commentButton.click(),
+  ]);
+  expect(commentResponse.ok()).toBe(true);
+  const postedComment = await commentResponse.json() as { body: string };
+  expect(postedComment.body).toContain(`[${skillSlug}](`);
+  expect(postedComment.body).toContain("SKILL.md)");
+  expect(postedComment.body).toContain(" 可以这么说");
 });
 
 test("issue comment composer focuses from blank surface clicks", async ({ page }) => {

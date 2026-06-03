@@ -1428,6 +1428,20 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     };
 
     const handleNativeBeforeInput = (event: InputEvent) => {
+      if (event.defaultPrevented) return;
+
+      if (
+        pendingMentionInputRef.current
+        && event.inputType === "insertText"
+        && typeof event.data === "string"
+        && event.data.length > 0
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        insertPendingMentionText(event.data);
+        return;
+      }
+
       if (event.inputType !== "deleteContentBackward" && event.inputType !== "deleteContentForward") {
         return;
       }
@@ -1443,7 +1457,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       editable.removeEventListener("keydown", handleNativeKeyDown, true);
       editable.removeEventListener("beforeinput", handleNativeBeforeInput, true);
     };
-  }, [removeAdjacentAtomicToken, value]);
+  }, [insertPendingMentionText, removeAdjacentAtomicToken, value]);
 
   const selectMention = useCallback(
     (option: MentionOption) => {
@@ -1739,6 +1753,18 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       onBeforeInputCapture={(event) => {
         const nativeEvent = event.nativeEvent;
         if (!(nativeEvent instanceof InputEvent)) return;
+
+        if (
+          pendingMentionInputRef.current
+          && nativeEvent.inputType === "insertText"
+          && typeof nativeEvent.data === "string"
+          && nativeEvent.data.length > 0
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          insertPendingMentionText(nativeEvent.data);
+          return;
+        }
 
         if (nativeEvent.inputType === "deleteContentBackward") {
           if (removeAdjacentAtomicToken("backward")) {

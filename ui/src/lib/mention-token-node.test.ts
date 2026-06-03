@@ -26,8 +26,8 @@ describe("MentionTokenNode", () => {
       expect(node.getTextContent()).toBe(MENTION_LABEL);
       expect(node.getHref()).toBe(MENTION_HREF);
       expect(node.getMode()).toBe("token");
-      expect(node.canInsertTextBefore()).toBe(true);
-      expect(node.canInsertTextAfter()).toBe(true);
+      expect(node.canInsertTextBefore()).toBe(false);
+      expect(node.canInsertTextAfter()).toBe(false);
       expect(node.isTextEntity()).toBe(true);
     });
   });

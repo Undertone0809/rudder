@@ -682,6 +682,58 @@ describe("MarkdownEditor", () => {
     expect(onChange).toHaveBeenLastCalledWith("hello [Rudder Bot](agent://agent-1) x");
   });
 
+  it("keeps native beforeinput text outside a just-inserted mention token", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="@wes"
+          onChange={onChange}
+          mentions={[
+            {
+              id: "agent:agent-1",
+              name: "Wesley (Engineer)",
+              kind: "agent",
+              agentId: "agent-1",
+              searchText: "wesley engineer wes",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "@wes".length);
+    await chooseMentionOption("agent:agent-1");
+
+    expect(onChange).toHaveBeenCalledWith("[Wesley (Engineer)](agent://agent-1) ");
+
+    await act(async () => {
+      editable!.dispatchEvent(new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "insertText",
+        data: "可以这么说",
+      }));
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith("[Wesley (Engineer)](agent://agent-1) 可以这么说");
+  });
+
   it("keeps the caret after a mention selected with Tab in a plain text composer", async () => {
     const restoreCaretRect = stubCaretRect();
     const container = document.createElement("div");

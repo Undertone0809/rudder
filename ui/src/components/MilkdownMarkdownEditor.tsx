@@ -358,7 +358,11 @@ function findContainingRudderTokenRange(state: ProseMirrorState) {
 }
 
 function isPrintableInputKey(event: React.KeyboardEvent) {
-  return event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey;
+  return event.key.length === 1
+    && !event.nativeEvent.isComposing
+    && !event.metaKey
+    && !event.ctrlKey
+    && !event.altKey;
 }
 
 function textAt(doc: ProseMirrorDoc, from: number, to: number) {
@@ -532,6 +536,29 @@ export function insertTextAfterRudderTokenBoundary(view: ProseMirrorView, text: 
   return true;
 }
 
+export function moveSelectionAfterRudderTokenBoundary(view: ProseMirrorView) {
+  if (!view.state.selection.empty) return false;
+  const containingRange = findContainingRudderTokenRange(view.state);
+  const adjacentRange = findAdjacentRudderTokenRange(view.state, "backward");
+  const range = containingRange ?? adjacentRange;
+  if (!range) return false;
+
+  const followingText = textAt(view.state.doc, range.to, range.to + 1);
+  const tr = isWhitespaceText(followingText)
+    ? view.state.tr
+    : view.state.tr.insert(range.to, view.state.schema.text(" "));
+  const selectionPos = isWhitespaceText(followingText) ? range.to + 1 : range.to + 1;
+  if (tr.doc) {
+    tr.setSelection(TextSelection.create(
+      tr.doc as Parameters<typeof TextSelection.create>[0],
+      selectionPos,
+    ));
+  }
+  tr.setStoredMarks([]);
+  view.dispatch(tr);
+  return true;
+}
+
 export function insertMissingRudderTokenBoundarySpaces(view: ProseMirrorView) {
   if (!view.state.selection.empty) return false;
   const selectionFrom = view.state.selection.from;
@@ -683,6 +710,10 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         handleDOMEvents: {
           beforeinput: (view, event) => {
             const inputEvent = event as InputEvent;
+            if (inputEvent.inputType === "insertCompositionText") {
+              moveSelectionAfterRudderTokenBoundary(view as unknown as ProseMirrorView);
+              return false;
+            }
             if (inputEvent.inputType !== "insertText" || !inputEvent.data) return false;
             const repaired = insertTextAfterRudderTokenBoundary(view as unknown as ProseMirrorView, inputEvent.data);
             if (!repaired) return false;
