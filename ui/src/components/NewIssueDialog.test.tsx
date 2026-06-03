@@ -323,6 +323,15 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("disabled:bg-muted/20");
   });
 
+  it("renders the create action as muted when no title is present", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain("Create Issue");
+    expect(html).toContain("disabled:bg-muted/40");
+    expect(html).toContain("disabled:text-muted-foreground/70");
+    expect(html).toContain("disabled:shadow-none");
+  });
+
   it("renders primary metadata controls as field selectors and keeps goal in the footer toolbar", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
