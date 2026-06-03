@@ -23,6 +23,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { buildChatMentionHref, formatMessengerPreview, formatMessengerTitle, type ChatConversation } from "@rudderhq/shared";
+import { ApiError } from "@/api/client";
 import { chatsApi } from "@/api/chats";
 import { messengerApi } from "@/api/messenger";
 import { Link, useLocation, useNavigate } from "@/lib/router";
@@ -50,12 +51,19 @@ type ThreadOrganizationRule = "latest" | "project" | "kind" | "attention";
 
 const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg";
 const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
+const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
   { value: "latest", label: "Latest activity" },
   { value: "project", label: "Project" },
   { value: "kind", label: "Thread type" },
   { value: "attention", label: "Needs attention" },
 ];
+
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
+}
 
 function escapeMarkdownLinkLabel(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/]/g, "\\]");
@@ -436,7 +444,11 @@ function ChatThreadRow({
                 <Archive className="h-4 w-4" />
                 Archive
               </DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" disabled={generating} onClick={onDelete}>
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={onDelete}
+                title={generating ? "Stops the active reply before deleting this chat." : undefined}
+              >
                 <Trash2 className="h-4 w-4" />
                 Delete
               </DropdownMenuItem>
@@ -654,7 +666,12 @@ export function MessengerContextSidebar() {
   const relativePath = toOrganizationRelativePath(location.pathname);
   const model = useMessengerModel();
   const { isMobile, setSidebarOpen } = useSidebar();
-  const { isChatGenerationActive } = useChatGenerations();
+  const {
+    abortChatStream,
+    isChatGenerationActive,
+    setChatSendInFlight,
+    setStreamDraftForChat,
+  } = useChatGenerations();
   const queryClient = useQueryClient();
   const route = resolveMessengerRoute(relativePath);
   const markedThreadRef = useRef<string | null>(null);
@@ -790,7 +807,32 @@ export function MessengerContextSidebar() {
   });
 
   const deleteConversationMutation = useMutation({
-    mutationFn: (chatId: string) => chatsApi.remove(chatId),
+    mutationFn: async ({ chatId, generating }: { chatId: string; generating: boolean }) => {
+      if (generating) {
+        abortChatStream(chatId);
+        await chatsApi.stopMessageStream(chatId).catch(() => undefined);
+        setStreamDraftForChat(chatId, null);
+        setChatSendInFlight(chatId, false);
+      }
+
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt <= DELETE_AFTER_STOP_RETRY_DELAYS_MS.length; attempt += 1) {
+        try {
+          return generating
+            ? await chatsApi.remove(chatId, { cancelActive: true })
+            : await chatsApi.remove(chatId);
+        } catch (error) {
+          lastError = error;
+          const shouldRetry = generating && error instanceof ApiError && error.status === 409;
+          if (!shouldRetry || attempt >= DELETE_AFTER_STOP_RETRY_DELAYS_MS.length) {
+            throw error;
+          }
+          await sleep(DELETE_AFTER_STOP_RETRY_DELAYS_MS[attempt]!);
+        }
+      }
+
+      throw lastError;
+    },
     onSuccess: async (conversation) => {
       if (route.kind === "chat" && route.conversationId === conversation.id) {
         navigate("/messenger/chat");
@@ -1009,7 +1051,10 @@ export function MessengerContextSidebar() {
                     }}
                     onDelete={() => {
                       if (typeof window !== "undefined" && !window.confirm(`Delete "${conversationDisplayTitle(conversation)}"? This cannot be undone.`)) return;
-                      deleteConversationMutation.mutate(conversation.id);
+                      deleteConversationMutation.mutate({
+                        chatId: conversation.id,
+                        generating: isChatGenerationActive(conversation.id),
+                      });
                     }}
                     onTogglePin={() => {
                       updateConversationUserStateMutation.mutate({

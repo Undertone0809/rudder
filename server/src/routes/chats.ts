@@ -42,7 +42,12 @@ import {
   type ChatAssistantResult,
   type ChatGeneratedAttachment,
 } from "../services/chat-assistant.js";
-import { cancelActiveChatGeneration, claimChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import {
+  cancelActiveChatGeneration,
+  cancelAndReleaseActiveChatGeneration,
+  claimChatGeneration,
+  hasActiveChatGeneration,
+} from "../services/chat-generation-locks.js";
 import {
   accessService,
   agentService,
@@ -1148,7 +1153,11 @@ export function chatRoutes(db: Db, storage: StorageService) {
       return;
     }
     if (hasActiveChatGeneration(existing.id)) {
-      throw conflict("Cannot delete a chat while a reply is in progress");
+      if (req.query.cancelActive === "true") {
+        cancelAndReleaseActiveChatGeneration(existing.id);
+      } else {
+        throw conflict("Cannot delete a chat while a reply is in progress");
+      }
     }
 
     const attachments = await svc.listAttachmentsForConversation(existing.id);

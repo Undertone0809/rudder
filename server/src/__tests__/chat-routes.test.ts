@@ -5,7 +5,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatRoutes } from "../routes/chats.js";
 import { errorHandler } from "../middleware/index.js";
-import { claimChatGeneration } from "../services/chat-generation-locks.js";
+import { claimChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
 
 const mockWithExecutionObservation = vi.hoisted(() => vi.fn(async (_context, _input, fn) => fn(null)));
 const mockObserveExecutionEvent = vi.hoisted(() => vi.fn().mockResolvedValue(null));
@@ -434,6 +434,28 @@ describe("chat routes", () => {
       expect(res.body.error).toBe("Cannot delete a chat while a reply is in progress");
       expect(mockChatService.listAttachmentsForConversation).not.toHaveBeenCalled();
       expect(mockChatService.remove).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
+  });
+
+  it("cancels and deletes an active chat conversation when explicitly requested", async () => {
+    const conversation = createConversation({ title: "Generating chat" });
+    const abortController = new AbortController();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
+    mockChatService.remove.mockResolvedValue(conversation);
+    const release = claimChatGeneration(conversation.id, abortController);
+
+    try {
+      const res = await request(createApp())
+        .delete("/api/chats/chat-1?cancelActive=true");
+
+      expect(res.status).toBe(200);
+      expect(abortController.signal.aborted).toBe(true);
+      expect(hasActiveChatGeneration(conversation.id)).toBe(false);
+      expect(mockChatService.listAttachmentsForConversation).toHaveBeenCalledWith("chat-1");
+      expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
     } finally {
       release?.();
     }

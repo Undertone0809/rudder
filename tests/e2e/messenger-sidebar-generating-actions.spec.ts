@@ -33,7 +33,7 @@ function currentChatId(pageUrl: string) {
   return chatId!;
 }
 
-test("shows Messenger sidebar chat actions while a reply is generating", async ({ page }) => {
+test("can stop and delete a Messenger sidebar chat while a reply is generating", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Sidebar-Generating-${Date.now()}`);
   const agent = await createStreamingAgent(page, organization.id, "Sidebar Operator");
   const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -76,4 +76,10 @@ test("shows Messenger sidebar chat actions while a reply is generating", async (
   await expect.poll(() => generatingIcon.evaluate((element) => getComputedStyle(element).opacity)).toBe("0");
   await actionButton.click();
   await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  const deleteItem = page.getByRole("menuitem", { name: "Delete" });
+  await expect(deleteItem).toBeEnabled();
+  page.once("dialog", (dialog) => dialog.accept());
+  await deleteItem.click();
+  await expect.poll(async () => (await page.request.get(`/api/chats/${chatId}`)).status()).toBe(404);
+  await expect(threadRow).toHaveCount(0);
 });

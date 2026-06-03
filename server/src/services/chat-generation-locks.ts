@@ -33,3 +33,13 @@ export function cancelActiveChatGeneration(conversationId: string): boolean {
   }
   return true;
 }
+
+export function cancelAndReleaseActiveChatGeneration(conversationId: string): boolean {
+  const active = activeChatGenerations.get(conversationId);
+  if (!active) return false;
+  if (active.abortController && !active.abortController.signal.aborted) {
+    active.abortController.abort();
+  }
+  activeChatGenerations.delete(conversationId);
+  return true;
+}

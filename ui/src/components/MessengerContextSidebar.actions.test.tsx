@@ -11,6 +11,10 @@ import { MessengerContextSidebar } from "./MessengerContextSidebar";
 
 const mockUpdateUserState = vi.hoisted(() => vi.fn());
 const mockRemove = vi.hoisted(() => vi.fn());
+const mockStopMessageStream = vi.hoisted(() => vi.fn());
+const mockAbortChatStream = vi.hoisted(() => vi.fn());
+const mockSetChatSendInFlight = vi.hoisted(() => vi.fn());
+const mockSetStreamDraftForChat = vi.hoisted(() => vi.fn());
 const invalidateQueries = vi.fn();
 
 let messengerModel: any;
@@ -39,6 +43,7 @@ vi.mock("@/api/chats", () => ({
   chatsApi: {
     update: vi.fn(),
     remove: mockRemove,
+    stopMessageStream: mockStopMessageStream,
     updateUserState: mockUpdateUserState,
   },
 }));
@@ -82,8 +87,10 @@ vi.mock("@/context/SidebarContext", () => ({
 vi.mock("@/context/ChatGenerationContext", () => ({
   useChatGenerations: () => ({
     isChatGenerationActive: (chatId: string | null | undefined) => Boolean(chatId && activeGeneratingChatIds.has(chatId)),
-    setChatGenerationActive: vi.fn(),
+    abortChatStream: mockAbortChatStream,
     activeChatIds: activeGeneratingChatIds,
+    setChatSendInFlight: mockSetChatSendInFlight,
+    setStreamDraftForChat: mockSetStreamDraftForChat,
   }),
 }));
 
@@ -169,6 +176,7 @@ describe("MessengerContextSidebar chat actions", () => {
       ...baseConversation(),
       id: chatId,
     }));
+    mockStopMessageStream.mockResolvedValue({ stopped: true });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     Object.defineProperty(window, "localStorage", {
       configurable: true,
@@ -241,7 +249,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(clipboardWriteText).toHaveBeenCalledWith("[Planning thread](chat://chat-1)");
   });
 
-  it("deletes a chat thread from the actions menu", () => {
+  it("deletes a chat thread from the actions menu", async () => {
     renderSidebar();
 
     const deleteButton = Array.from(document.querySelectorAll("button"))
@@ -249,7 +257,7 @@ describe("MessengerContextSidebar chat actions", () => {
 
     expect(deleteButton).toBeTruthy();
     expect(deleteButton?.dataset.variant).toBe("destructive");
-    act(() => {
+    await act(async () => {
       deleteButton?.click();
     });
 
@@ -257,7 +265,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockRemove).toHaveBeenCalledWith("chat-1");
   });
 
-  it("disables deleting a chat thread while it is generating", () => {
+  it("stops an active reply before deleting a generating chat thread", async () => {
     activeGeneratingChatIds = new Set(["chat-1"]);
     renderSidebar();
 
@@ -265,12 +273,16 @@ describe("MessengerContextSidebar chat actions", () => {
       .find((button) => button.textContent?.includes("Delete")) as HTMLButtonElement | undefined;
 
     expect(deleteButton).toBeTruthy();
-    expect(deleteButton?.disabled).toBe(true);
-    act(() => {
+    expect(deleteButton?.disabled).toBe(false);
+    await act(async () => {
       deleteButton?.click();
     });
 
-    expect(window.confirm).not.toHaveBeenCalled();
-    expect(mockRemove).not.toHaveBeenCalled();
+    expect(window.confirm).toHaveBeenCalledWith('Delete "hi"? This cannot be undone.');
+    expect(mockAbortChatStream).toHaveBeenCalledWith("chat-1");
+    expect(mockStopMessageStream).toHaveBeenCalledWith("chat-1");
+    expect(mockSetStreamDraftForChat).toHaveBeenCalledWith("chat-1", null);
+    expect(mockSetChatSendInFlight).toHaveBeenCalledWith("chat-1", false);
+    expect(mockRemove).toHaveBeenCalledWith("chat-1", { cancelActive: true });
   });
 });

@@ -46,7 +46,10 @@ export const chatsApi = {
       resolvedAt: string | null;
     }>,
   ) => api.patch<ChatConversation>(`/chats/${chatId}`, data),
-  remove: (chatId: string) => api.delete<ChatConversation>(`/chats/${chatId}`),
+  remove: (chatId: string, options: { cancelActive?: boolean } = {}) => {
+    const query = options.cancelActive ? "?cancelActive=true" : "";
+    return api.delete<ChatConversation>(`/chats/${chatId}${query}`);
+  },
   listMessages: (chatId: string, options: { includeTranscript?: boolean } = {}) => {
     const params = new URLSearchParams();
     if (typeof options.includeTranscript === "boolean") {
