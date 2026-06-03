@@ -137,6 +137,19 @@
       ]
     },
     {
+      "id": 21,
+      "prompt": "已经 spawn 了两个 reviewer。一个 child 还 open，另一个说 conditional accept，因为 UI 截图只是作者声称跑过，reviewer 自己没看。现在可以 handoff 吗？",
+      "expected_output": "Does not treat spawned child creation as review success. It reads or waits for reviewer final outputs, records open child state and conditional accept as unresolved gate evidence, and blocks final handoff until the missing reviewer-verified UI proof is gathered or the user explicitly lowers the bar.",
+      "files": [],
+      "expectations": [
+        "The result distinguishes spawned reviewers existing from the review gate passing.",
+        "The result treats a child without a final verdict as an incomplete review gate.",
+        "The result treats conditional accept and missing reviewer-verified UI proof as unresolved for final handoff.",
+        "The result does not upgrade stage accept or author-claimed validation into final handoff accept.",
+        "The result gives the smallest next action: wait for the child, inspect the screenshot or real app, or explicitly lower the acceptance bar."
+      ]
+    },
+    {
       "id": 15,
       "prompt": "这些删了。no，我只叫你把 package.json 的变更删掉。帮我看看这些代码是不是之前 Codex 没 commit。",
       "expected_output": "Routes to recovery before any destructive cleanup, rebuilds branch/status/session evidence, groups modified and untracked files by likely source or feature, touches only the narrowed target group, and preserves unrelated dirty work.",

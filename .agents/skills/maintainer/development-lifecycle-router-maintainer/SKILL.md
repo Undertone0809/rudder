@@ -502,6 +502,29 @@ produced by spawned reviewer agents.
 When subagents are available, spawn reviewers after the stage artifact exists.
 Record execution mode as `spawned reviewers`.
 
+Spawning reviewers is not the same as passing review. Before moving to handoff
+or the next consequential stage, reconcile the spawned reviewer gate:
+
+- read the actual reviewer outputs after the review assignment, not just the
+  fact that child threads were created
+- record each reviewer verdict, verdict level, blockers, and whether its proof
+  was reviewer-verified or only author-claimed
+- if a child session is still open and has no final verdict, wait when
+  practical or mark the gate blocked/incomplete
+- if a child has a final verdict but the spawn edge still appears open, record
+  the state mismatch and judge from the actual final output, but do not hide the
+  orchestration inconsistency
+- treat `conditional accept`, `needs more evidence`, and `reject` as unresolved
+  gate states until the named blocker is fixed, the missing proof is gathered,
+  or the user explicitly lowers the acceptance bar
+- do not upgrade a `stage accept` into a final handoff accept
+
+For UI, workflow, Desktop, runtime, release, or control-plane changes, the
+parent must verify that reviewer outputs distinguish author-claimed validation
+from reviewer-verified terminal product proof. If all reviewers only repeat the
+implementer's claimed tests, screenshots, or dev-server evidence, the review
+gate is not strong enough to close final handoff.
+
 Before recording `blocked: spawned reviewers unavailable`, perform an explicit
 spawn availability probe. Absence of a visible spawn tool in the first tool list,
 uncertainty about the active harness, or not having used multi-agent tools yet is
@@ -528,8 +551,9 @@ Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
 
 Review the stage artifact as the scenario and demand reviewer. Focus on user
 job, actors, lifecycle states, non-goals, requirement classes, edge cases, and
-whether this stage solves the right problem. Give accept / conditional accept /
-reject, blockers, and smallest changes needed.
+whether this stage solves the right problem. Separate author-claimed proof from
+reviewer-verified proof. Give accept / conditional accept / needs more evidence
+/ reject, verdict level, blockers, and smallest changes needed.
 ```
 
 Reviewer B owns delivery trust:
@@ -542,7 +566,8 @@ reviewer. Focus on object model, scope discipline, org scoping, contracts,
 tests, terminal product proof, visual/Desktop/release evidence when relevant,
 git safety, and handoff quality. If the work affects a user-visible or
 agent-visible workflow, verify whether the actor-run-chain or terminal product
-surface was actually exercised. Give accept / conditional accept / reject,
+surface was actually exercised by the reviewer or only claimed by the author.
+Give accept / conditional accept / needs more evidence / reject, verdict level,
 blockers, and smallest changes needed.
 ```
 
@@ -609,7 +634,13 @@ Do not hand off as complete when any of these are true:
 - a narrow specialized skill was bypassed for a heavyweight advisor loop
 - spawned reviewer evidence is missing for a routed stage artifact, decision,
   diff, validation bundle, or handoff
+- spawned reviewer child sessions have no final verdict, or the final verdicts
+  are `conditional accept`, `needs more evidence`, or `reject` with unresolved
+  blockers
 - "review" only means the author reread their own diff without findings
+- reviewers only repeated author-claimed validation instead of verifying the
+  required terminal product proof for UI, workflow, Desktop, runtime, release,
+  or control-plane changes
 - user-visible UI lacks rendered or screenshot evidence when required
 - agent-visible, CLI, runtime, Desktop, release, or control-plane workflow work
   lacks terminal product proof or a named blocked/substituted proof

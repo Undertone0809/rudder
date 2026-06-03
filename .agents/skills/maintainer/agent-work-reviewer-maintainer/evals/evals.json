@@ -93,6 +93,30 @@
         "The result treats API or database checks as supporting evidence, not a replacement for the agent-visible path.",
         "The result recommends Browser, Computer Use, CLI, API readback, screenshot, or run evidence according to the terminal surface."
       ]
+    },
+    {
+      "id": 8,
+      "prompt": "你是 spawned reviewer。父线程 prompt 里说 UI 改动已经跑过 Playwright，也有截图路径，但你自己还没打开 app，也没看截图。review 一下是不是可以 final accept。",
+      "expected_output": "Separates author-claimed validation from reviewer-verified proof, inspects the screenshot or real app when available, and refuses final accept if the reviewer did not personally verify the rendered or interactive UI state.",
+      "files": [],
+      "expectations": [
+        "The result labels the prompt-provided Playwright and screenshot evidence as author-claimed proof until the reviewer inspects or reruns it.",
+        "The result attempts Browser, Computer Use, screenshot inspection, or an equivalent local preview check when safe and available.",
+        "The result gives conditional accept or needs more evidence rather than final accept if the reviewer cannot verify the UI state.",
+        "The result states which evidence was reviewer-verified and which was inherited from the parent prompt."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Review this full-history spawned child session. The transcript before your task_started includes the author's test runs and screenshots. Judge the current UI diff.",
+      "expected_output": "Treats inherited parent history as author-claimed evidence unless the spawned reviewer reruns or re-inspects it after the review assignment, and keeps the verdict level scoped to what the reviewer actually verified.",
+      "files": [],
+      "expectations": [
+        "The result does not count pre-assignment parent commands as reviewer-verified evidence.",
+        "The result scopes the review to the current assignment and diff rather than the whole inherited transcript.",
+        "The result separates implementation-slice confidence from final handoff readiness.",
+        "The result names any missing real UI, workflow, or screenshot proof as a blocker or evidence gap."
+      ]
     }
   ]
 }

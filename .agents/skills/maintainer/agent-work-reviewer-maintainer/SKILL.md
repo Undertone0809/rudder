@@ -1,6 +1,6 @@
 ---
 name: agent-work-reviewer-maintainer
-description: Review Rudder agent work. Use for review/第一性原理/PM review of Codex sessions, PRs, commits, UI, releases, regressions, or agent outcomes. For functional or UI reviews, prefer running the real Rudder scenario with Browser or Computer Use when available instead of judging only from diffs.
+description: Review Rudder agent work. Use for review/第一性原理/PM review of Codex sessions, PRs, commits, UI, releases, regressions, or agent outcomes. Separates author-claimed proof from reviewer-verified proof. For functional or UI reviews, run the real Rudder scenario with Browser or Computer Use when available instead of accepting from diffs.
 ---
 
 # Agent Work Reviewer Maintainer
@@ -158,6 +158,21 @@ For database/API behavior, check the cross-layer contract:
 
 Separate "implemented" from "proven".
 
+Also separate `author-claimed proof` from `reviewer-verified proof`.
+
+`author-claimed proof` includes validation listed in the prompt, final handoff
+text, copied terminal output, screenshots the reviewer did not inspect, and
+test names the implementer says were run.
+
+`reviewer-verified proof` includes commands, logs, screenshots, browser/Desktop
+state, API readbacks, git evidence, CI state, or release surfaces that this
+reviewer actually inspected during the review pass.
+
+Do not convert author-claimed proof into reviewer-verified proof. It can support
+the review, but it cannot close a final handoff gap for UI, workflow, release,
+Desktop, runtime, or control-plane behavior when the reviewer could cheaply
+verify the real surface.
+
 Record which evidence exists:
 
 - typecheck, unit tests, build
@@ -171,6 +186,11 @@ Record which evidence exists:
 
 Treat timed-out, skipped, or attempted checks as unverified. Do not convert
 "looked plausible in code" into product proof.
+
+For spawned child reviewers, full-history forks may include the parent agent's
+prior commands, screenshots, tests, or edits. Treat inherited history and prompt
+claims as author-claimed proof unless the child reviewer performs or explicitly
+re-inspects the evidence after the review assignment starts.
 
 When reviewing in-progress work, spawned reviewer child sessions, or a branch
 with unrelated dirty feature groups, use a mixed-state verdict instead of a
@@ -217,6 +237,7 @@ Include the relevant subset:
 - artifact basis: plan/proposal/screenshot/log path and timestamp when relevant
 - validation basis: checks, browser/Desktop evidence, CI, release workflow, or
   product proof actually inspected
+- proof split: which evidence was author-claimed versus reviewer-verified
 - review round: first pass, delta review, second round, or final review
 
 If a prior reviewer already judged the same target, same git SHA, and same
@@ -258,6 +279,12 @@ Use or Browser could cheaply verify the actual Rudder interaction. The minimum
 credible evidence is the observed workflow state plus any relevant logs, API
 responses, screenshots, or failure messages.
 
+If the reviewer does not personally inspect the rendered or interactive state
+for a layout-sensitive UI or functional workflow, the final handoff verdict
+cannot be `accept`. Use `conditional accept` for a sound implementation slice,
+or `needs more evidence` when the missing scenario is required to judge the
+change.
+
 For agent-visible or control-plane work, do not accept direct database
 assertions, unit tests, or docs updates as the whole proof when a realistic
 actor-run-chain could cheaply exercise the behavior. Missing terminal product
@@ -283,6 +310,7 @@ the relevant subset:
 - changed object: the product/workflow/code object being reviewed
 - evidence inspected: files, diffs, logs, screenshots, docs, plans, tests, CI,
   browser/Desktop state, release artifacts, or sub-reviewer notes
+- proof split: author-claimed proof versus reviewer-verified proof
 - validation status: what passed, what failed, what timed out, what was skipped,
   and what was only inferred
 - product proof status: actor, trigger, system effect, terminal surface, and any
@@ -618,3 +646,36 @@ when useful, and next evidence/fix recommendations. It performs no write action.
 
 Must not:
 Patch files, stage changes, commit, push, or run destructive cleanup.
+
+### Case: Author-Claimed UI Proof Is Not Reviewer Proof
+
+Input:
+"Review this UI workflow. The implementer says Playwright passed and a
+screenshot was captured, but you have not opened the app or inspected the
+screenshot yourself."
+
+Expected behavior:
+The review may use the claimed checks as supporting context, but it labels them
+as author-claimed proof. If Browser, Computer Use, screenshot inspection, or a
+current local preview is available, the reviewer either verifies the real UI
+state or returns `conditional accept` / `needs more evidence` for final handoff.
+
+Must not:
+Give a final `accept` by repeating the implementer's claimed Playwright,
+screenshot, or dev-server evidence as if the reviewer personally verified it.
+
+### Case: Spawned Reviewer Full-History Contamination
+
+Input:
+"You are a spawned reviewer. The inherited transcript includes the author's
+tests, screenshots, and edits before your assignment. Review the current diff."
+
+Expected behavior:
+The review treats inherited commands and prompt-provided validation as
+author-claimed proof unless it reruns or re-inspects them after the review task
+starts. The verdict says exactly which proof was reviewer-verified and which
+was inherited.
+
+Must not:
+Count pre-assignment parent commands as reviewer-verified evidence or call a UI
+workflow fully accepted from inherited proof alone.
