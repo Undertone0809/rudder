@@ -445,6 +445,41 @@ describe("OrganizationWorkspaces scroll regions", () => {
     ]);
   });
 
+  it("closes the current Library file tab on command-w without allowing the browser shortcut", async () => {
+    renderWorkspacesPage();
+
+    const notesFileButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "notes.md",
+    );
+    expect(notesFileButton).toBeTruthy();
+
+    await act(async () => {
+      notesFileButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(
+      Array.from(document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"))
+        .map((tab) => tab.textContent?.trim()),
+    ).toEqual(["image.png", "notes.md"]);
+
+    const closeShortcut = new KeyboardEvent("keydown", {
+      key: "w",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      window.dispatchEvent(closeShortcut);
+    });
+
+    expect(closeShortcut.defaultPrevented).toBe(true);
+    const fileTabs = Array.from(
+      document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"),
+    );
+    expect(fileTabs.map((tab) => tab.textContent?.trim())).toEqual(["image.png"]);
+    expect(fileTabs.map((tab) => tab.querySelector("[role='tab']")?.getAttribute("aria-selected"))).toEqual(["true"]);
+  });
+
   it("scrolls the selected editor tab into view when opening a file from the tree", async () => {
     renderWorkspacesPage();
 

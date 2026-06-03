@@ -236,6 +236,13 @@ function normalizeRequestedPath(value: string | null) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function isWorkspaceCloseCurrentTabShortcut(event: KeyboardEvent) {
+  if (event.defaultPrevented) return false;
+  if (event.altKey || event.shiftKey) return false;
+  if (!event.metaKey && !event.ctrlKey) return false;
+  return event.key.toLowerCase() === "w";
+}
+
 function normalizeWorkspaceOpenFilePaths(paths: Array<string | null | undefined>) {
   const seen = new Set<string>();
   const normalized: string[] = [];
@@ -2560,6 +2567,7 @@ export function OrganizationWorkspaceBrowser({
   const markdownEditorRef = useRef<MarkdownEditorRef | null>(null);
   const openFileTabScrollerElementRef = useRef<HTMLDivElement | null>(null);
   const openFileTabElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const openFilePathsRef = useRef<string[]>(openFilePaths);
   const restoredOpenTabsOrgRef = useRef<string | null>(null);
   const allowDefaultFileOpenRef = useRef(true);
   const filesScrollRef = useScrollbarActivityRef("org-workspaces:files");
@@ -2580,6 +2588,7 @@ export function OrganizationWorkspaceBrowser({
     else openFileTabElementsRef.current.delete(filePath);
   }, []);
   selectedFilePathRef.current = selectedFilePath;
+  openFilePathsRef.current = openFilePaths;
 
   useEffect(() => {
     const clearRootDropState = () => setRootDropActive(false);
@@ -2612,6 +2621,22 @@ export function OrganizationWorkspaceBrowser({
   const openWorkspaceFileTab = useCallback((filePath: string) => {
     setOpenFilePaths((current) => appendWorkspaceOpenFilePath(current, filePath));
   }, []);
+
+  const handleCloseFileTab = useCallback((filePath: string) => {
+    flushCurrentDraft();
+    setOpenFilePaths((current) => {
+      const next = current.filter((candidate) => candidate !== filePath);
+      if (selectedFilePath === filePath) {
+        const closedIndex = current.indexOf(filePath);
+        const nextSelectedPath = next[Math.max(0, closedIndex - 1)] ?? next[0] ?? null;
+        if (!nextSelectedPath) allowDefaultFileOpenRef.current = false;
+        setSelectedFilePath(nextSelectedPath);
+        setDraftFilePath(nextSelectedPath);
+        updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
+      }
+      return next;
+    });
+  }, [flushCurrentDraft, searchParams, selectedFilePath, setSearchParams]);
 
   useEffect(() => {
     setBreadcrumbs([{ label: breadcrumbLabel }]);
@@ -2911,6 +2936,22 @@ export function OrganizationWorkspaceBrowser({
     window.addEventListener(WORKSPACE_FLUSH_DRAFT_EVENT, flushCurrentDraft);
     return () => window.removeEventListener(WORKSPACE_FLUSH_DRAFT_EVENT, flushCurrentDraft);
   }, [flushCurrentDraft]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isWorkspaceCloseCurrentTabShortcut(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const currentFilePath = selectedFilePathRef.current;
+      if (!currentFilePath || !openFilePathsRef.current.includes(currentFilePath)) return;
+      setTabContextMenu(null);
+      handleCloseFileTab(currentFilePath);
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [handleCloseFileTab]);
 
   const invalidateWorkspaceBrowser = useCallback(async () => {
     await Promise.all([
@@ -3382,22 +3423,6 @@ export function OrganizationWorkspaceBrowser({
             : `/projects/${parsed.projectId}`;
     navigate(target);
   };
-
-  function handleCloseFileTab(filePath: string) {
-    flushCurrentDraft();
-    setOpenFilePaths((current) => {
-      const next = current.filter((candidate) => candidate !== filePath);
-      if (selectedFilePath === filePath) {
-        const closedIndex = current.indexOf(filePath);
-        const nextSelectedPath = next[Math.max(0, closedIndex - 1)] ?? next[0] ?? null;
-        if (!nextSelectedPath) allowDefaultFileOpenRef.current = false;
-        setSelectedFilePath(nextSelectedPath);
-        setDraftFilePath(nextSelectedPath);
-        updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
-      }
-      return next;
-    });
-  }
 
   function handleCloseOtherFileTabs(filePath: string) {
     flushCurrentDraft();
