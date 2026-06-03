@@ -1367,6 +1367,59 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
+  it("clears Messenger issue attention when the client submits a stale issue read watermark", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-stale-issue-read";
+    const issueId = randomUUID();
+    const openedAt = new Date("2026-04-10T14:59:00.000Z");
+    const completedAt = new Date("2026-04-10T15:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Stale Issue Read Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Stale Issue Read Org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Clear stale issue read badge",
+      status: "done",
+      priority: "medium",
+      assigneeUserId: userId,
+      identifier: "STL-7",
+      createdAt: openedAt,
+      updatedAt: completedAt,
+      completedAt,
+    });
+
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "agent",
+      actorId: "stale-read-agent",
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: issueId,
+      details: { status: "done", identifier: "STL-7", _previous: { status: "in_progress" } },
+      createdAt: completedAt,
+    });
+
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+
+    const state = await messengerSvc.setThreadRead(orgId, userId, "issues", openedAt);
+    expect(state?.lastReadAt.toISOString()).toBe(completedAt.toISOString());
+
+    const readThread = await messengerSvc.getIssuesThread(orgId, userId);
+    const readSummaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const readIssuesSummary = readSummaries.find((entry) => entry.threadKey === "issues");
+
+    expect(readThread.detail.unreadCount).toBe(0);
+    expect(readIssuesSummary?.unreadCount).toBe(0);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
+  });
+
   it("does not count description-only issue updates as Messenger attention", async () => {
     const orgId = randomUUID();
     const userId = "board-user-description-only";

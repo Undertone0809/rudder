@@ -1212,6 +1212,15 @@ export function messengerService(db: Db) {
       : { itemCount: 0, unreadCount: 0, latestActivityAt: null };
   }
 
+  async function loadLatestIssueAttentionAt(orgId: string, userId: string) {
+    const rows = (await db.execute(sql<{ latestActivityAt: Date | null }>`
+      select max("attentionActivityAt") as "latestActivityAt"
+      from (${issueEntryRowsQuery(orgId, userId)}) issue_entry_stats
+      where "attentionActivityAt" is not null
+    `)) as Array<{ latestActivityAt: Date | null }>;
+    return normalizeDate(rows[0]?.latestActivityAt ?? null);
+  }
+
   async function loadLatestIssueAttentionEntry(orgId: string, userId: string) {
     const rows = (await db.execute(issueEntryRowsQuery(
       orgId,
@@ -1929,13 +1938,17 @@ export function messengerService(db: Db) {
     }
 
     const now = new Date();
+    const effectiveReadAt =
+      threadKey === "issues"
+        ? maxDate(readAt, await loadLatestIssueAttentionAt(orgId, userId)) ?? readAt
+        : readAt;
     const [row] = await db
       .insert(messengerThreadUserStates)
       .values({
         orgId,
         userId,
         threadKey,
-        lastReadAt: readAt,
+        lastReadAt: effectiveReadAt,
         updatedAt: now,
       })
       .onConflictDoUpdate({
@@ -1945,7 +1958,7 @@ export function messengerService(db: Db) {
           messengerThreadUserStates.userId,
         ],
         set: {
-          lastReadAt: readAt,
+          lastReadAt: effectiveReadAt,
           updatedAt: now,
         },
       })
