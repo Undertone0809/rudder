@@ -67,6 +67,8 @@ export async function loadAgentInstructionsPrefix(input: {
   warningStream?: "stdout" | "stderr";
 }): Promise<LoadedAgentInstructionsPrefix> {
   const instructionsFilePath = input.instructionsFilePath.trim();
+  const includeHeartbeatInstructions = input.includeHeartbeatInstructions === true;
+  const entryIsHeartbeatInstructions = path.basename(instructionsFilePath).toLowerCase() === "heartbeat.md";
   const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
   const displayInstructionsFilePath = instructionsFilePath
     ? displayInstructionPath(instructionsFilePath, instructionsFilePath)
@@ -104,26 +106,41 @@ export async function loadAgentInstructionsPrefix(input: {
   const loadedPaths = new Set<string>();
   const commandNotes = [...empty.commandNotes];
   let entrySection = "";
-  try {
-    const instructionsContents = await fs.readFile(instructionsFilePath, "utf8");
-    loadedPaths.add(path.resolve(instructionsFilePath));
-    entrySection =
-      `${instructionsContents}\n\n` +
-      `The above agent instructions were loaded from ${displayInstructionsFilePath}. ` +
-      `Resolve any relative file references from ${displayInstructionsDir}.`;
+  let entryReadFailed = false;
+  if (entryIsHeartbeatInstructions && !includeHeartbeatInstructions) {
     await input.onLog(
       "stdout",
-      `[rudder] Loaded agent instructions file: ${displayInstructionsFilePath}\n`,
+      `[rudder] Skipped agent heartbeat instructions file outside heartbeat scene: ${displayInstructionsFilePath}\n`,
     );
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    await input.onLog(
-      warningStream,
-      `[rudder] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
-    );
-    commandNotes.push(
-      `Configured instructionsFilePath ${displayInstructionsFilePath}, but file could not be read; continuing without injected instructions.`,
-    );
+    commandNotes.push(`Skipped configured heartbeat instructions outside heartbeat scene: ${displayInstructionsFilePath}`);
+  } else {
+    try {
+      const instructionsContents = await fs.readFile(instructionsFilePath, "utf8");
+      loadedPaths.add(path.resolve(instructionsFilePath));
+      entrySection =
+        `${instructionsContents}\n\n` +
+        `The above agent instructions were loaded from ${displayInstructionsFilePath}. ` +
+        `Resolve any relative file references from ${displayInstructionsDir}.`;
+      await input.onLog(
+        "stdout",
+        `[rudder] Loaded agent instructions file: ${displayInstructionsFilePath}\n`,
+      );
+    } catch (err) {
+      entryReadFailed = true;
+      const reason = err instanceof Error ? err.message : String(err);
+      await input.onLog(
+        warningStream,
+        `[rudder] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
+      );
+      commandNotes.push(
+        `Configured instructionsFilePath ${displayInstructionsFilePath}, but file could not be read; continuing without injected instructions.`,
+      );
+    }
+  }
+  if (entryIsHeartbeatInstructions && entrySection) {
+    commandNotes.push(`Loaded agent heartbeat instructions from ${displayInstructionsFilePath}`);
+  } else if (entrySection) {
+    commandNotes.splice(1, 0, `Loaded agent instructions from ${displayInstructionsFilePath}`);
   }
 
   async function loadSiblingInstructionFile(siblingInput: {
@@ -189,7 +206,7 @@ export async function loadAgentInstructionsPrefix(input: {
     commandNotes.push(`Loaded agent memory instructions from ${displayInstructionPath(memory.path, instructionsFilePath)}`);
   }
 
-  const heartbeat = input.includeHeartbeatInstructions
+  const heartbeat = includeHeartbeatInstructions
     ? await loadSiblingInstructionFile({
         fileName: "HEARTBEAT.md",
         label: "agent heartbeat instructions",
@@ -202,7 +219,9 @@ export async function loadAgentInstructionsPrefix(input: {
 
   const memoryFilePath = memory.section ? memory.path : null;
   const memorySection = memory.section;
-  if (entrySection) commandNotes.splice(1, 0, `Loaded agent instructions from ${displayInstructionsFilePath}`);
+  const entryHeartbeatSection = entryIsHeartbeatInstructions && includeHeartbeatInstructions ? entrySection : "";
+  const heartbeatFilePath = entryHeartbeatSection ? instructionsFilePath : heartbeat.section ? heartbeat.path : null;
+  const heartbeatChars = entryHeartbeatSection.length + heartbeat.section.length;
 
   const prefix = joinPromptSections([operatingContractSection, entrySection, soul.section, tools.section, memorySection, heartbeat.section]);
   return {
@@ -213,8 +232,8 @@ export async function loadAgentInstructionsPrefix(input: {
     soulFilePath: soul.section ? soul.path : null,
     toolsFilePath: tools.section ? tools.path : null,
     memoryFilePath,
-    heartbeatFilePath: heartbeat.section ? heartbeat.path : null,
-    readFailed: !entrySection,
+    heartbeatFilePath,
+    readFailed: entryReadFailed,
     metrics: {
       instructionsChars: prefix.length,
       operatingContractChars: operatingContractSection.length,
@@ -222,7 +241,7 @@ export async function loadAgentInstructionsPrefix(input: {
       soulChars: soul.section.length,
       toolsChars: tools.section.length,
       memoryChars: memorySection.length,
-      heartbeatChars: heartbeat.section.length,
+      heartbeatChars,
     },
   };
 }

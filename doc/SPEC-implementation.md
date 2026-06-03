@@ -773,6 +773,8 @@ Stable instruction inputs:
   configured instruction entry file
 - sibling `HEARTBEAT.md` when present beside the configured instruction entry
   file for `heartbeat` scene runs
+- `HEARTBEAT.md` content is excluded from non-`heartbeat` scenes even when a
+  legacy or explicit `instructionsFilePath` points directly at that file
 - enabled Rudder skills resolved for the agent/runtime
 - scene-level invariant rules for `heartbeat` or `chat`
 

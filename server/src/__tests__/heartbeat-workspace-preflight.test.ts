@@ -8,20 +8,24 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   agentRuntimeState,
+  agentTaskSessions,
   agentWakeupRequests,
   agents,
   applyPendingMigrations,
   createDb,
+  costEvents,
   ensurePostgresDatabase,
   heartbeatRunEvents,
   heartbeatRuns,
   organizationSkills,
   organizations,
 } from "@rudderhq/db";
+import { execute as executeCodexLocal } from "@rudderhq/agent-runtime-codex-local/server";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 
 const mockBudgetService = vi.hoisted(() => ({
+  evaluateCostEvent: vi.fn(),
   getInvocationBlock: vi.fn(),
 }));
 
@@ -169,6 +173,29 @@ async function waitForCondition(check: () => Promise<boolean>, timeoutMs = 4_000
   throw new Error("Timed out waiting for test condition");
 }
 
+async function writeFakeCodexCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+
+const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
+const payload = {
+  argv: process.argv.slice(2),
+  prompt: fs.readFileSync(0, "utf8"),
+  rudderEnvKeys: Object.keys(process.env)
+    .filter((key) => key.startsWith("RUDDER_"))
+    .sort(),
+};
+if (capturePath) {
+  fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
+}
+console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
+console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
+console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 } }));
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 describe("heartbeat managed workspace preflight", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -188,6 +215,7 @@ describe("heartbeat managed workspace preflight", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockBudgetService.evaluateCostEvent.mockResolvedValue(undefined);
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     mockPreflight.fail = false;
     mockPreflight.calls = [];
@@ -199,6 +227,8 @@ describe("heartbeat managed workspace preflight", () => {
   });
 
   afterEach(async () => {
+    await db.delete(agentTaskSessions);
+    await db.delete(costEvents);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agentRuntimeState);
@@ -221,7 +251,7 @@ describe("heartbeat managed workspace preflight", () => {
     if (dataDir) await fs.rm(dataDir, { recursive: true, force: true });
   });
 
-  async function seedAgentFixture() {
+  async function seedAgentFixture(agentRuntimeConfig: Record<string, unknown> = {}) {
     const orgId = randomUUID();
     const agentId = randomUUID();
     const orgName = `Rudder ${orgId.slice(0, 6)}`;
@@ -241,7 +271,7 @@ describe("heartbeat managed workspace preflight", () => {
       role: "engineer",
       status: "idle",
       agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {},
+      agentRuntimeConfig,
       runtimeConfig: {},
       permissions: {},
     });
@@ -262,6 +292,14 @@ describe("heartbeat managed workspace preflight", () => {
       .select()
       .from(heartbeatRunEvents)
       .where(eq(heartbeatRunEvents.runId, runId));
+  }
+
+  async function getAgent(agentId: string) {
+    return db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .then((rows) => rows[0] ?? null);
   }
 
   it("fails before adapter execution and records a workspace preflight event", async () => {
@@ -331,4 +369,83 @@ describe("heartbeat managed workspace preflight", () => {
     await expect(fs.stat(path.join(agentHome, "life")).then((stat) => stat.isDirectory())).resolves.toBe(true);
     await expect(fs.stat(path.join(agentHome, "skills")).then((stat) => stat.isDirectory())).resolves.toBe(true);
   });
+
+  it("loads HEARTBEAT.md through the heartbeat service actor path", async () => {
+    const agent = await seedAgentFixture();
+    const agentHome = resolveDefaultAgentWorkspaceDir(agent.orgId, {
+      id: agent.agentId,
+      orgId: agent.orgId,
+      name: agent.name,
+    });
+    const instructionsDir = path.join(agentHome, "instructions");
+    const instructionsPath = path.join(instructionsDir, "SOUL.md");
+    const heartbeatPath = path.join(instructionsDir, "HEARTBEAT.md");
+    const commandPath = path.join(rudderHome, "codex");
+    const capturePath = path.join(rudderHome, "codex-capture.json");
+    await fs.mkdir(instructionsDir, { recursive: true });
+    await fs.writeFile(instructionsPath, "# Persona\n\nYou are QA.\n", "utf8");
+    await fs.writeFile(heartbeatPath, "# Heartbeat\n\n- Check assigned issues.\n", "utf8");
+    await writeFakeCodexCommand(commandPath);
+    await db
+      .update(agents)
+      .set({
+        agentRuntimeConfig: {
+          command: commandPath,
+          instructionsFilePath: instructionsPath,
+          env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Follow the heartbeat prompt.",
+        },
+      })
+      .where(eq(agents.id, agent.agentId));
+    mockRuntimeAdapter.execute.mockImplementationOnce((ctx) => executeCodexLocal(ctx));
+
+    const run = await heartbeatService(db).wakeup(agent.agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "test_heartbeat_instructions",
+      contextSnapshot: { taskKey: "heartbeat:instructions" },
+    });
+
+    expect(run?.id).toBeTruthy();
+    let invokeEventPayload: unknown = null;
+    await waitForCondition(async () => {
+      try {
+        await fs.access(capturePath);
+      } catch {
+        return false;
+      }
+      const events = await getRunEvents(run!.id);
+      const invokeEvent = events.find((event) => event.eventType === "adapter.invoke");
+      if (!invokeEvent) return false;
+      invokeEventPayload = invokeEvent.payload;
+      return true;
+    }, 10_000);
+
+    const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+      prompt: string;
+      rudderEnvKeys: string[];
+    };
+    expect(capture.prompt).toContain("# Persona");
+    expect(capture.prompt).toContain("# Heartbeat");
+    expect(capture.prompt).toContain("Follow the heartbeat prompt.");
+    expect(invokeEventPayload).toEqual(expect.objectContaining({
+      agentRuntimeType: "codex_local",
+      promptMetrics: expect.objectContaining({
+        heartbeatChars: expect.any(Number),
+      }),
+      commandNotes: expect.arrayContaining([
+        "Loaded agent heartbeat instructions from $AGENT_HOME/instructions/HEARTBEAT.md",
+      ]),
+    }));
+    const promptMetrics = (invokeEventPayload as { promptMetrics: { heartbeatChars: number } }).promptMetrics;
+    expect(promptMetrics.heartbeatChars).toBeGreaterThan(0);
+    await waitForCondition(async () => {
+      const events = await getRunEvents(run!.id);
+      return events.some((event) => event.eventType === "lifecycle" && event.message === "run succeeded");
+    }, 15_000);
+    await waitForCondition(async () => {
+      const updatedAgent = await getAgent(agent.agentId);
+      return updatedAgent?.status === "idle";
+    }, 15_000);
+  }, 25_000);
 });
