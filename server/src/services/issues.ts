@@ -743,7 +743,8 @@ export function issueService(db: Db) {
       orgId: string,
       data: Omit<typeof issues.$inferInsert, "orgId"> & { labelIds?: string[] },
     ) => {
-      const { labelIds: inputLabelIds, ...issueData } = data;
+      const { labelIds: inputLabelIds, ...rawIssueData } = data;
+      const issueData = { ...rawIssueData };
       if (data.assigneeAgentId && data.assigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
       }
@@ -777,6 +778,16 @@ export function issueService(db: Db) {
       await assertValidParentIssue(orgId, null, data.parentId);
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, orgId);
+        if (issueData.parentId && issueData.projectId === undefined) {
+          const parent = await tx
+            .select({ projectId: issues.projectId })
+            .from(issues)
+            .where(and(eq(issues.id, issueData.parentId), eq(issues.orgId, orgId)))
+            .then((rows) => rows[0] ?? null);
+          if (parent?.projectId) {
+            issueData.projectId = parent.projectId;
+          }
+        }
         let executionWorkspaceSettings =
           (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
         if (executionWorkspaceSettings == null && issueData.projectId) {

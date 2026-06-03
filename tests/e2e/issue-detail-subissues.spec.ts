@@ -71,6 +71,12 @@ test.describe("Issue detail sub-issues", () => {
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
 
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: { name: "Sub-issue parent project", status: "in_progress" },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json();
+
     const parentRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
         title: "Parent issue container",
@@ -88,6 +94,7 @@ test.describe("Issue detail sub-issues", () => {
         status: "todo",
         priority: "medium",
         parentId: parentIssue.id,
+        projectId: project.id,
       },
     });
     expect(issueRes.ok()).toBe(true);
@@ -181,6 +188,18 @@ test.describe("Issue detail sub-issues", () => {
     ]);
     expect(childIssues.every((child: { parentId: string }) => child.parentId === issue.id)).toBe(true);
     expect(childIssues.find((child: { title: string; status: string }) => child.title === "Existing child issue")?.status).toBe("done");
+    expect(
+      childIssues.find((child: { title: string; projectId: string | null }) => child.title === "Existing child issue")
+        ?.projectId,
+    ).toBe(project.id);
+    expect(
+      childIssues.find((child: { title: string; projectId: string | null }) => child.title === "Inline child issue")
+        ?.projectId,
+    ).toBe(project.id);
+    expect(
+      childIssues.find((child: { title: string; projectId: string | null }) => child.title === "Standalone existing issue")
+        ?.projectId,
+    ).toBeNull();
 
     await page.getByRole("button", { name: "Add sub-issue" }).click();
     await page.getByRole("menuitem", { name: "Create new sub-issue" }).click();

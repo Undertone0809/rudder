@@ -738,9 +738,10 @@ describe("issueService.list participantAgentId", () => {
     expect(created.labelIds).toEqual([labelIds[0]]);
   });
 
-  it("allows unlabeled agent-created issues below five labels and inherits parent labels for sub-issues", async () => {
+  it("allows unlabeled agent-created issues below five labels and inherits parent defaults for sub-issues", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
     const labelIds = Array.from({ length: 5 }, () => randomUUID());
 
     await db.insert(organizations).values({
@@ -760,6 +761,12 @@ describe("issueService.list participantAgentId", () => {
       agentRuntimeConfig: {},
       runtimeConfig: {},
       permissions: {},
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      orgId,
+      name: "Parent Project",
+      status: "in_progress",
     });
     await db.insert(labels).values(
       labelIds.slice(0, 4).map((id, index) => ({
@@ -788,6 +795,7 @@ describe("issueService.list participantAgentId", () => {
       title: "Parent issue",
       status: "todo",
       priority: "medium",
+      projectId,
       labelIds: [labelIds[1]!],
     });
 
@@ -800,9 +808,17 @@ describe("issueService.list participantAgentId", () => {
     });
 
     expect(child.labelIds).toEqual([labelIds[1]]);
+    expect(child.projectId).toBe(projectId);
     await expect(
       db.select().from(issueLabels).where(eq(issueLabels.issueId, child.id)),
     ).resolves.toHaveLength(1);
+    await expect(
+      db
+        .select({ projectId: issues.projectId })
+        .from(issues)
+        .where(eq(issues.id, child.id))
+        .then((rows) => rows[0]?.projectId ?? null),
+    ).resolves.toBe(projectId);
   });
 
   it("rejects parent issue relationships outside the organization or through descendants", async () => {
