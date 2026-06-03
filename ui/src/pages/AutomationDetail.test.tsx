@@ -470,6 +470,18 @@ describe("AutomationDetail", () => {
     expect(configurationCard?.textContent).toContain("Triggers");
     expect(configurationCard?.querySelector('[data-testid="automation-add-trigger-button"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="automation-add-trigger-card"]')).toBeNull();
+    await act(async () => {
+      configurationCard
+        ?.querySelector('[data-testid="automation-add-trigger-button"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    const addTriggerCard = document.querySelector('[data-testid="automation-add-trigger-card"]');
+    expect(addTriggerCard).toBeTruthy();
+    expect(addTriggerCard?.className).toContain("w-[min(320px,calc(100vw-2rem))]");
+    expect(addTriggerCard?.className).toContain("max-h-[min(28rem,var(--radix-popover-content-available-height))]");
+    expect(addTriggerCard?.textContent).toContain("Schedule");
+    expect(addTriggerCard?.textContent).toContain("Create trigger");
     expect(configurationCard?.querySelector('[data-testid="automation-triggers-list"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="automation-trigger-editor-body"]')).toBeNull();
     const deliveryRules = configurationCard?.querySelector('[data-testid="automation-delivery-rules-section"]');

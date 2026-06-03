@@ -1231,10 +1231,11 @@ export function AutomationDetail() {
                 </PopoverTrigger>
                 <PopoverContent
                   data-testid="automation-add-trigger-card"
-                  align="end"
-                  side="left"
+                  align="center"
+                  side="bottom"
                   sideOffset={8}
-                  className="automation-trigger-menu-content glass-popover w-[min(320px,calc(100vw-2rem))] space-y-3 rounded-md p-3 text-foreground"
+                  collisionPadding={16}
+                  className="automation-trigger-menu-content glass-popover max-h-[min(28rem,var(--radix-popover-content-available-height))] w-[min(320px,calc(100vw-2rem))] overflow-y-auto rounded-md p-3 text-foreground"
                 >
                   <div className="px-1 text-sm font-medium text-muted-foreground">Schedule</div>
                   <ScheduleEditor
