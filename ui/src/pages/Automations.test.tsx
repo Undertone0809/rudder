@@ -19,6 +19,8 @@ const markdownEditorProps = vi.hoisted(() => [] as Array<{
   plainText?: boolean;
 }>);
 const automationListState = vi.hoisted(() => ({ items: [] as unknown[] }));
+const mockCreateAutomation = vi.hoisted(() => vi.fn(async () => ({ id: "created-auto-1" })));
+const mockCreateTrigger = vi.hoisted(() => vi.fn(async () => ({ trigger: { id: "trigger-created-1" }, secretMaterial: null })));
 
 const automation = {
   id: "auto-1",
@@ -160,8 +162,24 @@ vi.mock("@tanstack/react-query", () => ({
     }
     return { data: [], isLoading: false, error: null };
   },
-  useMutation: () => ({
-    mutate: vi.fn(),
+  useMutation: (options?: {
+    mutationFn?: (variables: unknown) => Promise<unknown> | unknown;
+    onSuccess?: (data: unknown, variables: unknown) => Promise<void> | void;
+    onError?: (error: unknown, variables: unknown) => Promise<void> | void;
+    onSettled?: () => Promise<void> | void;
+  }) => ({
+    mutate: vi.fn(async (variables?: unknown) => {
+      try {
+        const result = await options?.mutationFn?.(variables);
+        await options?.onSuccess?.(result, variables);
+        return result;
+      } catch (error) {
+        await options?.onError?.(error, variables);
+        throw error;
+      } finally {
+        await options?.onSettled?.();
+      }
+    }),
     isPending: false,
     isError: false,
     error: null,
@@ -169,6 +187,20 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     invalidateQueries: vi.fn(),
   }),
+}));
+
+vi.mock("../api/automations", () => ({
+  automationsApi: {
+    list: vi.fn(),
+    create: mockCreateAutomation,
+    createTrigger: mockCreateTrigger,
+    get: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    listRuns: vi.fn(),
+    run: vi.fn(),
+    activity: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -385,25 +417,12 @@ describe("Automations", () => {
     const scheduleInput = document.querySelector('input[aria-label="Schedule"]') as HTMLInputElement | null;
     expect(scheduleInput?.value).toBe("0 9 * * 1-5");
 
-    await act(async () => {
-      Array.from(document.body.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Track as issue"))
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    expect(document.body.textContent).toContain("Run output");
-    expect(document.body.textContent).toContain("Send to chat");
+    expect(document.body.textContent).toContain("Track as issue");
+    expect(document.body.textContent).not.toContain("Run output");
+    expect(document.body.textContent).not.toContain("Send to chat");
+    expect(document.body.textContent).not.toContain("New chat per run");
     expect(document.body.textContent).toContain("Create automation");
-
-    await act(async () => {
-      Array.from(document.body.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Send to chat"))
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    expect(runbookInput?.value).toContain("final result to a new Rudder chat");
+    expect(runbookInput?.value).toContain("board-tracked work");
   });
 
   it("opens the composer from the header as a blank prompt input", async () => {
@@ -450,7 +469,8 @@ describe("Automations", () => {
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
     expect(titleInput?.value).toBe("日会");
     expect(runbookInput?.value).toContain("上一个工作日以来更新的进行中任务");
-    expect(runbookInput?.value).toContain("发送到新的 Rudder chat");
+    expect(runbookInput?.value).toContain("创建或更新 board 可跟踪任务");
+    expect(runbookInput?.value).not.toContain("Rudder chat");
   });
 
   it("renders last run with trigger source, status, timestamp, and destination", async () => {
@@ -546,5 +566,24 @@ describe("Automations", () => {
       .at(-1) as HTMLButtonElement | undefined;
     expect(createButton).toBeTruthy();
     expect(createButton?.disabled).toBe(false);
+
+    await act(async () => {
+      createButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateAutomation).toHaveBeenCalledWith("org-1", expect.objectContaining({
+      title: "帮我 flomo 打 tag",
+      projectId: null,
+      assigneeAgentId: "agent-1",
+      outputMode: "track_issue",
+      chatConversationId: null,
+    }));
+    expect(mockCreateTrigger).toHaveBeenCalledWith("created-auto-1", expect.objectContaining({
+      kind: "schedule",
+      cronExpression: "0 9 * * *",
+      timezone: expect.any(String),
+    }));
   });
 });

@@ -279,7 +279,7 @@ describe("chat automation creation payloads", () => {
       status: "active",
       concurrencyPolicy: "coalesce_if_active",
       catchUpPolicy: "skip_missed",
-      outputMode: "chat_output",
+      outputMode: "track_issue",
       schedule: {
         cronExpression: "0 12 * * *",
         timezone: "Asia/Shanghai",
@@ -289,7 +289,7 @@ describe("chat automation creation payloads", () => {
     expect(sanitizeChatStructuredPayload(payload)).toEqual({
       automationCreate: expect.objectContaining({
         title: "Daily AI HOT report",
-        outputMode: "chat_output",
+        outputMode: "track_issue",
       }),
     });
   });

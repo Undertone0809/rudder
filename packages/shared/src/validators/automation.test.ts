@@ -8,7 +8,7 @@ const baseAutomationInput = {
 };
 
 describe("automation validators", () => {
-  it("defaults new automations to chat output", () => {
+  it("defaults new automations to issue tracking", () => {
     const parsed = createAutomationSchema.safeParse({
       title: "Daily result chat",
       assigneeAgentId: "11111111-1111-4111-8111-111111111111",
@@ -16,7 +16,7 @@ describe("automation validators", () => {
 
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.outputMode).toBe("chat_output");
+      expect(parsed.data.outputMode).toBe("track_issue");
     }
   });
 

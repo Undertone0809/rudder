@@ -158,7 +158,7 @@ export const chatAutomationCreateSchema = z.object({
   status: z.enum(AUTOMATION_STATUSES).optional().default("active"),
   concurrencyPolicy: z.enum(AUTOMATION_CONCURRENCY_POLICIES).optional().default("coalesce_if_active"),
   catchUpPolicy: z.enum(AUTOMATION_CATCH_UP_POLICIES).optional().default("skip_missed"),
-  outputMode: z.enum(AUTOMATION_OUTPUT_MODES).optional().default("chat_output"),
+  outputMode: z.enum(AUTOMATION_OUTPUT_MODES).optional().default("track_issue"),
   schedule: z.object({
     cronExpression: z.string().trim().min(1),
     timezone: z.string().trim().min(1),
