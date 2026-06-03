@@ -2798,7 +2798,7 @@ a.rudder-skill-token {
   background: transparent;
   color: color-mix(in oklab, #2f80ed 82%, var(--foreground) 18%);
   font-size: inherit;
-  font-weight: 560;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: 0;
   text-decoration: none;
@@ -2822,12 +2822,12 @@ a.rudder-skill-token {
 }
 
 .chat-composer .rudder-mdxeditor-content .rudder-skill-token {
-  vertical-align: -0.34em;
+  vertical-align: -0.28em;
 }
 
 .chat-composer .rudder-mdxeditor-content .rudder-skill-token::before {
-  width: 1.42em;
-  height: 1.42em;
+  width: 1.28em;
+  height: 1.28em;
 }
 
 .rudder-mdxeditor-content .rudder-skill-token::before,
@@ -3245,7 +3245,7 @@ a.rudder-project-mention-chip {
   background: transparent;
   color: color-mix(in oklab, #2f80ed 82%, var(--foreground) 18%);
   font-size: inherit;
-  font-weight: 560;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: 0;
   text-decoration: none;
@@ -3314,13 +3314,13 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
 
 .chat-composer .rudder-mdxeditor-content .rudder-mention-chip::before,
 .chat-composer .rudder-mdxeditor-content .rudder-project-mention-chip::before {
-  width: 1.42em;
-  height: 1.42em;
+  width: 1.28em;
+  height: 1.28em;
 }
 
 .chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"]::before {
-  width: 0.92em;
-  height: 0.92em;
+  width: 0.84em;
+  height: 0.84em;
 }
 
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"],
@@ -3339,6 +3339,8 @@ a.rudder-mention-chip[data-mention-kind="issue"]::before {
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="chat"]::before,
 .rudder-milkdown-content .rudder-mention-chip[data-mention-kind="chat"]::before,
 a.rudder-mention-chip[data-mention-kind="chat"]::before {
+  width: 1.25em;
+  height: 1.25em;
   border: 0;
   border-radius: 0;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/%3E%3C/svg%3E") center / contain no-repeat;
@@ -3365,8 +3367,22 @@ a.rudder-mention-chip[data-mention-kind="library_file"]::before {
 
 .chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
 .chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before {
-  width: 1.42em;
-  height: 1.42em;
+  width: 1.28em;
+  height: 1.28em;
+}
+
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="chat"]::before {
+  width: 1.28em;
+  height: 1.28em;
+}
+
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip,
+.chat-composer .rudder-mdxeditor-content .rudder-project-mention-chip {
+  vertical-align: -0.28em;
+}
+
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"] {
+  vertical-align: -0.08em;
 }
 
 /* Keep MDXEditor popups above app dialogs, even when they portal to <body>. */
