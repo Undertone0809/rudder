@@ -102,15 +102,18 @@ export function TranscriptChatStdoutActionRow({
 }) {
   const [open, setOpen] = useState(inline);
   const preview = truncate(compactWhitespace(block.text), density === "compact" ? 80 : 120) || "Output";
+  const compact = density === "compact";
+  const rowPaddingClass = compact ? "py-1" : "py-1.5";
+  const rowAlignmentClass = compact ? "items-center" : "items-start";
 
   if (inline) {
     return (
-      <div className="py-1.5" title={getTranscriptTimestampTitle(block.ts)}>
-        <div className="flex w-full items-start gap-2 text-left">
+      <div className={rowPaddingClass} title={getTranscriptTimestampTitle(block.ts)}>
+        <div className={cn("flex w-full gap-2 text-left", rowAlignmentClass)}>
           <TranscriptActionIconSlot category="stdout" status="completed" />
           <pre className={cn(
             "min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-foreground/80",
-            density === "compact" ? "text-[11px] leading-5" : "text-xs leading-6",
+            compact ? "text-[11px] leading-5" : "text-xs leading-6",
           )}>
             {block.text}
           </pre>
@@ -120,16 +123,16 @@ export function TranscriptChatStdoutActionRow({
   }
 
   return (
-    <div className="py-1.5" title={getTranscriptTimestampTitle(block.ts)}>
+    <div className={rowPaddingClass} title={getTranscriptTimestampTitle(block.ts)}>
       <button
         type="button"
-        className="flex w-full items-start gap-2 text-left"
+        className={cn("flex w-full gap-2 text-left", rowAlignmentClass)}
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-label={open ? "Collapse output details" : "Expand output details"}
       >
         <TranscriptActionIconSlot category="stdout" status="completed" />
-        <span className={cn("min-w-0 flex-1 break-words text-foreground/82", density === "compact" ? "text-xs leading-5" : "text-sm leading-6")}>
+        <span className={cn("min-w-0 flex-1 break-words text-foreground/82", compact ? "text-xs leading-5" : "text-sm leading-6")}>
           {preview}
         </span>
         <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
@@ -163,6 +166,7 @@ export function TranscriptChatToolActionRow({
   highlightError?: boolean;
 }) {
   const semantic = describeToolSemanticInfo(block.name, block.input);
+  const compact = density === "compact";
   const isCommand = isCommandTool(block.name, block.input);
   const command = getToolCommand(block);
   const requestText = command ?? (formatToolPayload(block.input) || "<empty>");
@@ -190,15 +194,17 @@ export function TranscriptChatToolActionRow({
       ? "text-cyan-700 dark:text-cyan-300"
       : "text-muted-foreground";
   const iconStatus = block.status === "error" ? "error" : block.status === "running" ? "running" : "completed";
+  const rowPaddingClass = compact ? "py-1" : "py-1.5";
+  const rowAlignmentClass = compact ? "items-center" : "items-start";
 
   return (
     <div
-      className={cn("py-1.5", highlightError && block.status === "error" && "rounded-lg bg-red-500/[0.04] px-2")}
+      className={cn(rowPaddingClass, highlightError && block.status === "error" && "rounded-lg bg-red-500/[0.04] px-2")}
       title={getTranscriptTimestampTitle(block.ts)}
     >
       <button
         type="button"
-        className="flex w-full items-start gap-2 text-left"
+        className={cn("flex w-full gap-2 text-left", rowAlignmentClass)}
         onClick={() => {
           if (inline) return;
           if (!canExpand) return;
@@ -214,7 +220,7 @@ export function TranscriptChatToolActionRow({
         }
       >
         <TranscriptActionIconSlot category={semantic.category} status={iconStatus} />
-        <span className={cn("min-w-0 flex-1 break-words text-foreground/84", density === "compact" ? "text-xs leading-5" : "text-sm leading-6")}>
+        <span className={cn("min-w-0 flex-1 break-words text-foreground/84", compact ? "text-xs leading-5" : "text-sm leading-6")}>
           {semantic.summary}
         </span>
         {duration ? (
@@ -493,7 +499,7 @@ export function TranscriptChatTurn({
   const segments = segmentChatTranscriptBlocks(turn.blocks);
   const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
   const content = segments.length > 0 ? (
-    <div className="space-y-3" title={getTranscriptTimestampTitle(turn.ts)}>
+    <div className={cn(density === "compact" ? "space-y-1.5" : "space-y-3")} title={getTranscriptTimestampTitle(turn.ts)}>
       {segments.map((segment, index) => (
         segment.type === "block"
           ? renderTranscriptBlock({
@@ -637,4 +643,3 @@ export function TranscriptChatTimeline({
     </div>
   );
 }
-

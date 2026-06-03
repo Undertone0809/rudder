@@ -546,6 +546,49 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Expand tool activity");
   });
 
+  it("keeps compact chat tool rows tight and center-aligned", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:02.000Z",
+              name: "tool",
+              toolUseId: "tool-compact-1",
+              input: {},
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:03.000Z",
+              toolUseId: "tool-compact-1",
+              content: "ok",
+              isError: false,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:04.000Z",
+              text: "The next progress note should sit close to the tool row.",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("space-y-1.5");
+    expect(html).toContain("py-1");
+    expect(html).toContain("items-center");
+    expect(html).toContain("Tool");
+    expect(html).toContain("The next progress note should sit close to the tool row.");
+  });
+
   it("renders Rudder issue close-out commands as one human-readable event", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
