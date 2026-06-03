@@ -14,6 +14,7 @@ import {
   hasRudderMarkdownReference,
   insertMissingRudderTokenBoundarySpaces,
   insertTextAfterRudderTokenBoundary,
+  isMilkdownEditableUnexpectedlyBlank,
   isRudderTokenHref,
   mentionMarkdown,
   moveSelectionAfterRudderTokenBoundary,
@@ -22,6 +23,31 @@ import {
   shouldParsePastedMarkdown,
 } from "./MilkdownMarkdownEditor";
 import type { MentionOption } from "./MarkdownEditor";
+
+describe("isMilkdownEditableUnexpectedlyBlank", () => {
+  it("detects a non-empty markdown document whose editable DOM came back empty", () => {
+    const editable = document.createElement("div");
+    editable.append(document.createElement("p"));
+
+    expect(isMilkdownEditableUnexpectedlyBlank(editable, "# HEARTBEAT.md\n\nContent")).toBe(true);
+  });
+
+  it("does not repair intentionally empty documents", () => {
+    const editable = document.createElement("div");
+
+    expect(isMilkdownEditableUnexpectedlyBlank(editable, "   \n")).toBe(false);
+  });
+
+  it("does not repair when visible text or media content is present", () => {
+    const textEditable = document.createElement("div");
+    textEditable.textContent = "HEARTBEAT.md";
+    expect(isMilkdownEditableUnexpectedlyBlank(textEditable, "# HEARTBEAT.md")).toBe(false);
+
+    const mediaEditable = document.createElement("div");
+    mediaEditable.append(document.createElement("img"));
+    expect(isMilkdownEditableUnexpectedlyBlank(mediaEditable, "![diagram](diagram.png)")).toBe(false);
+  });
+});
 
 describe("MilkdownMarkdownEditor mention serialization", () => {
   it("keeps canonical Rudder mention markdown for all mention kinds", () => {

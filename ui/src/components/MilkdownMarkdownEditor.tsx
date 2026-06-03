@@ -682,6 +682,39 @@ function BrowserPortal({ children }: { children: ReactNode }) {
   return typeof document === "undefined" ? <>{children}</> : createPortal(children, document.body);
 }
 
+export function isMilkdownEditableUnexpectedlyBlank(
+  editable: HTMLElement | null,
+  expectedMarkdown: string,
+): boolean {
+  if (!editable) return false;
+  if (!expectedMarkdown.trim()) return false;
+
+  const visibleText = (editable.textContent ?? "").replace(/\u200b/g, "").trim();
+  if (visibleText) return false;
+
+  const meaningfulElement = editable.querySelector(
+    [
+      "img",
+      "svg",
+      "video",
+      "audio",
+      "iframe",
+      "table",
+      "pre",
+      "code",
+      "blockquote",
+      "ul",
+      "ol",
+      "li",
+      "hr",
+      "a[href]",
+      "[data-mention-href]",
+      "[data-skill-token='true']",
+    ].join(","),
+  );
+  return !meaningfulElement;
+}
+
 function statusLabel(status: string): string {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -826,6 +859,16 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     return markdown;
   }, [get, getInstance, loading]);
 
+  const repairUnexpectedBlankDom = useCallback(() => {
+    const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+    if (!(editable instanceof HTMLElement)) return;
+    if (!isMilkdownEditableUnexpectedlyBlank(editable, latestValueRef.current)) return;
+
+    const editor = loading ? get() : getInstance();
+    editor?.action(replaceAll(latestValueRef.current, true));
+    requestAnimationFrame(() => refreshMilkdownMentionTokenStyles(containerRef.current, mentionsRef.current));
+  }, [get, getInstance, loading]);
+
   useImperativeHandle(forwardedRef, () => ({
     focus,
     getMarkdown: getCurrentMarkdown,
@@ -837,6 +880,33 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     const editor = loading ? get() : getInstance();
     editor?.action(replaceAll(value, true));
   }, [get, getInstance, loading, value]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    let frameId: number | null = null;
+    const scheduleRepair = () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null;
+        repairUnexpectedBlankDom();
+      });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") scheduleRepair();
+    };
+
+    window.addEventListener("focus", scheduleRepair);
+    window.addEventListener("pageshow", scheduleRepair);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      window.removeEventListener("focus", scheduleRepair);
+      window.removeEventListener("pageshow", scheduleRepair);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [repairUnexpectedBlankDom]);
 
   const filteredMentions = useMemo(() => {
     if (!mentionState || !mentions) return [];
