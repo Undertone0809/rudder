@@ -3,6 +3,50 @@ import { MENTION_OPTION_RENDER_LIMIT, filterMentionOptions } from "./mention-fil
 import type { MentionOption } from "@/components/MarkdownEditor";
 
 describe("filterMentionOptions", () => {
+  it("keeps entity search results in the requested mention type order", () => {
+    const mentions: MentionOption[] = [
+      {
+        id: "chat:1",
+        name: "Deploy",
+        kind: "chat",
+        chatConversationId: "chat-1",
+      },
+      {
+        id: "issue:1",
+        name: "Deploy rollout",
+        kind: "issue",
+        issueId: "issue-1",
+      },
+      {
+        id: "project:1",
+        name: "Deploy project",
+        kind: "project",
+        projectId: "project-1",
+      },
+      {
+        id: "skill:1",
+        name: "Deploy skill",
+        kind: "skill",
+        skillRefLabel: "deploy-skill",
+        skillMarkdownTarget: "/skills/deploy-skill/SKILL.md",
+      },
+      {
+        id: "agent:1",
+        name: "Deploy agent",
+        kind: "agent",
+        agentId: "agent-1",
+      },
+    ];
+
+    expect(filterMentionOptions(mentions, "@", "deploy").map((option) => option.id)).toEqual([
+      "agent:1",
+      "skill:1",
+      "project:1",
+      "issue:1",
+      "chat:1",
+    ]);
+  });
+
   it("promotes matching Library markdown files before broad issue and chat matches", () => {
     const broadMatches: MentionOption[] = Array.from({ length: 8 }, (_, index) => ({
       id: `issue:${index}`,

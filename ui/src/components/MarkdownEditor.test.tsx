@@ -1159,4 +1159,52 @@ describe("MarkdownEditor", () => {
     expect(menu?.textContent).toContain("Ella");
     expect(menu?.querySelector('[aria-label="Status: Todo"]')?.className).toContain("text-blue-600");
   });
+
+  it("renders chat mention options as one-line rows with activity time", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const restoreCaretRect = stubCaretRect();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="@launch"
+          onChange={() => undefined}
+          mentionMenuPlacement="container"
+          mentions={[
+            {
+              id: "chat:chat-1",
+              name: "Launch planning",
+              kind: "chat",
+              chatConversationId: "chat-1",
+              chatSummary: "Coordinate launch work",
+              chatStatus: "active",
+              chatUpdatedAt: new Date("2020-01-15T12:00:00"),
+              searchText: "launch Coordinate launch work",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, 7);
+
+    const option = document.body.querySelector('[data-testid="markdown-mention-option-chat:chat-1"]');
+    expect(option?.textContent).toContain("Launch planning");
+    expect(option?.textContent).toContain("Jan 15, 2020");
+    expect(option?.textContent).not.toContain("Coordinate launch work");
+    expect(option?.textContent).not.toContain("Chat");
+    expect(option?.querySelector(".mt-0\\.5")).toBeNull();
+  });
 });

@@ -78,7 +78,7 @@ import { filterMentionOptions } from "../lib/mention-filter";
 import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
-import { cn } from "../lib/utils";
+import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import { MilkdownMarkdownEditor } from "./MilkdownMarkdownEditor";
 import {
   getMentionMenuPositionForViewport,
@@ -1961,6 +1961,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                       const issueStatusLabel = option.issueStatus ? statusLabel(option.issueStatus) : "Issue";
                       const isContainerMenu = mentionMenuPlacement === "container";
                       const skillDescription = option.skillDescription ?? option.skillLocationLabel ?? option.skillDisplayName ?? option.name;
+                      const chatTimeLabel = option.chatUpdatedAt ? relativeTime(option.chatUpdatedAt) : null;
+                      const chatTimeTitle = option.chatUpdatedAt ? formatDateTime(option.chatUpdatedAt) : undefined;
                       return (
                         <button
                           key={option.id}
@@ -2033,56 +2035,57 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                             />
                           )}
                           {!(option.kind === "skill" && isContainerMenu) ? (
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate font-medium text-foreground">{option.name}</div>
-                              {option.kind === "issue" && option.issueId ? (
-                                <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-                                  {option.issueStatus ? <span>{issueStatusLabel}</span> : null}
-                                  {option.issueProjectName ? (
-                                    <span className="inline-flex min-w-0 items-center gap-1">
-                                      <span
-                                        className="h-2 w-2 shrink-0 rounded-full border border-border/50"
-                                        style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
-                                        aria-hidden="true"
-                                      />
-                                      <span className="truncate">{option.issueProjectName}</span>
-                                    </span>
-                                  ) : null}
-                                  <span className="inline-flex min-w-0 items-center gap-1">
-                                    {option.issueAssigneeIcon ? (
-                                      <AgentIcon
-                                        icon={option.issueAssigneeIcon}
-                                        role={option.issueAssigneeRole}
-                                        className="h-3 w-3 shrink-0 text-muted-foreground"
-                                      />
+                            option.kind === "chat" ? (
+                              <div className="min-w-0 flex-1 truncate font-medium text-foreground">
+                                {option.name}
+                              </div>
+                            ) : (
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate font-medium text-foreground">{option.name}</div>
+                                {option.kind === "issue" && option.issueId ? (
+                                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                                    {option.issueStatus ? <span>{issueStatusLabel}</span> : null}
+                                    {option.issueProjectName ? (
+                                      <span className="inline-flex min-w-0 items-center gap-1">
+                                        <span
+                                          className="h-2 w-2 shrink-0 rounded-full border border-border/50"
+                                          style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
+                                          aria-hidden="true"
+                                        />
+                                        <span className="truncate">{option.issueProjectName}</span>
+                                      </span>
                                     ) : null}
-                                    <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
-                                  </span>
-                                </div>
-                              ) : null}
-                              {option.kind === "skill" ? (
-                                <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                                  {option.skillCategoryLabel ? (
-                                    <span className="inline-flex shrink-0 items-center rounded-[var(--radius-sm)] border border-border/70 bg-muted/50 px-1.5 py-0.5 leading-none">
-                                      {option.skillCategoryLabel}
+                                    <span className="inline-flex min-w-0 items-center gap-1">
+                                      {option.issueAssigneeIcon ? (
+                                        <AgentIcon
+                                          icon={option.issueAssigneeIcon}
+                                          role={option.issueAssigneeRole}
+                                          className="h-3 w-3 shrink-0 text-muted-foreground"
+                                        />
+                                      ) : null}
+                                      <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
                                     </span>
-                                  ) : null}
-                                  <span className="min-w-0 truncate">
-                                    {option.skillDescription ?? option.skillLocationLabel ?? option.skillDisplayName}
-                                  </span>
-                                </div>
-                              ) : null}
-                              {option.kind === "chat" ? (
-                                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                                  {option.chatSummary ?? option.chatStatus ?? "Chat"}
-                                </div>
-                              ) : null}
-                              {option.kind === "library_doc" || option.kind === "library_file" ? (
-                                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                                  {option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
-                                </div>
-                              ) : null}
-                            </div>
+                                  </div>
+                                ) : null}
+                                {option.kind === "skill" ? (
+                                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                                    {option.skillCategoryLabel ? (
+                                      <span className="inline-flex shrink-0 items-center rounded-[var(--radius-sm)] border border-border/70 bg-muted/50 px-1.5 py-0.5 leading-none">
+                                        {option.skillCategoryLabel}
+                                      </span>
+                                    ) : null}
+                                    <span className="min-w-0 truncate">
+                                      {option.skillDescription ?? option.skillLocationLabel ?? option.skillDisplayName}
+                                    </span>
+                                  </div>
+                                ) : null}
+                                {option.kind === "library_doc" || option.kind === "library_file" ? (
+                                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                    {option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )
                           ) : null}
                           {option.kind === "issue" && option.issueId && (
                             <span className="ml-auto text-[11px] text-muted-foreground">
@@ -2095,8 +2098,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                             </span>
                           )}
                           {option.kind === "chat" && option.chatConversationId && (
-                            <span className="ml-auto text-[11px] text-muted-foreground">
-                              Chat
+                            <span className="ml-auto shrink-0 text-[11px] text-muted-foreground" title={chatTimeTitle}>
+                              {chatTimeLabel ?? "Chat"}
                             </span>
                           )}
                           {((option.kind === "library_doc" && option.libraryDocumentId) || (option.kind === "library_file" && option.libraryFilePath)) && (

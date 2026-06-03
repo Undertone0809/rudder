@@ -55,6 +55,8 @@ export function buildMarkdownMentionOptions(params: {
     });
   }
 
+  options.push(...(params.skillMentionOptions ?? []));
+
   for (const project of params.projects ?? []) {
     options.push({
       id: `project:${project.id}`,
@@ -115,7 +117,7 @@ export function buildMarkdownMentionOptions(params: {
       chatTitle: chat.title,
       chatStatus: chat.status,
       chatSummary: chat.summary,
-      chatUpdatedAt: chat.updatedAt,
+      chatUpdatedAt: chat.lastMessageAt ?? chat.updatedAt,
     });
   }
 
@@ -154,6 +156,5 @@ export function buildMarkdownMentionOptions(params: {
     });
   }
 
-  options.push(...(params.skillMentionOptions ?? []));
   return options;
 }
