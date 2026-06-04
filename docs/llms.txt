@@ -29,6 +29,6 @@ Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, 
 ## Chinese docs
 
 - [Rudder 中文首页](https://doc.rudder.zeeland.studio/zh): 中文产品介绍和入口。
-- [安装 Rudder](https://doc.rudder.zeeland.studio/zh/get-started/installation): 用 CLI 安装并启动 Rudder Desktop。
+- [快速开始](https://doc.rudder.zeeland.studio/zh/get-started/installation): 用 CLI 安装并启动 Rudder Desktop。
 - [创建第一个组织](https://doc.rudder.zeeland.studio/zh/get-started/first-organization): 用真实任务走通第一条人类-agent 协作循环。
 - [版本发布](https://doc.rudder.zeeland.studio/zh/releases): Rudder 稳定版本发布记录和升级说明。
