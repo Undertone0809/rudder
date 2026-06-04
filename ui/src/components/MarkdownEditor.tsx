@@ -33,8 +33,8 @@ import {
   addImportVisitor$,
   createRootEditorSubscription$,
 } from "@mdxeditor/editor";
-import { Boxes, FileText, MessageSquare } from "lucide-react";
-import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
+import { Boxes, FileText, Folder, MessageSquare } from "lucide-react";
+import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { useNavigate } from "@/lib/router";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
@@ -97,7 +97,7 @@ export {
 export interface MentionOption {
   id: string;
   name: string;
-  kind?: "agent" | "project" | "issue" | "chat" | "library_doc" | "library_file" | "skill";
+  kind?: "agent" | "project" | "issue" | "chat" | "library_doc" | "library_file" | "library_directory" | "skill";
   searchText?: string;
   agentId?: string;
   agentIcon?: string | null;
@@ -122,6 +122,7 @@ export interface MentionOption {
   libraryDocumentUpdatedAt?: Date | string | null;
   libraryDocumentPath?: string | null;
   libraryFilePath?: string | null;
+  libraryDirectoryPath?: string | null;
   skillRefLabel?: string | null;
   skillMarkdownTarget?: string | null;
   skillDisplayName?: string | null;
@@ -814,6 +815,13 @@ function mentionTokenDetails(option: MentionOption): { href: string; isSkill: bo
       label: option.name,
     };
   }
+  if (option.kind === "library_directory" && option.libraryDirectoryPath) {
+    return {
+      href: buildLibraryDirectoryMentionHref(option.libraryDirectoryPath, option.name),
+      isSkill: false,
+      label: option.name,
+    };
+  }
   if (option.kind === "project" && option.projectId) {
     return {
       href: buildProjectMentionHref(option.projectId, option.projectColor ?? null),
@@ -1048,6 +1056,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       if (mention.kind === "library_file" && mention.libraryFilePath) {
         map.set(`library_file:${mention.libraryFilePath}`, mention);
       }
+      if (mention.kind === "library_directory" && mention.libraryDirectoryPath) {
+        map.set(`library_directory:${mention.libraryDirectoryPath}`, mention);
+      }
     }
     return map;
   }, [mentions]);
@@ -1084,7 +1095,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       if (kind === "project") return "Projects";
       if (kind === "issue") return "Issues";
       if (kind === "chat") return "Chats";
-      if (kind === "library_doc" || kind === "library_file") return "Library";
+      if (kind === "library_doc" || kind === "library_file" || kind === "library_directory") return "Library";
       return "Agents";
     };
 
@@ -1385,7 +1396,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
           continue;
         }
 
-        if (parsed.kind === "library_doc" || parsed.kind === "library_file") {
+        if (parsed.kind === "library_doc" || parsed.kind === "library_file" || parsed.kind === "library_directory") {
           applyMentionChipDecoration(link, parsed);
           continue;
         }
@@ -1579,6 +1590,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                         ? buildLibraryDocMentionHref(option.libraryDocumentId, option.libraryDocumentTitle ?? option.name)
                         : option.kind === "library_file" && option.libraryFilePath
                           ? buildLibraryFileMentionHref(option.libraryFilePath, option.name)
+                          : option.kind === "library_directory" && option.libraryDirectoryPath
+                            ? buildLibraryDirectoryMentionHref(option.libraryDirectoryPath, option.name)
                           : buildAgentMentionHref(
                               option.agentId ?? option.id.replace(/^agent:/, ""),
                               option.agentIcon ?? null,
@@ -1665,6 +1678,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
               ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
               : parsed.kind === "library_file"
                 ? `/library?path=${encodeURIComponent(parsed.filePath)}`
+                : parsed.kind === "library_directory"
+                  ? `/library?directory=${encodeURIComponent(parsed.directoryPath)}`
                 : `/projects/${parsed.projectId}`;
       navigate(target);
       return;
@@ -2025,6 +2040,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                             <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
                           ) : option.kind === "library_file" ? (
                             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          ) : option.kind === "library_directory" ? (
+                            <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
                           ) : option.kind === "library_doc" ? (
                             <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
                           ) : (
@@ -2079,9 +2096,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                                     </span>
                                   </div>
                                 ) : null}
-                                {option.kind === "library_doc" || option.kind === "library_file" ? (
+                                {option.kind === "library_doc" || option.kind === "library_file" || option.kind === "library_directory" ? (
                                   <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                                    {option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
+                                    {option.libraryDirectoryPath ?? option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
                                   </div>
                                 ) : null}
                               </div>
@@ -2102,9 +2119,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                               {chatTimeLabel ?? "Chat"}
                             </span>
                           )}
-                          {((option.kind === "library_doc" && option.libraryDocumentId) || (option.kind === "library_file" && option.libraryFilePath)) && (
+                          {((option.kind === "library_doc" && option.libraryDocumentId) || (option.kind === "library_file" && option.libraryFilePath) || (option.kind === "library_directory" && option.libraryDirectoryPath)) && (
                             <span className="ml-auto text-[11px] text-muted-foreground">
-                              Doc
+                              {option.kind === "library_directory" ? "Folder" : "Doc"}
                             </span>
                           )}
                           {option.kind === "skill" && !isContainerMenu && (

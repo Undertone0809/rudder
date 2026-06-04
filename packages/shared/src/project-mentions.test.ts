@@ -3,18 +3,21 @@ import {
   buildAgentMentionHref,
   buildChatMentionHref,
   buildIssueMentionHref,
+  buildLibraryDirectoryMentionHref,
   buildLibraryDocMentionHref,
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
   extractChatMentionIds,
   extractIssueMentionIds,
+  extractLibraryDirectoryMentionPaths,
   extractLibraryDocMentionIds,
   extractLibraryFileMentionPaths,
   extractProjectMentionIds,
   parseAgentMentionHref,
   parseChatMentionHref,
   parseIssueMentionHref,
+  parseLibraryDirectoryMentionHref,
   parseLibraryDocMentionHref,
   parseLibraryFileMentionHref,
   parseProjectMentionHref,
@@ -94,6 +97,15 @@ describe("project-mentions", () => {
     expect(extractLibraryFileMentionPaths(`[@Product brief](${href})`)).toEqual(["docs/product-brief.md"]);
   });
 
+  it("round-trips library directory mentions with path metadata", () => {
+    const href = buildLibraryDirectoryMentionHref("projects/rudder-mkt", "Rudder marketing");
+    expect(parseLibraryDirectoryMentionHref(href)).toEqual({
+      directoryPath: "projects/rudder-mkt",
+      title: "Rudder marketing",
+    });
+    expect(extractLibraryDirectoryMentionPaths(`[@Rudder marketing](${href})`)).toEqual(["projects/rudder-mkt"]);
+  });
+
   it("ignores mention-looking links inside markdown code", () => {
     expect(extractProjectMentionIds("`[@Project](project://id)` [@Real](project://project-123)"))
       .toEqual(["project-123"]);
@@ -108,5 +120,8 @@ describe("project-mentions", () => {
     expect(extractLibraryFileMentionPaths(
       "`[@Doc](library-file://file?p=docs%2Fignored.md)` [@Real](library-file://file?p=docs%2Freal.md)",
     )).toEqual(["docs/real.md"]);
+    expect(extractLibraryDirectoryMentionPaths(
+      "`[@Dir](library-directory://directory?p=docs%2Fignored)` [@Real](library-directory://directory?p=docs%2Freal)",
+    )).toEqual(["docs/real"]);
   });
 });

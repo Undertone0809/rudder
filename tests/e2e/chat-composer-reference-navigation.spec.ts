@@ -13,6 +13,10 @@ function buildLibraryFileMentionHref(filePath: string, title: string) {
   return `library-file://file?p=${encodeURIComponent(filePath)}&t=${encodeURIComponent(title)}`;
 }
 
+function buildLibraryDirectoryMentionHref(directoryPath: string, title: string) {
+  return `library-directory://directory?p=${encodeURIComponent(directoryPath)}&t=${encodeURIComponent(title)}`;
+}
+
 function organizationSkillMarkdownTarget(skill: { sourceLocator?: string | null; sourcePath?: string | null }) {
   const candidate = skill.sourceLocator ?? skill.sourcePath ?? null;
   if (!candidate) return null;
@@ -78,6 +82,15 @@ test("chat composer reference tokens navigate to their target pages with a comma
   expect(libraryFileRes.ok()).toBe(true);
   const libraryFileName = libraryFilePath.split("/").at(-1) ?? libraryFilePath;
 
+  const libraryDirectoryPath = `projects/navigation-folder-${Date.now()}`;
+  const libraryDirectoryRes = await page.request.post(`/api/orgs/${organization.id}/workspace/directory`, {
+    data: {
+      directoryPath: libraryDirectoryPath,
+    },
+  });
+  expect(libraryDirectoryRes.ok()).toBe(true);
+  const libraryDirectoryName = libraryDirectoryPath.split("/").at(-1) ?? libraryDirectoryPath;
+
   const skillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
     data: {
       name: "Navigation Skill",
@@ -137,6 +150,7 @@ test("chat composer reference tokens navigate to their target pages with a comma
     `[Referenced navigation chat](chat://${referencedChat.id})`,
     `[${libraryDoc.title}](${buildLibraryDocMentionHref(libraryDoc.id, libraryDoc.title)})`,
     `[${libraryFileName}](${buildLibraryFileMentionHref(libraryFilePath, libraryFileName)})`,
+    `[${libraryDirectoryName}](${buildLibraryDirectoryMentionHref(libraryDirectoryPath, libraryDirectoryName)})`,
     `[navigation-skill](${skillTarget})`,
   ].join(" ");
 
@@ -148,6 +162,7 @@ test("chat composer reference tokens navigate to their target pages with a comma
   const chatToken = composer.locator("[data-mention-kind='chat']").filter({ hasText: "Referenced navigation chat" }).first();
   const libraryDocToken = composer.locator("[data-mention-kind='library_doc']").filter({ hasText: libraryDoc.title }).first();
   const libraryFileToken = composer.locator("[data-mention-kind='library_file']").filter({ hasText: libraryFileName }).first();
+  const libraryDirectoryToken = composer.locator("[data-mention-kind='library_directory']").filter({ hasText: libraryDirectoryName }).first();
   const skillToken = composer.locator("[data-skill-token='true']").filter({ hasText: "navigation-skill" }).first();
 
   await expect(agentToken).toBeVisible({ timeout: 15_000 });
@@ -156,6 +171,7 @@ test("chat composer reference tokens navigate to their target pages with a comma
   await expect(chatToken).toBeVisible();
   await expect(libraryDocToken).toBeVisible();
   await expect(libraryFileToken).toBeVisible();
+  await expect(libraryDirectoryToken).toBeVisible();
   await expect(skillToken).toBeVisible();
 
   await agentToken.click({ modifiers: ["ControlOrMeta"] });
@@ -186,6 +202,11 @@ test("chat composer reference tokens navigate to their target pages with a comma
   await expect(libraryFileToken).toBeVisible({ timeout: 15_000 });
   await libraryFileToken.click({ modifiers: ["ControlOrMeta"] });
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(libraryFilePath).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}$`));
+
+  await page.goto(hostChatPath);
+  await expect(libraryDirectoryToken).toBeVisible({ timeout: 15_000 });
+  await libraryDirectoryToken.click({ modifiers: ["ControlOrMeta"] });
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?directory=${encodeURIComponent(libraryDirectoryPath).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}$`));
 
   await page.goto(hostChatPath);
   await expect(skillToken).toBeVisible({ timeout: 15_000 });

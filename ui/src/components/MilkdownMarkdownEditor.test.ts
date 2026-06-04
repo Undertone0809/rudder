@@ -5,6 +5,7 @@ import {
   buildAgentMentionHref,
   buildChatMentionHref,
   buildIssueMentionHref,
+  buildLibraryDirectoryMentionHref,
   buildLibraryDocMentionHref,
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
@@ -110,6 +111,15 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
           libraryFilePath: "docs/editor.md",
         },
         expected: `[docs/editor.md](${buildLibraryFileMentionHref("docs/editor.md", "docs/editor.md")}) `,
+      },
+      {
+        option: {
+          id: "library-directory:projects/rudder-mkt",
+          name: "Rudder marketing",
+          kind: "library_directory",
+          libraryDirectoryPath: "projects/rudder-mkt",
+        },
+        expected: `[Rudder marketing](${buildLibraryDirectoryMentionHref("projects/rudder-mkt", "Rudder marketing")}) `,
       },
       {
         option: {

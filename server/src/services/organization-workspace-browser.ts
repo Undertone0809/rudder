@@ -354,6 +354,14 @@ export function organizationWorkspaceBrowserService(db: Db) {
           const entryPath = directoryPath ? `${directoryPath}/${entry.name}` : entry.name;
           if (isProtectedLibraryResourcePath(entryPath)) continue;
           if (entry.isDirectory()) {
+            if (!normalizedQuery || `${entry.name} ${entryPath}`.toLowerCase().includes(normalizedQuery)) {
+              entries.push({
+                name: entry.name,
+                path: entryPath,
+                isDirectory: true,
+              });
+              if (entries.length >= limit) break;
+            }
             await visit(entryPath);
             continue;
           }

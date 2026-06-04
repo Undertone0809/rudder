@@ -26,11 +26,12 @@ import {
   buildAgentMentionHref,
   buildChatMentionHref,
   buildIssueMentionHref,
+  buildLibraryDirectoryMentionHref,
   buildLibraryDocMentionHref,
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
 } from "@rudderhq/shared";
-import { Boxes, FileText, MessageSquare } from "lucide-react";
+import { Boxes, FileText, Folder, MessageSquare } from "lucide-react";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -145,6 +146,9 @@ function mentionTokenDetails(option: MentionOption): { href: string; label: stri
   if (option.kind === "library_file" && option.libraryFilePath) {
     return { href: buildLibraryFileMentionHref(option.libraryFilePath, option.name), label: option.name };
   }
+  if (option.kind === "library_directory" && option.libraryDirectoryPath) {
+    return { href: buildLibraryDirectoryMentionHref(option.libraryDirectoryPath, option.name), label: option.name };
+  }
   if (option.kind === "project" && option.projectId) {
     return { href: buildProjectMentionHref(option.projectId, option.projectColor ?? null), label: option.name };
   }
@@ -195,6 +199,7 @@ export function rudderTokenNavigationPath(href: string) {
     if (parsed.kind === "chat") return `/messenger/chat/${parsed.conversationId}`;
     if (parsed.kind === "library_doc") return `/library?doc=${encodeURIComponent(parsed.documentId)}`;
     if (parsed.kind === "library_file") return `/library?path=${encodeURIComponent(parsed.filePath)}`;
+    if (parsed.kind === "library_directory") return `/library?directory=${encodeURIComponent(parsed.directoryPath)}`;
     return `/agents/${parsed.agentId}`;
   }
 
@@ -940,7 +945,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       if (kind === "project") return "Projects";
       if (kind === "issue") return "Issues";
       if (kind === "chat") return "Chats";
-      if (kind === "library_doc" || kind === "library_file") return "Library";
+      if (kind === "library_doc" || kind === "library_file" || kind === "library_directory") return "Library";
       return "Agents";
     };
 
@@ -1346,6 +1351,8 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                         <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
                       ) : option.kind === "library_file" ? (
                         <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      ) : option.kind === "library_directory" ? (
+                        <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
                       ) : option.kind === "library_doc" ? (
                         <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
                       ) : (
@@ -1400,9 +1407,9 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                               {option.chatSummary ?? option.chatStatus ?? "Chat"}
                             </div>
                           ) : null}
-                          {option.kind === "library_doc" || option.kind === "library_file" ? (
+                          {option.kind === "library_doc" || option.kind === "library_file" || option.kind === "library_directory" ? (
                             <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                              {option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
+                              {option.libraryDirectoryPath ?? option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
                             </div>
                           ) : null}
                         </div>
@@ -1417,8 +1424,11 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                         <span className="ml-auto text-[11px] text-muted-foreground">Chat</span>
                       ) : null}
                       {((option.kind === "library_doc" && option.libraryDocumentId)
-                        || (option.kind === "library_file" && option.libraryFilePath)) ? (
-                        <span className="ml-auto text-[11px] text-muted-foreground">Doc</span>
+                        || (option.kind === "library_file" && option.libraryFilePath)
+                        || (option.kind === "library_directory" && option.libraryDirectoryPath)) ? (
+                        <span className="ml-auto text-[11px] text-muted-foreground">
+                          {option.kind === "library_directory" ? "Folder" : "Doc"}
+                        </span>
                       ) : null}
                       {option.kind === "skill" && !isContainerMenu ? (
                         <span className="ml-auto text-[11px] text-muted-foreground">Skill</span>

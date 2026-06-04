@@ -82,7 +82,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { extractLibraryDocMentionIds, extractLibraryFileMentionPaths, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
+import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 
 type IssueCostSummaryData = {
@@ -835,6 +835,7 @@ function LinkedLibraryDocsSection({
 }) {
   const mentionedDocIds = new Set(extractLibraryDocMentionIds(issue.description ?? ""));
   const mentionedFilePaths = new Set(extractLibraryFileMentionPaths(issue.description ?? ""));
+  const mentionedDirectoryPaths = new Set(extractLibraryDirectoryMentionPaths(issue.description ?? ""));
   const docsById = new Map((libraryDocuments ?? []).map((doc) => [doc.id, doc]));
   const filesByPath = new Map((libraryFiles ?? []).map((file) => [file.path, file]));
   const linkedDocs = new Map<string, LibraryDocumentSummary>();
@@ -851,6 +852,14 @@ function LinkedLibraryDocsSection({
       isDirectory: false,
     };
     linkedFiles.set(file.path, file);
+  }
+  for (const directoryPath of mentionedDirectoryPaths) {
+    const directory = filesByPath.get(directoryPath) ?? {
+      name: directoryPath.split("/").pop() || directoryPath,
+      path: directoryPath,
+      isDirectory: true,
+    };
+    linkedFiles.set(directory.path, directory);
   }
   for (const doc of issue.documentSummaries ?? []) {
     const libraryDoc = docsById.get(doc.id) ?? {
@@ -894,17 +903,17 @@ function LinkedLibraryDocsSection({
         {files.map((file) => (
           <Link
             key={file.path}
-            to={`/library?path=${encodeURIComponent(file.path)}`}
+            to={file.isDirectory ? `/library?directory=${encodeURIComponent(file.path)}` : `/library?path=${encodeURIComponent(file.path)}`}
             className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
           >
             <div className="min-w-0">
               <div className="truncate font-medium text-foreground">{file.name}</div>
               <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                live Library file / {file.path}
+                live Library {file.isDirectory ? "folder" : "file"} / {file.path}
               </div>
             </div>
             <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
-              file
+              {file.isDirectory ? "folder" : "file"}
             </span>
           </Link>
         ))}
@@ -1306,13 +1315,13 @@ export function IssueDetail() {
       });
     }
     for (const file of libraryMentionFiles?.entries ?? []) {
-      if (file.isDirectory) continue;
       options.push({
-        id: `library-file:${file.path}`,
-        name: file.name,
-        kind: "library_file",
+        id: file.isDirectory ? `library-directory:${file.path}` : `library-file:${file.path}`,
+        name: file.displayLabel ?? file.name,
+        kind: file.isDirectory ? "library_directory" : "library_file",
         searchText: `${file.name} ${file.path}`,
-        libraryFilePath: file.path,
+        libraryFilePath: file.isDirectory ? null : file.path,
+        libraryDirectoryPath: file.isDirectory ? file.path : null,
       });
     }
     options.push(...skillMentionOptions);

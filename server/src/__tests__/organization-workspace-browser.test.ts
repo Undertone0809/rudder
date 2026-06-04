@@ -326,6 +326,7 @@ describe("organization workspace browser", () => {
       ),
     );
     await fs.writeFile(path.join(root, "projects", "product", "z-special-product-brief.md"), "# Product brief\n", "utf8");
+    await fs.mkdir(path.join(root, "projects", "special-product-research"), { recursive: true });
     await fs.mkdir(path.join(root, "agents", "worker--1234"), { recursive: true });
     await fs.writeFile(path.join(root, "agents", "worker--1234", "secret-product-brief.md"), "# Agent memory\n", "utf8");
     await fs.mkdir(path.join(root, "skills", "writer"), { recursive: true });
@@ -336,7 +337,10 @@ describe("organization workspace browser", () => {
     expect(defaultEntries.map((entry) => entry.path)).not.toContain("projects/product/z-special-product-brief.md");
 
     const searchEntries = await workspaceBrowser.listMentionableFiles(orgId, { query: "special-product", limit: 20 });
-    expect(searchEntries.map((entry) => entry.path)).toEqual(["projects/product/z-special-product-brief.md"]);
+    expect(searchEntries.map((entry) => [entry.path, entry.isDirectory])).toEqual([
+      ["projects/product/z-special-product-brief.md", false],
+      ["projects/special-product-research", true],
+    ]);
   });
 
   it("allows normal entry actions below agent workspaces while protecting agent workspace handles", async () => {

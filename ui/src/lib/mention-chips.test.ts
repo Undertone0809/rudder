@@ -112,4 +112,24 @@ describe("mention chips", () => {
     expect(element.dataset.mentionKind).toBe("library_file");
     expect(element.classList.contains("rudder-mention-chip--library_file")).toBe(true);
   });
+
+  it("parses and decorates library directory mention links", () => {
+    expect(parseMentionChipHref("library-directory://directory?p=projects%2Frudder-mkt&t=Rudder%20marketing")).toEqual({
+      kind: "library_directory",
+      directoryPath: "projects/rudder-mkt",
+      title: "Rudder marketing",
+    });
+
+    const element = document.createElement("a");
+    element.textContent = "@Rudder marketing";
+    applyMentionChipDecoration(element, {
+      kind: "library_directory",
+      directoryPath: "projects/rudder-mkt",
+      title: "Rudder marketing",
+    });
+
+    expect(element.textContent).toBe("Rudder marketing");
+    expect(element.dataset.mentionKind).toBe("library_directory");
+    expect(element.classList.contains("rudder-mention-chip--library_directory")).toBe(true);
+  });
 });
