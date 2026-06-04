@@ -154,6 +154,10 @@ function buildCommentLink(commentId: string, location: ReturnType<typeof useLoca
   return `${window.location.origin}${path}#comment-${commentId}`;
 }
 
+function buildCommentMarkdownLink(commentId: string, location: ReturnType<typeof useLocation>) {
+  return `[Issue comment ${commentId.slice(0, 8)}](<${buildCommentLink(commentId, location)}>)`;
+}
+
 function timelineDateTime(date: Date | string) {
   const timestamp = new Date(date);
   return Number.isNaN(timestamp.getTime()) ? undefined : timestamp.toISOString();
@@ -196,7 +200,7 @@ function CommentActionsMenu({
           {copiedAction === "content" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           Copy content
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => copyToClipboard("link", buildCommentLink(comment.id, location))}>
+        <DropdownMenuItem onSelect={() => copyToClipboard("link", buildCommentMarkdownLink(comment.id, location))}>
           {copiedAction === "link" ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
           Copy link
         </DropdownMenuItem>

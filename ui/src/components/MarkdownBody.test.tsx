@@ -449,6 +449,21 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain('class="rudder-link-chip"');
   });
 
+  it("keeps same-origin absolute markdown links in the current window", () => {
+    const sameOriginHref = `${window.location.origin}/NEW/issues/NEW-13#comment-comment-1`;
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`Open [Issue comment](<${sameOriginHref}>)`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a");
+    expect(link?.getAttribute("href")).toBe(sameOriginHref);
+    expect(link?.getAttribute("target")).toBeNull();
+  });
+
   it("renders bare long URLs with the complete URL as link text", () => {
     const url = "https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/";
     const html = renderToStaticMarkup(

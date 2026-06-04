@@ -65,7 +65,39 @@ test("issue comment actions menu copies content and direct links", async ({ page
   const writesAfterLink = await page.evaluate(() => (
     (window as typeof window & { __rudderClipboardWrites?: string[] }).__rudderClipboardWrites ?? []
   ));
-  expect(writesAfterLink.at(-1)).toBe(
-    `${new URL(page.url()).origin}/${organization.issuePrefix}/issues/${routeRef}#comment-${comment.id}`,
-  );
+  const expectedCommentUrl = `${new URL(page.url()).origin}/${organization.issuePrefix}/issues/${routeRef}#comment-${comment.id}`;
+  const copiedMarkdownLink = writesAfterLink.at(-1);
+  expect(copiedMarkdownLink).toBe(`[Issue comment ${comment.id.slice(0, 8)}](<${expectedCommentUrl}>)`);
+
+  const composer = page.locator(".chat-composer .rudder-milkdown-content [contenteditable='true']").first();
+  await expect(composer).toBeVisible();
+  await composer.click();
+  await composer.evaluate((element, value) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", value);
+    element.dispatchEvent(new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: data,
+    }));
+  }, copiedMarkdownLink!);
+
+  const [createLinkedCommentResponse] = await Promise.all([
+    page.waitForResponse((response) =>
+      /\/api\/issues\/[^/]+\/comments$/.test(new URL(response.url()).pathname)
+      && response.request().method() === "POST",
+    ),
+    page.locator(".chat-composer").getByRole("button", { name: "Comment", exact: true }).click(),
+  ]);
+  expect(createLinkedCommentResponse.ok()).toBe(true);
+  const linkedComment = await createLinkedCommentResponse.json() as { id: string; body: string };
+  expect(linkedComment.body).toBe(`[Issue comment ${comment.id.slice(0, 8)}](${expectedCommentUrl})`);
+
+  const linkedCommentBlock = page.locator(`#comment-${linkedComment.id}`);
+  await expect(linkedCommentBlock).toBeVisible();
+  const renderedCopiedLink = linkedCommentBlock.getByRole("link", { name: `Issue comment ${comment.id.slice(0, 8)}` });
+  await expect(renderedCopiedLink).toHaveAttribute("href", expectedCommentUrl);
+  await renderedCopiedLink.click();
+  await expect(page).toHaveURL(expectedCommentUrl);
+  await expect(commentBlock).toHaveClass(/border-primary/);
 });

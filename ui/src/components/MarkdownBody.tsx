@@ -198,6 +198,13 @@ function isExternalMarkdownHref(value: string | null | undefined) {
 
   try {
     const parsed = new URL(trimmed);
+    if (
+      typeof window !== "undefined" &&
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      parsed.origin === window.location.origin
+    ) {
+      return false;
+    }
     return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:";
   } catch {
     return false;
