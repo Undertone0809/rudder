@@ -1249,8 +1249,12 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     focus: () => {
       focusEditorAtEnd();
     },
-    getMarkdown: () => latestValueRef.current,
-  }), [focusEditorAtEnd]);
+    getMarkdown: () => {
+      const editorMarkdown = ref.current?.getMarkdown();
+      if (typeof editorMarkdown !== "string") return latestValueRef.current;
+      return plainText ? normalizePlainTextComposerMarkdown(editorMarkdown) : editorMarkdown;
+    },
+  }), [focusEditorAtEnd, plainText]);
 
   // Whether the image plugin should be included (boolean is stable across renders
   // as long as the handler presence doesn't toggle)

@@ -76,3 +76,62 @@ test("chat composer keeps normal Markdown literal while tokenizing Rudder refere
   const userMessage = messages.find((message) => message.role === "user");
   expect(userMessage?.body).toBe(draft);
 });
+
+test("chat composer keeps text after Rudder reference tokens when sending", async ({ page }) => {
+  const organization = await createOrganization(page, "Chat-Reference-Tail");
+  const agent = await createChatAgent(page, organization.id, "Mira");
+
+  const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+    data: {
+      name: "Rudder Release",
+      description: "Release planning context",
+    },
+  });
+  expect(projectRes.ok()).toBe(true);
+  const project = await projectRes.json() as { id: string; name: string };
+
+  const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: "Reference tail",
+      preferredAgentId: agent.id,
+    },
+  });
+  expect(chatRes.ok()).toBe(true);
+  const chat = await chatRes.json() as { id: string };
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+
+  const projectReference = `[${project.name}](project://${project.id})`;
+  const agentReference = `[${agent.name}](agent://${agent.id})`;
+  const draft = `你需要结合 ${projectReference} 产出范围，并让 ${agentReference} 继续跟进。`;
+  await composer.fill(draft);
+
+  await expect(composer).toContainText("你需要结合");
+  await expect(composer.locator("[data-mention-kind='project']").filter({ hasText: project.name })).toBeVisible();
+  await expect(composer.locator("[data-mention-kind='agent']").filter({ hasText: agent.name })).toBeVisible();
+  await expect(composer).toContainText("产出范围，并让");
+  await expect(composer).toContainText("继续跟进。");
+
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const userBubble = page.getByTestId("chat-user-message-bubble").last();
+  await expect(userBubble).toContainText("你需要结合", { timeout: 15_000 });
+  await expect(userBubble).toContainText(project.name);
+  await expect(userBubble).toContainText("产出范围，并让");
+  await expect(userBubble).toContainText(agent.name);
+  await expect(userBubble).toContainText("继续跟进。");
+
+  const messagesRes = await page.request.get(`/api/chats/${chat.id}/messages`);
+  expect(messagesRes.ok()).toBe(true);
+  const messages = await messagesRes.json() as Array<{ role: string; body: string }>;
+  const userMessage = messages.find((message) => message.role === "user");
+  expect(userMessage?.body).toBe(draft);
+});

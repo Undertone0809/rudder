@@ -475,12 +475,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     void chatsApi.stopMessageStream(chatId).catch((error) => {
       pushToast({
         title: "Failed to stop streaming",
-        body: error instanceof Error ? error.message : "Try again.", tone: "error", }); }); abortChatStream(chatId); setStreamDraftForChat(chatId, (current) => (current ? { ...current, state: "stopped" } : current)); }, [abortChatStream, pushToast, setStreamDraftForChat]); const sendMessage = async (
+        body: error instanceof Error ? error.message : "Try again.", tone: "error", }); }); abortChatStream(chatId); setStreamDraftForChat(chatId, (current) => (current ? { ...current, state: "stopped" } : current)); }, [abortChatStream, pushToast, setStreamDraftForChat]); const readComposerDraft = useCallback(
+    () => composerEditorRef.current?.getMarkdown?.() ?? draft,
+    [draft],
+  ); const sendMessage = async (
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
       editUserMessageIdOverride?: string | null; clearPendingFilesOnSuccess?: boolean; },
   ) => {
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
-      return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined; const body = (options?.bodyOverride ?? draft).trim();
+      return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined; const body = (options?.bodyOverride ?? readComposerDraft()).trim();
     if (!body) { pushToast({ title: "Message cannot be empty", tone: "error" });
       return; } const filesToUpload = [...(options?.filesOverride ?? pendingFiles)]; let pendingFilesClearedAfterAck = false; const submittedComposerDraft = usesComposerState ? {
           body,
@@ -683,14 +686,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   );
   const insertSkillReference = useCallback((entry: (typeof availableChatSkills)[number]) => {
     if (!entry.skillRefLabel || !entry.skillMarkdownTarget) { setSkillMenuOpen(false);
-      return; } const nextDraft = appendSkillReferencesToDraft(
-      draft, [`[${entry.skillRefLabel}](${entry.skillMarkdownTarget})`], ); setDraft(nextDraft); setSkillMenuOpen(false); setSkillSearchQuery("");
+      return; } const currentDraft = readComposerDraft(); const nextDraft = appendSkillReferencesToDraft(
+      currentDraft, [`[${entry.skillRefLabel}](${entry.skillMarkdownTarget})`], ); setDraft(nextDraft); setSkillMenuOpen(false); setSkillSearchQuery("");
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); });
-    if (nextDraft === draft) {
+    if (nextDraft === currentDraft) {
       pushToast({
         title: "Selected skills already in message",
         tone: "success",
-      }); } }, [draft, pushToast]); const applyPreferredAgent = (value: string) => {
+      }); } }, [pushToast, readComposerDraft]); const applyPreferredAgent = (value: string) => {
     if (agentSelectionLocked) { setAgentMenuOpen(false);
       return; }
     if (!isSelectableChatAgentId(value, agents)) { setAgentMenuOpen(false);
