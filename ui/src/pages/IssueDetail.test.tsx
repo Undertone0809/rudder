@@ -581,6 +581,13 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("Comments &amp; Runs");
   });
 
+  it("keeps the desktop properties sidebar sticky against the issue detail page", () => {
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('<aside class="mt-6 xl:sticky xl:top-4 xl:mt-0">');
+    expect(html).not.toContain('class="space-y-3 xl:sticky xl:top-4"');
+  });
+
   it("keeps assignee changes out of the issue comment composer", () => {
     renderToStaticMarkup(<IssueDetail />);
 
