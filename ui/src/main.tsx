@@ -25,6 +25,20 @@ import "@mdxeditor/editor/style.css";
 import "./index.css";
 import "./motion.css";
 
+const E2E_CHILDREN_ONLY_ERROR_MESSAGE = "React.Children.only expected to receive a single React element child.";
+
+declare global {
+  interface ImportMeta {
+    readonly env: {
+      readonly DEV: boolean;
+    };
+  }
+
+  interface Window {
+    __RUDDER_E2E_THROW_APP_RENDER_ERROR__?: "children-only";
+  }
+}
+
 ConsoleRingBuffer.install();
 
 initPluginBridge(React, ReactDOM);
@@ -92,6 +106,14 @@ const queryClient = new QueryClient({
   },
 });
 
+function AppRoot() {
+  if (import.meta.env.DEV && window.__RUDDER_E2E_THROW_APP_RENDER_ERROR__ === "children-only") {
+    throw new Error(E2E_CHILDREN_ONLY_ERROR_MESSAGE);
+  }
+
+  return <App />;
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
@@ -110,7 +132,7 @@ createRoot(document.getElementById("root")!).render(
                               <PluginLauncherProvider>
                                 <DialogProvider>
                                   <ChatGenerationProvider>
-                                    <App />
+                                    <AppRoot />
                                   </ChatGenerationProvider>
                                 </DialogProvider>
                               </PluginLauncherProvider>
