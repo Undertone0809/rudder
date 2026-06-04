@@ -259,11 +259,11 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("Run");
     expect(html).not.toContain("Not an issue comment");
     expect(html).toContain('aria-label="Agent run"');
     expect(html).toContain('data-run-id="55555555-5555-4555-8555-555555555555"');
     expect(html).toContain("Ran for 32m");
+    expect(html).not.toContain(">Run</span>");
     expect(html).toContain('aria-label="Show details"');
     expect(html).toContain('data-size="sm"');
     expect(html).not.toContain("No run output captured.");

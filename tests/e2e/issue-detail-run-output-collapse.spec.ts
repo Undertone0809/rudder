@@ -122,6 +122,7 @@ test("collapses inactive issue runs by default and keeps active runs expanded", 
   const succeededRunCard = page.locator(`[data-run-id="${succeededRunId}"]`);
   await expect(succeededRunCard.getByRole("button", { name: "Show details" })).toBeVisible();
   await expect(succeededRunCard).toContainText("Ran for 32m");
+  await expect(succeededRunCard.getByText("Run", { exact: true })).toHaveCount(0);
   await expect(succeededRunCard).not.toContainText("Show details");
   await expect(succeededRunCard).not.toContainText("No run output captured.");
   const succeededRunBox = await succeededRunCard.boundingBox();
