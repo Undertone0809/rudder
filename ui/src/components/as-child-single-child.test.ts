@@ -15,7 +15,12 @@ function getAsChildViolations() {
     const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
     function visit(node: ts.Node) {
-      if (ts.isJsxElement(node) && hasBooleanAsChild(node.openingElement.attributes)) {
+      if (ts.isJsxSelfClosingElement(node) && hasPossiblyEnabledAsChild(node.attributes)) {
+        const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+        violations.push(`${file}:${location.line + 1}:${location.character + 1}`);
+      }
+
+      if (ts.isJsxElement(node) && hasPossiblyEnabledAsChild(node.openingElement.attributes)) {
         const children = node.children.filter((child) => {
           if (ts.isJsxText(child)) return child.getText(sourceFile).trim().length > 0;
           if (ts.isJsxExpression(child) && !child.expression) return false;
@@ -36,12 +41,12 @@ function getAsChildViolations() {
   return violations;
 }
 
-function hasBooleanAsChild(attributes: ts.JsxAttributes) {
+function hasPossiblyEnabledAsChild(attributes: ts.JsxAttributes) {
   return attributes.properties.some((property) => {
     if (!ts.isJsxAttribute(property) || property.name.getText() !== "asChild") return false;
     if (!property.initializer) return true;
-    return ts.isJsxExpression(property.initializer)
-      && property.initializer.expression?.kind === ts.SyntaxKind.TrueKeyword;
+    if (!ts.isJsxExpression(property.initializer)) return false;
+    return property.initializer.expression?.kind !== ts.SyntaxKind.FalseKeyword;
   });
 }
 

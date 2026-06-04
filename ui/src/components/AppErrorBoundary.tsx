@@ -17,6 +17,7 @@ const AUTO_RELOADABLE_ERROR_MESSAGES = [
 ];
 const AUTO_RECOVERY_STORAGE_KEY = "rudder:app-error-boundary:auto-recovery.v1";
 const AUTO_RECOVERY_WINDOW_MS = 30_000;
+const DESKTOP_RELOAD_FALLBACK_MS = 5_000;
 
 function isAutoReloadableRenderError(error: Error): boolean {
   return AUTO_RELOADABLE_ERROR_MESSAGES.includes(error.message);
@@ -59,6 +60,9 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   private reloadUi = () => {
     const desktopShell = readDesktopShell();
     if (desktopShell?.reloadApp) {
+      window.setTimeout(() => {
+        window.location.reload();
+      }, DESKTOP_RELOAD_FALLBACK_MS);
       void desktopShell.reloadApp().catch(() => {
         window.location.reload();
       });

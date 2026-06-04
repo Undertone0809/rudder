@@ -46,11 +46,6 @@ test("auto refreshes recoverable app render failures before showing diagnostics"
     (window as typeof window & { __rudderReloadAppCalls?: number }).__rudderReloadAppCalls ?? 0
   ))).toBe(1);
 
-  await page.goto("/");
-
   await expect(page.getByText("Rudder hit a UI failure.")).toBeVisible();
   await expect(page.getByText(CHILDREN_ONLY_MESSAGE)).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (
-    (window as typeof window & { __rudderReloadAppCalls?: number }).__rudderReloadAppCalls ?? 0
-  ))).toBe(0);
 });
