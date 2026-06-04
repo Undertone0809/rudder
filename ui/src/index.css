@@ -2636,6 +2636,54 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   white-space: pre;
 }
 
+.rudder-code-block-copy-wrap {
+  position: relative;
+}
+
+.rudder-code-block-copy-wrap pre {
+  padding-right: 2.75rem !important;
+}
+
+.rudder-code-block-copy-button {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  display: inline-flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--code-border) 82%, transparent);
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: color-mix(in oklab, var(--code-surface-elevated) 92%, transparent);
+  color: var(--code-muted);
+  opacity: 0;
+  box-shadow: 0 8px 20px -14px rgb(0 0 0 / 0.65);
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.rudder-code-block-copy-wrap:hover .rudder-code-block-copy-button,
+.rudder-code-block-copy-wrap:focus-within .rudder-code-block-copy-button {
+  opacity: 1;
+}
+
+.rudder-code-block-copy-button:hover,
+.rudder-code-block-copy-button:focus-visible,
+.rudder-code-block-copy-button[data-copy-state="copied"] {
+  border-color: color-mix(in oklab, var(--code-foreground) 34%, var(--code-border));
+  background: var(--code-surface-elevated);
+  color: var(--code-foreground);
+}
+
+.rudder-code-block-copy-button:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent-base) 48%, transparent);
+  outline-offset: 2px;
+}
+
 .rudder-markdown code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 1em;

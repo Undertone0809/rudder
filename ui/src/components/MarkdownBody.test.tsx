@@ -166,6 +166,41 @@ describe("MarkdownBody", () => {
     expect(copyEvent.defaultPrevented).toBe(true);
   });
 
+  it("copies block code when code-block copy is enabled without adding inline-code buttons", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody enableCodeBlockCopy>{"Inline `code`\n\n```sh\npnpm test\n```"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const copyButton = container.querySelector<HTMLButtonElement>(".rudder-code-block-copy-button");
+    expect(copyButton).toBeTruthy();
+    expect(container.querySelector("p code")).toBeTruthy();
+    expect(container.querySelectorAll(".rudder-code-block-copy-button")).toHaveLength(1);
+
+    await act(async () => {
+      copyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith("pnpm test");
+    expect(copyButton?.getAttribute("aria-label")).toBe("Copied");
+  });
+
+  it("does not render code-block copy controls by default", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"```sh\npnpm test\n```"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(container.querySelector(".rudder-code-block-copy-button")).toBeNull();
+  });
+
   it("renders chat mentions as live Messenger links", () => {
     const href = buildChatMentionHref("chat-123", "Launch planning");
     const html = renderToStaticMarkup(

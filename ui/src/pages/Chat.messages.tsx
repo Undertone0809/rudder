@@ -675,7 +675,7 @@ export function ProposalCard({
                 proposalDetailsCanExpand && !proposalDetailsExpanded && "chat-review-details-body--can-expand",
               )}
             >
-              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
                 {proposalDescription}
               </MarkdownBody>
             </div>
@@ -688,7 +688,7 @@ export function ProposalCard({
               <div className="text-[11px] font-medium text-muted-foreground">{planDocument.title}</div>
             ) : null}
             <div className="mt-3 text-sm leading-6 text-foreground">
-              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
                 {planDocument.body}
               </MarkdownBody>
             </div>
@@ -855,7 +855,7 @@ export function ChatLongMessageBody({
   return (
     <div className={cn("min-w-0", className)}>
       <div data-testid="chat-long-message-body" className="min-w-0">
-        <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+        <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
           {body}
         </MarkdownBody>
       </div>
@@ -966,7 +966,7 @@ export function ChatSystemMessageBody({
   }
 
   return (
-    <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+    <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
       {message.body}
     </MarkdownBody>
   );

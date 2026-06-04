@@ -146,6 +146,77 @@ test.describe("Chat message layout", () => {
     await page.screenshot({ path: "/tmp/rudder-chat-avatar-mobile.png", fullPage: true });
   });
 
+  test("shows a hover copy button for Messenger code blocks", async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.setViewportSize({ width: 1280, height: 820 });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Code-Copy-Chat-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Code copy chat",
+        summary: "Regression coverage for code-block copy controls.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: [
+        "Run this command, not the inline `pnpm ignored` example.",
+        "",
+        "```sh",
+        "pnpm --filter @rudderhq/ui typecheck",
+        "```",
+      ].join("\n"),
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("Run this command", { timeout: 15_000 });
+    await expect(assistantMessage.locator("p code", { hasText: "pnpm ignored" })).toBeVisible();
+
+    const codeBlock = assistantMessage.locator(".rudder-code-block-copy-wrap").first();
+    const copyButton = codeBlock.locator(".rudder-code-block-copy-button");
+    await expect(copyButton).toHaveCount(1);
+    await expect(copyButton).toHaveCSS("opacity", "0");
+
+    await codeBlock.hover();
+    await expect(copyButton).toHaveCSS("opacity", "1");
+    await expect(copyButton).toHaveAttribute("aria-label", "Copy code");
+    await page.screenshot({ path: "/tmp/rudder-zst-131-code-copy-hover.png", fullPage: true });
+
+    await copyButton.click();
+    await expect(copyButton).toHaveAttribute("aria-label", "Copied");
+    await expect.poll(async () => page.evaluate(() => navigator.clipboard.readText())).toBe(
+      "pnpm --filter @rudderhq/ui typecheck",
+    );
+  });
+
   test("collapses long assistant messages behind an expandable preview", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
 
