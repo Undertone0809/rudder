@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OrganizationWorkspaces } from "./OrganizationWorkspaces";
+import { OrganizationWorkspaceFilesSidebar, OrganizationWorkspaces, WorkspaceLaunchTargetIcon } from "./OrganizationWorkspaces";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -321,7 +321,7 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(document.querySelector("[data-testid='org-workspaces-files-scroll']")).not.toBeNull();
   });
 
-  it("keeps the workspace launcher icon-only while preserving the accessible app label", async () => {
+  it("moves workspace launch targets into the Library sidebar menu", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       value: 1200,
@@ -338,23 +338,74 @@ describe("OrganizationWorkspaces scroll regions", () => {
     mockState.desktopShell = {
       listAvailableIdes: vi.fn().mockResolvedValue([{ id: "vscode", label: "VS Code" }]),
       listWorkspaceLaunchTargets: vi.fn().mockResolvedValue([
+        { id: "cursor", label: "Cursor", kind: "ide" },
         { id: "vscode", label: "VS Code", kind: "ide" },
       ]),
       openWorkspace: vi.fn(),
     };
 
-    renderWorkspacesPage();
+    if (!currentContainer) {
+      currentContainer = document.createElement("div");
+      document.body.appendChild(currentContainer);
+    }
+
+    act(() => {
+      currentRoot ??= createRoot(currentContainer!);
+      currentRoot.render(
+        <>
+          <OrganizationWorkspaceFilesSidebar />
+          <OrganizationWorkspaces />
+        </>,
+      );
+    });
+    cleanupFn = () => currentRoot?.unmount();
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    const launcher = document.querySelector("[data-testid='org-workspaces-editor-launcher']");
-    const openButton = launcher?.querySelector("button[aria-label='Open workspace in VS Code']");
+    const launcher = document.querySelector("[data-testid='org-workspaces-sidebar-launcher']");
     expect(launcher).not.toBeNull();
-    expect(openButton).not.toBeNull();
-    expect(openButton?.textContent).toBe("VS");
+    expect(launcher?.getAttribute("aria-label")).toBe("Open workspace menu");
     expect(launcher?.textContent).not.toContain("VS Code");
+    expect(document.querySelector("[data-testid='org-workspaces-editor-launcher']")).toBeNull();
+
+    act(() => {
+      launcher?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    });
+
+    expect(document.querySelector("[data-testid='org-workspaces-sidebar-launch-target-cursor']")).not.toBeNull();
+    expect(document.querySelector("[data-testid='org-workspaces-sidebar-launch-target-vscode']")).not.toBeNull();
+  });
+
+  it("does not wrap native workspace launcher app icons in a card shell", () => {
+    if (!currentContainer) {
+      currentContainer = document.createElement("div");
+      document.body.appendChild(currentContainer);
+    }
+
+    act(() => {
+      currentRoot ??= createRoot(currentContainer!);
+      currentRoot.render(
+        <WorkspaceLaunchTargetIcon
+          target={{
+            id: "finder",
+            label: "Finder",
+            kind: "folder",
+            iconDataUrl: "data:image/png;base64,AAAA",
+          }}
+        />,
+      );
+    });
+    cleanupFn = () => currentRoot?.unmount();
+
+    const iconSlot = document.querySelector("[data-workspace-launch-target-icon='finder']");
+    expect(iconSlot).not.toBeNull();
+    expect(iconSlot?.classList.contains("border")).toBe(false);
+    expect(iconSlot?.className).not.toContain("bg-");
+    expect(iconSlot?.className).not.toContain("shadow");
+    expect(iconSlot?.className).not.toContain("rounded");
+    expect(iconSlot?.querySelector("img")?.className).not.toContain("drop-shadow");
   });
 
   it("marks only the empty editor tab-strip space for desktop window dragging", async () => {

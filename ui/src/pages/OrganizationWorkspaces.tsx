@@ -157,7 +157,7 @@ export function WorkspaceLaunchTargetIcon({
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   const slotClassName = cn(
-    "inline-flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-[color:var(--border-soft)] bg-white shadow-[0_0_0_1px_color-mix(in_oklab,var(--surface-page)_70%,transparent)] dark:bg-white",
+    "inline-flex h-5 w-5 shrink-0 items-center justify-center",
     className,
   );
 
@@ -171,7 +171,7 @@ export function WorkspaceLaunchTargetIcon({
         <img
           src={target.iconDataUrl}
           alt=""
-          className="h-full w-full object-contain drop-shadow-[0_0_1px_rgba(0,0,0,0.35)]"
+          className="h-full w-full object-contain"
           onError={() => setImageFailed(true)}
         />
       </span>
@@ -210,6 +210,83 @@ export function WorkspaceLaunchTargetIcon({
     >
       <Icon className="h-[72%] w-[72%]" />
     </span>
+  );
+}
+
+function WorkspaceLaunchMenu({
+  rootPath,
+  targets,
+  openingTargetId,
+  onOpenTarget,
+  className,
+  contentAlign = "end",
+  testId = "org-workspaces-launcher",
+  targetTestIdPrefix = "org-workspaces-launch-target",
+}: {
+  rootPath: string;
+  targets: DesktopWorkspaceLaunchTarget[];
+  openingTargetId: DesktopWorkspaceLaunchTarget["id"] | null;
+  onOpenTarget: (rootPath: string, target: DesktopWorkspaceLaunchTarget, toastLabel?: string) => void;
+  className?: string;
+  contentAlign?: "start" | "center" | "end";
+  testId?: string;
+  targetTestIdPrefix?: string;
+}) {
+  if (targets.length === 0) return null;
+
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                className,
+              )}
+              aria-label="Open workspace menu"
+              disabled={openingTargetId !== null}
+              data-testid={testId}
+            >
+              {openingTargetId ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ExternalLink className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Open workspace</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent
+        align={contentAlign}
+        sideOffset={8}
+        className="w-60 whitespace-nowrap p-1"
+      >
+        {targets.map((target) => (
+          <DropdownMenuItem
+            key={target.id}
+            className="h-9 gap-2 rounded-[6px]"
+            disabled={openingTargetId !== null}
+            data-testid={`${targetTestIdPrefix}-${target.id}`}
+            onSelect={() => {
+              onOpenTarget(rootPath, target, "workspace");
+            }}
+          >
+            {openingTargetId === target.id ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <WorkspaceLaunchTargetIcon target={target} />
+            )}
+            <span className="min-w-0 flex-1 truncate">{target.label}</span>
+            <span className="text-[11px] capitalize text-muted-foreground">{target.kind}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1824,6 +1901,10 @@ export function OrganizationWorkspaceFilesSidebar() {
     () => ({ name: "", path: "", isDirectory: true, displayLabel: "Library" }),
     [],
   );
+  const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
+  const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
+    DesktopWorkspaceLaunchTarget["id"] | null
+  >(null);
   const expandedDirectories = useMemo(
     () => {
       if (selectedFilePath) return parentDirectories(selectedFilePath);
@@ -1847,6 +1928,27 @@ export function OrganizationWorkspaceFilesSidebar() {
     return () => {
       window.removeEventListener("dragend", clearRootDropState);
       window.removeEventListener("drop", clearRootDropState, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    let cancelled = false;
+
+    if (typeof desktopShell?.listWorkspaceLaunchTargets === "function") {
+      desktopShell.listWorkspaceLaunchTargets()
+        .then((targets) => {
+          if (!cancelled) setWorkspaceLaunchTargets(targets);
+        })
+        .catch(() => {
+          if (!cancelled) setWorkspaceLaunchTargets([]);
+        });
+    } else {
+      setWorkspaceLaunchTargets([]);
+    }
+
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -2146,6 +2248,33 @@ export function OrganizationWorkspaceFilesSidebar() {
     }
   }
 
+  async function handleOpenWorkspaceTarget(
+    rootPath: string,
+    target: DesktopWorkspaceLaunchTarget,
+    toastLabel = "workspace",
+  ) {
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.openWorkspace) return;
+
+    setOpeningWorkspaceTargetId(target.id);
+    try {
+      await desktopShell.openWorkspace(rootPath, target.id);
+      writeStoredWorkspaceLaunchTargetId(target.id);
+      pushToast({
+        title: `Opened ${toastLabel} in ${target.label}`,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: `Failed to open ${toastLabel}`,
+        body: error instanceof Error ? error.message : `Could not open the ${toastLabel} in ${target.label}.`,
+        tone: "error",
+      });
+    } finally {
+      setOpeningWorkspaceTargetId(null);
+    }
+  }
+
   function handleSelectFile(filePath: string) {
     updateSelectedPath(searchParams, setSearchParams, filePath);
   }
@@ -2223,6 +2352,19 @@ export function OrganizationWorkspaceFilesSidebar() {
             <h2 className="truncate text-sm font-semibold">Library</h2>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            {workspaceRootPath ? (
+              <WorkspaceLaunchMenu
+                rootPath={workspaceRootPath}
+                targets={workspaceLaunchTargets}
+                openingTargetId={openingWorkspaceTargetId}
+                onOpenTarget={(rootPath, target, toastLabel) => {
+                  void handleOpenWorkspaceTarget(rootPath, target, toastLabel);
+                }}
+                contentAlign="start"
+                testId="org-workspaces-sidebar-launcher"
+                targetTestIdPrefix="org-workspaces-sidebar-launch-target"
+              />
+            ) : null}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -3253,11 +3395,6 @@ export function OrganizationWorkspaceBrowser({
     }
   }, [pushToast]);
 
-  const handleOpenWorkspace = useCallback((target: DesktopWorkspaceLaunchTarget) => {
-    if (!workspaceRootPath) return;
-    void handleOpenWorkspaceTarget(workspaceRootPath, target, "workspace");
-  }, [handleOpenWorkspaceTarget, workspaceRootPath]);
-
   const handleSelectWorkspaceLaunchTarget = useCallback((target: DesktopWorkspaceLaunchTarget) => {
     setLastWorkspaceLaunchTargetId(target.id);
     writeStoredWorkspaceLaunchTargetId(target.id);
@@ -3295,75 +3432,27 @@ export function OrganizationWorkspaceBrowser({
         >
           <FolderPlus className="h-3.5 w-3.5" />
         </Button>
-        {workspaceRootPath && selectedWorkspaceLaunchTarget && !selectedProjectResource ? (
-          <div
-            className="inline-flex h-9 items-stretch overflow-hidden rounded-md border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
-            data-testid="org-workspaces-launcher"
-          >
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-full w-9 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
-              aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
-              onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
-              disabled={openingWorkspaceTargetId !== null}
-            >
-              {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <WorkspaceLaunchTargetIcon target={selectedWorkspaceLaunchTarget} />
-              )}
-            </Button>
-            <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-full w-9 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                  aria-label="Open workspace menu"
-                  disabled={openingWorkspaceTargetId !== null}
-                >
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 whitespace-nowrap">
-                <DropdownMenuRadioGroup
-                  value={selectedWorkspaceLaunchTarget.id}
-                  onValueChange={(targetId) => {
-                    const target = workspaceLaunchTargets.find((candidate) => candidate.id === targetId);
-                    if (target) handleSelectWorkspaceLaunchTarget(target);
-                  }}
-                >
-                  {workspaceLaunchTargets.map((target) => (
-                    <DropdownMenuRadioItem
-                      key={target.id}
-                      value={target.id}
-                      data-testid={`org-workspaces-launch-target-${target.id}`}
-                    >
-                      <WorkspaceLaunchTargetIcon target={target} />
-                      <span>{target.label}</span>
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+        {workspaceRootPath && !selectedProjectResource ? (
+          <WorkspaceLaunchMenu
+            rootPath={workspaceRootPath}
+            targets={workspaceLaunchTargets}
+            openingTargetId={openingWorkspaceTargetId}
+            onOpenTarget={handleOpenWorkspaceTarget}
+            className="h-8 w-8"
+            testId="org-workspaces-launcher"
+            targetTestIdPrefix="org-workspaces-launch-target"
+          />
         ) : null}
       </div>,
     );
 
     return () => setHeaderActions(null);
   }, [
-    handleOpenWorkspace,
-    handleSelectWorkspaceLaunchTarget,
+    handleOpenWorkspaceTarget,
     handleStartCreateRootEntry,
     isMobileViewport,
     openingWorkspaceTargetId,
     selectedProjectResource,
-    selectedWorkspaceLaunchTarget,
     setHeaderActions,
     workspaceLaunchTargets,
     workspaceRootPath,
@@ -3420,7 +3509,9 @@ export function OrganizationWorkspaceBrowser({
           ? `/messenger/chat/${parsed.conversationId}`
           : parsed.kind === "library_doc"
             ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
-            : `/projects/${parsed.projectId}`;
+            : parsed.kind === "library_directory"
+              ? `/library?directory=${encodeURIComponent(parsed.directoryPath)}`
+              : `/projects/${parsed.projectId}`;
     navigate(target);
   };
 
@@ -3851,6 +3942,17 @@ export function OrganizationWorkspaceBrowser({
                   <div className="truncate text-sm font-medium">Library</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  {workspaceRootPath && !selectedProjectResource ? (
+                    <WorkspaceLaunchMenu
+                      rootPath={workspaceRootPath}
+                      targets={workspaceLaunchTargets}
+                      openingTargetId={openingWorkspaceTargetId}
+                      onOpenTarget={handleOpenWorkspaceTarget}
+                      contentAlign="start"
+                      testId="org-workspaces-sidebar-launcher"
+                      targetTestIdPrefix="org-workspaces-sidebar-launch-target"
+                    />
+                  ) : null}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -4019,65 +4121,6 @@ export function OrganizationWorkspaceBrowser({
                   <div className="rudder-doc-editor-tab-drag-spacer mb-1 h-9 min-w-0 flex-1" aria-hidden="true" />
                 )}
               </div>
-              {workspaceRootPath && selectedWorkspaceLaunchTarget && !selectedProjectResource ? (
-                <div className="flex shrink-0 items-center border-l border-border px-2 text-xs text-muted-foreground">
-                  <div
-                    className="inline-flex h-9 items-stretch overflow-hidden rounded-[18px] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
-                    data-testid="org-workspaces-editor-launcher"
-                  >
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-full w-9 rounded-none border-0 text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
-                      aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
-                      onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
-                      disabled={openingWorkspaceTargetId !== null}
-                    >
-                      {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <WorkspaceLaunchTargetIcon target={selectedWorkspaceLaunchTarget} />
-                      )}
-                    </Button>
-                    <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-full w-9 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                          aria-label="Open workspace menu"
-                          disabled={openingWorkspaceTargetId !== null}
-                        >
-                          <ChevronDown className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56 whitespace-nowrap">
-                        <DropdownMenuRadioGroup
-                          value={selectedWorkspaceLaunchTarget.id}
-                          onValueChange={(targetId) => {
-                            const target = workspaceLaunchTargets.find((candidate) => candidate.id === targetId);
-                            if (target) handleSelectWorkspaceLaunchTarget(target);
-                          }}
-                        >
-                          {workspaceLaunchTargets.map((target) => (
-                            <DropdownMenuRadioItem
-                              key={target.id}
-                              value={target.id}
-                              data-testid={`org-workspaces-editor-launch-target-${target.id}`}
-                            >
-                              <WorkspaceLaunchTargetIcon target={target} />
-                              <span>{target.label}</span>
-                            </DropdownMenuRadioItem>
-                          ))}
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </div>
-              ) : null}
             </div>
             {selectedFilePath ? (
               <div
