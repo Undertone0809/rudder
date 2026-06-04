@@ -455,6 +455,39 @@ function isWorkspaceTextDocumentFilePath(filePath: string | null) {
   return extension !== null && WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS.has(extension);
 }
 
+function displayWorkspaceDocumentKind(filePath: string | null) {
+  const extension = getWorkspaceFileExtension(filePath);
+  if (!extension) return "Document";
+  switch (extension) {
+    case ".md":
+    case ".markdown":
+    case ".mdown":
+      return "Markdown";
+    case ".mdx":
+      return "MDX";
+    case ".json":
+      return "JSON";
+    case ".csv":
+      return "CSV";
+    case ".html":
+      return "HTML";
+    case ".txt":
+    case ".text":
+      return "Text";
+    default:
+      return extension.slice(1).toUpperCase();
+  }
+}
+
+function countWorkspaceDocumentWords(content: string) {
+  const matches = content.match(/[\p{L}\p{N}]+(?:[-'][\p{L}\p{N}]+)*/gu);
+  return matches?.length ?? 0;
+}
+
+function formatWorkspaceWordCount(count: number) {
+  return `${count.toLocaleString()} ${count === 1 ? "word" : "words"}`;
+}
+
 function splitYamlFrontmatter(content: string) {
   const match = content.match(/^(---\r?\n[\s\S]*?\r?\n---)(\r?\n|$)/);
   if (!match) {
@@ -787,13 +820,21 @@ interface WorkspacePathBreadcrumbPart {
 }
 
 function workspacePathBreadcrumb(
-  filePath: string,
+  entryPath: string,
   agentWorkspaceEntryByName: Map<string, OrganizationWorkspaceFileEntry>,
+  entryKind: "file" | "directory",
 ): WorkspacePathBreadcrumbPart[] {
-  const segments = filePath.split("/").filter(Boolean);
-  return segments.map((segment, index) => {
+  const segments = entryPath.split("/").filter(Boolean);
+  const rootPart: WorkspacePathBreadcrumbPart = {
+    label: "Library",
+    path: "",
+    isFile: false,
+    kind: "folder",
+  };
+  if (segments.length === 0) return [rootPart];
+  return [rootPart, ...segments.map((segment, index): WorkspacePathBreadcrumbPart => {
     const path = segments.slice(0, index + 1).join("/");
-    const isFile = index === segments.length - 1;
+    const isFile = entryKind === "file" && index === segments.length - 1;
     if (segments[0] === "agents" && index === 1) {
       const agentWorkspaceEntry = agentWorkspaceEntryByName.get(segment);
       return {
@@ -811,7 +852,7 @@ function workspacePathBreadcrumb(
       isFile,
       kind: segment === "agents" && index === 0 ? "agents_root" : isFile ? "file" : "folder",
     };
-  });
+  })];
 }
 
 function focusWorkspaceTreeEntry(entryPath: string | null) {
@@ -3824,6 +3865,26 @@ export function OrganizationWorkspaceBrowser({
   const selectedMarkdownOutline = selectedFileUsesMarkdownEditor
     ? extractDocumentOutline(selectedMarkdownParts.body)
     : [];
+  const selectedDirectoryPath = !selectedFilePath && !selectedProjectResource
+    ? requestedDirectoryPath
+    : null;
+  const visibleWorkspaceBreadcrumbPath = selectedFilePath ?? selectedDirectoryPath;
+  const visibleWorkspaceBreadcrumbKind = selectedFilePath ? "file" : "directory";
+  const emptyStateCreateTarget: OrganizationWorkspaceFileEntry = {
+    name: selectedDirectoryPath?.split("/").filter(Boolean).at(-1) ?? "",
+    path: selectedDirectoryPath ?? "",
+    isDirectory: true,
+    displayLabel: selectedDirectoryPath ? displayWorkspaceFileTabLabel(selectedDirectoryPath) : "Library",
+  };
+  const emptyStateOpenFolderPath = joinWorkspacePath(workspaceRootPath, selectedDirectoryPath ?? "");
+  const selectedDocumentWordCount = countWorkspaceDocumentWords(
+    selectedFileUsesMarkdownEditor ? selectedMarkdownParts.body : selectedEditorContent,
+  );
+  const selectedSaveStatus = saveWorkspaceFile.isError
+    ? "Save failed"
+    : draftFilePath === selectedFilePath && syncedFileRef.current.filePath === selectedFilePath && draftContent !== syncedFileRef.current.content
+      ? "Saving"
+      : "Saved";
   const canEditSelectedFile = Boolean(
     selectedFilePath
     && selectedFileDetail
@@ -4393,46 +4454,39 @@ export function OrganizationWorkspaceBrowser({
                 )}
               </div>
             </div>
-            {selectedFilePath ? (
+            {visibleWorkspaceBreadcrumbPath !== null ? (
               <div
                 data-testid="org-workspaces-path-breadcrumb"
-                className="flex h-9 shrink-0 items-center gap-1 border-x border-b border-border bg-[color:var(--surface-elevated)] px-3 text-xs text-muted-foreground"
+                className="flex h-9 shrink-0 items-center gap-1 overflow-hidden border-x border-b border-border bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
                 aria-label="File path"
               >
-                {workspacePathBreadcrumb(selectedFilePath, agentWorkspaceEntryByName).map((part, index, parts) => {
+                {workspacePathBreadcrumb(
+                  visibleWorkspaceBreadcrumbPath,
+                  agentWorkspaceEntryByName,
+                  visibleWorkspaceBreadcrumbKind,
+                ).map((part, index, parts) => {
                   const isLast = index === parts.length - 1;
                   return (
-                    <div key={part.path} className="flex min-w-0 items-center gap-1">
-                      {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/70" /> : null}
+                    <div key={`${part.path}:${index}`} className="flex min-w-0 items-center gap-1.5">
+                      {index > 0 ? <span className="shrink-0 text-muted-foreground/45">/</span> : null}
                       <button
                         type="button"
                         className={cn(
-                          "inline-flex min-w-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-left transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                          isLast && "font-medium text-foreground",
+                          "inline-flex min-w-0 rounded-[4px] px-1 py-0.5 text-left font-medium transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                          isLast ? "text-foreground" : "text-muted-foreground",
                         )}
                         title={part.path}
                         onClick={() => {
                           if (part.isFile) {
                             handleSelectFile(part.path);
-                          } else {
+                          } else if (part.path) {
+                            setActiveEntryPath(part.path);
                             focusWorkspaceTreeEntry(part.path);
+                          } else {
+                            setActiveEntryPath(null);
                           }
                         }}
                       >
-                        {part.kind === "agent_workspace" ? (
-                          <span
-                            data-testid="org-workspaces-path-breadcrumb-agent-icon"
-                            className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center"
-                          >
-                            <AgentIcon icon={part.agentIcon} role={part.agentRole} className="h-3.5 w-3.5 text-[12px]" />
-                          </span>
-                        ) : part.kind === "agents_root" ? (
-                          <Bot className="h-3.5 w-3.5 shrink-0" />
-                        ) : part.isFile ? (
-                          <FileCode2 className="h-3.5 w-3.5 shrink-0" />
-                        ) : (
-                          <Folder className="h-3.5 w-3.5 shrink-0" />
-                        )}
                         <span className="truncate">{part.label}</span>
                       </button>
                     </div>
@@ -4459,8 +4513,47 @@ export function OrganizationWorkspaceBrowser({
               ) : requestedResourceAttachmentId ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">Resource not found in this project Library.</div>
               ) : !selectedFilePath ? (
-                <div className="px-4 py-6 text-sm text-muted-foreground">
-                  {noSelectionMessage}
+                <div className="flex h-full min-h-[360px] items-center justify-center px-6 py-10">
+                  <div className="flex max-w-md flex-col items-center text-center">
+                    <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:var(--surface-page)] text-muted-foreground shadow-[0_0_36px_color-mix(in_oklab,var(--foreground)_8%,transparent)]">
+                      <FileText className="h-8 w-8" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-foreground">No file selected</h2>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                      {noSelectionMessage}
+                    </p>
+                    <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-9 gap-2 rounded-[5px] border-[color:var(--border-base)] bg-[color:var(--surface-page)] px-4 text-sm"
+                        onClick={() => handleStartCreateEntry(emptyStateCreateTarget, "file")}
+                        disabled={!workspaceRootPath || !canCreateInsideWorkspaceDirectory(emptyStateCreateTarget.path)}
+                        data-testid="org-workspaces-empty-new-document"
+                      >
+                        <FilePlus2 className="h-4 w-4 text-[color:var(--accent-strong)]" />
+                        New document
+                      </Button>
+                      {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 gap-2 rounded-[5px] border-[color:var(--border-base)] bg-[color:var(--surface-page)] px-4 text-sm"
+                          onClick={() => {
+                            void handleOpenWorkspaceTarget(
+                              emptyStateOpenFolderPath,
+                              selectedWorkspaceLaunchTarget,
+                              selectedDirectoryPath ? "folder" : "workspace",
+                            );
+                          }}
+                          disabled={openingWorkspaceTargetId !== null}
+                        >
+                          <FolderOpen className="h-4 w-4 text-[color:var(--accent-strong)]" />
+                          Open folder
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
               ) : fileQuery.isLoading ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">Loading file…</div>
@@ -4571,6 +4664,28 @@ export function OrganizationWorkspaceBrowser({
                       className="scrollbar-auto-hide block min-h-[280px] flex-1 overflow-auto border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none"
                     />
                   )}
+                  <div
+                    data-testid="org-workspaces-editor-status-bar"
+                    className="flex h-8 shrink-0 items-center justify-between gap-4 border-t border-border bg-[color:var(--surface-page)] px-4 text-xs text-muted-foreground"
+                  >
+                    <div className="flex min-w-0 items-center gap-4">
+                      <span>{displayWorkspaceDocumentKind(selectedFilePath)}</span>
+                      <span>{formatWorkspaceWordCount(selectedDocumentWordCount)}</span>
+                    </div>
+                    <div className={cn(
+                      "flex shrink-0 items-center gap-1.5",
+                      saveWorkspaceFile.isError ? "text-destructive" : "text-muted-foreground",
+                    )}>
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "h-2 w-2 rounded-full",
+                          saveWorkspaceFile.isError ? "bg-destructive" : "bg-[color:var(--accent-strong)]",
+                        )}
+                      />
+                      {selectedSaveStatus}
+                    </div>
+                  </div>
                 </div>
               ) : selectedFileDetail?.previewKind === "image" && selectedFileDetail.contentPath ? (
                 <div

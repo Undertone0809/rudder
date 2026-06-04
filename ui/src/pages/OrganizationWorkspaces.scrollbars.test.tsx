@@ -676,6 +676,16 @@ describe("OrganizationWorkspaces scroll regions", () => {
     );
   });
 
+  it("shows a compact editor status bar for editable Library documents", () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/notes.md";
+    renderWorkspacesPage();
+
+    const statusBar = document.querySelector("[data-testid='org-workspaces-editor-status-bar']");
+    expect(statusBar?.textContent).toContain("Markdown");
+    expect(statusBar?.textContent).toMatch(/\d+ words?/);
+    expect(statusBar?.textContent).toContain("Saved");
+  });
+
   it("closes the current Library file tab on command-w without allowing the browser shortcut", async () => {
     renderWorkspacesPage();
 
@@ -853,7 +863,10 @@ describe("OrganizationWorkspaces scroll regions", () => {
 
     renderWorkspacesPage();
 
-    expect(document.querySelector("[data-testid='org-workspaces-path-breadcrumb']")).toBeNull();
+    const breadcrumb = document.querySelector("[data-testid='org-workspaces-path-breadcrumb']");
+    expect(breadcrumb?.textContent?.replace(/\s+/g, " ").trim()).toBe("Library/artifacts/chat-ui-review");
+    expect(document.querySelector("[data-testid='org-workspaces-empty-new-document']")).not.toBeNull();
+    expect(document.body.textContent).toContain("No file selected");
     expect(
       document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] [role='tab'][aria-selected='true']"),
     ).toHaveLength(0);
