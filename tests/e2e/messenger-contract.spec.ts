@@ -834,6 +834,12 @@ test.describe("Messenger unified threads contract", () => {
 
     await page.screenshot({ path: testInfo.outputPath("messenger-split-issues-desktop.png"), fullPage: true });
 
+    await page.setViewportSize({ width: 768, height: 900 });
+    await expect(splitIssueRow).toBeVisible();
+    await expect(splitIssueRow).toContainText("Split sidebar issue");
+    await expect(splitIssueRow).not.toContainText("assigned to me");
+    await page.screenshot({ path: testInfo.outputPath("messenger-split-issues-narrow.png"), fullPage: true });
+
     await clickMessengerViewCheckbox(page, "Split issue notifications");
     await expect(page.getByText("Threads · Compact")).toBeVisible({ timeout: 15_000 });
     await expect(splitIssueRow).toHaveCount(0);
