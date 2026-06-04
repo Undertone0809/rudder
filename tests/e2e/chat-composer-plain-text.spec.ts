@@ -70,6 +70,10 @@ test("chat composer keeps normal Markdown literal while tokenizing Rudder refere
 
   await page.getByRole("button", { name: "Send" }).click();
 
+  const userBubble = page.getByTestId("chat-user-message-bubble").last();
+  await expect(userBubble).toContainText("bold # title plain", { timeout: 15_000 });
+  await expect(userBubble).toContainText(agent.name);
+
   const messagesRes = await page.request.get(`/api/chats/${chat.id}/messages`);
   expect(messagesRes.ok()).toBe(true);
   const messages = await messagesRes.json() as Array<{ role: string; body: string }>;
@@ -109,15 +113,15 @@ test("chat composer keeps text after Rudder reference tokens when sending", asyn
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
 
-  const projectReference = `[${project.name}](project://${project.id})`;
+  const projectReference = `[${project.name}](project://${project.id}?c=linear-gradient%28135deg%2C%20%23ef4444%200%25%2C%20%23f59e0b%20100%25%29)`;
   const agentReference = `[${agent.name}](agent://${agent.id})`;
-  const draft = `你需要结合 ${projectReference} 产出范围，并让 ${agentReference} 继续跟进。`;
+  const draft = `你需要结合 ${projectReference} 项目中的 issue 发版计划，优化一下 PRD roadmap，并让 ${agentReference} 继续跟进。`;
   await composer.fill(draft);
 
   await expect(composer).toContainText("你需要结合");
   await expect(composer.locator("[data-mention-kind='project']").filter({ hasText: project.name })).toBeVisible();
   await expect(composer.locator("[data-mention-kind='agent']").filter({ hasText: agent.name })).toBeVisible();
-  await expect(composer).toContainText("产出范围，并让");
+  await expect(composer).toContainText("项目中的 issue 发版计划，优化一下 PRD roadmap，并让");
   await expect(composer).toContainText("继续跟进。");
 
   await page.getByRole("button", { name: "Send" }).click();
@@ -125,7 +129,7 @@ test("chat composer keeps text after Rudder reference tokens when sending", asyn
   const userBubble = page.getByTestId("chat-user-message-bubble").last();
   await expect(userBubble).toContainText("你需要结合", { timeout: 15_000 });
   await expect(userBubble).toContainText(project.name);
-  await expect(userBubble).toContainText("产出范围，并让");
+  await expect(userBubble).toContainText("项目中的 issue 发版计划，优化一下 PRD roadmap，并让");
   await expect(userBubble).toContainText(agent.name);
   await expect(userBubble).toContainText("继续跟进。");
 
