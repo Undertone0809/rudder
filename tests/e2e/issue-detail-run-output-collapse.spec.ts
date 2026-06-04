@@ -52,6 +52,7 @@ test("collapses inactive issue runs by default and keeps active runs expanded", 
   const now = new Date("2026-05-07T00:02:00.000Z");
   const later = new Date("2026-05-07T00:03:00.000Z");
   const latest = new Date("2026-05-07T00:04:00.000Z");
+  const succeededFinishedAt = new Date("2026-05-07T00:35:00.000Z");
 
   await e2eDb.insert(heartbeatRuns).values([
     {
@@ -78,7 +79,7 @@ test("collapses inactive issue runs by default and keeps active runs expanded", 
       triggerDetail: "system",
       status: "succeeded",
       startedAt: later,
-      finishedAt: later,
+      finishedAt: succeededFinishedAt,
       contextSnapshot: {
         issueId: issue.id,
         issue: { id: issue.id, title: "Review failed run folding", status: "in_progress", priority: "medium" },
@@ -120,6 +121,7 @@ test("collapses inactive issue runs by default and keeps active runs expanded", 
 
   const succeededRunCard = page.locator(`[data-run-id="${succeededRunId}"]`);
   await expect(succeededRunCard.getByRole("button", { name: "Show details" })).toBeVisible();
+  await expect(succeededRunCard).toContainText("Ran for 32m");
   await expect(succeededRunCard).not.toContainText("Show details");
   await expect(succeededRunCard).not.toContainText("No run output captured.");
   const succeededRunBox = await succeededRunCard.boundingBox();
