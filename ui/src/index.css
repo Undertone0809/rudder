@@ -517,6 +517,7 @@
   .dark .workspace-main-card--frameless,
   html.desktop-shell-macos .workspace-main-card--frameless,
   html.dark.desktop-shell-macos .workspace-main-card--frameless {
+    background: transparent;
     border-width: 0;
     border-color: transparent;
     box-shadow: none;

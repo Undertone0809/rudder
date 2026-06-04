@@ -94,6 +94,13 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
+  it("keeps frameless Library work surfaces transparent over the desktop shell", () => {
+    const framelessWorkspaceCard = cssBlock(".workspace-main-card--frameless");
+
+    expect(framelessWorkspaceCard).toContain("background: transparent");
+    expect(framelessWorkspaceCard).toContain("box-shadow: none");
+  });
+
   it("keeps the macOS desktop shell top chrome compact", () => {
     const rootTokens = cssBlock(":root");
 

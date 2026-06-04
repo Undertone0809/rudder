@@ -460,11 +460,14 @@ describe("OrganizationWorkspaces scroll regions", () => {
     renderWorkspacesPage();
 
     const tabStrip = document.querySelector("[data-testid='org-workspaces-editor-tabs']");
+    const editorContent = document.querySelector("[data-testid='org-workspaces-editor-content']");
     const fileTab = document.querySelector("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab");
     const dragSpacer = document.querySelector("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab-drag-spacer");
     expect(tabStrip?.classList.contains("rudder-doc-editor-tab-strip--desktop-chrome")).toBe(true);
-    expect(tabStrip?.className).toContain("bg-[color:var(--surface-elevated)]");
+    expect(tabStrip?.className).toContain("bg-transparent");
+    expect(tabStrip?.className).not.toContain("bg-[color:var(--surface-elevated)]");
     expect(tabStrip?.className).not.toContain("bg-[color:var(--surface-page)]");
+    expect(editorContent?.className).toContain("bg-[color:var(--surface-elevated)]");
     expect(fileTab?.classList.contains("rudder-doc-editor-tab--desktop-no-drag")).toBe(true);
     expect(dragSpacer).not.toBeNull();
 

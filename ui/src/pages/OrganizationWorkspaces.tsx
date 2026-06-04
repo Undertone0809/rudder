@@ -4303,13 +4303,13 @@ export function OrganizationWorkspaceBrowser({
 
           <section
             data-testid="org-workspaces-editor-card"
-            className="flex min-h-[420px] min-w-0 flex-col bg-card lg:min-h-0 lg:flex-1"
+            className="flex min-h-[420px] min-w-0 flex-col bg-transparent lg:min-h-0 lg:flex-1"
           >
             <div
               data-testid="org-workspaces-editor-tabs"
               role="tablist"
               aria-label="Open files"
-              className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-elevated)]"
+              className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-11 shrink-0 items-stretch justify-between bg-transparent"
             >
               <div
                 ref={setOpenFileTabsScrollerRef}
@@ -4433,7 +4433,7 @@ export function OrganizationWorkspaceBrowser({
                 })}
               </div>
             ) : null}
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div data-testid="org-workspaces-editor-content" className="min-h-0 flex-1 overflow-hidden bg-[color:var(--surface-elevated)]">
               {selectedProjectResource ? (
                 <ProjectResourceDetailPanel
                   project={selectedProjectResource.project}
