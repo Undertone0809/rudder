@@ -583,6 +583,7 @@ function ThreadRow({
   const preview = formatMessengerPreview(thread.preview) || formatMessengerPreview(thread.subtitle) || messengerThreadKindLabel(thread.kind);
   const compact = density === "compact";
   const [actionsOpen, setActionsOpen] = useState(false);
+  const canTogglePin = thread.metadata?.splitIssue === true;
 
   return (
     <div
@@ -616,7 +617,7 @@ function ThreadRow({
               )}
             >
               <span className="truncate">{threadDisplayTitle(thread.title)}</span>
-              {thread.isPinned ? (
+              {canTogglePin && thread.isPinned ? (
                 <Pin className="h-3 w-3 shrink-0 text-muted-foreground" />
               ) : null}
             </span>
@@ -644,36 +645,38 @@ function ThreadRow({
         </span>
       </Link>
 
-      <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-              compact ? "right-1.5" : "right-2",
-              actionsOpen ? "opacity-100" : "opacity-0",
-            )}
-            aria-label="Thread actions"
-          >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="surface-overlay text-foreground">
-          <DropdownMenuItem onClick={onTogglePin}>
-            {thread.isPinned ? (
-              <>
-                <PinOff className="h-4 w-4" />
-                Unpin
-              </>
-            ) : (
-              <>
-                <Pin className="h-4 w-4" />
-                Pin
-              </>
-            )}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {canTogglePin ? (
+        <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+                compact ? "right-1.5" : "right-2",
+                actionsOpen ? "opacity-100" : "opacity-0",
+              )}
+              aria-label="Thread actions"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+            <DropdownMenuItem onClick={onTogglePin}>
+              {thread.isPinned ? (
+                <>
+                  <PinOff className="h-4 w-4" />
+                  Unpin
+                </>
+              ) : (
+                <>
+                  <Pin className="h-4 w-4" />
+                  Pin
+                </>
+              )}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
     </div>
   );
 }

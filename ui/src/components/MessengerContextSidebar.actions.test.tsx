@@ -10,6 +10,7 @@ import { MessengerContextSidebar } from "./MessengerContextSidebar";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUpdateUserState = vi.hoisted(() => vi.fn());
+const mockUpdateThreadUserState = vi.hoisted(() => vi.fn());
 const mockRemove = vi.hoisted(() => vi.fn());
 const mockStopMessageStream = vi.hoisted(() => vi.fn());
 const mockAbortChatStream = vi.hoisted(() => vi.fn());
@@ -46,6 +47,13 @@ vi.mock("@/api/chats", () => ({
     remove: mockRemove,
     stopMessageStream: mockStopMessageStream,
     updateUserState: mockUpdateUserState,
+  },
+}));
+
+vi.mock("@/api/messenger", () => ({
+  messengerApi: {
+    markThreadRead: vi.fn(),
+    updateThreadUserState: mockUpdateThreadUserState,
   },
 }));
 
@@ -200,6 +208,7 @@ describe("MessengerContextSidebar chat actions", () => {
       id: chatId,
     }));
     mockStopMessageStream.mockResolvedValue({ stopped: true });
+    mockUpdateThreadUserState.mockResolvedValue({ threadKey: "issue:issue-1", pinned: true });
     mockConfirm.mockResolvedValue(true);
     Object.defineProperty(window, "localStorage", {
       configurable: true,
@@ -223,6 +232,7 @@ describe("MessengerContextSidebar chat actions", () => {
     document.body.innerHTML = "";
     vi.restoreAllMocks();
     mockConfirm.mockClear();
+    mockUpdateThreadUserState.mockClear();
   });
 
   it("marks a read chat thread unread from the actions menu", () => {
@@ -320,5 +330,67 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockSetStreamDraftForChat).toHaveBeenCalledWith("chat-1", null);
     expect(mockSetChatSendInFlight).toHaveBeenCalledWith("chat-1", false);
     expect(mockRemove).toHaveBeenCalledWith("chat-1", { cancelActive: true });
+  });
+
+  it("does not expose thread pin actions on the aggregate Issues row", () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issues",
+          kind: "issues",
+          title: "Issues",
+          preview: "Followed issues",
+          subtitle: null,
+          href: "/messenger/issues",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    expect(document.querySelector('[aria-label="Thread actions"]')).toBeNull();
+  });
+
+  it("pins split issue rows through issue thread user state", async () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Split issue",
+          preview: "Followed issue update",
+          subtitle: null,
+          href: "/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: { splitIssue: true },
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    expect(document.querySelector('[aria-label="Thread actions"]')).toBeTruthy();
+    const pinButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Pin")) as HTMLButtonElement | undefined;
+
+    expect(pinButton).toBeTruthy();
+    await act(async () => {
+      pinButton?.click();
+    });
+
+    expect(mockUpdateThreadUserState).toHaveBeenCalledWith("org-1", "issue:issue-1", { pinned: true });
   });
 });
