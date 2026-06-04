@@ -2399,8 +2399,8 @@ export function IssueDetail() {
       </Sheet>
       <ScrollToBottom />
       </div>
-      <aside className="mt-6 xl:mt-0">
-        <div className="space-y-3 xl:sticky xl:top-4">
+      <aside className="mt-6 xl:sticky xl:top-4 xl:mt-0">
+        <div className="space-y-3">
           <div className="hidden xl:flex justify-end">
             {renderDesktopIssueActions({
               moreOpen: sidebarMoreOpen,
