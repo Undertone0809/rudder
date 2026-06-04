@@ -63,6 +63,7 @@ import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
 import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useSidebar } from "@/context/SidebarContext";
@@ -816,7 +817,30 @@ export function ProposalCard({
 }
 
 export const chatMessageHoverBarClass =
-  "opacity-0 pointer-events-none transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100";
+  "opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100";
+
+function CopyMessageButton({ onClick }: { onClick: () => void }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+            aria-label="Copy message"
+            onClick={onClick}
+          >
+            <Copy className="h-4 w-4" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={8}>
+          Copy message
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 export function ChatLongMessageBody({
   body,
   skillReferences,
@@ -1552,14 +1576,7 @@ export function ChatMessageItem({
                 label={relativeTime(message.createdAt)}
                 className="text-[11px] tracking-normal"
               />
-              <button
-                type="button"
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-                aria-label="Copy message"
-                onClick={() => void onCopyMessageText(message.body)}
-              >
-                <Copy className="h-4 w-4" />
-              </button>
+              <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
             </div>
           ) : null}
         </div>
@@ -1604,14 +1621,7 @@ export function ChatMessageItem({
             chatMessageHoverBarClass,
           )}
         >
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-            aria-label="Copy message"
-            onClick={() => void onCopyMessageText(message.body)}
-          >
-            <Copy className="h-4 w-4" />
-          </button>
+          <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
           <button
             type="button"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
@@ -1694,14 +1704,7 @@ export function OptimisticUserDraftItem({
             chatMessageHoverBarClass,
           )}
         >
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-            aria-label="Copy message"
-            onClick={() => void onCopyMessageText(body)}
-          >
-            <Copy className="h-4 w-4" />
-          </button>
+          <CopyMessageButton onClick={() => void onCopyMessageText(body)} />
           <button
             type="button"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
@@ -1981,14 +1984,7 @@ export function AssistantDraftItem({
               label={relativeTime(createdAt)}
               className="text-[11px] tracking-normal"
             />
-            <button
-              type="button"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-              aria-label="Copy message"
-              onClick={() => void onCopyMessageText(body)}
-            >
-              <Copy className="h-4 w-4" />
-            </button>
+            <CopyMessageButton onClick={() => void onCopyMessageText(body)} />
           </div>
         ) : null}
       </div>
