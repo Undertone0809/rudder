@@ -91,9 +91,9 @@ test.describe("New issue skill mentions", () => {
     const atMentionMenuBox = await atMentionMenu.boundingBox();
     expect(composerBox).not.toBeNull();
     expect(atMentionMenuBox).not.toBeNull();
-    expect(atMentionMenuBox!.x).toBeGreaterThanOrEqual(composerBox!.x - 8);
-    expect(atMentionMenuBox!.x).toBeLessThanOrEqual(composerBox!.x + 8);
-    expect(Math.abs(atMentionMenuBox!.width - composerBox!.width)).toBeLessThanOrEqual(16);
+    expect(atMentionMenuBox!.x).toBeGreaterThan(composerBox!.x + 16);
+    expect(atMentionMenuBox!.x).toBeLessThan(composerBox!.x + composerBox!.width / 2);
+    expect(atMentionMenuBox!.width).toBeLessThan(composerBox!.width / 2);
     await expect(atMentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first()).toContainText("Build Advisor");
 
     await composer.press("ControlOrMeta+A");

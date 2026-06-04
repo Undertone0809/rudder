@@ -8,7 +8,6 @@ import { NewIssueDialog } from "./NewIssueDialog";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedMarkdownEditorProps: {
-  mentionMenuAnchorRef?: { current: unknown };
   mentionMenuPlacement?: string;
 } | null = null;
 const dialogState = vi.hoisted(() => ({
@@ -182,17 +181,14 @@ vi.mock("./MarkdownEditor", () => ({
   MarkdownEditor: ({
     mentions,
     contentClassName,
-    mentionMenuAnchorRef,
     mentionMenuPlacement,
   }: {
     mentions?: Array<Record<string, unknown>>;
     contentClassName?: string;
-    mentionMenuAnchorRef?: { current: unknown };
     mentionMenuPlacement?: string;
   }) => {
     capturedMentions = mentions ?? [];
     capturedMarkdownEditorProps = {
-      mentionMenuAnchorRef,
       mentionMenuPlacement,
     };
     return <textarea aria-label="Description" className={contentClassName} />;
@@ -380,11 +376,10 @@ describe("NewIssueDialog", () => {
     expect(html).not.toContain("min-h-[120px]");
   });
 
-  it("anchors description mention suggestions to the composer shell", () => {
+  it("uses caret anchored description mention suggestions", () => {
     renderToStaticMarkup(<NewIssueDialog />);
 
-    expect(capturedMarkdownEditorProps?.mentionMenuPlacement).toBe("container");
-    expect(capturedMarkdownEditorProps?.mentionMenuAnchorRef).toEqual(expect.objectContaining({ current: null }));
+    expect(capturedMarkdownEditorProps?.mentionMenuPlacement).toBeUndefined();
   });
 
   it("does not render the execution workspace controls", () => {
