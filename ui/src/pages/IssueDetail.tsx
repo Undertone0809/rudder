@@ -1485,7 +1485,12 @@ export function IssueDetail() {
 
   const updateIssue = useMutation({
     mutationFn: (data: Record<string, unknown>) => issuesApi.update(issueId!, data),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      queryClient.setQueryData(queryKeys.issues.detail(issueId!), updated);
+      queryClient.setQueryData(queryKeys.issues.detail(updated.id), updated);
+      if (updated.identifier) {
+        queryClient.setQueryData(queryKeys.issues.detail(updated.identifier), updated);
+      }
       invalidateIssue();
     },
   });
