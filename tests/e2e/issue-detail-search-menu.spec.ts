@@ -34,7 +34,7 @@ test.describe("Issue detail search menu", () => {
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/issues/${currentIssue.identifier ?? currentIssue.id}`);
-    await expect(page.getByText("Current detail issue", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Current detail issue", exact: true })).toBeVisible();
 
     await page.getByRole("textbox", { name: "Search issues" }).fill(targetRef);
 
@@ -42,6 +42,7 @@ test.describe("Issue detail search menu", () => {
     await expect(menu).toBeVisible();
     await expect(menu).toContainText(targetRef);
     await expect(menu).toContainText("Search target issue");
+    await expect(menu.locator("[data-slot='issue-status-icon']")).toHaveAttribute("data-status", "todo");
 
     const geometry = await page.evaluate(() => {
       const input = document.querySelector<HTMLInputElement>('input[aria-label="Search issues"]');
@@ -62,6 +63,6 @@ test.describe("Issue detail search menu", () => {
     await option.click();
 
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${targetRef}$`));
-    await expect(page.getByText("Search target issue", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Search target issue", exact: true })).toBeVisible();
   });
 });

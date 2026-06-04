@@ -254,6 +254,7 @@ describe("BreadcrumbBar", () => {
     expect(menu).not.toBeNull();
     expect(menu?.textContent).toContain("ZST-377");
     expect(menu?.textContent).toContain("new issue 时候输入文档持弹窗出来的位置不对");
+    expect(menu?.querySelector("[data-slot='issue-status-icon']")?.getAttribute("data-status")).toBe("todo");
 
     const result = container.querySelector<HTMLButtonElement>("[role='option']");
     expect(result).not.toBeNull();

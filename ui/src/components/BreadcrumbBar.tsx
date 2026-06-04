@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { CircleDot, CircleHelp, Menu, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { CircleHelp, Menu, PanelLeftOpen, Plus, Search } from "lucide-react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -26,6 +26,7 @@ import { issuesApi } from "@/api/issues";
 import { projectsApi } from "@/api/projects";
 import { queryKeys } from "@/lib/queryKeys";
 import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
+import { StatusIcon } from "@/components/StatusIcon";
 import type { Issue } from "@rudderhq/shared";
 
 type GlobalToolbarContext = { orgId: string | null; orgPrefix: string | null };
@@ -376,7 +377,7 @@ export function BreadcrumbBar({
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={() => navigateToIssueSearchResult(issue)}
                         >
-                          <CircleDot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <StatusIcon status={issue.status} className="h-3.5 w-3.5" />
                           <span className="shrink-0 font-mono text-xs text-muted-foreground">{issueResultLabel(issue)}</span>
                           <span className="min-w-0 flex-1 truncate text-foreground">{issue.title}</span>
                           <span className="shrink-0 text-xs text-muted-foreground">{issue.status}</span>
