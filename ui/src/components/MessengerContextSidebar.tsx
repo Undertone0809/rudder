@@ -40,19 +40,24 @@ import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 
 type ThreadOrganizationRule = "latest" | "project" | "kind" | "attention";
+type MessengerThreadDensity = "comfortable" | "compact";
 
 const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg";
+const THREAD_DENSITY_STORAGE_KEY = "rudder.messengerThreadDensityByOrg";
 const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
+const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "comfortable";
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
   { value: "latest", label: "Latest activity" },
@@ -149,6 +154,19 @@ function readThreadOrganizationRule(orgId: string | null | undefined): ThreadOrg
   return DEFAULT_THREAD_ORGANIZATION_RULE;
 }
 
+function readThreadDensity(orgId: string | null | undefined): MessengerThreadDensity {
+  if (!orgId || typeof window === "undefined") return DEFAULT_THREAD_DENSITY;
+  try {
+    const raw = window.localStorage.getItem(THREAD_DENSITY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    const value = parsed[orgId];
+    if (value === "comfortable" || value === "compact") return value;
+  } catch {
+    // Ignore storage failures; the default comfortable list remains usable.
+  }
+  return DEFAULT_THREAD_DENSITY;
+}
+
 function writeThreadOrganizationRule(orgId: string, rule: ThreadOrganizationRule) {
   if (typeof window === "undefined") return;
   try {
@@ -157,6 +175,17 @@ function writeThreadOrganizationRule(orgId: string, rule: ThreadOrganizationRule
     window.localStorage.setItem(THREAD_ORGANIZATION_STORAGE_KEY, JSON.stringify({ ...parsed, [orgId]: rule }));
   } catch {
     // Ignore storage failures; the in-memory selection still applies for this view.
+  }
+}
+
+function writeThreadDensity(orgId: string, density: MessengerThreadDensity) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(THREAD_DENSITY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    window.localStorage.setItem(THREAD_DENSITY_STORAGE_KEY, JSON.stringify({ ...parsed, [orgId]: density }));
+  } catch {
+    // Ignore storage failures; the in-memory density still applies for this view.
   }
 }
 
@@ -225,16 +254,26 @@ function ThreadAvatar({
 
 function MessengerThreadSectionHeader({
   rule,
+  density,
   onRuleChange,
+  onDensityChange,
 }: {
   rule: ThreadOrganizationRule;
+  density: MessengerThreadDensity;
   onRuleChange: (rule: ThreadOrganizationRule) => void;
+  onDensityChange: (density: MessengerThreadDensity) => void;
 }) {
   const activeRule = rule !== DEFAULT_THREAD_ORGANIZATION_RULE;
+  const compact = density === "compact";
   return (
     <div className="group/section flex items-center justify-between px-3.5 pt-3.5">
       <div className="min-w-0 truncate text-[11px] font-semibold text-muted-foreground/72">
-        Threads{activeRule ? <span className="text-muted-foreground"> · {threadOrganizationLabel(rule)}</span> : null}
+        Threads{activeRule || compact ? (
+          <span className="text-muted-foreground">
+            {" · "}
+            {[activeRule ? threadOrganizationLabel(rule) : null, compact ? "Compact" : null].filter(Boolean).join(" · ")}
+          </span>
+        ) : null}
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -250,7 +289,15 @@ function MessengerThreadSectionHeader({
             <ListFilter className="h-3.5 w-3.5" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="surface-overlay w-44 text-foreground">
+        <DropdownMenuContent align="end" className="surface-overlay w-48 text-foreground">
+          <DropdownMenuLabel className="text-xs text-muted-foreground">View</DropdownMenuLabel>
+          <DropdownMenuCheckboxItem
+            checked={compact}
+            onCheckedChange={(checked) => onDensityChange(checked ? "compact" : "comfortable")}
+          >
+            Compact mode
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuSeparator />
           <DropdownMenuLabel className="text-xs text-muted-foreground">Organize by</DropdownMenuLabel>
           <DropdownMenuRadioGroup value={rule} onValueChange={(value) => onRuleChange(value as ThreadOrganizationRule)}>
             {THREAD_ORGANIZATION_OPTIONS.map((option) => (
@@ -687,9 +734,13 @@ export function MessengerContextSidebar() {
   const [threadOrganizationRule, setThreadOrganizationRule] = useState<ThreadOrganizationRule>(() =>
     readThreadOrganizationRule(model.selectedOrganizationId),
   );
+  const [threadDensity, setThreadDensity] = useState<MessengerThreadDensity>(() =>
+    readThreadDensity(model.selectedOrganizationId),
+  );
 
   useEffect(() => {
     setThreadOrganizationRule(readThreadOrganizationRule(model.selectedOrganizationId));
+    setThreadDensity(readThreadDensity(model.selectedOrganizationId));
   }, [model.selectedOrganizationId]);
 
   const shouldLoadSidebarConversations = threadOrganizationRule === "project";
@@ -779,6 +830,13 @@ export function MessengerContextSidebar() {
     setThreadOrganizationRule(rule);
     if (model.selectedOrganizationId) {
       writeThreadOrganizationRule(model.selectedOrganizationId, rule);
+    }
+  };
+
+  const handleThreadDensityChange = (density: MessengerThreadDensity) => {
+    setThreadDensity(density);
+    if (model.selectedOrganizationId) {
+      writeThreadDensity(model.selectedOrganizationId, density);
     }
   };
 
@@ -987,7 +1045,9 @@ export function MessengerContextSidebar() {
       />
       <MessengerThreadSectionHeader
         rule={threadOrganizationRule}
+        density={threadDensity}
         onRuleChange={handleThreadOrganizationRuleChange}
+        onDensityChange={handleThreadDensityChange}
       />
       <nav
         ref={setSidebarScrollRef}
