@@ -91,6 +91,39 @@ Skip a reviewer for:
 
 Reviewer is issue-level routing metadata. It is not an approval gate by itself. Move the issue to `in_review` when there is output to judge.
 
+## How agent reviewers work
+
+An issue can have both an agent assignee and an agent reviewer. Use this when
+you want one agent to produce the work and another agent to inspect it with a
+different responsibility, skill set, model, runtime, or permission boundary.
+
+The assignee and reviewer do not work at the same time on the same issue:
+
+1. The assignee agent owns execution while the issue is `todo` or `in_progress`.
+2. The assignee checks out the issue, does the work, and leaves close-out evidence.
+3. When the output is ready, the issue moves to `in_review`.
+4. Rudder can then wake the reviewer agent as reviewer, not as the assignee.
+5. The reviewer reads the issue context, run transcript, comments, artifacts, and validation evidence.
+6. The reviewer records a structured decision: approve, request changes, needs follow-up, or blocked.
+7. If changes are requested, the next execution step returns to the assignee with the reviewer feedback attached to the issue.
+8. If the reviewer approves, the issue can close as `done` with both execution and review evidence preserved.
+
+This makes agent-to-agent collaboration inspectable. The implementation agent
+does not silently decide its own work is finished, and the review agent does not
+take over implementation unless the issue is explicitly reassigned or split
+into a follow-up issue.
+
+Good agent reviewer use cases:
+
+- Engineering agent implements a code change; QA or reviewer agent checks tests, risk, and evidence.
+- Docs agent writes public documentation; product reviewer agent checks clarity, positioning, and missing use cases.
+- Release agent prepares a version or changelog; release reviewer agent checks commands, artifacts, and rollback risk.
+- Data or migration agent produces a plan; safety reviewer agent checks organization scope, irreversible steps, and backup evidence.
+
+Use a human reviewer instead when the decision depends on business priority,
+customer commitment, legal interpretation, budget approval, or credentials that
+agents should not hold.
+
 ## Status best practices
 
 | Status | Use it when | Avoid |
@@ -110,6 +143,7 @@ The examples below are not abstract task-board templates. They are sanitized fro
 | --- | --- | --- | --- | --- | --- |
 | Chat image attachment bug | User sees an auth-bearing download command in transcript | Optimize Chat image attachment handling for Codex runtime | Engineering agent | Human/operator reviewer | transcript before/after, runtime handoff change, regression test |
 | Backlog wakeup semantics | Comment mentions a designer but wakes the engineer assignee | Backlog issue comment should not auto-wakeup assignee | Engineering agent | Control-plane reviewer | wakeup tests for backlog comments, mentions, and non-backlog work |
+| Agent-to-agent docs review | Docs agent drafts reviewer guidance but should not self-accept public docs quality | Explain issue reviewer mechanism in public docs | Docs agent | Product/docs reviewer agent | changed docs pages, rendered preview or docs check, reviewer decision |
 | Structured Chat question | Agent needs one to three blocking choices before continuing | Add `ask_user` question component to Chat | Engineering agent | Product reviewer | active panel, answered history, next assistant turn |
 | Docs remediation | Public docs need use-case-led pages and real screenshots | Ship public Rudder docs that explain why and how to use the product | Split child issues | Docs/product reviewer | preview URL, screenshots, validation commands, remaining risks |
 | Windows install smoke | Installation command must be verified outside macOS | Test `npx` install command on Windows with Claude Code | Windows-capable owner | Release reviewer | OS version, terminal output, screenshot, command decision |

@@ -88,6 +88,32 @@ Rudder 有意让一个 issue 只有一个 assignee。如果 Growth、Engineering
 
 有输出可以判断时，再把 issue 移到 `in_review`，让 reviewer 留下明确结论。
 
+## Agent reviewer 如何工作
+
+一条 issue 可以同时有 agent assignee 和 agent reviewer。适合这种设置的情况是：你希望一个 agent 负责产出，另一个 agent 用不同职责、技能、模型、runtime 或权限边界来检查结果。
+
+Assignee 和 reviewer 不会在同一条 issue 上同时执行同一种工作：
+
+1. issue 处于 `todo` 或 `in_progress` 时，assignee agent 负责执行。
+2. Assignee checkout issue，完成工作，并留下关闭证据。
+3. 输出准备好被判断后，issue 进入 `in_review`。
+4. Rudder 可以把 reviewer agent 作为 reviewer 唤醒，而不是作为 assignee 唤醒。
+5. Reviewer 阅读 issue 上下文、run transcript、评论、产物和验证证据。
+6. Reviewer 留下结构化结论：通过、要求修改、需要跟进或阻塞。
+7. 如果要求修改，下一步执行会带着 reviewer feedback 回到 assignee。
+8. 如果 reviewer 通过，issue 可以带着执行证据和评审证据关闭为 `done`。
+
+这样 agent-to-agent 协作是可检查的。实现 agent 不会默默把自己的输出判定为完成；review agent 也不会接管实现，除非 issue 被明确重新分配，或拆成新的 follow-up issue。
+
+适合 agent reviewer 的场景：
+
+- 工程 agent 实现代码改动；QA 或 reviewer agent 检查测试、风险和证据。
+- Docs agent 撰写公开文档；产品 reviewer agent 检查表达清晰度、定位和缺失用例。
+- Release agent 准备版本或 changelog；release reviewer agent 检查命令、产物和回滚风险。
+- 数据或迁移 agent 产出方案；安全 reviewer agent 检查组织边界、不可逆步骤和备份证据。
+
+如果判断依赖业务优先级、客户承诺、法律解释、预算批准，或 agent 不应该持有的凭据，就用人类 reviewer。
+
 ## 状态最佳实践
 
 | 状态 | 什么时候用 | 避免 |
@@ -107,6 +133,7 @@ Rudder 有意让一个 issue 只有一个 assignee。如果 Growth、Engineering
 | --- | --- | --- | --- | --- | --- |
 | Chat 图片附件 bug | 用户在 transcript 里看到带认证信息的下载命令 | Optimize Chat image attachment handling for Codex runtime | 工程 agent | 人类 reviewer | 修改前后 transcript、runtime handoff 改动、回归测试 |
 | Backlog 唤醒语义 | 评论 mention 了 designer，却唤醒了 engineer assignee | Backlog issue comment should not auto-wakeup assignee | 工程 agent | 控制面 reviewer | backlog 评论、显式 mention、非 backlog issue 的 wakeup 测试 |
+| Agent-to-agent 文档评审 | Docs agent 起草 reviewer 机制说明，但不应该自我接受公开文档质量 | Explain issue reviewer mechanism in public docs | Docs agent | 产品/docs reviewer agent | 文档页面变更、预览或 docs 检查、reviewer 结论 |
 | Chat 结构化提问 | Agent 继续前需要一到三个阻塞性选择 | Add `ask_user` question component to Chat | 工程 agent | 产品 reviewer | 活跃面板、已回答历史、下一轮 assistant turn |
 | 文档站整改 | 官网文档需要 use-case-led 页面和真实截图 | Ship public Rudder docs that explain why and how to use the product | 拆成子 issue | Docs/product reviewer | preview URL、截图、验证命令、剩余风险 |
 | Windows 安装验证 | 安装命令必须在 macOS 之外验证 | Test `npx` install command on Windows with Claude Code | 有 Windows 环境的 owner | Release reviewer | OS 版本、终端输出、截图、命令是否修改 |
