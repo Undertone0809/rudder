@@ -247,6 +247,12 @@ describe("agent run filters", () => {
     ]);
   });
 
+  it("labels timer source filters as heartbeat", () => {
+    expect(runFilterChips(defaultFilterState({
+      sources: ["timer"],
+    }))).toEqual(["Source: Heartbeat"]);
+  });
+
   it("sorts filtered runs by duration after filtering", () => {
     const shortRun = run({
       id: "11111111-0000-4000-8000-000000000000",

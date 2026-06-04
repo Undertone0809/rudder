@@ -63,7 +63,7 @@ export function describeRunReason(run: RunReasonInput): RunReasonSummary {
   switch (wakeReason) {
     case "heartbeat_timer":
       return {
-        label: "Scheduled heartbeat",
+        label: "Heartbeat",
         description: "The agent's heartbeat schedule reached its next run time.",
         tone: "scheduled",
       };
@@ -131,7 +131,7 @@ export function describeRunReason(run: RunReasonInput): RunReasonSummary {
 
   if (run.invocationSource === "timer") {
     return {
-      label: "Scheduled heartbeat",
+      label: "Heartbeat",
       description: "The agent's heartbeat schedule started this run.",
       tone: "scheduled",
     };

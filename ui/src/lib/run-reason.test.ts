@@ -46,7 +46,7 @@ describe("describeRunReason", () => {
       invocationSource: "timer",
       triggerDetail: "system",
       contextSnapshot: { wakeReason: "heartbeat_timer" },
-    })).label).toBe("Scheduled heartbeat");
+    })).label).toBe("Heartbeat");
   });
 
   it("shows passive follow-up attempts instead of automation", () => {

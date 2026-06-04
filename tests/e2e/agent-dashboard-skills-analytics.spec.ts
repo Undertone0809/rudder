@@ -205,7 +205,7 @@ test.describe("Agent dashboard skills analytics", () => {
     await expect(mainContent.getByText("Run Triggers")).toBeVisible();
     const triggerDistribution = mainContent.getByRole("button", { name: /Run trigger distribution: 3 runs across 3 triggers/ });
     await expect(triggerDistribution).toBeVisible();
-    await expect(triggerDistribution.getByText("Scheduled heartbeat")).toBeVisible();
+    await expect(triggerDistribution.getByText("Heartbeat")).toBeVisible();
     await expect(triggerDistribution.getByText("Mentioned")).toBeVisible();
     await expect(triggerDistribution.getByText("Task assigned")).toBeVisible();
     await expect(mainContent.getByText("4 skill uses")).toBeVisible();

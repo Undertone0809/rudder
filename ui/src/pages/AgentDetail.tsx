@@ -1508,7 +1508,7 @@ export function AgentDetail() {
           <RunButton
             onClick={() => agentAction.mutate("invoke")}
             disabled={agentAction.isPending || isPendingApproval}
-            label="Run Heartbeat"
+            label="Run heartbeat"
           />
           <PauseResumeButton
             isPaused={agent.status === "paused"}

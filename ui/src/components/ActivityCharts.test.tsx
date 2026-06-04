@@ -180,7 +180,7 @@ describe("RunTriggerDistributionChart", () => {
 
     const container = render(<RunTriggerDistributionChart runs={runs} />);
 
-    expect(container.textContent).toContain("Scheduled heartbeat");
+    expect(container.textContent).toContain("Heartbeat");
     expect(container.textContent).toContain("Mentioned");
     expect(container.textContent).toContain("Task assigned");
     expect(container.querySelector('[data-testid="run-trigger-distribution-bar"]')).toBeTruthy();

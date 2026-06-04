@@ -404,7 +404,7 @@ const zhExactPhrases: Record<string, string> = {
   "No recent issues.": "最近没有任务。",
   "See All": "查看全部",
   "more issues": "个更多任务",
-  "Run Heartbeat": "运行心跳",
+  "Run heartbeat": "运行心跳",
   "Copy Agent ID": "复制智能体 ID",
   "Reset Sessions": "重置会话",
   "Terminate": "终止",

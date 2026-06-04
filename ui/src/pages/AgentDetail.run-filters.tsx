@@ -51,7 +51,7 @@ const statusLabels: Record<HeartbeatRunStatus, string> = {
 };
 
 const sourceLabels: Record<HeartbeatInvocationSource, string> = {
-  timer: "Timer",
+  timer: "Heartbeat",
   assignment: "Assignment",
   review: "Review",
   on_demand: "Manual",
