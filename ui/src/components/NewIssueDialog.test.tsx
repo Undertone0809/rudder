@@ -327,8 +327,8 @@ describe("NewIssueDialog", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
     expect(html).toContain("Create Issue");
-    expect(html).toContain("disabled:bg-muted/40");
-    expect(html).toContain("disabled:text-muted-foreground/70");
+    expect(html).toContain("disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:ring-1");
+    expect(html).toContain("disabled:ring-border/80");
     expect(html).toContain("disabled:shadow-none");
   });
 
