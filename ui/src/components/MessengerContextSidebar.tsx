@@ -221,23 +221,27 @@ function ThreadAvatar({
   icon: Icon,
   unreadCount,
   needsAttention,
+  density = "comfortable",
   shape = "circle",
   testId,
 }: {
   icon: typeof MessageSquare;
   unreadCount: number;
   needsAttention: boolean;
+  density?: MessengerThreadDensity;
   shape?: "circle" | "rounded";
   testId?: string;
 }) {
+  const compact = density === "compact";
   return (
     <span
       className={cn(
-        "relative mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)] text-[color:var(--accent-strong)]",
+        "relative flex shrink-0 items-center justify-center border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)] text-[color:var(--accent-strong)]",
+        compact ? "h-7 w-7" : "mt-0.5 h-10 w-10",
         shape === "rounded" ? "rounded-[calc(var(--radius-sm)+1px)]" : "rounded-full",
       )}
     >
-      <Icon className="h-4.5 w-4.5" />
+      <Icon className={cn(compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
       {unreadCount > 0 ? (
         <span
           data-testid={testId}
@@ -317,6 +321,7 @@ function ChatThreadRow({
   href,
   active,
   generating,
+  density,
   renaming,
   renameDraft,
   onRenameDraftChange,
@@ -333,6 +338,7 @@ function ChatThreadRow({
   href: string;
   active: boolean;
   generating: boolean;
+  density: MessengerThreadDensity;
   renaming: boolean;
   renameDraft: string;
   onRenameDraftChange: (value: string) => void;
@@ -347,6 +353,7 @@ function ChatThreadRow({
 }) {
   const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const compact = density === "compact";
 
   useEffect(() => {
     if (generating) setActionsOpen(false);
@@ -357,7 +364,8 @@ function ChatThreadRow({
       data-testid={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
       data-messenger-thread-key={`chat:${conversation.id}`}
       className={cn(
-        "group relative mx-1.5 flex items-start gap-3 rounded-[calc(var(--radius-md)-2px)] border px-3 py-2.5 transition-[background-color,border-color,color]",
+        "group relative mx-1.5 flex rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
+        compact ? "items-center gap-2 px-2 py-1.5" : "items-start gap-3 px-3 py-2.5",
         active
           ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
@@ -367,6 +375,7 @@ function ChatThreadRow({
         icon={MessageSquare}
         unreadCount={conversation.unreadCount}
         needsAttention={conversation.needsAttention}
+        density={density}
         shape="rounded"
         testId={`${sanitizeThreadKey(`chat:${conversation.id}`)}-unread-badge`}
       />
@@ -394,7 +403,10 @@ function ChatThreadRow({
       ) : (
         <>
           <Link to={href} onClick={() => onSelect(href)} className="block min-w-0 flex-1">
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_3rem] items-start gap-x-2">
+            <div className={cn(
+              "grid min-w-0 gap-x-2",
+              compact ? "grid-cols-[minmax(0,1fr)_2.75rem] items-center" : "grid-cols-[minmax(0,1fr)_3rem] items-start",
+            )}>
               <div className="min-w-0">
                 <div
                   className={cn(
@@ -407,19 +419,22 @@ function ChatThreadRow({
                     <Pin className="h-3 w-3 shrink-0 text-muted-foreground" />
                   ) : null}
                 </div>
-                <div
-                  className={cn(
-                    "mt-0.5 truncate text-[12px]",
-                    conversation.isUnread ? "text-foreground/76" : "text-muted-foreground",
-                  )}
-                >
-                  {conversationSubtitle(conversation)}
-                </div>
+                {!compact ? (
+                  <div
+                    className={cn(
+                      "mt-0.5 truncate text-[12px]",
+                      conversation.isUnread ? "text-foreground/76" : "text-muted-foreground",
+                    )}
+                  >
+                    {conversationSubtitle(conversation)}
+                  </div>
+                ) : null}
               </div>
               <span
                 data-testid={`messenger-time-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
                 className={cn(
-                  "mt-0.5 block w-12 shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
+                  "block shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
+                  compact ? "w-11" : "mt-0.5 w-12",
                   (actionsOpen || generating) && "opacity-0",
                 )}
               >
@@ -433,7 +448,8 @@ function ChatThreadRow({
               data-testid={`messenger-generating-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
               aria-label="Chat reply in progress"
               className={cn(
-                "pointer-events-none absolute right-2 top-1/2 z-10 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
+                "pointer-events-none absolute top-1/2 z-10 inline-flex -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
+                compact ? "right-1.5 h-5 w-5" : "right-2 h-6 w-6",
                 actionsOpen && "opacity-0",
               )}
             >
@@ -446,7 +462,8 @@ function ChatThreadRow({
               <button
                 type="button"
                 className={cn(
-                  "absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+                  "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+                  compact ? "right-1.5" : "right-2",
                   actionsOpen ? "opacity-100" : "opacity-0",
                 )}
                 aria-label="Chat actions"
@@ -512,14 +529,17 @@ function ChatThreadRow({
 function ThreadRow({
   thread,
   active,
+  density,
   onSelect,
 }: {
   thread: ReturnType<typeof useMessengerModel>["threadSummaries"][number];
   active: boolean;
+  density: MessengerThreadDensity;
   onSelect: (href: string) => void;
 }) {
   const Icon = threadIcon(thread.kind);
   const preview = formatMessengerPreview(thread.preview) || formatMessengerPreview(thread.subtitle) || messengerThreadKindLabel(thread.kind);
+  const compact = density === "compact";
   const row = (
     <Link
       to={thread.href}
@@ -527,7 +547,8 @@ function ThreadRow({
       data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}
       data-messenger-thread-key={thread.threadKey}
       className={cn(
-        "mx-1.5 flex items-start gap-3 rounded-[calc(var(--radius-md)-2px)] border px-3 py-2.5 transition-[background-color,border-color,color]",
+        "mx-1.5 flex rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
+        compact ? "items-center gap-2 px-2 py-1.5" : "items-start gap-3 px-3 py-2.5",
         active
           ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
@@ -537,10 +558,14 @@ function ThreadRow({
         icon={Icon}
         unreadCount={thread.unreadCount}
         needsAttention={thread.needsAttention}
+        density={density}
         testId={`${sanitizeThreadKey(thread.threadKey)}-unread-badge`}
       />
       <span className="min-w-0 flex-1">
-        <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_3rem] items-start gap-x-2">
+        <span className={cn(
+          "grid min-w-0 gap-x-2",
+          compact ? "grid-cols-[minmax(0,1fr)_2.75rem] items-center" : "grid-cols-[minmax(0,1fr)_3rem] items-start",
+        )}>
           <span
             className={cn(
               "min-w-0 truncate text-[13px] leading-tight",
@@ -551,19 +576,24 @@ function ThreadRow({
           </span>
           <span
             data-testid={`messenger-time-${sanitizeThreadKey(thread.threadKey)}`}
-            className="mt-0.5 block w-12 shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground"
+            className={cn(
+              "block shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground",
+              compact ? "w-11" : "mt-0.5 w-12",
+            )}
           >
             {thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt)) : "No activity"}
           </span>
         </span>
-        <span
-          className={cn(
-            "mt-0.5 block truncate text-[12px]",
-            thread.unreadCount > 0 ? "text-foreground/76" : "text-muted-foreground",
-          )}
-        >
-          {preview}
-        </span>
+        {!compact ? (
+          <span
+            className={cn(
+              "mt-0.5 block truncate text-[12px]",
+              thread.unreadCount > 0 ? "text-foreground/76" : "text-muted-foreground",
+            )}
+          >
+            {preview}
+          </span>
+        ) : null}
       </span>
     </Link>
   );
@@ -1057,14 +1087,18 @@ export function MessengerContextSidebar() {
           to="/messenger/chat"
           onClick={() => handleMessengerEntrySelect("/messenger/chat")}
           className={cn(
-            "mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-md)-2px)] border border-transparent px-3 py-2.5 text-sm transition-[background-color,border-color,color]",
+            "mx-1.5 flex items-center rounded-[calc(var(--radius-md)-2px)] border border-transparent text-sm transition-[background-color,border-color,color]",
+            threadDensity === "compact" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2.5",
             route.kind === "chat" && !route.conversationId
               ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))] font-medium text-foreground"
               : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
           )}
         >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)+1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_88%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_82%,transparent)] text-[color:var(--accent-strong)]">
-            <Plus className="h-4.5 w-4.5" />
+          <span className={cn(
+            "flex shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)+1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_88%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_82%,transparent)] text-[color:var(--accent-strong)]",
+            threadDensity === "compact" ? "h-7 w-7" : "h-10 w-10",
+          )}>
+            <Plus className={cn(threadDensity === "compact" ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
           </span>
           <span className="truncate text-[13px] font-medium leading-tight">New chat</span>
         </Link>
@@ -1073,7 +1107,10 @@ export function MessengerContextSidebar() {
             {Array.from({ length: 5 }).map((_, index) => (
               <div
                 key={index}
-                className="h-[72px] animate-pulse rounded-[calc(var(--radius-md)-2px)] border border-transparent bg-[color:color-mix(in_oklab,var(--surface-elevated)_60%,transparent)]"
+                className={cn(
+                  "animate-pulse rounded-[calc(var(--radius-md)-2px)] border border-transparent bg-[color:color-mix(in_oklab,var(--surface-elevated)_60%,transparent)]",
+                  threadDensity === "compact" ? "h-10" : "h-[72px]",
+                )}
               />
             ))}
           </div>
@@ -1098,6 +1135,7 @@ export function MessengerContextSidebar() {
                     href={thread.href}
                     active={active}
                     generating={isChatGenerationActive(conversation.id)}
+                    density={threadDensity}
                     renaming={renamingConversationId === conversation.id}
                     renameDraft={renameDraft}
                     onRenameDraftChange={setRenameDraft}
@@ -1148,6 +1186,7 @@ export function MessengerContextSidebar() {
                   key={thread.threadKey}
                   thread={thread}
                   active={active}
+                  density={threadDensity}
                   onSelect={handleMessengerEntrySelect}
                 />
               );
