@@ -4309,7 +4309,7 @@ export function OrganizationWorkspaceBrowser({
               data-testid="org-workspaces-editor-tabs"
               role="tablist"
               aria-label="Open files"
-              className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-page)]"
+              className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-elevated)]"
             >
               <div
                 ref={setOpenFileTabsScrollerRef}
