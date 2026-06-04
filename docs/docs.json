@@ -75,8 +75,8 @@
             ]
           },
           {
-            "group": "Releases",
-            "icon": "history",
+            "group": "Project",
+            "icon": "folder-git-2",
             "pages": [
               "releases"
             ]
@@ -119,8 +119,8 @@
             ]
           },
           {
-            "group": "版本发布",
-            "icon": "history",
+            "group": "项目",
+            "icon": "folder-git-2",
             "pages": [
               "zh/releases"
             ]
