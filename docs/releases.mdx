@@ -1,0 +1,218 @@
+---
+title: "Releases"
+description: "Stable Rudder release notes, upgrade notes, and GitHub Release links."
+icon: "history"
+keywords:
+  - "Rudder changelog"
+  - "Rudder releases"
+  - "AI agent orchestration release notes"
+canonical: "https://doc.rudder.zeeland.studio/releases"
+"og:url": "https://doc.rudder.zeeland.studio/releases"
+---
+
+Rudder publishes stable releases for the user-facing install path:
+
+```sh
+npx @rudderhq/cli@latest start
+```
+
+This changelog tracks stable releases only. Canary builds are published more frequently for validation and Desktop asset testing; use [GitHub Releases](https://github.com/Undertone0809/rudder/releases) when you need prerelease history.
+
+## v0.3.0
+
+Released: 2026-06-04
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.3.0)
+
+### Highlights
+
+- Promoted Library as the main navigation home for organization folders, project files, bundled skill references, and workspace launchers.
+- Added Library-folder mentions to chat, comments, markdown editors, and Milkdown surfaces so operators can link shared context from composer flows.
+- Improved issue detail readability with sticky sidebar behavior, clearer status icons, muted empty-title creation, inherited sub-issue workspace validation, and run-duration display.
+- Tightened Messenger and chat interactions with sidebar density controls, copy-message tooltips, relative activity timestamps, and refined mention search.
+- Added runtime and Calendar safeguards around heartbeat instruction scenes, inherited project context, and calendar event details.
+
+### Install
+
+```sh
+npx @rudderhq/cli@latest start
+```
+
+## v0.2.10
+
+Released: 2026-06-03
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.10)
+
+### Highlights
+
+- Promoted the Library workspace model for organization files, project resources, agent instructions, and bundled skill references.
+- Improved Library file actions, editor tabs, drag behavior, mention tokens, and protected managed entries.
+- Tightened Messenger and issue attention behavior, including pagination, self-authored comment filtering, and clearer issue update cards.
+- Improved agent run and heartbeat surfaces with better run rows, timestamps, avatars, skill analytics, and timer-admission checks.
+- Added richer markdown mention support across comments, chat, Library files, and editor surfaces.
+- Polished Desktop and local runtime paths around bundled plugin assets, release staging, and user-facing runtime errors.
+
+## v0.2.9
+
+Released: 2026-05-29
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.9)
+
+### Highlights
+
+- Fixed runtime cache installs so optional npm dependencies such as Windows embedded Postgres packages are preserved during first-run startup.
+- Restored packaged Windows Desktop icon resources.
+- Collapsed failed issue run output so long failure logs do not overwhelm issue detail.
+- Added run occurrence timestamps to agent run lists.
+- Added heartbeat agent avatars and tightened long assignee labels.
+- Improved chat and proposal ownership handling.
+- Reduced hot-path query pressure by paginating Messenger issue threads and capping heartbeat run list queries.
+
+## v0.2.8
+
+Released: 2026-05-27
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.8)
+
+### Highlights
+
+- Added run skill filters to the agent run timeline.
+- Improved proposal review readability and E2E coverage.
+- Hardened first-run and update behavior with direct Desktop asset downloads, layered Desktop shell updates, and staged runtime package caching.
+- Added dedicated docs staging and production release workflows.
+- Updated Claude local runtime authentication guidance and parsing.
+- Refreshed README links and imagery for the public website and documentation.
+
+## v0.2.7
+
+Released: 2026-05-27
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.7)
+
+### Highlights
+
+- Added organization intelligence profiles for reusable operating context.
+- Expanded chat, Messenger, and automation workflows with multi-select ask-user questions, chat-created automations, agent attribution navigation, proposal review improvements, and attachment previews.
+- Improved control-plane performance with cheaper Messenger summaries, sidebar badge aggregation, monthly cost spend rollups, and approval summary indexing.
+- Refined agent and run surfaces with run skill filters, fallback avatars, working-issue counts, and recent issue behavior.
+- Hardened scheduled database backups, heartbeat closeout behavior, release workflow serialization, and maintainer skill routing.
+- Refreshed README and public documentation across English and Chinese onboarding, runtime configuration, agent creation, concepts, issue lifecycle, and first-organization guides.
+
+## v0.2.6
+
+Released: 2026-05-22
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.6)
+
+### Highlights
+
+- Fixed Desktop release packaging across Windows portable archives, asset collection, signing behavior, and workspace launcher icon decoding.
+- Improved CLI startup by falling back to the latest compatible server package when an exact server version is not yet available on npm.
+- Expanded chat and automation behavior with image attachments for native runtimes, ask-user attachments, automation replies that can start new chats, clearer delivery rules, and more natural activity copy.
+- Added issue hierarchy controls, widened sub-issue selection, task-neutral assignment prompts, and better agent detail loading states.
+- Hardened workspace backup browsing and related E2E coverage.
+- Strengthened maintainer skills and release process guidance.
+
+## v0.2.5
+
+Released: 2026-05-20
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.5)
+
+### Highlights
+
+- Fixed a Desktop dev shell regression caused by leftover extracted update flow code.
+- Hardened Desktop startup, update, and packaging paths with server-package verification, safer post-update reload handling, workspace launcher icon resilience, and update force-quit targeting.
+- Added and refined maintainer skills for development lifecycle routing, review loops, UI polish, data-path diagnosis, mock data, and run-transcript debugging.
+- Split large server, runtime, Desktop, CLI, and UI modules into narrower source files while preserving behavior.
+- Improved issue, chat, Messenger, automation, and approval workflows.
+- Updated release, publishing, and bundled-skill references for current package and CLI behavior.
+
+## v0.2.4
+
+Released: 2026-05-18
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.4)
+
+### Highlights
+
+- Hardened Desktop and CLI startup/update behavior with safer quit handoff, packaged CLI stdout flushing, cached portable asset handling, workspace launcher icon fixes, and runtime install coverage.
+- Expanded the agent-facing CLI with private skill creation, richer issue search/comment/document commands, and synchronized bundled skill references.
+- Improved issue workflows with starred issues, activity principal filters, reviewer and approval coverage, comment persistence signals, ownership boundary fixes for mentions, and approval-blocked issue reactivation.
+- Refined automation, Calendar, and activity UI.
+- Polished chat and board presentation with expandable long message previews, chat response quality gating, better headings, constrained card metadata, and improved avatars.
+
+## v0.2.3
+
+Released: 2026-05-16
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.3)
+
+### Highlights
+
+- Hardened Desktop and CLI update handling with cached release assets, safer stable/canary comparisons, explicit restart confirmation, and macOS icon and CLI shim auth fixes.
+- Added runtime cache retention so stale local runtime downloads are pruned.
+- Improved managed workspace preflight coverage and resilience.
+- Refined issue, chat, and automation workflows with better sub-issue creation, parent context display, ask-user answer rendering, mention insertion, and command palette behavior.
+- Polished app shell and organization surfaces with guided product tour support, improved agent avatars, restored organization skills scrolling, and better run, cost, and kanban metadata display.
+- Updated Chinese onboarding and concept docs plus screenshot/demo assets.
+
+## v0.2.2
+
+Released: 2026-05-14
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.2)
+
+### Highlights
+
+- Hardened Windows Desktop installation from the CLI by avoiding pnpm store filesystem edge cases, using Windows-native extraction and copy commands, and preserving the active package manager.
+- Improved Desktop update feedback.
+- Continued Desktop release hardening around public downloads, stable update channel checks, and packaged staging output.
+- Refined app shell, agent views, issue hierarchy, mobile subissue rows, workspace routes, and run-duration display.
+- Updated public documentation and screenshot/demo guidance.
+
+## v0.2.1
+
+Released: 2026-05-14
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.1)
+
+### Highlights
+
+- Improved Messenger and issue-chat workflows with contextual issue chat entry, retry for failed chat replies, unread controls, safer linked-issue prompt context, optimistic chat titles, image context actions, and clearer comment labels.
+- Added memory-update visibility and developer-diagnostics controls in run transcripts.
+- Hardened local runtime execution with GitHub keyring and credential-helper bridging.
+- Expanded and refined the public docs site with bilingual Mintlify content, navigation fixes, image assets, and installation guidance.
+- Improved agent, dashboard, and workspace UI behavior.
+- Cleaned up chat and issue contracts by removing the routing-suggestion result kind and moving approvals into activity.
+
+## v0.2.0
+
+Released: 2026-05-10
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.0)
+
+### Highlights
+
+- Added reviewer-aware issue workflows, including reviewer display, blocked reviewer handoffs, reviewer closeout recovery, and clearer approval rendering.
+- Improved Messenger-driven issue work with selected-agent runtime routing, plan-mode approval gates, persistent streaming, hidden-conversation unread handling, Markdown rendering, mentions, image attachments, and draft issue autosave isolation.
+- Expanded visibility with organization cost trends, per-agent run cost charts, cost breakdown avatars, transcript/tool rendering improvements, and Langfuse prompt I/O exposure.
+- Hardened local runtime and CLI surfaces with git identity guards, managed runtime auth preservation, server-backed issue search, CLI runtime caching, image upload, and safer issue/document context.
+- Improved Desktop release and update behavior.
+- Refined product polish across chat, issue cards, tabs, tooltips, priority visuals, onboarding seeds, and localization cleanup.
+
+## v0.1.0
+
+Released: 2026-05-05
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.1.0)
+
+### Highlights
+
+- Added the stable first-run CLI path: `npx @rudderhq/cli@latest start`.
+- Shipped Desktop portable builds for macOS, Windows, and Linux through GitHub Releases.
+- Added organization-scoped task, goal, issue, agent, workflow, memory, and activity surfaces for end-to-end agent-work loops.
+- Included local agent runtime support for Codex, Claude, Cursor, Gemini, OpenCode, Pi, and OpenClaw gateway adapters.
+- Added plugin and bundled-skill distribution surfaces for repeatable agent workflows.
+- Added release automation for npm packages, GitHub Releases, Desktop assets, checksums, and public install smoke tests.

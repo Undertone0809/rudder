@@ -211,6 +211,11 @@ Stable changelog files live at:
 
 - `releases/vX.Y.Z.md`
 
+The public docs changelog must be updated in the same stable-release pass:
+
+- `docs/releases.mdx`
+- `docs/zh/releases.mdx`
+
 Canaries do not get changelog files.
 
 Use this body shape because GitHub already renders the release title, tag,
