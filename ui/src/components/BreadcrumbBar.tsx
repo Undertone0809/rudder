@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { CircleHelp, Menu, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { CircleDot, CircleHelp, Menu, PanelLeftOpen, Plus, Search } from "lucide-react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -22,9 +22,11 @@ import { PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { PluginLauncherOutlet, usePluginLaunchers } from "@/plugins/launchers";
 import { useI18n } from "@/context/I18nContext";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { issuesApi } from "@/api/issues";
 import { projectsApi } from "@/api/projects";
 import { queryKeys } from "@/lib/queryKeys";
 import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
+import type { Issue } from "@rudderhq/shared";
 
 type GlobalToolbarContext = { orgId: string | null; orgPrefix: string | null };
 
@@ -52,6 +54,10 @@ function GlobalToolbarPlugins({ context }: { context: GlobalToolbarContext }) {
   );
 }
 
+function issueResultLabel(issue: Pick<Issue, "id" | "identifier">) {
+  return issue.identifier ?? issue.id.slice(0, 8);
+}
+
 export function BreadcrumbBar({
   desktopChrome = false,
   variant = "shell",
@@ -64,11 +70,14 @@ export function BreadcrumbBar({
   const location = useLocation();
   const navigate = useNavigate();
   const [issueSearch, setIssueSearch] = useState("");
+  const [issueSearchMenuOpen, setIssueSearchMenuOpen] = useState(false);
   const issueSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const issueSearchContainerRef = useRef<HTMLDivElement | null>(null);
   const relativePath = useMemo(() => toOrganizationRelativePath(location.pathname), [location.pathname]);
   const activeIssueSource = useMemo(() => new URLSearchParams(location.search).get("source") ?? "", [location.search]);
   const isIssuesRoute = useMemo(() => /^\/issues(?:\/|$)/.test(relativePath), [relativePath]);
   const isIssueDetailRoute = useMemo(() => /^\/issues\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
+  const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
   const isPrimaryRailPage = useMemo(
     () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|library|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
     [relativePath],
@@ -99,6 +108,13 @@ export function BreadcrumbBar({
     },
     enabled: !!selectedOrganizationId && /^\/projects(?:\/|$)/.test(relativePath),
   });
+  const issueSearchQuery = issueSearch.trim();
+  const showIssueSearchMenu = isIssueDetailRoute && !isLinearIssueSource && issueSearchMenuOpen && issueSearchQuery.length > 0;
+  const { data: searchedIssues = [], isFetching: issueSearchFetching } = useQuery({
+    queryKey: queryKeys.issues.search(selectedOrganizationId ?? "__none__", issueSearchQuery),
+    queryFn: () => issuesApi.list(selectedOrganizationId!, { q: issueSearchQuery }),
+    enabled: !!selectedOrganizationId && showIssueSearchMenu,
+  });
 
   const globalToolbarSlotContext = useMemo(
     () => ({
@@ -126,7 +142,8 @@ export function BreadcrumbBar({
     if (!isIssuesRoute) return;
     const query = new URLSearchParams(location.search).get("q") ?? "";
     setIssueSearch(query);
-  }, [isIssuesRoute, location.search]);
+    setIssueSearchMenuOpen(query.trim().length > 0 && isIssueDetailRoute);
+  }, [isIssueDetailRoute, isIssuesRoute, location.search]);
 
   useEffect(() => {
     if (!isIssuesRoute) return;
@@ -147,6 +164,24 @@ export function BreadcrumbBar({
     }, 250);
     return () => window.clearTimeout(timeoutId);
   }, [isIssuesRoute, issueSearch, location.pathname, location.search, navigate]);
+
+  const navigateToIssueSearchResult = (issue: Issue) => {
+    setIssueSearchMenuOpen(false);
+    issueSearchInputRef.current?.blur();
+    navigate(`/issues/${issue.identifier ?? issue.id}`);
+  };
+
+  useEffect(() => {
+    if (!issueSearchMenuOpen) return;
+    const closeIssueSearchMenu = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (issueSearchContainerRef.current?.contains(target)) return;
+      setIssueSearchMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeIssueSearchMenu);
+    return () => document.removeEventListener("pointerdown", closeIssueSearchMenu);
+  }, [issueSearchMenuOpen]);
 
   useEffect(() => {
     if (!isIssuesRoute) return;
@@ -234,7 +269,6 @@ export function BreadcrumbBar({
   }
 
   if (threeColumnTitle) {
-    const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
     const showIssueDetailBreadcrumbs = isIssuesRoute && isIssueDetailRoute && breadcrumbs.length > 1;
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
@@ -297,15 +331,63 @@ export function BreadcrumbBar({
         {desktopChrome && !showIssueDetailBreadcrumbs ? <div className="desktop-window-drag hidden min-h-full flex-1 md:block" /> : null}
         {isIssuesRoute ? (
           <div className={cn("hidden items-center gap-3 md:flex", desktopChrome && "desktop-window-no-drag")}>
-            <div className="relative w-80">
+            <div ref={issueSearchContainerRef} className="relative w-80">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 ref={issueSearchInputRef}
                 value={issueSearch}
-                onChange={(event) => setIssueSearch(event.target.value)}
+                onChange={(event) => {
+                  setIssueSearch(event.target.value);
+                  setIssueSearchMenuOpen(event.target.value.trim().length > 0 && isIssueDetailRoute);
+                }}
+                onFocus={() => setIssueSearchMenuOpen(issueSearchQuery.length > 0 && isIssueDetailRoute)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && issueSearchMenuOpen) {
+                    event.preventDefault();
+                    setIssueSearchMenuOpen(false);
+                  }
+                  if (event.key === "Enter" && showIssueSearchMenu && searchedIssues[0]) {
+                    event.preventDefault();
+                    navigateToIssueSearchResult(searchedIssues[0]);
+                  }
+                }}
                 placeholder={isLinearIssueSource ? "Search Linear issues..." : "Search issues..."}
                 className="h-9 border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] pl-8 text-sm"
+                aria-label="Search issues"
+                aria-expanded={showIssueSearchMenu}
+                aria-controls={showIssueSearchMenu ? "issue-search-menu" : undefined}
               />
+              {showIssueSearchMenu ? (
+                <div
+                  id="issue-search-menu"
+                  role="listbox"
+                  className="absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:var(--surface-panel)] py-1 shadow-lg"
+                >
+                  {issueSearchFetching ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">Searching...</div>
+                  ) : searchedIssues.length > 0 ? (
+                    <div className="max-h-80 overflow-y-auto scrollbar-auto-hide">
+                      {searchedIssues.slice(0, 8).map((issue) => (
+                        <button
+                          key={issue.id}
+                          type="button"
+                          role="option"
+                          className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[color:var(--surface-hover)] focus:bg-[color:var(--surface-hover)] focus:outline-none"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => navigateToIssueSearchResult(issue)}
+                        >
+                          <CircleDot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="shrink-0 font-mono text-xs text-muted-foreground">{issueResultLabel(issue)}</span>
+                          <span className="min-w-0 flex-1 truncate text-foreground">{issue.title}</span>
+                          <span className="shrink-0 text-xs text-muted-foreground">{issue.status}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">No matching issues.</div>
+                  )}
+                </div>
+              ) : null}
             </div>
             {!isLinearIssueSource ? (
               <Button size="sm" className="px-4" onClick={() => openNewIssue()}>

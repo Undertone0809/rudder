@@ -17,6 +17,8 @@ let cleanupFn: (() => void) | null = null;
 let mockBreadcrumbs: Array<{ label: string; href?: string }> = [];
 let locationState: unknown = null;
 let capturedLinks: Array<{ to: string; state?: unknown }> = [];
+let mockNavigate = vi.fn();
+let mockUseQuery = vi.fn();
 
 vi.mock("@/lib/router", () => ({
   Link: ({ to, state, children, ...props }: { to: string; state?: unknown; children: import("react").ReactNode }) => {
@@ -24,7 +26,7 @@ vi.mock("@/lib/router", () => ({
     return <a href={to} {...props}>{children}</a>;
   },
   useLocation: () => ({ pathname, search, state: locationState }),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockNavigate,
 }));
 
 vi.mock("../context/BreadcrumbContext", () => ({
@@ -51,7 +53,7 @@ vi.mock("@/context/DialogContext", () => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: undefined }),
+  useQuery: (options: unknown) => mockUseQuery(options),
 }));
 
 vi.mock("@/context/I18nContext", () => ({
@@ -76,6 +78,8 @@ describe("BreadcrumbBar", () => {
     mockBreadcrumbs = [];
     locationState = null;
     capturedLinks = [];
+    mockNavigate = vi.fn();
+    mockUseQuery = vi.fn(() => ({ data: undefined, isFetching: false }));
     globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
       return 0;
@@ -199,6 +203,126 @@ describe("BreadcrumbBar", () => {
 
     expect(event.defaultPrevented).toBe(false);
     expect(document.activeElement).not.toBe(input);
+  });
+
+  it("opens an issue result menu from issue detail search and navigates to the selected issue", async () => {
+    pathname = "/RUD/issues/RUD-197";
+    mockBreadcrumbs = [
+      { label: "Issues", href: "/issues" },
+      { label: "RUD-197 current issue" },
+    ];
+    mockUseQuery = vi.fn((options: { queryKey?: readonly unknown[] }) => {
+      if (options.queryKey?.[2] === "search") {
+        return {
+          data: [
+            {
+              id: "issue-377",
+              identifier: "ZST-377",
+              title: "new issue 时候输入文档持弹窗出来的位置不对",
+              status: "todo",
+            },
+          ],
+          isFetching: false,
+        };
+      }
+      return { data: undefined, isFetching: false };
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<BreadcrumbBar variant="card" />);
+      await Promise.resolve();
+    });
+
+    const input = container.querySelector<HTMLInputElement>("input[aria-label='Search issues']");
+    expect(input).not.toBeNull();
+
+    await act(async () => {
+      input!.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "ZST-377");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const menu = container.querySelector<HTMLElement>("[role='listbox']#issue-search-menu");
+    expect(menu).not.toBeNull();
+    expect(menu?.textContent).toContain("ZST-377");
+    expect(menu?.textContent).toContain("new issue 时候输入文档持弹窗出来的位置不对");
+
+    const result = container.querySelector<HTMLButtonElement>("[role='option']");
+    expect(result).not.toBeNull();
+
+    await act(async () => {
+      result!.click();
+      await Promise.resolve();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith("/issues/ZST-377");
+  });
+
+  it("dismisses the issue detail search menu when clicking outside", async () => {
+    pathname = "/RUD/issues/RUD-197";
+    mockBreadcrumbs = [
+      { label: "Issues", href: "/issues" },
+      { label: "RUD-197 current issue" },
+    ];
+    mockUseQuery = vi.fn((options: { queryKey?: readonly unknown[] }) => {
+      if (options.queryKey?.[2] === "search") {
+        return {
+          data: [
+            {
+              id: "issue-377",
+              identifier: "ZST-377",
+              title: "new issue 时候输入文档持弹窗出来的位置不对",
+              status: "todo",
+            },
+          ],
+          isFetching: false,
+        };
+      }
+      return { data: undefined, isFetching: false };
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const outsideButton = document.createElement("button");
+    outsideButton.textContent = "Outside";
+    document.body.appendChild(outsideButton);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+      outsideButton.remove();
+    };
+
+    await act(async () => {
+      root.render(<BreadcrumbBar variant="card" />);
+      await Promise.resolve();
+    });
+
+    const input = container.querySelector<HTMLInputElement>("input[aria-label='Search issues']");
+    expect(input).not.toBeNull();
+
+    await act(async () => {
+      input!.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "ZST-377");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[role='listbox']#issue-search-menu")).not.toBeNull();
+
+    await act(async () => {
+      outsideButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[role='listbox']#issue-search-menu")).toBeNull();
   });
 
   it("renders a Dashboard and Calendar switcher on the dashboard page", () => {
