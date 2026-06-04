@@ -1968,9 +1968,9 @@ button[draggable="false"] {
 .rudder-doc-editor-tab-strip {
   position: relative;
   isolation: isolate;
-  --rudder-doc-editor-tab-strip-height: 53px;
-  --rudder-doc-editor-tab-active-height: var(--rudder-doc-editor-tab-strip-height);
-  --rudder-doc-editor-tab-inactive-height: calc(var(--rudder-doc-editor-tab-strip-height) - 4px);
+  --rudder-doc-editor-tab-strip-height: 44px;
+  --rudder-doc-editor-tab-active-height: 40px;
+  --rudder-doc-editor-tab-inactive-height: 36px;
   --rudder-doc-editor-tab-radius: var(--desktop-workspace-radius);
   --rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2);
 }
