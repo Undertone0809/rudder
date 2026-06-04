@@ -9,6 +9,7 @@ export const messengerThreadUserStates = pgTable(
     userId: text("user_id").notNull(),
     threadKey: text("thread_key").notNull(),
     lastReadAt: timestamp("last_read_at", { withTimezone: true }).notNull().defaultNow(),
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
