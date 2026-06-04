@@ -151,6 +151,7 @@ export function buildMarkdownMentionOptions(params: {
       name: file.displayLabel ?? file.name,
       kind: file.isDirectory ? "library_directory" : "library_file",
       searchText: `${file.name} ${file.path}`,
+      libraryEntryId: file.libraryEntryId ?? null,
       libraryFilePath: file.isDirectory ? null : file.path,
       libraryDirectoryPath: file.isDirectory ? file.path : null,
     });

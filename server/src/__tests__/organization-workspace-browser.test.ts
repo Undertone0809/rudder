@@ -3,12 +3,14 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  libraryEntries,
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
@@ -343,6 +345,138 @@ describe("organization workspace browser", () => {
     ]);
   });
 
+  it("keeps workspace file Library entry ids stable across managed file and directory moves", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Library Entry Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Library Entry Org"),
+      issuePrefix: "WBL",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const root = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(root, { recursive: true });
+
+    const created = await workspaceBrowser.createFile(orgId, "projects/work/original.md", "# Original\n");
+    expect(created.libraryEntryId).toEqual(expect.any(String));
+    const entryId = created.libraryEntryId!;
+
+    const listed = await workspaceBrowser.listFiles(orgId, "projects/work");
+    expect(listed.entries).toContainEqual(expect.objectContaining({
+      path: "projects/work/original.md",
+      libraryEntryId: entryId,
+    }));
+
+    const renamed = await workspaceBrowser.renameEntry(orgId, "projects/work/original.md", "renamed.md");
+    expect(renamed).toEqual(expect.objectContaining({
+      previousPath: "projects/work/original.md",
+      path: "projects/work/renamed.md",
+      libraryEntryId: entryId,
+    }));
+    const afterRename = await workspaceBrowser.readFile(orgId, "projects/work/renamed.md");
+    expect(afterRename.libraryEntryId).toBe(entryId);
+
+    await workspaceBrowser.createDirectory(orgId, "projects/final");
+    const moved = await workspaceBrowser.moveEntry(orgId, "projects/work/renamed.md", "projects/final");
+    expect(moved).toEqual(expect.objectContaining({
+      previousPath: "projects/work/renamed.md",
+      path: "projects/final/renamed.md",
+      libraryEntryId: entryId,
+    }));
+
+    const [activeEntry] = await db
+      .select()
+      .from(libraryEntries)
+      .where(eq(libraryEntries.id, entryId));
+    expect(activeEntry).toEqual(expect.objectContaining({
+      orgId,
+      currentPath: "projects/final/renamed.md",
+      status: "active",
+      title: "renamed.md",
+    }));
+
+    const child = await workspaceBrowser.createFile(orgId, "projects/work/nested/child.md", "# Child\n");
+    const childEntryId = child.libraryEntryId!;
+    await expect(workspaceBrowser.renameEntry(orgId, "projects/work", "research")).resolves.toEqual(
+      expect.objectContaining({
+        previousPath: "projects/work",
+        path: "projects/research",
+        isDirectory: true,
+        libraryEntryId: null,
+      }),
+    );
+    const [movedChildEntry] = await db
+      .select()
+      .from(libraryEntries)
+      .where(eq(libraryEntries.id, childEntryId));
+    expect(movedChildEntry).toEqual(expect.objectContaining({
+      currentPath: "projects/research/nested/child.md",
+      status: "active",
+    }));
+
+    await expect(workspaceBrowser.deleteEntry(orgId, "projects/research")).resolves.toEqual({
+      path: "projects/research",
+      isDirectory: true,
+      libraryEntryId: null,
+    });
+    const [deletedChildEntry] = await db
+      .select()
+      .from(libraryEntries)
+      .where(eq(libraryEntries.id, childEntryId));
+    expect(deletedChildEntry).toEqual(expect.objectContaining({
+      currentPath: null,
+      status: "deleted",
+    }));
+  });
+
+  it("creates Library entry ids safely when concurrent listings discover the same file", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Library Entry Race Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Library Entry Race Org"),
+      issuePrefix: "WBR",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const root = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(path.join(root, "projects", "race"), { recursive: true });
+    await fs.writeFile(path.join(root, "projects", "race", "reference.md"), "# Reference\n", "utf8");
+
+    const listings = await Promise.all(
+      Array.from({ length: 8 }, () => workspaceBrowser.listFiles(orgId, "projects/race")),
+    );
+
+    const entryIds = new Set(
+      listings.map((listing) => listing.entries.find((entry) => entry.path === "projects/race/reference.md")?.libraryEntryId),
+    );
+    expect(entryIds.size).toBe(1);
+    const [entryId] = [...entryIds];
+    expect(entryId).toEqual(expect.any(String));
+
+    const rows = await db
+      .select()
+      .from(libraryEntries)
+      .where(eq(libraryEntries.currentPath, "projects/race/reference.md"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(expect.objectContaining({
+      id: entryId,
+      orgId,
+      status: "active",
+    }));
+  });
+
   it("allows normal entry actions below agent workspaces while protecting agent workspace handles", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);
@@ -470,11 +604,14 @@ describe("organization workspace browser", () => {
       status: 422,
     });
 
-    await expect(workspaceBrowser.moveEntry(orgId, "projects/work/new-file.md", "projects/final")).resolves.toEqual({
-      previousPath: "projects/work/new-file.md",
-      path: "projects/final/new-file.md",
-      isDirectory: false,
-    });
+    await expect(workspaceBrowser.moveEntry(orgId, "projects/work/new-file.md", "projects/final")).resolves.toEqual(
+      expect.objectContaining({
+        previousPath: "projects/work/new-file.md",
+        path: "projects/final/new-file.md",
+        isDirectory: false,
+        libraryEntryId: expect.any(String),
+      }),
+    );
     await expect(fs.readFile(path.join(root, "projects", "final", "new-file.md"), "utf8")).resolves.toBe("# New\n");
 
     await expect(
@@ -491,24 +628,27 @@ describe("organization workspace browser", () => {
     });
     await expect(
       workspaceBrowser.moveEntry(orgId, `agents/${workspaceKey}/instructions/NOTES.md`, `agents/${workspaceKey}/instructions/scratch`),
-    ).resolves.toEqual({
+    ).resolves.toEqual(expect.objectContaining({
       previousPath: `agents/${workspaceKey}/instructions/NOTES.md`,
       path: `agents/${workspaceKey}/instructions/scratch/NOTES.md`,
       isDirectory: false,
-    });
+      libraryEntryId: expect.any(String),
+    }));
     await expect(
       workspaceBrowser.renameEntry(orgId, `agents/${workspaceKey}/instructions/scratch/NOTES.md`, "renamed-notes.md"),
-    ).resolves.toEqual({
+    ).resolves.toEqual(expect.objectContaining({
       previousPath: `agents/${workspaceKey}/instructions/scratch/NOTES.md`,
       path: `agents/${workspaceKey}/instructions/scratch/renamed-notes.md`,
       isDirectory: false,
-    });
+      libraryEntryId: expect.any(String),
+    }));
     await expect(
       workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}/instructions/scratch/renamed-notes.md`),
-    ).resolves.toEqual({
+    ).resolves.toEqual(expect.objectContaining({
       path: `agents/${workspaceKey}/instructions/scratch/renamed-notes.md`,
       isDirectory: false,
-    });
+      libraryEntryId: expect.any(String),
+    }));
   });
 
 });

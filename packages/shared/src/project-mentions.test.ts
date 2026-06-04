@@ -5,6 +5,7 @@ import {
   buildIssueMentionHref,
   buildLibraryDirectoryMentionHref,
   buildLibraryDocMentionHref,
+  buildLibraryEntryMentionHref,
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
@@ -12,6 +13,7 @@ import {
   extractIssueMentionIds,
   extractLibraryDirectoryMentionPaths,
   extractLibraryDocMentionIds,
+  extractLibraryEntryMentionIds,
   extractLibraryFileMentionPaths,
   extractProjectMentionIds,
   parseAgentMentionHref,
@@ -19,6 +21,7 @@ import {
   parseIssueMentionHref,
   parseLibraryDirectoryMentionHref,
   parseLibraryDocMentionHref,
+  parseLibraryEntryMentionHref,
   parseLibraryFileMentionHref,
   parseProjectMentionHref,
 } from "./project-mentions.js";
@@ -88,6 +91,16 @@ describe("project-mentions", () => {
     expect(extractLibraryDocMentionIds(`[@Product principles](${href})`)).toEqual(["doc-123"]);
   });
 
+  it("round-trips library entry mentions with title and path-hint metadata", () => {
+    const href = buildLibraryEntryMentionHref("entry-123", "Product brief", "projects/rudder/product-brief.md");
+    expect(parseLibraryEntryMentionHref(href)).toEqual({
+      entryId: "entry-123",
+      title: "Product brief",
+      path: "projects/rudder/product-brief.md",
+    });
+    expect(extractLibraryEntryMentionIds(`[@Product brief](${href})`)).toEqual(["entry-123"]);
+  });
+
   it("round-trips library file mentions with path metadata", () => {
     const href = buildLibraryFileMentionHref("docs/product-brief.md", "Product brief");
     expect(parseLibraryFileMentionHref(href)).toEqual({
@@ -117,6 +130,8 @@ describe("project-mentions", () => {
       .toEqual(["chat-2"]);
     expect(extractLibraryDocMentionIds("`[@Doc](library-doc://doc-1)` [@Real](library-doc://doc-2)"))
       .toEqual(["doc-2"]);
+    expect(extractLibraryEntryMentionIds("`[@Doc](library-entry://entry-1)` [@Real](library-entry://entry-2)"))
+      .toEqual(["entry-2"]);
     expect(extractLibraryFileMentionPaths(
       "`[@Doc](library-file://file?p=docs%2Fignored.md)` [@Real](library-file://file?p=docs%2Freal.md)",
     )).toEqual(["docs/real.md"]);

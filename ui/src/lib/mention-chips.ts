@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDirectoryMentionHref, parseLibraryDocMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
+import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDirectoryMentionHref, parseLibraryDocMentionHref, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
 import { FileText, Folder } from "lucide-react";
 import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
 import { getAgentIcon } from "./agent-icons";
@@ -29,6 +29,12 @@ export type ParsedMentionChip =
       kind: "library_doc";
       documentId: string;
       title: string | null;
+    }
+  | {
+      kind: "library_entry";
+      entryId: string;
+      title: string | null;
+      path: string | null;
     }
   | {
       kind: "library_file";
@@ -93,6 +99,16 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
     };
   }
 
+  const libraryEntry = parseLibraryEntryMentionHref(href);
+  if (libraryEntry) {
+    return {
+      kind: "library_entry",
+      entryId: libraryEntry.entryId,
+      title: libraryEntry.title,
+      path: libraryEntry.path,
+    };
+  }
+
   const libraryFile = parseLibraryFileMentionHref(href);
   if (libraryFile) {
     return {
@@ -139,7 +155,7 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
     }
   }
 
-  if (mention.kind === "library_doc" || mention.kind === "library_file" || mention.kind === "library_directory") {
+  if (mention.kind === "library_doc" || mention.kind === "library_entry" || mention.kind === "library_file" || mention.kind === "library_directory") {
     const iconMask = mention.kind === "library_directory"
       ? buildLucideIconMask(Folder, "lucide:folder")
       : buildLucideIconMask(FileText, "lucide:file-text");
@@ -187,6 +203,7 @@ export function clearMentionChipDecoration(element: HTMLElement) {
     "rudder-mention-chip--chat",
     "rudder-mention-chip--issue",
     "rudder-mention-chip--library_doc",
+    "rudder-mention-chip--library_entry",
     "rudder-mention-chip--library_file",
     "rudder-mention-chip--library_directory",
     "rudder-mention-chip--project",

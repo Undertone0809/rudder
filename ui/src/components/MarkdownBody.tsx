@@ -478,10 +478,12 @@ export function MarkdownBody({
               ? `/messenger/chat/${mention.conversationId}`
               : mention.kind === "library_doc"
                 ? `/library?doc=${encodeURIComponent(mention.documentId)}`
-                : mention.kind === "library_file"
-                  ? `/library?path=${encodeURIComponent(mention.filePath)}`
-                  : mention.kind === "library_directory"
-                    ? `/library?directory=${encodeURIComponent(mention.directoryPath)}`
+                : mention.kind === "library_entry"
+                  ? `/library?entry=${encodeURIComponent(mention.entryId)}`
+                  : mention.kind === "library_file"
+                    ? `/library?path=${encodeURIComponent(mention.filePath)}`
+                    : mention.kind === "library_directory"
+                      ? `/library?directory=${encodeURIComponent(mention.directoryPath)}`
                   : `/agents/${mention.agentId}`;
         return (
           <a

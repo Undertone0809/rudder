@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   buildAgentMentionHref,
+  buildLibraryEntryMentionHref,
   buildLibraryFileMentionHref,
   parseAgentMentionHref,
   type Project,
@@ -746,8 +747,11 @@ function escapeMarkdownLinkLabel(label: string) {
   return label.replace(/([\\\]])/g, "\\$1");
 }
 
-function buildWorkspaceFileLinkMarkdown(filePath: string, label: string) {
-  return `[${escapeMarkdownLinkLabel(label)}](${buildLibraryFileMentionHref(filePath, label)})`;
+function buildWorkspaceFileLinkMarkdown(filePath: string, label: string, libraryEntryId?: string | null) {
+  const href = libraryEntryId
+    ? buildLibraryEntryMentionHref(libraryEntryId, label, filePath)
+    : buildLibraryFileMentionHref(filePath, label);
+  return `[${escapeMarkdownLinkLabel(label)}](${href})`;
 }
 
 function buildWorkspaceDirectoryLinkMarkdown(directoryPath: string, label: string) {
@@ -758,7 +762,7 @@ function buildWorkspaceEntryLinkMarkdown(entry: OrganizationWorkspaceFileEntry) 
   const label = displayWorkspaceEntryLabel(entry);
   return entry.isDirectory
     ? buildWorkspaceDirectoryLinkMarkdown(entry.path, label)
-    : buildWorkspaceFileLinkMarkdown(entry.path, label);
+    : buildWorkspaceFileLinkMarkdown(entry.path, label, entry.libraryEntryId);
 }
 
 async function copyWorkspaceText(copyValue: string) {
@@ -861,6 +865,7 @@ function updateSelectedPath(
   const next = new URLSearchParams(searchParams);
   if (filePath) next.set("path", filePath);
   else next.delete("path");
+  next.delete("entry");
   if (filePath) next.delete("directory");
   if (filePath) next.delete("resource");
   else next.delete("resource");
@@ -2023,9 +2028,10 @@ export function OrganizationWorkspaceFilesSidebar() {
   const { pushToast } = useToast();
   const { viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
-  const selectedFilePath = normalizeRequestedPath(searchParams.get("path"));
-  const selectedResourceAttachmentId = normalizeRequestedPath(searchParams.get("resource"));
-  const requestedDirectoryPath = normalizeRequestedPath(searchParams.get("directory"));
+  const requestedEntryId = normalizeRequestedPath(searchParams.get("entry"));
+  const selectedFilePath = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("path"));
+  const selectedResourceAttachmentId = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("resource"));
+  const requestedDirectoryPath = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("directory"));
   const filesScrollRef = useScrollbarActivityRef("org-workspaces:files-sidebar");
   const [createTarget, setCreateTarget] = useState<{
     parent: OrganizationWorkspaceFileEntry;
@@ -2043,6 +2049,12 @@ export function OrganizationWorkspaceFilesSidebar() {
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", ""),
     queryFn: () => organizationsApi.listWorkspaceFiles(viewedOrganizationId!, ""),
     enabled: !!viewedOrganizationId,
+    refetchOnWindowFocus: false,
+  });
+  const libraryEntryQuery = useQuery({
+    queryKey: queryKeys.organizations.libraryEntry(viewedOrganizationId ?? "__none__", requestedEntryId ?? ""),
+    queryFn: () => organizationsApi.getLibraryEntry(viewedOrganizationId!, requestedEntryId!),
+    enabled: !!viewedOrganizationId && !!requestedEntryId,
     refetchOnWindowFocus: false,
   });
   const projectResourceTree = useProjectResourceTreeGroups(viewedOrganizationId);
@@ -2072,10 +2084,18 @@ export function OrganizationWorkspaceFilesSidebar() {
   );
 
   useEffect(() => {
+    if (requestedEntryId) {
+      if (libraryEntryQuery.data?.status === "active" && libraryEntryQuery.data.currentPath) {
+        updateSelectedPath(searchParams, setSearchParams, libraryEntryQuery.data.currentPath);
+      } else {
+        setActiveEntryPath(null);
+      }
+      return;
+    }
     if (selectedFilePath) setActiveEntryPath(selectedFilePath);
     else if (selectedResourcePath) setActiveEntryPath(selectedResourcePath);
     else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
-  }, [requestedDirectoryPath, selectedFilePath, selectedResourcePath]);
+  }, [libraryEntryQuery.data?.currentPath, requestedDirectoryPath, requestedEntryId, searchParams, selectedFilePath, selectedResourcePath, setSearchParams]);
 
   useEffect(() => {
     const clearRootDropState = () => {
@@ -2848,9 +2868,10 @@ export function OrganizationWorkspaceBrowser({
   const navigate = useNavigate();
   const { viewedOrganization, viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
-  const requestedFilePath = normalizeRequestedPath(searchParams.get("path"));
-  const requestedResourceAttachmentId = normalizeRequestedPath(searchParams.get("resource"));
-  const requestedDirectoryPath = normalizeRequestedPath(searchParams.get("directory"));
+  const requestedEntryId = normalizeRequestedPath(searchParams.get("entry"));
+  const requestedFilePath = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("path"));
+  const requestedResourceAttachmentId = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("resource"));
+  const requestedDirectoryPath = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("directory"));
   const initialOpenFileTabState = useMemo(
     () => readStoredWorkspaceOpenFileTabState(viewedOrganizationId),
     [viewedOrganizationId],
@@ -3028,6 +3049,12 @@ export function OrganizationWorkspaceBrowser({
     enabled: !!viewedOrganizationId,
     refetchOnWindowFocus: false,
   });
+  const libraryEntryQuery = useQuery({
+    queryKey: queryKeys.organizations.libraryEntry(viewedOrganizationId ?? "__none__", requestedEntryId ?? ""),
+    queryFn: () => organizationsApi.getLibraryEntry(viewedOrganizationId!, requestedEntryId!),
+    enabled: !!viewedOrganizationId && !!requestedEntryId,
+    refetchOnWindowFocus: false,
+  });
   const projectResourceTree = useProjectResourceTreeGroups(viewedOrganizationId);
   const selectedProjectResource = useMemo(
     () => findProjectResourceSelection(projectResourceTree.projects, requestedResourceAttachmentId),
@@ -3036,10 +3063,18 @@ export function OrganizationWorkspaceBrowser({
   const selectedResourcePath = selectedProjectResource?.path ?? null;
 
   useEffect(() => {
+    if (requestedEntryId) {
+      if (libraryEntryQuery.data?.status === "active" && libraryEntryQuery.data.currentPath) {
+        updateSelectedPath(searchParams, setSearchParams, libraryEntryQuery.data.currentPath);
+      } else {
+        setActiveEntryPath(null);
+      }
+      return;
+    }
     if (selectedFilePath) setActiveEntryPath(selectedFilePath);
     else if (selectedResourcePath) setActiveEntryPath(selectedResourcePath);
     else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
-  }, [requestedDirectoryPath, selectedFilePath, selectedResourcePath]);
+  }, [libraryEntryQuery.data?.currentPath, requestedDirectoryPath, requestedEntryId, searchParams, selectedFilePath, selectedResourcePath, setSearchParams]);
   const agentWorkspaceEntriesQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", "agents"),
     queryFn: () => organizationsApi.listWorkspaceFiles(viewedOrganizationId!, "agents"),
@@ -3078,6 +3113,11 @@ export function OrganizationWorkspaceBrowser({
 
   useEffect(() => {
     flushCurrentDraft();
+    if (requestedEntryId) {
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      return;
+    }
     if (requestedResourceAttachmentId) {
       setSelectedFilePath(null);
       setDraftFilePath(null);
@@ -3097,6 +3137,7 @@ export function OrganizationWorkspaceBrowser({
     flushCurrentDraft,
     openWorkspaceFileTab,
     requestedDirectoryPath,
+    requestedEntryId,
     requestedFilePath,
     requestedResourceAttachmentId,
     viewedOrganizationId,
@@ -3105,15 +3146,23 @@ export function OrganizationWorkspaceBrowser({
   useEffect(() => {
     if (!viewedOrganizationId) return;
     if (restoredOpenTabsOrgRef.current !== viewedOrganizationId) return;
-    if (requestedResourceAttachmentId || requestedDirectoryPath) return;
+    if (requestedEntryId || requestedResourceAttachmentId || requestedDirectoryPath) return;
     writeStoredWorkspaceOpenFileTabState(viewedOrganizationId, openFilePaths, selectedFilePath);
-  }, [openFilePaths, requestedDirectoryPath, requestedResourceAttachmentId, selectedFilePath, viewedOrganizationId]);
+  }, [openFilePaths, requestedDirectoryPath, requestedEntryId, requestedResourceAttachmentId, selectedFilePath, viewedOrganizationId]);
 
   useEffect(() => {
     if (!viewedOrganizationId || restoredOpenTabsOrgRef.current === viewedOrganizationId) return;
     restoredOpenTabsOrgRef.current = viewedOrganizationId;
     allowDefaultFileOpenRef.current = true;
     const storedTabState = readStoredWorkspaceOpenFileTabState(viewedOrganizationId);
+
+    if (requestedEntryId) {
+      setOpenFilePaths([]);
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      setActiveEntryPath(null);
+      return;
+    }
 
     const nextOpenFilePaths = requestedFilePath
       ? normalizeWorkspaceOpenFilePaths([...storedTabState.openFilePaths, requestedFilePath])
@@ -3148,6 +3197,7 @@ export function OrganizationWorkspaceBrowser({
     }
   }, [
     requestedDirectoryPath,
+    requestedEntryId,
     requestedFilePath,
     requestedResourceAttachmentId,
     searchParams,
@@ -3156,6 +3206,7 @@ export function OrganizationWorkspaceBrowser({
   ]);
 
   useEffect(() => {
+    if (requestedEntryId) return;
     if (selectedFilePath) return;
     if (requestedResourceAttachmentId) return;
     if (requestedDirectoryPath) return;
@@ -3726,6 +3777,18 @@ export function OrganizationWorkspaceBrowser({
     return <p className="text-sm text-destructive">{rootQuery.error.message}</p>;
   }
 
+  if (requestedEntryId) {
+    if (libraryEntryQuery.isLoading) {
+      return <PageSkeleton variant="detail" />;
+    }
+    if (libraryEntryQuery.error) {
+      return <EmptyState icon={FileText} message="This Library reference could not be found or is not available in this organization." />;
+    }
+    if (libraryEntryQuery.data?.status !== "active" || !libraryEntryQuery.data.currentPath) {
+      return <EmptyState icon={FileText} message="This Library reference no longer points to an active workspace file." />;
+    }
+  }
+
   const workspace = rootQuery.data;
   if (!workspace) return null;
 
@@ -3763,8 +3826,10 @@ export function OrganizationWorkspaceBrowser({
         ? `/issues/${parsed.ref ?? parsed.issueId}`
         : parsed.kind === "chat"
           ? `/messenger/chat/${parsed.conversationId}`
-          : parsed.kind === "library_doc"
-            ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
+        : parsed.kind === "library_doc"
+          ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
+          : parsed.kind === "library_entry"
+            ? `/library?entry=${encodeURIComponent(parsed.entryId)}`
             : parsed.kind === "library_directory"
               ? `/library?directory=${encodeURIComponent(parsed.directoryPath)}`
               : `/projects/${parsed.projectId}`;

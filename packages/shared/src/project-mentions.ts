@@ -9,6 +9,7 @@ export const AGENT_MENTION_SCHEME = "agent://";
 export const ISSUE_MENTION_SCHEME = "issue://";
 export const CHAT_MENTION_SCHEME = "chat://";
 export const LIBRARY_DOC_MENTION_SCHEME = "library-doc://";
+export const LIBRARY_ENTRY_MENTION_SCHEME = "library-entry://";
 export const LIBRARY_FILE_MENTION_SCHEME = "library-file://";
 export const LIBRARY_DIRECTORY_MENTION_SCHEME = "library-directory://";
 
@@ -21,6 +22,7 @@ const AGENT_MENTION_LINK_RE = /\[[^\]]*]\((agent:\/\/[^)\s]+)\)/gi;
 const ISSUE_MENTION_LINK_RE = /\[[^\]]*]\((issue:\/\/[^)\s]+)\)/gi;
 const CHAT_MENTION_LINK_RE = /\[[^\]]*]\((chat:\/\/[^)\s]+)\)/gi;
 const LIBRARY_DOC_MENTION_LINK_RE = /\[[^\]]*]\((library-doc:\/\/[^)\s]+)\)/gi;
+const LIBRARY_ENTRY_MENTION_LINK_RE = /\[[^\]]*]\((library-entry:\/\/[^)\s]+)\)/gi;
 const LIBRARY_FILE_MENTION_LINK_RE = /\[[^\]]*]\((library-file:\/\/[^)\s]+)\)/gi;
 const LIBRARY_DIRECTORY_MENTION_LINK_RE = /\[[^\]]*]\((library-directory:\/\/[^)\s]+)\)/gi;
 const AGENT_ICON_NAME_RE = /^[a-z0-9-]+$/i;
@@ -56,6 +58,12 @@ export interface ParsedChatMention {
 export interface ParsedLibraryDocMention {
   documentId: string;
   title: string | null;
+}
+
+export interface ParsedLibraryEntryMention {
+  entryId: string;
+  title: string | null;
+  path: string | null;
 }
 
 export interface ParsedLibraryFileMention {
@@ -261,6 +269,42 @@ export function parseLibraryDocMentionHref(href: string): ParsedLibraryDocMentio
   };
 }
 
+export function buildLibraryEntryMentionHref(entryId: string, title?: string | null, pathHint?: string | null): string {
+  const trimmedEntryId = entryId.trim();
+  const search = new URLSearchParams();
+  const trimmedTitle = title?.trim();
+  const trimmedPathHint = pathHint?.trim();
+  if (trimmedTitle) search.set("t", trimmedTitle);
+  if (trimmedPathHint) search.set("p", trimmedPathHint);
+  const query = search.toString();
+  return `${LIBRARY_ENTRY_MENTION_SCHEME}${trimmedEntryId}${query ? `?${query}` : ""}`;
+}
+
+export function parseLibraryEntryMentionHref(href: string): ParsedLibraryEntryMention | null {
+  if (!href.startsWith(LIBRARY_ENTRY_MENTION_SCHEME)) return null;
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "library-entry:") return null;
+
+  const entryId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
+  if (!entryId) return null;
+
+  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
+  const path = (url.searchParams.get("p") ?? url.searchParams.get("path") ?? "").trim() || null;
+
+  return {
+    entryId,
+    title,
+    path,
+  };
+}
+
 export function buildLibraryFileMentionHref(filePath: string, title?: string | null): string {
   const trimmedFilePath = filePath.trim();
   const trimmedTitle = title?.trim();
@@ -384,6 +428,19 @@ export function extractLibraryDocMentionIds(markdown: string): string[] {
   while ((match = re.exec(source)) !== null) {
     const parsed = parseLibraryDocMentionHref(match[1]);
     if (parsed) ids.add(parsed.documentId);
+  }
+  return [...ids];
+}
+
+export function extractLibraryEntryMentionIds(markdown: string): string[] {
+  if (!markdown) return [];
+  const ids = new Set<string>();
+  const re = new RegExp(LIBRARY_ENTRY_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const parsed = parseLibraryEntryMentionHref(match[1]);
+    if (parsed) ids.add(parsed.entryId);
   }
   return [...ids];
 }

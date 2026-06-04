@@ -1,6 +1,7 @@
 export { organizations } from "./organizations.js";
 export { organizationIntelligenceProfiles } from "./organization_intelligence_profiles.js";
 export { organizationResources } from "./organization_resources.js";
+export { libraryEntries } from "./library_entries.js";
 export { organizationLogos } from "./organization_logos.js";
 export { authUsers, authSessions, authAccounts, authVerifications } from "./auth.js";
 export { instanceSettings } from "./instance_settings.js";

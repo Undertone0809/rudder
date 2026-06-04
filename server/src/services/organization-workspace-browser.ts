@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import { resolveStoredOrDerivedAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
+import { libraryEntryService } from "./library-entries.js";
 import { organizationService } from "./orgs.js";
 
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
@@ -198,6 +199,7 @@ function getWorkspaceFilePreviewKind(contentType: string, buffer: Buffer): Organ
 
 export function organizationWorkspaceBrowserService(db: Db) {
   const orgs = organizationService(db);
+  const libraryEntries = libraryEntryService(db);
 
   async function listAgentWorkspaceDirectoryMap(orgId: string) {
     const rows = await db
@@ -264,6 +266,20 @@ export function organizationWorkspaceBrowserService(db: Db) {
     });
   }
 
+  async function attachLibraryEntryIds(
+    orgId: string,
+    entries: OrganizationWorkspaceFileEntry[],
+  ): Promise<OrganizationWorkspaceFileEntry[]> {
+    return await Promise.all(entries.map(async (entry) => {
+      if (entry.isDirectory) return entry;
+      const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, entry.path);
+      return {
+        ...entry,
+        libraryEntryId: libraryEntry.id,
+      };
+    }));
+  }
+
   async function resolveWorkspaceRoot(orgId: string): Promise<WorkspaceRootResolution> {
     const organization = await orgs.getById(orgId);
     if (!organization) throw notFound("Organization not found");
@@ -308,7 +324,10 @@ export function organizationWorkspaceBrowserService(db: Db) {
           isDirectory: entry.isDirectory(),
         };
       });
-      const decoratedEntries = await decorateWorkspaceEntries(orgId, normalizedPath, unsortedEntries);
+      const decoratedEntries = await attachLibraryEntryIds(
+        orgId,
+        await decorateWorkspaceEntries(orgId, normalizedPath, unsortedEntries),
+      );
       const entries: OrganizationWorkspaceFileEntry[] = decoratedEntries.sort((left, right) => {
         if (left.isDirectory !== right.isDirectory) return left.isDirectory ? -1 : 1;
         return (left.displayLabel ?? left.name).localeCompare(right.displayLabel ?? right.name);
@@ -379,7 +398,8 @@ export function organizationWorkspaceBrowserService(db: Db) {
       }
 
       await visit("");
-      return entries.sort((left, right) => left.path.localeCompare(right.path));
+      const decoratedEntries = await attachLibraryEntryIds(orgId, entries);
+      return decoratedEntries.sort((left, right) => left.path.localeCompare(right.path));
     },
 
     async readFile(orgId: string, filePath: string): Promise<OrganizationWorkspaceFileDetail> {
@@ -392,6 +412,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
           rootPath: resolvedRoot,
           repoUrl: root.repoUrl,
           filePath: normalizedPath,
+          libraryEntryId: null,
           rootExists: false,
           content: null,
           contentType: null,
@@ -409,12 +430,14 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const buffer = await fs.readFile(resolvedTarget);
       const contentType = getWorkspaceFileContentType(normalizedPath || resolvedTarget, buffer) ?? "application/octet-stream";
       const previewKind = getWorkspaceFilePreviewKind(contentType, buffer);
+      const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, normalizedPath);
       if (previewKind === "image") {
         return {
           source: root.source,
           rootPath: resolvedRoot,
           repoUrl: root.repoUrl,
           filePath: normalizedPath,
+          libraryEntryId: libraryEntry.id,
           rootExists: true,
           content: null,
           contentType,
@@ -430,6 +453,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
           rootPath: resolvedRoot,
           repoUrl: root.repoUrl,
           filePath: normalizedPath,
+          libraryEntryId: libraryEntry.id,
           rootExists: true,
           content: null,
           contentType,
@@ -445,6 +469,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         rootPath: resolvedRoot,
         repoUrl: root.repoUrl,
         filePath: normalizedPath,
+        libraryEntryId: libraryEntry.id,
         rootExists: true,
         content: buffer.toString("utf8"),
         contentType,
@@ -496,12 +521,14 @@ export function organizationWorkspaceBrowserService(db: Db) {
       }
 
       await fs.writeFile(resolvedTarget, content, "utf8");
+      const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, normalizedPath);
 
       return {
         source: root.source,
         rootPath: resolvedRoot,
         repoUrl: root.repoUrl,
         filePath: normalizedPath,
+        libraryEntryId: libraryEntry.id,
         rootExists: true,
         content,
         contentType: getWorkspaceFileContentType(normalizedPath || resolvedTarget) ?? "text/plain",
@@ -533,12 +560,14 @@ export function organizationWorkspaceBrowserService(db: Db) {
 
       await fs.mkdir(path.dirname(resolvedTarget), { recursive: true });
       await fs.writeFile(resolvedTarget, content, { encoding: "utf8", flag: "wx" });
+      const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, normalizedPath);
 
       return {
         source: root.source,
         rootPath: resolvedRoot,
         repoUrl: root.repoUrl,
         filePath: normalizedPath,
+        libraryEntryId: libraryEntry.id,
         rootExists: true,
         content,
         contentType: getWorkspaceFileContentType(normalizedPath || resolvedTarget) ?? "text/plain",
@@ -614,10 +643,14 @@ export function organizationWorkspaceBrowserService(db: Db) {
       }
 
       await fs.rename(resolvedTarget, nextTarget);
+      const libraryEntry = stat.isDirectory()
+        ? (await libraryEntries.moveWorkspaceDirectoryEntries(orgId, normalizedPath, nextPath), null)
+        : await libraryEntries.moveWorkspaceFileEntry(orgId, normalizedPath, nextPath);
       return {
         previousPath: normalizedPath,
         path: nextPath,
         isDirectory: stat.isDirectory(),
+        libraryEntryId: libraryEntry?.id ?? null,
       };
     },
 
@@ -674,10 +707,14 @@ export function organizationWorkspaceBrowserService(db: Db) {
       }
 
       await fs.rename(resolvedTarget, nextTarget);
+      const libraryEntry = stat.isDirectory()
+        ? (await libraryEntries.moveWorkspaceDirectoryEntries(orgId, normalizedPath, nextPath), null)
+        : await libraryEntries.moveWorkspaceFileEntry(orgId, normalizedPath, nextPath);
       return {
         previousPath: normalizedPath,
         path: nextPath,
         isDirectory: stat.isDirectory(),
+        libraryEntryId: libraryEntry?.id ?? null,
       };
     },
 
@@ -696,9 +733,13 @@ export function organizationWorkspaceBrowserService(db: Db) {
       }
 
       await fs.rm(resolvedTarget, { recursive: true, force: false });
+      const libraryEntry = stat.isDirectory()
+        ? (await libraryEntries.markWorkspaceDirectoryEntriesDeleted(orgId, normalizedPath), null)
+        : await libraryEntries.markWorkspaceFileEntryDeleted(orgId, normalizedPath);
       return {
         path: normalizedPath,
         isDirectory: stat.isDirectory(),
+        libraryEntryId: libraryEntry?.id ?? null,
       };
     },
   };

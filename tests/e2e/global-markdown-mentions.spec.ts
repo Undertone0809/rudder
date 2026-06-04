@@ -68,6 +68,8 @@ test("Library markdown editor can mention global Rudder entities", async ({ page
     },
   });
   expect(workspaceDocRes.ok()).toBe(true);
+  const workspaceDoc = await workspaceDocRes.json() as { libraryEntryId: string };
+  expect(workspaceDoc.libraryEntryId).toBeTruthy();
 
   const editorDocPath = "docs/global-mention-editor.md";
   const editorDocRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
@@ -79,6 +81,21 @@ test("Library markdown editor can mention global Rudder entities", async ({ page
   expect(editorDocRes.ok()).toBe(true);
 
   await selectOrganization(page, organization.id);
+  await page.goto(`/${organization.issuePrefix}/library?entry=${encodeURIComponent(workspaceDoc.libraryEntryId)}&path=docs%2Fstale-reference.md`);
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(workspaceDocPath)}$`));
+  await expect(page.locator("#main-content")).toContainText("global-mention-reference.md");
+
+  const renameRes = await page.request.patch(`/api/orgs/${organization.id}/workspace/entry?path=${encodeURIComponent(workspaceDocPath)}`, {
+    data: {
+      name: "global-mention-reference-renamed.md",
+    },
+  });
+  expect(renameRes.ok()).toBe(true);
+  const renamedWorkspaceDocPath = "docs/global-mention-reference-renamed.md";
+  await page.goto(`/${organization.issuePrefix}/library?entry=${encodeURIComponent(workspaceDoc.libraryEntryId)}&path=${encodeURIComponent(workspaceDocPath)}`);
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(renamedWorkspaceDocPath)}$`));
+  await expect(page.locator("#main-content")).toContainText("global-mention-reference-renamed.md");
+
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(editorDocPath)}`);
 
   const editor = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').first();
@@ -96,6 +113,6 @@ test("Library markdown editor can mention global Rudder entities", async ({ page
   await expectMention(String(suffix), `markdown-mention-option-agent:${agent.id}`, agent.name);
   await expectMention(String(suffix), `markdown-mention-option-issue:${issue.id}`, issue.title);
   await expectMention(String(suffix), `markdown-mention-option-chat:${chat.id}`, chat.title);
-  await expectMention("global-mention-reference", `markdown-mention-option-library-file:${workspaceDocPath}`, "global-mention-reference.md");
+  await expectMention("global-mention-reference", `markdown-mention-option-library-file:${renamedWorkspaceDocPath}`, "global-mention-reference-renamed.md");
   await expectMention(String(suffix), `markdown-mention-option-skill:org:${skill.id}`, skill.slug);
 });

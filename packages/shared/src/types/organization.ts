@@ -18,6 +18,7 @@ export interface OrganizationWorkspaceFileEntry {
   name: string;
   path: string;
   isDirectory: boolean;
+  libraryEntryId?: string | null;
   displayLabel?: string;
   entityType?: OrganizationWorkspaceFileEntryEntityType;
   agentId?: string;
@@ -41,6 +42,7 @@ export interface OrganizationWorkspaceFileDetail {
   rootPath: string | null;
   repoUrl: string | null;
   filePath: string;
+  libraryEntryId: string | null;
   rootExists: boolean;
   content: string | null;
   contentType: string | null;
@@ -75,6 +77,19 @@ export interface OrganizationWorkspaceEntryMutationResult {
   path: string;
   previousPath?: string;
   isDirectory?: boolean;
+  libraryEntryId?: string | null;
+}
+
+export interface LibraryEntry {
+  id: string;
+  orgId: string;
+  kind: "file";
+  sourceType: "workspace_file";
+  currentPath: string | null;
+  title: string;
+  status: "active" | "archived" | "deleted";
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Organization {

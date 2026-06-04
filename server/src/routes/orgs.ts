@@ -40,6 +40,7 @@ import {
   logActivity,
 } from "../services/index.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
+import { libraryEntryService } from "../services/library-entries.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
@@ -64,6 +65,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   const budgets = budgetService(db);
   const resources = resourceCatalogService(db);
   const documents = documentService(db);
+  const libraryEntries = libraryEntryService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
   const workspaceBackups = workspaceBackupService(db);
   const exportJobs = organizationExportJobService();
@@ -224,6 +226,20 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       return;
     }
     res.json(document);
+  });
+
+  router.get("/:orgId/library/entries/:entryId", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type !== "agent") {
+      assertBoard(req);
+    }
+    const entry = await libraryEntries.getById(orgId, req.params.entryId as string);
+    if (!entry) {
+      res.status(404).json({ error: "Library entry not found" });
+      return;
+    }
+    res.json(entry);
   });
 
   router.patch("/:orgId/library/documents/:documentId", validate(updateLibraryDocumentSchema), async (req, res) => {

@@ -8,6 +8,8 @@ export const queryKeys = {
     libraryDocuments: (orgId: string) => ["organizations", orgId, "library-documents"] as const,
     libraryDocument: (orgId: string, documentId: string) =>
       ["organizations", orgId, "library-document", documentId] as const,
+    libraryEntry: (orgId: string, entryId: string) =>
+      ["organizations", orgId, "library-entry", entryId] as const,
     libraryDocumentRevisions: (orgId: string, documentId: string) =>
       ["organizations", orgId, "library-document-revisions", documentId] as const,
     workspaceFiles: (orgId: string, directoryPath: string) =>

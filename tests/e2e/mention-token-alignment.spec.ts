@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { expect, test, type Page } from "@playwright/test";
 
-const TOKEN_TYPES = ["agent", "project", "issue", "chat", "library_doc", "library_file", "skill"] as const;
+const TOKEN_TYPES = ["agent", "project", "issue", "chat", "library_doc", "library_entry", "library_file", "skill"] as const;
 const SURFACES = ["editor", "milkdown", "markdown"] as const;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const APP_STYLESHEET = path.join(REPO_ROOT, "ui/src/index.css");
@@ -48,6 +48,7 @@ test("mention tokens align with surrounding text on every rendered surface", asy
             <a class="rudder-mention-chip rudder-mention-chip--issue" data-token-kind="issue" data-mention-kind="issue">ZST-24</a>
             <a class="rudder-mention-chip rudder-mention-chip--chat" data-token-kind="chat" data-mention-kind="chat">Launch chat</a>
             <a class="rudder-mention-chip rudder-mention-chip--library_doc" data-token-kind="library_doc" data-mention-kind="library_doc">Product doc</a>
+            <a class="rudder-mention-chip rudder-mention-chip--library_entry" data-token-kind="library_entry" data-mention-kind="library_entry">entry-brief.md</a>
             <a class="rudder-mention-chip rudder-mention-chip--library_file" data-token-kind="library_file" data-mention-kind="library_file">product-brief.md</a>
             <span class="rudder-skill-token" data-token-kind="skill" data-skill-token="true">build-advisor</span>
             after text.
@@ -61,6 +62,7 @@ test("mention tokens align with surrounding text on every rendered surface", asy
             <a class="rudder-mention-chip rudder-mention-chip--issue" data-token-kind="issue" data-mention-kind="issue">ZST-24</a>
             <a class="rudder-mention-chip rudder-mention-chip--chat" data-token-kind="chat" data-mention-kind="chat">Launch chat</a>
             <a class="rudder-mention-chip rudder-mention-chip--library_doc" data-token-kind="library_doc" data-mention-kind="library_doc">Product doc</a>
+            <a class="rudder-mention-chip rudder-mention-chip--library_entry" data-token-kind="library_entry" data-mention-kind="library_entry">entry-brief.md</a>
             <a class="rudder-mention-chip rudder-mention-chip--library_file" data-token-kind="library_file" data-mention-kind="library_file">product-brief.md</a>
             <span class="rudder-skill-token" data-token-kind="skill" data-skill-token="true">build-advisor</span>
             after text.
@@ -74,6 +76,7 @@ test("mention tokens align with surrounding text on every rendered surface", asy
             <a class="rudder-mention-chip rudder-mention-chip--issue" data-token-kind="issue" data-mention-kind="issue">ZST-24</a>
             <a class="rudder-mention-chip rudder-mention-chip--chat" data-token-kind="chat" data-mention-kind="chat">Launch chat</a>
             <a class="rudder-mention-chip rudder-mention-chip--library_doc" data-token-kind="library_doc" data-mention-kind="library_doc">Product doc</a>
+            <a class="rudder-mention-chip rudder-mention-chip--library_entry" data-token-kind="library_entry" data-mention-kind="library_entry">entry-brief.md</a>
             <a class="rudder-mention-chip rudder-mention-chip--library_file" data-token-kind="library_file" data-mention-kind="library_file">product-brief.md</a>
             <span class="rudder-skill-token-wrap">
               <span class="rudder-skill-token" data-token-kind="skill" data-skill-token="true">build-advisor</span>
@@ -97,21 +100,23 @@ test("mention tokens align with surrounding text on every rendered surface", asy
       expect(Math.abs(tokenCenter - textCenter), `${surface} ${type} token center`).toBeLessThanOrEqual(1.5);
     }
 
-    const libraryFileStyles = await page
-      .locator(`[data-surface="${surface}"] [data-token-kind="library_file"]`)
-      .evaluate((element) => {
-        const styles = getComputedStyle(element);
-        return {
-          backgroundColor: styles.backgroundColor,
-          borderTopStyle: styles.borderTopStyle,
-          borderTopWidth: styles.borderTopWidth,
-          color: styles.color,
-        };
-      });
-    expect(libraryFileStyles.backgroundColor, `${surface} library file background`).toBe("rgba(0, 0, 0, 0)");
-    expect(libraryFileStyles.borderTopStyle, `${surface} library file border style`).toBe("none");
-    expect(libraryFileStyles.borderTopWidth, `${surface} library file border width`).toBe("0px");
-    expect(libraryFileStyles.color, `${surface} library file link color`).toBe("rgb(37, 99, 235)");
+    for (const libraryTokenType of ["library_entry", "library_file"] as const) {
+      const libraryTokenStyles = await page
+        .locator(`[data-surface="${surface}"] [data-token-kind="${libraryTokenType}"]`)
+        .evaluate((element) => {
+          const styles = getComputedStyle(element);
+          return {
+            backgroundColor: styles.backgroundColor,
+            borderTopStyle: styles.borderTopStyle,
+            borderTopWidth: styles.borderTopWidth,
+            color: styles.color,
+          };
+        });
+      expect(libraryTokenStyles.backgroundColor, `${surface} ${libraryTokenType} background`).toBe("rgba(0, 0, 0, 0)");
+      expect(libraryTokenStyles.borderTopStyle, `${surface} ${libraryTokenType} border style`).toBe("none");
+      expect(libraryTokenStyles.borderTopWidth, `${surface} ${libraryTokenType} border width`).toBe("0px");
+      expect(libraryTokenStyles.color, `${surface} ${libraryTokenType} link color`).toBe("rgb(37, 99, 235)");
+    }
 
     for (const type of TOKEN_TYPES) {
       const fontWeight = await page
@@ -152,6 +157,7 @@ test("composer reference tokens align inside the chat input line", async ({ page
             <a class="rudder-mention-chip rudder-mention-chip--issue" data-token-kind="issue" data-mention-kind="issue">ZST-363 issue update 的内容太粗了</a>
             <a class="rudder-mention-chip rudder-mention-chip--chat" data-token-kind="chat" data-mention-kind="chat">Chat update</a>
             <a class="rudder-mention-chip rudder-mention-chip--library_doc" data-token-kind="library_doc" data-mention-kind="library_doc">Project context</a>
+            <a class="rudder-mention-chip rudder-mention-chip--library_entry" data-token-kind="library_entry" data-mention-kind="library_entry">entry-brief.md</a>
             <a class="rudder-mention-chip rudder-mention-chip--library_file" data-token-kind="library_file" data-mention-kind="library_file">product-brief.md</a>
             <span class="rudder-skill-token" data-token-kind="skill" data-skill-token="true">你有权限创建一个新项目吗?</span>
           </p>

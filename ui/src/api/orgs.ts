@@ -3,6 +3,7 @@ import type {
   CreateOrganizationResourceRequest,
   LibraryDocument,
   LibraryDocumentRevision,
+  LibraryEntry,
   LibraryDocumentSummary,
   Organization,
   OrganizationResource,
@@ -84,6 +85,8 @@ export const organizationsApi = {
     api.post<LibraryDocument>(`/orgs/${orgId}/library/documents`, data),
   getLibraryDocument: (orgId: string, documentId: string) =>
     api.get<LibraryDocument>(`/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}`),
+  getLibraryEntry: (orgId: string, entryId: string) =>
+    api.get<LibraryEntry>(`/orgs/${orgId}/library/entries/${encodeURIComponent(entryId)}`),
   updateLibraryDocument: (orgId: string, documentId: string, data: UpdateLibraryDocument) =>
     api.patch<LibraryDocument>(`/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}`, data),
   listLibraryDocumentRevisions: (orgId: string, documentId: string) =>

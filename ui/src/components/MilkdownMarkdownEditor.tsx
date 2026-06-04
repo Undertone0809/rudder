@@ -28,6 +28,7 @@ import {
   buildIssueMentionHref,
   buildLibraryDirectoryMentionHref,
   buildLibraryDocMentionHref,
+  buildLibraryEntryMentionHref,
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
 } from "@rudderhq/shared";
@@ -144,7 +145,12 @@ function mentionTokenDetails(option: MentionOption): { href: string; label: stri
     };
   }
   if (option.kind === "library_file" && option.libraryFilePath) {
-    return { href: buildLibraryFileMentionHref(option.libraryFilePath, option.name), label: option.name };
+    return {
+      href: option.libraryEntryId
+        ? buildLibraryEntryMentionHref(option.libraryEntryId, option.name, option.libraryFilePath)
+        : buildLibraryFileMentionHref(option.libraryFilePath, option.name),
+      label: option.name,
+    };
   }
   if (option.kind === "library_directory" && option.libraryDirectoryPath) {
     return { href: buildLibraryDirectoryMentionHref(option.libraryDirectoryPath, option.name), label: option.name };
@@ -198,6 +204,7 @@ export function rudderTokenNavigationPath(href: string) {
     if (parsed.kind === "issue") return `/issues/${parsed.ref ?? parsed.issueId}`;
     if (parsed.kind === "chat") return `/messenger/chat/${parsed.conversationId}`;
     if (parsed.kind === "library_doc") return `/library?doc=${encodeURIComponent(parsed.documentId)}`;
+    if (parsed.kind === "library_entry") return `/library?entry=${encodeURIComponent(parsed.entryId)}`;
     if (parsed.kind === "library_file") return `/library?path=${encodeURIComponent(parsed.filePath)}`;
     if (parsed.kind === "library_directory") return `/library?directory=${encodeURIComponent(parsed.directoryPath)}`;
     return `/agents/${parsed.agentId}`;

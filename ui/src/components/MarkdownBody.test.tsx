@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { ThemeProvider } from "../context/ThemeContext";
 import { MarkdownBody } from "./MarkdownBody";
 import type { MentionOption } from "./MarkdownEditor";
@@ -122,6 +122,19 @@ describe("MarkdownBody", () => {
 
     expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
     expect(html).toContain('data-mention-kind="library_file"');
+    expect(html).toContain("product-brief.md");
+  });
+
+  it("renders library entry mentions as live Library entry links with path hints", () => {
+    const href = buildLibraryEntryMentionHref("entry-123", "product-brief.md", "docs/product-brief.md");
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{`[@product-brief.md](${href})`}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/library?entry=entry-123"');
+    expect(html).toContain('data-mention-kind="library_entry"');
     expect(html).toContain("product-brief.md");
   });
 

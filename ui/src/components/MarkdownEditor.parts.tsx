@@ -80,7 +80,7 @@ import { cn } from "../lib/utils";
 export interface MentionOption {
   id: string;
   name: string;
-  kind?: "agent" | "project" | "issue" | "skill";
+  kind?: "agent" | "project" | "issue" | "chat" | "library_doc" | "library_entry" | "library_file" | "library_directory" | "skill";
   searchText?: string;
   agentId?: string;
   agentIcon?: string | null;
@@ -95,6 +95,18 @@ export interface MentionOption {
   issueAssigneeName?: string | null;
   issueAssigneeIcon?: string | null;
   issueAssigneeRole?: AgentRole | null;
+  chatConversationId?: string;
+  chatTitle?: string | null;
+  chatStatus?: string | null;
+  chatSummary?: string | null;
+  chatUpdatedAt?: Date | string | null;
+  libraryDocumentId?: string;
+  libraryDocumentTitle?: string | null;
+  libraryDocumentUpdatedAt?: Date | string | null;
+  libraryDocumentPath?: string | null;
+  libraryEntryId?: string | null;
+  libraryFilePath?: string | null;
+  libraryDirectoryPath?: string | null;
   skillRefLabel?: string | null;
   skillMarkdownTarget?: string | null;
   skillDisplayName?: string | null;

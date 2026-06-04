@@ -1,5 +1,6 @@
 export type {
   Organization,
+  LibraryEntry,
   OrganizationWorkspace,
   OrganizationWorkspaceRootSource,
   OrganizationWorkspaceFileEntry,
