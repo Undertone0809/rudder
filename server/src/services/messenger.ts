@@ -662,6 +662,7 @@ function splitIssueSummary(
   entry: IssueThreadEntry,
   item: MessengerIssueThreadItem,
   lastReadAt: Date | null,
+  threadState: ThreadStateRow | null,
 ): MessengerThreadSummary {
   const unreadCount = entry.attentionActivityAt && (!lastReadAt || entry.attentionActivityAt.getTime() > lastReadAt.getTime())
     ? 1
@@ -676,7 +677,7 @@ function splitIssueSummary(
     lastReadAt,
     unreadCount,
     needsAttention: unreadCount > 0,
-    isPinned: false,
+    isPinned: Boolean(threadState?.pinnedAt),
     href: item.href ?? issueHref(entry.issue),
     metadata: {
       ...item.metadata,
@@ -1441,7 +1442,8 @@ export function messengerService(db: Db) {
     const pageEntries = entries.slice(0, limit);
     const cards = await buildIssueCardsForEntries(orgId, userId, pageEntries, "latest");
     const lastReadAt = await lastReadAtPromise;
-    return cards.map(({ entry, item }) => splitIssueSummary(entry, item, lastReadAt));
+    const issueThreadStates = await loadThreadStates(db, orgId, userId, cards.map(({ entry }) => `issue:${entry.issue.id}`));
+    return cards.map(({ entry, item }) => splitIssueSummary(entry, item, lastReadAt, issueThreadStates.get(`issue:${entry.issue.id}`) ?? null));
   }
 
   async function loadApprovalSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
@@ -2054,6 +2056,72 @@ export function messengerService(db: Db) {
     return row ? ({ lastReadAt: row.lastReadAt } as ThreadReadState) : null;
   }
 
+  async function canUseIssueThread(orgId: string, userId: string, issueId: string) {
+    const [row] = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(
+        eq(issues.orgId, orgId),
+        eq(issues.id, issueId),
+        ne(issues.originKind, "automation_execution"),
+        or(
+          eq(issues.assigneeUserId, userId),
+          eq(issues.reviewerUserId, userId),
+          eq(issues.createdByUserId, userId),
+          sql`exists (
+            select 1
+            from ${issueFollows} follow_row
+            where follow_row.org_id = ${orgId}
+              and follow_row.user_id = ${userId}
+              and follow_row.issue_id = ${issues.id}
+          )`,
+        ),
+      ))
+      .limit(1);
+    return Boolean(row);
+  }
+
+  async function setThreadPinned(orgId: string, userId: string, threadKey: string, pinned: boolean) {
+    if (threadKey.startsWith("chat:")) {
+      const conversationId = threadKey.slice("chat:".length);
+      const conversation = await chatsSvc.getById(conversationId, userId);
+      if (!conversation || conversation.orgId !== orgId) return null;
+      await chatsSvc.setPinned(conversationId, orgId, userId, pinned);
+      return { threadKey, pinned };
+    }
+
+    if (threadKey.startsWith("issue:")) {
+      const issueId = threadKey.slice("issue:".length);
+      if (!await canUseIssueThread(orgId, userId, issueId)) return null;
+    }
+
+    const now = new Date();
+    const existing = await getThreadState(orgId, userId, threadKey);
+    const [row] = await db
+      .insert(messengerThreadUserStates)
+      .values({
+        orgId,
+        userId,
+        threadKey,
+        lastReadAt: existing?.lastReadAt ?? new Date(0),
+        pinnedAt: pinned ? now : null,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          messengerThreadUserStates.orgId,
+          messengerThreadUserStates.threadKey,
+          messengerThreadUserStates.userId,
+        ],
+        set: {
+          pinnedAt: pinned ? now : null,
+          updatedAt: now,
+        },
+      })
+      .returning();
+    return row ? { threadKey, pinned: Boolean(row.pinnedAt) } : null;
+  }
+
   return {
     listThreadSummaries,
     listThreadSummaryPage,
@@ -2065,5 +2133,6 @@ export function messengerService(db: Db) {
     getThreadState,
     markThreadRead,
     setThreadRead: markThreadRead,
+    setThreadPinned,
   };
 }

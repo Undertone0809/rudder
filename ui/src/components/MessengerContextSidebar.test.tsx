@@ -320,6 +320,49 @@ describe("MessengerContextSidebar", () => {
     }));
   });
 
+  it("promotes pinned split issue rows with pinned chats in latest activity mode", () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-2",
+          kind: "chat",
+          title: "Recent unpinned chat",
+          preview: "Recent but not pinned.",
+          subtitle: null,
+          href: "/messenger/chat/chat-2",
+          latestActivityAt: "2026-04-11T09:55:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Pinned split issue",
+          preview: "Pinned issue should sort with pinned rows.",
+          subtitle: "assigned to me",
+          href: "/issues/ISS-1",
+          latestActivityAt: "2026-04-11T08:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 1,
+          needsAttention: true,
+          isPinned: true,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.indexOf('data-testid="messenger-thread-issue-issue-1"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-chat-chat-2"'),
+    );
+    expect(html).toContain("Pinned");
+    expect(html).toContain("Recent");
+  });
+
   it("groups Messenger chats by project when the organization rule is project", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
     chatList = [

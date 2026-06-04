@@ -358,7 +358,7 @@ describe("messengerService and issue follows", () => {
     const issueId = randomUUID();
     const chatId = randomUUID();
     const olderChatId = randomUUID();
-    const issueUpdatedAt = new Date("2026-05-03T12:00:00.000Z");
+    const issueUpdatedAt = new Date("2026-05-03T10:30:00.000Z");
     const chatUpdatedAt = new Date("2026-05-03T11:00:00.000Z");
     const olderChatUpdatedAt = new Date("2026-05-03T10:00:00.000Z");
 
@@ -419,12 +419,12 @@ describe("messengerService and issue follows", () => {
     expect(aggregateSummaries.map((item) => item.threadKey)).toContain("issues");
     expect(splitSummaries.map((item) => item.threadKey)).not.toContain("issues");
     expect(splitSummaries.map((item) => item.threadKey)).toEqual([
-      `issue:${issueId}`,
       `chat:${chatId}`,
+      `issue:${issueId}`,
       `chat:${olderChatId}`,
     ]);
     expect(splitPage.items.map((item) => item.threadKey)).toEqual(splitSummaries.map((item) => item.threadKey));
-    expect(splitSummaries[0]).toMatchObject({
+    expect(splitSummaries[1]).toMatchObject({
       threadKey: `issue:${issueId}`,
       kind: "issues",
       title: "SPL-1 · Split issue row",
@@ -438,6 +438,17 @@ describe("messengerService and issue follows", () => {
         assignedToMe: true,
       },
     });
+
+    const pinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${issueId}`, true);
+    const pinnedSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+
+    expect(pinnedState).toEqual({ threadKey: `issue:${issueId}`, pinned: true });
+    expect(pinnedSummaries.map((item) => item.threadKey)).toEqual([
+      `issue:${issueId}`,
+      `chat:${chatId}`,
+      `chat:${olderChatId}`,
+    ]);
+    expect(pinnedSummaries[0]?.isPinned).toBe(true);
   });
 
   it("includes issue status transitions in Messenger issue update cards", async () => {

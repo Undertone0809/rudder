@@ -9,6 +9,7 @@ import {
   createDb,
   heartbeatRuns,
   issues,
+  messengerThreadUserStates,
 } from "../../packages/db/src/index.ts";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
@@ -600,7 +601,7 @@ test.describe("Messenger unified threads contract", () => {
     await expect(mainContent.locator(".chat-composer")).toBeVisible({ timeout: 15_000 });
     const organizationPrefix = organization.issuePrefix;
 
-    const sidebarThreads = page.locator('[data-testid="workspace-sidebar"] [data-testid^="messenger-thread-"]:not([data-testid="messenger-thread-organization-trigger"])');
+    const sidebarThreads = page.locator('[data-testid="workspace-sidebar"] [data-messenger-thread-key]');
     await expect(sidebarThreads).toHaveCount(3, { timeout: 15_000 });
     await expect(page.getByTestId(threadTestId("approvals"))).toContainText("Approvals");
     await expect(page.getByTestId(threadTestId("issues"))).toContainText("Messenger issue follow");
@@ -816,11 +817,46 @@ test.describe("Messenger unified threads contract", () => {
     await expect(splitIssueRow).toContainText(issueRef);
     await expect(splitIssueRow).toContainText("assigned to me");
 
-    const sidebarThreads = page.locator('[data-testid="workspace-sidebar"] [data-testid^="messenger-thread-"]:not([data-testid="messenger-thread-organization-trigger"])');
+    const sidebarThreads = page.locator('[data-testid="workspace-sidebar"] [data-messenger-thread-key]');
     await expect(sidebarThreads).toHaveCount(3);
     await expect(sidebarThreads.nth(0)).toContainText("Split newer chat");
     await expect(sidebarThreads.nth(1)).toContainText("Split sidebar issue");
     await expect(sidebarThreads.nth(2)).toContainText("Split older chat");
+
+    await splitIssueRow.hover();
+    await splitIssueRow.getByRole("button", { name: "Thread actions" }).click();
+    await page.getByRole("menuitem", { name: "Pin" }).click();
+    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect.poll(async () => {
+      return await sidebarThreads.evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-testid")),
+      );
+    }).toEqual([
+      threadTestId(`issue:${issue.id}`),
+      threadTestId(`chat:${newerChat.id}`),
+      threadTestId(`chat:${olderChat.id}`),
+    ]);
+    await expect.poll(async () => {
+      const rows = await e2eDb
+        .select({ pinnedAt: messengerThreadUserStates.pinnedAt })
+        .from(messengerThreadUserStates)
+        .where(eq(messengerThreadUserStates.threadKey, `issue:${issue.id}`));
+      return Boolean(rows[0]?.pinnedAt);
+    }).toBe(true);
+
+    await splitIssueRow.hover();
+    await splitIssueRow.getByRole("button", { name: "Thread actions" }).click();
+    await page.getByRole("menuitem", { name: "Unpin" }).click();
+    await expect(page.getByTestId("messenger-thread-section-pinned")).toHaveCount(0);
+    await expect.poll(async () => {
+      return await sidebarThreads.evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-testid")),
+      );
+    }).toEqual([
+      threadTestId(`chat:${newerChat.id}`),
+      threadTestId(`issue:${issue.id}`),
+      threadTestId(`chat:${olderChat.id}`),
+    ]);
 
     await splitIssueRow.click();
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${issueRef}$`));

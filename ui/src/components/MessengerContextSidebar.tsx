@@ -570,24 +570,26 @@ function ThreadRow({
   thread,
   active,
   density,
+  onTogglePin,
   onSelect,
 }: {
   thread: ReturnType<typeof useMessengerModel>["threadSummaries"][number];
   active: boolean;
   density: MessengerThreadDensity;
+  onTogglePin: () => void;
   onSelect: (href: string) => void;
 }) {
   const Icon = threadIcon(thread.kind);
   const preview = formatMessengerPreview(thread.preview) || formatMessengerPreview(thread.subtitle) || messengerThreadKindLabel(thread.kind);
   const compact = density === "compact";
-  const row = (
-    <Link
-      to={thread.href}
-      onClick={() => onSelect(thread.href)}
+  const [actionsOpen, setActionsOpen] = useState(false);
+
+  return (
+    <div
       data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}
       data-messenger-thread-key={thread.threadKey}
       className={cn(
-        "mx-1.5 flex rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
+        "group relative mx-1.5 flex rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
         compact ? "items-center gap-2 px-2 py-1.5" : "items-start gap-3 px-3 py-2.5",
         active
           ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
@@ -601,44 +603,79 @@ function ThreadRow({
         density={density}
         testId={`${sanitizeThreadKey(thread.threadKey)}-unread-badge`}
       />
-      <span className="min-w-0 flex-1">
-        <span className={cn(
-          "grid min-w-0 gap-x-2",
-          compact ? "grid-cols-[minmax(0,1fr)_2.75rem] items-center" : "grid-cols-[minmax(0,1fr)_3rem] items-start",
-        )}>
-          <span
-            className={cn(
-              "min-w-0 truncate text-[13px] leading-tight",
-              thread.unreadCount > 0 ? "font-semibold text-foreground" : "font-medium text-foreground/92",
-            )}
-          >
-            {threadDisplayTitle(thread.title)}
+      <Link to={thread.href} onClick={() => onSelect(thread.href)} className="block min-w-0 flex-1">
+        <span className="min-w-0">
+          <span className={cn(
+            "grid min-w-0 gap-x-2",
+            compact ? "grid-cols-[minmax(0,1fr)_2.75rem] items-center" : "grid-cols-[minmax(0,1fr)_3rem] items-start",
+          )}>
+            <span
+              className={cn(
+                "flex min-w-0 items-center gap-2 text-[13px] leading-tight",
+                thread.unreadCount > 0 ? "font-semibold text-foreground" : "font-medium text-foreground/92",
+              )}
+            >
+              <span className="truncate">{threadDisplayTitle(thread.title)}</span>
+              {thread.isPinned ? (
+                <Pin className="h-3 w-3 shrink-0 text-muted-foreground" />
+              ) : null}
+            </span>
+            <span
+              data-testid={`messenger-time-${sanitizeThreadKey(thread.threadKey)}`}
+              className={cn(
+                "block shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
+                compact ? "w-11" : "mt-0.5 w-12",
+                actionsOpen && "opacity-0",
+              )}
+            >
+              {thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt)) : "No activity"}
+            </span>
           </span>
-          <span
-            data-testid={`messenger-time-${sanitizeThreadKey(thread.threadKey)}`}
-            className={cn(
-              "block shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground",
-              compact ? "w-11" : "mt-0.5 w-12",
-            )}
-          >
-            {thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt)) : "No activity"}
-          </span>
+          {!compact ? (
+            <span
+              className={cn(
+                "mt-0.5 block truncate text-[12px]",
+                thread.unreadCount > 0 ? "text-foreground/76" : "text-muted-foreground",
+              )}
+            >
+              {preview}
+            </span>
+          ) : null}
         </span>
-        {!compact ? (
-          <span
-            className={cn(
-              "mt-0.5 block truncate text-[12px]",
-              thread.unreadCount > 0 ? "text-foreground/76" : "text-muted-foreground",
-            )}
-          >
-            {preview}
-          </span>
-        ) : null}
-      </span>
-    </Link>
-  );
+      </Link>
 
-  return row;
+      <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+              compact ? "right-1.5" : "right-2",
+              actionsOpen ? "opacity-100" : "opacity-0",
+            )}
+            aria-label="Thread actions"
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+          <DropdownMenuItem onClick={onTogglePin}>
+            {thread.isPinned ? (
+              <>
+                <PinOff className="h-4 w-4" />
+                Unpin
+              </>
+            ) : (
+              <>
+                <Pin className="h-4 w-4" />
+                Pin
+              </>
+            )}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
 }
 
 type MessengerThreadSummaryItem = ReturnType<typeof useMessengerModel>["threadSummaries"][number];
@@ -714,7 +751,6 @@ interface OrganizedThreadSection {
 }
 
 function isPinnedEntry(entry: OrganizedThreadEntry) {
-  if (entry.thread.kind !== "chat") return false;
   return typeof entry.thread.isPinned === "boolean" ? entry.thread.isPinned : Boolean(entry.conversation?.isPinned);
 }
 
@@ -1000,6 +1036,22 @@ export function MessengerContextSidebar() {
     },
   });
 
+  const updateThreadUserStateMutation = useMutation({
+    mutationFn: ({
+      threadKey,
+      pinned,
+    }: {
+      threadKey: string;
+      pinned?: boolean;
+    }) => {
+      if (!model.selectedOrganizationId) throw new Error("Organization is required to update Messenger thread state");
+      return messengerApi.updateThreadUserState(model.selectedOrganizationId, threadKey, { pinned });
+    },
+    onSuccess: async () => {
+      await refreshChatViews();
+    },
+  });
+
   const submitRename = () => {
     const trimmed = renameDraft.trim();
     if (!renamingConversationId || !trimmed) {
@@ -1241,6 +1293,12 @@ export function MessengerContextSidebar() {
                   thread={thread}
                   active={active}
                   density={threadDensity}
+                  onTogglePin={() => {
+                    updateThreadUserStateMutation.mutate({
+                      threadKey: thread.threadKey,
+                      pinned: !thread.isPinned,
+                    });
+                  }}
                   onSelect={handleMessengerEntrySelect}
                 />
               );

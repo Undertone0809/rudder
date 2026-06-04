@@ -15,6 +15,7 @@ export interface MessengerThreadUserState {
   userId: string;
   threadKey: string;
   lastReadAt: Date;
+  pinnedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -268,6 +268,10 @@ export const updateChatConversationUserStateSchema = z.object({
   unread: z.boolean().optional(),
 });
 
+export const updateMessengerThreadUserStateSchema = z.object({
+  pinned: z.boolean().optional(),
+});
+
 export type ChatConversationStatus = z.infer<typeof chatConversationStatusSchema>;
 export type ChatIssueCreationMode = z.infer<typeof chatIssueCreationModeSchema>;
 export type ChatMessageRole = z.infer<typeof chatMessageRoleSchema>;
@@ -279,6 +283,7 @@ export type CreateChatConversation = z.infer<typeof createChatConversationSchema
 export type SetChatProjectContext = z.infer<typeof setChatProjectContextSchema>;
 export type UpdateChatConversation = z.infer<typeof updateChatConversationSchema>;
 export type AddChatMessage = z.infer<typeof addChatMessageSchema>;
+export type UpdateMessengerThreadUserState = z.infer<typeof updateMessengerThreadUserStateSchema>;
 export type ChatAskUserOption = z.infer<typeof chatAskUserOptionSchema>;
 export type ChatAskUserQuestion = z.infer<typeof chatAskUserQuestionSchema>;
 export type ChatAskUserRequest = z.infer<typeof chatAskUserRequestSchema>;

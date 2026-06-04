@@ -41,6 +41,17 @@ export const messengerApi = {
       `/orgs/${orgId}/messenger/threads/${encodeURIComponent(threadKey)}/read`,
       lastReadAt ? { lastReadAt } : {},
     ),
+  updateThreadUserState: (
+    orgId: string,
+    threadKey: string,
+    data: {
+      pinned?: boolean;
+    },
+  ) =>
+    api.post<{ threadKey: string; pinned?: boolean }>(
+      `/orgs/${orgId}/messenger/threads/${encodeURIComponent(threadKey)}/user-state`,
+      data,
+    ),
   getIssuesThread: (orgId: string, options: MessengerIssuesThreadOptions = {}) => {
     const params = new URLSearchParams();
     if (options.cursor) params.set("cursor", options.cursor);

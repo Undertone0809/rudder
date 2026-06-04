@@ -1,7 +1,12 @@
 import { Router } from "express";
 import type { Db } from "@rudderhq/db";
-import { MESSENGER_SYSTEM_THREAD_KINDS, type MessengerSystemThreadKind } from "@rudderhq/shared";
+import {
+  MESSENGER_SYSTEM_THREAD_KINDS,
+  updateMessengerThreadUserStateSchema,
+  type MessengerSystemThreadKind,
+} from "@rudderhq/shared";
 import { messengerService } from "../services/messenger.js";
+import { validate } from "../middleware/validate.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 const SYSTEM_THREAD_KIND_SET = new Set<MessengerSystemThreadKind>(MESSENGER_SYSTEM_THREAD_KINDS);
@@ -14,6 +19,9 @@ function boardUserId(req: Parameters<typeof assertBoard>[0]) {
 function parseThreadKey(threadKey: string) {
   if (threadKey.startsWith("chat:")) {
     return { kind: "chat" as const, conversationId: threadKey.slice("chat:".length) };
+  }
+  if (threadKey.startsWith("issue:")) {
+    return { kind: "issue" as const, issueId: threadKey.slice("issue:".length) };
   }
   if (threadKey === "issues") return { kind: "issues" as const };
   if (threadKey === "approvals") return { kind: "approvals" as const };
@@ -102,6 +110,34 @@ export function messengerRoutes(db: Db) {
     }
     res.json({ threadKey, lastReadAt: state.lastReadAt });
   });
+
+  router.post(
+    "/orgs/:orgId/messenger/threads/:threadKey/user-state",
+    validate(updateMessengerThreadUserStateSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      const threadKey = req.params.threadKey as string;
+      const parsed = parseThreadKey(threadKey);
+      if (!parsed) {
+        res.status(404).json({ error: "Messenger thread not found" });
+        return;
+      }
+
+      if (typeof req.body.pinned === "boolean") {
+        const state = await svc.setThreadPinned(orgId, userId, threadKey, req.body.pinned);
+        if (!state) {
+          res.status(404).json({ error: "Messenger thread not found" });
+          return;
+        }
+        res.json(state);
+        return;
+      }
+
+      res.json({ threadKey });
+    },
+  );
 
   router.get("/orgs/:orgId/messenger/issues", async (req, res) => {
     const orgId = req.params.orgId as string;
