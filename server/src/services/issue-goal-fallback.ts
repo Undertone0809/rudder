@@ -26,6 +26,14 @@ export function resolveNextIssueGoalId(input: {
     return input.goalId ?? null;
   }
 
+  if (input.projectId === undefined) {
+    return input.currentGoalId ?? null;
+  }
+
+  if (input.projectId === input.currentProjectId) {
+    return input.currentGoalId ?? null;
+  }
+
   const projectId =
     input.projectId !== undefined ? input.projectId : input.currentProjectId;
   const goalId = input.currentGoalId;

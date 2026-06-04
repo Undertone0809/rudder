@@ -12,6 +12,7 @@ const mockIssueService = vi.hoisted(() => ({
   create: vi.fn(),
   createAttachment: vi.fn(),
   findMentionedAgents: vi.fn(),
+  findMentionedProjectIds: vi.fn(),
   getAncestors: vi.fn(),
   getById: vi.fn(),
   getComment: vi.fn(),
@@ -50,6 +51,10 @@ const mockProjectService = vi.hoisted(() => ({
   listByIds: vi.fn(),
 }));
 
+const mockWorkProductService = vi.hoisted(() => ({
+  listForIssue: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 
 const ASSIGNEE_AGENT_ID = "22222222-2222-4222-8222-222222222222";
@@ -79,7 +84,7 @@ vi.mock("../services/index.js", () => ({
   automationService: () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),
   }),
-  workProductService: () => ({}),
+  workProductService: () => mockWorkProductService,
 }));
 
 function createBoardActor() {
@@ -175,6 +180,7 @@ describe("issue lifecycle routes", () => {
         : null,
     );
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
+    mockIssueService.findMentionedProjectIds.mockResolvedValue([]);
     mockIssueService.getAncestors.mockResolvedValue([]);
     mockIssueService.getComment.mockResolvedValue(null);
     mockIssueService.getCommentCursor.mockResolvedValue({
@@ -191,6 +197,7 @@ describe("issue lifecycle routes", () => {
     mockGoalService.getDefaultCompanyGoal.mockResolvedValue(null);
     mockProjectService.getById.mockResolvedValue(null);
     mockProjectService.listByIds.mockResolvedValue([]);
+    mockWorkProductService.listForIssue.mockResolvedValue([]);
     mockIssueService.addComment.mockImplementation(async (_issueId: string, body: string, author: { agentId?: string; userId?: string }) => ({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",
@@ -201,6 +208,44 @@ describe("issue lifecycle routes", () => {
       authorAgentId: author.agentId ?? null,
       authorUserId: author.userId ?? "local-board",
     }));
+  });
+
+  it("does not synthesize the default goal when reading an explicitly goal-less issue", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ goalId: null, projectId: null }));
+    mockGoalService.getDefaultCompanyGoal.mockResolvedValue({
+      id: "dddddddd-dddd-4ddd-dddd-dddddddddddd",
+      orgId: "organization-1",
+      title: "Default organization goal",
+      level: "organization",
+      status: "active",
+    });
+
+    const res = await request(createApp())
+      .get("/api/issues/11111111-1111-4111-8111-111111111111");
+
+    expect(res.status).toBe(200);
+    expect(res.body.goalId).toBeNull();
+    expect(res.body.goal).toBeNull();
+    expect(mockGoalService.getDefaultCompanyGoal).not.toHaveBeenCalled();
+  });
+
+  it("does not synthesize the default goal in heartbeat context for an explicitly goal-less issue", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ goalId: null, projectId: null }));
+    mockGoalService.getDefaultCompanyGoal.mockResolvedValue({
+      id: "dddddddd-dddd-4ddd-dddd-dddddddddddd",
+      orgId: "organization-1",
+      title: "Default organization goal",
+      level: "organization",
+      status: "active",
+    });
+
+    const res = await request(createApp())
+      .get("/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context");
+
+    expect(res.status).toBe(200);
+    expect(res.body.issue.goalId).toBeNull();
+    expect(res.body.goal).toBeNull();
+    expect(mockGoalService.getDefaultCompanyGoal).not.toHaveBeenCalled();
   });
 
   it("does not log activity for unchanged document saves", async () => {

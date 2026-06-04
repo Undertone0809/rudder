@@ -1043,6 +1043,15 @@ describe("issueService.list participantAgentId", () => {
     const updated = await svc.update(issue.id, { goalId: null });
 
     expect(updated?.goalId).toBeNull();
+
+    const descriptionOnlyUpdate = await svc.update(issue.id, {
+      description: "Description-only edits must not restore the default goal.",
+    });
+    expect(descriptionOnlyUpdate?.goalId).toBeNull();
+
+    const noProjectUpdate = await svc.update(issue.id, { projectId: null });
+    expect(noProjectUpdate?.goalId).toBeNull();
+
     const persisted = await svc.getById(issue.id);
     expect(persisted?.goalId).toBeNull();
   });

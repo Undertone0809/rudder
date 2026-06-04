@@ -45,11 +45,33 @@ describe("issue goal fallback", () => {
     ).toBeNull();
   });
 
-  it("backfills the organization goal on update for legacy no-project issues", () => {
+  it("preserves legacy no-project issues on unrelated updates", () => {
     expect(
       resolveNextIssueGoalId({
         currentProjectId: null,
         currentGoalId: null,
+        defaultGoalId: "goal-1",
+      }),
+    ).toBeNull();
+  });
+
+  it("preserves cleared no-project issues on no-op project clears", () => {
+    expect(
+      resolveNextIssueGoalId({
+        currentProjectId: null,
+        currentGoalId: null,
+        projectId: null,
+        defaultGoalId: "goal-1",
+      }),
+    ).toBeNull();
+  });
+
+  it("backfills the organization goal when a project is explicitly cleared", () => {
+    expect(
+      resolveNextIssueGoalId({
+        currentProjectId: "project-1",
+        currentGoalId: null,
+        projectId: null,
         defaultGoalId: "goal-1",
       }),
     ).toBe("goal-1");

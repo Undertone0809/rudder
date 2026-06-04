@@ -520,11 +520,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const [ancestors, project, goal, mentionedProjectIds, documentPayload] = await Promise.all([
       svc.getAncestors(issue.id),
       issue.projectId ? projectsSvc.getById(issue.projectId) : null,
-      issue.goalId
-        ? goalsSvc.getById(issue.goalId)
-        : !issue.projectId
-          ? goalsSvc.getDefaultCompanyGoal(issue.orgId)
-          : null,
+      issue.goalId ? goalsSvc.getById(issue.goalId) : null,
       svc.findMentionedProjectIds(issue.id),
       documentsSvc.getIssueDocumentPayload(issue),
     ]);
@@ -537,7 +533,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const workProducts = await workProductsSvc.listForIssue(issue.id);
     res.json({
       ...issue,
-      goalId: goal?.id ?? issue.goalId,
+      goalId: issue.goalId,
       ancestors,
       ...documentPayload,
       project: project ?? null,
@@ -565,11 +561,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const [ancestors, project, goal, commentCursor, wakeComment, documentPayload] = await Promise.all([
       svc.getAncestors(issue.id),
       issue.projectId ? projectsSvc.getById(issue.projectId) : null,
-      issue.goalId
-        ? goalsSvc.getById(issue.goalId)
-        : !issue.projectId
-          ? goalsSvc.getDefaultCompanyGoal(issue.orgId)
-          : null,
+      issue.goalId ? goalsSvc.getById(issue.goalId) : null,
       svc.getCommentCursor(issue.id),
       wakeCommentId ? svc.getComment(wakeCommentId) : null,
       documentsSvc.getIssueDocumentPayload(issue),
@@ -584,7 +576,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
         status: issue.status,
         priority: issue.priority,
         projectId: issue.projectId,
-        goalId: goal?.id ?? issue.goalId,
+        goalId: issue.goalId,
         parentId: issue.parentId,
         assigneeAgentId: issue.assigneeAgentId,
         assigneeUserId: issue.assigneeUserId,
