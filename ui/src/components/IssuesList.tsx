@@ -32,7 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverAnchor, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Star, SlidersHorizontal } from "lucide-react";
+import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Pin, SlidersHorizontal } from "lucide-react";
 import { DEFAULT_ISSUE_DISPLAY_PROPERTIES, KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
 import type { AgentRole, Issue, ReorderIssue } from "@rudderhq/shared";
 
@@ -258,8 +258,8 @@ interface IssuesListProps {
   initialSearch?: string;
   initialGroupBy?: IssueViewState["groupBy"];
   toolbarMode?: "full" | "controls-only" | "hidden";
-  starredIssueIds?: string[];
-  onToggleStarredIssue?: (issueId: string) => void;
+  pinnedIssueIds?: string[];
+  onTogglePinnedIssue?: (issueId: string) => void;
   onOpenIssue?: (issue: Issue) => void;
   searchFilters?: {
     participantAgentId?: string;
@@ -290,8 +290,8 @@ export function IssuesList({
   initialSearch,
   initialGroupBy,
   toolbarMode = "full",
-  starredIssueIds = [],
-  onToggleStarredIssue,
+  pinnedIssueIds = [],
+  onTogglePinnedIssue,
   onOpenIssue,
   searchFilters,
   onSearchChange,
@@ -923,6 +923,8 @@ export function IssuesList({
             projects={projects}
             onCreateIssue={(status) => openNewIssue({ ...contextNewIssueDefaults, status })}
             onOpenIssue={onOpenIssue}
+            pinnedIssueIds={pinnedIssueIds}
+            onTogglePinnedIssue={onTogglePinnedIssue}
             onUpdateIssue={onUpdateIssue}
             onReorderIssue={reorderIssue}
           />
@@ -1020,21 +1022,22 @@ export function IssuesList({
                   mobileMeta={timeAgo(issue.updatedAt)}
                   desktopTrailing={(
                     <>
-                      {onToggleStarredIssue ? (
+                      {onTogglePinnedIssue ? (
                         <button
                           type="button"
-                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                          className="rounded p-1 text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-accent/50 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            onToggleStarredIssue(issue.id);
+                            onTogglePinnedIssue(issue.id);
                           }}
-                          title={starredIssueIds.includes(issue.id) ? "Unstar issue" : "Star issue"}
+                          title={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
+                          aria-label={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
                         >
-                          <Star
+                          <Pin
                             className={cn(
                               "h-3.5 w-3.5",
-                              starredIssueIds.includes(issue.id) && "fill-current text-amber-500",
+                              pinnedIssueIds.includes(issue.id) && "fill-current text-[color:var(--accent-strong)]",
                             )}
                           />
                         </button>

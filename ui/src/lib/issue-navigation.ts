@@ -1,6 +1,6 @@
 const ISSUE_NAVIGATION_KEY = "rudder:issue-navigation";
 
-const SUPPORTED_SCOPES = new Set(["assigned", "starred", "recent"]);
+const SUPPORTED_SCOPES = new Set(["assigned", "pinned", "starred", "recent"]);
 
 type StoredIssueNavigationState = {
   scope?: string;
@@ -14,7 +14,9 @@ function getIssueNavigationStorageKey(selectedOrganizationId?: string | null): s
 function normalizeStoredIssueNavigationState(
   value: StoredIssueNavigationState | null | undefined,
 ): StoredIssueNavigationState {
-  const scope = typeof value?.scope === "string" && SUPPORTED_SCOPES.has(value.scope) ? value.scope : undefined;
+  const scope = typeof value?.scope === "string" && SUPPORTED_SCOPES.has(value.scope)
+    ? value.scope === "starred" ? "pinned" : value.scope
+    : undefined;
   const projectId = typeof value?.projectId === "string" && value.projectId.trim().length > 0
     ? value.projectId
     : undefined;

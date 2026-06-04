@@ -29,7 +29,7 @@ import { sortIssues, type IssueSortState } from "@/lib/issue-sort";
 import { formatPriorityLabel } from "@/lib/priorities";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { formatIssueCardDate } from "@/lib/issue-card-date";
-import { CalendarClock, FolderKanban, Plus, Tags, User, UserCheck } from "lucide-react";
+import { CalendarClock, FolderKanban, Pin, Plus, Tags, User, UserCheck } from "lucide-react";
 import type { AgentRole, Issue, IssueStatus, ReorderIssue } from "@rudderhq/shared";
 
 const boardStatuses: IssueStatus[] = [
@@ -173,6 +173,8 @@ interface KanbanBoardProps {
   projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
   onOpenIssue?: (issue: Issue) => void;
+  pinnedIssueIds?: string[];
+  onTogglePinnedIssue?: (issueId: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
   onReorderIssue?: (data: ReorderIssue) => void;
 }
@@ -291,6 +293,8 @@ function KanbanColumn({
   projects,
   onCreateIssue,
   onOpenIssue,
+  pinnedIssueIds = [],
+  onTogglePinnedIssue,
 }: {
   status: string;
   issues: Issue[];
@@ -303,6 +307,8 @@ function KanbanColumn({
   projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
   onOpenIssue?: (issue: Issue) => void;
+  pinnedIssueIds?: string[];
+  onTogglePinnedIssue?: (issueId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const columnScrollRef = useScrollbarActivityRef();
@@ -351,6 +357,8 @@ function KanbanColumn({
               justDropped={recentlyDroppedIssueIds?.has(issue.id)}
               projects={projects}
               onOpenIssue={onOpenIssue}
+              pinnedIssueIds={pinnedIssueIds}
+              onTogglePinnedIssue={onTogglePinnedIssue}
             />
           ))}
         </SortableContext>
@@ -406,6 +414,8 @@ function KanbanCard({
   justDropped,
   projects,
   onOpenIssue,
+  pinnedIssueIds = [],
+  onTogglePinnedIssue,
 }: {
   issue: Issue;
   agents?: Agent[];
@@ -417,6 +427,8 @@ function KanbanCard({
   justDropped?: boolean;
   projects?: ProjectOption[];
   onOpenIssue?: (issue: Issue) => void;
+  pinnedIssueIds?: string[];
+  onTogglePinnedIssue?: (issueId: string) => void;
 }) {
   const {
     attributes,
@@ -471,6 +483,7 @@ function KanbanCard({
       showRole={false}
     />
   ) : null;
+  const isPinned = pinnedIssueIds.includes(issue.id);
   const hasPrimaryMeta = showPriority;
   const hasSecondaryMeta = Boolean(reviewerMeta || showProject || showLabels || showUpdated || showCreated);
 
@@ -486,15 +499,39 @@ function KanbanCard({
       data-live={isLive ? "true" : "false"}
       data-just-dropped={justDropped ? "true" : "false"}
       className={cn(
-        "motion-kanban-card overflow-hidden rounded-[calc(var(--radius-sm)-1px)] border bg-card p-2.5 cursor-grab active:cursor-grabbing",
+        "motion-kanban-card group relative overflow-hidden rounded-[calc(var(--radius-sm)-1px)] border bg-card p-2.5 cursor-grab active:cursor-grabbing",
         isDragging && !isOverlay ? "opacity-30" : "",
         isOverlay ? "shadow-lg ring-1 ring-primary/20" : "hover:shadow-sm",
       )}
     >
+      {onTogglePinnedIssue ? (
+        <button
+          type="button"
+          className="absolute right-2 top-2 z-20 inline-flex h-6 w-6 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] bg-card/90 text-muted-foreground opacity-0 shadow-sm ring-1 ring-[color:var(--border-soft)] transition-[opacity,background-color,color] hover:bg-accent hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+          title={isPinned ? "Unpin issue" : "Pin issue"}
+          aria-label={isPinned ? "Unpin issue" : "Pin issue"}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onTogglePinnedIssue(issue.id);
+          }}
+        >
+          <Pin
+            className={cn(
+              "h-3.5 w-3.5",
+              isPinned && "fill-current text-[color:var(--accent-strong)]",
+            )}
+          />
+        </button>
+      ) : null}
       <Link
         to={`/issues/${issue.identifier ?? issue.id}`}
         state={issueLinkState}
-        className="block min-w-0 no-underline text-inherit"
+        className="block min-w-0 pr-5 no-underline text-inherit"
         onClick={(e) => {
           if (isDragging) {
             e.preventDefault();
@@ -596,6 +633,8 @@ export function KanbanBoard({
   projects,
   onCreateIssue,
   onOpenIssue,
+  pinnedIssueIds = [],
+  onTogglePinnedIssue,
   onUpdateIssue,
   onReorderIssue,
 }: KanbanBoardProps) {
@@ -780,6 +819,8 @@ export function KanbanBoard({
                 projects={projects}
                 onCreateIssue={onCreateIssue}
                 onOpenIssue={onOpenIssue}
+                pinnedIssueIds={pinnedIssueIds}
+                onTogglePinnedIssue={onTogglePinnedIssue}
               />
             ))}
             {hiddenStatuses.length > 0 ? (
@@ -819,6 +860,7 @@ export function KanbanBoard({
             displayProperties={displayProperties}
             isOverlay
             projects={projects}
+            pinnedIssueIds={pinnedIssueIds}
           />
         ) : null}
       </DragOverlay>

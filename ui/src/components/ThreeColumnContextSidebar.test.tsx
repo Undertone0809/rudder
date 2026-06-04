@@ -402,6 +402,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     const followingLink = document.querySelector('a[href="/issues?scope=following"]');
     expect(followingLink?.textContent).toContain("Following");
     expect(document.querySelector('a[href="/issues?scope=starred"]')).toBeNull();
+    expect(document.querySelector('a[href="/issues?scope=pinned"]')).toBeNull();
   });
 
   const savedDraft = {
@@ -569,11 +570,11 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(activeRow?.getAttribute("aria-current")).toBe("page");
   });
 
-  it("renders starred issues as bounded sidebar rows after issues are starred", () => {
+  it("renders pinned issues as bounded sidebar rows after issues are pinned", () => {
     mockState.issues = Array.from({ length: 7 }, (_, index) => ({
       id: `issue-${index + 1}`,
       identifier: `RUD-${index + 1}`,
-      title: `Starred issue ${index + 1}`,
+      title: `Pinned issue ${index + 1}`,
       status: "todo",
     }));
     mockState.follows = mockState.issues.map((issue, index) => ({
@@ -588,42 +589,43 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     renderSidebar();
 
     expect(document.querySelector('a[href="/issues?scope=starred"]')).toBeNull();
-    expect(document.querySelector("[data-testid='issue-starred-section']")?.textContent).toContain("Starred (7)");
-    expect(document.querySelector("[data-testid='issue-starred-row-issue-1']")?.textContent).toContain("Starred issue 1");
-    expect(document.querySelector("[data-testid='issue-starred-row-issue-5']")?.textContent).toContain("Starred issue 5");
-    expect(document.querySelector("[data-testid='issue-starred-row-issue-6']")).toBeNull();
+    expect(document.querySelector('a[href="/issues?scope=pinned"]')).toBeNull();
+    expect(document.querySelector("[data-testid='issue-pinned-section']")?.textContent).toContain("Pinned (7)");
+    expect(document.querySelector("[data-testid='issue-pinned-row-issue-1']")?.textContent).toContain("Pinned issue 1");
+    expect(document.querySelector("[data-testid='issue-pinned-row-issue-5']")?.textContent).toContain("Pinned issue 5");
+    expect(document.querySelector("[data-testid='issue-pinned-row-issue-6']")).toBeNull();
 
-    const toggle = document.querySelector("[data-testid='issue-starred-toggle']") as HTMLButtonElement | null;
+    const toggle = document.querySelector("[data-testid='issue-pinned-toggle']") as HTMLButtonElement | null;
     expect(toggle?.textContent).toContain("Show all");
 
     act(() => {
       toggle?.click();
     });
 
-    expect(document.querySelector("[data-testid='issue-starred-row-issue-7']")?.textContent).toContain("Starred issue 7");
-    const starredList = document.querySelector("[data-testid='issue-starred-list']") as HTMLDivElement | null;
-    expect(starredList?.className).toContain("max-h-72");
-    expect(starredList?.className).toContain("scrollbar-auto-hide");
+    expect(document.querySelector("[data-testid='issue-pinned-row-issue-7']")?.textContent).toContain("Pinned issue 7");
+    const pinnedList = document.querySelector("[data-testid='issue-pinned-list']") as HTMLDivElement | null;
+    expect(pinnedList?.className).toContain("max-h-72");
+    expect(pinnedList?.className).toContain("scrollbar-auto-hide");
     expect(toggle?.textContent).toContain("Show less");
   });
 
-  it("marks the active issue detail in the starred sidebar list", () => {
+  it("marks the active issue detail in the pinned sidebar list", () => {
     mockState.pathname = "/RUD/issues/RUD-2";
     mockState.relativePath = "/issues/RUD-2";
-    const starredIssue = { id: "issue-2", identifier: "RUD-2", title: "Starred active issue", status: "todo" };
-    mockState.issues = [starredIssue];
+    const pinnedIssue = { id: "issue-2", identifier: "RUD-2", title: "Pinned active issue", status: "todo" };
+    mockState.issues = [pinnedIssue];
     mockState.follows = [{
       id: "follow-1",
       orgId: "org-1",
-      issueId: starredIssue.id,
+      issueId: pinnedIssue.id,
       userId: "user-1",
       createdAt: "2026-04-26T10:00:00.000Z",
-      issue: starredIssue,
+      issue: pinnedIssue,
     }];
 
     renderSidebar();
 
-    const activeRow = document.querySelector("[data-testid='issue-starred-row-issue-2']") as HTMLAnchorElement | null;
+    const activeRow = document.querySelector("[data-testid='issue-pinned-row-issue-2']") as HTMLAnchorElement | null;
     expect(activeRow?.getAttribute("aria-current")).toBe("page");
   });
 

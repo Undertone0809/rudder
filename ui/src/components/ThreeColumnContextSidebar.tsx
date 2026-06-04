@@ -922,7 +922,7 @@ export function ThreeColumnContextSidebar() {
     () => resolveRecentIssues(recentIssueIds, allIssues ?? []),
     [allIssues, recentIssueIds],
   );
-  const starredIssueRefs = useMemo<SidebarIssue[]>(() => {
+  const pinnedIssueRefs = useMemo<SidebarIssue[]>(() => {
     const issuesById = new Map((allIssues ?? []).map((issue) => [issue.id, issue]));
     return issueFollows.map((follow) => issuesById.get(follow.issueId) ?? follow.issue);
   }, [allIssues, issueFollows]);
@@ -1315,18 +1315,18 @@ export function ThreeColumnContextSidebar() {
           className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto pb-3.5"
         >
           <SidebarIssueListSection
-            issues={starredIssueRefs}
+            issues={pinnedIssueRefs}
             activeIssueRef={activeIssueRef}
             closeMobileSidebar={closeMobileSidebar}
-            collapsed={isIssueSectionCollapsed("starred")}
-            onToggleCollapsed={() => toggleIssueSection("starred")}
-            sectionLabel={`Starred (${starredIssueRefs.length})`}
-            ariaLabel="Starred issues"
-            sectionTestId="issue-starred-section"
-            listTestId="issue-starred-list"
-            rowTestIdPrefix="issue-starred-row"
-            toggleTestId="issue-starred-toggle"
-            scrollActivityKey="rudder:sidebar-scroll:starred-issues"
+            collapsed={isIssueSectionCollapsed("pinned")}
+            onToggleCollapsed={() => toggleIssueSection("pinned")}
+            sectionLabel={`Pinned (${pinnedIssueRefs.length})`}
+            ariaLabel="Pinned issues"
+            sectionTestId="issue-pinned-section"
+            listTestId="issue-pinned-list"
+            rowTestIdPrefix="issue-pinned-row"
+            toggleTestId="issue-pinned-toggle"
+            scrollActivityKey="rudder:sidebar-scroll:pinned-issues"
           />
           <SidebarIssueListSection
             issues={recentIssueRefs}

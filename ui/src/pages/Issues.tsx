@@ -211,7 +211,7 @@ export function Issues() {
   const initialSearch = searchParams.get("q") ?? "";
   const issueSource = searchParams.get("source") ?? "";
   const issueScope = searchParams.get("scope") ?? "";
-  const effectiveIssueScope = issueScope === "recent" ? "" : issueScope;
+  const effectiveIssueScope = issueScope === "recent" ? "" : issueScope === "starred" ? "pinned" : issueScope;
   const isDraftScope = effectiveIssueScope === "drafts";
   const isLinearSource = issueSource === "linear" && !isDraftScope;
   const linearTeamId = searchParams.get("linearTeamId") ?? undefined;
@@ -377,7 +377,7 @@ export function Issues() {
   });
   const visibleIssues = useMemo(() => {
     const allIssues = issues ?? [];
-    if (effectiveIssueScope === "starred") {
+    if (effectiveIssueScope === "pinned") {
       return allIssues.filter((issue) => followedIssueIds.has(issue.id));
     }
     if (effectiveIssueScope === "following" && currentUserId) {
@@ -476,8 +476,8 @@ export function Issues() {
         initialSearch={initialSearch}
         initialGroupBy={initialGroupBy}
         toolbarMode="controls-only"
-        starredIssueIds={[...followedIssueIds]}
-        onToggleStarredIssue={(issueId) => {
+        pinnedIssueIds={[...followedIssueIds]}
+        onTogglePinnedIssue={(issueId) => {
           void toggleFollowIssue(issueId);
         }}
         onOpenIssue={(issue) => {

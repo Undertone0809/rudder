@@ -72,7 +72,7 @@ test.describe("Issues recently viewed sidebar", () => {
 
     await page.goto("/issues?view=view-1");
 
-    await expect(page.getByRole("link", { name: /Starred/ })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /Pinned/ })).toHaveCount(0);
     await expect(page).toHaveURL(/\/issues$/);
     await expect(page.getByRole("button", { name: /Save board/ })).toHaveCount(0);
     await expect(page.getByTestId("issue-custom-views-section")).toHaveCount(0);
@@ -123,9 +123,9 @@ test.describe("Issues recently viewed sidebar", () => {
     await expect(page.getByTestId(`issue-recent-row-${firstIssue.id}`)).toHaveAttribute("href", recentHrefPattern);
   });
 
-  test("shows starred issues in the sidebar after clicking star", async ({ page }) => {
-    const organization = await createOrganization(page, "Issues-Starred-Sidebar");
-    const issue = await createIssue(page, organization.id, "Sidebar starred issue");
+  test("shows pinned issues in the sidebar after clicking the hover pin", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Pinned-Sidebar");
+    const issue = await createIssue(page, organization.id, "Sidebar pinned issue");
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -134,16 +134,27 @@ test.describe("Issues recently viewed sidebar", () => {
 
     await page.goto("/issues");
 
-    await expect(page.getByTestId("issue-starred-section")).toHaveCount(0);
-    await expect(page.getByRole("link", { name: /Starred/ })).toHaveCount(0);
+    await expect(page.getByTestId("issue-pinned-section")).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /Pinned/ })).toHaveCount(0);
+
+    const boardCard = page.getByTestId(`kanban-card-${issue.identifier ?? issue.id}`);
+    const boardPin = boardCard.getByRole("button", { name: "Pin issue" });
+    await expect(boardPin).toHaveCSS("opacity", "0");
+    await boardCard.hover();
+    await expect(boardPin).toHaveCSS("opacity", "1");
+    await boardPin.click();
 
     await page.getByRole("button", { name: "List view" }).click();
-    await expect(page.getByText("Sidebar starred issue", { exact: true })).toBeVisible();
-    await page.getByTitle("Star issue").first().click();
+    const listRow = page.locator("#main-content").getByRole("link", { name: /Sidebar pinned issue/ });
+    await expect(listRow).toBeVisible();
+    const listPin = listRow.getByRole("button", { name: "Unpin issue" });
+    await expect(listPin).toHaveCSS("opacity", "0");
+    await listRow.hover();
+    await expect(listPin).toHaveCSS("opacity", "1");
 
-    await expect(page.getByTestId("issue-starred-section")).toContainText("Starred (1)");
-    await expect(page.getByTestId(`issue-starred-row-${issue.id}`)).toContainText("Sidebar starred issue");
-    await expect(page.getByTestId(`issue-starred-row-${issue.id}`)).toHaveAttribute(
+    await expect(page.getByTestId("issue-pinned-section")).toContainText("Pinned (1)");
+    await expect(page.getByTestId(`issue-pinned-row-${issue.id}`)).toContainText("Sidebar pinned issue");
+    await expect(page.getByTestId(`issue-pinned-row-${issue.id}`)).toHaveAttribute(
       "href",
       new RegExp(`/issues/${issue.identifier ?? issue.id}$`),
     );
