@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommentThread } from "./CommentThread";
 
 vi.mock("./MarkdownEditor", () => ({
@@ -59,6 +59,10 @@ vi.mock("./transcript/RunTranscriptView", () => ({
 }));
 
 describe("CommentThread", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("offers a general file attachment control for comments", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
@@ -262,6 +266,47 @@ describe("CommentThread", () => {
     expect(html).toContain("Ran for 32m");
     expect(html).toContain('aria-label="Show details"');
     expect(html).not.toContain("No run output captured.");
+  });
+
+  it("shows recent activity timestamps as relative labels while preserving exact titles", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-07T01:12:00.000Z"));
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-1",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Fresh update.",
+              createdAt: new Date("2026-05-07T00:36:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:36:00.000Z"),
+            },
+          ]}
+          linkedRuns={[
+            {
+              runId: "55555555-5555-4555-8555-555555555555",
+              status: "succeeded",
+              agentId: "22222222-2222-4222-8222-222222222222",
+              createdAt: new Date("2026-05-07T00:12:00.000Z"),
+              startedAt: new Date("2026-05-07T00:12:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain(">36m ago</time>");
+    expect(html).toContain(">1h ago</time>");
+    expect(html).toMatch(/title="May 7, 2026, \d{2}:36"/);
+    expect(html).toMatch(/title="May 7, 2026, \d{2}:12"/);
+    expect(html).not.toContain(">May 7, 2026, 00:36</a>");
+    expect(html).not.toContain(">May 7, 2026, 00:12</time>");
   });
 
   it("collapses inactive linked run details by default", () => {

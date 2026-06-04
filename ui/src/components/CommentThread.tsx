@@ -21,7 +21,7 @@ import { formatChatAgentLabel } from "../lib/agent-labels";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
-import { formatDateTime } from "../lib/utils";
+import { formatDateTime, relativeTime } from "../lib/utils";
 import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from "../lib/run-duration-label";
 import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { PluginSlotOutlet } from "@/plugins/slots";
@@ -152,6 +152,11 @@ function buildCommentLink(commentId: string, location: ReturnType<typeof useLoca
   const path = `${location.pathname}${location.search}`;
   if (typeof window === "undefined") return `${path}#comment-${commentId}`;
   return `${window.location.origin}${path}#comment-${commentId}`;
+}
+
+function timelineDateTime(date: Date | string) {
+  const timestamp = new Date(date);
+  return Number.isNaN(timestamp.getTime()) ? undefined : timestamp.toISOString();
 }
 
 function CommentActionsMenu({
@@ -312,6 +317,8 @@ const TimelineList = memo(function TimelineList({
           const transcript = runTranscriptById.get(run.runId) ?? [];
           const hasOutput = runHasOutput(run.runId);
           const passiveLabel = passiveFollowupLabel(run.contextSnapshot);
+          const runTimestamp = run.startedAt ?? run.createdAt;
+          const runTimestampTitle = formatDateTime(runTimestamp);
           const runExpanded = runExpandedOverrides[run.runId] ?? shouldExpandRunByDefault(run.status);
           const toggleLabel = runExpanded ? "Hide details" : "Show details";
           const agent = agentMap?.get(run.agentId);
@@ -382,9 +389,13 @@ const TimelineList = memo(function TimelineList({
                       />
                     </Link>
                     <div className="shrink-0 text-right">
-                      <span className="block text-xs text-muted-foreground">
-                        {formatDateTime(run.startedAt ?? run.createdAt)}
-                      </span>
+                      <time
+                        className="block text-xs text-muted-foreground"
+                        dateTime={timelineDateTime(runTimestamp)}
+                        title={runTimestampTitle}
+                      >
+                        {relativeTime(runTimestamp)}
+                      </time>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -440,9 +451,13 @@ const TimelineList = memo(function TimelineList({
                       </span>
                     )}
                   </div>
-                  <span className="hidden h-7 shrink-0 items-center text-muted-foreground sm:inline-flex">
-                    {formatDateTime(run.startedAt ?? run.createdAt)}
-                  </span>
+                  <time
+                    className="hidden h-7 shrink-0 items-center text-muted-foreground sm:inline-flex"
+                    dateTime={timelineDateTime(runTimestamp)}
+                    title={runTimestampTitle}
+                  >
+                    {relativeTime(runTimestamp)}
+                  </time>
                   {toggleButton}
                 </div>
               )}
@@ -468,6 +483,7 @@ const TimelineList = memo(function TimelineList({
 
         const comment = item.comment;
         const isHighlighted = highlightCommentId === comment.id;
+        const commentTimestampTitle = formatDateTime(comment.createdAt);
         return (
           <div
             key={comment.id}
@@ -491,8 +507,12 @@ const TimelineList = memo(function TimelineList({
                 <a
                   href={`#comment-${comment.id}`}
                   className="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
+                  title={commentTimestampTitle}
+                  aria-label={`Comment posted ${commentTimestampTitle}`}
                 >
-                  {formatDateTime(comment.createdAt)}
+                  <time dateTime={timelineDateTime(comment.createdAt)}>
+                    {relativeTime(comment.createdAt)}
+                  </time>
                 </a>
                 <CommentActionsMenu
                   comment={comment}
