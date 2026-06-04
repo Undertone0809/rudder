@@ -265,6 +265,7 @@ describe("CommentThread", () => {
     expect(html).toContain('data-run-id="55555555-5555-4555-8555-555555555555"');
     expect(html).toContain("Ran for 32m");
     expect(html).toContain('aria-label="Show details"');
+    expect(html).toContain('data-size="sm"');
     expect(html).not.toContain("No run output captured.");
   });
 

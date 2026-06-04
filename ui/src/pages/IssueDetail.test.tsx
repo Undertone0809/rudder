@@ -731,7 +731,9 @@ describe("IssueDetail", () => {
     expect(html).toContain("committed abc1234: fix: report code commit");
     expect(html).toContain("requested human intervention");
     expect(html).toContain("data-testid=\"issue-activity-row\"");
-    expect(html).toContain("grid-cols-[minmax(5.5rem,8.5rem)_minmax(0,1fr)_auto]");
+    expect(html).toContain("grid-cols-[minmax(0,1fr)_auto]");
+    expect(html).toContain("border-transparent");
+    expect(html).toContain("pl-3");
     expect(html).toContain("tabular-nums");
     expect(html).not.toContain("updated the issue");
     expect(html).not.toContain("updated the description");

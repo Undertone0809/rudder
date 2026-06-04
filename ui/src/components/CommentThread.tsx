@@ -428,7 +428,7 @@ const TimelineList = memo(function TimelineList({
                         name={agentName}
                         icon={agent?.icon}
                         role={agent?.role}
-                        size="xs"
+                        size="sm"
                         className="h-7 max-w-[12rem] items-center"
                       />
                     </Link>

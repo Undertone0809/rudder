@@ -764,16 +764,18 @@ export function IssueActivityRow({
   return (
     <div
       data-testid="issue-activity-row"
-      className="grid min-h-7 grid-cols-[minmax(5.5rem,8.5rem)_minmax(0,1fr)_auto] items-center gap-2 rounded-sm px-1 py-0.5 text-xs text-muted-foreground"
+      className="grid min-h-7 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-sm border border-transparent py-0.5 pl-3 pr-1 text-xs text-muted-foreground"
     >
-      <ActorIdentity
-        evt={evt}
-        agentMap={agentMap}
-        currentBoardUserId={currentBoardUserId}
-        operatorDisplayName={operatorDisplayName}
-        className="min-w-0 max-w-full [&_[data-slot=avatar]]:top-0"
-      />
-      <span className="min-w-0 truncate leading-5">{renderActivityDescription(evt, agentMap, currentBoardUserId)}</span>
+      <span className="flex h-7 min-w-0 items-center gap-1.5">
+        <ActorIdentity
+          evt={evt}
+          agentMap={agentMap}
+          currentBoardUserId={currentBoardUserId}
+          operatorDisplayName={operatorDisplayName}
+          className="min-w-0 max-w-[8.5rem] shrink-0 [&_[data-slot=avatar]]:top-0"
+        />
+        <span className="min-w-0 truncate leading-5">{renderActivityDescription(evt, agentMap, currentBoardUserId)}</span>
+      </span>
       <span className="shrink-0 leading-5 tabular-nums">{relativeTime(evt.createdAt)}</span>
     </div>
   );
