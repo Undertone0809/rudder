@@ -48,8 +48,6 @@ Rudder turns those coordination patterns into product primitives for agent teams
 
 ![Rudder run transcript](./doc/assets/readme_imgs/6.png)
 
-![Rudder organization focused view](./doc/assets/readme_imgs/7.png)
-
 ![Rudder issue detail](./doc/assets/readme_imgs/8.png)
 
 - work belongs to an organization, not a loose thread
