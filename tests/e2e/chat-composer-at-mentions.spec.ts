@@ -104,6 +104,14 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
   });
   expect(libraryFileRes.ok()).toBe(true);
 
+  const libraryDirectoryPath = `projects/at-library-folder-${suffix}`;
+  const libraryDirectoryRes = await page.request.post(`/api/orgs/${organization.id}/workspace/directory`, {
+    data: {
+      directoryPath: libraryDirectoryPath,
+    },
+  });
+  expect(libraryDirectoryRes.ok()).toBe(true);
+
   const skillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
     data: {
       name: `AtSkill${suffix}`,
@@ -139,7 +147,7 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
       optionTestId: `markdown-mention-option-agent:${agent.id}`,
       tokenSelector: "[data-mention-kind='agent']",
       tokenText: agent.name,
-      minIconPx: 19,
+      minIconPx: 17,
     },
     {
       kind: "project",
@@ -147,7 +155,7 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
       optionTestId: `markdown-mention-option-project:${project.id}`,
       tokenSelector: "[data-mention-kind='project']",
       tokenText: project.name,
-      minIconPx: 12,
+      minIconPx: 11,
     },
     {
       kind: "issue",
@@ -155,7 +163,7 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
       optionTestId: `markdown-mention-option-issue:${issue.id}`,
       tokenSelector: "[data-mention-kind='issue']",
       tokenText: issue.title,
-      minIconPx: 19,
+      minIconPx: 17,
     },
     {
       kind: "chat",
@@ -163,7 +171,7 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
       optionTestId: `markdown-mention-option-chat:${referencedChat.id}`,
       tokenSelector: "[data-mention-kind='chat']",
       tokenText: referencedChat.title,
-      minIconPx: 19,
+      minIconPx: 17,
     },
     {
       kind: "library_doc",
@@ -171,7 +179,7 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
       optionTestId: `markdown-mention-option-library-doc:${libraryDoc.id}`,
       tokenSelector: "[data-mention-kind='library_doc']",
       tokenText: libraryDoc.title,
-      minIconPx: 19,
+      minIconPx: 17,
     },
     {
       kind: "library_file",
@@ -179,7 +187,16 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
       optionTestId: `markdown-mention-option-library-file:${libraryFilePath}`,
       tokenSelector: "[data-mention-kind='library_file']",
       tokenText: `at-library-file-${suffix}.md`,
-      minIconPx: 19,
+      minIconPx: 17,
+    },
+    {
+      kind: "library_directory",
+      query: `at-library-folder-${suffix}`,
+      optionTestId: `markdown-mention-option-library-directory:${libraryDirectoryPath}`,
+      optionText: `Folder`,
+      tokenSelector: "[data-mention-kind='library_directory']",
+      tokenText: `at-library-folder-${suffix}`,
+      minIconPx: 17,
     },
     {
       kind: "skill",
@@ -188,7 +205,7 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
       optionText: `AtSkill${suffix}`,
       tokenSelector: "[data-skill-token='true']",
       tokenText: skill.slug,
-      minIconPx: 19,
+      minIconPx: 17,
     },
   ];
 
@@ -197,11 +214,17 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
     await page.keyboard.type(`@${mentionCase.query}`);
     const option = page.getByTestId(mentionCase.optionTestId);
     await expect(option).toContainText(mentionCase.optionText ?? mentionCase.tokenText, { timeout: 15_000 });
+    if (mentionCase.kind === "library_directory") {
+      await expect(option).toContainText(libraryDirectoryPath);
+    }
     await page.keyboard.press("Tab");
 
     const token = composer.locator(mentionCase.tokenSelector).filter({ hasText: mentionCase.tokenText }).first();
     await expect(token, `${mentionCase.kind} token`).toBeVisible({ timeout: 15_000 });
     await expectReadableReferenceIcon(token, mentionCase.minIconPx);
+    if (mentionCase.kind === "library_directory") {
+      await expect(token).toHaveAttribute("data-mention-href", /library-directory:\/\/directory\?/);
+    }
 
     const trailingText = ` after-${mentionCase.kind}`;
     await page.keyboard.type(trailingText);

@@ -10,6 +10,7 @@ export const ISSUE_MENTION_SCHEME = "issue://";
 export const CHAT_MENTION_SCHEME = "chat://";
 export const LIBRARY_DOC_MENTION_SCHEME = "library-doc://";
 export const LIBRARY_FILE_MENTION_SCHEME = "library-file://";
+export const LIBRARY_DIRECTORY_MENTION_SCHEME = "library-directory://";
 
 const HEX_COLOR_RE = /^[0-9a-f]{6}$/i;
 const HEX_COLOR_SHORT_RE = /^[0-9a-f]{3}$/i;
@@ -21,6 +22,7 @@ const ISSUE_MENTION_LINK_RE = /\[[^\]]*]\((issue:\/\/[^)\s]+)\)/gi;
 const CHAT_MENTION_LINK_RE = /\[[^\]]*]\((chat:\/\/[^)\s]+)\)/gi;
 const LIBRARY_DOC_MENTION_LINK_RE = /\[[^\]]*]\((library-doc:\/\/[^)\s]+)\)/gi;
 const LIBRARY_FILE_MENTION_LINK_RE = /\[[^\]]*]\((library-file:\/\/[^)\s]+)\)/gi;
+const LIBRARY_DIRECTORY_MENTION_LINK_RE = /\[[^\]]*]\((library-directory:\/\/[^)\s]+)\)/gi;
 const AGENT_ICON_NAME_RE = /^[a-z0-9-]+$/i;
 const AGENT_AVATAR_UUID_RE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const AGENT_ASSET_ICON_RE = new RegExp(`^asset:${AGENT_AVATAR_UUID_RE}(?:\\?bg=([a-z0-9-]+))?$`, "i");
@@ -58,6 +60,11 @@ export interface ParsedLibraryDocMention {
 
 export interface ParsedLibraryFileMention {
   filePath: string;
+  title: string | null;
+}
+
+export interface ParsedLibraryDirectoryMention {
+  directoryPath: string;
   title: string | null;
 }
 
@@ -285,6 +292,37 @@ export function parseLibraryFileMentionHref(href: string): ParsedLibraryFileMent
   };
 }
 
+export function buildLibraryDirectoryMentionHref(directoryPath: string, title?: string | null): string {
+  const trimmedDirectoryPath = directoryPath.trim();
+  const trimmedTitle = title?.trim();
+  const search = new URLSearchParams({ p: trimmedDirectoryPath });
+  if (trimmedTitle) search.set("t", trimmedTitle);
+  return `${LIBRARY_DIRECTORY_MENTION_SCHEME}directory?${search.toString()}`;
+}
+
+export function parseLibraryDirectoryMentionHref(href: string): ParsedLibraryDirectoryMention | null {
+  if (!href.startsWith(LIBRARY_DIRECTORY_MENTION_SCHEME)) return null;
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "library-directory:") return null;
+
+  const directoryPath = (url.searchParams.get("p") ?? url.searchParams.get("path") ?? "").trim();
+  if (!directoryPath) return null;
+
+  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
+
+  return {
+    directoryPath,
+    title,
+  };
+}
+
 export function extractProjectMentionIds(markdown: string): string[] {
   if (!markdown) return [];
   const ids = new Set<string>();
@@ -359,6 +397,19 @@ export function extractLibraryFileMentionPaths(markdown: string): string[] {
   while ((match = re.exec(source)) !== null) {
     const parsed = parseLibraryFileMentionHref(match[1]);
     if (parsed) paths.add(parsed.filePath);
+  }
+  return [...paths];
+}
+
+export function extractLibraryDirectoryMentionPaths(markdown: string): string[] {
+  if (!markdown) return [];
+  const paths = new Set<string>();
+  const re = new RegExp(LIBRARY_DIRECTORY_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const parsed = parseLibraryDirectoryMentionHref(match[1]);
+    if (parsed) paths.add(parsed.directoryPath);
   }
   return [...paths];
 }

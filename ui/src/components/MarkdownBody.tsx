@@ -473,6 +473,8 @@ export function MarkdownBody({
                 ? `/library?doc=${encodeURIComponent(mention.documentId)}`
                 : mention.kind === "library_file"
                   ? `/library?path=${encodeURIComponent(mention.filePath)}`
+                  : mention.kind === "library_directory"
+                    ? `/library?directory=${encodeURIComponent(mention.directoryPath)}`
                   : `/agents/${mention.agentId}`;
         return (
           <a

@@ -27,8 +27,13 @@ function mentionMatchRank(option: MentionOption, query: string) {
   if (name === query) return 0;
   if (name.startsWith(query)) return 1;
 
-  if (option.kind === "library_file" && option.libraryFilePath) {
-    const path = normalizedText(option.libraryFilePath);
+  const libraryPath = option.kind === "library_file"
+    ? option.libraryFilePath
+    : option.kind === "library_directory"
+      ? option.libraryDirectoryPath
+      : null;
+  if (libraryPath) {
+    const path = normalizedText(libraryPath);
     if (path.endsWith(`.${query}`)) return 2;
     if (path.split("/").some((part) => part.startsWith(query))) return 3;
   }
@@ -48,8 +53,8 @@ function mentionKindPriority(option: MentionOption) {
   return 5;
 }
 
-function isStrongLibraryFileMatch(entry: { mention: MentionOption; rank: number }) {
-  return entry.mention.kind === "library_file" && entry.rank <= 3;
+function isStrongLibraryEntryMatch(entry: { mention: MentionOption; rank: number }) {
+  return (entry.mention.kind === "library_file" || entry.mention.kind === "library_directory") && entry.rank <= 3;
 }
 
 export function filterMentionOptions(
@@ -72,9 +77,9 @@ export function filterMentionOptions(
     })
     .filter((entry): entry is { mention: MentionOption; rank: number; index: number } => entry !== null)
     .sort((left, right) => {
-      const leftStrongLibraryFile = isStrongLibraryFileMatch(left);
-      const rightStrongLibraryFile = isStrongLibraryFileMatch(right);
-      if (leftStrongLibraryFile !== rightStrongLibraryFile) return leftStrongLibraryFile ? -1 : 1;
+      const leftStrongLibraryEntry = isStrongLibraryEntryMatch(left);
+      const rightStrongLibraryEntry = isStrongLibraryEntryMatch(right);
+      if (leftStrongLibraryEntry !== rightStrongLibraryEntry) return leftStrongLibraryEntry ? -1 : 1;
       const leftKindPriority = mentionKindPriority(left.mention);
       const rightKindPriority = mentionKindPriority(right.mention);
       if (leftKindPriority !== rightKindPriority) return leftKindPriority - rightKindPriority;

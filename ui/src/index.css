@@ -2411,8 +2411,10 @@ a.rudder-mention-chip[data-mention-kind="agent"]::before {
 
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before,
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_directory"]::before,
 a.rudder-mention-chip[data-mention-kind="library_doc"]::before,
-a.rudder-mention-chip[data-mention-kind="library_file"]::before {
+a.rudder-mention-chip[data-mention-kind="library_file"]::before,
+a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   content: "";
   flex: none;
   width: 0.95em;
@@ -3205,8 +3207,10 @@ a.rudder-project-mention-chip:hover {
 
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"],
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"],
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_directory"],
 a.rudder-mention-chip[data-mention-kind="library_doc"],
-a.rudder-mention-chip[data-mention-kind="library_file"] {
+a.rudder-mention-chip[data-mention-kind="library_file"],
+a.rudder-mention-chip[data-mention-kind="library_directory"] {
   gap: 0.32em;
   margin: 0 0.08em;
   padding: 0;
@@ -3222,8 +3226,10 @@ a.rudder-mention-chip[data-mention-kind="library_file"] {
 
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]:hover,
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]:hover,
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_directory"]:hover,
 a.rudder-mention-chip[data-mention-kind="library_doc"]:hover,
-a.rudder-mention-chip[data-mention-kind="library_file"]:hover {
+a.rudder-mention-chip[data-mention-kind="library_file"]:hover,
+a.rudder-mention-chip[data-mention-kind="library_directory"]:hover {
   background-color: transparent;
   color: var(--rudder-doc-link-hover);
   text-decoration: none;
@@ -3349,10 +3355,13 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before,
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_directory"]::before,
 .rudder-milkdown-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
 .rudder-milkdown-content .rudder-mention-chip[data-mention-kind="library_file"]::before,
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="library_directory"]::before,
 a.rudder-mention-chip[data-mention-kind="library_doc"]::before,
-a.rudder-mention-chip[data-mention-kind="library_file"]::before {
+a.rudder-mention-chip[data-mention-kind="library_file"]::before,
+a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   width: 1.25em;
   height: 1.25em;
   -webkit-mask-image: var(--rudder-mention-icon-mask, none);
@@ -3366,7 +3375,8 @@ a.rudder-mention-chip[data-mention-kind="library_file"]::before {
 }
 
 .chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
-.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before {
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before,
+.chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_directory"]::before {
   width: 1.28em;
   height: 1.28em;
 }

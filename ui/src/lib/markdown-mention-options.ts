@@ -146,13 +146,13 @@ export function buildMarkdownMentionOptions(params: {
   }
 
   for (const file of params.libraryFiles ?? []) {
-    if (file.isDirectory) continue;
     options.push({
-      id: `library-file:${file.path}`,
-      name: file.name,
-      kind: "library_file",
+      id: file.isDirectory ? `library-directory:${file.path}` : `library-file:${file.path}`,
+      name: file.displayLabel ?? file.name,
+      kind: file.isDirectory ? "library_directory" : "library_file",
       searchText: `${file.name} ${file.path}`,
-      libraryFilePath: file.path,
+      libraryFilePath: file.isDirectory ? null : file.path,
+      libraryDirectoryPath: file.isDirectory ? file.path : null,
     });
   }
 

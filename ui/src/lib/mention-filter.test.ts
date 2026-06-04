@@ -47,7 +47,7 @@ describe("filterMentionOptions", () => {
     ]);
   });
 
-  it("promotes matching Library markdown files before broad issue and chat matches", () => {
+  it("promotes matching Library entries before broad issue and chat matches", () => {
     const broadMatches: MentionOption[] = Array.from({ length: 8 }, (_, index) => ({
       id: `issue:${index}`,
       name: `RUD-${index} unrelated work`,
@@ -65,6 +65,13 @@ describe("filterMentionOptions", () => {
         searchText: "flomo memo export active md",
       },
       {
+        id: "library-directory:projects/rudder-mkt",
+        name: "Rudder marketing",
+        kind: "library_directory",
+        libraryDirectoryPath: "projects/rudder-mkt",
+        searchText: "Rudder marketing projects/rudder-mkt",
+      },
+      {
         id: "library-file:docs/product.md",
         name: "product.md",
         kind: "library_file",
@@ -79,6 +86,9 @@ describe("filterMentionOptions", () => {
       id: "library-file:docs/product.md",
       kind: "library_file",
     });
+    expect(filterMentionOptions(mentions, "@", "rudder").map((option) => option.id)).toContain(
+      "library-directory:projects/rudder-mkt",
+    );
     expect(filtered).toHaveLength(10);
   });
 

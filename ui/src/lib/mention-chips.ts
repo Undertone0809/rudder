@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
-import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDocMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
-import { FileText } from "lucide-react";
+import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDirectoryMentionHref, parseLibraryDocMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
+import { FileText, Folder } from "lucide-react";
 import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
 import { getAgentIcon } from "./agent-icons";
 
@@ -33,6 +33,11 @@ export type ParsedMentionChip =
   | {
       kind: "library_file";
       filePath: string;
+      title: string | null;
+    }
+  | {
+      kind: "library_directory";
+      directoryPath: string;
       title: string | null;
     };
 
@@ -97,6 +102,15 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
     };
   }
 
+  const libraryDirectory = parseLibraryDirectoryMentionHref(href);
+  if (libraryDirectory) {
+    return {
+      kind: "library_directory",
+      directoryPath: libraryDirectory.directoryPath,
+      title: libraryDirectory.title,
+    };
+  }
+
   return null;
 }
 
@@ -125,8 +139,10 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
     }
   }
 
-  if (mention.kind === "library_doc" || mention.kind === "library_file") {
-    const iconMask = buildLucideIconMask(FileText, "lucide:file-text");
+  if (mention.kind === "library_doc" || mention.kind === "library_file" || mention.kind === "library_directory") {
+    const iconMask = mention.kind === "library_directory"
+      ? buildLucideIconMask(Folder, "lucide:folder")
+      : buildLucideIconMask(FileText, "lucide:file-text");
     if (iconMask) {
       style["--rudder-mention-icon-mask"] = iconMask;
     }
@@ -172,6 +188,7 @@ export function clearMentionChipDecoration(element: HTMLElement) {
     "rudder-mention-chip--issue",
     "rudder-mention-chip--library_doc",
     "rudder-mention-chip--library_file",
+    "rudder-mention-chip--library_directory",
     "rudder-mention-chip--project",
     "rudder-project-mention-chip",
   );

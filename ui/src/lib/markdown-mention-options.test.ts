@@ -139,4 +139,36 @@ describe("buildMarkdownMentionOptions", () => {
       chatUpdatedAt: new Date("2026-05-20T00:05:00Z"),
     }));
   });
+
+  it("includes Library directories as mentionable entities", () => {
+    const options = buildMarkdownMentionOptions({
+      libraryFiles: [
+        {
+          name: "rudder-mkt",
+          displayLabel: "Rudder marketing",
+          path: "projects/rudder-mkt",
+          isDirectory: true,
+        },
+        {
+          name: "narrative.md",
+          path: "projects/rudder-mkt/narrative.md",
+          isDirectory: false,
+        },
+      ],
+    });
+
+    expect(options).toContainEqual(expect.objectContaining({
+      id: "library-directory:projects/rudder-mkt",
+      name: "Rudder marketing",
+      kind: "library_directory",
+      libraryDirectoryPath: "projects/rudder-mkt",
+      libraryFilePath: null,
+    }));
+    expect(options).toContainEqual(expect.objectContaining({
+      id: "library-file:projects/rudder-mkt/narrative.md",
+      kind: "library_file",
+      libraryFilePath: "projects/rudder-mkt/narrative.md",
+      libraryDirectoryPath: null,
+    }));
+  });
 });

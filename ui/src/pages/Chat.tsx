@@ -643,6 +643,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
               : parsed.kind === "library_file"
                 ? `/library?path=${encodeURIComponent(parsed.filePath)}`
+                : parsed.kind === "library_directory"
+                  ? `/library?directory=${encodeURIComponent(parsed.directoryPath)}`
                 : `/projects/${parsed.projectId}`;
       navigate(target);
       return;
