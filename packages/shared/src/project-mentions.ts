@@ -46,6 +46,7 @@ export interface ParsedAgentMention {
 export interface ParsedIssueMention {
   issueId: string;
   ref: string | null;
+  commentId: string | null;
 }
 
 export interface ParsedChatMention {
@@ -171,11 +172,15 @@ export function parseAgentMentionHref(href: string): ParsedAgentMention | null {
   };
 }
 
-export function buildIssueMentionHref(issueId: string, ref?: string | null): string {
+export function buildIssueMentionHref(issueId: string, ref?: string | null, commentId?: string | null): string {
   const trimmedIssueId = issueId.trim();
   const trimmedRef = ref?.trim();
-  if (!trimmedRef) return `${ISSUE_MENTION_SCHEME}${trimmedIssueId}`;
-  return `${ISSUE_MENTION_SCHEME}${trimmedIssueId}?r=${encodeURIComponent(trimmedRef)}`;
+  const trimmedCommentId = commentId?.trim();
+  const params = new URLSearchParams();
+  if (trimmedRef) params.set("r", trimmedRef);
+  if (trimmedCommentId) params.set("c", trimmedCommentId);
+  const query = params.toString();
+  return query ? `${ISSUE_MENTION_SCHEME}${trimmedIssueId}?${query}` : `${ISSUE_MENTION_SCHEME}${trimmedIssueId}`;
 }
 
 export function parseIssueMentionHref(href: string): ParsedIssueMention | null {
@@ -194,10 +199,12 @@ export function parseIssueMentionHref(href: string): ParsedIssueMention | null {
   if (!issueId) return null;
 
   const ref = (url.searchParams.get("r") ?? url.searchParams.get("ref") ?? "").trim() || null;
+  const commentId = (url.searchParams.get("c") ?? url.searchParams.get("commentId") ?? "").trim() || null;
 
   return {
     issueId,
     ref,
+    commentId,
   };
 }
 

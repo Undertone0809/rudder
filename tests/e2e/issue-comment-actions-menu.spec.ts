@@ -65,9 +65,12 @@ test("issue comment actions menu copies content and direct links", async ({ page
   const writesAfterLink = await page.evaluate(() => (
     (window as typeof window & { __rudderClipboardWrites?: string[] }).__rudderClipboardWrites ?? []
   ));
-  const expectedCommentUrl = `${new URL(page.url()).origin}/${organization.issuePrefix}/issues/${routeRef}#comment-${comment.id}`;
+  const expectedMentionHref = `issue://${issue.id}?r=${routeRef}&c=${comment.id}`;
+  const expectedSerializedMentionHref = expectedMentionHref.replaceAll("&", "\\&");
   const copiedMarkdownLink = writesAfterLink.at(-1);
-  expect(copiedMarkdownLink).toBe(`[Issue comment ${comment.id.slice(0, 8)}](<${expectedCommentUrl}>)`);
+  expect(copiedMarkdownLink).toBe(`[Issue comment ${comment.id.slice(0, 8)}](${expectedMentionHref})`);
+  expect(copiedMarkdownLink).not.toContain("http://");
+  expect(copiedMarkdownLink).not.toContain("https://");
 
   const composer = page.locator(".chat-composer .rudder-milkdown-content [contenteditable='true']").first();
   await expect(composer).toBeVisible();
@@ -81,6 +84,11 @@ test("issue comment actions menu copies content and direct links", async ({ page
       clipboardData: data,
     }));
   }, copiedMarkdownLink!);
+  const pastedMentionChip = page.locator(".chat-composer .rudder-milkdown-content .rudder-mention-chip--issue", {
+    hasText: `Issue comment ${comment.id.slice(0, 8)}`,
+  });
+  await expect(pastedMentionChip).toBeVisible();
+  await expect(pastedMentionChip).toHaveAttribute("data-mention-kind", "issue");
 
   const [createLinkedCommentResponse] = await Promise.all([
     page.waitForResponse((response) =>
@@ -91,13 +99,14 @@ test("issue comment actions menu copies content and direct links", async ({ page
   ]);
   expect(createLinkedCommentResponse.ok()).toBe(true);
   const linkedComment = await createLinkedCommentResponse.json() as { id: string; body: string };
-  expect(linkedComment.body).toBe(`[Issue comment ${comment.id.slice(0, 8)}](${expectedCommentUrl})`);
+  expect(linkedComment.body).toBe(`[Issue comment ${comment.id.slice(0, 8)}](${expectedSerializedMentionHref})`);
 
   const linkedCommentBlock = page.locator(`#comment-${linkedComment.id}`);
   await expect(linkedCommentBlock).toBeVisible();
   const renderedCopiedLink = linkedCommentBlock.getByRole("link", { name: `Issue comment ${comment.id.slice(0, 8)}` });
-  await expect(renderedCopiedLink).toHaveAttribute("href", expectedCommentUrl);
+  const expectedRenderedHref = `/issues/${routeRef}#comment-${comment.id}`;
+  await expect(renderedCopiedLink).toHaveAttribute("href", expectedRenderedHref);
   await renderedCopiedLink.click();
-  await expect(page).toHaveURL(expectedCommentUrl);
+  await expect(page).toHaveURL(`${new URL(page.url()).origin}${expectedRenderedHref}`);
   await expect(commentBlock).toHaveClass(/border-primary/);
 });

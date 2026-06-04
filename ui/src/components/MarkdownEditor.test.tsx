@@ -78,13 +78,25 @@ vi.mock("../lib/mention-chips", () => ({
     if (scheme === "chat") return { kind: "chat", conversationId: rest.split("?")[0] };
     if (scheme === "issue") {
       const [issueId, query = ""] = rest.split("?");
+      const params = new URLSearchParams(query);
       return {
         kind: "issue",
         issueId,
-        ref: new URLSearchParams(query).get("r"),
+        ref: params.get("r"),
+        commentId: params.get("c"),
       };
     }
     return null;
+  },
+  mentionChipNavigationPath: (mention: { kind: string; [key: string]: string | null }) => {
+    if (mention.kind === "agent") return `/agents/${mention.agentId}`;
+    if (mention.kind === "project") return `/projects/${mention.projectId}`;
+    if (mention.kind === "chat") return `/messenger/chat/${mention.conversationId}`;
+    if (mention.kind === "issue") {
+      const basePath = `/issues/${mention.ref ?? mention.issueId}`;
+      return mention.commentId ? `${basePath}#comment-${encodeURIComponent(mention.commentId)}` : basePath;
+    }
+    return "/";
   },
   stripMentionChipLabelPrefix: (value: string) => value.replace(/^@(?=\S)/, ""),
 }));

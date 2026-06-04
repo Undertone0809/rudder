@@ -5,7 +5,7 @@ import { buildAgentMentionHref } from "@rudderhq/shared";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
-import { mentionChipInlineStyle, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
+import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
 import { parseSkillReference } from "../lib/skill-reference";
 import { ImagePreviewDialog, type ImagePreviewState } from "./ImagePreviewDialog";
 import { InspectableImage } from "./InspectableImage";
@@ -470,19 +470,7 @@ export function MarkdownBody({
             }
           : parsed;
         const mentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren));
-        const targetHref = mention.kind === "project"
-          ? `/projects/${mention.projectId}`
-          : mention.kind === "issue"
-            ? `/issues/${mention.ref ?? mention.issueId}`
-            : mention.kind === "chat"
-              ? `/messenger/chat/${mention.conversationId}`
-              : mention.kind === "library_doc"
-                ? `/library?doc=${encodeURIComponent(mention.documentId)}`
-                : mention.kind === "library_file"
-                  ? `/library?path=${encodeURIComponent(mention.filePath)}`
-                  : mention.kind === "library_directory"
-                    ? `/library?directory=${encodeURIComponent(mention.directoryPath)}`
-                  : `/agents/${mention.agentId}`;
+        const targetHref = mentionChipNavigationPath(mention);
         return (
           <a
             href={targetHref}

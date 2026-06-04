@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyMentionChipDecoration,
   mentionChipInlineStyle,
+  mentionChipNavigationPath,
   parseMentionChipHref,
   stripMentionChipLabelPrefix,
 } from "./mention-chips";
@@ -91,6 +92,30 @@ describe("mention chips", () => {
     expect(element.textContent).toBe("Launch planning");
     expect(element.dataset.mentionKind).toBe("chat");
     expect(element.classList.contains("rudder-mention-chip--chat")).toBe(true);
+  });
+
+  it("parses, decorates, and navigates issue comment mention links", () => {
+    const mention = parseMentionChipHref("issue://issue-123?r=RUD-123&c=comment-456");
+    expect(mention).toEqual({
+      kind: "issue",
+      issueId: "issue-123",
+      ref: "RUD-123",
+      commentId: "comment-456",
+    });
+
+    expect(mention ? mentionChipNavigationPath(mention) : null).toBe("/issues/RUD-123#comment-comment-456");
+
+    const element = document.createElement("a");
+    element.textContent = "Issue comment comment-";
+    applyMentionChipDecoration(element, {
+      kind: "issue",
+      issueId: "issue-123",
+      ref: "RUD-123",
+      commentId: "comment-456",
+    });
+
+    expect(element.dataset.mentionKind).toBe("issue");
+    expect(element.classList.contains("rudder-mention-chip--issue")).toBe(true);
   });
 
   it("parses and decorates library file mention links", () => {

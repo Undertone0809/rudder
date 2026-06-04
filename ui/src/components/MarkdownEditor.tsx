@@ -55,6 +55,7 @@ import {
 import {
   applyMentionChipDecoration,
   clearMentionChipDecoration,
+  mentionChipNavigationPath,
   parseMentionChipHref,
   stripMentionChipLabelPrefix,
 } from "../lib/mention-chips";
@@ -1672,19 +1673,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     if (token.kind === "mention") {
       const parsed = parseMentionChipHref(token.href);
       if (!parsed) return;
-      const target = parsed.kind === "agent"
-        ? `/agents/${parsed.agentId}`
-        : parsed.kind === "issue"
-          ? `/issues/${parsed.ref ?? parsed.issueId}`
-          : parsed.kind === "chat"
-            ? `/messenger/chat/${parsed.conversationId}`
-            : parsed.kind === "library_doc"
-              ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
-              : parsed.kind === "library_file"
-                ? `/library?path=${encodeURIComponent(parsed.filePath)}`
-                : parsed.kind === "library_directory"
-                  ? `/library?directory=${encodeURIComponent(parsed.directoryPath)}`
-                : `/projects/${parsed.projectId}`;
+      const target = mentionChipNavigationPath(parsed);
       navigate(target);
       return;
     }

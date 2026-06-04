@@ -37,6 +37,7 @@ import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import {
   mentionChipInlineStyle,
+  mentionChipNavigationPath,
   parseMentionChipHref,
   stripMentionChipLabelPrefix,
   type ParsedMentionChip,
@@ -194,13 +195,7 @@ export function hasRudderMarkdownReference(markdown: string) {
 export function rudderTokenNavigationPath(href: string) {
   const parsed = parseMentionChipHref(href);
   if (parsed) {
-    if (parsed.kind === "project") return `/projects/${parsed.projectId}`;
-    if (parsed.kind === "issue") return `/issues/${parsed.ref ?? parsed.issueId}`;
-    if (parsed.kind === "chat") return `/messenger/chat/${parsed.conversationId}`;
-    if (parsed.kind === "library_doc") return `/library?doc=${encodeURIComponent(parsed.documentId)}`;
-    if (parsed.kind === "library_file") return `/library?path=${encodeURIComponent(parsed.filePath)}`;
-    if (parsed.kind === "library_directory") return `/library?directory=${encodeURIComponent(parsed.directoryPath)}`;
-    return `/agents/${parsed.agentId}`;
+    return mentionChipNavigationPath(parsed);
   }
 
   return null;

@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { buildIssueMentionHref } from "@rudderhq/shared";
 import type { IssueComment, Agent } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
 import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, TerminalSquare } from "lucide-react";
@@ -148,14 +149,16 @@ function shouldSkipRunRowNavigation(target: EventTarget | null): boolean {
     : false;
 }
 
-function buildCommentLink(commentId: string, location: ReturnType<typeof useLocation>) {
-  const path = `${location.pathname}${location.search}`;
-  if (typeof window === "undefined") return `${path}#comment-${commentId}`;
-  return `${window.location.origin}${path}#comment-${commentId}`;
+function extractIssueRouteRef(location: ReturnType<typeof useLocation>) {
+  const segments = location.pathname.split("/").filter(Boolean);
+  const issuesIndex = segments.lastIndexOf("issues");
+  const routeRef = issuesIndex >= 0 ? segments[issuesIndex + 1] : null;
+  return routeRef ? decodeURIComponent(routeRef) : null;
 }
 
-function buildCommentMarkdownLink(commentId: string, location: ReturnType<typeof useLocation>) {
-  return `[Issue comment ${commentId.slice(0, 8)}](<${buildCommentLink(commentId, location)}>)`;
+function buildCommentMarkdownLink(comment: CommentWithRunMeta, location: ReturnType<typeof useLocation>) {
+  const href = buildIssueMentionHref(comment.issueId, extractIssueRouteRef(location), comment.id);
+  return `[Issue comment ${comment.id.slice(0, 8)}](${href})`;
 }
 
 function timelineDateTime(date: Date | string) {
@@ -200,7 +203,7 @@ function CommentActionsMenu({
           {copiedAction === "content" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           Copy content
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => copyToClipboard("link", buildCommentMarkdownLink(comment.id, location))}>
+        <DropdownMenuItem onSelect={() => copyToClipboard("link", buildCommentMarkdownLink(comment, location))}>
           {copiedAction === "link" ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
           Copy link
         </DropdownMenuItem>

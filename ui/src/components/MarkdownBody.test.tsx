@@ -343,6 +343,20 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain(">@PAP-123 auth flow</a>");
   });
 
+  it("renders issue comment mentions as chips that link to the comment anchor", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[Issue comment abc12345](${buildIssueMentionHref("issue-789", "PAP-123", "comment-123")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/issues/PAP-123#comment-comment-123"');
+    expect(html).toContain('data-mention-kind="issue"');
+    expect(html).toContain(">Issue comment abc12345</a>");
+  });
+
   it("renders skill references as non-interactive tokens instead of links", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

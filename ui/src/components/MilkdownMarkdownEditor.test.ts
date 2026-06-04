@@ -489,6 +489,9 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
   it("resolves special Rudder references to app navigation paths", () => {
     expect(rudderTokenNavigationPath(buildAgentMentionHref("agent-1", "bot"))).toBe("/agents/agent-1");
     expect(rudderTokenNavigationPath(buildIssueMentionHref("issue-1", "R-1"))).toBe("/issues/R-1");
+    expect(rudderTokenNavigationPath(buildIssueMentionHref("issue-1", "R-1", "comment-1"))).toBe(
+      "/issues/R-1#comment-comment-1",
+    );
     expect(rudderTokenNavigationPath(buildLibraryFileMentionHref("docs/spec.md", "spec.md"))).toBe(
       "/library?path=docs%2Fspec.md",
     );

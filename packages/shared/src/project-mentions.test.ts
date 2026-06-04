@@ -66,8 +66,24 @@ describe("project-mentions", () => {
     expect(parseIssueMentionHref(href)).toEqual({
       issueId: "issue-123",
       ref: "PAP-123",
+      commentId: null,
     });
     expect(extractIssueMentionIds(`[@PAP-123](${href})`)).toEqual(["issue-123"]);
+  });
+
+  it("round-trips issue mentions with comment anchors", () => {
+    const href = buildIssueMentionHref("issue-123", "PAP-123", "comment-456");
+    expect(href).toBe("issue://issue-123?r=PAP-123&c=comment-456");
+    expect(parseIssueMentionHref(href)).toEqual({
+      issueId: "issue-123",
+      ref: "PAP-123",
+      commentId: "comment-456",
+    });
+    expect(parseIssueMentionHref("issue://issue-123?ref=PAP-123&commentId=comment-456")).toEqual({
+      issueId: "issue-123",
+      ref: "PAP-123",
+      commentId: "comment-456",
+    });
   });
 
   it("round-trips chat mentions with title metadata", () => {
