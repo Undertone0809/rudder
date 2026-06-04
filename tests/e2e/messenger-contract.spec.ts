@@ -88,6 +88,14 @@ async function expectMessengerThreadStartsAtBottom(page: Page, heading: string) 
   }).toBeLessThanOrEqual(8);
 }
 
+async function clickMessengerViewCheckbox(page: Page, name: string) {
+  const item = page.getByRole("menuitemcheckbox", { name });
+  if (!await item.isVisible().catch(() => false)) {
+    await page.getByTestId("messenger-thread-organization-trigger").click();
+  }
+  await item.click();
+}
+
 test.describe("Messenger unified threads contract", () => {
   test("loads additional chat sessions in the Messenger sidebar without fetching every thread up front", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Paged-Sessions-${Date.now()}`);
@@ -723,6 +731,113 @@ test.describe("Messenger unified threads contract", () => {
       path: testInfo.outputPath("messenger-shell.png"),
       fullPage: true,
     });
+  });
+
+  test("splits issue notifications into mixed Messenger sidebar rows", async ({ page }, testInfo) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Split-Issues-${Date.now()}`);
+    const newerChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Split newer chat",
+        summary: "This chat should stay above the split issue.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(newerChatRes.ok()).toBe(true);
+    const newerChat = await newerChatRes.json();
+
+    const olderChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Split older chat",
+        summary: "This chat should stay below the split issue.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(olderChatRes.ok()).toBe(true);
+    const olderChat = await olderChatRes.json();
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Split sidebar issue",
+        description: "This issue should become its own Messenger sidebar row.",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: currentUserId,
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier?: string | null; title: string };
+    const issueRef = issue.identifier ?? issue.id;
+
+    const baseTime = Date.parse("2026-05-04T12:00:00.000Z");
+    await e2eDb.update(chatConversations)
+      .set({
+        lastMessageAt: new Date(baseTime + 10 * 60_000),
+        updatedAt: new Date(baseTime + 10 * 60_000),
+      })
+      .where(eq(chatConversations.id, newerChat.id));
+    await e2eDb.update(issues)
+      .set({
+        updatedAt: new Date(baseTime + 5 * 60_000),
+      })
+      .where(eq(issues.id, issue.id));
+    await e2eDb.update(chatConversations)
+      .set({
+        lastMessageAt: new Date(baseTime),
+        updatedAt: new Date(baseTime),
+      })
+      .where(eq(chatConversations.id, olderChat.id));
+
+    await page.goto("/");
+    await page.evaluate(({ orgId }) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, { orgId: organization.id });
+
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    const aggregateIssueRow = page.getByTestId(threadTestId("issues"));
+    const splitIssueRow = page.getByTestId(threadTestId(`issue:${issue.id}`));
+    const newerChatRow = page.getByTestId(threadTestId(`chat:${newerChat.id}`));
+    const olderChatRow = page.getByTestId(threadTestId(`chat:${olderChat.id}`));
+
+    await expect(aggregateIssueRow).toContainText("Issues", { timeout: 15_000 });
+    await expect(splitIssueRow).toHaveCount(0);
+
+    await clickMessengerViewCheckbox(page, "Split issue notifications");
+    await expect(page.getByText("Threads · Split issues")).toBeVisible({ timeout: 15_000 });
+    await expect(aggregateIssueRow).toHaveCount(0);
+    await expect(splitIssueRow).toContainText("Split sidebar issue", { timeout: 15_000 });
+    await expect(splitIssueRow).toContainText(issueRef);
+    await expect(splitIssueRow).toContainText("assigned to me");
+
+    const sidebarThreads = page.locator('[data-testid="workspace-sidebar"] [data-testid^="messenger-thread-"]:not([data-testid="messenger-thread-organization-trigger"])');
+    await expect(sidebarThreads).toHaveCount(3);
+    await expect(sidebarThreads.nth(0)).toContainText("Split newer chat");
+    await expect(sidebarThreads.nth(1)).toContainText("Split sidebar issue");
+    await expect(sidebarThreads.nth(2)).toContainText("Split older chat");
+
+    await splitIssueRow.click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${issueRef}$`));
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    await expect(splitIssueRow).toBeVisible({ timeout: 15_000 });
+
+    await clickMessengerViewCheckbox(page, "Compact mode");
+    await expect(page.getByText("Threads · Compact · Split issues")).toBeVisible({ timeout: 15_000 });
+    await expect(splitIssueRow).toContainText("Split sidebar issue");
+    await expect(splitIssueRow).not.toContainText("assigned to me");
+
+    await page.screenshot({ path: testInfo.outputPath("messenger-split-issues-desktop.png"), fullPage: true });
+
+    await clickMessengerViewCheckbox(page, "Split issue notifications");
+    await expect(page.getByText("Threads · Compact")).toBeVisible({ timeout: 15_000 });
+    await expect(splitIssueRow).toHaveCount(0);
+    await expect(aggregateIssueRow).toContainText("Issues", { timeout: 15_000 });
   });
 
   test("lets operators label agent-proposed chat issue approvals before approval", async ({ page }) => {

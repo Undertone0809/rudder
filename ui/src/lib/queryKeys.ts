@@ -82,7 +82,10 @@ export const queryKeys = {
   },
   messenger: {
     threads: (orgId: string) => ["messenger", orgId, "threads"] as const,
-    threadPages: (orgId: string) => ["messenger", orgId, "threads", "pages"] as const,
+    threadPages: (orgId: string, splitIssues?: boolean) =>
+      splitIssues === undefined
+        ? ["messenger", orgId, "threads", "pages"] as const
+        : ["messenger", orgId, "threads", "pages", splitIssues ? "split-issues" : "aggregate-issues"] as const,
     threadPreview: (orgId: string) => ["messenger", orgId, "threads", "preview"] as const,
     issues: (orgId: string) => ["messenger", orgId, "issues"] as const,
     approvals: (orgId: string) => ["messenger", orgId, "approvals"] as const,

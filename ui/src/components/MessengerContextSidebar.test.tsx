@@ -10,6 +10,7 @@ const invalidateQueries = vi.fn();
 
 let messengerModel: any;
 let messengerRoute: any;
+let messengerModelOptions: any[];
 let chatList: any[];
 let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
@@ -48,8 +49,15 @@ vi.mock("@/context/DialogContext", () => ({
   useDialog: () => ({ confirm: vi.fn(async () => true) }),
 }));
 
+vi.mock("@/context/OrganizationContext", () => ({
+  useOrganization: () => ({ selectedOrganizationId: "org-1" }),
+}));
+
 vi.mock("@/hooks/useMessenger", () => ({
-  useMessengerModel: () => messengerModel,
+  useMessengerModel: (options?: unknown) => {
+    messengerModelOptions.push(options);
+    return messengerModel;
+  },
   messengerThreadKindLabel: (kind: string) => kind,
   resolveMessengerRoute: () => messengerRoute,
 }));
@@ -98,6 +106,7 @@ describe("MessengerContextSidebar", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-11T10:00:00.000Z"));
     queryOptions = [];
+    messengerModelOptions = [];
     localStorageValues = {};
     vi.stubGlobal("window", {
       localStorage: {
@@ -241,6 +250,15 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("items-center gap-2 px-2 py-1.5");
     expect(html).toContain("h-7 w-7");
     expect(html).toContain("grid-cols-[minmax(0,1fr)_2.75rem] items-center");
+  });
+
+  it("restores the split issue notifications preference for the current organization", () => {
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": true });
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("Split issues");
+    expect(messengerModelOptions).toContainEqual({ splitIssues: true });
   });
 
   it("promotes pinned Messenger chats from thread summaries before chat list hydration", () => {

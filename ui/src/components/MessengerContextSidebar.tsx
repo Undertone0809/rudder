@@ -32,6 +32,7 @@ import { cn, relativeTime } from "@/lib/utils";
 import { useSidebar } from "@/context/SidebarContext";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
+import { useOrganization } from "@/context/OrganizationContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
@@ -56,6 +57,7 @@ type MessengerThreadDensity = "comfortable" | "compact";
 
 const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg";
 const THREAD_DENSITY_STORAGE_KEY = "rudder.messengerThreadDensityByOrg";
+const SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY = "rudder.messengerSplitIssueNotificationsByOrg";
 const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
 const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "comfortable";
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
@@ -167,6 +169,18 @@ function readThreadDensity(orgId: string | null | undefined): MessengerThreadDen
   return DEFAULT_THREAD_DENSITY;
 }
 
+function readSplitIssueNotifications(orgId: string | null | undefined): boolean {
+  if (!orgId || typeof window === "undefined") return false;
+  try {
+    const raw = window.localStorage.getItem(SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    return parsed[orgId] === true;
+  } catch {
+    // Ignore storage failures; aggregate issue notifications remain the default.
+  }
+  return false;
+}
+
 function writeThreadOrganizationRule(orgId: string, rule: ThreadOrganizationRule) {
   if (typeof window === "undefined") return;
   try {
@@ -186,6 +200,17 @@ function writeThreadDensity(orgId: string, density: MessengerThreadDensity) {
     window.localStorage.setItem(THREAD_DENSITY_STORAGE_KEY, JSON.stringify({ ...parsed, [orgId]: density }));
   } catch {
     // Ignore storage failures; the in-memory density still applies for this view.
+  }
+}
+
+function writeSplitIssueNotifications(orgId: string, enabled: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    window.localStorage.setItem(SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY, JSON.stringify({ ...parsed, [orgId]: enabled }));
+  } catch {
+    // Ignore storage failures; the in-memory toggle still applies for this view.
   }
 }
 
@@ -259,23 +284,32 @@ function ThreadAvatar({
 function MessengerThreadSectionHeader({
   rule,
   density,
+  splitIssueNotifications,
   onRuleChange,
   onDensityChange,
+  onSplitIssueNotificationsChange,
 }: {
   rule: ThreadOrganizationRule;
   density: MessengerThreadDensity;
+  splitIssueNotifications: boolean;
   onRuleChange: (rule: ThreadOrganizationRule) => void;
   onDensityChange: (density: MessengerThreadDensity) => void;
+  onSplitIssueNotificationsChange: (enabled: boolean) => void;
 }) {
   const activeRule = rule !== DEFAULT_THREAD_ORGANIZATION_RULE;
   const compact = density === "compact";
+  const statusLabels = [
+    activeRule ? threadOrganizationLabel(rule) : null,
+    compact ? "Compact" : null,
+    splitIssueNotifications ? "Split issues" : null,
+  ].filter(Boolean);
   return (
     <div className="group/section flex items-center justify-between px-3.5 pt-3.5">
       <div className="min-w-0 truncate text-[11px] font-semibold text-muted-foreground/72">
-        Threads{activeRule || compact ? (
+        Threads{statusLabels.length > 0 ? (
           <span className="text-muted-foreground">
             {" · "}
-            {[activeRule ? threadOrganizationLabel(rule) : null, compact ? "Compact" : null].filter(Boolean).join(" · ")}
+            {statusLabels.join(" · ")}
           </span>
         ) : null}
       </div>
@@ -300,6 +334,12 @@ function MessengerThreadSectionHeader({
             onCheckedChange={(checked) => onDensityChange(checked ? "compact" : "comfortable")}
           >
             Compact mode
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            checked={splitIssueNotifications}
+            onCheckedChange={(checked) => onSplitIssueNotificationsChange(Boolean(checked))}
+          >
+            Split issue notifications
           </DropdownMenuCheckboxItem>
           <DropdownMenuSeparator />
           <DropdownMenuLabel className="text-xs text-muted-foreground">Organize by</DropdownMenuLabel>
@@ -743,7 +783,11 @@ export function MessengerContextSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const relativePath = toOrganizationRelativePath(location.pathname);
-  const model = useMessengerModel();
+  const { selectedOrganizationId } = useOrganization();
+  const [splitIssueNotifications, setSplitIssueNotifications] = useState(() =>
+    readSplitIssueNotifications(selectedOrganizationId),
+  );
+  const model = useMessengerModel({ splitIssues: splitIssueNotifications });
   const { isMobile, setSidebarOpen } = useSidebar();
   const { confirm } = useDialog();
   const {
@@ -771,6 +815,7 @@ export function MessengerContextSidebar() {
   useEffect(() => {
     setThreadOrganizationRule(readThreadOrganizationRule(model.selectedOrganizationId));
     setThreadDensity(readThreadDensity(model.selectedOrganizationId));
+    setSplitIssueNotifications(readSplitIssueNotifications(model.selectedOrganizationId));
   }, [model.selectedOrganizationId]);
 
   const shouldLoadSidebarConversations = threadOrganizationRule === "project";
@@ -867,6 +912,13 @@ export function MessengerContextSidebar() {
     setThreadDensity(density);
     if (model.selectedOrganizationId) {
       writeThreadDensity(model.selectedOrganizationId, density);
+    }
+  };
+
+  const handleSplitIssueNotificationsChange = (enabled: boolean) => {
+    setSplitIssueNotifications(enabled);
+    if (model.selectedOrganizationId) {
+      writeSplitIssueNotifications(model.selectedOrganizationId, enabled);
     }
   };
 
@@ -1076,8 +1128,10 @@ export function MessengerContextSidebar() {
       <MessengerThreadSectionHeader
         rule={threadOrganizationRule}
         density={threadDensity}
+        splitIssueNotifications={splitIssueNotifications}
         onRuleChange={handleThreadOrganizationRuleChange}
         onDensityChange={handleThreadDensityChange}
+        onSplitIssueNotificationsChange={handleSplitIssueNotificationsChange}
       />
       <nav
         ref={setSidebarScrollRef}

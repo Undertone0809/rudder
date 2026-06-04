@@ -79,6 +79,13 @@ type IssueThreadDetailOptions = {
   limit?: number;
   cursor?: string | null;
 };
+type ThreadSummaryListOptions = {
+  splitIssues?: boolean;
+};
+type ThreadSummaryPageOptions = ThreadSummaryListOptions & {
+  limit?: number;
+  cursor?: string | null;
+};
 type IssueThreadCursor = {
   activityAt: string;
   issueId: string;
@@ -648,6 +655,35 @@ function issueSummary(
     needsAttention: unreadCount > 0,
     isPinned: false,
     href: "/messenger/issues",
+  };
+}
+
+function splitIssueSummary(
+  entry: IssueThreadEntry,
+  item: MessengerIssueThreadItem,
+  lastReadAt: Date | null,
+): MessengerThreadSummary {
+  const unreadCount = entry.attentionActivityAt && (!lastReadAt || entry.attentionActivityAt.getTime() > lastReadAt.getTime())
+    ? 1
+    : 0;
+  return {
+    threadKey: `issue:${entry.issue.id}`,
+    kind: "issues",
+    title: item.title,
+    subtitle: item.subtitle,
+    preview: item.preview ?? item.body,
+    latestActivityAt: item.latestActivityAt,
+    lastReadAt,
+    unreadCount,
+    needsAttention: unreadCount > 0,
+    isPinned: false,
+    href: item.href,
+    metadata: {
+      ...item.metadata,
+      splitIssue: true,
+      issueId: entry.issue.id,
+      issueIdentifier: entry.issue.identifier,
+    },
   };
 }
 
@@ -1275,6 +1311,51 @@ export function messengerService(db: Db) {
     return rows.map((row) => issueThreadEntryFromRow(row, userId));
   }
 
+  async function buildIssueCardsForEntries(
+    orgId: string,
+    userId: string,
+    entries: IssueThreadEntry[],
+    order: "latest" | "chronological",
+  ) {
+    const latestDisplayCommentRows = await loadLatestIssueCommentsForDisplay(orgId, entries.map((entry) => entry.issue.id), userId);
+    const latestDisplayCommentByIssue = new Map<string, IssueCommentRow>();
+    for (const row of latestDisplayCommentRows) {
+      latestDisplayCommentByIssue.set(row.issueId, row);
+    }
+    const orderedEntries = order === "chronological"
+      ? [...entries].sort(compareIssueThreadEntriesChronological)
+      : [...entries];
+    return orderedEntries.map((entry) => {
+      const latestDisplayComment = latestDisplayCommentByIssue.get(entry.issue.id) ?? null;
+      const latestDisplayCommentAt = normalizeDate(latestDisplayComment?.createdAt ?? null);
+      const latestSourceIsComment = Boolean(
+        latestDisplayCommentAt &&
+        (!entry.latestActivity?.createdAt || latestDisplayCommentAt.getTime() >= new Date(entry.latestActivity.createdAt).getTime()),
+      );
+      const sourceComment = latestSourceIsComment ? latestDisplayComment : null;
+      const latestPreview = sourceComment
+        ? truncate(sourceComment.body)
+        : entry.latestActivity
+          ? summarizeIssueActivity(entry.latestActivity, entry.issue)
+          : null;
+      const statusChangeActivity = sourceComment
+        ? (issueStatusActivityMatchesSourceComment(entry.latestActivity, sourceComment) ? entry.latestActivity : null)
+        : entry.latestActivity;
+      return {
+        entry,
+        item: issueCard(
+          entry.issue,
+          userId,
+          entry.issue.followed,
+          latestPreview,
+          entry.latestActivityAt,
+          sourceComment,
+          statusChangeActivity,
+        ),
+      };
+    });
+  }
+
   async function loadIssueData(
     orgId: string,
     userId: string,
@@ -1300,39 +1381,8 @@ export function messengerService(db: Db) {
     const hasMoreDetailEntries = options.includeDetail && detailEntries.length > detailLimit;
     const pageEntries = hasMoreDetailEntries ? detailEntries.slice(0, detailLimit) : detailEntries;
     const cursorEntry = hasMoreDetailEntries ? pageEntries.at(-1) ?? null : null;
-    const latestDisplayCommentRows = await loadLatestIssueCommentsForDisplay(orgId, pageEntries.map((entry) => entry.issue.id), userId);
-    const latestDisplayCommentByIssue = new Map<string, IssueCommentRow>();
-    for (const row of latestDisplayCommentRows) {
-      latestDisplayCommentByIssue.set(row.issueId, row);
-    }
-    const chronologicalItems = pageEntries
-      .sort(compareIssueThreadEntriesChronological)
-      .map((entry) => {
-        const latestDisplayComment = latestDisplayCommentByIssue.get(entry.issue.id) ?? null;
-        const latestDisplayCommentAt = normalizeDate(latestDisplayComment?.createdAt ?? null);
-        const latestSourceIsComment = Boolean(
-          latestDisplayCommentAt &&
-          (!entry.latestActivity?.createdAt || latestDisplayCommentAt.getTime() >= new Date(entry.latestActivity.createdAt).getTime()),
-        );
-        const sourceComment = latestSourceIsComment ? latestDisplayComment : null;
-        const latestPreview = sourceComment
-          ? truncate(sourceComment.body)
-          : entry.latestActivity
-            ? summarizeIssueActivity(entry.latestActivity, entry.issue)
-            : null;
-        const statusChangeActivity = sourceComment
-          ? (issueStatusActivityMatchesSourceComment(entry.latestActivity, sourceComment) ? entry.latestActivity : null)
-          : entry.latestActivity;
-        return issueCard(
-          entry.issue,
-          userId,
-          entry.issue.followed,
-          latestPreview,
-          entry.latestActivityAt,
-          sourceComment,
-          statusChangeActivity,
-        );
-      });
+    const chronologicalItems = (await buildIssueCardsForEntries(orgId, userId, pageEntries, "chronological"))
+      .map(({ item }) => item);
 
     const data: IssueThreadData = {
       summary: issueSummary(stats.itemCount, stats.latestActivityAt, stats.unreadCount, lastReadAt, summaryPreview),
@@ -1378,6 +1428,20 @@ export function messengerService(db: Db) {
 
   async function loadIssueThreadSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource): Promise<SystemSummaryData> {
     return loadIssueData(orgId, userId, threadStates, { includeDetail: false });
+  }
+
+  async function loadSplitIssueSummaries(
+    orgId: string,
+    userId: string,
+    threadStates: ThreadStateSource | undefined,
+    limit: number,
+  ) {
+    const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "issues", threadStates);
+    const entries = await loadIssueDetailEntries(orgId, userId, limit, null);
+    const pageEntries = entries.slice(0, limit);
+    const cards = await buildIssueCardsForEntries(orgId, userId, pageEntries, "latest");
+    const lastReadAt = await lastReadAtPromise;
+    return cards.map(({ entry, item }) => splitIssueSummary(entry, item, lastReadAt));
   }
 
   async function loadApprovalSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
@@ -1788,7 +1852,11 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function listThreadSummaries(orgId: string, userId: string) {
+  async function listThreadSummaries(
+    orgId: string,
+    userId: string,
+    options: ThreadSummaryListOptions = {},
+  ) {
     const syntheticThreadStates = loadThreadStates(db, orgId, userId, [
       "issues",
       "approvals",
@@ -1796,9 +1864,12 @@ export function messengerService(db: Db) {
       "budget-alerts",
       "join-requests",
     ]);
-    const [chats, issueData, approvalData, failedRunData, budgetData, joinRequestData] = await Promise.all([
+    const [chats, issueData, splitIssueSummaries, approvalData, failedRunData, budgetData, joinRequestData] = await Promise.all([
       chatsSvc.listSummaries(orgId, { status: "active" }, userId),
       loadIssueThreadSummaryData(orgId, userId, syntheticThreadStates),
+      options.splitIssues
+        ? loadSplitIssueSummaries(orgId, userId, syntheticThreadStates, MAX_THREAD_SUMMARY_LIMIT)
+        : Promise.resolve([] as MessengerThreadSummary[]),
       loadApprovalThreadSummaryData(orgId, userId, syntheticThreadStates),
       loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),
       loadBudgetAlertData(orgId, userId, syntheticThreadStates),
@@ -1806,7 +1877,8 @@ export function messengerService(db: Db) {
     ]);
 
     const syntheticSummaries: MessengerThreadSummary[] = [];
-    if (issueData.itemCount > 0) syntheticSummaries.push(issueData.summary);
+    if (options.splitIssues) syntheticSummaries.push(...splitIssueSummaries);
+    else if (issueData.itemCount > 0) syntheticSummaries.push(issueData.summary);
     if (approvalData.itemCount > 0) syntheticSummaries.push(approvalData.summary);
     if (failedRunData.itemCount > 0) syntheticSummaries.push(failedRunData.summary);
     if (budgetData.detail.items.length > 0) syntheticSummaries.push(budgetData.summary);
@@ -1823,7 +1895,7 @@ export function messengerService(db: Db) {
   async function listThreadSummaryPage(
     orgId: string,
     userId: string,
-    options: { limit?: number; cursor?: string | null } = {},
+    options: ThreadSummaryPageOptions = {},
   ): Promise<MessengerThreadSummaryPage> {
     const limit = normalizeThreadSummaryLimit(options.limit);
     const cursor = decodeThreadSummaryCursor(options.cursor);
@@ -1836,12 +1908,16 @@ export function messengerService(db: Db) {
     ]);
     const [
       issueData,
+      splitIssueSummaries,
       approvalData,
       failedRunData,
       budgetData,
       joinRequestData,
     ] = await Promise.all([
       loadIssueThreadSummaryData(orgId, userId, syntheticThreadStates),
+      options.splitIssues
+        ? loadSplitIssueSummaries(orgId, userId, syntheticThreadStates, MAX_THREAD_SUMMARY_LIMIT)
+        : Promise.resolve([] as MessengerThreadSummary[]),
       loadApprovalThreadSummaryData(orgId, userId, syntheticThreadStates),
       loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),
       loadBudgetAlertData(orgId, userId, syntheticThreadStates),
@@ -1849,7 +1925,8 @@ export function messengerService(db: Db) {
     ]);
 
     const syntheticSummaries: MessengerThreadSummary[] = [];
-    if (issueData.itemCount > 0) syntheticSummaries.push(issueData.summary);
+    if (options.splitIssues) syntheticSummaries.push(...splitIssueSummaries);
+    else if (issueData.itemCount > 0) syntheticSummaries.push(issueData.summary);
     if (approvalData.itemCount > 0) syntheticSummaries.push(approvalData.summary);
     if (failedRunData.itemCount > 0) syntheticSummaries.push(failedRunData.summary);
     if (budgetData.detail.items.length > 0) syntheticSummaries.push(budgetData.summary);

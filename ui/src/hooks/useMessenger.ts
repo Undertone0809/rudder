@@ -85,7 +85,7 @@ export function messengerThreadKindLabel(kind: MessengerThreadKind): string {
   return titleCaseThreadKind(kind);
 }
 
-export function useMessengerModel() {
+export function useMessengerModel(options: { splitIssues?: boolean } = {}) {
   const location = useLocation();
   const { selectedOrganizationId } = useOrganization();
   const route = resolveMessengerRoute(toOrganizationRelativePath(location.pathname));
@@ -97,11 +97,12 @@ export function useMessengerModel() {
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
 
   const threadsQuery = useInfiniteQuery({
-    queryKey: queryKeys.messenger.threadPages(selectedOrganizationId ?? "__none__"),
+    queryKey: queryKeys.messenger.threadPages(selectedOrganizationId ?? "__none__", Boolean(options.splitIssues)),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => messengerApi.listThreadPage(selectedOrganizationId!, {
       cursor: pageParam,
       limit: MESSENGER_THREAD_PAGE_SIZE,
+      splitIssues: options.splitIssues,
     }),
     getNextPageParam: (lastPage) => lastPage.pageInfo.hasMore ? lastPage.pageInfo.nextCursor : undefined,
     enabled: !!selectedOrganizationId,

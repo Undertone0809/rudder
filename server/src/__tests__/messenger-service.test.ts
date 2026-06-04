@@ -352,6 +352,94 @@ describe("messengerService and issue follows", () => {
     expect(issuesSummary?.preview).toBe("Followed issue — Review Summary: render enough comment body to judge the issue update");
   });
 
+  it("can split tracked issue notifications into Messenger thread summaries", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-split-issues";
+    const issueId = randomUUID();
+    const chatId = randomUUID();
+    const olderChatId = randomUUID();
+    const issueUpdatedAt = new Date("2026-05-03T12:00:00.000Z");
+    const chatUpdatedAt = new Date("2026-05-03T11:00:00.000Z");
+    const olderChatUpdatedAt = new Date("2026-05-03T10:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Split Issues Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Split Issues Org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(chatConversations).values([
+      {
+        id: chatId,
+        orgId,
+        title: "Middle chat thread",
+        summary: "This chat should sort between split issue rows and older chats.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        createdByUserId: userId,
+        lastMessageAt: chatUpdatedAt,
+        createdAt: chatUpdatedAt,
+        updatedAt: chatUpdatedAt,
+      },
+      {
+        id: olderChatId,
+        orgId,
+        title: "Older chat thread",
+        summary: "This chat should sort after the split issue row.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        createdByUserId: userId,
+        lastMessageAt: olderChatUpdatedAt,
+        createdAt: olderChatUpdatedAt,
+        updatedAt: olderChatUpdatedAt,
+      },
+    ]);
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Split issue row",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: userId,
+      identifier: "SPL-1",
+      createdAt: issueUpdatedAt,
+      updatedAt: issueUpdatedAt,
+    });
+
+    const aggregateSummaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const splitSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    const splitPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 10,
+      splitIssues: true,
+    });
+
+    expect(aggregateSummaries.map((item) => item.threadKey)).toContain("issues");
+    expect(splitSummaries.map((item) => item.threadKey)).not.toContain("issues");
+    expect(splitSummaries.map((item) => item.threadKey)).toEqual([
+      `issue:${issueId}`,
+      `chat:${chatId}`,
+      `chat:${olderChatId}`,
+    ]);
+    expect(splitPage.items.map((item) => item.threadKey)).toEqual(splitSummaries.map((item) => item.threadKey));
+    expect(splitSummaries[0]).toMatchObject({
+      threadKey: `issue:${issueId}`,
+      kind: "issues",
+      title: "SPL-1 · Split issue row",
+      href: "/issues/SPL-1",
+      unreadCount: 1,
+      needsAttention: true,
+      metadata: {
+        splitIssue: true,
+        issueId,
+        issueIdentifier: "SPL-1",
+        assignedToMe: true,
+      },
+    });
+  });
+
   it("includes issue status transitions in Messenger issue update cards", async () => {
     const orgId = randomUUID();
     const userId = "board-user-status-transition";

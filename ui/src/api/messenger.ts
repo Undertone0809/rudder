@@ -22,6 +22,7 @@ type MessengerIssuesThreadOptions = {
 type MessengerThreadsOptions = {
   cursor?: string | null;
   limit?: number;
+  splitIssues?: boolean;
 };
 
 export const messengerApi = {
@@ -31,6 +32,7 @@ export const messengerApi = {
     const params = new URLSearchParams();
     if (options.cursor) params.set("cursor", options.cursor);
     if (typeof options.limit === "number") params.set("limit", String(options.limit));
+    if (options.splitIssues) params.set("splitIssues", "true");
     const query = params.toString();
     return api.get<MessengerThreadSummaryPage>(`/orgs/${orgId}/messenger/threads${query ? `?${query}` : ""}`);
   },

@@ -54,6 +54,7 @@ export interface MessengerThreadSummary {
   needsAttention: boolean;
   isPinned: boolean;
   href: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface MessengerThreadPageInfo {
