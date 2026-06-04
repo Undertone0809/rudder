@@ -586,10 +586,12 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
 
       if (commentBody && comment) {
         let mentionedIds: string[] = [];
-        try {
-          mentionedIds = await svc.findMentionedAgents(issue.orgId, commentBody);
-        } catch (err) {
-          logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+        if (actor.actorType !== "agent") {
+          try {
+            mentionedIds = await svc.findMentionedAgents(issue.orgId, commentBody);
+          } catch (err) {
+            logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+          }
         }
 
         for (const mentionedId of mentionedIds) {

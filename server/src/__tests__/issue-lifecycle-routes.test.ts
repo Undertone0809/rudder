@@ -1712,6 +1712,27 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+
+  it("does not fan out mention wakeups from agent-authored issue comments", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        checkoutRunId: RUN_ID,
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "@Peer Agent I handled the review feedback." });
+
+    expect(res.status).toBe(201);
+    await flushAsyncWork();
+    expect(mockIssueService.findMentionedAgents).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
   it("does not update assignee when a comment mentions another agent", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({

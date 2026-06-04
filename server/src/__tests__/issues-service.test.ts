@@ -24,7 +24,7 @@ import {
   projects,
   projectWorkspaces,
 } from "@rudderhq/db";
-import { deriveOrganizationUrlKey } from "@rudderhq/shared";
+import { buildAgentMentionHref, deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { issueService } from "../services/issues.ts";
 
 type EmbeddedPostgresInstance = {
@@ -380,6 +380,35 @@ describe("issueService.list participantAgentId", () => {
     await expect(svc.findMentionedProjectIds(issueId)).resolves.toEqual([projectId]);
   });
 
+
+  it("treats agent mention links as render-only references when resolving agent wake mentions", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Agent Mention Org",
+      urlKey: deriveOrganizationUrlKey("Agent Mention Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Wesley",
+      role: "reviewer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await expect(svc.findMentionedAgents(orgId, "@Wesley please check this")).resolves.toEqual([agentId]);
+    await expect(
+      svc.findMentionedAgents(orgId, `Render-only reference: [Wesley](${buildAgentMentionHref(agentId, "code")})`),
+    ).resolves.toEqual([]);
+  });
   it("persists and filters reviewer principals", async () => {
     const orgId = randomUUID();
     const reviewerAgentId = randomUUID();

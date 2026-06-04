@@ -316,10 +316,12 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
       }
 
       let mentionedIds: string[] = [];
-      try {
-        mentionedIds = await svc.findMentionedAgents(issue.orgId, req.body.body);
-      } catch (err) {
-        logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+      if (!actorIsAgent) {
+        try {
+          mentionedIds = await svc.findMentionedAgents(issue.orgId, req.body.body);
+        } catch (err) {
+          logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+        }
       }
 
       for (const mentionedId of mentionedIds) {

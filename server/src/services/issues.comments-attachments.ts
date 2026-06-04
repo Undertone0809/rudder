@@ -22,7 +22,6 @@ import {
   projects,
 } from "@rudderhq/db";
 import {
-  extractAgentMentionIds,
   extractProjectMentionIds,
   isUuidLike,
   type IssueSearchMatch,
@@ -55,12 +54,11 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       let m: RegExpExecArray | null;
       while ((m = re.exec(body)) !== null) tokens.add(m[1].toLowerCase());
 
-      const explicitAgentMentionIds = extractAgentMentionIds(body).filter(isUuidLike);
-      if (tokens.size === 0 && explicitAgentMentionIds.length === 0) return [];
+      if (tokens.size === 0) return [];
 
       const rows = await db.select({ id: agents.id, name: agents.name })
         .from(agents).where(eq(agents.orgId, orgId));
-      const resolved = new Set<string>(explicitAgentMentionIds);
+      const resolved = new Set<string>();
       for (const agent of rows) {
         if (tokens.has(agent.name.toLowerCase())) {
           resolved.add(agent.id);
