@@ -282,6 +282,26 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     };
   }
 
+  function automationChatRunInputPayload(
+    automation: typeof automations.$inferSelect,
+    run: typeof automationRuns.$inferSelect,
+    source: "schedule" | "manual" | "api" | "webhook",
+  ) {
+    return {
+      eventType: "automation_run_input",
+      automationChatRun: {
+        ...automationChatRunMetadata(automation, run, run.linkedChatConversationId ?? ""),
+        status: "running",
+        source,
+        triggerId: run.triggerId,
+      },
+      guidance: {
+        intent: "execute_existing_automation",
+        mayCreateAutomation: false,
+      },
+    };
+  }
+
   function proposedPlanDocumentPayload(structuredPayload: Record<string, unknown> | null | undefined) {
     if (!structuredPayload) return null;
     const rawDocument =
@@ -595,7 +615,14 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         source: run.source as "schedule" | "manual" | "api" | "webhook",
         payload: run.triggerPayload,
       });
-      userMessage = await chatSvc.addUserChatMessage(conversation.id, conversation.orgId, prompt) as ChatMessage;
+      const source = run.source as "schedule" | "manual" | "api" | "webhook";
+      userMessage = await chatSvc.addUserChatMessage(
+        conversation.id,
+        conversation.orgId,
+        prompt,
+        null,
+        { structuredPayload: automationChatRunInputPayload(automation, run, source) },
+      ) as ChatMessage;
       await logChatMessageAdded({
         orgId: conversation.orgId,
         conversationId: conversation.id,

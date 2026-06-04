@@ -372,6 +372,43 @@ export function buildChatResponseQualityPromptSection() {
   ].join("\n");
 }
 
+export function buildAutomationRunInputPromptSection(messages: ChatMessage[]) {
+  const automationInputs = messages
+    .slice(-12)
+    .filter((message) => message.structuredPayload?.eventType === "automation_run_input");
+  if (automationInputs.length === 0) return null;
+
+  const latest = automationInputs.at(-1)!;
+  const payload = latest.structuredPayload ?? {};
+  const run = asRecord(payload.automationChatRun);
+  const guidance = asRecord(payload.guidance);
+  const lines = [
+    "Automation execution context:",
+    "- This conversation contains an existing Rudder Automation run input.",
+    "- Treat messages with structuredPayload.eventType = \"automation_run_input\" as system-scheduled execution instructions for an already-created automation, even though they are stored with role \"user\" for chat transcript continuity.",
+    "- Do not interpret an automation-run input as an operator-authored request to create, configure, or revise an automation.",
+    "- Do not emit result kind \"automation_create\" because of an automation-run input.",
+    "- Do not ask for schedule, trigger source, recurrence, or push time when the missing detail is only about creating or configuring the automation; that automation already exists.",
+    "- Ask the operator only for information required to complete the current run's actual content task.",
+  ];
+  if (typeof run?.automationTitle === "string") {
+    lines.push(`- Automation title: ${run.automationTitle}`);
+  }
+  if (typeof run?.automationId === "string") {
+    lines.push(`- Automation ID: ${run.automationId}`);
+  }
+  if (typeof run?.runId === "string") {
+    lines.push(`- Automation run ID: ${run.runId}`);
+  }
+  if (typeof run?.source === "string") {
+    lines.push(`- Trigger source: ${run.source}`);
+  }
+  if (guidance?.mayCreateAutomation === false) {
+    lines.push("- For this automation-run input, mayCreateAutomation: false.");
+  }
+  return lines.join("\n");
+}
+
 export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntimeSource, resultSentinel: string) {
   return [
     buildChatSpeakerPromptSection(runtimeSource),
@@ -388,7 +425,7 @@ export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntime
     "Use result kind 'issue_proposal' for larger work that should become an issue.",
     "For issue_proposal, include exactly one owner decision in structuredPayload.issueProposal: either assigneeAgentId/assigneeUserId for the proposed owner, or assigneeUnassignedReason explaining why the issue should intentionally remain unassigned. Do not leave ownership implicit. Do not default to the selected chat agent unless that agent should actually own execution.",
     "Issue proposals create To Do issues by default. Omit status for the normal runnable default; set status to 'backlog' only when the issue should intentionally wait and not be picked up by agents yet.",
-    "Use result kind 'automation_create' when the user clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. This creates a Rudder Automation directly without a board approval proposal.",
+    "Use result kind 'automation_create' only when the latest operator-authored user request clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. Never use automation_create for automation-run input messages.",
     "For automation_create, include structuredPayload.automationCreate with title, description, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to assign the automation to the selected chat agent. Use outputMode 'track_issue' so each run creates reviewable board-tracked work.",
     "Reply in two phases.",
     "Phase 1: while you work, write concise progress updates in Markdown with no JSON fences. These are process transcript entries, not the final answer.",
@@ -764,6 +801,7 @@ export function buildConversationPrompt(
   const selectedProjectSection = buildSelectedProjectPromptSection(input.contextLinks);
   const selectedIssueSection = buildSelectedIssuePromptSection(input.conversation, input.contextLinks);
   const issueLabelsSection = buildIssueLabelsPromptSection(input.issueLabels);
+  const automationRunInputSection = buildAutomationRunInputPromptSection(input.messages);
   const currentUserAttachmentSection = buildCurrentUserAttachmentPromptSection(input.messages.slice(-12), attachmentReferences);
   /**
    * Chat prompt assembly stays compositional on purpose.
@@ -782,6 +820,7 @@ export function buildConversationPrompt(
     ...(selectedIssueSection ? [selectedIssueSection] : []),
     ...(selectedProjectSection ? [selectedProjectSection] : []),
     ...(issueLabelsSection ? [issueLabelsSection] : []),
+    ...(automationRunInputSection ? [automationRunInputSection] : []),
     ...(orgResourcesPrompt ? [orgResourcesPrompt] : []),
     ...(operatorProfileSection ? [operatorProfileSection] : []),
     ...(currentUserAttachmentSection ? [currentUserAttachmentSection] : []),

@@ -294,6 +294,29 @@ function askUserSummary(ctx: { context?: Record<string, unknown> }) {
   })}`;
 }
 
+function makeAutomationRunInputMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    ...makeMessages()[0]!,
+    id: "automation-run-input-message",
+    body: "Send me a daily information flow.\n\nAutomation: Daily information flow\nTrigger source: schedule",
+    structuredPayload: {
+      eventType: "automation_run_input",
+      automationChatRun: {
+        automationId: "automation-1",
+        automationTitle: "Daily information flow",
+        runId: "run-1",
+        source: "schedule",
+        status: "running",
+      },
+      guidance: {
+        intent: "execute_existing_automation",
+        mayCreateAutomation: false,
+      },
+    },
+    ...overrides,
+  };
+}
+
 describe("chatAssistantService operator profile prompt injection", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -692,6 +715,131 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).not.toContain("Plan mode is active for this conversation.");
     expect(prompt).not.toContain("required markdown plan for the issue plan document");
     expect(prompt).toContain("\"body\": \"optional markdown plan\"");
+  });
+
+  it("marks automation-run user messages as existing execution input instead of automation creation intent", async () => {
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ title: "Daily information flow" }),
+      messages: [makeAutomationRunInputMessage()],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("Automation execution context:");
+    expect(prompt).toContain("already-created automation");
+    expect(prompt).toContain("Do not emit result kind \"automation_create\" because of an automation-run input.");
+    expect(prompt).toContain("Do not ask for schedule, trigger source, recurrence, or push time");
+    expect(prompt).toContain("Use result kind 'automation_create' only when the latest operator-authored user request");
+    expect(prompt).toContain("\"eventType\": \"automation_run_input\"");
+    expect(prompt).toContain("\"mayCreateAutomation\": false");
+    expect(prompt).toContain("For this automation-run input, mayCreateAutomation: false.");
+  });
+
+  it("keeps automation-run execution context when the operator answers an ask_user follow-up", async () => {
+    const svc = chatAssistantService({} as any);
+    const now = new Date("2026-03-29T08:02:00.000Z");
+    const automationInput = makeAutomationRunInputMessage({
+      chatTurnId: "turn-automation-run",
+      createdAt: new Date("2026-03-29T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-29T08:01:00.000Z"),
+    });
+    const assistantQuestion: ChatMessage = {
+      ...automationInput,
+      id: "message-ask",
+      role: "assistant",
+      kind: "ask_user",
+      body: "Which account should I summarize?",
+      replyingAgentId: "agent-1",
+      structuredPayload: {
+        requestUserInput: {
+          questions: [{
+            id: "account",
+            question: "Which account should I summarize?",
+            options: [{ id: "all", label: "All accounts" }],
+          }],
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+    const operatorAnswer: ChatMessage = {
+      ...automationInput,
+      id: "message-answer",
+      body: "Use all accounts.",
+      structuredPayload: null,
+      chatTurnId: "turn-answer",
+      createdAt: new Date("2026-03-29T08:03:00.000Z"),
+      updatedAt: new Date("2026-03-29T08:03:00.000Z"),
+    };
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ title: "Daily information flow" }),
+      messages: [automationInput, assistantQuestion, operatorAnswer],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("Automation execution context:");
+    expect(prompt).toContain("Do not interpret an automation-run input as an operator-authored request");
+    expect(prompt).toContain("Do not emit result kind \"automation_create\" because of an automation-run input.");
+    expect(prompt).toContain("\"body\": \"Use all accounts.\"");
+    expect(prompt).toContain("\"eventType\": \"automation_run_input\"");
+  });
+
+  it("returns a normal message for daily automation-run wording when the prompt carries the execution guard", async () => {
+    const svc = chatAssistantService({} as any);
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      const prompt = String(ctx.context?.chatPrompt ?? "");
+      const hasAutomationRunGuard =
+        prompt.includes("structuredPayload.eventType = \"automation_run_input\"")
+        && prompt.includes("Do not emit result kind \"automation_create\" because of an automation-run input.");
+      const sentinel = sentinelFromContext(ctx);
+      return {
+        summary: `${sentinel}${JSON.stringify(hasAutomationRunGuard
+          ? {
+            kind: "message",
+            body: "Here is today's information flow.",
+            structuredPayload: null,
+          }
+          : {
+            kind: "automation_create",
+            body: "I can create that automation.",
+            structuredPayload: {
+              automationCreate: {
+                title: "Daily information flow",
+                description: "Send a daily information flow.",
+                priority: "medium",
+                outputMode: "chat_output",
+                schedule: {
+                  cronExpression: "0 9 * * *",
+                  timezone: "Asia/Shanghai",
+                },
+              },
+            },
+          })}`,
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const result = await svc.generateChatAssistantReply({
+      conversation: makeConversation({ title: "Daily information flow" }),
+      messages: [makeAutomationRunInputMessage()],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      kind: "message",
+      body: "Here is today's information flow.",
+      structuredPayload: null,
+    }));
   });
 
   it("parses ask_user final results and includes requestUserInput guidance in normal chat", async () => {

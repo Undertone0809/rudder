@@ -927,6 +927,7 @@ export function chatService(db: Db) {
     orgId: string,
     body: string,
     editUserMessageId?: string | null,
+    options: { structuredPayload?: Record<string, unknown> | null } = {},
   ) {
     if (editUserMessageId) {
       let [target] = await db
@@ -975,6 +976,7 @@ export function chatService(db: Db) {
       role: "user",
       kind: "message",
       body,
+      structuredPayload: options.structuredPayload ?? null,
       chatTurnId: turnId,
       turnVariant: 0,
     });

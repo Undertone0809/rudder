@@ -564,6 +564,20 @@ describe("automation service live-execution coalescing", () => {
     expect(userMessage.kind).toBe("message");
     expect(userMessage.body).toContain("Summarize active work.");
     expect(userMessage.body).toContain("Automation: Daily standup");
+    expect(userMessage.structuredPayload).toMatchObject({
+      eventType: "automation_run_input",
+      automationChatRun: {
+        automationId: automation.id,
+        automationTitle: automation.title,
+        runId: run.id,
+        source: "manual",
+        status: "running",
+      },
+      guidance: {
+        intent: "execute_existing_automation",
+        mayCreateAutomation: false,
+      },
+    });
     expect(completed?.startedChatMessageId).toBe(userMessage.id);
 
     const assistantMessage = messages[1]!;
