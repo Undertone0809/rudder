@@ -103,6 +103,104 @@ test("Library markdown paste parses markdown syntax and keeps code blocks readab
   await expect(editor).not.toContainText("## HEAD2");
 });
 
+test("Library markdown pasted images are uploaded as assets before save", async ({ page }) => {
+  const organization = await createOrg(page, "Library-Markdown-Image-Upload");
+  const filePath = "docs/image-upload.md";
+  await writeWorkspaceFile(page, organization.id, filePath, "# Image Upload\n\n");
+  await selectOrg(page, organization.id);
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+
+  const editor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+  await expect(editor.locator("h1", { hasText: "Image Upload" })).toBeVisible();
+
+  const uploadResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST"
+    && response.url().includes(`/api/orgs/${organization.id}/assets/images`)
+    && response.status() === 201,
+  );
+
+  await editor.evaluate(async (element) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 180;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Failed to create canvas context for Library image upload test");
+    }
+    context.fillStyle = "#f8fafc";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#2563eb";
+    context.fillRect(32, 32, canvas.width - 64, canvas.height - 64);
+    context.fillStyle = "#ffffff";
+    context.font = "bold 24px sans-serif";
+    context.fillText("Library", 112, 98);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/png");
+    });
+    if (!blob) {
+      throw new Error("Failed to create PNG blob for Library image upload test");
+    }
+
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([blob], "library-screenshot.png", { type: "image/png" }));
+
+    const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      value: dataTransfer,
+    });
+    element.dispatchEvent(pasteEvent);
+  });
+
+  const uploadedAsset = await (await uploadResponse).json() as { contentPath: string };
+  expect(uploadedAsset.contentPath).toMatch(/^\/api\/assets\/[^/]+\/content$/);
+  await expect(editor.locator(`img[src="${uploadedAsset.contentPath}"]`)).toBeVisible();
+
+  await expect.poll(async () => {
+    const fileRes = await page.request.get(
+      `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(filePath)}`,
+    );
+    expect(fileRes.ok()).toBe(true);
+    const detail = await fileRes.json() as { content: string | null };
+    return detail.content ?? "";
+  }).toContain(uploadedAsset.contentPath);
+
+  const savedFileRes = await page.request.get(
+    `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(filePath)}`,
+  );
+  expect(savedFileRes.ok()).toBe(true);
+  const savedFile = await savedFileRes.json() as { content: string | null };
+  expect(savedFile.content).toContain(`![library-screenshot.png](${uploadedAsset.contentPath})`);
+  expect(savedFile.content).not.toContain("data:image");
+});
+
+test("Library markdown files reject embedded image data URLs", async ({ page }) => {
+  const organization = await createOrg(page, "Library-Markdown-Image-Data-Url");
+
+  const createRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+    data: {
+      filePath: "docs/data-url-create.md",
+      content: "![Screenshot](data:image/svg+xml,%3Csvg%3E%3C/svg%3E)\n",
+    },
+  });
+  expect(createRes.status()).toBe(422);
+  await expect(createRes.json()).resolves.toMatchObject({
+    error: expect.stringContaining("Embedded image data URLs are not allowed"),
+  });
+
+  const filePath = "docs/data-url-update.md";
+  await writeWorkspaceFile(page, organization.id, filePath, "# Screenshot\n\n");
+  const updateRes = await page.request.patch(`/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(filePath)}`, {
+    data: {
+      content: "![Screenshot](data:image/jpeg;base64,/9j/4AAQSkZJRg==)\n",
+    },
+  });
+  expect(updateRes.status()).toBe(422);
+  await expect(updateRes.json()).resolves.toMatchObject({
+    error: expect.stringContaining("Embedded image data URLs are not allowed"),
+  });
+});
+
 test("Library markdown section jumps align headings to the top of the editor viewport", async ({ page }) => {
   const organization = await createOrg(page, "Library-Markdown-Outline");
   const filePath = "docs/outline.md";

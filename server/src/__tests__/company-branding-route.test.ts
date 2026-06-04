@@ -246,6 +246,7 @@ describe("organization workspace file agent access", () => {
   beforeEach(() => {
     mockAgentService.getById.mockReset();
     mockLogActivity.mockReset();
+    mockOrganizationSkillService.syncWorkspaceFileChange.mockReset();
   });
 
   it("limits agent workspace file reads to project Library paths", async () => {
@@ -332,5 +333,41 @@ describe("organization workspace file agent access", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-name>/`");
+  });
+
+  it("rejects embedded image data URLs when creating workspace files", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/organization-1/workspace/file")
+      .send({
+        filePath: "docs/screenshot.md",
+        content: "![Screenshot](data:image/svg+xml,%3Csvg%3E%3C/svg%3E)\n",
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("Embedded image data URLs are not allowed");
+  });
+
+  it("rejects embedded image data URLs when updating workspace files", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    });
+
+    const res = await request(app)
+      .patch("/api/orgs/organization-1/workspace/file?path=docs%2Fscreenshot.md")
+      .send({
+        content: "![Screenshot](data:image/jpeg;base64,/9j/4AAQSkZJRg==)\n",
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("Embedded image data URLs are not allowed");
+    expect(mockOrganizationSkillService.syncWorkspaceFileChange).not.toHaveBeenCalled();
   });
 });

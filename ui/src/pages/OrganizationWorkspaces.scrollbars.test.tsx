@@ -14,6 +14,7 @@ const mockState = vi.hoisted(() => ({
   setHeaderActions: vi.fn(),
   pushToast: vi.fn(),
   setSearchParams: vi.fn(),
+  uploadImage: vi.fn(),
   searchParams: "path=artifacts/chat-ui-review/image.png",
   viewedOrganizationId: "org-1",
   viewedOrganizationIssuePrefix: "RUD",
@@ -111,15 +112,40 @@ vi.mock("@tanstack/react-query", () => ({
     }
     return { data: null, isLoading: false, error: null };
   }),
-  useMutation: vi.fn(() => ({
-    mutate: vi.fn(),
-    isPending: false,
-    isError: false,
-  })),
+  useMutation: vi.fn((options?: {
+    mutationFn?: (payload: unknown) => unknown;
+    onError?: (error: unknown) => void;
+    onSuccess?: (result: unknown) => void;
+  }) => {
+    const mutateAsync = vi.fn(async (payload: unknown) => {
+      try {
+        const result = options?.mutationFn ? await options.mutationFn(payload) : undefined;
+        options?.onSuccess?.(result);
+        return result;
+      } catch (error) {
+        options?.onError?.(error);
+        throw error;
+      }
+    });
+    return {
+      mutate: vi.fn((payload: unknown) => {
+        void mutateAsync(payload);
+      }),
+      mutateAsync,
+      isPending: false,
+      isError: false,
+    };
+  }),
   useQueryClient: vi.fn(() => ({
     invalidateQueries: vi.fn(),
     setQueryData: vi.fn(),
   })),
+}));
+
+vi.mock("../api/assets", () => ({
+  assetsApi: {
+    uploadImage: (...args: unknown[]) => mockState.uploadImage(...args),
+  },
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -162,8 +188,10 @@ vi.mock("../components/MarkdownEditor", () => ({
   MarkdownEditor: ({
     value,
     onInlineTokenClick,
+    imageUploadHandler,
   }: {
     value?: string;
+    imageUploadHandler?: (file: File) => Promise<string>;
     onInlineTokenClick?: (
       token: {
         element: HTMLElement;
@@ -191,6 +219,17 @@ vi.mock("../components/MarkdownEditor", () => ({
       >
         README.md
       </button>
+      <button
+        type="button"
+        data-testid="mock-library-upload-image"
+        onClick={() => {
+          void imageUploadHandler?.(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "screenshot.png", {
+            type: "image/png",
+          }));
+        }}
+      >
+        Upload image
+      </button>
     </div>
   ),
 }));
@@ -208,6 +247,10 @@ let currentContainer: HTMLDivElement | null = null;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  mockState.uploadImage.mockResolvedValue({
+    assetId: "asset-1",
+    contentPath: "/api/assets/asset-1/content",
+  });
   mockState.searchParams = "path=artifacts/chat-ui-review/image.png";
   mockState.viewedOrganizationId = "org-1";
   mockState.viewedOrganizationIssuePrefix = "RUD";
@@ -494,6 +537,24 @@ describe("OrganizationWorkspaces scroll regions", () => {
       "false",
       "true",
     ]);
+  });
+
+  it("uploads Library markdown images as assets instead of embedding data URLs", async () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/notes.md";
+    renderWorkspacesPage();
+
+    await act(async () => {
+      document.querySelector("[data-testid='mock-library-upload-image']")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(mockState.uploadImage).toHaveBeenCalledWith(
+      "org-1",
+      expect.any(File),
+      "library/artifacts/chat-ui-review/notes",
+    );
   });
 
   it("closes the current Library file tab on command-w without allowing the browser shortcut", async () => {

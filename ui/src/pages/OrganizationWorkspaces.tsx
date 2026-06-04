@@ -33,6 +33,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { assetsApi } from "../api/assets";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { AgentIcon } from "../components/AgentIconPicker";
@@ -107,6 +108,9 @@ const PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES = new Set(["memory", "skills"]);
 const AGENT_MENTION_MARKDOWN_LINK_RE = /\[([^\]]*)]\((agent:\/\/[^)\s]+)\)/g;
 const WORKSPACE_ENTRY_DND_MIME = "application/x-rudder-workspace-entry";
 const WORKSPACE_TAB_DND_MIME = "application/x-rudder-workspace-tab";
+const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*,/i;
+const EMBEDDED_IMAGE_DATA_URL_ERROR =
+  "Embedded image data URLs are not allowed in Library files. Upload the image and reference the asset URL instead.";
 const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
   label: string;
   className: string;
@@ -146,6 +150,25 @@ function clampWorkspaceTabContextMenuPosition(left: number, top: number) {
 function requestWorkspaceDraftFlush() {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new Event(WORKSPACE_FLUSH_DRAFT_EVENT));
+}
+
+function containsEmbeddedImageDataUrl(content: string) {
+  return EMBEDDED_IMAGE_DATA_URL_RE.test(content);
+}
+
+function workspaceImageAssetNamespace(filePath: string | null) {
+  const withoutExtension = (filePath ?? "untitled")
+    .replace(/\.[^/.]+$/, "")
+    .split("/")
+    .map((segment) => {
+      const cleaned = segment
+        .replace(/[^a-zA-Z0-9_-]+/g, "_")
+        .replace(/_{2,}/g, "_")
+        .replace(/^_+|_+$/g, "");
+      return (cleaned || "file").slice(0, 40);
+    })
+    .join("/");
+  return `library/${withoutExtension}`.slice(0, 120).replace(/\/+$/g, "") || "library";
 }
 
 export function WorkspaceLaunchTargetIcon({
@@ -3028,16 +3051,37 @@ export function OrganizationWorkspaceBrowser({
   );
 
   const saveWorkspaceFile = useMutation({
-    mutationFn: (payload: { filePath: string; content: string }) =>
-      organizationsApi.updateWorkspaceFile(viewedOrganizationId!, payload.filePath, {
+    mutationFn: (payload: { filePath: string; content: string }) => {
+      if (containsEmbeddedImageDataUrl(payload.content)) {
+        throw new Error(EMBEDDED_IMAGE_DATA_URL_ERROR);
+      }
+      return organizationsApi.updateWorkspaceFile(viewedOrganizationId!, payload.filePath, {
         content: payload.content,
-      }),
+      });
+    },
     onSuccess: (detail) => {
       if (!viewedOrganizationId) return;
       syncedFileRef.current = { filePath: detail.filePath, content: detail.content ?? "" };
       queryClient.setQueryData(
         queryKeys.organizations.workspaceFile(viewedOrganizationId, detail.filePath),
         detail,
+      );
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Image upload required",
+        body: error instanceof Error ? error.message : EMBEDDED_IMAGE_DATA_URL_ERROR,
+        tone: "error",
+      });
+    },
+  });
+  const uploadWorkspaceImage = useMutation({
+    mutationFn: async (payload: { file: File; filePath: string | null }) => {
+      if (!viewedOrganizationId) throw new Error("No organization selected");
+      return assetsApi.uploadImage(
+        viewedOrganizationId,
+        payload.file,
+        workspaceImageAssetNamespace(payload.filePath),
       );
     },
   });
@@ -4251,6 +4295,13 @@ export function OrganizationWorkspaceBrowser({
                             onChange={(nextContent) => handleMarkdownBodyDraftChange(selectedFilePath, nextContent)}
                             mentions={agentWorkspaceMentionOptions}
                             onInlineTokenClick={handleLibraryInlineTokenClick}
+                            imageUploadHandler={async (file) => {
+                              const asset = await uploadWorkspaceImage.mutateAsync({
+                                file,
+                                filePath: selectedFilePath,
+                              });
+                              return asset.contentPath;
+                            }}
                             bordered={false}
                             placeholder="Write in Markdown..."
                             contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"

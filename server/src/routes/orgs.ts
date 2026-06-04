@@ -23,7 +23,7 @@ import {
   createWorkspaceBackupSchema,
   restoreWorkspaceBackupSchema,
 } from "@rudderhq/shared";
-import { forbidden } from "../errors.js";
+import { forbidden, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
@@ -42,6 +42,16 @@ import {
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+
+const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*,/i;
+const EMBEDDED_IMAGE_DATA_URL_ERROR =
+  "Embedded image data URLs are not allowed in Library files. Upload images as attachments or assets and reference their content URL instead.";
+
+function assertNoEmbeddedImageDataUrls(content: string) {
+  if (EMBEDDED_IMAGE_DATA_URL_RE.test(content)) {
+    throw unprocessable(EMBEDDED_IMAGE_DATA_URL_ERROR);
+  }
+}
 
 export function organizationRoutes(db: Db, storage?: StorageService) {
   const router = Router();
@@ -504,7 +514,9 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     const orgId = req.params.orgId as string;
     await assertCanWriteWorkspaceFile(req, orgId);
     assertAgentLibraryProjectPath(req, req.body.filePath, "file");
-    const result = await workspaceBrowser.createFile(orgId, req.body.filePath, req.body.content ?? "");
+    const content = req.body.content ?? "";
+    assertNoEmbeddedImageDataUrls(content);
+    const result = await workspaceBrowser.createFile(orgId, req.body.filePath, content);
     const actor = getActorInfo(req);
     await logActivity(db, {
       orgId,
@@ -549,6 +561,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     await assertCanWriteWorkspaceFile(req, orgId);
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
     assertAgentLibraryProjectPath(req, filePath, "file");
+    assertNoEmbeddedImageDataUrls(req.body.content);
     const result = await workspaceBrowser.writeFile(orgId, filePath, req.body.content);
     await organizationSkills.syncWorkspaceFileChange(orgId, result.filePath, req.body.content);
     const actor = getActorInfo(req);
