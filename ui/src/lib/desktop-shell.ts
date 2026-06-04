@@ -119,7 +119,7 @@ export type DesktopIdeTarget = {
 };
 
 export type DesktopWorkspaceLaunchTarget = {
-  id: DesktopIdeTarget["id"] | "xcode" | "terminal" | "warp" | "finder";
+  id: DesktopIdeTarget["id"] | "xcode" | "terminal" | "warp" | "commandPrompt" | "powershell" | "finder";
   label: string;
   kind: "ide" | "terminal" | "folder";
   iconDataUrl?: string;

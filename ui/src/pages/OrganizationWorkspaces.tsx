@@ -25,6 +25,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
@@ -96,6 +99,8 @@ const WORKSPACE_LAUNCH_TARGET_IDS = [
   "xcode",
   "terminal",
   "warp",
+  "commandPrompt",
+  "powershell",
   "finder",
 ] as const satisfies readonly DesktopWorkspaceLaunchTarget["id"][];
 const WORKSPACE_IMAGE_FILE_EXTENSIONS = new Set([".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
@@ -122,10 +127,18 @@ const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTa
   webstorm: { label: "WS", className: "bg-[#ec4899] text-white" },
   intellij: { label: "IJ", className: "bg-[#f97316] text-white" },
   xcode: { label: "XC", className: "bg-[#147efb] text-white" },
+  commandPrompt: { label: "CMD", className: "bg-[#111827] text-white" },
+  powershell: { label: "PS", className: "bg-[#2563eb] text-white" },
 };
 
 function isWorkspaceLaunchTargetId(value: string | null): value is DesktopWorkspaceLaunchTarget["id"] {
   return WORKSPACE_LAUNCH_TARGET_IDS.includes(value as DesktopWorkspaceLaunchTarget["id"]);
+}
+
+function isWorkspaceIdeLaunchTarget(
+  target: DesktopWorkspaceLaunchTarget,
+): target is DesktopWorkspaceLaunchTarget & { id: DesktopIdeTarget["id"]; kind: "ide" } {
+  return target.kind === "ide" && target.id !== "xcode";
 }
 
 function readStoredWorkspaceLaunchTargetId() {
@@ -664,6 +677,33 @@ function serializeWorkspaceDragEntry(entry: OrganizationWorkspaceFileEntry) {
   });
 }
 
+function setWorkspaceEntryDragImage(event: DragEvent<HTMLElement>) {
+  if (typeof event.dataTransfer.setDragImage !== "function") return;
+
+  const source = event.currentTarget.cloneNode(true);
+  if (!(source instanceof HTMLElement)) return;
+
+  source.querySelector("[data-testid^='org-workspaces-entry-more-']")?.remove();
+  source.classList.remove("hover:bg-accent/60", "hover:bg-accent/50", "hover:text-foreground");
+  source.classList.add("rudder-workspace-tree-drag-image");
+  source.removeAttribute("data-workspace-entry-path");
+  source.removeAttribute("draggable");
+
+  const rect = event.currentTarget.getBoundingClientRect();
+  source.style.position = "fixed";
+  source.style.top = "-1000px";
+  source.style.left = "-1000px";
+  source.style.width = `${Math.min(Math.max(rect.width || 220, 190), 300)}px`;
+  source.style.paddingLeft = "10px";
+  source.style.opacity = "1";
+  source.style.pointerEvents = "none";
+  source.style.zIndex = "-1";
+
+  document.body.appendChild(source);
+  event.dataTransfer.setDragImage(source, Math.min(event.clientX - rect.left, 26), Math.min(event.clientY - rect.top, 16));
+  window.setTimeout(() => source.remove(), 0);
+}
+
 function parseWorkspaceDragEntry(event: DragEvent<HTMLElement>) {
   const payload = event.dataTransfer.getData(WORKSPACE_ENTRY_DND_MIME);
   if (!payload) return null;
@@ -845,12 +885,16 @@ function DirectoryChildren({
   selectedFilePath,
   selectedResourcePath,
   activeEntryPath,
+  draggedEntryPath,
   onSelectFile,
   onSelectResource,
   onFocusEntry,
+  onDragStartEntry,
+  onDragEndEntry,
   onCopyLink,
   onCopyAbsolutePath,
   onOpenEntry,
+  onOpenEntryTarget,
   onStartCreateEntry,
   onStartRename,
   onStartDelete,
@@ -861,6 +905,8 @@ function DirectoryChildren({
   onUnlinkResource,
   unlinkingResourceId,
   expandedDirectories,
+  workspaceLaunchTargets,
+  openingWorkspaceTargetId,
   projectResourceGroupsByLibraryPath,
   depth,
 }: {
@@ -869,12 +915,16 @@ function DirectoryChildren({
   selectedFilePath: string | null;
   selectedResourcePath: string | null;
   activeEntryPath: string | null;
+  draggedEntryPath: string | null;
   onSelectFile: (filePath: string) => void;
   onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
+  onDragStartEntry: (entryPath: string) => void;
+  onDragEndEntry: () => void;
   onCopyLink: (entry: OrganizationWorkspaceFileEntry) => void;
   onCopyAbsolutePath: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
+  onOpenEntryTarget?: (entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -885,6 +935,8 @@ function DirectoryChildren({
   onUnlinkResource: (project: Project, attachment: ProjectResourceAttachment) => void;
   unlinkingResourceId: string | null;
   expandedDirectories: Set<string>;
+  workspaceLaunchTargets: DesktopWorkspaceLaunchTarget[];
+  openingWorkspaceTargetId: DesktopWorkspaceLaunchTarget["id"] | null;
   projectResourceGroupsByLibraryPath: Map<string, ProjectResourceTreeGroup>;
   depth: number;
 }) {
@@ -908,12 +960,16 @@ function DirectoryChildren({
           selectedFilePath={selectedFilePath}
           selectedResourcePath={selectedResourcePath}
           activeEntryPath={activeEntryPath}
+          draggedEntryPath={draggedEntryPath}
           onSelectFile={onSelectFile}
           onSelectResource={onSelectResource}
           onFocusEntry={onFocusEntry}
+          onDragStartEntry={onDragStartEntry}
+          onDragEndEntry={onDragEndEntry}
           onCopyLink={onCopyLink}
           onCopyAbsolutePath={onCopyAbsolutePath}
           onOpenEntry={onOpenEntry}
+          onOpenEntryTarget={onOpenEntryTarget}
           onStartCreateEntry={onStartCreateEntry}
           onStartRename={onStartRename}
           onStartDelete={onStartDelete}
@@ -924,6 +980,8 @@ function DirectoryChildren({
           onUnlinkResource={onUnlinkResource}
           unlinkingResourceId={unlinkingResourceId}
           expandedDirectories={expandedDirectories}
+          workspaceLaunchTargets={workspaceLaunchTargets}
+          openingWorkspaceTargetId={openingWorkspaceTargetId}
           projectResourceGroupsByLibraryPath={projectResourceGroupsByLibraryPath}
           depth={depth}
         />
@@ -938,12 +996,16 @@ function WorkspaceTreeNode({
   selectedFilePath,
   selectedResourcePath,
   activeEntryPath,
+  draggedEntryPath,
   onSelectFile,
   onSelectResource,
   onFocusEntry,
+  onDragStartEntry,
+  onDragEndEntry,
   onCopyLink,
   onCopyAbsolutePath,
   onOpenEntry,
+  onOpenEntryTarget,
   onStartCreateEntry,
   onStartRename,
   onStartDelete,
@@ -954,6 +1016,8 @@ function WorkspaceTreeNode({
   onUnlinkResource,
   unlinkingResourceId,
   expandedDirectories,
+  workspaceLaunchTargets,
+  openingWorkspaceTargetId,
   projectResourceGroupsByLibraryPath,
   depth = 0,
 }: {
@@ -962,12 +1026,16 @@ function WorkspaceTreeNode({
   selectedFilePath: string | null;
   selectedResourcePath: string | null;
   activeEntryPath: string | null;
+  draggedEntryPath: string | null;
   onSelectFile: (filePath: string) => void;
   onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
+  onDragStartEntry: (entryPath: string) => void;
+  onDragEndEntry: () => void;
   onCopyLink: (entry: OrganizationWorkspaceFileEntry) => void;
   onCopyAbsolutePath: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
+  onOpenEntryTarget?: (entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -978,6 +1046,8 @@ function WorkspaceTreeNode({
   onUnlinkResource: (project: Project, attachment: ProjectResourceAttachment) => void;
   unlinkingResourceId: string | null;
   expandedDirectories: Set<string>;
+  workspaceLaunchTargets: DesktopWorkspaceLaunchTarget[];
+  openingWorkspaceTargetId: DesktopWorkspaceLaunchTarget["id"] | null;
   projectResourceGroupsByLibraryPath: Map<string, ProjectResourceTreeGroup>;
   depth?: number;
 }) {
@@ -994,7 +1064,11 @@ function WorkspaceTreeNode({
   const canRenameEntry = canRenameWorkspaceEntry(entry);
   const canDeleteEntry = canDeleteWorkspaceEntry(entry);
   const canDropIntoDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
+  const entryOpenTargets = entry.isDirectory
+    ? workspaceLaunchTargets
+    : workspaceLaunchTargets.filter(isWorkspaceIdeLaunchTarget);
   const isActive = activeEntryPath === entry.path || (!activeEntryPath && selectedFilePath === entry.path);
+  const isDraggingEntry = draggedEntryPath === entry.path;
   const handleOpenActionMenu = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1009,6 +1083,8 @@ function WorkspaceTreeNode({
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(WORKSPACE_ENTRY_DND_MIME, serializeWorkspaceDragEntry(entry));
     event.dataTransfer.setData("text/plain", entry.path);
+    onDragStartEntry(entry.path);
+    setWorkspaceEntryDragImage(event);
   };
   const handleDragOver = (event: DragEvent<HTMLElement>) => {
     if (!canDropIntoDirectory || !hasWorkspaceDragPayload(event.dataTransfer)) return;
@@ -1110,16 +1186,50 @@ function WorkspaceTreeNode({
         </DropdownMenuItem>
         {!isProtectedContainer ? (
           <>
-            {onOpenEntry || canCreateInsideDirectory ? <DropdownMenuSeparator /> : null}
-            {onOpenEntry ? (
-              <DropdownMenuItem onSelect={() => onOpenEntry(entry)}>
-                <ExternalLink className="h-3.5 w-3.5" />
-                {entry.isDirectory ? "Open folder" : "Open in editor"}
-              </DropdownMenuItem>
+            {onOpenEntry || onOpenEntryTarget || canCreateInsideDirectory ? <DropdownMenuSeparator /> : null}
+            {onOpenEntry || onOpenEntryTarget ? (
+              entryOpenTargets.length > 0 && onOpenEntryTarget ? (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger
+                    className="h-9 rounded-[6px] px-2 text-sm"
+                    data-testid={`org-workspaces-entry-open-submenu-${entry.path}`}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    {entry.isDirectory ? "Open folder" : "Open in editor"}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent
+                    sideOffset={6}
+                    className="w-60 whitespace-nowrap p-1"
+                  >
+                    {entryOpenTargets.map((target) => (
+                      <DropdownMenuItem
+                        key={target.id}
+                        className="h-9 gap-2 rounded-[6px]"
+                        disabled={openingWorkspaceTargetId !== null}
+                        data-testid={`org-workspaces-entry-open-target-${entry.path}-${target.id}`}
+                        onSelect={() => onOpenEntryTarget(entry, target)}
+                      >
+                        {openingWorkspaceTargetId === target.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <WorkspaceLaunchTargetIcon target={target} />
+                        )}
+                        <span className="min-w-0 flex-1 truncate">{target.label}</span>
+                        <span className="text-[11px] capitalize text-muted-foreground">{target.kind}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              ) : onOpenEntry ? (
+                <DropdownMenuItem onSelect={() => onOpenEntry(entry)}>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  {entry.isDirectory ? "Open folder" : "Open in editor"}
+                </DropdownMenuItem>
+              ) : null
             ) : null}
             {canCreateInsideDirectory ? (
               <>
-                {onOpenEntry ? <DropdownMenuSeparator /> : null}
+                {onOpenEntry || onOpenEntryTarget ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem onSelect={() => onStartCreateEntry(entry, "file")}>
                   <FilePlus2 className="h-3.5 w-3.5" />
                   New file
@@ -1160,15 +1270,22 @@ function WorkspaceTreeNode({
       <li>
         <div
           className={cn(
-            "group flex w-full items-center rounded-md pr-1 text-sm text-foreground transition-colors hover:bg-accent/60",
-            isActive && "bg-accent text-foreground",
-            dropActive && "bg-[#2f80ed]/10 ring-1 ring-[#2f80ed]/30",
+            "group flex w-full items-center rounded-md pr-1 text-sm text-foreground transition-[background-color,color,opacity,transform] duration-150",
+            isDraggingEntry
+              ? "rudder-workspace-tree-entry--dragging text-muted-foreground"
+              : "hover:bg-accent/60",
+            isActive && !isDraggingEntry && "bg-accent text-foreground",
+            dropActive && !isDraggingEntry && "bg-[#2f80ed]/10 ring-1 ring-[#2f80ed]/30",
           )}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
           data-workspace-entry-path={entry.path}
+          data-dragging-workspace-entry={isDraggingEntry ? "true" : undefined}
           draggable={canMoveEntry}
           onDragStart={handleDragStart}
-          onDragEnd={() => setDropActive(false)}
+          onDragEnd={() => {
+            setDropActive(false);
+            onDragEndEntry();
+          }}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
@@ -1224,12 +1341,16 @@ function WorkspaceTreeNode({
               selectedFilePath={selectedFilePath}
               selectedResourcePath={selectedResourcePath}
               activeEntryPath={activeEntryPath}
+              draggedEntryPath={draggedEntryPath}
               onSelectFile={onSelectFile}
               onSelectResource={onSelectResource}
               onFocusEntry={onFocusEntry}
+              onDragStartEntry={onDragStartEntry}
+              onDragEndEntry={onDragEndEntry}
               onCopyLink={onCopyLink}
               onCopyAbsolutePath={onCopyAbsolutePath}
               onOpenEntry={onOpenEntry}
+              onOpenEntryTarget={onOpenEntryTarget}
               onStartCreateEntry={onStartCreateEntry}
               onStartRename={onStartRename}
               onStartDelete={onStartDelete}
@@ -1240,6 +1361,8 @@ function WorkspaceTreeNode({
               onUnlinkResource={onUnlinkResource}
               unlinkingResourceId={unlinkingResourceId}
               expandedDirectories={expandedDirectories}
+              workspaceLaunchTargets={workspaceLaunchTargets}
+              openingWorkspaceTargetId={openingWorkspaceTargetId}
               projectResourceGroupsByLibraryPath={projectResourceGroupsByLibraryPath}
               depth={depth + 1}
             />
@@ -1273,14 +1396,23 @@ function WorkspaceTreeNode({
   return (
     <li>
       <div
-        className={`group flex w-full items-center rounded-md pr-1 text-sm transition-colors ${
-          isSelected || isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-        }`}
+        className={cn(
+          "group flex w-full items-center rounded-md pr-1 text-sm transition-[background-color,color,opacity,transform] duration-150",
+          isDraggingEntry
+            ? "rudder-workspace-tree-entry--dragging text-muted-foreground"
+            : isSelected || isActive
+              ? "bg-accent text-foreground"
+              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+        )}
         style={{ paddingLeft: `${depth * 14 + 23}px` }}
         data-workspace-entry-path={entry.path}
+        data-dragging-workspace-entry={isDraggingEntry ? "true" : undefined}
         draggable={canMoveEntry}
         onDragStart={handleDragStart}
-        onDragEnd={() => setDropActive(false)}
+        onDragEnd={() => {
+          setDropActive(false);
+          onDragEndEntry();
+        }}
         onContextMenu={handleOpenActionMenu}
       >
         <button
@@ -1904,6 +2036,7 @@ export function OrganizationWorkspaceFilesSidebar() {
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [rootDropActive, setRootDropActive] = useState(false);
+  const [draggedEntryPath, setDraggedEntryPath] = useState<string | null>(null);
   const [activeEntryPath, setActiveEntryPath] = useState<string | null>(selectedFilePath ?? requestedDirectoryPath);
 
   const rootQuery = useQuery({
@@ -1945,7 +2078,10 @@ export function OrganizationWorkspaceFilesSidebar() {
   }, [requestedDirectoryPath, selectedFilePath, selectedResourcePath]);
 
   useEffect(() => {
-    const clearRootDropState = () => setRootDropActive(false);
+    const clearRootDropState = () => {
+      setRootDropActive(false);
+      setDraggedEntryPath(null);
+    };
     window.addEventListener("dragend", clearRootDropState);
     window.addEventListener("drop", clearRootDropState, true);
     return () => {
@@ -2298,6 +2434,36 @@ export function OrganizationWorkspaceFilesSidebar() {
     }
   }
 
+  async function handleOpenEntryTarget(entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget) {
+    if (entry.isDirectory) {
+      await handleOpenWorkspaceTarget(joinWorkspacePath(workspaceRootPath, entry.path), target, "folder");
+      return;
+    }
+
+    if (!workspaceRootPath || !isWorkspaceIdeLaunchTarget(target)) return;
+    const desktopShell = readDesktopShell();
+    if (typeof desktopShell?.openWorkspaceFileInIde !== "function") return;
+
+    setOpeningWorkspaceTargetId(target.id);
+    try {
+      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, entry.path, target.id);
+      writeStoredWorkspaceLaunchTargetId(target.id);
+      pushToast({
+        title: `Opened file in ${target.label}`,
+        body: entry.path,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open file",
+        body: error instanceof Error ? error.message : `Could not open ${entry.path} in ${target.label}.`,
+        tone: "error",
+      });
+    } finally {
+      setOpeningWorkspaceTargetId(null);
+    }
+  }
+
   function handleSelectFile(filePath: string) {
     updateSelectedPath(searchParams, setSearchParams, filePath);
   }
@@ -2465,14 +2631,20 @@ export function OrganizationWorkspaceFilesSidebar() {
                       selectedFilePath={selectedFilePath}
                       selectedResourcePath={selectedResourcePath}
                       activeEntryPath={activeEntryPath}
+                      draggedEntryPath={draggedEntryPath}
                       onSelectFile={handleSelectFile}
                       onSelectResource={handleSelectResource}
                       onFocusEntry={setActiveEntryPath}
+                      onDragStartEntry={setDraggedEntryPath}
+                      onDragEndEntry={() => setDraggedEntryPath(null)}
                       onCopyLink={(entryToCopy) => void handleCopyEntryLink(entryToCopy)}
                       onCopyAbsolutePath={(entryToCopy) => void handleCopyEntryAbsolutePath(entryToCopy)}
                       onOpenEntry={readDesktopShell()?.openPath
                         ? (entryToOpen) => void handleOpenEntryDefault(entryToOpen)
                         : undefined}
+                      onOpenEntryTarget={(entryToOpen, target) => {
+                        void handleOpenEntryTarget(entryToOpen, target);
+                      }}
                       onStartCreateEntry={handleStartCreateEntry}
                       onStartRename={handleStartRename}
                       onStartDelete={handleStartDelete}
@@ -2483,6 +2655,8 @@ export function OrganizationWorkspaceFilesSidebar() {
                       onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
                       unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                       expandedDirectories={expandedDirectories}
+                      workspaceLaunchTargets={workspaceLaunchTargets}
+                      openingWorkspaceTargetId={openingWorkspaceTargetId}
                       projectResourceGroupsByLibraryPath={projectResourceTree.groupsByLibraryPath}
                     />
                   ))}
@@ -2716,6 +2890,7 @@ export function OrganizationWorkspaceBrowser({
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [rootDropActive, setRootDropActive] = useState(false);
+  const [draggedEntryPath, setDraggedEntryPath] = useState<string | null>(null);
   const [activeEntryPath, setActiveEntryPath] = useState<string | null>(requestedFilePath ?? requestedDirectoryPath);
   const [createTarget, setCreateTarget] = useState<{
     parent: OrganizationWorkspaceFileEntry;
@@ -2756,7 +2931,10 @@ export function OrganizationWorkspaceBrowser({
   openFilePathsRef.current = openFilePaths;
 
   useEffect(() => {
-    const clearRootDropState = () => setRootDropActive(false);
+    const clearRootDropState = () => {
+      setRootDropActive(false);
+      setDraggedEntryPath(null);
+    };
     window.addEventListener("dragend", clearRootDropState);
     window.addEventListener("drop", clearRootDropState, true);
     return () => {
@@ -3439,6 +3617,40 @@ export function OrganizationWorkspaceBrowser({
     }
   }, [pushToast]);
 
+  const handleOpenEntryTarget = useCallback(async (
+    entry: OrganizationWorkspaceFileEntry,
+    target: DesktopWorkspaceLaunchTarget,
+  ) => {
+    if (entry.isDirectory) {
+      await handleOpenWorkspaceTarget(joinWorkspacePath(workspaceRootPath, entry.path), target, "folder");
+      return;
+    }
+
+    if (!workspaceRootPath || !isWorkspaceIdeLaunchTarget(target)) return;
+    const desktopShell = readDesktopShell();
+    if (typeof desktopShell?.openWorkspaceFileInIde !== "function") return;
+
+    setOpeningWorkspaceTargetId(target.id);
+    try {
+      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, entry.path, target.id);
+      setLastWorkspaceLaunchTargetId(target.id);
+      writeStoredWorkspaceLaunchTargetId(target.id);
+      pushToast({
+        title: `Opened file in ${target.label}`,
+        body: entry.path,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open file",
+        body: error instanceof Error ? error.message : `Could not open ${entry.path} in ${target.label}.`,
+        tone: "error",
+      });
+    } finally {
+      setOpeningWorkspaceTargetId(null);
+    }
+  }, [handleOpenWorkspaceTarget, pushToast, workspaceRootPath]);
+
   const handleSelectWorkspaceLaunchTarget = useCallback((target: DesktopWorkspaceLaunchTarget) => {
     setLastWorkspaceLaunchTargetId(target.id);
     writeStoredWorkspaceLaunchTargetId(target.id);
@@ -4053,14 +4265,20 @@ export function OrganizationWorkspaceBrowser({
                           selectedFilePath={selectedFilePath}
                           selectedResourcePath={selectedResourcePath}
                           activeEntryPath={activeEntryPath}
+                          draggedEntryPath={draggedEntryPath}
                           onSelectFile={handleSelectFile}
                           onSelectResource={handleSelectResource}
                           onFocusEntry={setActiveEntryPath}
+                          onDragStartEntry={setDraggedEntryPath}
+                          onDragEndEntry={() => setDraggedEntryPath(null)}
                           onCopyLink={(entryToCopy) => void handleCopyEntryLink(entryToCopy)}
                           onCopyAbsolutePath={(entryToCopy) => void handleCopyEntryAbsolutePath(entryToCopy)}
                           onOpenEntry={readDesktopShell()?.openPath
                             ? (entryToOpen) => void handleOpenEntryDefault(entryToOpen)
                             : undefined}
+                          onOpenEntryTarget={(entryToOpen, target) => {
+                            void handleOpenEntryTarget(entryToOpen, target);
+                          }}
                           onStartCreateEntry={handleStartCreateEntry}
                           onStartRename={handleStartRename}
                           onStartDelete={handleStartDelete}
@@ -4071,6 +4289,8 @@ export function OrganizationWorkspaceBrowser({
                           onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
                           unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                           expandedDirectories={expandedDirectories}
+                          workspaceLaunchTargets={workspaceLaunchTargets}
+                          openingWorkspaceTargetId={openingWorkspaceTargetId}
                           projectResourceGroupsByLibraryPath={projectResourceTree.groupsByLibraryPath}
                         />
                       ))}

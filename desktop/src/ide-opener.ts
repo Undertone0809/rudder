@@ -9,6 +9,8 @@ export type DesktopWorkspaceLaunchTargetId =
   | "xcode"
   | "terminal"
   | "warp"
+  | "commandPrompt"
+  | "powershell"
   | "finder";
 
 export type DesktopIdeTarget = {
@@ -74,8 +76,35 @@ type DesktopWorkspaceLaunchSpec = {
     directoryName: string;
     executableName: string;
   }[];
+  windowsExecutableCandidates?: (env: NodeJS.ProcessEnv) => string[];
   commands: string[];
 };
+
+function uniqueNonEmpty(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+}
+
+function windowsSystemRoot(env: NodeJS.ProcessEnv) {
+  return env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? env.WINDIR ?? "C:\\Windows";
+}
+
+function windowsCommandPromptCandidates(env: NodeJS.ProcessEnv) {
+  const systemRoot = windowsSystemRoot(env);
+  return uniqueNonEmpty([
+    env.ComSpec,
+    env.COMSPEC,
+    path.win32.join(systemRoot, "System32", "cmd.exe"),
+  ]);
+}
+
+function windowsPowerShellCandidates(env: NodeJS.ProcessEnv) {
+  const systemRoot = windowsSystemRoot(env);
+  const programFiles = env.ProgramFiles ?? env.PROGRAMFILES ?? "C:\\Program Files";
+  return uniqueNonEmpty([
+    path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    path.win32.join(programFiles, "PowerShell", "7", "pwsh.exe"),
+  ]);
+}
 
 const WORKSPACE_LAUNCH_SPECS: DesktopWorkspaceLaunchSpec[] = [
   {
@@ -101,6 +130,24 @@ const WORKSPACE_LAUNCH_SPECS: DesktopWorkspaceLaunchSpec[] = [
   { id: "xcode", label: "Xcode", kind: "ide", platforms: ["darwin"], macAppNames: ["Xcode"], commands: ["xed"] },
   { id: "terminal", label: "Terminal", kind: "terminal", platforms: ["darwin"], macAppNames: ["Terminal"], commands: [] },
   { id: "warp", label: "Warp", kind: "terminal", macAppNames: ["Warp"], commands: ["warp"] },
+  {
+    id: "commandPrompt",
+    label: "Command Prompt",
+    kind: "terminal",
+    platforms: ["win32"],
+    macAppNames: [],
+    windowsExecutableCandidates: windowsCommandPromptCandidates,
+    commands: ["cmd"],
+  },
+  {
+    id: "powershell",
+    label: "PowerShell",
+    kind: "terminal",
+    platforms: ["win32"],
+    macAppNames: [],
+    windowsExecutableCandidates: windowsPowerShellCandidates,
+    commands: ["powershell", "pwsh"],
+  },
 ];
 
 function execFilePromise(command: string, args: string[]) {
@@ -241,6 +288,30 @@ async function detectAvailableWorkspaceLaunchTargetsInternal(
       }
     }
 
+    if (platform === "win32" && spec.windowsExecutableCandidates) {
+      let matchedExecutablePath: string | null = null;
+      for (const candidate of spec.windowsExecutableCandidates(env)) {
+        if (await pathExists(candidate)) {
+          matchedExecutablePath = candidate;
+          break;
+        }
+      }
+
+      if (matchedExecutablePath) {
+        available.push({
+          id: spec.id,
+          label: spec.label,
+          kind: spec.kind,
+          iconPath: matchedExecutablePath,
+          strategy: {
+            kind: "executable",
+            executablePath: matchedExecutablePath,
+          },
+        });
+        continue;
+      }
+    }
+
     for (const command of spec.commands) {
       if (await commandExists(command, platform)) {
         available.push({
@@ -323,15 +394,23 @@ function defaultRunExecutable(executablePath: string, absolutePath: string, plat
   });
 }
 
+export function windowsTerminalLaunchArgs(command: string) {
+  const baseName = path.win32.basename(command).toLowerCase();
+  return baseName === "cmd.exe" || baseName === "cmd"
+    ? ["/d", "/s", "/k"]
+    : baseName === "powershell.exe" || baseName === "powershell" || baseName === "pwsh.exe" || baseName === "pwsh"
+      ? ["-NoLogo", "-NoExit"]
+      : [];
+}
+
 function defaultRunTerminalCommand(command: string, cwd: string, platform: NodeJS.Platform) {
   if (platform === "darwin") {
     return execFilePromise("open", ["-a", command, cwd]);
   }
   if (platform === "win32") {
     return new Promise<void>((resolve, reject) => {
-      const child = spawn(command, [], {
+      const child = spawn(command, windowsTerminalLaunchArgs(command), {
         cwd,
-        shell: true,
         stdio: "ignore",
         windowsHide: false,
         detached: true,
@@ -407,6 +486,8 @@ export async function openWorkspace(
       await runTerminalCommand(target.strategy.appPath, absolutePath, platform);
     } else if (target.strategy.kind === "command") {
       await runTerminalCommand(target.strategy.command, absolutePath, platform);
+    } else if (target.strategy.kind === "executable") {
+      await runTerminalCommand(target.strategy.executablePath, absolutePath, platform);
     } else {
       throw new Error(`The requested workspace launcher is not available: ${targetId}`);
     }

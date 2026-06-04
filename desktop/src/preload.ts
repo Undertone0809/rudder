@@ -115,7 +115,7 @@ type DesktopIdeTarget = {
 };
 
 type DesktopWorkspaceLaunchTarget = {
-  id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij" | "xcode" | "terminal" | "warp" | "finder";
+  id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij" | "xcode" | "terminal" | "warp" | "commandPrompt" | "powershell" | "finder";
   label: string;
   kind: "ide" | "terminal" | "folder";
   iconDataUrl?: string;

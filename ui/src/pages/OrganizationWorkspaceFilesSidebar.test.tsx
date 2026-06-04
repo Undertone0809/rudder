@@ -270,6 +270,18 @@ function openEntryMenu(entryPath: string) {
   return menu;
 }
 
+function openEntryOpenSubmenu(entryPath: string) {
+  const trigger = document.querySelector<HTMLElement>(
+    `[data-testid="org-workspaces-entry-open-submenu-${entryPath}"]`,
+  );
+  expect(trigger).toBeTruthy();
+  act(() => {
+    trigger?.dispatchEvent(new MouseEvent("pointermove", { bubbles: true }));
+    trigger?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
 describe("OrganizationWorkspaceFilesSidebar", () => {
   it("renders a workspace launcher in the sidebar header", async () => {
     const listWorkspaceLaunchTargets = vi.fn().mockResolvedValue([
@@ -288,6 +300,86 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(document.querySelector("[data-testid='workspace-context-header']")?.textContent).toContain("Library");
     expect(document.querySelector("[data-testid='org-workspaces-sidebar-launcher']")).not.toBeNull();
     expect(listWorkspaceLaunchTargets).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers installed IDE choices from the file Open in editor submenu", async () => {
+    const openWorkspace = vi.fn(async () => undefined);
+    const openWorkspaceFileInIde = vi.fn(async () => undefined);
+    mockState.desktopShell = {
+      listWorkspaceLaunchTargets: vi.fn().mockResolvedValue([
+        { id: "cursor", label: "Cursor", kind: "ide" },
+        { id: "vscode", label: "VS Code", kind: "ide" },
+        { id: "commandPrompt", label: "Command Prompt", kind: "terminal" },
+        { id: "powershell", label: "PowerShell", kind: "terminal" },
+        { id: "finder", label: "Folder", kind: "folder" },
+      ]),
+      openWorkspace,
+      openWorkspaceFileInIde,
+    };
+
+    renderSidebar("docs/draft.md");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    openEntryMenu("docs/draft.md");
+    openEntryOpenSubmenu("docs/draft.md");
+
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-cursor']")).not.toBeNull();
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-vscode']")).not.toBeNull();
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-commandPrompt']")).toBeNull();
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-powershell']")).toBeNull();
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs/draft.md-finder']")).toBeNull();
+
+    const vscodeItem = document.querySelector<HTMLElement>(
+      "[data-testid='org-workspaces-entry-open-target-docs/draft.md-vscode']",
+    );
+    await act(async () => {
+      vscodeItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(openWorkspaceFileInIde).toHaveBeenCalledWith("/tmp/rudder-org", "docs/draft.md", "vscode");
+    expect(openWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("offers installed app choices from the directory Open folder submenu", async () => {
+    const openWorkspace = vi.fn(async () => undefined);
+    const openWorkspaceFileInIde = vi.fn(async () => undefined);
+    mockState.desktopShell = {
+      listWorkspaceLaunchTargets: vi.fn().mockResolvedValue([
+        { id: "vscode", label: "VS Code", kind: "ide" },
+        { id: "commandPrompt", label: "Command Prompt", kind: "terminal" },
+        { id: "powershell", label: "PowerShell", kind: "terminal" },
+        { id: "finder", label: "Folder", kind: "folder" },
+      ]),
+      openWorkspace,
+      openWorkspaceFileInIde,
+    };
+
+    renderSidebar("docs/draft.md");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    openEntryMenu("docs");
+    openEntryOpenSubmenu("docs");
+
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs-vscode']")).not.toBeNull();
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs-commandPrompt']")).not.toBeNull();
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs-powershell']")).not.toBeNull();
+    expect(document.querySelector("[data-testid='org-workspaces-entry-open-target-docs-finder']")).not.toBeNull();
+
+    const finderItem = document.querySelector<HTMLElement>(
+      "[data-testid='org-workspaces-entry-open-target-docs-finder']",
+    );
+    await act(async () => {
+      finderItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(openWorkspace).toHaveBeenCalledWith("/tmp/rudder-org/docs", "finder");
+    expect(openWorkspaceFileInIde).not.toHaveBeenCalled();
   });
 
   it("hides destructive actions for protected agent instruction entries", () => {

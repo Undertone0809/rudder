@@ -56,7 +56,7 @@ export function InspectableImage({
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<ImageContextMenuPosition | null>(null);
-  const canOpenInFinder = canShowImageInFolder();
+  const canShowInFolder = canShowImageInFolder();
 
   useEffect(() => {
     if (!contextMenuPosition) return;
@@ -169,15 +169,15 @@ export function InspectableImage({
             <Download className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate">Download Image</span>
           </button>
-          {canOpenInFinder ? (
+          {canShowInFolder ? (
             <button
               type="button"
               role="menuitem"
               className="chat-composer-menu-row w-full"
-              onClick={() => runImageAction("Open in Finder failed", () => showImageInFolder(src, name))}
+              onClick={() => runImageAction("Show in folder failed", () => showImageInFolder(src, name))}
             >
               <Folder className="h-3.5 w-3.5 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">Open in Finder</span>
+              <span className="min-w-0 flex-1 truncate">Show in folder</span>
             </button>
           ) : null}
         </div>,

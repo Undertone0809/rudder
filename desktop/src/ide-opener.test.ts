@@ -9,6 +9,7 @@ import {
   openWorkspaceFileInIde,
   resolveWorkspaceRootDirectory,
   resolveWorkspaceFileAbsolutePath,
+  windowsTerminalLaunchArgs,
 } from "./ide-opener.js";
 
 describe("listAvailableIdeTargets", () => {
@@ -72,9 +73,12 @@ describe("listWorkspaceLaunchTargets", () => {
       env: {
         LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local",
         ProgramFiles: "C:\\Program Files",
+        SystemRoot: "C:\\Windows",
       },
       pathExists: async (targetPath) =>
-        targetPath === "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+        targetPath === "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe"
+        || targetPath === "C:\\Windows\\System32\\cmd.exe"
+        || targetPath === "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       commandExists,
     });
 
@@ -84,6 +88,18 @@ describe("listWorkspaceLaunchTargets", () => {
         label: "Cursor",
         kind: "ide",
         iconPath: "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+      },
+      {
+        id: "commandPrompt",
+        label: "Command Prompt",
+        kind: "terminal",
+        iconPath: "C:\\Windows\\System32\\cmd.exe",
+      },
+      {
+        id: "powershell",
+        label: "PowerShell",
+        kind: "terminal",
+        iconPath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       },
       { id: "finder", label: "Folder", kind: "folder" },
     ]);
@@ -167,6 +183,45 @@ describe("openWorkspace", () => {
     });
 
     expect(runTerminalCommand).toHaveBeenCalledWith("/Applications/Terminal.app", root, "darwin");
+  });
+
+  it("opens Windows shell targets with the workspace root as cwd", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-windows-shell-"));
+    const runTerminalCommand = vi.fn(async () => {});
+
+    await openWorkspace(root, "powershell", {
+      platform: "win32",
+      env: {
+        SystemRoot: "C:\\Windows",
+      },
+      pathExists: async (targetPath) =>
+        targetPath === "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      commandExists: async () => false,
+      runTerminalCommand,
+    });
+
+    expect(runTerminalCommand).toHaveBeenCalledWith(
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      root,
+      "win32",
+    );
+  });
+
+  it("opens Command Prompt with the workspace root as cwd", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-windows-cmd-"));
+    const runTerminalCommand = vi.fn(async () => {});
+
+    await openWorkspace(root, "commandPrompt", {
+      platform: "win32",
+      env: {
+        SystemRoot: "C:\\Windows",
+      },
+      pathExists: async (targetPath) => targetPath === "C:\\Windows\\System32\\cmd.exe",
+      commandExists: async () => false,
+      runTerminalCommand,
+    });
+
+    expect(runTerminalCommand).toHaveBeenCalledWith("C:\\Windows\\System32\\cmd.exe", root, "win32");
   });
 
   it("opens the folder fallback with the workspace root", async () => {
@@ -289,5 +344,16 @@ describe("resolveWorkspaceFileAbsolutePath", () => {
   it("rejects paths outside the workspace root", () => {
     expect(() => resolveWorkspaceFileAbsolutePath("/tmp/org", "../outside.md"))
       .toThrow("Workspace file path must stay inside the workspace root.");
+  });
+});
+
+describe("windowsTerminalLaunchArgs", () => {
+  it("keeps Command Prompt and PowerShell sessions open after launch", () => {
+    expect(windowsTerminalLaunchArgs("C:\\Windows\\System32\\cmd.exe")).toEqual(["/d", "/s", "/k"]);
+    expect(windowsTerminalLaunchArgs("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")).toEqual([
+      "-NoLogo",
+      "-NoExit",
+    ]);
+    expect(windowsTerminalLaunchArgs("C:\\Program Files\\PowerShell\\7\\pwsh.exe")).toEqual(["-NoLogo", "-NoExit"]);
   });
 });

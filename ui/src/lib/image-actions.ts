@@ -88,7 +88,7 @@ export async function copyImage(src: string, name: string) {
 export async function showImageInFolder(src: string, name: string) {
   const desktopShell = readDesktopShell();
   if (!desktopShell?.showImageInFolder) {
-    throw new Error("Open in Finder is available in the desktop app.");
+    throw new Error("Show in folder is available in the desktop app.");
   }
   const blob = await fetchImageBlob(src);
   await desktopShell.showImageInFolder(await createImageDesktopPayload(blob, name));

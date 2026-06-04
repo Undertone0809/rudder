@@ -51,7 +51,7 @@ export function ImagePreviewDialog({
   const toast = useMaybeToast();
   const [naturalSize, setNaturalSize] = useState<ImageNaturalSize | null>(preview?.naturalSize ?? null);
   const [viewportSize, setViewportSize] = useState(() => getViewportSize());
-  const canOpenInFinder = canShowImageInFolder();
+  const canShowInFolder = canShowImageInFolder();
 
   useEffect(() => {
     if (!preview) {
@@ -163,15 +163,15 @@ export function ImagePreviewDialog({
                 <Download className="size-4" aria-hidden="true" />
                 <span className="sr-only">Download Image</span>
               </button>
-              {canOpenInFinder ? (
+              {canShowInFolder ? (
                 <button
                   type="button"
                   className="rudder-image-preview-action"
-                  title="Open in Finder"
-                  onClick={() => runImageAction("Open in Finder failed", () => showImageInFolder(preview.src, preview.name))}
+                  title="Show in folder"
+                  onClick={() => runImageAction("Show in folder failed", () => showImageInFolder(preview.src, preview.name))}
                 >
                   <Folder className="size-4" aria-hidden="true" />
-                  <span className="sr-only">Open in Finder</span>
+                  <span className="sr-only">Show in folder</span>
                 </button>
               ) : null}
             </div>

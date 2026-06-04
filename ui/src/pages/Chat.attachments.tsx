@@ -141,7 +141,7 @@ export function ChatImageAttachmentTile({
   const { pushToast } = useToast();
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<ChatImageContextMenuPosition | null>(null);
-  const canShowInFinder = canShowImageInFolder();
+  const canShowInFolder = canShowImageInFolder();
 
   useEffect(() => {
     if (!contextMenuPosition) return;
@@ -186,10 +186,10 @@ export function ChatImageAttachmentTile({
 
   const showImageInFolder = async () => {
     setContextMenuPosition(null);
-    if (!canShowInFinder) {
+    if (!canShowInFolder) {
       pushToast({
-        title: "Open in Finder unavailable",
-        body: "Open in Finder is available in the desktop app.",
+        title: "Show in folder unavailable",
+        body: "Show in folder is available in the desktop app.",
         tone: "error",
       });
       return;
@@ -199,7 +199,7 @@ export function ChatImageAttachmentTile({
       await showImageInFolderAction(src, name);
     } catch (error) {
       pushToast({
-        title: "Open in Finder failed",
+        title: "Show in folder failed",
         body: error instanceof Error ? error.message : String(error),
         tone: "error",
       });
@@ -247,11 +247,11 @@ export function ChatImageAttachmentTile({
             type="button"
             role="menuitem"
             className="chat-composer-menu-row w-full disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!canShowInFinder}
+            disabled={!canShowInFolder}
             onClick={showImageInFolder}
           >
             <Folder className="h-3.5 w-3.5 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">Open in Finder</span>
+            <span className="min-w-0 flex-1 truncate">Show in folder</span>
           </button>
           <button
             type="button"
@@ -423,4 +423,3 @@ export function ChatAttachmentPreviewDialog({
     />
   );
 }
-
