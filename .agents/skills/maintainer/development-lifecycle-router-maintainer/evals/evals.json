@@ -227,6 +227,34 @@
       ]
     },
     {
+      "id": 23,
+      "prompt": "你这个 development-lifecycle-router-maintainer 得优化了啊，不然我每次都要这样问，好麻烦 019e93bc-6b5b-7fe0-bbf6-cf73f34a9c7e。用 skill-optimizer 来优化一下这个 skill。截图里上一轮提到了 imagegen-frontend-web、redesign-existing-projects 和 router。",
+      "expected_output": "Classifies the turn as skill_optimization and routes to skill-optimizer with development-lifecycle-router-maintainer as the target artifact. It treats the screenshot, linked design skills, and session id as failure evidence, extracts the failed decision point, patches the router or its evals narrowly, and does not generate UI mockups or recommend the design skills as the current task.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
+      ],
+      "expectations": [
+        "The result gives meta-request precedence over content embedded in the screenshot or prior assistant output.",
+        "The result names skill-optimizer as the primary workflow and the router skill as the target artifact.",
+        "The result uses the session id, screenshot, and prior recommendations as evidence rather than current routing candidates.",
+        "The result extracts a reusable failure class such as screenshot evidence overriding the user's skill-optimization request.",
+        "The result updates or proposes a validation case that prevents the same misroute on the next run."
+      ]
+    },
+    {
+      "id": 24,
+      "prompt": "继续刚才的 Library UI 图，按 imagegen-frontend-web 和 redesign-existing-projects 给我生成三张方便 review。development-lifecycle-router-maintainer 只负责帮我把阶段和 review gate 想清楚。",
+      "expected_output": "Does not over-trigger skill optimization just because the router skill is named. It classifies the task as ui_design, uses the requested design/image skills to produce reviewable UI references, treats the router only as a lifecycle gate, and does not patch the router or run skill-optimizer.",
+      "files": [],
+      "expectations": [
+        "The result recognizes the user is continuing the UI design task, not asking to optimize a skill.",
+        "The result uses the named design/image skills as active workflow inputs rather than evidence-only artifacts.",
+        "The result keeps lifecycle routing concise and does not expand into a skill-optimization diagnosis.",
+        "The result does not edit SKILL.md or eval files."
+      ]
+    },
+    {
       "id": 7,
       "prompt": "organization-portability 这个文件太大了，一口气做完架构优化，但可以分批 commit，不要一下子来一个很大的 commit。",
       "expected_output": "Routes the long refactor through phased implementation, creates a visible phase checklist, commits coherent phases separately when safe, keeps checkpoint evidence after each phase, and requires spawned reviewers before each phase handoff or final completion.",
