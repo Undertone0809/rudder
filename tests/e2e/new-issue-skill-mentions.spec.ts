@@ -94,7 +94,7 @@ test.describe("New issue skill mentions", () => {
     expect(atMentionMenuBox!.x).toBeGreaterThanOrEqual(composerBox!.x - 8);
     expect(atMentionMenuBox!.x).toBeLessThanOrEqual(composerBox!.x + 8);
     expect(Math.abs(atMentionMenuBox!.width - composerBox!.width)).toBeLessThanOrEqual(16);
-    await expect(atMentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first()).toContainText("build-advisor");
+    await expect(atMentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first()).toContainText("Build Advisor");
 
     await composer.press("ControlOrMeta+A");
     await page.keyboard.type("Use @handoff");
@@ -111,7 +111,7 @@ test.describe("New issue skill mentions", () => {
     const mentionMenu = page.getByTestId("markdown-mention-menu");
     await expect(mentionMenu).toBeVisible({ timeout: 15_000 });
     const skillOption = mentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first();
-    await expect(skillOption).toContainText("build-advisor");
+    await expect(skillOption).toContainText("Build Advisor");
     await skillOption.dispatchEvent("mousedown");
 
     const insertedSkillToken = composer.locator("a").filter({ hasText: "build-advisor" }).first();
