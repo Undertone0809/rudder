@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const indexCss = readFileSync(new URL("../index.css", import.meta.url), "utf8");
+const organizationWorkspacesSource = readFileSync(new URL("../pages/OrganizationWorkspaces.tsx", import.meta.url), "utf8");
 
 function cssBlock(selector: string) {
   const start = indexCss.indexOf(selector);
@@ -151,5 +152,28 @@ describe("index.css motion rules", () => {
     const tabScrollerScrollbar = cssBlock(".rudder-doc-editor-tab-scroller::-webkit-scrollbar");
 
     expect(tabScrollerScrollbar).toContain("height: 4px !important");
+  });
+
+  it("keeps Library file-tab corners aligned with the desktop workspace radius", () => {
+    const tabStrip = cssBlock(".rudder-doc-editor-tab-strip");
+    const activeTabCorners = cssBlock(".rudder-doc-editor-tab--active::before,\n.rudder-doc-editor-tab--active::after");
+
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-strip-height: 53px");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: var(--rudder-doc-editor-tab-strip-height)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-inactive-height: calc(var(--rudder-doc-editor-tab-strip-height) - 4px)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-radius: var(--desktop-workspace-radius)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2)");
+    expect(activeTabCorners).toContain("width: var(--rudder-doc-editor-tab-corner-size)");
+    expect(indexCss).toContain("border-bottom-right-radius: var(--rudder-doc-editor-tab-corner-size)");
+    expect(indexCss).toContain("border-bottom-left-radius: var(--rudder-doc-editor-tab-corner-size)");
+    expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-strip-height)]");
+    expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-active-height)]");
+    expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-inactive-height)]");
+    expect(organizationWorkspacesSource).toContain("rounded-t-[var(--rudder-doc-editor-tab-radius)]");
+    expect(organizationWorkspacesSource).toContain("rounded-[var(--rudder-doc-editor-tab-radius)]");
+    expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-path-breadcrumb"[\s\S]{0,240}className="[^"]*\bborder-x\b[^"]*\bborder-b\b[^"]*\bborder-border\b/);
+    expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-editor-content"[\s\S]{0,160}className="[^"]*\bborder-x\b[^"]*\bborder-b\b[^"]*\bborder-border\b/);
+    expect(organizationWorkspacesSource).not.toMatch(/rudder-doc-editor-tab--active[^\n]*rounded-t-\[24px]/);
+    expect(organizationWorkspacesSource).not.toMatch(/mb-1 h-9[^\n]*rounded-\[18px]/);
   });
 });

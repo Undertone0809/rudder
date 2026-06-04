@@ -4316,7 +4316,7 @@ export function OrganizationWorkspaceBrowser({
               data-testid="org-workspaces-editor-tabs"
               role="tablist"
               aria-label="Open files"
-              className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-11 shrink-0 items-stretch justify-between bg-transparent"
+              className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-[var(--rudder-doc-editor-tab-strip-height)] shrink-0 items-stretch justify-between bg-transparent"
             >
               <div
                 ref={setOpenFileTabsScrollerRef}
@@ -4346,8 +4346,8 @@ export function OrganizationWorkspaceBrowser({
                           className={cn(
                             "rudder-doc-editor-tab rudder-doc-editor-tab--desktop-no-drag group relative flex min-w-[132px] max-w-[248px] shrink-0 cursor-default items-center border px-1 transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
                             active
-                              ? "rudder-doc-editor-tab--active mb-[-1px] h-10 overflow-visible rounded-t-[24px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
-                              : "mb-1 h-9 translate-y-px overflow-hidden rounded-[18px] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
+                              ? "rudder-doc-editor-tab--active mb-[-1px] h-[var(--rudder-doc-editor-tab-active-height)] overflow-visible rounded-t-[var(--rudder-doc-editor-tab-radius)] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
+                              : "mb-1 h-[var(--rudder-doc-editor-tab-inactive-height)] translate-y-px overflow-hidden rounded-[var(--rudder-doc-editor-tab-radius)] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
                             active && first && "rudder-doc-editor-tab--first-active",
                             dragging && "opacity-55",
                             dropBefore && !dragging && "rudder-doc-editor-tab--drop-before",
@@ -4396,7 +4396,7 @@ export function OrganizationWorkspaceBrowser({
             {selectedFilePath ? (
               <div
                 data-testid="org-workspaces-path-breadcrumb"
-                className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-[color:var(--surface-elevated)] px-3 text-xs text-muted-foreground"
+                className="flex h-9 shrink-0 items-center gap-1 border-x border-b border-border bg-[color:var(--surface-elevated)] px-3 text-xs text-muted-foreground"
                 aria-label="File path"
               >
                 {workspacePathBreadcrumb(selectedFilePath, agentWorkspaceEntryByName).map((part, index, parts) => {
@@ -4440,7 +4440,7 @@ export function OrganizationWorkspaceBrowser({
                 })}
               </div>
             ) : null}
-            <div data-testid="org-workspaces-editor-content" className="min-h-0 flex-1 overflow-hidden bg-[color:var(--surface-elevated)]">
+            <div data-testid="org-workspaces-editor-content" className="min-h-0 flex-1 overflow-hidden border-x border-b border-border bg-[color:var(--surface-elevated)]">
               {selectedProjectResource ? (
                 <ProjectResourceDetailPanel
                   project={selectedProjectResource.project}

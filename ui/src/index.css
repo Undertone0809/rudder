@@ -1968,6 +1968,11 @@ button[draggable="false"] {
 .rudder-doc-editor-tab-strip {
   position: relative;
   isolation: isolate;
+  --rudder-doc-editor-tab-strip-height: 53px;
+  --rudder-doc-editor-tab-active-height: var(--rudder-doc-editor-tab-strip-height);
+  --rudder-doc-editor-tab-inactive-height: calc(var(--rudder-doc-editor-tab-strip-height) - 4px);
+  --rudder-doc-editor-tab-radius: var(--desktop-workspace-radius);
+  --rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2);
 }
 
 .rudder-doc-editor-tab-strip::after {
@@ -2003,26 +2008,26 @@ button[draggable="false"] {
   content: "";
   position: absolute;
   bottom: -1px;
-  width: 24px;
-  height: 24px;
+  width: var(--rudder-doc-editor-tab-corner-size);
+  height: var(--rudder-doc-editor-tab-corner-size);
   pointer-events: none;
   z-index: -1;
 }
 
 .rudder-doc-editor-tab--active::before {
-  left: -24px;
+  left: calc(var(--rudder-doc-editor-tab-corner-size) * -1);
   border-right: 1px solid var(--border-base);
   border-bottom: 1px solid var(--border-base);
-  border-bottom-right-radius: 24px;
-  box-shadow: 12px 12px 0 10px var(--surface-elevated);
+  border-bottom-right-radius: var(--rudder-doc-editor-tab-corner-size);
+  box-shadow: var(--rudder-doc-editor-tab-radius) var(--rudder-doc-editor-tab-radius) 0 calc(var(--rudder-doc-editor-tab-radius) - 2px) var(--surface-elevated);
 }
 
 .rudder-doc-editor-tab--active::after {
-  right: -24px;
+  right: calc(var(--rudder-doc-editor-tab-corner-size) * -1);
   border-bottom: 1px solid var(--border-base);
   border-left: 1px solid var(--border-base);
-  border-bottom-left-radius: 24px;
-  box-shadow: -12px 12px 0 10px var(--surface-elevated);
+  border-bottom-left-radius: var(--rudder-doc-editor-tab-corner-size);
+  box-shadow: calc(var(--rudder-doc-editor-tab-radius) * -1) var(--rudder-doc-editor-tab-radius) 0 calc(var(--rudder-doc-editor-tab-radius) - 2px) var(--surface-elevated);
 }
 
 .rudder-doc-editor-tab--first-active::before {
