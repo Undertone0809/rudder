@@ -1815,12 +1815,7 @@ export function messengerService(db: Db) {
     const threadSummaries: MessengerThreadSummary[] = [
       ...chats.map(chatSummary),
       ...syntheticSummaries,
-    ].sort((a, b) => {
-      const aTime = a.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
-      const bTime = b.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
-      if (aTime !== bTime) return bTime - aTime;
-      return a.title.localeCompare(b.title);
-    });
+    ].sort(comparePinnedThenLatest);
 
     return threadSummaries;
   }

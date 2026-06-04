@@ -594,6 +594,9 @@ export function buildMessengerChatThreadSummary(
 export function mergeMessengerThreadSummaries(current: MessengerThreadSummary[], incoming: MessengerThreadSummary) {
   const withoutCurrent = current.filter((thread) => thread.threadKey !== incoming.threadKey);
   return [incoming, ...withoutCurrent].sort((a, b) => {
+    const aPinned = Boolean(a.isPinned);
+    const bPinned = Boolean(b.isPinned);
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
     const aTime = a.latestActivityAt ? new Date(a.latestActivityAt).getTime() : Number.NEGATIVE_INFINITY;
     const bTime = b.latestActivityAt ? new Date(b.latestActivityAt).getTime() : Number.NEGATIVE_INFINITY;
     if (aTime !== bTime) return bTime - aTime;

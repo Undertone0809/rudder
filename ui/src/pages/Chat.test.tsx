@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { Agent, ChatConversation, ChatMessage, Issue, Project } from "@rudderhq/shared";
+import type { Agent, ChatConversation, ChatMessage, Issue, MessengerThreadSummary, Project } from "@rudderhq/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
 import {
@@ -42,6 +42,7 @@ import {
   withOptimisticOutgoingMessage,
   withOptimisticPlanMode,
 } from "./Chat";
+import { mergeMessengerThreadSummaries } from "./Chat.parts";
 import {
   createImageDesktopPayload,
   resolveImageFilename,
@@ -85,6 +86,21 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
     supersededAt: null,
     createdAt: new Date("2026-05-07T00:00:00.000Z"),
     updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function messengerThread(overrides: Partial<MessengerThreadSummary> & Pick<MessengerThreadSummary, "threadKey" | "title">): MessengerThreadSummary {
+  return {
+    kind: "chat",
+    subtitle: null,
+    preview: null,
+    latestActivityAt: new Date("2026-05-01T10:00:00.000Z"),
+    lastReadAt: null,
+    unreadCount: 0,
+    needsAttention: false,
+    isPinned: false,
+    href: `/messenger/${overrides.threadKey}`,
     ...overrides,
   };
 }
@@ -1212,6 +1228,35 @@ describe("withOptimisticOutgoingMessage", () => {
     const optimistic = withOptimisticOutgoingMessage(original, "new message", new Date());
 
     expect(optimistic.title).toBe("Already named");
+  });
+});
+
+describe("mergeMessengerThreadSummaries", () => {
+  it("keeps pinned chats ahead of newer unpinned optimistic updates", () => {
+    const pinnedOlder = messengerThread({
+      threadKey: "chat:pinned-older",
+      title: "Pinned older",
+      isPinned: true,
+      latestActivityAt: new Date("2026-05-01T08:00:00.000Z"),
+    });
+    const recentUnpinned = messengerThread({
+      threadKey: "chat:recent",
+      title: "Recent",
+      latestActivityAt: new Date("2026-05-03T08:00:00.000Z"),
+    });
+    const incomingUnpinned = messengerThread({
+      threadKey: "chat:incoming",
+      title: "Incoming",
+      latestActivityAt: new Date("2026-05-04T08:00:00.000Z"),
+    });
+
+    const merged = mergeMessengerThreadSummaries([recentUnpinned, pinnedOlder], incomingUnpinned);
+
+    expect(merged.map((thread) => thread.threadKey)).toEqual([
+      "chat:pinned-older",
+      "chat:incoming",
+      "chat:recent",
+    ]);
   });
 });
 

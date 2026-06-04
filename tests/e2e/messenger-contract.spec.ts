@@ -207,6 +207,15 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
     const firstPage = await (await firstPageResponse).json();
     expect(firstPage.items.some((item: { title: string }) => item.title === "Pinned page session 45")).toBe(true);
+    const legacyThreadsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/threads`);
+    expect(legacyThreadsRes.ok()).toBe(true);
+    const legacyThreads = await legacyThreadsRes.json() as Array<{ threadKey: string; isPinned?: boolean }>;
+    expect(legacyThreads.slice(0, 1)).toEqual([
+      expect.objectContaining({
+        threadKey: `chat:${pinnedOlderChat.id}`,
+        isPinned: true,
+      }),
+    ]);
 
     await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId(threadTestId(`chat:${pinnedOlderChat.id}`))).toContainText("Pinned page session 45");

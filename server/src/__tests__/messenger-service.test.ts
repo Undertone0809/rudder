@@ -2410,9 +2410,20 @@ describe("messengerService and issue follows", () => {
       createdByUserId: userId,
     });
     await chatSvc.setPinned(pinnedConversation.id, orgId, userId, true);
+    await db
+      .update(chatConversations)
+      .set({
+        lastMessageAt: new Date("2026-05-03T12:00:00.000Z"),
+        updatedAt: new Date("2026-05-03T12:00:00.000Z"),
+      })
+      .where(eq(chatConversations.id, unpinnedConversation.id));
 
     const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
 
+    expect(summaries.map((item) => item.threadKey).slice(0, 2)).toEqual([
+      `chat:${pinnedConversation.id}`,
+      `chat:${unpinnedConversation.id}`,
+    ]);
     expect(summaries.find((item) => item.threadKey === `chat:${pinnedConversation.id}`)?.isPinned).toBe(true);
     expect(summaries.find((item) => item.threadKey === `chat:${unpinnedConversation.id}`)?.isPinned).toBe(false);
   });
