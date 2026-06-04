@@ -531,7 +531,7 @@ function KanbanCard({
       <Link
         to={`/issues/${issue.identifier ?? issue.id}`}
         state={issueLinkState}
-        className="block min-w-0 pr-5 no-underline text-inherit"
+        className="block min-w-0 no-underline text-inherit"
         onClick={(e) => {
           if (isDragging) {
             e.preventDefault();

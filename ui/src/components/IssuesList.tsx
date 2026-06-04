@@ -1020,28 +1020,28 @@ export function IssuesList({
                     </>
                   )}
                   mobileMeta={timeAgo(issue.updatedAt)}
+                  desktopOverlayAction={onTogglePinnedIssue ? (
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1.5 z-20 hidden h-6 w-6 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] bg-background/90 text-muted-foreground opacity-0 shadow-sm ring-1 ring-[color:var(--border-soft)] transition-[opacity,background-color,color] hover:bg-accent hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 sm:inline-flex"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onTogglePinnedIssue(issue.id);
+                      }}
+                      title={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
+                      aria-label={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
+                    >
+                      <Pin
+                        className={cn(
+                          "h-3.5 w-3.5",
+                          pinnedIssueIds.includes(issue.id) && "fill-current text-[color:var(--accent-strong)]",
+                        )}
+                      />
+                    </button>
+                  ) : null}
                   desktopTrailing={(
                     <>
-                      {onTogglePinnedIssue ? (
-                        <button
-                          type="button"
-                          className="rounded p-1 text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-accent/50 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onTogglePinnedIssue(issue.id);
-                          }}
-                          title={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
-                          aria-label={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
-                        >
-                          <Pin
-                            className={cn(
-                              "h-3.5 w-3.5",
-                              pinnedIssueIds.includes(issue.id) && "fill-current text-[color:var(--accent-strong)]",
-                            )}
-                          />
-                        </button>
-                      ) : null}
                       {(issue.labels ?? []).length > 0 && (
                         <span className="hidden items-center gap-1 overflow-hidden md:flex md:max-w-[240px]">
                           {(issue.labels ?? []).slice(0, 3).map((label) => (

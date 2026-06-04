@@ -13,6 +13,7 @@ interface IssueRowProps {
   desktopMetaLeading?: ReactNode;
   desktopLeadingSpacer?: boolean;
   mobileMeta?: ReactNode;
+  desktopOverlayAction?: ReactNode;
   desktopTrailing?: ReactNode;
   trailingMeta?: ReactNode;
   unreadState?: UnreadState | null;
@@ -28,6 +29,7 @@ export function IssueRow({
   desktopMetaLeading,
   desktopLeadingSpacer = false,
   mobileMeta,
+  desktopOverlayAction,
   desktopTrailing,
   trailingMeta,
   unreadState = null,
@@ -46,10 +48,11 @@ export function IssueRow({
       state={issueLinkState}
       onClick={onOpen}
       className={cn(
-        "group flex items-start gap-2 border-b panel-divider py-3 pl-3 pr-3 text-sm no-underline text-inherit transition-[background-color,border-color] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_56%,transparent)] last:border-b-0 sm:items-center sm:py-2.5 sm:pl-2",
+        "group relative flex items-start gap-2 border-b panel-divider py-3 pl-3 pr-3 text-sm no-underline text-inherit transition-[background-color,border-color] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_56%,transparent)] last:border-b-0 sm:items-center sm:py-2.5 sm:pl-2",
         className,
       )}
     >
+      {desktopOverlayAction}
       <span className="shrink-0 pt-px sm:hidden">
         {mobileLeading ?? <StatusIcon status={issue.status} />}
       </span>
