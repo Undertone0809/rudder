@@ -271,7 +271,7 @@ function openEntryMenu(entryPath: string) {
 }
 
 describe("OrganizationWorkspaceFilesSidebar", () => {
-  it("does not render a workspace launcher in the sidebar header", () => {
+  it("renders a workspace launcher in the sidebar header", async () => {
     const listWorkspaceLaunchTargets = vi.fn().mockResolvedValue([
       { id: "vscode", label: "VS Code", kind: "ide" },
     ]);
@@ -281,10 +281,13 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     };
 
     renderSidebar();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     expect(document.querySelector("[data-testid='workspace-context-header']")?.textContent).toContain("Library");
-    expect(document.querySelector("[data-testid='org-workspaces-launcher']")).toBeNull();
-    expect(listWorkspaceLaunchTargets).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-testid='org-workspaces-sidebar-launcher']")).not.toBeNull();
+    expect(listWorkspaceLaunchTargets).toHaveBeenCalledTimes(1);
   });
 
   it("hides destructive actions for protected agent instruction entries", () => {

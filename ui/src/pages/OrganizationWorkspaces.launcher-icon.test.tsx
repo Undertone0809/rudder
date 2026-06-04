@@ -32,7 +32,7 @@ function renderIcon(element: React.ReactNode) {
 }
 
 describe("WorkspaceLaunchTargetIcon", () => {
-  it("renders app icon data inside a visible icon slot", () => {
+  it("renders app icon data without adding a card shell", () => {
     const { container, unmount } = renderIcon(
       <WorkspaceLaunchTargetIcon
         target={{
@@ -47,8 +47,10 @@ describe("WorkspaceLaunchTargetIcon", () => {
 
     const slot = container.querySelector("[data-workspace-launch-target-icon='vscode']");
     const image = container.querySelector("img");
-    expect(slot?.className).toContain("bg-white");
-    expect(slot?.className).toContain("border");
+    expect(slot?.className).not.toContain("bg-white");
+    expect(slot?.className).not.toContain("border");
+    expect(slot?.className).not.toContain("shadow");
+    expect(slot?.className).not.toContain("rounded");
     expect(image?.getAttribute("src")).toBe("data:image/png;base64,abc");
 
     unmount();
