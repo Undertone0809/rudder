@@ -158,9 +158,9 @@ describe("index.css motion rules", () => {
     const tabStrip = cssBlock(".rudder-doc-editor-tab-strip");
     const activeTabCorners = cssBlock(".rudder-doc-editor-tab--active::before,\n.rudder-doc-editor-tab--active::after");
 
-    expect(tabStrip).toContain("--rudder-doc-editor-tab-strip-height: 44px");
-    expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: 40px");
-    expect(tabStrip).toContain("--rudder-doc-editor-tab-inactive-height: 36px");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-strip-height: 53px");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: 46px");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-inactive-height: 40px");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-radius: var(--desktop-workspace-radius)");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2)");
     expect(activeTabCorners).toContain("width: var(--rudder-doc-editor-tab-corner-size)");
