@@ -879,7 +879,7 @@ export function Automations() {
                 </Button>
                 <div className="flex flex-col items-end gap-2">
                   <Button className="h-8 px-3 text-xs" size="sm" onClick={() => createAutomation.mutate()} disabled={createAutomation.isPending || !isDraftReady}>
-                    {createAutomation.isPending ? "Creating..." : "Create automation"}
+                    {createAutomation.isPending ? "Creating..." : "Create"}
                     <ArrowRight className="ml-1 h-3 w-3" />
                   </Button>
                   {createAutomation.isError ? (

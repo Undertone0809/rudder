@@ -421,7 +421,7 @@ describe("Automations", () => {
     expect(document.body.textContent).not.toContain("Run output");
     expect(document.body.textContent).not.toContain("Send to chat");
     expect(document.body.textContent).not.toContain("New chat per run");
-    expect(document.body.textContent).toContain("Create automation");
+    expect(document.body.textContent).toContain("Create");
     expect(runbookInput?.value).toContain("board-tracked work");
   });
 
@@ -562,8 +562,7 @@ describe("Automations", () => {
     });
 
     const createButton = Array.from(document.body.querySelectorAll("button"))
-      .filter((button) => button.textContent?.includes("Create automation"))
-      .at(-1) as HTMLButtonElement | undefined;
+      .find((button) => button.textContent?.trim() === "Create") as HTMLButtonElement | undefined;
     expect(createButton).toBeTruthy();
     expect(createButton?.disabled).toBe(false);
 
