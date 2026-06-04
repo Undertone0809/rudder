@@ -109,6 +109,16 @@ describe("index.css motion rules", () => {
     expect(rootTokens).toContain("--desktop-content-top-gap: 0.375rem");
   });
 
+  it("keeps desktop workspace shell and work-card corners aligned", () => {
+    const rootTokens = cssBlock(":root");
+    const workspaceShell = cssBlock(".workspace-shell");
+    const workspaceCards = cssBlock(".workspace-context-card,\n  .workspace-main-card");
+
+    expect(rootTokens).toContain("--desktop-workspace-radius: calc(var(--radius-sm) - 1px)");
+    expect(workspaceShell).toContain("border-radius: var(--desktop-workspace-radius)");
+    expect(workspaceCards).toContain("border-radius: var(--desktop-workspace-radius)");
+  });
+
   it("keeps dashboard run previews compact even when transcripts contain markdown headings", () => {
     const previewMarkdown = cssBlock(".dashboard-run-preview .rudder-markdown");
     const previewHeadings = cssBlock(".dashboard-run-preview .rudder-markdown :where(h1, h2, h3, h4, h5, h6)");

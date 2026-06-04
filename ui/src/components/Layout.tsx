@@ -854,7 +854,7 @@ export function Layout() {
                           inert={sidebarOpen ? undefined : true}
                           className={cn(
                             "flex min-h-0 shrink-0 overflow-hidden",
-                            "workspace-context-card rounded-[5px]",
+                            "workspace-context-card",
                             !resizingColumn && "transition-[width,opacity,border-color] duration-200 ease-out motion-reduce:transition-none",
                             sidebarOpen ? "opacity-100" : "pointer-events-none border-transparent opacity-0",
                           )}
@@ -890,7 +890,7 @@ export function Layout() {
                       data-tour-target="workspace-main"
                       className={cn(
                         "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-                        "workspace-main-card rounded-[5px]",
+                        "workspace-main-card",
                         isLibraryRoute && "workspace-main-card--frameless",
                       )}
                     >

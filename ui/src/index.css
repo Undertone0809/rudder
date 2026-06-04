@@ -52,6 +52,7 @@
   --desktop-content-surface-light: #f8f4ee;
   --desktop-content-surface-light-alt: #f8f4ee;
   --desktop-content-border-light: rgb(214 209 202 / 0.82);
+  --desktop-workspace-radius: calc(var(--radius-sm) - 1px);
   --desktop-titlebar-top-gap: 0.625rem;
   --desktop-sidebar-top-clearance: 2.125rem;
   --desktop-content-top-gap: 0.375rem;
@@ -396,6 +397,7 @@
   .workspace-shell {
     background: transparent;
     border: 0;
+    border-radius: var(--desktop-workspace-radius);
     box-shadow: none;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -481,6 +483,7 @@
   .workspace-main-card {
     background: var(--desktop-content-surface-light);
     border: 1px solid var(--desktop-content-border-light);
+    border-radius: var(--desktop-workspace-radius);
     box-shadow:
       0 18px 36px -30px rgb(82 69 54 / 0.18),
       0 8px 16px -14px rgb(82 69 54 / 0.08);
