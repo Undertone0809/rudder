@@ -112,6 +112,7 @@ type ProseMirrorView = {
   state: ProseMirrorState;
   dispatch: (transaction: ProseMirrorTransaction) => void;
   focus?: () => void;
+  posAtDOM?: (node: Node, offset: number) => number;
 };
 
 type RudderTokenRange = {
@@ -510,11 +511,12 @@ export function insertMentionIntoProseMirrorView(
   const triggerText = `${state.trigger}${state.query}`;
   const { from, to } = view.state.selection;
   const start = Math.max(0, from - triggerText.length);
+  const replaceTo = isWhitespaceText(textAt(view.state.doc, to, to + 1)) ? to + 1 : to;
   const linkMark = view.state.schema.marks.link?.create({ href: token.href });
   const mentionNode = view.state.schema.text(token.label, linkMark ? [linkMark] : undefined);
   const spaceNode = view.state.schema.text(" ");
   const tr = view.state.tr
-    .replaceWith(start, to, [mentionNode, spaceNode])
+    .replaceWith(start, replaceTo, [mentionNode, spaceNode])
     .setStoredMarks([]);
   const selectionPos = start + token.label.length + 1;
   if (tr.doc) {
@@ -569,6 +571,35 @@ export function moveSelectionAfterRudderTokenBoundary(view: ProseMirrorView) {
   }
   tr.setStoredMarks([]);
   view.dispatch(tr);
+  return true;
+}
+
+function placeSelectionAfterRudderTokenAnchor(view: ProseMirrorView, anchor: HTMLAnchorElement) {
+  if (!view.posAtDOM) return false;
+  const lastChild = anchor.lastChild;
+  const targetNode = lastChild ?? anchor;
+  const targetOffset = targetNode.nodeType === Node.TEXT_NODE
+    ? (targetNode.textContent ?? "").length
+    : anchor.childNodes.length;
+  let targetPos: number;
+  try {
+    targetPos = view.posAtDOM(targetNode, targetOffset);
+  } catch {
+    return false;
+  }
+  const range =
+    findRudderTokenRangeAt(view.state.doc, Math.max(0, targetPos - 1))
+    ?? findRudderTokenRangeAt(view.state.doc, targetPos);
+  if (!range) return false;
+  const tr = view.state.tr
+    .setSelection(TextSelection.create(
+      view.state.doc as unknown as Parameters<typeof TextSelection.create>[0],
+      range.to,
+    ))
+    .setStoredMarks([]);
+  view.dispatch(tr);
+  moveSelectionAfterRudderTokenBoundary(view);
+  view.focus?.();
   return true;
 }
 
@@ -1000,10 +1031,19 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         editor?.action(replaceAll(next, true));
       }
     }
-    requestAnimationFrame(() => focus());
+    requestAnimationFrame(() => {
+      const currentEditor = loading ? get() : getInstance();
+      currentEditor?.action((ctx) => {
+        if (insertedInEditor) {
+          ctx.get(editorViewCtx).focus();
+          return;
+        }
+        focusProseMirrorViewAtEnd(ctx.get(editorViewCtx) as unknown as ProseMirrorView);
+      });
+    });
     mentionStateRef.current = null;
     setMentionState(null);
-  }, [focus, get, getInstance, loading]);
+  }, [get, getInstance, loading]);
 
   const removeAdjacentRudderToken = useCallback((direction: "backward" | "forward") => {
     const editor = loading ? get() : getInstance();
@@ -1171,6 +1211,14 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         const href = anchor.getAttribute("href") ?? "";
         if (!href || !isRudderTokenHref(href, label)) return;
         event.preventDefault();
+        event.stopPropagation();
+        if (!event.metaKey && !event.ctrlKey) {
+          const editor = loading ? get() : getInstance();
+          editor?.action((ctx) => {
+            placeSelectionAfterRudderTokenAnchor(ctx.get(editorViewCtx) as unknown as ProseMirrorView, anchor);
+          });
+          return;
+        }
         if (onInlineTokenClick) {
           const skillReference = parseSkillReference(href, label);
           onInlineTokenClick(

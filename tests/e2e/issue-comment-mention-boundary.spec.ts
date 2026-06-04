@@ -161,6 +161,58 @@ test("issue comment mention keeps punctuation attached while ending the mention 
   await expect(token).not.toContainText("，");
 });
 
+test("issue comment mention plain click keeps editing while command click navigates", async ({ page }) => {
+  await page.goto("/");
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Comment-Mention-Click-Boundary-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Griffin",
+      role: "ceo",
+      agentRuntimeType: "process",
+    },
+  });
+  expect(agentRes.ok()).toBe(true);
+  const agent = await agentRes.json() as { id: string };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Mention click boundary regression",
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  const issuePath = `/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`;
+  await page.goto(issuePath);
+
+  const composer = page.getByRole("region", { name: "Activity" }).locator(".rudder-milkdown-content [contenteditable='true']").last();
+  await expect(composer).toBeVisible();
+  await composer.click();
+  await page.keyboard.type("@gri");
+  await page.getByTestId(`markdown-mention-option-agent:${agent.id}`).click();
+
+  const token = composer.locator("[data-mention-kind='agent']").filter({ hasText: "Griffin (CEO)" }).first();
+  await expect(token).toBeVisible();
+  await token.click();
+  await page.keyboard.type("继续输入");
+
+  await expect(page).toHaveURL(new RegExp(`${issuePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+  await expect(composer).toContainText("Griffin (CEO) 继续输入");
+  await expect(token).not.toContainText("继续输入");
+
+  await token.click({ modifiers: ["ControlOrMeta"] });
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/agents/[^/?]+(?:/dashboard)?(?:\\?.*)?$`));
+  await expect(page.getByText("Griffin").first()).toBeVisible({ timeout: 15_000 });
+});
+
 test("issue comment skill mention keeps following typed text outside the token", async ({ page }) => {
   const suffix = Date.now();
   await page.goto("/");
