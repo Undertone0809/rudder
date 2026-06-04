@@ -809,6 +809,8 @@ test.describe("Messenger unified threads contract", () => {
 
     await expect(aggregateIssueRow).toContainText("Issues", { timeout: 15_000 });
     await expect(splitIssueRow).toHaveCount(0);
+    await aggregateIssueRow.hover();
+    await expect(aggregateIssueRow.getByRole("button", { name: "Thread actions" })).toHaveCount(0);
 
     await clickMessengerViewCheckbox(page, "Split issue notifications");
     await expect(page.getByText("Threads · Split issues")).toBeVisible({ timeout: 15_000 });
@@ -880,6 +882,8 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByText("Threads · Compact")).toBeVisible({ timeout: 15_000 });
     await expect(splitIssueRow).toHaveCount(0);
     await expect(aggregateIssueRow).toContainText("Issues", { timeout: 15_000 });
+    await aggregateIssueRow.hover();
+    await expect(aggregateIssueRow.getByRole("button", { name: "Thread actions" })).toHaveCount(0);
   });
 
   test("lets operators label agent-proposed chat issue approvals before approval", async ({ page }) => {

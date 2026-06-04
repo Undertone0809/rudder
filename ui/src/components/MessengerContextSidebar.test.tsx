@@ -252,6 +252,13 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("grid-cols-[minmax(0,1fr)_2.75rem] items-center");
   });
 
+  it("keeps the aggregate Issues row free of thread pin actions by default", () => {
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("Issues");
+    expect(html).not.toContain('aria-label="Thread actions"');
+  });
+
   it("restores the split issue notifications preference for the current organization", () => {
     localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": true });
 
@@ -350,6 +357,7 @@ describe("MessengerContextSidebar", () => {
           unreadCount: 1,
           needsAttention: true,
           isPinned: true,
+          metadata: { splitIssue: true },
         },
       ],
     };
@@ -361,6 +369,7 @@ describe("MessengerContextSidebar", () => {
     );
     expect(html).toContain("Pinned");
     expect(html).toContain("Recent");
+    expect(html).toContain('aria-label="Thread actions"');
   });
 
   it("groups Messenger chats by project when the organization rule is project", () => {
