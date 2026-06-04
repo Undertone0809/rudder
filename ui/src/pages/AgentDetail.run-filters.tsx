@@ -11,7 +11,7 @@ import { runMetrics, asRecord, asNonEmptyString, formatCompactTokenLabel, readIn
 
 export type RunFilterView = "all" | "active" | "failed" | "issue" | "retries" | "expensive";
 export type RunFilterContext = "issue" | "retry" | "followup" | "process_lost";
-export type RunFilterDatePreset = "all" | "24h" | "7d" | "30d";
+export type RunFilterDatePreset = "all" | "24h" | "7d" | "30d" | "custom";
 export type RunFilterCostPreset = "high_tokens" | "long";
 export type RunSortKey = "newest" | "oldest" | "duration_desc" | "duration_asc" | "tokens_desc" | "tokens_asc" | "cost_desc" | "cost_asc";
 type RunSortField = "created" | "duration" | "tokens" | "cost";
@@ -26,6 +26,8 @@ export interface RunFilterState {
   contexts: RunFilterContext[];
   skills: string[];
   date: RunFilterDatePreset;
+  customFrom: string;
+  customTo: string;
   cost: RunFilterCostPreset[];
   sort: RunSortKey;
 }
@@ -70,6 +72,7 @@ const dateLabels: Record<RunFilterDatePreset, string> = {
   "24h": "24h",
   "7d": "7d",
   "30d": "30d",
+  custom: "Custom",
 };
 
 const costLabels: Record<RunFilterCostPreset, string> = {
@@ -137,6 +140,14 @@ function readFreeformList(value: string | null): string[] {
   return out;
 }
 
+function readDateTimeInputValue(value: string | null): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const timestamp = new Date(trimmed).getTime();
+  return Number.isFinite(timestamp) ? trimmed : "";
+}
+
 function toggleValue<T extends string>(values: T[], value: T) {
   return values.includes(value) ? values.filter((candidate) => candidate !== value) : [...values, value];
 }
@@ -198,11 +209,26 @@ function matchesContext(run: HeartbeatRun, context: RunFilterContext) {
   }
 }
 
-function matchesDate(run: HeartbeatRun, date: RunFilterDatePreset) {
-  if (date === "all") return true;
+function dateTimeInputToTimestamp(value: string) {
+  if (!value.trim()) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function matchesDate(run: HeartbeatRun, state: Pick<RunFilterState, "date" | "customFrom" | "customTo">) {
+  if (state.date === "all") return true;
   const createdAt = new Date(run.createdAt).getTime();
   if (!Number.isFinite(createdAt)) return false;
-  const windowMs = date === "24h" ? 24 * 60 * 60 * 1000 : date === "7d" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+
+  if (state.date === "custom") {
+    const from = dateTimeInputToTimestamp(state.customFrom);
+    const to = dateTimeInputToTimestamp(state.customTo);
+    if (from !== null && createdAt < from) return false;
+    if (to !== null && createdAt > to) return false;
+    return true;
+  }
+
+  const windowMs = state.date === "24h" ? 24 * 60 * 60 * 1000 : state.date === "7d" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
   return createdAt >= Date.now() - windowMs;
 }
 
@@ -306,6 +332,8 @@ export function parseRunFilterState(searchParams: URLSearchParams): RunFilterSta
     contexts: readList(searchParams.get("runContext"), validContexts),
     skills: readFreeformList(searchParams.get("runSkill")),
     date: rawDate && validDates.has(rawDate) ? rawDate : "all",
+    customFrom: readDateTimeInputValue(searchParams.get("runFrom")),
+    customTo: readDateTimeInputValue(searchParams.get("runTo")),
     cost: readList(searchParams.get("runCost"), validCosts),
     sort: rawSort && validSorts.has(rawSort) ? rawSort : "newest",
   };
@@ -328,6 +356,8 @@ export function writeRunFilterState(searchParams: URLSearchParams, patch: RunFil
     ["runSkill", writeList(nextState.skills)],
     ["runCost", writeList(nextState.cost)],
     ["runDate", nextState.date === "all" ? null : nextState.date],
+    ["runFrom", nextState.date === "custom" && nextState.customFrom ? nextState.customFrom : null],
+    ["runTo", nextState.date === "custom" && nextState.customTo ? nextState.customTo : null],
     ["runSort", nextState.sort === "newest" ? null : nextState.sort],
   ];
   for (const [key, value] of values) {
@@ -361,7 +391,7 @@ export function applyRunFilters(runs: HeartbeatRun[], state: RunFilterState) {
     if (state.contexts.length > 0 && !state.contexts.every((context) => matchesContext(run, context))) return false;
     if (state.skills.length > 0 && !runUsedSkills(run).some((skill) => state.skills.includes(skill.key))) return false;
     if (state.cost.length > 0 && !state.cost.every((cost) => matchesCost(run, cost))) return false;
-    if (!matchesDate(run, state.date)) return false;
+    if (!matchesDate(run, state)) return false;
     if (q && !searchableText(run).includes(q)) return false;
     return true;
   });
@@ -420,8 +450,29 @@ export function runFilterChips(state: RunFilterState) {
   for (const context of state.contexts) chips.push(contextLabels[context]);
   if (state.skills.length > 0) chips.push(`Skill: ${state.skills.join(", ")}`);
   for (const cost of state.cost) chips.push(costLabels[cost]);
-  if (state.date !== "all") chips.push(dateLabels[state.date]);
+  if (state.date !== "all") chips.push(formatDateFilterChip(state));
   return chips;
+}
+
+function formatDateTimeChipValue(value: string) {
+  const timestamp = dateTimeInputToTimestamp(value);
+  if (timestamp === null) return "";
+  return new Date(timestamp).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatDateFilterChip(state: Pick<RunFilterState, "date" | "customFrom" | "customTo">) {
+  if (state.date !== "custom") return dateLabels[state.date];
+  const from = formatDateTimeChipValue(state.customFrom);
+  const to = formatDateTimeChipValue(state.customTo);
+  if (from && to) return `Custom: ${from} - ${to}`;
+  if (from) return `From ${from}`;
+  if (to) return `Until ${to}`;
+  return dateLabels.custom;
 }
 
 export function RunFiltersToolbar({
@@ -608,6 +659,30 @@ export function RunFiltersToolbar({
                       </button>
                     ))}
                   </div>
+                  {state.date === "custom" && (
+                    <div className="grid gap-1.5 pt-1">
+                      <label className="grid gap-1 text-[11px] text-muted-foreground">
+                        <span>From</span>
+                        <Input
+                          type="datetime-local"
+                          aria-label="Custom run start time"
+                          value={state.customFrom}
+                          onChange={(event) => onChange({ date: "custom", customFrom: event.target.value })}
+                          className="h-7 px-2 text-xs"
+                        />
+                      </label>
+                      <label className="grid gap-1 text-[11px] text-muted-foreground">
+                        <span>To</span>
+                        <Input
+                          type="datetime-local"
+                          aria-label="Custom run end time"
+                          value={state.customTo}
+                          onChange={(event) => onChange({ date: "custom", customTo: event.target.value })}
+                          className="h-7 px-2 text-xs"
+                        />
+                      </label>
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -66,6 +66,8 @@ function defaultFilterState(overrides: Partial<RunFilterState> = {}): RunFilterS
     contexts: [],
     skills: [],
     date: "all",
+    customFrom: "",
+    customTo: "",
     cost: [],
     sort: "newest",
     ...overrides,
@@ -104,7 +106,7 @@ function cleanupToolbar(root: Root, container: HTMLElement) {
 
 describe("agent run filters", () => {
   it("parses and writes URL query state without dropping unrelated params", () => {
-    const original = new URLSearchParams("tab=runs&runView=failed&runStatus=failed,timed_out&runContext=retry&runSkill=build-advisor&runQ=process&runSort=duration_desc");
+    const original = new URLSearchParams("tab=runs&runView=failed&runStatus=failed,timed_out&runContext=retry&runSkill=build-advisor&runQ=process&runSort=duration_desc&runDate=custom&runFrom=2026-05-24T08:00&runTo=2026-05-24T18:00");
     const state = parseRunFilterState(original);
 
     expect(state.view).toBe("failed");
@@ -113,6 +115,9 @@ describe("agent run filters", () => {
     expect(state.skills).toEqual(["build-advisor"]);
     expect(state.q).toBe("process");
     expect(state.sort).toBe("duration_desc");
+    expect(state.date).toBe("custom");
+    expect(state.customFrom).toBe("2026-05-24T08:00");
+    expect(state.customTo).toBe("2026-05-24T18:00");
 
     const next = writeRunFilterState(original, {
       view: "all",
@@ -120,6 +125,9 @@ describe("agent run filters", () => {
       statuses: [],
       contexts: [],
       skills: [],
+      date: "all",
+      customFrom: "",
+      customTo: "",
       sort: "newest",
     });
 
@@ -130,6 +138,9 @@ describe("agent run filters", () => {
     expect(next.get("runSkill")).toBeNull();
     expect(next.get("runQ")).toBeNull();
     expect(next.get("runSort")).toBeNull();
+    expect(next.get("runDate")).toBeNull();
+    expect(next.get("runFrom")).toBeNull();
+    expect(next.get("runTo")).toBeNull();
   });
 
   it("filters by status, issue context, retry context, used skill, token cost, and search text", () => {
@@ -193,6 +204,8 @@ describe("agent run filters", () => {
       contexts: ["issue", "retry", "process_lost"],
       skills: ["build-advisor"],
       date: "all",
+      customFrom: "",
+      customTo: "",
       cost: ["high_tokens"],
       sort: "newest",
     });
@@ -231,6 +244,8 @@ describe("agent run filters", () => {
       contexts: ["followup"],
       skills: ["build-advisor", "debug-run-transcript"],
       date: "7d",
+      customFrom: "",
+      customTo: "",
       cost: ["long"],
       sort: "duration_desc",
     });
@@ -251,6 +266,40 @@ describe("agent run filters", () => {
     expect(runFilterChips(defaultFilterState({
       sources: ["timer"],
     }))).toEqual(["Source: Heartbeat"]);
+  });
+
+  it("filters by custom run time bounds", () => {
+    const early = run({
+      id: "11111111-0000-4000-8000-000000000000",
+      createdAt: new Date("2026-05-24T07:59:00"),
+    });
+    const inside = run({
+      id: "22222222-0000-4000-8000-000000000000",
+      createdAt: new Date("2026-05-24T12:00:00"),
+    });
+    const late = run({
+      id: "33333333-0000-4000-8000-000000000000",
+      createdAt: new Date("2026-05-24T18:01:00"),
+    });
+
+    const filtered = applyRunFilters([early, inside, late], defaultFilterState({
+      date: "custom",
+      customFrom: "2026-05-24T08:00",
+      customTo: "2026-05-24T18:00",
+    }));
+
+    expect(filtered.map((item) => item.id)).toEqual([inside.id]);
+  });
+
+  it("describes custom time chips", () => {
+    const chips = runFilterChips(defaultFilterState({
+      date: "custom",
+      customFrom: "2026-05-24T08:00",
+      customTo: "2026-05-24T18:00",
+    }));
+
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toMatch(/^Custom: /);
   });
 
   it("sorts filtered runs by duration after filtering", () => {
@@ -336,6 +385,47 @@ describe("agent run filters", () => {
         durationButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
       expect(patches.at(-1)).toMatchObject({ sort: "duration_asc" });
+    } finally {
+      cleanupToolbar(root, container);
+    }
+  });
+
+  it("shows custom time inputs in the filter popover", () => {
+    const patches: Array<Partial<RunFilterState>> = [];
+    const { container, root } = renderToolbar({
+      onChange: (patch) => patches.push(patch),
+    });
+
+    try {
+      const filterButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Filter"),
+      );
+      act(() => {
+        filterButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+
+      const customButton = Array.from(document.body.querySelectorAll("button")).find(
+        (button) => button.textContent === "Custom",
+      );
+      act(() => {
+        customButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(patches.at(-1)).toMatchObject({ date: "custom" });
+
+      act(() => {
+        root.render(createElement(RunFiltersToolbar, {
+          runs: [],
+          filteredCount: 0,
+          state: defaultFilterState({ date: "custom", customFrom: "2026-05-24T08:00" }),
+          onChange: (patch) => patches.push(patch),
+          onClear: () => undefined,
+        }));
+      });
+
+      const fromInput = document.body.querySelector<HTMLInputElement>('input[aria-label="Custom run start time"]');
+      const toInput = document.body.querySelector<HTMLInputElement>('input[aria-label="Custom run end time"]');
+      expect(fromInput?.value).toBe("2026-05-24T08:00");
+      expect(toInput?.value).toBe("");
     } finally {
       cleanupToolbar(root, container);
     }

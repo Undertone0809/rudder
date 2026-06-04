@@ -5,6 +5,15 @@ import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
+function formatDateTimeLocal(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  const hours = String(value.getHours()).padStart(2, "0");
+  const minutes = String(value.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
 });
@@ -158,5 +167,25 @@ test.describe("Agent runs filter menu", () => {
     await expect(listPane.getByText("Selected run is outside the current filters.")).toBeVisible();
     await expect(listPane.getByText(failedRunId.slice(0, 8))).toBeVisible();
     await expect(mainContent.getByTestId("agent-runs-detail-pane").getByText("Selected run should stay open")).toBeVisible();
+
+    await mainContent.getByRole("button", { name: "Clear run filters" }).click();
+    await expect(page).not.toHaveURL(/runStatus=failed/);
+    await expect(page).not.toHaveURL(/runSkill=build-advisor/);
+
+    await mainContent.getByRole("button", { name: "Filter" }).click();
+    const customPopover = page.getByTestId("run-filter-popover");
+    await expect(customPopover).toBeVisible();
+    await customPopover.getByRole("button", { name: "Custom" }).click();
+    const customFrom = formatDateTimeLocal(new Date("2026-05-23T08:30:00.000Z"));
+    const customTo = formatDateTimeLocal(new Date("2026-05-23T09:30:00.000Z"));
+    await customPopover.getByLabel("Custom run start time").fill(customFrom);
+    await customPopover.getByLabel("Custom run end time").fill(customTo);
+    await expect(page).toHaveURL(/runDate=custom/);
+    await expect(page).toHaveURL(new RegExp(`runFrom=${encodeURIComponent(customFrom)}`));
+    await expect(page).toHaveURL(new RegExp(`runTo=${encodeURIComponent(customTo)}`));
+    await expect(listPane.getByText(failedRunId.slice(0, 8))).toBeVisible();
+    await expect(listPane.getByText(newestShortRunId.slice(0, 8))).toHaveCount(0);
+    await expect(listPane.getByText("Selected run is outside the current filters.")).toBeVisible();
+    await expect(mainContent.getByText(/Custom:/)).toBeVisible();
   });
 });
