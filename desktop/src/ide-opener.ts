@@ -30,6 +30,10 @@ type DesktopWorkspaceLaunchDetection = DesktopWorkspaceLaunchTarget & {
       appPath: string;
     }
     | {
+      kind: "executable";
+      executablePath: string;
+    }
+    | {
       kind: "command";
       command: string;
     }
@@ -40,6 +44,7 @@ type DesktopWorkspaceLaunchDetection = DesktopWorkspaceLaunchTarget & {
 
 type DetectAvailableWorkspaceLaunchTargetsOptions = {
   platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
   homeDir?: string;
   pathExists?: (targetPath: string) => Promise<boolean>;
   commandExists?: (command: string, platform: NodeJS.Platform) => Promise<boolean>;
@@ -49,31 +54,52 @@ type OpenWorkspaceOptions = DetectAvailableWorkspaceLaunchTargetsOptions & {
   openDarwinApp?: (appPath: string, absolutePath: string) => Promise<void>;
   openFolder?: (absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
   runCommand?: (command: string, absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
+  runExecutable?: (executablePath: string, absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
   runTerminalCommand?: (command: string, cwd: string, platform: NodeJS.Platform) => Promise<void>;
 };
 
 type OpenWorkspaceFileInIdeOptions = DetectAvailableWorkspaceLaunchTargetsOptions & {
   openDarwinApp?: (appPath: string, absolutePath: string) => Promise<void>;
   runCommand?: (command: string, absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
+  runExecutable?: (executablePath: string, absolutePath: string, platform: NodeJS.Platform) => Promise<void>;
 };
 
 type DesktopWorkspaceLaunchSpec = {
   id: Exclude<DesktopWorkspaceLaunchTargetId, "finder">;
   label: string;
   kind: "ide" | "terminal";
+  platforms?: NodeJS.Platform[];
   macAppNames: string[];
+  windowsInstallations?: {
+    directoryName: string;
+    executableName: string;
+  }[];
   commands: string[];
 };
 
 const WORKSPACE_LAUNCH_SPECS: DesktopWorkspaceLaunchSpec[] = [
-  { id: "cursor", label: "Cursor", kind: "ide", macAppNames: ["Cursor"], commands: ["cursor"] },
-  { id: "vscode", label: "VS Code", kind: "ide", macAppNames: ["Visual Studio Code"], commands: ["code"] },
+  {
+    id: "cursor",
+    label: "Cursor",
+    kind: "ide",
+    macAppNames: ["Cursor"],
+    windowsInstallations: [{ directoryName: "Cursor", executableName: "Cursor.exe" }],
+    commands: ["cursor"],
+  },
+  {
+    id: "vscode",
+    label: "VS Code",
+    kind: "ide",
+    macAppNames: ["Visual Studio Code"],
+    windowsInstallations: [{ directoryName: "Microsoft VS Code", executableName: "Code.exe" }],
+    commands: ["code"],
+  },
   { id: "windsurf", label: "Windsurf", kind: "ide", macAppNames: ["Windsurf"], commands: ["windsurf"] },
   { id: "zed", label: "Zed", kind: "ide", macAppNames: ["Zed"], commands: ["zed"] },
   { id: "webstorm", label: "WebStorm", kind: "ide", macAppNames: ["WebStorm"], commands: ["webstorm"] },
   { id: "intellij", label: "IntelliJ IDEA", kind: "ide", macAppNames: ["IntelliJ IDEA"], commands: ["idea"] },
-  { id: "xcode", label: "Xcode", kind: "ide", macAppNames: ["Xcode"], commands: ["xed"] },
-  { id: "terminal", label: "Terminal", kind: "terminal", macAppNames: ["Terminal"], commands: [] },
+  { id: "xcode", label: "Xcode", kind: "ide", platforms: ["darwin"], macAppNames: ["Xcode"], commands: ["xed"] },
+  { id: "terminal", label: "Terminal", kind: "terminal", platforms: ["darwin"], macAppNames: ["Terminal"], commands: [] },
   { id: "warp", label: "Warp", kind: "terminal", macAppNames: ["Warp"], commands: ["warp"] },
 ];
 
@@ -116,6 +142,25 @@ function macAppCandidates(appName: string, homeDir: string) {
   ];
 }
 
+function windowsExecutableCandidates(
+  installation: NonNullable<DesktopWorkspaceLaunchSpec["windowsInstallations"]>[number],
+  homeDir: string,
+  env: NodeJS.ProcessEnv,
+) {
+  const localAppData = env.LOCALAPPDATA ?? path.win32.join(homeDir, "AppData", "Local");
+  const programFiles = env.ProgramFiles ?? env.PROGRAMFILES ?? "C:\\Program Files";
+  const programFilesX86 = env["ProgramFiles(x86)"];
+  const roots = [
+    localAppData ? path.win32.join(localAppData, "Programs") : null,
+    programFiles,
+    programFilesX86,
+  ].filter((entry): entry is string => Boolean(entry));
+
+  return roots.map((root) =>
+    path.win32.join(root, installation.directoryName, installation.executableName),
+  );
+}
+
 function folderLaunchDetection(platform: NodeJS.Platform): DesktopWorkspaceLaunchDetection {
   return {
     id: "finder",
@@ -132,12 +177,17 @@ async function detectAvailableWorkspaceLaunchTargetsInternal(
   options: DetectAvailableWorkspaceLaunchTargetsOptions = {},
 ): Promise<DesktopWorkspaceLaunchDetection[]> {
   const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
   const homeDir = options.homeDir ?? os.homedir();
   const pathExists = options.pathExists ?? defaultPathExists;
   const commandExists = options.commandExists ?? defaultCommandExists;
   const available: DesktopWorkspaceLaunchDetection[] = [];
 
   for (const spec of WORKSPACE_LAUNCH_SPECS) {
+    if (spec.platforms && !spec.platforms.includes(platform)) {
+      continue;
+    }
+
     if (platform === "darwin") {
       let matchedAppPath: string | null = null;
       for (const appName of spec.macAppNames) {
@@ -160,9 +210,33 @@ async function detectAvailableWorkspaceLaunchTargetsInternal(
             appPath: matchedAppPath,
           },
         });
-        if (spec.id === "warp") {
-          available.push(folderLaunchDetection(platform));
+        continue;
+      }
+    }
+
+    if (platform === "win32" && spec.windowsInstallations) {
+      let matchedExecutablePath: string | null = null;
+      for (const installation of spec.windowsInstallations) {
+        for (const candidate of windowsExecutableCandidates(installation, homeDir, env)) {
+          if (await pathExists(candidate)) {
+            matchedExecutablePath = candidate;
+            break;
+          }
         }
+        if (matchedExecutablePath) break;
+      }
+
+      if (matchedExecutablePath) {
+        available.push({
+          id: spec.id,
+          label: spec.label,
+          kind: spec.kind,
+          iconPath: matchedExecutablePath,
+          strategy: {
+            kind: "executable",
+            executablePath: matchedExecutablePath,
+          },
+        });
         continue;
       }
     }
@@ -181,12 +255,9 @@ async function detectAvailableWorkspaceLaunchTargetsInternal(
         break;
       }
     }
-
-    if (spec.id === "warp") {
-      available.push(folderLaunchDetection(platform));
-    }
   }
 
+  available.push(folderLaunchDetection(platform));
   return available;
 }
 
@@ -237,6 +308,19 @@ function defaultRunCommand(command: string, absolutePath: string, platform: Node
     });
   }
   return execFilePromise(command, [absolutePath]);
+}
+
+function defaultRunExecutable(executablePath: string, absolutePath: string, platform: NodeJS.Platform) {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(executablePath, [absolutePath], {
+      detached: true,
+      stdio: "ignore",
+      ...(platform === "win32" ? { windowsHide: true } : {}),
+    });
+    child.once("error", reject);
+    child.once("spawn", () => resolve());
+    child.unref();
+  });
 }
 
 function defaultRunTerminalCommand(command: string, cwd: string, platform: NodeJS.Platform) {
@@ -304,6 +388,7 @@ export async function openWorkspace(
   const openDarwinApp = options.openDarwinApp ?? defaultOpenDarwinApp;
   const openFolder = options.openFolder ?? defaultOpenFolder;
   const runCommand = options.runCommand ?? defaultRunCommand;
+  const runExecutable = options.runExecutable ?? defaultRunExecutable;
   const runTerminalCommand = options.runTerminalCommand ?? defaultRunTerminalCommand;
   const absolutePath = await resolveWorkspaceRootDirectory(rootPath);
   const detections = await detectAvailableWorkspaceLaunchTargetsInternal(options);
@@ -320,11 +405,15 @@ export async function openWorkspace(
   } else if (target.kind === "terminal") {
     if (target.strategy.kind === "darwin-app") {
       await runTerminalCommand(target.strategy.appPath, absolutePath, platform);
-    } else {
+    } else if (target.strategy.kind === "command") {
       await runTerminalCommand(target.strategy.command, absolutePath, platform);
+    } else {
+      throw new Error(`The requested workspace launcher is not available: ${targetId}`);
     }
   } else if (target.strategy.kind === "darwin-app") {
     await openDarwinApp(target.strategy.appPath, absolutePath);
+  } else if (target.strategy.kind === "executable") {
+    await runExecutable(target.strategy.executablePath, absolutePath, platform);
   } else {
     await runCommand(target.strategy.command, absolutePath, platform);
   }
@@ -346,6 +435,7 @@ export async function openWorkspaceFileInIde(
   const platform = options.platform ?? process.platform;
   const openDarwinApp = options.openDarwinApp ?? defaultOpenDarwinApp;
   const runCommand = options.runCommand ?? defaultRunCommand;
+  const runExecutable = options.runExecutable ?? defaultRunExecutable;
   const absolutePath = resolveWorkspaceFileAbsolutePath(rootPath, filePath);
   const detections = (await detectAvailableWorkspaceLaunchTargetsInternal(options)).filter(
     (entry): entry is DesktopWorkspaceLaunchDetection & { id: DesktopIdeId; kind: "ide" } =>
@@ -364,6 +454,8 @@ export async function openWorkspaceFileInIde(
 
   if (target.strategy.kind === "darwin-app") {
     await openDarwinApp(target.strategy.appPath, absolutePath);
+  } else if (target.strategy.kind === "executable") {
+    await runExecutable(target.strategy.executablePath, absolutePath, platform);
   } else if (target.strategy.kind === "command") {
     await runCommand(target.strategy.command, absolutePath, platform);
   } else {

@@ -64,6 +64,32 @@ describe("listWorkspaceLaunchTargets", () => {
     ]);
   });
 
+  it("detects installed Windows editors without requiring PATH commands or showing macOS-only launchers", async () => {
+    const commandExists = vi.fn(async () => false);
+    const targets = await listWorkspaceLaunchTargets({
+      platform: "win32",
+      homeDir: "C:\\Users\\tester",
+      env: {
+        LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local",
+        ProgramFiles: "C:\\Program Files",
+      },
+      pathExists: async (targetPath) =>
+        targetPath === "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+      commandExists,
+    });
+
+    expect(targets).toEqual([
+      {
+        id: "cursor",
+        label: "Cursor",
+        kind: "ide",
+        iconPath: "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+      },
+      { id: "finder", label: "Folder", kind: "folder" },
+    ]);
+    expect(commandExists).not.toHaveBeenCalledWith("xed", "win32");
+  });
+
   it("keeps the folder fallback available when no app or command is detected", async () => {
     const targets = await listWorkspaceLaunchTargets({
       platform: "linux",
@@ -91,6 +117,35 @@ describe("openWorkspace", () => {
     });
 
     expect(openDarwinApp).toHaveBeenCalledWith("/Applications/Cursor.app", root);
+    expect(result).toEqual({
+      id: "cursor",
+      label: "Cursor",
+      kind: "ide",
+      absolutePath: root,
+    });
+  });
+
+  it("opens an installed Windows IDE executable without shell command parsing", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-windows-open-"));
+    const runExecutable = vi.fn(async () => {});
+
+    const result = await openWorkspace(root, "cursor", {
+      platform: "win32",
+      homeDir: "C:\\Users\\tester",
+      env: {
+        LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local",
+      },
+      pathExists: async (targetPath) =>
+        targetPath === "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+      commandExists: async () => false,
+      runExecutable,
+    });
+
+    expect(runExecutable).toHaveBeenCalledWith(
+      "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+      root,
+      "win32",
+    );
     expect(result).toEqual({
       id: "cursor",
       label: "Cursor",
@@ -149,6 +204,38 @@ describe("openWorkspaceFileInIde", () => {
     expect(openDarwinApp).toHaveBeenCalledWith(
       "/Applications/Cursor.app",
       "/Users/tester/workspaces/org-1/plans/next-step.md",
+    );
+    expect(result).toEqual({
+      id: "cursor",
+      label: "Cursor",
+      absolutePath: "/Users/tester/workspaces/org-1/plans/next-step.md",
+    });
+  });
+
+  it("opens a workspace file with an installed Windows IDE executable", async () => {
+    const runExecutable = vi.fn(async () => {});
+
+    const result = await openWorkspaceFileInIde(
+      "/Users/tester/workspaces/org-1",
+      "plans/next-step.md",
+      "cursor",
+      {
+        platform: "win32",
+        homeDir: "C:\\Users\\tester",
+        env: {
+          LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local",
+        },
+        pathExists: async (targetPath) =>
+          targetPath === "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+        commandExists: async () => false,
+        runExecutable,
+      },
+    );
+
+    expect(runExecutable).toHaveBeenCalledWith(
+      "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+      "/Users/tester/workspaces/org-1/plans/next-step.md",
+      "win32",
     );
     expect(result).toEqual({
       id: "cursor",
