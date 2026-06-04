@@ -734,18 +734,20 @@ export function ActorIdentity({
   agentMap,
   currentBoardUserId,
   operatorDisplayName,
+  className,
 }: {
   evt: ActivityEvent;
   agentMap: Map<string, Agent>;
   currentBoardUserId?: string | null;
   operatorDisplayName?: string | null;
+  className?: string;
 }) {
   const id = evt.actorId;
   if (evt.actorType === "agent") {
     const agent = agentMap.get(id);
-    return <AgentIdentity name={agent?.name ?? id.slice(0, 8)} icon={agent?.icon} role={agent?.role} size="sm" />;
+    return <AgentIdentity name={agent?.name ?? id.slice(0, 8)} icon={agent?.icon} role={agent?.role} size="sm" className={className} />;
   }
-  return <Identity name={resolveBoardActorLabel(evt.actorType, id, currentBoardUserId, operatorDisplayName)} size="sm" />;
+  return <Identity name={resolveBoardActorLabel(evt.actorType, id, currentBoardUserId, operatorDisplayName)} size="sm" className={className} />;
 }
 
 export function IssueActivityRow({
@@ -760,15 +762,19 @@ export function IssueActivityRow({
   operatorDisplayName?: string | null;
 }) {
   return (
-    <div className="flex items-center gap-1.5 rounded-sm px-1 py-0.5 text-xs text-muted-foreground">
+    <div
+      data-testid="issue-activity-row"
+      className="grid min-h-7 grid-cols-[minmax(5.5rem,8.5rem)_minmax(0,1fr)_auto] items-center gap-2 rounded-sm px-1 py-0.5 text-xs text-muted-foreground"
+    >
       <ActorIdentity
         evt={evt}
         agentMap={agentMap}
         currentBoardUserId={currentBoardUserId}
         operatorDisplayName={operatorDisplayName}
+        className="min-w-0 max-w-full [&_[data-slot=avatar]]:top-0"
       />
-      <span className="min-w-0">{renderActivityDescription(evt, agentMap, currentBoardUserId)}</span>
-      <span className="ml-auto shrink-0">{relativeTime(evt.createdAt)}</span>
+      <span className="min-w-0 truncate leading-5">{renderActivityDescription(evt, agentMap, currentBoardUserId)}</span>
+      <span className="shrink-0 leading-5 tabular-nums">{relativeTime(evt.createdAt)}</span>
     </div>
   );
 }
