@@ -307,10 +307,11 @@ function renderWorkspacesPage() {
   cleanupFn = () => currentRoot?.unmount();
 }
 
-function createTabDragEvent(type: string, dataTransfer: DataTransferStub, clientX = 75) {
+function createTabDragEvent(type: string, dataTransfer: DataTransferStub, clientX = 75, clientY = 18) {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
   Object.defineProperty(event, "clientX", { value: clientX });
+  Object.defineProperty(event, "clientY", { value: clientY });
   return event;
 }
 
@@ -320,9 +321,13 @@ function createDataTransferStub() {
     dropEffect: "none",
     effectAllowed: "none",
     getData: vi.fn((type: string) => data.get(type) ?? ""),
+    get types() {
+      return Array.from(data.keys());
+    },
     setData: vi.fn((type: string, value: string) => {
       data.set(type, value);
     }),
+    setDragImage: vi.fn(),
   };
 }
 
@@ -503,6 +508,34 @@ describe("OrganizationWorkspaces scroll regions", () => {
       Array.from(document.querySelectorAll("[data-testid='org-workspaces-editor-tabs'] .rudder-doc-editor-tab"))
         .map((tab) => tab.textContent?.trim()),
     ).toEqual(["notes.md", "image.png"]);
+  });
+
+  it("keeps the selected Library tree source quiet while dragging", async () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/README.md";
+    renderWorkspacesPage();
+
+    const sourceRow = document.querySelector(
+      '[data-workspace-entry-path="artifacts/chat-ui-review/README.md"]',
+    ) as HTMLElement | null;
+    expect(sourceRow).not.toBeNull();
+    expect(sourceRow?.className).toContain("bg-accent");
+
+    const dataTransfer = createDataTransferStub();
+    await act(async () => {
+      sourceRow?.dispatchEvent(createTabDragEvent("dragstart", dataTransfer, 42, 14));
+    });
+
+    expect(sourceRow?.getAttribute("data-dragging-workspace-entry")).toBe("true");
+    expect(sourceRow?.classList.contains("rudder-workspace-tree-entry--dragging")).toBe(true);
+    expect(sourceRow?.className).not.toContain("bg-accent");
+    expect(dataTransfer.setDragImage).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      sourceRow?.dispatchEvent(createTabDragEvent("dragend", dataTransfer, 42, 14));
+    });
+
+    expect(sourceRow?.getAttribute("data-dragging-workspace-entry")).toBeNull();
+    expect(sourceRow?.className).toContain("bg-accent");
   });
 
   it("opens Library file tokens inside the current editor tab set", async () => {
