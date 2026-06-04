@@ -827,6 +827,7 @@ export function Layout() {
               className={cn(
                 "flex min-h-0 min-w-0 flex-1 flex-col",
                 isMobile ? "w-full" : "workspace-shell overflow-hidden",
+                !isMobile && isLibraryRoute && "workspace-shell--library-transparent",
               )}
             >
               {!showIntegratedCardHeaders ? (

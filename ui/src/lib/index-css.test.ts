@@ -101,6 +101,13 @@ describe("index.css motion rules", () => {
     expect(framelessWorkspaceCard).toContain("box-shadow: none");
   });
 
+  it("removes the extra desktop shell wash behind the Library workspace", () => {
+    const libraryWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell--library-transparent");
+
+    expect(indexCss).toContain("html.dark.desktop-shell-macos .workspace-shell--library-transparent");
+    expect(libraryWorkspaceShell).toContain("background: transparent");
+  });
+
   it("keeps the macOS desktop shell top chrome compact", () => {
     const rootTokens = cssBlock(":root");
 

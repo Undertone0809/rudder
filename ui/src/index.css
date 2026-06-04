@@ -426,6 +426,10 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+  html.desktop-shell-macos .workspace-shell--library-transparent,
+  html.dark.desktop-shell-macos .workspace-shell--library-transparent {
+    background: transparent;
+  }
 
   .primary-rail-shell {
     background: transparent;
