@@ -1811,7 +1811,7 @@ export function NewIssueDialog() {
               size="sm"
               className={cn(
                 "min-w-[8.5rem] disabled:opacity-100",
-                !hasIssueTitle && "disabled:border-border/40 disabled:bg-muted/40 disabled:text-muted-foreground/70 disabled:shadow-none",
+                !hasIssueTitle && "disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:ring-1 disabled:ring-inset disabled:ring-border/80 disabled:shadow-none",
               )}
               disabled={!hasIssueTitle || isCreatingOrRedirecting}
               onClick={handleSubmit}
