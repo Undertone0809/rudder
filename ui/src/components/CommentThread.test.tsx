@@ -247,6 +247,7 @@ describe("CommentThread", () => {
               agentId: "22222222-2222-4222-8222-222222222222",
               createdAt: new Date("2026-05-07T00:02:00.000Z"),
               startedAt: new Date("2026-05-07T00:02:00.000Z"),
+              finishedAt: new Date("2026-05-07T00:34:00.000Z"),
             },
           ]}
           onAdd={async () => undefined}
@@ -258,6 +259,7 @@ describe("CommentThread", () => {
     expect(html).not.toContain("Not an issue comment");
     expect(html).toContain('aria-label="Agent run"');
     expect(html).toContain('data-run-id="55555555-5555-4555-8555-555555555555"');
+    expect(html).toContain("Ran for 32m");
     expect(html).toContain('aria-label="Show details"');
     expect(html).not.toContain("No run output captured.");
   });

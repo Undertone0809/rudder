@@ -22,6 +22,7 @@ import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 import { formatDateTime } from "../lib/utils";
+import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from "../lib/run-duration-label";
 import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
@@ -39,6 +40,7 @@ interface LinkedRunItem {
   agentId: string;
   createdAt: Date | string;
   startedAt: Date | string | null;
+  finishedAt?: Date | string | null;
   invocationSource?: string;
   triggerDetail?: string | null;
   contextSnapshot?: Record<string, unknown> | null;
@@ -314,6 +316,8 @@ const TimelineList = memo(function TimelineList({
           const toggleLabel = runExpanded ? "Hide details" : "Show details";
           const agent = agentMap?.get(run.agentId);
           const agentName = agent?.name ?? run.agentId.slice(0, 8);
+          const runDurationLabel = run.finishedAt || isRunTimingActive(run) ? formatRunDurationLabel(run) : null;
+          const runTimingTitle = formatRunTimingTitle(run);
           const runDetailPath = applyOrganizationPrefix(`/agents/${run.agentId}/runs/${run.runId}`, organizationPrefix);
           const openRunDetail = () => {
             navigate(runDetailPath);
@@ -389,6 +393,14 @@ const TimelineList = memo(function TimelineList({
                       Run
                     </span>
                     {statusBadge}
+                    {runDurationLabel ? (
+                      <span
+                        className="inline-flex h-7 shrink-0 items-center text-muted-foreground"
+                        title={runTimingTitle || undefined}
+                      >
+                        {runDurationLabel}
+                      </span>
+                    ) : null}
                     {passiveLabel && (
                       <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
                         {passiveLabel}
@@ -414,6 +426,14 @@ const TimelineList = memo(function TimelineList({
                       Run
                     </span>
                     {statusBadge}
+                    {runDurationLabel ? (
+                      <span
+                        className="inline-flex h-7 shrink-0 items-center text-muted-foreground"
+                        title={runTimingTitle || undefined}
+                      >
+                        {runDurationLabel}
+                      </span>
+                    ) : null}
                     {passiveLabel && (
                       <span className="inline-flex h-7 shrink-0 items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-medium text-amber-700 dark:text-amber-300">
                         {passiveLabel}
@@ -600,7 +620,7 @@ export function CommentThread({
         invocationSource: "issue_timeline",
         triggerDetail: null,
         startedAt: typeof run.startedAt === "string" ? run.startedAt : run.startedAt?.toISOString() ?? null,
-        finishedAt: null,
+        finishedAt: typeof run.finishedAt === "string" ? run.finishedAt : run.finishedAt?.toISOString() ?? null,
         createdAt: typeof run.createdAt === "string" ? run.createdAt : run.createdAt.toISOString(),
         agentId: run.agentId,
         agentName: agent?.name ?? run.agentId.slice(0, 8),
