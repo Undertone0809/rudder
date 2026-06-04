@@ -677,7 +677,7 @@ function splitIssueSummary(
     unreadCount,
     needsAttention: unreadCount > 0,
     isPinned: false,
-    href: item.href,
+    href: item.href ?? issueHref(entry.issue),
     metadata: {
       ...item.metadata,
       splitIssue: true,
