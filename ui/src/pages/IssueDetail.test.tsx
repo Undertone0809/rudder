@@ -343,7 +343,7 @@ vi.mock("../components/ScrollToBottom", () => ({
 }));
 
 vi.mock("../components/StatusIcon", () => ({
-  StatusIcon: () => <span>Status</span>,
+  StatusIcon: ({ status }: { status: string }) => <span data-slot="issue-status-icon" data-status={status}>Status</span>,
 }));
 
 vi.mock("../components/PriorityIcon", () => ({
@@ -669,6 +669,19 @@ describe("IssueDetail", () => {
         createdAt: new Date("2026-04-20T01:12:00.000Z"),
       },
       {
+        id: "activity-status",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: { status: "in_progress", _previous: { status: "todo" } },
+        createdAt: new Date("2026-04-20T01:14:00.000Z"),
+      },
+      {
         id: "activity-document-updated",
         orgId: "org-2",
         actorType: "user",
@@ -727,11 +740,15 @@ describe("IssueDetail", () => {
     expect(html).toContain("assigned the issue to Builder");
     expect(html).toContain("changed the reviewer from Builder to Me");
     expect(html).toContain("changed the goal");
+    expect(html).toContain("moved from Todo to In Progress");
     expect(html).toContain("confirmed blocker; operator handoff needed");
     expect(html).toContain("committed abc1234: fix: report code commit");
     expect(html).toContain("requested human intervention");
     expect(html).toContain("data-testid=\"issue-activity-row\"");
-    expect(html).toContain("grid-cols-[minmax(0,1fr)_auto]");
+    expect(html).toContain("grid-cols-[16px_minmax(0,1fr)]");
+    expect(html).toContain("data-testid=\"issue-activity-summary\"");
+    expect(html).toContain("whitespace-nowrap");
+    expect(html).toContain("data-status=\"in_progress\"");
     expect(html).toContain("border-transparent");
     expect(html).toContain("pl-3");
     expect(html).toContain("tabular-nums");

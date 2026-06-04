@@ -39,6 +39,11 @@ test.describe("Issue activity", () => {
     });
     expect(assignRes.ok()).toBe(true);
 
+    const statusRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: { status: "in_progress" },
+    });
+    expect(statusRes.ok()).toBe(true);
+
     const descriptionRes = await page.request.patch(`/api/issues/${issue.id}`, {
       data: { description: "Description-only update should not render as activity." },
     });
@@ -63,6 +68,10 @@ test.describe("Issue activity", () => {
     const activity = page.getByRole("region", { name: "Activity" });
     await expect(activity).toBeVisible();
     await expect(activity.getByText("assigned the issue to Builder", { exact: false })).toBeVisible();
+    const statusActivity = activity.getByTestId("issue-activity-row").filter({ hasText: "moved from Todo to In Progress" });
+    await expect(statusActivity).toBeVisible();
+    await expect(statusActivity.getByTestId("issue-activity-summary")).toHaveClass(/whitespace-nowrap/);
+    await expect(statusActivity.locator('[data-slot="issue-status-icon"][data-status="in_progress"]')).toBeVisible();
     await expect(activity.getByText("updated the description", { exact: false })).toHaveCount(0);
     await expect(activity.getByText("updated a document note", { exact: false })).toHaveCount(0);
   });

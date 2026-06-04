@@ -45,8 +45,6 @@ import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
 import { formatPriorityLabel } from "../lib/priorities";
-import { Identity } from "../components/Identity";
-import { AgentIdentity } from "../components/AgentAvatar";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { Separator } from "@/components/ui/separator";
@@ -576,8 +574,8 @@ export function formatAction(
       const from = previous.status;
       parts.push(
         from
-          ? `changed the status from ${humanizeValue(from)} to ${humanizeValue(details.status)}`
-          : `changed the status to ${humanizeValue(details.status)}`
+          ? `moved from ${issueStatusLabel(humanizeValue(from))} to ${issueStatusLabel(humanizeValue(details.status))}`
+          : `moved to ${issueStatusLabel(humanizeValue(details.status))}`
       );
     }
     if (details.priority !== undefined) {
@@ -729,25 +727,44 @@ export function renderActivityDescription(
   return formatAction(evt.action, details, agentMap, currentBoardUserId);
 }
 
-export function ActorIdentity({
+export function issueActivityActorName({
   evt,
   agentMap,
   currentBoardUserId,
   operatorDisplayName,
-  className,
 }: {
   evt: ActivityEvent;
   agentMap: Map<string, Agent>;
   currentBoardUserId?: string | null;
   operatorDisplayName?: string | null;
-  className?: string;
 }) {
   const id = evt.actorId;
   if (evt.actorType === "agent") {
     const agent = agentMap.get(id);
-    return <AgentIdentity name={agent?.name ?? id.slice(0, 8)} icon={agent?.icon} role={agent?.role} size="sm" className={className} />;
+    return agent?.name ?? id.slice(0, 8);
   }
-  return <Identity name={resolveBoardActorLabel(evt.actorType, id, currentBoardUserId, operatorDisplayName)} size="sm" className={className} />;
+  return resolveBoardActorLabel(evt.actorType, id, currentBoardUserId, operatorDisplayName);
+}
+
+export function issueActivityMarkerStatus(evt: ActivityEvent): string | null {
+  const details = asRecord(evt.details);
+  if (evt.action === "issue.updated" && typeof details?.status === "string") return details.status;
+  if (evt.action === "issue.checked_out") return "in_progress";
+  if (evt.action === "issue.released") return "done";
+  return null;
+}
+
+export function IssueActivityMarker({ evt }: { evt: ActivityEvent }) {
+  const status = issueActivityMarkerStatus(evt);
+  return (
+    <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+      {status ? (
+        <StatusIcon status={status} className="h-4 w-4" />
+      ) : (
+        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/45" />
+      )}
+    </span>
+  );
 }
 
 export function IssueActivityRow({
@@ -761,22 +778,24 @@ export function IssueActivityRow({
   currentBoardUserId?: string | null;
   operatorDisplayName?: string | null;
 }) {
+  const actorName = issueActivityActorName({ evt, agentMap, currentBoardUserId, operatorDisplayName });
+  const activityDescription = renderActivityDescription(evt, agentMap, currentBoardUserId);
+  const activityTime = relativeTime(evt.createdAt);
+
   return (
     <div
       data-testid="issue-activity-row"
-      className="grid min-h-7 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-sm border border-transparent py-0.5 pl-3 pr-1 text-xs text-muted-foreground"
+      className="grid min-h-8 grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-sm border border-transparent py-1 pl-3 pr-2 text-xs text-muted-foreground"
     >
-      <span className="flex h-7 min-w-0 items-center gap-1.5">
-        <ActorIdentity
-          evt={evt}
-          agentMap={agentMap}
-          currentBoardUserId={currentBoardUserId}
-          operatorDisplayName={operatorDisplayName}
-          className="min-w-0 max-w-[8.5rem] shrink-0 [&_[data-slot=avatar]]:top-0"
-        />
-        <span className="min-w-0 truncate leading-5">{renderActivityDescription(evt, agentMap, currentBoardUserId)}</span>
+      <IssueActivityMarker evt={evt} />
+      <span
+        data-testid="issue-activity-summary"
+        className="flex min-w-0 items-center gap-1.5 whitespace-nowrap leading-5"
+      >
+        <span className="max-w-[9rem] shrink-0 truncate font-medium text-foreground">{actorName}</span>
+        <span className="min-w-0 truncate"> {activityDescription}</span>
+        <span className="shrink-0 tabular-nums text-muted-foreground/90"> · {activityTime}</span>
       </span>
-      <span className="shrink-0 leading-5 tabular-nums">{relativeTime(evt.createdAt)}</span>
     </div>
   );
 }
