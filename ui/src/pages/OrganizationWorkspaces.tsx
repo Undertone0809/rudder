@@ -75,6 +75,7 @@ import {
   Image as ImageIcon,
   Link2,
   MoreHorizontal,
+  PackageOpen,
   Pencil,
   Loader2,
   Terminal,
@@ -1057,6 +1058,7 @@ function WorkspaceTreeNode({
   const primaryLabel = displayWorkspaceEntryLabel(entry);
   const isAgentWorkspace = entry.entityType === "agent_workspace";
   const isAgentsRoot = entry.path === "agents";
+  const isProjectLibraryFolder = isProjectLibraryFolderPath(entry.path);
   const isProtectedContainer = isProtectedAgentWorkspaceContainerPath(entry.path);
   const projectResourceGroup = projectResourceGroupsByLibraryPath.get(entry.path) ?? null;
   const canCreateInsideDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
@@ -1315,6 +1317,11 @@ function WorkspaceTreeNode({
               </span>
             ) : isAgentsRoot ? (
               <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            ) : isProjectLibraryFolder ? (
+              <PackageOpen
+                data-testid="org-workspaces-project-icon"
+                className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+              />
             ) : (
               <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             )}

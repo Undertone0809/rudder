@@ -35,6 +35,13 @@ vi.mock("@tanstack/react-query", () => ({
             isDirectory: true,
             entityType: "organization_workspace",
           },
+          {
+            name: "projects",
+            displayLabel: "projects",
+            path: "projects",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
         ],
         artifacts: [
           {
@@ -64,6 +71,24 @@ vi.mock("@tanstack/react-query", () => ({
             name: "README.md",
             displayLabel: "README.md",
             path: "artifacts/chat-ui-review/README.md",
+            isDirectory: false,
+            entityType: "organization_workspace",
+          },
+        ],
+        projects: [
+          {
+            name: "rudder-dev",
+            displayLabel: "Rudder dev",
+            path: "projects/rudder-dev",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
+        ],
+        "projects/rudder-dev": [
+          {
+            name: "PROJECT.md",
+            displayLabel: "PROJECT.md",
+            path: "projects/rudder-dev/PROJECT.md",
             isDirectory: false,
             entityType: "organization_workspace",
           },
@@ -106,6 +131,50 @@ vi.mock("@tanstack/react-query", () => ({
           previewKind: "image",
           truncated: false,
         },
+        isLoading: false,
+        error: null,
+      };
+    }
+    if (key[0] === "projects" && key.length === 2) {
+      return {
+        data: [
+          {
+            id: "project-rudder",
+            orgId: "org-1",
+            urlKey: "rudder-dev",
+            goalId: null,
+            goalIds: [],
+            goals: [],
+            name: "Rudder dev",
+            description: null,
+            status: "in_progress",
+            leadAgentId: null,
+            targetDate: null,
+            color: null,
+            pauseReason: null,
+            pausedAt: null,
+            executionWorkspacePolicy: null,
+            codebase: {
+              configured: true,
+              scope: "organization",
+              workspaceId: null,
+              repoUrl: null,
+              repoRef: null,
+              defaultRef: null,
+              repoName: null,
+              localFolder: null,
+              managedFolder: "",
+              effectiveLocalFolder: "",
+              origin: "local_folder",
+            },
+            resources: [],
+            workspaces: [],
+            primaryWorkspace: null,
+            archivedAt: null,
+            createdAt: new Date("2026-06-01T00:00:00.000Z"),
+            updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+          },
+        ],
         isLoading: false,
         error: null,
       };
@@ -541,6 +610,18 @@ describe("OrganizationWorkspaces scroll regions", () => {
 
     expect(sourceRow?.getAttribute("data-dragging-workspace-entry")).toBeNull();
     expect(sourceRow?.className).toContain("bg-accent");
+  });
+
+  it("uses the project-specific icon for Rudder project folders in the Library tree", () => {
+    mockState.searchParams = "directory=projects/rudder-dev";
+    renderWorkspacesPage();
+
+    const projectRow = document.querySelector(
+      '[data-workspace-entry-path="projects/rudder-dev"]',
+    ) as HTMLElement | null;
+    expect(projectRow).not.toBeNull();
+    expect(projectRow?.textContent).toContain("Rudder dev");
+    expect(projectRow?.querySelector('[data-testid="org-workspaces-project-icon"]')).not.toBeNull();
   });
 
   it("opens Library file tokens inside the current editor tab set", async () => {
