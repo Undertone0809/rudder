@@ -410,6 +410,20 @@ Choose proof that follows that loop:
   read back the API/DB state and observe the final app or CLI surface.
 - For UI and workflow changes, use Browser or Computer Use to exercise the
   actual route when practical, plus API/log readback when state matters.
+- When the user explicitly asks for "真实环境", "本地真实环境", "在我电脑上",
+  "你自己 UI 跑一遍", "我验收结果", or challenges "你试过了吗", treat that
+  as a hard real-local validation request. Automated E2E, unit tests, static
+  review, spawned reviewer acceptance, or screenshots from an isolated test
+  fixture are supporting evidence only; they do not satisfy the request by
+  themselves.
+- For hard real-local validation requests on a UI surface, use the user's
+  current local Rudder instance when safe: confirm `/api/health` or the
+  equivalent live source of truth, create disposable seed data through public
+  APIs when needed, open the actual local route in Browser or Computer Use,
+  perform the user-visible action, then read back persisted API/DB state and
+  capture a screenshot or final URL. If a later runtime/agent step fails for
+  reasons outside the UI path, separate that failure from the UI validation
+  result instead of downgrading or hiding the UI proof.
 - For Desktop-native behavior, packaged startup, menus, update prompts,
   drag/drop, native dialogs, or resident shell behavior, use Computer Use or
   packaged Desktop verification. Browser proof is only a substitute when the

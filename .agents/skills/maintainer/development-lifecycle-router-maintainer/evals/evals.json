@@ -214,6 +214,19 @@
       ]
     },
     {
+      "id": 22,
+      "prompt": "我是要你自己 UI 在我电脑上自己真实的跑一遍，这个你试过了？我不管，你在我电脑上做好测试，我验收结果。",
+      "expected_output": "Treats the correction as a hard real-local validation request, not as a request for more automated tests. It uses the user's current local Rudder instance when safe, opens the actual local UI route, performs the user-visible action through the UI, verifies persisted state through API or DB readback, captures a screenshot or final URL, and only then updates the evidence ledger and handoff status.",
+      "files": [],
+      "expectations": [
+        "The result does not defend Playwright E2E, unit tests, spawned reviewer acceptance, or code review as sufficient proof by themselves.",
+        "The result confirms the live local runtime source of truth, such as /api/health, before claiming it used the user's local environment.",
+        "The result drives the actual local UI route through Browser or Computer Use instead of directly POSTing the final state.",
+        "The result verifies the terminal product effect with persisted API or DB readback when state matters.",
+        "The result includes reviewer-visible proof such as a final URL, screenshot path, mutation ledger, or exact readback value."
+      ]
+    },
+    {
       "id": 7,
       "prompt": "organization-portability 这个文件太大了，一口气做完架构优化，但可以分批 commit，不要一下子来一个很大的 commit。",
       "expected_output": "Routes the long refactor through phased implementation, creates a visible phase checklist, commits coherent phases separately when safe, keeps checkpoint evidence after each phase, and requires spawned reviewers before each phase handoff or final completion.",
