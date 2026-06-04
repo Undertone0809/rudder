@@ -227,6 +227,22 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('aria-label="Organize threads"');
   });
 
+  it("renders Messenger threads as one-line rows in compact density", () => {
+    localStorageValues["rudder.messengerThreadDensityByOrg"] = JSON.stringify({ "org-1": "compact" });
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("Threads");
+    expect(html).toContain("Compact");
+    expect(html).toContain("hi");
+    expect(html).toContain("Issues");
+    expect(html).not.toContain("Hello Zee!");
+    expect(html).not.toContain("Followed issues");
+    expect(html).toContain("items-center gap-2 px-2 py-1.5");
+    expect(html).toContain("h-7 w-7");
+    expect(html).toContain("grid-cols-[minmax(0,1fr)_2.75rem] items-center");
+  });
+
   it("promotes pinned Messenger chats from thread summaries before chat list hydration", () => {
     chatList = [];
     messengerModel = {
@@ -330,7 +346,8 @@ describe("MessengerContextSidebar", () => {
 
     expect(html).toContain('data-testid="messenger-generating-chat-chat-1"');
     expect(html).toContain('aria-label="Chat reply in progress"');
-    expect(html).toContain("pointer-events-none absolute right-2 top-1/2");
+    expect(html).toContain("pointer-events-none absolute top-1/2");
+    expect(html).toContain("right-2 h-6 w-6");
     expect(html).toContain("20m ago");
   });
 

@@ -1,0 +1,212 @@
+---
+title: "版本发布"
+description: "Rudder 稳定版本的发布记录、升级说明和 GitHub Release 链接。"
+icon: "history"
+keywords:
+  - "Rudder 更新日志"
+  - "Rudder 版本发布"
+  - "AI agent 编排发布记录"
+canonical: "https://doc.rudder.zeeland.studio/zh/releases"
+"og:url": "https://doc.rudder.zeeland.studio/zh/releases"
+---
+
+Rudder 的稳定版本对应用户默认安装路径：
+
+```sh
+npx @rudderhq/cli@latest start
+```
+
+这个页面只记录稳定版本。Canary 会更频繁地用于验证和 Desktop 资产测试；如果需要查看预发布历史，可以看 [GitHub Releases](https://github.com/Undertone0809/rudder/releases)。
+
+## v0.3.0
+
+发布时间：2026-06-04
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.3.0)
+
+### 重点变化
+
+- 将 Library 提升为组织文件夹、项目文件、内置 skill references 和 workspace launcher 的主导航入口。
+- 在 chat、comments、markdown editor 和 Milkdown 中加入 Library-folder mention，方便从输入流里直接引用共享上下文。
+- 改善 issue detail 的阅读体验，包括 sticky sidebar、更清晰的 status icon、空标题创建状态、继承 sub-issue workspace 校验和 run-duration 展示。
+- 收紧 Messenger 和 chat 的交互，包括 sidebar 密度控制、copy-message tooltip、相对时间和 mention 搜索结果。
+- 增加 heartbeat instruction scene、继承 project context 和 calendar event detail 的运行时/Calendar 保护。
+
+## v0.2.10
+
+发布时间：2026-06-03
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.10)
+
+### 重点变化
+
+- 推进 Library workspace 模型，用于组织文件、项目资源、agent instructions 和内置 skill references。
+- 改善 Library 文件操作、editor tabs、拖拽、mention tokens 和受保护 managed entries。
+- 收紧 Messenger 和 issue attention 行为，包括分页、自 authored comment 过滤和更清楚的 issue update card。
+- 改善 agent run 与 heartbeat 页面，包括 run rows、timestamps、avatars、skill analytics 和 timer admission。
+- 为 comments、chat、Library files 和 editor surfaces 增加更完整的 markdown mention 支持。
+- 打磨 Desktop 与本地 runtime 路径，包括 bundled plugin assets、release staging 和面向用户的 runtime error。
+
+## v0.2.9
+
+发布时间：2026-05-29
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.9)
+
+### 重点变化
+
+- 修复 runtime cache install，确保 Windows embedded Postgres 等 optional npm dependencies 在首次启动时不会丢失。
+- 恢复 Windows Desktop 打包后的 icon resources。
+- 折叠失败 run 的长输出，避免 issue detail 被日志淹没。
+- 在 agent run list 中加入 run occurrence timestamp。
+- 增加 heartbeat agent avatars，并收紧长 assignee label 的展示。
+- 改善 chat 和 proposal ownership handling。
+- 通过 Messenger issue thread 分页和 heartbeat run list query cap 降低热路径查询压力。
+
+## v0.2.8
+
+发布时间：2026-05-27
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.8)
+
+### 重点变化
+
+- 为 agent run timeline 加入 run skill filters。
+- 改善 proposal review 可读性和 E2E 覆盖。
+- 通过直接 Desktop asset 下载、分层 Desktop shell update 和 staged runtime package cache 强化首次安装与更新。
+- 新增 docs staging 和 production release workflows。
+- 更新 Claude local runtime 的认证提示和解析逻辑。
+- 刷新 README 链接与图片，更直接指向 public website 和 documentation。
+
+## v0.2.7
+
+发布时间：2026-05-27
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.7)
+
+### 重点变化
+
+- 新增 organization intelligence profiles，用于保存可复用的组织运行上下文。
+- 扩展 chat、Messenger 和 automation workflows，包括 multi-select ask-user、chat-created automations、agent attribution navigation、proposal review 改进和附件预览。
+- 改善 control-plane performance，包括更轻的 Messenger summaries、sidebar badge aggregation、monthly cost spend rollups 和 approval summary indexing。
+- 改善 agent 和 run surfaces，包括 run skill filters、fallback avatars、working-issue counts 和 recent issue behavior。
+- 强化 scheduled database backups、heartbeat closeout behavior、release workflow serialization 和 maintainer skill routing。
+- 刷新 README 和中英文 public documentation。
+
+## v0.2.6
+
+发布时间：2026-05-22
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.6)
+
+### 重点变化
+
+- 修复 Desktop release packaging，覆盖 Windows portable archives、asset collection、signing behavior 和 workspace launcher icon decoding。
+- CLI startup 在精确 server version 还没上 npm 时，会 fallback 到最新兼容 server package。
+- 扩展 chat 和 automation，包括 native runtime image attachments、ask-user attachments、automation replies starting new chats、delivery rules 和 activity copy。
+- 增加 issue hierarchy controls、sub-issue selection、task-neutral assignment prompts 和更好的 agent detail loading states。
+- 强化 workspace backup browsing 和相关 E2E 覆盖。
+- 加强 maintainer skills 与 release process guidance。
+
+## v0.2.5
+
+发布时间：2026-05-20
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.5)
+
+### 重点变化
+
+- 修复 Desktop dev shell regression，移除残留 extracted update flow code。
+- 强化 Desktop startup、update 和 packaging paths，包括 server-package verification、post-update reload、workspace launcher icon resilience 和 update force-quit targeting。
+- 新增和打磨 maintainer skills，用于 development lifecycle routing、review loops、UI polish、data-path diagnosis、mock data 和 run-transcript debugging。
+- 将较大的 server、runtime、Desktop、CLI 和 UI modules 拆成更窄的 source files，同时保持行为不变。
+- 改善 issue、chat、Messenger、automation 和 approval workflows。
+- 更新 release、publishing 和 bundled-skill references。
+
+## v0.2.4
+
+发布时间：2026-05-18
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.4)
+
+### 重点变化
+
+- 强化 Desktop 和 CLI startup/update，包括 safer quit handoff、packaged CLI stdout flushing、cached portable assets、workspace launcher icons 和 runtime install coverage。
+- 扩展 agent-facing CLI，支持 private skill creation、更丰富的 issue search/comment/document commands，以及同步 bundled skill references。
+- 改善 issue workflows，包括 starred issues、activity principal filters、reviewer/approval coverage、comment persistence signals、mention ownership fixes 和 approval-blocked issue reactivation。
+- 改善 automation、Calendar 和 activity UI。
+- 打磨 chat 和 board presentation，包括 long message preview、chat response quality gating、empty/project headings、card metadata 和 avatars。
+
+## v0.2.3
+
+发布时间：2026-05-16
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.3)
+
+### 重点变化
+
+- 强化 Desktop 和 CLI update handling，包括 cached release assets、stable/canary comparison、restart confirmation、macOS icon 和 CLI shim auth fixes。
+- 增加 runtime cache retention，自动清理 stale local runtime downloads。
+- 改善 managed workspace preflight coverage 和 resilience。
+- 改善 issue、chat 和 automation workflows，包括 sub-issue creation、parent context display、ask-user answer rendering、mention insertion 和 command palette behavior。
+- 打磨 app shell 和 organization surfaces，包括 product tour、agent avatars、organization skills scrolling、run/cost/kanban metadata。
+- 更新中文 onboarding、concept docs 和 screenshot/demo assets。
+
+## v0.2.2
+
+发布时间：2026-05-14
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.2)
+
+### 重点变化
+
+- 强化 Windows Desktop CLI 安装路径，避开 pnpm store filesystem edge cases，使用 Windows-native extraction/copy，并保留 active package manager。
+- 改善 Desktop update feedback。
+- 继续强化 public downloads、stable update channel checks 和 packaged staging output。
+- 改善 app shell、agent views、issue hierarchy、mobile subissue rows、workspace routes 和 run-duration display。
+- 更新 public documentation 和 screenshot/demo guidance。
+
+## v0.2.1
+
+发布时间：2026-05-14
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.1)
+
+### 重点变化
+
+- 改善 Messenger 和 issue-chat workflows，包括 contextual issue chat entry、failed chat retry、unread controls、linked-issue prompt context、optimistic chat titles、image context actions 和 comment labels。
+- 为 run transcripts 增加 memory-update visibility 和 developer-diagnostics controls。
+- 通过 GitHub keyring 和 credential-helper bridging 强化 local runtime execution。
+- 扩展 bilingual Mintlify public docs，修复 navigation，增加 image assets 和 installation guidance。
+- 改善 agent、dashboard 和 workspace UI behavior。
+- 清理 chat 和 issue contracts，移除 routing-suggestion result kind，并将 approvals 移入 activity。
+
+## v0.2.0
+
+发布时间：2026-05-10
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.2.0)
+
+### 重点变化
+
+- 增加 reviewer-aware issue workflows，包括 reviewer display、blocked reviewer handoffs、reviewer closeout recovery 和 approval rendering。
+- 改善 Messenger-driven issue work，包括 selected-agent runtime routing、plan-mode approval gates、persistent streaming、unread handling、Markdown rendering、mentions、image attachments 和 draft issue autosave。
+- 增加 organization cost trends、per-agent run cost charts、cost breakdown avatars、transcript/tool rendering 和 Langfuse prompt I/O exposure。
+- 强化 local runtime 和 CLI，包括 git identity guards、managed runtime auth preservation、server-backed issue search、CLI runtime caching、image upload 和更安全的 issue/document context。
+- 改善 Desktop release 和 update behavior。
+- 打磨 chat、issue cards、tabs、tooltips、priority visuals、onboarding seeds 和 localization。
+
+## v0.1.0
+
+发布时间：2026-05-05
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.1.0)
+
+### 重点变化
+
+- 增加稳定首次启动路径：`npx @rudderhq/cli@latest start`。
+- 通过 GitHub Releases 发布 macOS、Windows 和 Linux Desktop portable builds。
+- 增加 organization-scoped task、goal、issue、agent、workflow、memory 和 activity surfaces，用于端到端 agent-work loops。
+- 支持 Codex、Claude、Cursor、Gemini、OpenCode、Pi 和 OpenClaw gateway adapters 等本地 agent runtime。
+- 增加 plugin 和 bundled-skill distribution surfaces。
+- 增加 npm packages、GitHub Releases、Desktop assets、checksums 和 public install smoke tests 的 release automation。

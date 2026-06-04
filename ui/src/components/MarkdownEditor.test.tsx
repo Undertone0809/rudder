@@ -1157,7 +1157,7 @@ describe("MarkdownEditor", () => {
     expect(menu?.textContent).toContain("Todo");
     expect(menu?.textContent).toContain("rudder dev");
     expect(menu?.textContent).toContain("Ella");
-    expect(menu?.querySelector('[aria-label="Status: Todo"]')?.className).toContain("text-blue-600");
+    expect(menu?.querySelector('[aria-label="Status: Todo"]')?.className).toContain("text-muted-foreground");
   });
 
   it("renders chat mention options as one-line rows with activity time", async () => {

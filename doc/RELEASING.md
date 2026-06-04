@@ -39,11 +39,23 @@ Every stable release has five separate surfaces:
 
 1. **Verification** — the exact git SHA passes typecheck, tests, and build
 2. **npm** — `@rudderhq/cli` and public workspace packages are published
-3. **GitHub** — the stable release gets a git tag and GitHub Release
+3. **GitHub** — the stable release gets a git tag and GitHub Release record
 4. **Desktop** — macOS, Windows, and Linux portable assets are attached to the stable GitHub Release
-5. **Website / announcements** — the stable changelog is published externally and announced
+5. **Website / announcements** — the release is publicly announced, and any
+   in-scope website/docs content is published
 
 A stable release is done only when all five surfaces are handled.
+
+For the announcement surface, the public GitHub Release notes may be the
+announcement channel when there is no separate website post or social/customer
+announcement in scope. If a separate announcement or docs-site publish is
+expected, record the channel and owner in the release issue before closeout. If
+that surface is intentionally skipped, record who made that decision and why.
+
+Docs production deploy failures caused by Vercel account or token access are an
+external release blocker for docs-site publishing. Do not silently count a
+failed docs workflow as handled; either escalate the credential/account issue to
+the Vercel owner or explicitly scope docs-site publishing out of that release.
 
 ## Docs Site Releases
 
@@ -138,6 +150,8 @@ The workflow:
 - creates git tag `vX.Y.Z`
 - creates or updates the GitHub Release from `releases/vX.Y.Z.md`
 - starts the desktop release workflow for `vX.Y.Z`
+- records the announcement channel, and publishes docs production when website
+  content is part of the release scope
 
 Users install stable Rudder with:
 
@@ -196,6 +210,11 @@ gh workflow run desktop-release.yml --ref v0.1.0 -f release_tag=v0.1.0
 Stable changelog files live at:
 
 - `releases/vX.Y.Z.md`
+
+The public docs changelog must be updated in the same stable-release pass:
+
+- `docs/releases.mdx`
+- `docs/zh/releases.mdx`
 
 Canaries do not get changelog files.
 

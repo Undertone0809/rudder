@@ -73,6 +73,13 @@
               "how-to/create-agent",
               "how-to/configure-agent-runtime"
             ]
+          },
+          {
+            "group": "Releases",
+            "icon": "history",
+            "pages": [
+              "releases"
+            ]
           }
         ]
       },
@@ -109,6 +116,13 @@
               "zh/how-to/issue-lifecycle",
               "zh/how-to/create-agent",
               "zh/how-to/configure-agent-runtime"
+            ]
+          },
+          {
+            "group": "版本发布",
+            "icon": "history",
+            "pages": [
+              "zh/releases"
             ]
           }
         ]
@@ -163,7 +177,7 @@
           },
           {
             "label": "Changelog",
-            "href": "https://github.com/Undertone0809/rudder/releases"
+            "href": "/releases"
           }
         ]
       }
