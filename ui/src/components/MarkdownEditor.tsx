@@ -40,6 +40,7 @@ import { useNavigate } from "@/lib/router";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
 import { AgentIcon } from "./AgentIconPicker";
+import { StatusIcon } from "./StatusIcon";
 import {
   $createParagraphNode,
   $createRangeSelection,
@@ -62,7 +63,6 @@ import {
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
 import { $createMentionTokenNode, mentionTokenPlugin } from "../lib/mention-token-node";
-import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   applySkillTokenDecoration,
@@ -2019,15 +2019,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                             />
                           ) : option.kind === "issue" && option.issueId ? (
                             <span
-                              className={cn(
-                                "relative inline-flex h-4 w-4 shrink-0 rounded-full border-2",
-                                option.issueStatus ? issueStatusIcon[option.issueStatus] ?? issueStatusIconDefault : issueStatusIconDefault,
-                              )}
+                              className="inline-flex shrink-0"
                               aria-label={`Status: ${issueStatusLabel}`}
+                              title={issueStatusLabel}
                             >
-                              {option.issueStatus === "done" ? (
-                                <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
-                              ) : null}
+                              <StatusIcon status={option.issueStatus ?? "default"} />
                             </span>
                           ) : option.kind === "chat" ? (
                             <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -2049,34 +2045,33 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                               <div className="min-w-0 flex-1 truncate font-medium text-foreground">
                                 {option.name}
                               </div>
+                            ) : option.kind === "issue" && option.issueId ? (
+                              <div className="flex min-w-0 flex-1 items-center gap-2">
+                                <span className="min-w-0 truncate font-medium text-foreground">{option.name}</span>
+                                {option.issueProjectName ? (
+                                  <span className="inline-flex min-w-0 shrink-[2] items-center gap-1 text-[11px] text-muted-foreground">
+                                    <span
+                                      className="h-2 w-2 shrink-0 rounded-full border border-border/50"
+                                      style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
+                                      aria-hidden="true"
+                                    />
+                                    <span className="truncate">{option.issueProjectName}</span>
+                                  </span>
+                                ) : null}
+                                <span className="inline-flex min-w-0 shrink-[2] items-center gap-1 text-[11px] text-muted-foreground">
+                                  {option.issueAssigneeIcon ? (
+                                    <AgentIcon
+                                      icon={option.issueAssigneeIcon}
+                                      role={option.issueAssigneeRole}
+                                      className="h-3 w-3 shrink-0 text-muted-foreground"
+                                    />
+                                  ) : null}
+                                  <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
+                                </span>
+                              </div>
                             ) : (
                               <div className="min-w-0 flex-1">
                                 <div className="truncate font-medium text-foreground">{option.name}</div>
-                                {option.kind === "issue" && option.issueId ? (
-                                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-                                    {option.issueStatus ? <span>{issueStatusLabel}</span> : null}
-                                    {option.issueProjectName ? (
-                                      <span className="inline-flex min-w-0 items-center gap-1">
-                                        <span
-                                          className="h-2 w-2 shrink-0 rounded-full border border-border/50"
-                                          style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
-                                          aria-hidden="true"
-                                        />
-                                        <span className="truncate">{option.issueProjectName}</span>
-                                      </span>
-                                    ) : null}
-                                    <span className="inline-flex min-w-0 items-center gap-1">
-                                      {option.issueAssigneeIcon ? (
-                                        <AgentIcon
-                                          icon={option.issueAssigneeIcon}
-                                          role={option.issueAssigneeRole}
-                                          className="h-3 w-3 shrink-0 text-muted-foreground"
-                                        />
-                                      ) : null}
-                                      <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
-                                    </span>
-                                  </div>
-                                ) : null}
                                 {option.kind === "skill" ? (
                                   <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                                     {option.skillCategoryLabel ? (

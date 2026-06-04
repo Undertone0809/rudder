@@ -31,6 +31,7 @@ const mockState = vi.hoisted(() => ({
   mutations: [] as unknown[],
   navigate: vi.fn(),
   pushToast: vi.fn(),
+  queryKeys: [] as unknown[][],
   sendMessageStream: vi.fn(),
   setBreadcrumbs: vi.fn(),
   streamDrafts: {} as Record<string, ChatStreamDraft>,
@@ -39,6 +40,7 @@ const mockState = vi.hoisted(() => ({
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled = true }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
     if (!enabled) return { data: undefined, isPending: false, isLoading: false, error: null };
+    mockState.queryKeys.push([...queryKey]);
     if (queryKey[0] === "chats" && queryKey[2] === "active") {
       return { data: mockState.conversations, isPending: false, isLoading: false, error: null };
     }
@@ -489,6 +491,7 @@ beforeEach(() => {
   mockState.mutations = [];
   mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
+  mockState.queryKeys = [];
   mockState.sendMessageStream.mockReset();
   mockState.sendMessageStream.mockImplementation(async (chatId: string, body: string, options: {
     onEvent: (event: unknown) => void | Promise<void>;
@@ -542,6 +545,18 @@ afterEach(() => {
   cleanupFn = null;
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
+});
+
+describe("Chat mention sources", () => {
+  it("uses active conversations for mention options instead of archived threads", () => {
+    renderChat();
+
+    const chatListStatuses = mockState.queryKeys
+      .filter((queryKey) => queryKey[0] === "chats" && queryKey.length === 3)
+      .map((queryKey) => queryKey[2]);
+    expect(chatListStatuses).toContain("active");
+    expect(chatListStatuses).not.toContain("all");
+  });
 });
 
 describe("Chat attachment previews", () => {

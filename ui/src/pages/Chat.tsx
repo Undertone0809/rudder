@@ -139,8 +139,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         search: nextSearch.toString() ? `?${nextSearch.toString()}` : "", }, { replace: true }, ); }, [chatConversationPath, chatRootPath, conversationId, draft, navigate, pendingPrefill, searchParams]); const conversationsQuery = useQuery({
     queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
     queryFn: () => chatsApi.list(selectedOrganizationId!, "active"), enabled: !!selectedOrganizationId && isMobile, }); const mentionConversationsQuery = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "all"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "all"), enabled: !!selectedOrganizationId, }); const conversationQuery = useQuery({
+    queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"), enabled: !!selectedOrganizationId, }); const conversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(conversationId ?? "__none__"),
     queryFn: () => chatsApi.get(conversationId!), enabled: !!conversationId, }); const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(conversationId ?? "__none__"),

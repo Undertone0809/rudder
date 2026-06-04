@@ -1166,10 +1166,11 @@ describe("MarkdownEditor", () => {
 
     const menu = document.body.querySelector('[data-testid="markdown-mention-menu"]');
     expect(menu?.textContent).toContain("RUD-28 Add icon for opening a file in IDE");
-    expect(menu?.textContent).toContain("Todo");
+    expect(menu?.textContent).not.toContain("Todo");
     expect(menu?.textContent).toContain("rudder dev");
     expect(menu?.textContent).toContain("Ella");
-    expect(menu?.querySelector('[aria-label="Status: Todo"]')?.className).toContain("text-muted-foreground");
+    expect(menu?.querySelector('[aria-label="Status: Todo"] [data-slot="issue-status-icon"]')).not.toBeNull();
+    expect(menu?.querySelector('[data-testid="markdown-mention-option-issue:issue-1"] .mt-0\\.5')).toBeNull();
   });
 
   it("renders chat mention options as one-line rows with activity time", async () => {
