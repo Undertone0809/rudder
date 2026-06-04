@@ -89,12 +89,34 @@ test.describe("New issue skill mentions", () => {
     await expect(atMentionMenu).toBeVisible({ timeout: 15_000 });
     const composerBox = await composer.boundingBox();
     const atMentionMenuBox = await atMentionMenu.boundingBox();
+    const atTokenEndBox = await composer.evaluate((editable) => {
+      const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const textNode = walker.currentNode as Text;
+        const atPos = textNode.textContent?.indexOf("@advisor") ?? -1;
+        if (atPos === -1) continue;
+
+        const range = document.createRange();
+        const tokenEnd = atPos + "@advisor".length;
+        range.setStart(textNode, tokenEnd);
+        range.setEnd(textNode, tokenEnd);
+        const rect = range.getBoundingClientRect();
+        return {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height,
+        };
+      }
+      return null;
+    });
     expect(composerBox).not.toBeNull();
     expect(atMentionMenuBox).not.toBeNull();
-    expect(atMentionMenuBox!.x).toBeGreaterThan(composerBox!.x + 16);
-    expect(atMentionMenuBox!.x).toBeLessThan(composerBox!.x + composerBox!.width / 2);
-    expect(atMentionMenuBox!.width).toBeLessThan(composerBox!.width / 2);
-    await expect(atMentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first()).toContainText("Build Advisor");
+    expect(atTokenEndBox).not.toBeNull();
+    expect(atMentionMenuBox!.x).toBeGreaterThan(composerBox!.x + 24);
+    expect(atMentionMenuBox!.width).toBeLessThan(composerBox!.width - 80);
+    expect(Math.abs(atMentionMenuBox!.x - atTokenEndBox!.x)).toBeLessThan(32);
+    await expect(atMentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first()).toContainText("build-advisor");
 
     await composer.press("ControlOrMeta+A");
     await page.keyboard.type("Use @handoff");
@@ -111,7 +133,7 @@ test.describe("New issue skill mentions", () => {
     const mentionMenu = page.getByTestId("markdown-mention-menu");
     await expect(mentionMenu).toBeVisible({ timeout: 15_000 });
     const skillOption = mentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first();
-    await expect(skillOption).toContainText("Build Advisor");
+    await expect(skillOption).toContainText("build-advisor");
     await skillOption.dispatchEvent("mousedown");
 
     const insertedSkillToken = composer.locator("a").filter({ hasText: "build-advisor" }).first();
