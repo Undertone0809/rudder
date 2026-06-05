@@ -4497,7 +4497,7 @@ export function OrganizationWorkspaceBrowser({
               data-testid="org-workspaces-editor-content"
               className={cn(
                 "min-h-0 flex-1 overflow-hidden border-x border-b border-border bg-[color:var(--surface-elevated)]",
-                !showWorkspaceFileTabs && visibleWorkspaceBreadcrumbPath === null && "border-t",
+                !showWorkspaceFileTabs && visibleWorkspaceBreadcrumbPath === null && "rounded-[var(--desktop-workspace-radius)] border-t",
               )}
             >
               {selectedProjectResource ? (
