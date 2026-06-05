@@ -4,6 +4,7 @@ import { act } from "react";
 import type { MouseEventHandler, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Agent } from "@rudderhq/shared";
 import { ISSUE_AUTOSAVE_STORAGE_KEY, ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
 import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 
@@ -60,7 +61,7 @@ const mockState = vi.hoisted(() => ({
   }>,
 }));
 
-const sidebarAgent = {
+const sidebarAgent: Agent = {
   id: "agent-1",
   orgId: "org-1",
   name: "Penelope",
@@ -78,7 +79,7 @@ const sidebarAgent = {
   spentMonthlyCents: 0,
   pauseReason: null,
   pausedAt: null,
-  permissions: { canCreateAgents: true, canManageSkills: true, canAssignTasks: true },
+  permissions: { canCreateAgents: true, canManageSkills: true },
   lastHeartbeatAt: null,
   metadata: null,
   createdAt: new Date("2026-04-26T10:00:00.000Z"),
@@ -245,6 +246,9 @@ beforeEach(() => {
   mockState.linearContributions = [];
   mockState.linearCatalog = null;
   mockState.liveRuns = [];
+  sidebarAgent.status = "idle";
+  sidebarAgent.pauseReason = null;
+  sidebarAgent.pausedAt = null;
   vi.stubGlobal("confirm", mockState.confirm);
 });
 
@@ -790,6 +794,21 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 });
 
 describe("ThreeColumnContextSidebar agent actions", () => {
+  it("shows a paused tag in the agent detail sidebar row", () => {
+    sidebarAgent.status = "paused";
+    sidebarAgent.pauseReason = "manual";
+    sidebarAgent.pausedAt = new Date("2026-06-05T18:27:57.200Z");
+    mockState.pathname = "/RUD/agents/penelope/dashboard";
+    mockState.relativePath = "/agents/penelope/dashboard";
+
+    renderSidebar();
+
+    const row = document.querySelector("[data-testid='agent-sidebar-row-agent-1']") as HTMLElement | null;
+    expect(row?.textContent).toContain("Penelope (CEO)");
+    expect(row?.textContent).toContain("paused");
+    expect(row?.querySelector('[title="Agent status: paused"]')?.textContent).toBe("paused");
+  });
+
   it("shows the agent row action menu in the agent detail sidebar", () => {
     mockState.pathname = "/RUD/agents/penelope/dashboard";
     mockState.relativePath = "/agents/penelope/dashboard";

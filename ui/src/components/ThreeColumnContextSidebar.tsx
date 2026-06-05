@@ -45,8 +45,10 @@ import { heartbeatsApi } from "@/api/heartbeats";
 import { displayChatTitle } from "@/lib/chat-title";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
+import { sidebarAgentStatusTag } from "@/lib/agent-sidebar-status";
 import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
+import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { relativeTime } from "@/lib/utils";
 import {
   RECENT_ISSUES_CHANGED_EVENT,
@@ -1766,6 +1768,7 @@ export function ThreeColumnContextSidebar() {
         {visibleAgents.map((agent) => {
           const liveCount = liveCountByAgent.get(agent.id) ?? 0;
           const active = activeAgentRef === agent.urlKey || activeAgentRef === agent.id;
+          const statusTag = sidebarAgentStatusTag(agent);
           return (
             <div
               key={agent.id}
@@ -1786,6 +1789,17 @@ export function ThreeColumnContextSidebar() {
                 <span className="flex-1 truncate" title={formatSidebarAgentLabel(agent)}>
                   {formatSidebarAgentLabel(agent)}
                 </span>
+                {statusTag ? (
+                  <span
+                    title={`Agent status: ${statusTag}`}
+                    className={cn(
+                      "ml-auto inline-flex h-5 shrink-0 items-center rounded-[calc(var(--radius-sm)-1px)] border px-1.5 text-[10px] font-medium leading-none whitespace-nowrap",
+                      statusBadge[statusTag] ?? statusBadgeDefault,
+                    )}
+                  >
+                    {statusTag}
+                  </span>
+                ) : null}
                 {liveCount > 0 ? <SidebarLiveCount count={liveCount} /> : null}
               </Link>
               <AgentActionsMenu
