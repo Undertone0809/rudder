@@ -41,6 +41,7 @@ export interface ParsedProjectMention {
 export interface ParsedAgentMention {
   agentId: string;
   icon: string | null;
+  intent: "reference" | "wake";
 }
 
 export interface ParsedIssueMention {
@@ -142,13 +143,17 @@ export function parseProjectMentionHref(href: string): ParsedProjectMention | nu
   };
 }
 
-export function buildAgentMentionHref(agentId: string, icon?: string | null): string {
+export function buildAgentMentionHref(agentId: string, icon?: string | null, intent?: "reference" | "wake" | null): string {
   const trimmedAgentId = agentId.trim();
   const normalizedIcon = normalizeAgentIcon(icon ?? null);
-  if (!normalizedIcon) {
+  const params = new URLSearchParams();
+  if (normalizedIcon) params.set("i", normalizedIcon);
+  if (intent === "wake") params.set("intent", "wake");
+  const search = params.toString();
+  if (!search) {
     return `${AGENT_MENTION_SCHEME}${trimmedAgentId}`;
   }
-  return `${AGENT_MENTION_SCHEME}${trimmedAgentId}?i=${encodeURIComponent(normalizedIcon)}`;
+  return `${AGENT_MENTION_SCHEME}${trimmedAgentId}?${search}`;
 }
 
 export function parseAgentMentionHref(href: string): ParsedAgentMention | null {
@@ -169,6 +174,7 @@ export function parseAgentMentionHref(href: string): ParsedAgentMention | null {
   return {
     agentId,
     icon: normalizeAgentIcon(url.searchParams.get("i") ?? url.searchParams.get("icon")),
+    intent: url.searchParams.get("intent") === "wake" ? "wake" : "reference",
   };
 }
 
@@ -352,6 +358,19 @@ export function extractAgentMentionIds(markdown: string): string[] {
   while ((match = re.exec(source)) !== null) {
     const parsed = parseAgentMentionHref(match[1]);
     if (parsed) ids.add(parsed.agentId);
+  }
+  return [...ids];
+}
+
+export function extractAgentWakeMentionIds(markdown: string): string[] {
+  if (!markdown) return [];
+  const ids = new Set<string>();
+  const re = new RegExp(AGENT_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const parsed = parseAgentMentionHref(match[1]);
+    if (parsed?.intent === "wake") ids.add(parsed.agentId);
   }
   return [...ids];
 }

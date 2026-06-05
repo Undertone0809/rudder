@@ -117,6 +117,8 @@ export interface MarkdownEditorProps {
   bordered?: boolean;
   /** List of mentionable entities. Enables @-mention autocomplete. */
   mentions?: MentionOption[];
+  /** Whether selected agent mentions are plain references or comment wake requests. */
+  agentMentionIntent?: "reference" | "wake";
   /** Optional surface used to align the mention menu for larger composer UIs. */
   mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
   mentionMenuPlacement?: "caret" | "container";
@@ -807,8 +809,8 @@ export function statusLabel(status: string): string {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-export function mentionMarkdown(option: MentionOption): string {
-  const token = mentionTokenDetails(option);
+export function mentionMarkdown(option: MentionOption, agentMentionIntent?: "reference" | "wake"): string {
+  const token = mentionTokenDetails(option, agentMentionIntent);
   return token ? `[${token.label}](${token.href}) ` : "";
 }
 
@@ -816,7 +818,10 @@ export function mentionVisibleLabel(option: MentionOption): string {
   return mentionTokenDetails(option)?.label ?? option.name;
 }
 
-export function mentionTokenDetails(option: MentionOption): { href: string; isSkill: boolean; label: string } | null {
+export function mentionTokenDetails(
+  option: MentionOption,
+  agentMentionIntent?: "reference" | "wake",
+): { href: string; isSkill: boolean; label: string } | null {
   if (option.kind === "skill") {
     if (!option.skillMarkdownTarget || !option.skillRefLabel) return null;
     return { href: option.skillMarkdownTarget, isSkill: true, label: option.skillRefLabel };
@@ -837,7 +842,7 @@ export function mentionTokenDetails(option: MentionOption): { href: string; isSk
   }
   const agentId = option.agentId ?? option.id.replace(/^agent:/, "");
   return {
-    href: buildAgentMentionHref(agentId, option.agentIcon ?? null),
+    href: buildAgentMentionHref(agentId, option.agentIcon ?? null, agentMentionIntent),
     isSkill: false,
     label: option.name,
   };
@@ -910,9 +915,15 @@ export function findActiveMentionIndex(markdown: string, state: MentionState, ed
 }
 
 /** Replace the active trigger query range with the selected mention token. */
-export function applyMention(markdown: string, state: MentionState, option: MentionOption, editable: HTMLElement | null): string {
+export function applyMention(
+  markdown: string,
+  state: MentionState,
+  option: MentionOption,
+  editable: HTMLElement | null,
+  agentMentionIntent?: "reference" | "wake",
+): string {
   const search = `${state.trigger}${state.query}`;
-  const replacement = mentionMarkdown(option);
+  const replacement = mentionMarkdown(option, agentMentionIntent);
   if (!replacement) return markdown;
   const idx = findActiveMentionIndex(markdown, state, editable);
   if (idx === -1) return markdown;
@@ -928,9 +939,10 @@ export function replaceMentionInLexicalEditor(
   state: MentionState,
   option: MentionOption,
   editable: HTMLElement,
+  agentMentionIntent?: "reference" | "wake",
 ) {
   if (!editable.contains(state.textNode)) return false;
-  const token = mentionTokenDetails(option);
+  const token = mentionTokenDetails(option, agentMentionIntent);
   if (!token) return false;
 
   const text = state.textNode.textContent ?? "";

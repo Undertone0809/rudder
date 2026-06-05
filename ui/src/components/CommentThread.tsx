@@ -818,6 +818,7 @@ export function CommentThread({
           onChange={setBody}
           placeholder="Leave a comment..."
           mentions={mentions}
+          agentMentionIntent="wake"
           onMentionQueryChange={onMentionQueryChange}
           mentionMenuAnchorRef={composerSurfaceRef}
           mentionMenuPlacement="container"

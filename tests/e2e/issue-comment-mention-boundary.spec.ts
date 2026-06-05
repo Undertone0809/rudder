@@ -15,6 +15,10 @@ test("issue comment agent mention keeps following typed text outside the token",
       name: "Griffin",
       role: "ceo",
       agentRuntimeType: "process",
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+      },
     },
   });
   expect(agentRes.ok()).toBe(true);
@@ -66,9 +70,24 @@ test("issue comment agent mention keeps following typed text outside the token",
     commentButton.click(),
   ]);
   expect(commentResponse.ok()).toBe(true);
-  const postedComment = await commentResponse.json() as { body: string };
+  const postedComment = await commentResponse.json() as { id: string; body: string };
   expect(postedComment.body).toContain("[Griffin (CEO)](agent://");
+  expect(postedComment.body).toContain("intent=wake");
   expect(postedComment.body).toContain(") 我们");
+
+  await expect.poll(async () => {
+    const runsRes = await page.request.get(`/api/orgs/${organization.id}/heartbeat-runs?agentId=${agent.id}&limit=20`);
+    expect(runsRes.ok()).toBe(true);
+    const runs = await runsRes.json() as Array<{ contextSnapshot?: Record<string, unknown> | null }>;
+    return runs.filter((run) =>
+      run.contextSnapshot?.wakeReason === "issue_comment_mentioned"
+      && run.contextSnapshot?.wakeSource === "comment.mention"
+      && run.contextSnapshot?.commentId === postedComment.id
+    ).length;
+  }, {
+    timeout: 15_000,
+    intervals: [250, 500, 1_000],
+  }).toBeGreaterThan(0);
 });
 
 test("issue comment mention recovers when the boundary space is deleted before typing", async ({ page }) => {

@@ -56,7 +56,7 @@ From: {{comment.authorLabel}} ({{comment.authorKind}})
 {{comment.body}}
 
 Please review the comment above and respond or take action as appropriate.
-An @mention is an explicit request for attention or collaboration, not an automatic transfer of issue ownership. Only checkout or self-assign when the comment explicitly asks you to take ownership and the normal issue workflow allows it.`;
+A mention-triggered comment wake is a request for attention or collaboration, not an automatic transfer of issue ownership. Plain structured agent links such as \`agent://agent-id\` are reference-only. Only checkout or self-assign when the comment explicitly asks you to take ownership and the normal issue workflow allows it.`;
 
 export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). There is a new comment on an issue you own.
 
@@ -286,7 +286,7 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "",
   "When you write issue comments or chat replies, match the language of the user's or board's most recent substantive message unless they explicitly ask for a different language.",
   "",
-  "When an issue comment is meant to get another agent's attention, mention that agent explicitly with Rudder's agent mention syntax, such as `@AgentName` in the issue composer or a structured markdown link like `[@AgentName](agent://agent-id)`. Mentioning an agent requests attention or collaboration; it does not transfer issue ownership unless the comment also makes an explicit handoff and normal checkout rules allow it.",
+  "Mention-triggered comment wakes arrive with `RUDDER_WAKE_COMMENT_ID`; read that wake comment before acting. Board/operator issue comments can wake an agent with a plain `@AgentName` token or an issue-composer agent mention serialized as `agent://agent-id?intent=wake`. Plain structured links such as `agent://agent-id` are reference-only links for rendering and navigation. Agent-authored issue comments do not fan out peer wakeups by default; use reviewer, assignment, or explicit handoff workflow instead. Mentioning an agent requests attention or collaboration; it does not transfer issue ownership unless the comment also makes an explicit handoff and normal checkout rules allow it.",
   "",
   "When an issue comment, done comment, or blocker comment cites visual evidence from a local screenshot/image path, attach the image with the Rudder CLI `--image <path>` option instead of leaving only the filesystem path in the text.",
   "",

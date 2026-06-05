@@ -8,6 +8,7 @@ import {
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
+  extractAgentWakeMentionIds,
   extractChatMentionIds,
   extractIssueMentionIds,
   extractLibraryDirectoryMentionPaths,
@@ -48,8 +49,10 @@ describe("project-mentions", () => {
     expect(parseAgentMentionHref(href)).toEqual({
       agentId: "agent-123",
       icon: "code",
+      intent: "reference",
     });
     expect(extractAgentMentionIds(`[@CodexCoder](${href})`)).toEqual(["agent-123"]);
+    expect(extractAgentWakeMentionIds(`[@CodexCoder](${href})`)).toEqual([]);
   });
 
   it("round-trips agent mentions with avatar metadata", () => {
@@ -58,7 +61,23 @@ describe("project-mentions", () => {
     expect(parseAgentMentionHref(href)).toEqual({
       agentId: "agent-123",
       icon,
+      intent: "reference",
     });
+  });
+
+  it("extracts only wake-intent agent mentions for runtime wakeups", () => {
+    const referenceHref = buildAgentMentionHref("agent-reference", "code");
+    const wakeHref = buildAgentMentionHref("agent-wake", "code", "wake");
+
+    expect(parseAgentMentionHref(wakeHref)).toEqual({
+      agentId: "agent-wake",
+      icon: "code",
+      intent: "wake",
+    });
+    expect(extractAgentMentionIds(`[@Reference](${referenceHref}) [@Wake](${wakeHref})`))
+      .toEqual(["agent-reference", "agent-wake"]);
+    expect(extractAgentWakeMentionIds(`[@Reference](${referenceHref}) [@Wake](${wakeHref})`))
+      .toEqual(["agent-wake"]);
   });
 
   it("round-trips issue mentions with identifier metadata", () => {

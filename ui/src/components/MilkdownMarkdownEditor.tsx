@@ -128,7 +128,7 @@ function linkHrefFromTextNode(node: {
   return node.marks?.find((mark) => mark.type?.name === "link" && mark.attrs?.href)?.attrs?.href?.trim() ?? "";
 }
 
-function mentionTokenDetails(option: MentionOption): { href: string; label: string } | null {
+function mentionTokenDetails(option: MentionOption, agentMentionIntent?: "reference" | "wake"): { href: string; label: string } | null {
   if (option.kind === "skill") {
     if (!option.skillMarkdownTarget || !option.skillRefLabel) return null;
     return { href: option.skillMarkdownTarget, label: option.skillRefLabel };
@@ -155,11 +155,11 @@ function mentionTokenDetails(option: MentionOption): { href: string; label: stri
     return { href: buildProjectMentionHref(option.projectId, option.projectColor ?? null), label: option.name };
   }
   const agentId = option.agentId ?? option.id.replace(/^agent:/, "");
-  return { href: buildAgentMentionHref(agentId, option.agentIcon ?? null), label: option.name };
+  return { href: buildAgentMentionHref(agentId, option.agentIcon ?? null, agentMentionIntent), label: option.name };
 }
 
-export function mentionMarkdown(option: MentionOption): string {
-  const token = mentionTokenDetails(option);
+export function mentionMarkdown(option: MentionOption, agentMentionIntent?: "reference" | "wake"): string {
+  const token = mentionTokenDetails(option, agentMentionIntent);
   return token ? `[${token.label}](${token.href}) ` : "";
 }
 
@@ -484,9 +484,15 @@ function findActiveMentionIndex(markdown: string, state: MentionState, editable:
   return ordinalIndex ?? indexes[indexes.length - 1]!;
 }
 
-export function applyMention(markdown: string, state: MentionState, option: MentionOption, editable: HTMLElement | null): string {
+export function applyMention(
+  markdown: string,
+  state: MentionState,
+  option: MentionOption,
+  editable: HTMLElement | null,
+  agentMentionIntent?: "reference" | "wake",
+): string {
   const search = `${state.trigger}${state.query}`;
-  const replacement = mentionMarkdown(option);
+  const replacement = mentionMarkdown(option, agentMentionIntent);
   if (!replacement) return markdown;
   const index = findActiveMentionIndex(markdown, state, editable);
   if (index === -1) {
@@ -505,8 +511,9 @@ export function insertMentionIntoProseMirrorView(
   view: ProseMirrorView,
   state: MentionState,
   option: MentionOption,
+  agentMentionIntent?: "reference" | "wake",
 ) {
-  const token = mentionTokenDetails(option);
+  const token = mentionTokenDetails(option, agentMentionIntent);
   if (!token) return false;
   const triggerText = `${state.trigger}${state.query}`;
   const { from, to } = view.state.selection;
@@ -765,6 +772,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   mentionMenuPlacement = "caret",
   onSubmit,
   submitShortcut = "mod-enter",
+  agentMentionIntent = "reference",
   onInlineTokenClick,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
@@ -1015,10 +1023,16 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       state,
       option,
       editable instanceof HTMLElement ? editable : null,
+      agentMentionIntent,
     );
     let insertedInEditor = false;
     editor?.action((ctx) => {
-      insertedInEditor = insertMentionIntoProseMirrorView(ctx.get(editorViewCtx) as unknown as ProseMirrorView, state, option);
+      insertedInEditor = insertMentionIntoProseMirrorView(
+        ctx.get(editorViewCtx) as unknown as ProseMirrorView,
+        state,
+        option,
+        agentMentionIntent,
+      );
     });
     if (insertedInEditor && next !== latestValueRef.current) {
       latestValueRef.current = next;

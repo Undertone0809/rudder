@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommentThread } from "./CommentThread";
 
 vi.mock("./MarkdownEditor", () => ({
-  MarkdownEditor: () => <div>Markdown editor</div>,
+  MarkdownEditor: ({ agentMentionIntent }: { agentMentionIntent?: string }) => (
+    <div data-agent-mention-intent={agentMentionIntent ?? ""}>Markdown editor</div>
+  ),
 }));
 
 vi.mock("./MarkdownBody", () => ({
@@ -78,6 +80,7 @@ describe("CommentThread", () => {
     expect(html).toContain("text/csv");
     expect(html).toContain('title="Attach file"');
     expect(html).toContain("chat-composer");
+    expect(html).toContain('data-agent-mention-intent="wake"');
     expect(html).not.toContain("Assignee");
   });
 

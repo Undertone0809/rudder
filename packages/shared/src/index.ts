@@ -877,6 +877,7 @@ export {
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
+  extractAgentWakeMentionIds,
   extractChatMentionIds,
   extractIssueMentionIds,
   extractLibraryDirectoryMentionPaths,

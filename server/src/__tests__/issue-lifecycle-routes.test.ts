@@ -2088,6 +2088,35 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+  it("does not fan out mention wakeups from agent-authored issue update comments", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        checkoutRunId: RUN_ID,
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: (patch.status as string | undefined) ?? "in_progress",
+        checkoutRunId: RUN_ID,
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ comment: "@Peer Agent I handled the review feedback." });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockIssueService.findMentionedAgents).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
   it("rejects issue completion from a mention-only agent run that does not own the issue", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({

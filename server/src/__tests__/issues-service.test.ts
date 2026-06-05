@@ -381,32 +381,68 @@ describe("issueService.list participantAgentId", () => {
   });
 
 
-  it("treats agent mention links as render-only references when resolving agent wake mentions", async () => {
+  it("distinguishes render-only and wake-intent agent links when resolving agent wake mentions", async () => {
     const orgId = randomUUID();
+    const otherOrgId = randomUUID();
     const agentId = randomUUID();
+    const otherOrgAgentId = randomUUID();
 
-    await db.insert(organizations).values({
-      id: orgId,
-      name: "Agent Mention Org",
-      urlKey: deriveOrganizationUrlKey("Agent Mention Org"),
-      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
-    await db.insert(agents).values({
-      id: agentId,
-      orgId,
-      name: "Wesley",
-      role: "reviewer",
-      status: "active",
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {},
-      runtimeConfig: {},
-      permissions: {},
-    });
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Agent Mention Org",
+        urlKey: deriveOrganizationUrlKey("Agent Mention Org"),
+        issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Agent Mention Org",
+        urlKey: deriveOrganizationUrlKey("Other Agent Mention Org"),
+        issuePrefix: `B${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values([
+      {
+        id: agentId,
+        orgId,
+        name: "Wesley",
+        role: "reviewer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: otherOrgAgentId,
+        orgId: otherOrgId,
+        name: "OtherOrgAgent",
+        role: "reviewer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
 
     await expect(svc.findMentionedAgents(orgId, "@Wesley please check this")).resolves.toEqual([agentId]);
     await expect(
       svc.findMentionedAgents(orgId, `Render-only reference: [Wesley](${buildAgentMentionHref(agentId, "code")})`),
+    ).resolves.toEqual([]);
+    await expect(
+      svc.findMentionedAgents(orgId, `Renderer label reference: [@Wesley](${buildAgentMentionHref(agentId, "code")})`),
+    ).resolves.toEqual([]);
+    await expect(
+      svc.findMentionedAgents(orgId, "Code is not a wake request: `@Wesley`"),
+    ).resolves.toEqual([]);
+    await expect(
+      svc.findMentionedAgents(orgId, `Wake request: [Wesley](${buildAgentMentionHref(agentId, "code", "wake")})`),
+    ).resolves.toEqual([agentId]);
+    await expect(
+      svc.findMentionedAgents(orgId, `Cross-org wake request: [OtherOrgAgent](${buildAgentMentionHref(otherOrgAgentId, "code", "wake")})`),
     ).resolves.toEqual([]);
   });
   it("persists and filters reviewer principals", async () => {

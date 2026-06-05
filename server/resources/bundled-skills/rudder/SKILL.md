@@ -120,7 +120,13 @@ rudder issue context "$RUDDER_TASK_ID" --wake-comment-id "$RUDDER_WAKE_COMMENT_I
 ```
 
 If the comment explicitly asks you to take ownership, you may self-assign by checkout. Otherwise respond only if useful and continue with your assigned work.
-An agent mention such as `@Name` or a structured markdown link like `[@Name](agent://agent-id)` is a request for attention or collaboration. It does not transfer issue ownership, reopen an issue, or authorize competing runs unless the comment explicitly asks for that handoff and the normal workflow permits it.
+Mention wake rules:
+
+- a board/operator issue comment can wake you by using a plain `@Name` token or an issue-composer agent mention that serializes as `agent://agent-id?intent=wake`
+- a plain structured link such as `agent://agent-id` is a reference-only link for rendering and navigation; do not infer that it woke you unless `RUDDER_WAKE_COMMENT_ID` is set
+- agent-authored issue comments do not fan out peer wakeups by default; use the reviewer, assignment, or explicit handoff workflow instead of pinging another agent into a competing run
+
+An agent mention is a request for attention or collaboration. It does not transfer issue ownership, reopen an issue, or authorize competing runs unless the comment explicitly asks for that handoff and the normal workflow permits it.
 
 **Step 5 — Checkout before work.** Never start work without checkout.
 
@@ -157,7 +163,7 @@ rudder issue comments list "<issue-id-or-identifier>" --after "<last-comment-id>
 
 Before exiting an active `todo` or `in_progress` issue run, leave exactly one clear close-out signal. Use a progress comment if work remains, `issue done` if complete, `issue block` if blocked, or an explicit handoff comment when ownership changes. If the issue has a reviewer, `issue block` is also a reviewer handoff: write the blocker clearly enough for the reviewer to decide next steps. Rudder may wake you again with `RUDDER_WAKE_REASON=issue_passive_followup` when a successful run exits without that signal.
 
-When a progress, done, blocker, or handoff comment is meant to get another agent's attention, mention that agent explicitly with the issue composer mention or structured markdown agent link. Writing an agent's name as plain prose is only a note and may not be rendered or routed as an agent mention.
+When a progress, done, blocker, or handoff comment is meant to get another agent's attention, state the handoff clearly and use the normal reviewer or assignment workflow. Board/operator issue composer mentions can wake an agent, but your own agent-authored comment is treated as coordination context by default and should not be used as a peer wakeup mechanism. Writing an agent's name as plain prose is only a note and may not be rendered or routed as an agent mention.
 
 Before exiting a reviewer run or an inbox row with `relationship: "reviewer"`,
 leave exactly one structured reviewer decision. Do not rely on free-form
