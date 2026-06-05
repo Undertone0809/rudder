@@ -20,6 +20,7 @@ export type MessengerRouteState =
   | { kind: "root" }
   | { kind: "chat"; conversationId?: string }
   | { kind: "issues" }
+  | { kind: "issue"; issueId: string }
   | { kind: "approvals" }
   | { kind: "system"; threadKind: MessengerSystemThreadKind };
 
@@ -65,6 +66,10 @@ export function resolveMessengerRoute(pathname: string): MessengerRouteState {
     return { kind: "chat", conversationId: match?.[1] };
   }
   if (/^\/messenger\/chat(?:\/|$)/.test(pathname)) return { kind: "chat" };
+  if (/^\/messenger\/issues\/[^/]+(?:\/|$)/.test(pathname)) {
+    const match = pathname.match(/^\/messenger\/issues\/([^/]+)(?:\/|$)/);
+    return { kind: "issue", issueId: match?.[1] ?? "" };
+  }
   if (/^\/messenger\/issues(?:\/|$)/.test(pathname)) return { kind: "issues" };
   if (/^\/messenger\/approvals(?:\/|$)/.test(pathname)) return { kind: "approvals" };
   const systemMatch = pathname.match(/^\/messenger\/system\/([^/]+)(?:\/|$)/);

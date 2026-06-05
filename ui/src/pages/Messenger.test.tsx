@@ -128,7 +128,7 @@ describe("Messenger page headers", () => {
     expect(html).toContain("Issues");
     expect(html).toContain("Followed issues, issues I created, and issues assigned to me.");
     expect(html).toContain("Messenger issue follow");
-    expect(html).toContain('href="/issues/RUD-1"');
+    expect(html).toContain('href="/messenger/issues/RUD-1"');
     expect(html).not.toContain("#comment-");
     expect(html).not.toContain("Assign to me");
     expect(html).not.toContain("3 unread");
@@ -174,7 +174,7 @@ describe("Messenger page headers", () => {
     expect(html).toContain("<strong>Rendered</strong>");
     expect(html).toContain("Alex comment");
     expect(html).not.toContain("Source comment by Alex");
-    expect(html).toContain('href="/issues/RUD-4#comment-comment-4"');
+    expect(html).toContain('href="/messenger/issues/RUD-4#comment-comment-4"');
     expect(html).not.toContain("Issues assistant");
   });
 

@@ -58,6 +58,7 @@ import { getRememberedMessengerPath, rememberMessengerPath, resolveRememberedMes
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { cn, relativeTime } from "@/lib/utils";
 import { Chat } from "./Chat";
+import { IssueDetail } from "./IssueDetail";
 
 const ISSUE_COMMENT_PREVIEW_LINES = 10;
 const ISSUE_COMMENT_PREVIEW_LINE_HEIGHT = 20;
@@ -129,7 +130,7 @@ function issueDisplayTitle(item: MessengerIssueThreadItem) {
 }
 
 function issueOpenHref(item: MessengerIssueThreadItem) {
-  const href = item.href ?? `/issues/${item.issueIdentifier ?? item.issueId}`;
+  const href = `/messenger/issues/${item.issueIdentifier ?? item.issueId}`;
   if (!item.sourceCommentId) return href;
   const hashlessHref = href.split("#")[0] ?? href;
   return `${hashlessHref}#comment-${item.sourceCommentId}`;
@@ -1160,6 +1161,7 @@ export function Messenger() {
   }
 
   if (route.kind === "chat") return <Chat />;
+  if (route.kind === "issue") return <IssueDetail />;
   if (route.kind === "issues") return <MessengerIssuesView />;
   if (route.kind === "approvals") return <MessengerApprovalsView />;
   if (route.kind === "system") return <MessengerSystemView threadKind={route.threadKind} />;

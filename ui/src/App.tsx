@@ -226,6 +226,7 @@ function boardRoutes() {
       <Route path="messenger" element={<Messenger />} />
       <Route path="messenger/*" element={<Messenger />} />
       <Route path="messenger/issues" element={<Messenger />} />
+      <Route path="messenger/issues/:issueId" element={<IssueDetail />} />
       <Route path="messenger/approvals" element={<Messenger />} />
       <Route path="messenger/approvals/:approvalId" element={<Messenger />} />
       <Route path="messenger/system/:threadKind" element={<Messenger />} />

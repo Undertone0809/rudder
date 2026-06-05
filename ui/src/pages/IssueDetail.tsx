@@ -23,6 +23,7 @@ import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/detail-escape";
 import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
 import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
+import { toOrganizationRelativePath } from "../lib/organization-routes";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { useProjectOrder } from "../hooks/useProjectOrder";
@@ -1033,6 +1034,8 @@ export function IssueDetail() {
   const navigateBack = useNavigationBack();
   const { pushToast } = useToast();
   const operatorDisplayName = useOperatorDisplayName();
+  const relativePath = toOrganizationRelativePath(location.pathname);
+  const issueRouteBasePath = relativePath.startsWith("/messenger/issues") ? "/messenger/issues" : "/issues";
   const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
   const [sidebarMoreOpen, setSidebarMoreOpen] = useState(false);
   const [copiedIssueId, setCopiedIssueId] = useState(false);
@@ -1104,8 +1107,12 @@ export function IssueDetail() {
 
   const hasLiveRuns = (liveRuns ?? []).length > 0 || !!activeRun;
   const sourceBreadcrumb = useMemo(
-    () => readIssueDetailBreadcrumb(location.state) ?? { label: "Issues", href: "/issues" },
-    [location.state],
+    () => readIssueDetailBreadcrumb(location.state) ?? (
+      issueRouteBasePath === "/messenger/issues"
+        ? { label: "Messenger", href: "/messenger" }
+        : { label: "Issues", href: "/issues" }
+    ),
+    [issueRouteBasePath, location.state],
   );
   const ancestors = issue?.ancestors ?? EMPTY_ISSUE_ANCESTORS;
   const issueHeaderBreadcrumbs = useMemo(() => {
@@ -1694,9 +1701,9 @@ export function IssueDetail() {
 
   useEffect(() => {
     if (issue?.identifier && issueId !== issue.identifier) {
-      navigate(`/issues/${issue.identifier}`, { replace: true, state: location.state });
+      navigate(`${issueRouteBasePath}/${issue.identifier}`, { replace: true, state: location.state });
     }
-  }, [issue, issueId, navigate, location.state]);
+  }, [issue, issueId, issueRouteBasePath, navigate, location.state]);
 
   useLayoutEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

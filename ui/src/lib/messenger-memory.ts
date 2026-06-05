@@ -29,7 +29,7 @@ export function sanitizeRememberedMessengerPath(path: string | null | undefined)
   const pathname = path?.split("?")[0]?.split("#")[0] ?? "";
 
   if (/^\/messenger\/chat(?:\/[^/]+)?$/.test(pathname)) return pathname;
-  if (pathname === "/messenger/issues" || pathname === "/messenger/approvals") return pathname;
+  if (pathname === "/messenger/issues" || /^\/messenger\/issues\/[^/]+$/.test(pathname) || pathname === "/messenger/approvals") return pathname;
   if (/^\/messenger\/system\/(failed-runs|budget-alerts|join-requests)$/.test(pathname)) {
     return pathname;
   }

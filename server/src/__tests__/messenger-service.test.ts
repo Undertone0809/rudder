@@ -428,7 +428,7 @@ describe("messengerService and issue follows", () => {
       threadKey: `issue:${issueId}`,
       kind: "issues",
       title: "SPL-1 · Split issue row",
-      href: "/issues/SPL-1",
+      href: "/messenger/issues/SPL-1",
       unreadCount: 1,
       needsAttention: true,
       metadata: {

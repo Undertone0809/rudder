@@ -680,13 +680,13 @@ test.describe("Messenger unified threads contract", () => {
     const openIssueLink = issueCard.getByRole("link", { name: "Open issue" });
     await expect(openIssueLink).toHaveAttribute(
       "href",
-      new RegExp(`/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`),
+      new RegExp(`/messenger/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`),
     );
     await expect(issueCard.getByRole("button", { name: "Assign to me" })).toHaveCount(0);
     await expect(issueCard.getByRole("button", { name: "Unassign me" })).toHaveCount(0);
 
     await openIssueLink.click();
-    await expect(page).toHaveURL(new RegExp(`/${organizationPrefix}/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`));
+    await expect(page).toHaveURL(new RegExp(`/${organizationPrefix}/messenger/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`));
     const highlightedComment = page.locator(`#comment-${createdCommentId}`);
     await expect(highlightedComment).toBeVisible({ timeout: 15_000 });
     await expect(highlightedComment).toHaveClass(/bg-primary\/5/);
@@ -822,6 +822,7 @@ test.describe("Messenger unified threads contract", () => {
     await expect(splitIssueRow).toContainText("Split sidebar issue", { timeout: 15_000 });
     await expect(splitIssueRow).toContainText(issueRef);
     await expect(splitIssueRow).toContainText("assigned to me");
+    await expect(splitIssueRow.locator('[data-slot="issue-status-icon"][data-status="todo"]')).toBeVisible();
     await expect(page.getByTestId(threadUnreadBadgeTestId(`issue:${issue.id}`))).toHaveText("1");
     await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
 
@@ -867,7 +868,8 @@ test.describe("Messenger unified threads contract", () => {
     ]);
 
     await splitIssueRow.click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${issueRef}$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/issues/${issueRef}$`));
+    await expect(page.getByTestId("workspace-context-header")).toContainText("Messenger");
     await expect(page.locator("#main-content").getByRole("heading", { name: "Split sidebar issue" })).toBeVisible({ timeout: 15_000 });
     await expect.poll(async () => {
       const rows = await e2eDb

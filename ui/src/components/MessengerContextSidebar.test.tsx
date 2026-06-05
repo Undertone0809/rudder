@@ -361,13 +361,13 @@ describe("MessengerContextSidebar", () => {
           title: "ISS-1 · Pinned split issue",
           preview: "Pinned issue should sort with pinned rows.",
           subtitle: "assigned to me",
-          href: "/issues/ISS-1",
+          href: "/messenger/issues/ISS-1",
           latestActivityAt: "2026-04-11T08:40:00.000Z",
           lastReadAt: null,
           unreadCount: 1,
           needsAttention: true,
           isPinned: true,
-          metadata: { splitIssue: true },
+          metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "in_progress" },
         },
       ],
     };
@@ -380,6 +380,7 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("Pinned");
     expect(html).toContain("Recent");
     expect(html).toContain('aria-label="Thread actions"');
+    expect(html).toContain('data-slot="status-progress-arc"');
   });
 
   it("groups Messenger chats by project when the organization rule is project", () => {

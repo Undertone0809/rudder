@@ -391,6 +391,10 @@ function issueHref(issue: IssueUniverseRow) {
   return `/issues/${issue.identifier ?? issue.id}`;
 }
 
+function messengerIssueHref(issue: IssueUniverseRow) {
+  return `/messenger/issues/${issue.identifier ?? issue.id}`;
+}
+
 function issueDisplayLabel(issue: IssueUniverseRow) {
   return issue.identifier ? `${issue.identifier} · ${issue.title}` : issue.title;
 }
@@ -679,7 +683,7 @@ function splitIssueSummary(
     unreadCount,
     needsAttention: unreadCount > 0,
     isPinned: Boolean(threadState?.pinnedAt),
-    href: item.href ?? issueHref(entry.issue),
+    href: messengerIssueHref(entry.issue),
     metadata: {
       ...item.metadata,
       splitIssue: true,

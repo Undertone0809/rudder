@@ -39,6 +39,7 @@ import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-c
 import { getMessengerUnreadScrollRequestId, MESSENGER_SCROLL_TO_UNREAD_EVENT } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
+import { StatusIcon } from "@/components/StatusIcon";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -267,6 +268,43 @@ function ThreadAvatar({
       )}
     >
       <Icon className={cn(compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
+      {unreadCount > 0 ? (
+        <span
+          data-testid={testId}
+          className="absolute -right-1.5 -top-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[color:var(--surface-elevated)] bg-red-500 px-1 text-[10px] font-semibold leading-none text-white shadow-[0_4px_12px_-6px_rgba(220,38,38,0.85)]"
+        >
+          {unreadCount > 99 ? "99+" : unreadCount}
+        </span>
+      ) : needsAttention ? (
+        <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full border-2 border-[color:var(--surface-elevated)] bg-red-500" />
+      ) : null}
+    </span>
+  );
+}
+
+function IssueStatusThreadAvatar({
+  status,
+  unreadCount,
+  needsAttention,
+  density = "comfortable",
+  testId,
+}: {
+  status: string;
+  unreadCount: number;
+  needsAttention: boolean;
+  density?: MessengerThreadDensity;
+  testId?: string;
+}) {
+  const compact = density === "compact";
+  return (
+    <span
+      title={`Issue status: ${status.replace(/_/g, " ")}`}
+      className={cn(
+        "relative flex shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)]",
+        compact ? "h-7 w-7" : "mt-0.5 h-10 w-10",
+      )}
+    >
+      <StatusIcon status={status} className={cn(compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
       {unreadCount > 0 ? (
         <span
           data-testid={testId}
@@ -584,6 +622,10 @@ function ThreadRow({
   const compact = density === "compact";
   const [actionsOpen, setActionsOpen] = useState(false);
   const canTogglePin = thread.metadata?.splitIssue === true;
+  const issueStatus =
+    thread.metadata?.splitIssue === true && typeof thread.metadata.status === "string"
+      ? thread.metadata.status
+      : null;
 
   return (
     <div
@@ -597,13 +639,23 @@ function ThreadRow({
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
       )}
     >
-      <ThreadAvatar
-        icon={Icon}
-        unreadCount={thread.unreadCount}
-        needsAttention={thread.needsAttention}
-        density={density}
-        testId={`${sanitizeThreadKey(thread.threadKey)}-unread-badge`}
-      />
+      {issueStatus ? (
+        <IssueStatusThreadAvatar
+          status={issueStatus}
+          unreadCount={thread.unreadCount}
+          needsAttention={thread.needsAttention}
+          density={density}
+          testId={`${sanitizeThreadKey(thread.threadKey)}-unread-badge`}
+        />
+      ) : (
+        <ThreadAvatar
+          icon={Icon}
+          unreadCount={thread.unreadCount}
+          needsAttention={thread.needsAttention}
+          density={density}
+          testId={`${sanitizeThreadKey(thread.threadKey)}-unread-badge`}
+        />
+      )}
       <Link to={thread.href} onClick={() => onSelect(thread.href)} className="block min-w-0 flex-1">
         <span className="min-w-0">
           <span className={cn(
@@ -755,6 +807,14 @@ interface OrganizedThreadSection {
 
 function isPinnedEntry(entry: OrganizedThreadEntry) {
   return typeof entry.thread.isPinned === "boolean" ? entry.thread.isPinned : Boolean(entry.conversation?.isPinned);
+}
+
+function threadMatchesMessengerIssueRoute(thread: MessengerThreadSummaryItem, issueRef: string) {
+  if (thread.metadata?.splitIssue !== true) return false;
+  const metadata = thread.metadata as Record<string, unknown>;
+  if (metadata.issueId === issueRef || metadata.issueIdentifier === issueRef) return true;
+  const normalizedHref = thread.href.split("?")[0]?.split("#")[0] ?? thread.href;
+  return normalizedHref === `/messenger/issues/${issueRef}`;
 }
 
 function entryActivityTime(entry: OrganizedThreadEntry) {
@@ -909,22 +969,27 @@ export function MessengerContextSidebar() {
 
   const activeThreadKey = useMemo(() => {
     if (route.kind === "chat" && route.conversationId) return `chat:${route.conversationId}`;
+    if (route.kind === "issue") {
+      return model.threadSummaries.find((thread) => threadMatchesMessengerIssueRoute(thread, route.issueId))?.threadKey ?? `issue:${route.issueId}`;
+    }
     if (route.kind === "issues") return "issues";
     if (route.kind === "approvals") return "approvals";
     if (route.kind === "system") return route.threadKind;
     return null;
-  }, [route]);
+  }, [model.threadSummaries, route]);
   const activeThread = useMemo(
     () => model.threadSummaries.find((thread) => thread.threadKey === activeThreadKey) ?? null,
     [activeThreadKey, model.threadSummaries],
   );
   const activeThreadDetailReady = useMemo(() => {
+    if (route.kind === "issue") return !!activeThread;
     if (route.kind === "issues") return !!model.issueThreadDetail;
     if (route.kind === "approvals") return !!model.approvalThreadDetail;
     if (route.kind === "system") return !!model.systemThreadDetail;
     return false;
-  }, [model.approvalThreadDetail, model.issueThreadDetail, model.systemThreadDetail, route]);
+  }, [activeThread, model.approvalThreadDetail, model.issueThreadDetail, model.systemThreadDetail, route]);
   const activeThreadReadAt = useMemo(() => {
+    if (route.kind === "issue") return activeThread?.latestActivityAt ?? null;
     if (route.kind === "issues") return model.issueThreadDetail?.latestActivityAt ?? null;
     if (route.kind === "approvals") return model.approvalThreadDetail?.latestActivityAt ?? null;
     if (route.kind === "system") return model.systemThreadDetail?.latestActivityAt ?? null;
