@@ -574,6 +574,26 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(activeRow?.getAttribute("aria-current")).toBe("page");
   });
 
+  it("keeps issue sidebar row glyphs, keys, and titles on one centerline", () => {
+    mockState.issues = [{
+      id: "issue-1",
+      identifier: "RUD-1",
+      title: "Align a long recently viewed issue title",
+      status: "backlog",
+    }];
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(["issue-1"]));
+
+    renderSidebar();
+
+    const activeRow = document.querySelector("[data-testid='issue-recent-row-issue-1']") as HTMLAnchorElement | null;
+    const statusSlot = activeRow?.querySelector("[data-slot='issue-status-icon']")?.parentElement;
+    const textGroup = statusSlot?.nextElementSibling;
+    expect(statusSlot?.className).toContain("items-center");
+    expect(statusSlot?.className).toContain("h-5");
+    expect(textGroup?.className).toContain("items-center");
+    expect(textGroup?.className).not.toContain("items-baseline");
+  });
+
   it("renders pinned issues as bounded sidebar rows after issues are pinned", () => {
     mockState.issues = Array.from({ length: 7 }, (_, index) => ({
       id: `issue-${index + 1}`,
