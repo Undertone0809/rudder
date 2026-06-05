@@ -1,23 +1,22 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 function getAsChildViolations() {
-  const files = execFileSync("rg", ["--files", "ui/src"], { encoding: "utf8" })
-    .split("\n")
-    .filter((file) => /\.(tsx|ts)$/.test(file));
+  const files = listTypeScriptFiles(getSourceRoot());
   const violations: string[] = [];
 
   for (const file of files) {
+    const displayPath = path.relative(process.cwd(), file);
     const sourceText = readFileSync(file, "utf8");
-    const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const sourceFile = ts.createSourceFile(displayPath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
     function visit(node: ts.Node) {
       if (ts.isJsxSelfClosingElement(node) && hasPossiblyEnabledAsChild(node.attributes)) {
         const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-        violations.push(`${file}:${location.line + 1}:${location.character + 1}`);
+        violations.push(`${displayPath}:${location.line + 1}:${location.character + 1}`);
       }
 
       if (ts.isJsxElement(node) && hasPossiblyEnabledAsChild(node.openingElement.attributes)) {
@@ -28,7 +27,7 @@ function getAsChildViolations() {
         });
         if (children.length !== 1 || children.some((child) => ts.isJsxFragment(child))) {
           const location = sourceFile.getLineAndCharacterOfPosition(node.openingElement.getStart(sourceFile));
-          violations.push(`${file}:${location.line + 1}:${location.character + 1}`);
+          violations.push(`${displayPath}:${location.line + 1}:${location.character + 1}`);
         }
       }
 
@@ -39,6 +38,27 @@ function getAsChildViolations() {
   }
 
   return violations;
+}
+
+function getSourceRoot() {
+  const repoSourceRoot = path.join(process.cwd(), "ui", "src");
+  if (existsSync(repoSourceRoot)) return repoSourceRoot;
+  return path.join(process.cwd(), "src");
+}
+
+function listTypeScriptFiles(directory: string): string[] {
+  const files: string[] = [];
+
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listTypeScriptFiles(entryPath));
+    } else if (/\.(tsx|ts)$/.test(entry.name)) {
+      files.push(entryPath);
+    }
+  }
+
+  return files;
 }
 
 function hasPossiblyEnabledAsChild(attributes: ts.JsxAttributes) {
