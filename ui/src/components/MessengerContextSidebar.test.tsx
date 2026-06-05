@@ -268,6 +268,16 @@ describe("MessengerContextSidebar", () => {
     expect(messengerModelOptions).toContainEqual({ splitIssues: true });
   });
 
+  it("hides stale aggregate Issues rows while split issue notifications are active", () => {
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": true });
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("Split issues");
+    expect(html).not.toContain('data-testid="messenger-thread-issues"');
+    expect(html).not.toContain("Followed issues");
+  });
+
   it("promotes pinned Messenger chats from thread summaries before chat list hydration", () => {
     chatList = [];
     messengerModel = {

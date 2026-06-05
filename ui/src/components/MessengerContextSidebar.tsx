@@ -857,6 +857,11 @@ export function MessengerContextSidebar() {
     setSplitIssueNotifications(readSplitIssueNotifications(model.selectedOrganizationId));
   }, [model.selectedOrganizationId]);
 
+  useEffect(() => {
+    if (!model.selectedOrganizationId) return;
+    void invalidateMessengerThreadSummaryQueries(queryClient, model.selectedOrganizationId);
+  }, [model.selectedOrganizationId, queryClient, splitIssueNotifications]);
+
   const shouldLoadSidebarConversations = threadOrganizationRule === "project";
 
   const chatsQuery = useQuery({
@@ -874,7 +879,10 @@ export function MessengerContextSidebar() {
   }, [chatsQuery.data]);
 
   const organizedThreadSections = useMemo(() => {
-    const entries = model.threadSummaries.map((thread) => {
+    const threadSummaries = splitIssueNotifications
+      ? model.threadSummaries.filter((thread) => thread.threadKey !== "issues")
+      : model.threadSummaries;
+    const entries = threadSummaries.map((thread) => {
       const conversationId = threadConversationId(thread.threadKey);
       const loadedConversation = conversationId ? conversationsById.get(conversationId) ?? null : null;
       return {
@@ -885,7 +893,7 @@ export function MessengerContextSidebar() {
       };
     });
     return organizeThreadEntries(entries, threadOrganizationRule);
-  }, [conversationsById, model.selectedOrganizationId, model.threadSummaries, threadOrganizationRule]);
+  }, [conversationsById, model.selectedOrganizationId, model.threadSummaries, splitIssueNotifications, threadOrganizationRule]);
   const firstUnreadThreadKey = useMemo(() => {
     for (const section of organizedThreadSections) {
       for (const entry of section.entries) {
