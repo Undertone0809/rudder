@@ -163,6 +163,7 @@ describe("MessengerContextSidebar", () => {
   });
 
   it("formats markdown heading previews as readable sidebar summaries", () => {
+    localStorageValues["rudder.messengerThreadDensityByOrg"] = JSON.stringify({ "org-1": "comfortable" });
     chatList = [];
     messengerModel = {
       ...baseModel(),
@@ -236,23 +237,42 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('aria-label="Organize threads"');
   });
 
-  it("renders Messenger threads as one-line rows in compact density", () => {
-    localStorageValues["rudder.messengerThreadDensityByOrg"] = JSON.stringify({ "org-1": "compact" });
-
+  it("defaults Messenger threads to compact density and split issue notifications", () => {
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).toContain("Threads");
     expect(html).toContain("Compact");
+    expect(html).toContain("Split issues");
     expect(html).toContain("hi");
-    expect(html).toContain("Issues");
     expect(html).not.toContain("Hello Zee!");
     expect(html).not.toContain("Followed issues");
+    expect(html).not.toContain('data-testid="messenger-thread-issues"');
     expect(html).toContain("items-center gap-2 px-2 py-1.5");
     expect(html).toContain("h-7 w-7");
     expect(html).toContain("grid-cols-[minmax(0,1fr)_2.75rem] items-center");
+    expect(messengerModelOptions).toContainEqual({ splitIssues: true });
   });
 
-  it("keeps the aggregate Issues row free of thread pin actions by default", () => {
+  it("respects stored comfortable density and aggregate issue notification preferences", () => {
+    localStorageValues["rudder.messengerThreadDensityByOrg"] = JSON.stringify({ "org-1": "comfortable" });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("Threads");
+    expect(html).not.toContain("Compact");
+    expect(html).not.toContain("Split issues");
+    expect(html).toContain("Issues");
+    expect(html).toContain("Hello Zee!");
+    expect(html).toContain("Followed issues");
+    expect(html).toContain("gap-3 px-3 py-2.5");
+    expect(html).toContain("h-10 w-10");
+    expect(messengerModelOptions).toContainEqual({ splitIssues: false });
+  });
+
+  it("keeps the aggregate Issues row free of thread pin actions when split issue notifications are off", () => {
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
+
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).toContain("Issues");
@@ -260,17 +280,15 @@ describe("MessengerContextSidebar", () => {
   });
 
   it("restores the split issue notifications preference for the current organization", () => {
-    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": true });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
-    expect(html).toContain("Split issues");
-    expect(messengerModelOptions).toContainEqual({ splitIssues: true });
+    expect(html).not.toContain("Split issues");
+    expect(messengerModelOptions).toContainEqual({ splitIssues: false });
   });
 
   it("hides stale aggregate Issues rows while split issue notifications are active", () => {
-    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": true });
-
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).toContain("Split issues");
@@ -279,6 +297,7 @@ describe("MessengerContextSidebar", () => {
   });
 
   it("promotes pinned Messenger chats from thread summaries before chat list hydration", () => {
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
     chatList = [];
     messengerModel = {
       ...baseModel(),
@@ -385,6 +404,7 @@ describe("MessengerContextSidebar", () => {
 
   it("groups Messenger chats by project when the organization rule is project", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
     chatList = [
       {
         id: "chat-1",
@@ -428,7 +448,7 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('data-testid="messenger-generating-chat-chat-1"');
     expect(html).toContain('aria-label="Chat reply in progress"');
     expect(html).toContain("pointer-events-none absolute top-1/2");
-    expect(html).toContain("right-2 h-6 w-6");
+    expect(html).toContain("right-1.5 h-5 w-5");
     expect(html).toContain("20m ago");
   });
 

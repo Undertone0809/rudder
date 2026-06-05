@@ -60,7 +60,8 @@ const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg
 const THREAD_DENSITY_STORAGE_KEY = "rudder.messengerThreadDensityByOrg";
 const SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY = "rudder.messengerSplitIssueNotificationsByOrg";
 const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
-const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "comfortable";
+const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "compact";
+const DEFAULT_SPLIT_ISSUE_NOTIFICATIONS = true;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
   { value: "latest", label: "Latest activity" },
@@ -171,15 +172,16 @@ function readThreadDensity(orgId: string | null | undefined): MessengerThreadDen
 }
 
 function readSplitIssueNotifications(orgId: string | null | undefined): boolean {
-  if (!orgId || typeof window === "undefined") return false;
+  if (!orgId || typeof window === "undefined") return DEFAULT_SPLIT_ISSUE_NOTIFICATIONS;
   try {
     const raw = window.localStorage.getItem(SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    return parsed[orgId] === true;
+    const value = parsed[orgId];
+    if (typeof value === "boolean") return value;
   } catch {
-    // Ignore storage failures; aggregate issue notifications remain the default.
+    // Ignore storage failures; split issue notifications remain the default.
   }
-  return false;
+  return DEFAULT_SPLIT_ISSUE_NOTIFICATIONS;
 }
 
 function writeThreadOrganizationRule(orgId: string, rule: ThreadOrganizationRule) {
