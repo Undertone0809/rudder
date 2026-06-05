@@ -664,7 +664,8 @@ function splitIssueSummary(
   lastReadAt: Date | null,
   threadState: ThreadStateRow | null,
 ): MessengerThreadSummary {
-  const unreadCount = entry.attentionActivityAt && (!lastReadAt || entry.attentionActivityAt.getTime() > lastReadAt.getTime())
+  const effectiveLastReadAt = maxDate(lastReadAt, threadState?.lastReadAt ?? null);
+  const unreadCount = entry.attentionActivityAt && (!effectiveLastReadAt || entry.attentionActivityAt.getTime() > effectiveLastReadAt.getTime())
     ? 1
     : 0;
   return {
@@ -674,7 +675,7 @@ function splitIssueSummary(
     subtitle: item.subtitle,
     preview: item.preview ?? item.body,
     latestActivityAt: item.latestActivityAt,
-    lastReadAt,
+    lastReadAt: effectiveLastReadAt,
     unreadCount,
     needsAttention: unreadCount > 0,
     isPinned: Boolean(threadState?.pinnedAt),
@@ -1235,9 +1236,14 @@ export function messengerService(db: Db) {
         count(*) filter (
           where "attentionActivityAt" is not null
             and (${lastReadAtIso}::timestamptz is null or "attentionActivityAt" > ${lastReadAtIso}::timestamptz)
+            and (issue_thread_state.last_read_at is null or "attentionActivityAt" > issue_thread_state.last_read_at)
         )::int as "unreadCount",
         max("latestActivityAt") as "latestActivityAt"
       from (${issueEntryRowsQuery(orgId, userId)}) issue_entry_stats
+      left join ${messengerThreadUserStates} issue_thread_state
+        on issue_thread_state.org_id = ${orgId}
+        and issue_thread_state.user_id = ${userId}
+        and issue_thread_state.thread_key = 'issue:' || issue_entry_stats.id::text
     `)) as IssueThreadStats[];
     const row = rows[0];
     return row
@@ -2025,6 +2031,11 @@ export function messengerService(db: Db) {
       const state = await chatsSvc.markRead(conversationId, orgId, userId, readAt);
       if (!state) return null;
       return { lastReadAt: state.lastReadAt } as ThreadReadState;
+    }
+
+    if (threadKey.startsWith("issue:")) {
+      const issueId = threadKey.slice("issue:".length);
+      if (!await canUseIssueThread(orgId, userId, issueId)) return null;
     }
 
     const now = new Date();

@@ -30,6 +30,7 @@ import {
   heartbeatService,
   issueApprovalService,
   issueService,
+  messengerService,
   documentService,
   logActivity,
   projectService,
@@ -52,6 +53,7 @@ const MAX_ISSUE_COMMENT_LIMIT = 500;
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
   const svc = issueService(db);
+  const messengerSvc = messengerService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const agentsSvc = agentService(db);
@@ -912,7 +914,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
       res.status(403).json({ error: "Board user context required" });
       return;
     }
-    const readState = await svc.markRead(issue.orgId, issue.id, req.actor.userId, new Date());
+    const readAt = new Date();
+    const readState = await svc.markRead(issue.orgId, issue.id, req.actor.userId, readAt);
+    await messengerSvc.setThreadRead(issue.orgId, req.actor.userId, `issue:${issue.id}`, readAt);
     res.json(readState);
   });
 

@@ -21,6 +21,10 @@ const mockHeartbeatService = vi.hoisted(() => ({
   reportRunActivity: vi.fn(async () => undefined),
 }));
 
+const mockMessengerService = vi.hoisted(() => ({
+  setThreadRead: vi.fn(async () => undefined),
+}));
+
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
@@ -36,6 +40,7 @@ vi.mock("../services/index.js", () => ({
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => ({}),
   issueService: () => mockIssueService,
+  messengerService: () => mockMessengerService,
   organizationIntelligenceProfileService: () => ({
     list: vi.fn(),
     getByPurpose: vi.fn(),

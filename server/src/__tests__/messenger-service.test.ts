@@ -451,6 +451,67 @@ describe("messengerService and issue follows", () => {
     expect(pinnedSummaries[0]?.isPinned).toBe(true);
   });
 
+  it("clears split issue attention from the single issue read state", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-split-issue-read";
+    const issueId = randomUUID();
+    const unrelatedIssueId = randomUUID();
+    const issueUpdatedAt = new Date("2026-05-03T10:30:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Split Issue Read Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Split Issue Read Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        orgId,
+        title: "Split issue read state",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        identifier: "SPL-READ-1",
+        createdAt: issueUpdatedAt,
+        updatedAt: issueUpdatedAt,
+      },
+      {
+        id: unrelatedIssueId,
+        orgId,
+        title: "Unrelated split issue read state",
+        status: "todo",
+        priority: "medium",
+        identifier: "SPL-READ-2",
+        createdAt: issueUpdatedAt,
+        updatedAt: issueUpdatedAt,
+      },
+    ]);
+
+    const beforeReadSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    const beforeReadIssue = beforeReadSummaries.find((item) => item.threadKey === `issue:${issueId}`);
+    expect(beforeReadIssue?.unreadCount).toBe(1);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+
+    const rejectedState = await messengerSvc.setThreadRead(orgId, userId, `issue:${unrelatedIssueId}`, issueUpdatedAt);
+    expect(rejectedState).toBeNull();
+
+    const state = await messengerSvc.setThreadRead(orgId, userId, `issue:${issueId}`, issueUpdatedAt);
+    expect(state?.lastReadAt.toISOString()).toBe(issueUpdatedAt.toISOString());
+
+    const afterReadSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    const afterReadAggregateSummary = await messengerSvc.listThreadSummaries(orgId, userId);
+    const afterReadIssue = afterReadSummaries.find((item) => item.threadKey === `issue:${issueId}`);
+    const issuesSummary = afterReadAggregateSummary.find((item) => item.threadKey === "issues");
+
+    expect(afterReadIssue?.unreadCount).toBe(0);
+    expect(afterReadIssue?.needsAttention).toBe(false);
+    expect(issuesSummary?.unreadCount).toBe(0);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
+  });
+
   it("includes issue status transitions in Messenger issue update cards", async () => {
     const orgId = randomUUID();
     const userId = "board-user-status-transition";

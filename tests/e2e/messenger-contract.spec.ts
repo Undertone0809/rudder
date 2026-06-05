@@ -59,6 +59,10 @@ function chatUnreadBadgeTestId(chatId: string) {
   return `${`chat:${chatId}`.replace(/[^a-zA-Z0-9_-]/g, "-")}-unread-badge`;
 }
 
+function threadUnreadBadgeTestId(threadKey: string) {
+  return `${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}-unread-badge`;
+}
+
 async function isInElementViewport(page: Page, containerTestId: string, rowTestId: string) {
   return page.evaluate(({ containerTestId, rowTestId }) => {
     const container = document.querySelector(`[data-testid="${containerTestId}"] nav`);
@@ -818,6 +822,8 @@ test.describe("Messenger unified threads contract", () => {
     await expect(splitIssueRow).toContainText("Split sidebar issue", { timeout: 15_000 });
     await expect(splitIssueRow).toContainText(issueRef);
     await expect(splitIssueRow).toContainText("assigned to me");
+    await expect(page.getByTestId(threadUnreadBadgeTestId(`issue:${issue.id}`))).toHaveText("1");
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
 
     const sidebarThreads = page.locator('[data-testid="workspace-sidebar"] [data-messenger-thread-key]');
     await expect(sidebarThreads).toHaveCount(3);
@@ -862,8 +868,19 @@ test.describe("Messenger unified threads contract", () => {
 
     await splitIssueRow.click();
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${issueRef}$`));
+    await expect(page.locator("#main-content").getByRole("heading", { name: "Split sidebar issue" })).toBeVisible({ timeout: 15_000 });
+    await expect.poll(async () => {
+      const rows = await e2eDb
+        .select({ lastReadAt: messengerThreadUserStates.lastReadAt })
+        .from(messengerThreadUserStates)
+        .where(eq(messengerThreadUserStates.threadKey, `issue:${issue.id}`));
+      return (rows[0]?.lastReadAt?.getTime() ?? 0) >= (baseTime + 5 * 60_000);
+    }).toBe(true);
+
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
     await expect(splitIssueRow).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId(threadUnreadBadgeTestId(`issue:${issue.id}`))).toHaveCount(0);
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveCount(0);
 
     await clickMessengerViewCheckbox(page, "Compact mode");
     await expect(page.getByText("Threads · Compact · Split issues")).toBeVisible({ timeout: 15_000 });

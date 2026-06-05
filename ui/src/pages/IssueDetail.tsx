@@ -22,6 +22,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/detail-escape";
 import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
+import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { useProjectOrder } from "../hooks/useProjectOrder";
@@ -1500,6 +1501,7 @@ export function IssueDetail() {
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(issueOrgId) });
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(issueOrgId) });
         queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(issueOrgId) });
+        invalidateMessengerThreadSummaryQueries(queryClient, issueOrgId);
       }
     },
   });
