@@ -18,9 +18,25 @@ interface LibraryFilePutOptions extends BaseClientOptions {
   bodyFile?: string;
 }
 
+interface LibraryFileLinkResult {
+  filePath: string;
+  libraryEntryId: string | null;
+  mentionHref: string | null;
+  markdownLink: string | null;
+}
+
+function toLibraryFileLinkResult(detail: OrganizationWorkspaceFileDetail): LibraryFileLinkResult {
+  return {
+    filePath: detail.filePath,
+    libraryEntryId: detail.libraryEntryId,
+    mentionHref: detail.mentionHref,
+    markdownLink: detail.markdownLink,
+  };
+}
+
 export function registerLibraryCommands(program: Command): void {
   const library = program.command("library").description("Library file operations");
-  const file = library.command("file").description("Path-based Library file operations");
+  const file = library.command("file").description("Library file operations");
 
   addCommonClientOptions(
     file
@@ -59,6 +75,28 @@ export function registerLibraryCommands(program: Command): void {
             `/api/orgs/${ctx.orgId}/workspace/file?${search.toString()}`,
           );
           printOutput(result, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: true },
+  );
+
+  addCommonClientOptions(
+    file
+      .command("link")
+      .description(getAgentCliCapabilityById("library.file.link").description)
+      .argument("<filePath>", "Library file path")
+      .action(async (filePath: string, opts: BaseClientOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const search = new URLSearchParams();
+          search.set("path", filePath.trim());
+          const result = await ctx.api.get<OrganizationWorkspaceFileDetail>(
+            `/api/orgs/${ctx.orgId}/workspace/file?${search.toString()}`,
+          );
+          if (!result) throw new Error("Library file not found");
+          printOutput(toLibraryFileLinkResult(result), { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }

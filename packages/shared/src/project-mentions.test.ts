@@ -6,7 +6,9 @@ import {
   buildLibraryDirectoryMentionHref,
   buildLibraryDocMentionHref,
   buildLibraryEntryMentionHref,
+  buildLibraryEntryMentionMarkdown,
   buildLibraryFileMentionHref,
+  buildLibraryFileMentionMarkdown,
   buildProjectMentionHref,
   extractAgentMentionIds,
   extractChatMentionIds,
@@ -99,6 +101,13 @@ describe("project-mentions", () => {
       path: "projects/rudder/product-brief.md",
     });
     expect(extractLibraryEntryMentionIds(`[@Product brief](${href})`)).toEqual(["entry-123"]);
+  });
+
+  it("builds library mention markdown without requiring agents to hand-write URLs", () => {
+    expect(buildLibraryEntryMentionMarkdown("entry-123", "Product [brief]", "projects/rudder/product-brief.md"))
+      .toBe("[Product \\[brief\\]](library-entry://entry-123?t=Product+%5Bbrief%5D&p=projects%2Frudder%2Fproduct-brief.md)");
+    expect(buildLibraryFileMentionMarkdown("projects/rudder/product-brief.md", "Product brief"))
+      .toBe("[Product brief](library-file://file?p=projects%2Frudder%2Fproduct-brief.md&t=Product+brief)");
   });
 
   it("round-trips library file mentions with path metadata", () => {

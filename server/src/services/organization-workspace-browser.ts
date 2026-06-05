@@ -9,6 +9,10 @@ import type {
   OrganizationWorkspaceFileList,
   OrganizationWorkspaceRootSource,
 } from "@rudderhq/shared";
+import {
+  buildLibraryEntryMentionHref,
+  buildLibraryEntryMentionMarkdown,
+} from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { resolveStoredOrDerivedAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -58,6 +62,24 @@ function toPortableRelativePath(relativePath: string) {
 
 function normalizeRequestedPath(value: string | null | undefined) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function workspaceFileLabel(filePath: string) {
+  return filePath.split("/").filter(Boolean).at(-1) ?? filePath;
+}
+
+function workspaceFileReferenceFields(filePath: string, libraryEntryId: string | null) {
+  if (!libraryEntryId) {
+    return {
+      mentionHref: null,
+      markdownLink: null,
+    };
+  }
+  const label = workspaceFileLabel(filePath);
+  return {
+    mentionHref: buildLibraryEntryMentionHref(libraryEntryId, label, filePath),
+    markdownLink: buildLibraryEntryMentionMarkdown(libraryEntryId, label, filePath),
+  };
 }
 
 function resolveWithinRoot(rootPath: string, requestedPath: string) {
@@ -413,6 +435,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
           repoUrl: root.repoUrl,
           filePath: normalizedPath,
           libraryEntryId: null,
+          ...workspaceFileReferenceFields(normalizedPath, null),
           rootExists: false,
           content: null,
           contentType: null,
@@ -438,6 +461,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
           repoUrl: root.repoUrl,
           filePath: normalizedPath,
           libraryEntryId: libraryEntry.id,
+          ...workspaceFileReferenceFields(normalizedPath, libraryEntry.id),
           rootExists: true,
           content: null,
           contentType,
@@ -454,6 +478,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
           repoUrl: root.repoUrl,
           filePath: normalizedPath,
           libraryEntryId: libraryEntry.id,
+          ...workspaceFileReferenceFields(normalizedPath, libraryEntry.id),
           rootExists: true,
           content: null,
           contentType,
@@ -470,6 +495,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         repoUrl: root.repoUrl,
         filePath: normalizedPath,
         libraryEntryId: libraryEntry.id,
+        ...workspaceFileReferenceFields(normalizedPath, libraryEntry.id),
         rootExists: true,
         content: buffer.toString("utf8"),
         contentType,
@@ -529,6 +555,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         repoUrl: root.repoUrl,
         filePath: normalizedPath,
         libraryEntryId: libraryEntry.id,
+        ...workspaceFileReferenceFields(normalizedPath, libraryEntry.id),
         rootExists: true,
         content,
         contentType: getWorkspaceFileContentType(normalizedPath || resolvedTarget) ?? "text/plain",
@@ -568,6 +595,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         repoUrl: root.repoUrl,
         filePath: normalizedPath,
         libraryEntryId: libraryEntry.id,
+        ...workspaceFileReferenceFields(normalizedPath, libraryEntry.id),
         rootExists: true,
         content,
         contentType: getWorkspaceFileContentType(normalizedPath || resolvedTarget) ?? "text/plain",

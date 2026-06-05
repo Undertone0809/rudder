@@ -43,6 +43,8 @@ export interface OrganizationWorkspaceFileDetail {
   repoUrl: string | null;
   filePath: string;
   libraryEntryId: string | null;
+  mentionHref: string | null;
+  markdownLink: string | null;
   rootExists: boolean;
   content: string | null;
   contentType: string | null;

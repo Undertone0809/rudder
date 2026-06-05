@@ -280,6 +280,14 @@ export function buildLibraryEntryMentionHref(entryId: string, title?: string | n
   return `${LIBRARY_ENTRY_MENTION_SCHEME}${trimmedEntryId}${query ? `?${query}` : ""}`;
 }
 
+function escapeMarkdownLinkLabel(label: string): string {
+  return label.replace(/([\\[\]])/g, "\\$1");
+}
+
+export function buildLibraryEntryMentionMarkdown(entryId: string, label: string, pathHint?: string | null): string {
+  return `[${escapeMarkdownLinkLabel(label)}](${buildLibraryEntryMentionHref(entryId, label, pathHint)})`;
+}
+
 export function parseLibraryEntryMentionHref(href: string): ParsedLibraryEntryMention | null {
   if (!href.startsWith(LIBRARY_ENTRY_MENTION_SCHEME)) return null;
 
@@ -311,6 +319,10 @@ export function buildLibraryFileMentionHref(filePath: string, title?: string | n
   const search = new URLSearchParams({ p: trimmedFilePath });
   if (trimmedTitle) search.set("t", trimmedTitle);
   return `${LIBRARY_FILE_MENTION_SCHEME}file?${search.toString()}`;
+}
+
+export function buildLibraryFileMentionMarkdown(filePath: string, label: string): string {
+  return `[${escapeMarkdownLinkLabel(label)}](${buildLibraryFileMentionHref(filePath, label)})`;
 }
 
 export function parseLibraryFileMentionHref(href: string): ParsedLibraryFileMention | null {

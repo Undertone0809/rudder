@@ -46,9 +46,10 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder project get <project-id-or-shortname> [--org-id <id>]` | Read one project by ID or shortname. | no | no | no | no |
 | `rudder project create --org-id <id> --name <name>` | Create a project in the organization. | yes | required | no | attached when available |
 | `rudder project update <project-id-or-shortname> [--org-id <id>]` | Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt. | yes | no | no | attached when available |
-| `rudder library file list [directory]` | List path-based Library files and folders. | no | required | no | no |
-| `rudder library file get <path>` | Read one path-based Library file. | no | required | no | no |
-| `rudder library file put <path> --body-file <path>` | Create or update one path-based Library file. | yes | required | no | attached when available |
+| `rudder library file list [directory]` | List Library files and folders; file rows include `libraryEntryId` when a strong reference can be generated. | no | required | no | no |
+| `rudder library file get <path>` | Read one Library file; JSON includes `mentionHref` and `markdownLink`. | no | required | no | no |
+| `rudder library file link <path>` | Return the strong Markdown link for one Library file without printing file content. | no | required | no | no |
+| `rudder library file put <path> --body-file <path>` | Create or update one Library file; JSON includes `mentionHref` and `markdownLink`. | yes | required | no | attached when available |
 | `rudder approval get <approval-id>` | Read one approval request. | no | no | no | no |
 | `rudder approval issues <approval-id>` | List the issues linked to an approval. | no | no | no | no |
 | `rudder approval comment <approval-id> --body-file <path>` | Add a comment to an approval. | yes | no | no | attached when available |
@@ -77,6 +78,29 @@ Issue comment and close-out commands accept comment bodies only from files or st
 If your issue comment cites a screenshot path or visual validation artifact, attach that file with `--image <path>` instead of leaving only the local path in the text.
 
 If `RUDDER_WAKE_REASON=issue_passive_followup`, the run is close-out governance for the same issue. Inspect current issue state first, then leave a progress comment, completion, blocker, or explicit handoff.
+
+## Renderable Library References
+
+Agents should not hand-write `library-entry://...` URLs. After creating,
+updating, or reading a durable Library file, use the CLI-returned
+`markdownLink` in issue comments, review comments, blocker notes, done comments,
+and chat replies.
+
+```bash
+result="$(rudder library file put "projects/<project>/<issue>.md" --body-file /tmp/work.md --json)"
+printf '%s\n' "$result" | jq -r .markdownLink
+```
+
+The relevant JSON fields are:
+
+- `libraryEntryId`: stable identity for the Library file.
+- `mentionHref`: raw `library-entry://<id>?t=<title>&p=<path>` target.
+- `markdownLink`: complete Markdown link that the renderer turns into a Library
+  chip and that continues resolving after Rudder-managed rename or move.
+
+Use `rudder library file link <path> --json` when you only need the reference
+for an existing file. Treat `library-file://...` as legacy weak path syntax and
+use it only when preserving old content that has no `libraryEntryId`.
 
 ## Git Identity Policy
 

@@ -180,6 +180,32 @@ Project mutation policy:
 - Project create/update requests write activity log entries with the agent
   actor and run id when the CLI attaches one.
 
+### Library Workspace Files
+
+Normal agents should use the CLI commands in `cli-reference.md`. API fallback
+for Library files is for debugging or compatibility only.
+
+- `GET /api/orgs/:orgId/workspace/files?path=:directory`
+- `GET /api/orgs/:orgId/workspace/file?path=:file`
+- `POST /api/orgs/:orgId/workspace/file`
+- `PATCH /api/orgs/:orgId/workspace/file?path=:file`
+- `GET /api/orgs/:orgId/workspace/mention-files?q=:query`
+
+Workspace file detail responses include renderable reference fields:
+
+```json
+{
+  "filePath": "projects/rudder/RUD-123.md",
+  "libraryEntryId": "entry-uuid",
+  "mentionHref": "library-entry://entry-uuid?t=RUD-123.md&p=projects%2Frudder%2FRUD-123.md",
+  "markdownLink": "[RUD-123.md](library-entry://entry-uuid?t=RUD-123.md&p=projects%2Frudder%2FRUD-123.md)"
+}
+```
+
+Agents should paste `markdownLink` into issue comments and close-out notes.
+`library-file://...` is legacy weak path syntax and should not be used for new
+durable Library references when `libraryEntryId` is available.
+
 ## Approval Workflows
 
 - `GET /api/approvals/:approvalId`

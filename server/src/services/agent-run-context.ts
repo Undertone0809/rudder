@@ -135,6 +135,7 @@ function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
       if (sourceType === "library") {
         lines.push(
           `  - Library path: \`library:${attachment.resource.locator}\``,
+          `  - To cite this file in a comment or handoff, run \`rudder library file link "${attachment.resource.locator}" --json\` and paste the returned \`markdownLink\`.`,
         );
       }
       if (attachment.resource.description?.trim()) {

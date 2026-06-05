@@ -280,10 +280,12 @@ Do not fall back to raw `curl` for this workflow in local adapters or packaged d
 
 ## Durable Library Files
 
-If asked to make or revise durable project work files, write them under `library:projects/<project-name>/`. Issues should reference Library files with normal Markdown links, for example:
+If asked to make or revise durable project work files, write them under `library:projects/<project-name>/`. When you need to cite a Library file in a chat reply, issue comment, review, blocker, or done comment, use the `markdownLink` returned by the CLI. Do not hand-write `library-entry://...` URLs.
+
+Strong Library links look like normal Markdown, but the target is a stable Library entry id:
 
 ```md
-[Project work file](library-file://file?p=projects%2Fproject-name%2FRUD-123.md&t=Project%20work%20file)
+[Project work file](library-entry://<entry-id>?t=Project+work+file&p=projects%2Fproject-name%2FRUD-123.md)
 ```
 
 Typical flow:
@@ -291,15 +293,24 @@ Typical flow:
 ```bash
 rudder library file get "projects/<project-name>/<issue-identifier>.md" --json
 rudder library file put "projects/<project-name>/<issue-identifier>.md" --body-file "<path>" --json
+rudder library file link "projects/<project-name>/<issue-identifier>.md" --json
 rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" --json
 ```
+
+The `put`, `get`, and `link` JSON responses include:
+
+- `libraryEntryId`: stable Library file identity
+- `mentionHref`: the raw `library-entry://...` target
+- `markdownLink`: the Markdown link to paste into the comment body
+
+For close-out comments, copy `markdownLink` from the JSON response into your temporary Markdown comment file. Use older `library-file://...` links only when you are preserving or reading legacy content that has no `libraryEntryId`.
 
 Planning rules:
 
 - do not mark the issue done when the request was only to create or revise a plan
 - reassign back to the requester if that is the expected workflow
 - when you create or update a durable Library file, always include a user-visible Markdown link to that file in your final chat reply or issue comment
-- when you reference the plan in comments, link to the Library file with `library-file://file?p=<url-encoded-relative-path>`
+- when you reference the plan in comments, use the `markdownLink` returned by `rudder library file put ... --json` or `rudder library file link ... --json`
 - `rudder issue documents ...` is a legacy compatibility surface for older DB-backed issue documents. Read it when a prompt explicitly points to an existing legacy issue document; do not use it for new durable files.
 
 ## Critical Rules

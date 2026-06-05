@@ -1350,6 +1350,7 @@ export function IssueDetail() {
         kind: file.isDirectory ? "library_directory" : "library_file",
         searchText: `${file.name} ${file.path}`,
         libraryFilePath: file.isDirectory ? null : file.path,
+        libraryEntryId: file.isDirectory ? null : file.libraryEntryId ?? null,
         libraryDirectoryPath: file.isDirectory ? file.path : null,
       });
     }

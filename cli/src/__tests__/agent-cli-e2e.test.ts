@@ -1203,9 +1203,29 @@ describe("agent CLI e2e", () => {
     );
     expect(libraryFile).toMatchObject({
       filePath: "projects/agent-team/agent-team-design.md",
+      libraryEntryId: expect.any(String),
+      mentionHref: expect.stringContaining("library-entry://"),
+      markdownLink: expect.stringContaining("library-entry://"),
       content: libraryBody,
       contentType: "text/markdown",
       previewKind: "text",
+    });
+    expect(libraryFile.markdownLink).toContain("agent-team-design.md");
+    expect(libraryFile.markdownLink).toContain("projects%2Fagent-team%2Fagent-team-design.md");
+
+    const libraryFileLink = await runCliJson<Pick<OrganizationWorkspaceFileDetail, "filePath" | "libraryEntryId" | "mentionHref" | "markdownLink">>(
+      ["library", "file", "link", "projects/agent-team/agent-team-design.md"],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(libraryFileLink).toEqual({
+      filePath: "projects/agent-team/agent-team-design.md",
+      libraryEntryId: libraryFile.libraryEntryId,
+      mentionHref: libraryFile.mentionHref,
+      markdownLink: libraryFile.markdownLink,
     });
 
     const libraryListing = await runCliJson<OrganizationWorkspaceFileList>(

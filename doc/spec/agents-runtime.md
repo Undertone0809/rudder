@@ -150,6 +150,12 @@ Organization resources and project resources are intentionally different:
   normalized project Library path represented to agents as
   `library:projects/<project-name>/`; they must not use absolute paths, URL
   schemes, `..` traversal, or non-project Library roots.
+- The `library:projects/...` value is a locator for reading or updating the
+  file, not the Markdown link agents should paste into comments. When an agent
+  cites a Library file in a chat reply, issue comment, review, blocker, or done
+  note, it should use `rudder library file put/get/link ... --json` and paste
+  the returned `markdownLink`. That link uses `library-entry://<entry-id>` when
+  stable Library identity is available.
 - When a heartbeat or chat run resolves a `projectId`, Rudder loads only that
   project's attached resources into
   `context.rudderWorkspace.resourcesPrompt`,

@@ -68,8 +68,16 @@ test("Library markdown editor can mention global Rudder entities", async ({ page
     },
   });
   expect(workspaceDocRes.ok()).toBe(true);
-  const workspaceDoc = await workspaceDocRes.json() as { libraryEntryId: string };
+  const workspaceDoc = await workspaceDocRes.json() as { libraryEntryId: string; markdownLink: string };
   expect(workspaceDoc.libraryEntryId).toBeTruthy();
+  expect(workspaceDoc.markdownLink).toContain("library-entry://");
+
+  const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+    data: {
+      body: `Strong Library reference: ${workspaceDoc.markdownLink}`,
+    },
+  });
+  expect(commentRes.ok()).toBe(true);
 
   const editorDocPath = "docs/global-mention-editor.md";
   const editorDocRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
@@ -95,6 +103,12 @@ test("Library markdown editor can mention global Rudder entities", async ({ page
   await page.goto(`/${organization.issuePrefix}/library?entry=${encodeURIComponent(workspaceDoc.libraryEntryId)}&path=${encodeURIComponent(workspaceDocPath)}`);
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(renamedWorkspaceDocPath)}$`));
   await expect(page.locator("#main-content")).toContainText("global-mention-reference-renamed.md");
+
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.id}`);
+  const strongLibraryCommentLink = page.locator(`a[href="/library?entry=${workspaceDoc.libraryEntryId}"]`).first();
+  await expect(strongLibraryCommentLink).toBeVisible({ timeout: 15_000 });
+  await strongLibraryCommentLink.click();
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?path=${encodeURIComponent(renamedWorkspaceDocPath)}$`));
 
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(editorDocPath)}`);
 

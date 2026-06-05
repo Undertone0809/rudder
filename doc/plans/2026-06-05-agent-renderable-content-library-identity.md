@@ -33,9 +33,10 @@ updated_at: 2026-06-05
 Implement the first durable slice of Rudder's Agent renderable content contract:
 Library file references written by agents and operators should resolve by stable
 Library entry identity, not by mutable file path. This slice introduces
-DB-backed `library_entries`, a `library-entry://<id>` Markdown token format, and
-workspace file API support so newly created or referenced Library files can be
-rendered consistently across issue, chat, approval, and comment surfaces.
+DB-backed `library_entries`, a `library-entry://<id>` Markdown token format,
+workspace file API support, and an Agent-facing CLI authoring contract so newly
+created or referenced Library files can be rendered consistently across issue,
+chat, approval, and comment surfaces.
 
 The broader render-block protocol remains future work. This implementation
 creates the identity foundation required before rich cards or Agent-authored
@@ -63,6 +64,13 @@ this path."
     identity and current path/state
   - update Library copy-link and mention insertion to emit strong
     `library-entry://` links when possible
+  - expose `mentionHref` and `markdownLink` from workspace file detail responses
+    and `rudder library file put/get/link --json`
+  - update the bundled `rudder` skill, CLI reference, API reference, and runtime
+    resource context so agents know to paste CLI-returned `markdownLink` rather
+    than hand-writing token URLs
+  - ensure issue/comment Library mention options and opened-file copy links use
+    `libraryEntryId` when available
   - update Markdown rendering and editor token decoration for Library entries
   - preserve `library-file://` and `library-directory://` as weak compatibility
     references
@@ -89,12 +97,22 @@ this path."
    routes to use the Library entry service.
 6. Update UI copy-link, mention insertion, MarkdownBody, MarkdownEditor, and
    mention chips to use and render strong Library entry tokens.
-7. Add focused tests for:
+7. Update the Agent-facing authoring path:
+   - `rudder library file put/get --json` includes `mentionHref` and
+     `markdownLink`
+   - `rudder library file link <path> --json` returns the strong reference
+     without printing file content
+   - bundled skill docs tell agents to paste `markdownLink` in close-out
+     comments and treat `library-file://` as legacy fallback only
+8. Add focused tests for:
    - `library-entry://` parser/formatter
    - file create/read returning an entry id
    - move/rename preserving entry id and changing current path
    - delete preserving a deleted entry rather than erasing the reference
    - MarkdownBody rendering Library entry tokens as Library links
+   - CLI agent workflow returning strong markdown links
+   - issue comment terminal UI resolving a strong Library entry link after file
+     rename
 
 ## Design Notes
 
@@ -114,6 +132,8 @@ this path."
 ## Success Criteria
 
 - New Library file links emitted by Rudder use `library-entry://<id>`.
+- Agents can get a ready-to-paste `markdownLink` from the stable CLI without
+  hand-writing `library-entry://` syntax.
 - Existing `library-file://` links continue to render and navigate by path.
 - A Rudder-managed rename or move preserves the entry id and updates the strong
   reference target.
@@ -126,13 +146,17 @@ this path."
 - Passed: `pnpm --filter @rudderhq/shared typecheck`
 - Passed: `pnpm --filter @rudderhq/server typecheck`
 - Passed: `pnpm --filter @rudderhq/ui typecheck`
+- Passed: `pnpm --filter @rudderhq/cli typecheck`
 - Passed: `pnpm test:run packages/shared/src/project-mentions.test.ts`
 - Passed: `pnpm test:run ui/src/components/MarkdownBody.test.tsx`
 - Passed: `pnpm test:run server/src/__tests__/organization-workspace-browser.test.ts`
+- Passed: `pnpm test:run cli/src/__tests__/agent-cli-e2e.test.ts`
 - Passed: `RUDDER_E2E_USE_EXISTING_SERVER=1 pnpm test:e2e tests/e2e/mention-token-alignment.spec.ts`
 - Passed: `pnpm test:e2e tests/e2e/global-markdown-mentions.spec.ts`
   after clearing stale SysV shared memory segments left by old embedded
   PostgreSQL processes.
+- Passed: `pnpm test:e2e tests/e2e/global-markdown-mentions.spec.ts` after
+  adding the Agent-writable strong-link issue-comment journey.
 - Passed: `pnpm build`
 - Passed: `git diff --check`
 

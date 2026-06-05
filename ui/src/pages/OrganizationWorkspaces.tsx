@@ -3,8 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   buildAgentMentionHref,
-  buildLibraryEntryMentionHref,
-  buildLibraryFileMentionHref,
+  buildLibraryEntryMentionMarkdown,
+  buildLibraryFileMentionMarkdown,
   parseAgentMentionHref,
   type Project,
   type ProjectResourceAttachment,
@@ -743,19 +743,14 @@ function joinWorkspacePath(rootPath: string | null, entryPath: string) {
   return `${rootPath.replace(/\/+$/, "")}/${entryPath}`;
 }
 
-function escapeMarkdownLinkLabel(label: string) {
-  return label.replace(/([\\\]])/g, "\\$1");
-}
-
 function buildWorkspaceFileLinkMarkdown(filePath: string, label: string, libraryEntryId?: string | null) {
-  const href = libraryEntryId
-    ? buildLibraryEntryMentionHref(libraryEntryId, label, filePath)
-    : buildLibraryFileMentionHref(filePath, label);
-  return `[${escapeMarkdownLinkLabel(label)}](${href})`;
+  return libraryEntryId
+    ? buildLibraryEntryMentionMarkdown(libraryEntryId, label, filePath)
+    : buildLibraryFileMentionMarkdown(filePath, label);
 }
 
 function buildWorkspaceDirectoryLinkMarkdown(directoryPath: string, label: string) {
-  return `[${escapeMarkdownLinkLabel(label)}](/library?directory=${encodeURIComponent(directoryPath)})`;
+  return `[${label.replace(/([\\[\]])/g, "\\$1")}](/library?directory=${encodeURIComponent(directoryPath)})`;
 }
 
 function buildWorkspaceEntryLinkMarkdown(entry: OrganizationWorkspaceFileEntry) {
@@ -3941,7 +3936,12 @@ export function OrganizationWorkspaceBrowser({
 
   async function handleCopyWorkspaceLink(filePath: string) {
     const label = displayWorkspaceFileTabLabel(filePath);
-    const copyValue = buildWorkspaceFileLinkMarkdown(filePath, label);
+    const cachedDetail = viewedOrganizationId
+      ? queryClient.getQueryData<OrganizationWorkspaceFileDetail>(
+        queryKeys.organizations.workspaceFile(viewedOrganizationId, filePath),
+      )
+      : null;
+    const copyValue = buildWorkspaceFileLinkMarkdown(filePath, label, cachedDetail?.libraryEntryId ?? null);
     try {
       await copyWorkspaceText(copyValue);
       pushToast({
