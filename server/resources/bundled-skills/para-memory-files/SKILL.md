@@ -113,4 +113,4 @@ file, then verify against the stored fact or note.
 
 ## Shared Work Notes
 
-Keep durable project work notes under `library:projects/<project-name>/` when a project is in scope. These files are shared project context, not personal memory. Use `rg` to search relevant Library files and prefer the newest dated file when several match. Shared notes go stale; if a newer note exists, do not confuse yourself with an older version. If you notice staleness, update the file to note what supersedes it.
+Keep durable project work notes under `$RUDDER_PROJECT_LIBRARY_ROOT` when a project is in scope and local filesystem access is available. These files are shared project context, not personal memory. Use `$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>` when asking Rudder for a renderable reference to one of those files. Use `rg` to search relevant Library files and prefer the newest dated file when several match. Shared notes go stale; if a newer note exists, do not confuse yourself with an older version. If you notice staleness, update the file to note what supersedes it.

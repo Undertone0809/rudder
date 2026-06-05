@@ -386,7 +386,7 @@ export function buildIssueDocumentsPrompt(input: IssueDocumentPromptInput | null
   return [
     "## Legacy Issue Documents",
     "These legacy issue documents are not inlined automatically. Fetch one only when you need its contents.",
-    "For new or revised durable work files, write them under `library:projects/<project-name>/`, then link them in issue text or comments.",
+    "For new or revised durable work files in local trusted runs, write them under `$RUDDER_PROJECT_LIBRARY_ROOT`, then cite them in issue text or comments with `rudder library file ref \"$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>\" --json`.",
     "",
     ...references,
   ].join("\n");

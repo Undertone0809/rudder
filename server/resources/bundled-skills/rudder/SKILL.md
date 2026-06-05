@@ -52,12 +52,12 @@ Important files and conventions:
 - Structured shared references live in the org `Resources` catalog. Agents do not receive the whole org catalog automatically.
 - If a run or chat is linked to a project, Rudder injects only that project's attached resources into the runtime context.
 - Project Context is the explicit operator-curated starting set, not a knowledge boundary. If those resources are insufficient, inspect broader Library files and other org workspace know-how before concluding context is missing.
-- Library-backed resources use `sourceType: "library"` and a safe `locator` inside `library:projects/<project-name>/`.
+- Library-backed resources use `sourceType: "library"` and a safe `locator` inside `library:projects/<project-key>/`.
 - External resources use `sourceType: "external"` and keep their original URL, local path, repo path, or connector locator.
 - If you encounter older `library-file://...` or `library-doc://...` links, treat them as legacy Rudder Library references. Prefer project Library resources going forward.
 - If you need broader org-wide resources, query the org resource catalog or inspect Library files explicitly instead of assuming they are already in the prompt.
 - Use Workspaces for disk-backed shared files and skill packages.
-- Durable generated project work files belong under `library:projects/<project-name>/`. Use `/tmp` only for transient scratch files and temporary verification files.
+- In local trusted runs, durable generated project work files belong under `$RUDDER_PROJECT_LIBRARY_ROOT`. Use `$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>` only when asking Rudder for a renderable reference. Use `/tmp` only for transient scratch files and temporary verification files.
 - If a `resources.md` file exists, treat it like a normal workspace file rather than a reserved Rudder surface.
 - Agent-specific files live under `workspaces/agents/<workspace-key>/...`.
 - New projects do not create or configure their own workspace roots.
@@ -280,7 +280,9 @@ Do not fall back to raw `curl` for this workflow in local adapters or packaged d
 
 ## Durable Library Files
 
-If asked to make or revise durable project work files, write them under `library:projects/<project-name>/`. When you need to cite a Library file in a chat reply, issue comment, review, blocker, or done comment, use the `markdownLink` returned by the CLI. Do not hand-write `library-entry://...` URLs.
+If asked to make or revise durable project work files, use the Library as a local file workspace. In local trusted runs with project context, write files directly under `$RUDDER_PROJECT_LIBRARY_ROOT` with normal filesystem tools. `library:projects/<project-key>/...` is the Rudder product locator for those files, not the Markdown link syntax and not a reason to route ordinary local edits through the CLI.
+
+When you need to cite a Library file in a chat reply, issue comment, review, blocker, or done comment, use the `markdownLink` returned by `rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>" --json`. Do not hand-write `library-entry://...` URLs.
 
 Strong Library links look like normal Markdown, but the target is a stable Library entry id:
 
@@ -291,26 +293,25 @@ Strong Library links look like normal Markdown, but the target is a stable Libra
 Typical flow:
 
 ```bash
-rudder library file get "projects/<project-name>/<issue-identifier>.md" --json
-rudder library file put "projects/<project-name>/<issue-identifier>.md" --body-file "<path>" --json
-rudder library file link "projects/<project-name>/<issue-identifier>.md" --json
+printf '%s\n' "<markdown body>" > "$RUDDER_PROJECT_LIBRARY_ROOT/<issue-identifier>.md"
+rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<issue-identifier>.md" --json
 rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" --json
 ```
 
-The `put`, `get`, and `link` JSON responses include:
+The `ref`, `put`, and `get` JSON responses include:
 
 - `libraryEntryId`: stable Library file identity
 - `mentionHref`: the raw `library-entry://...` target
 - `markdownLink`: the Markdown link to paste into the comment body
 
-For close-out comments, copy `markdownLink` from the JSON response into your temporary Markdown comment file. Use older `library-file://...` links only when you are preserving or reading legacy content that has no `libraryEntryId`.
+For close-out comments, copy `markdownLink` from the JSON response into your temporary Markdown comment file and post that link as the Rudder-visible handoff checkpoint. Direct filesystem writes are not complete handoff evidence until the file is cited with the returned `markdownLink`. The `ref` argument is a Library-relative path such as `$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>`, not the absolute `$RUDDER_PROJECT_LIBRARY_ROOT/...` filesystem path. If `$RUDDER_PROJECT_LIBRARY_ROOT` is unset or inaccessible, use `rudder library file get/put "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"` as the remote or restricted runtime fallback. Use older `library-file://...` links only when you are preserving or reading legacy content that has no `libraryEntryId`.
 
 Planning rules:
 
 - do not mark the issue done when the request was only to create or revise a plan
 - reassign back to the requester if that is the expected workflow
 - when you create or update a durable Library file, always include a user-visible Markdown link to that file in your final chat reply or issue comment
-- when you reference the plan in comments, use the `markdownLink` returned by `rudder library file put ... --json` or `rudder library file link ... --json`
+- when you reference the plan in comments, use the `markdownLink` returned by `rudder library file ref ... --json`
 - `rudder issue documents ...` is a legacy compatibility surface for older DB-backed issue documents. Read it when a prompt explicitly points to an existing legacy issue document; do not use it for new durable files.
 
 ## Critical Rules

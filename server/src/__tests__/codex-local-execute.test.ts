@@ -198,6 +198,9 @@ process.stdin.on("end", () => {
       ident,
       useConfigOnly,
       email,
+      rudderEnvKeys: Object.keys(process.env)
+        .filter((key) => key.startsWith("RUDDER_"))
+        .sort(),
     }), "utf8");
   }
   console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
@@ -391,6 +394,8 @@ describe("codex execute", () => {
           rudderWorkspace: {
             orgWorkspaceRoot: path.join(root, "org-workspace"),
             orgSkillsDir: path.join(root, "org-workspace", "skills"),
+            projectLibraryRoot: path.join(root, "org-workspace", "projects", "product"),
+            projectLibraryRelativePath: "projects/product",
           },
         },
         authToken: "run-jwt-token",
@@ -404,10 +409,13 @@ describe("codex execute", () => {
         ident: { ok: boolean; stdout: string; stderr: string };
         useConfigOnly: { ok: boolean; stdout: string; stderr: string };
         email: { ok: boolean; stdout: string; stderr: string };
+        rudderEnvKeys: string[];
       };
       expect(capture.home).toBe(path.join(managedCodexHome, "home"));
       expect(capture.ident.ok).toBe(true);
       expect(capture.ident.stdout).toContain("Rudder Agent <rudder-agent@example.com>");
+      expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_ROOT");
+      expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_PATH");
       expect(capture.ident.stdout).not.toContain(".local");
       expect(capture.useConfigOnly.stdout).toBe("true\n");
       expect(capture.email.stdout).toBe("");

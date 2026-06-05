@@ -102,6 +102,8 @@ describe("gemini execute", () => {
           rudderWorkspace: {
             orgWorkspaceRoot: path.join(root, "org-workspace"),
             orgSkillsDir: path.join(root, "org-workspace", "skills"),
+            projectLibraryRoot: path.join(root, "org-workspace", "projects", "product"),
+            projectLibraryRelativePath: "projects/product",
           },
         },
         authToken: "run-jwt-token",
@@ -133,6 +135,8 @@ describe("gemini execute", () => {
           "RUDDER_API_KEY",
           "RUDDER_API_URL",
           "RUDDER_ORG_ID",
+          "RUDDER_PROJECT_LIBRARY_PATH",
+          "RUDDER_PROJECT_LIBRARY_ROOT",
           "RUDDER_RUN_ID",
         ]),
       );

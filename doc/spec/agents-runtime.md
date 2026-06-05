@@ -148,14 +148,21 @@ Organization resources and project resources are intentionally different:
   with a project-specific role and note. `external` resources point to URLs,
   local paths, repos, or connector objects. `library` resources point to one
   normalized project Library path represented to agents as
-  `library:projects/<project-name>/`; they must not use absolute paths, URL
+  `library:projects/<project-key>/`; they must not use absolute paths, URL
   schemes, `..` traversal, or non-project Library roots.
-- The `library:projects/...` value is a locator for reading or updating the
-  file, not the Markdown link agents should paste into comments. When an agent
-  cites a Library file in a chat reply, issue comment, review, blocker, or done
-  note, it should use `rudder library file put/get/link ... --json` and paste
-  the returned `markdownLink`. That link uses `library-entry://<entry-id>` when
-  stable Library identity is available.
+- The `library:projects/...` value is a locator and product identity boundary,
+  not the Markdown link agents should paste into comments. In local trusted
+  runs, project-scoped agents receive
+  `context.rudderWorkspace.projectLibraryRoot`, exposed to local runtimes as
+  `$RUDDER_PROJECT_LIBRARY_ROOT`, and should read/write durable project files
+  there with normal filesystem tools. When an agent cites a Library file in a
+  chat reply, issue comment, review, blocker, or done note, it should use
+  `rudder library file ref ... --json` and paste the returned `markdownLink`.
+  That link uses `library-entry://<entry-id>` when stable Library identity is
+  available. Posting that returned link is the Rudder-visible handoff
+  checkpoint for direct filesystem writes. `rudder library file get/put
+  "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"` remains a fallback for remote
+  or restricted runtimes without local filesystem access.
 - When a heartbeat or chat run resolves a `projectId`, Rudder loads only that
   project's attached resources into
   `context.rudderWorkspace.resourcesPrompt`,

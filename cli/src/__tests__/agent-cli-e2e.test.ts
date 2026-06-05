@@ -381,6 +381,7 @@ describe("agent CLI e2e", () => {
   let dbDataDir = "";
   let dbInstance: EmbeddedPostgresInstance | null = null;
   let serverProcess: ServerProcess | null = null;
+  let instanceId = "";
 
   let orgId = "";
   let agentId = "";
@@ -408,7 +409,7 @@ describe("agent CLI e2e", () => {
 
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
     latestServerOutput = { stdout: [], stderr: [] };
-    const instanceId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    instanceId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     serverProcess = spawn(
       "pnpm",
       ["--silent", "rudder", "run", "--config", configPath],
@@ -1188,13 +1189,36 @@ describe("agent CLI e2e", () => {
         configPath,
         env,
       }),
-    ).rejects.toThrow("Agents must write new durable work files under `library:projects/<project-name>/`");
+    ).rejects.toThrow("Agents must write new durable work files under `library:projects/<project-key>/...`");
 
-    const libraryBodyFile = path.join(tempRoot, "agent-team-design.md");
     const libraryBody = "# Agent Team Design\n\nThis belongs in the project Library.";
-    writeFileSync(libraryBodyFile, libraryBody, "utf8");
+    const projectLibraryPath = "projects/agent-team";
+    const libraryRelativeFile = "agent-team-design.md";
+    const libraryFilePath = `${projectLibraryPath}/${libraryRelativeFile}`;
+    const orgWorkspaceRoot = path.join(tempRoot, "rudder-home", "instances", instanceId, "organizations", orgId, "workspaces");
+    const projectLibraryRoot = path.join(orgWorkspaceRoot, projectLibraryPath);
+    mkdirSync(projectLibraryRoot, { recursive: true });
+    writeFileSync(path.join(projectLibraryRoot, libraryRelativeFile), libraryBody, "utf8");
+
+    const libraryFileRef = await runCliJson<Pick<OrganizationWorkspaceFileDetail, "filePath" | "libraryEntryId" | "mentionHref" | "markdownLink">>(
+      ["library", "file", "ref", libraryFilePath],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(libraryFileRef).toEqual({
+      filePath: libraryFilePath,
+      libraryEntryId: expect.any(String),
+      mentionHref: expect.stringContaining("library-entry://"),
+      markdownLink: expect.stringContaining("library-entry://"),
+    });
+    expect(libraryFileRef.markdownLink).toContain(libraryRelativeFile);
+    expect(libraryFileRef.markdownLink).toContain("projects%2Fagent-team%2Fagent-team-design.md");
+
     const libraryFile = await runCliJson<OrganizationWorkspaceFileDetail>(
-      ["library", "file", "put", "projects/agent-team/agent-team-design.md", "--body-file", libraryBodyFile],
+      ["library", "file", "get", libraryFilePath],
       {
         apiBase,
         configPath,
@@ -1202,31 +1226,24 @@ describe("agent CLI e2e", () => {
       },
     );
     expect(libraryFile).toMatchObject({
-      filePath: "projects/agent-team/agent-team-design.md",
-      libraryEntryId: expect.any(String),
-      mentionHref: expect.stringContaining("library-entry://"),
-      markdownLink: expect.stringContaining("library-entry://"),
+      filePath: libraryFilePath,
+      libraryEntryId: libraryFileRef.libraryEntryId,
+      mentionHref: libraryFileRef.mentionHref,
+      markdownLink: libraryFileRef.markdownLink,
       content: libraryBody,
       contentType: "text/markdown",
       previewKind: "text",
     });
-    expect(libraryFile.markdownLink).toContain("agent-team-design.md");
-    expect(libraryFile.markdownLink).toContain("projects%2Fagent-team%2Fagent-team-design.md");
 
     const libraryFileLink = await runCliJson<Pick<OrganizationWorkspaceFileDetail, "filePath" | "libraryEntryId" | "mentionHref" | "markdownLink">>(
-      ["library", "file", "link", "projects/agent-team/agent-team-design.md"],
+      ["library", "file", "link", libraryFilePath],
       {
         apiBase,
         configPath,
         env,
       },
     );
-    expect(libraryFileLink).toEqual({
-      filePath: "projects/agent-team/agent-team-design.md",
-      libraryEntryId: libraryFile.libraryEntryId,
-      mentionHref: libraryFile.mentionHref,
-      markdownLink: libraryFile.markdownLink,
-    });
+    expect(libraryFileLink).toEqual(libraryFileRef);
 
     const libraryListing = await runCliJson<OrganizationWorkspaceFileList>(
       ["library", "file", "list", "projects/agent-team"],
@@ -1245,16 +1262,18 @@ describe("agent CLI e2e", () => {
     });
     expect(defaultLibraryListing.directoryPath).toBe("projects");
 
+    const forbiddenLibraryBodyFile = path.join(tempRoot, "agent-team-design-forbidden.md");
+    writeFileSync(forbiddenLibraryBodyFile, libraryBody, "utf8");
     await expect(
       runCliJson<OrganizationWorkspaceFileDetail>(
-        ["library", "file", "put", "skills/agent-team-design.md", "--body-file", libraryBodyFile],
+        ["library", "file", "put", "skills/agent-team-design.md", "--body-file", forbiddenLibraryBodyFile],
         {
           apiBase,
           configPath,
           env,
         },
       ),
-    ).rejects.toThrow("Agent Library file access is limited to `library:projects/<project-name>/`");
+    ).rejects.toThrow("Agent Library file access is limited to `library:projects/<project-key>/...`");
 
     const updatedLibraryBodyFile = path.join(tempRoot, "agent-team-design-updated.md");
     const updatedLibraryBody = `${libraryBody}\n\nUpdated by agent CLI.`;

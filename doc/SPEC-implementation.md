@@ -796,7 +796,7 @@ Resource loading contract:
   Resources have a `sourceType`: `external` resources point to URLs, local
   paths, repos, or connector objects; `library` resources point to a normalized
   project Library path represented to agents as
-  `library:projects/<project-name>/`. Library resource locators must not be
+  `library:projects/<project-key>/`. Library resource locators must not be
   absolute paths, URL schemes, `..` paths, or non-project Library roots.
 - When a heartbeat or chat run resolves a `projectId`, Rudder loads only that
   project's attached resources into the runtime context and prompt resource

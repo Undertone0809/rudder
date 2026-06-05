@@ -167,7 +167,7 @@ Loading policy:
   Library workspace files when the attached resources are not enough.
 - Resource `sourceType` values:
   - `library`: `locator` is a safe project Library path under
-    `library:projects/<project-name>/`.
+    `library:projects/<project-key>/`.
   - `external`: `locator` is the original URL, local path, repo path, or
     connector object reference.
 - If you need org-wide background that was not attached to the current project,
@@ -182,8 +182,10 @@ Project mutation policy:
 
 ### Library Workspace Files
 
-Normal agents should use the CLI commands in `cli-reference.md`. API fallback
-for Library files is for debugging or compatibility only.
+Local trusted agents should use normal filesystem tools under
+`$RUDDER_PROJECT_LIBRARY_ROOT` for durable project files. API fallback for
+Library files is for debugging, compatibility, remote runtimes, or restricted
+runtimes that cannot access the local Library filesystem.
 
 - `GET /api/orgs/:orgId/workspace/files?path=:directory`
 - `GET /api/orgs/:orgId/workspace/file?path=:file`
@@ -202,9 +204,17 @@ Workspace file detail responses include renderable reference fields:
 }
 ```
 
-Agents should paste `markdownLink` into issue comments and close-out notes.
-`library-file://...` is legacy weak path syntax and should not be used for new
-durable Library references when `libraryEntryId` is available.
+Agents should paste `markdownLink` into issue comments and close-out notes. In
+normal local runs, obtain that field with
+`rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>" --json`
+after writing the file directly. The `ref` path is Library-relative, not the
+absolute `$RUDDER_PROJECT_LIBRARY_ROOT/...` filesystem path. Posting that
+returned link is the Rudder-visible handoff checkpoint for direct filesystem
+writes. If `$RUDDER_PROJECT_LIBRARY_ROOT` is unset or inaccessible, use
+`rudder library file get/put "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"` as
+the remote or restricted runtime fallback. `library-file://...` is legacy weak
+path syntax and should not be used for new durable Library references when
+`libraryEntryId` is available.
 
 ## Approval Workflows
 

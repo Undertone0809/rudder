@@ -34,6 +34,17 @@ function toLibraryFileLinkResult(detail: OrganizationWorkspaceFileDetail): Libra
   };
 }
 
+async function printLibraryFileReference(filePath: string, opts: BaseClientOptions): Promise<void> {
+  const ctx = resolveCommandContext(opts, { requireCompany: true });
+  const search = new URLSearchParams();
+  search.set("path", filePath.trim());
+  const result = await ctx.api.get<OrganizationWorkspaceFileDetail>(
+    `/api/orgs/${ctx.orgId}/workspace/file?${search.toString()}`,
+  );
+  if (!result) throw new Error("Library file not found");
+  printOutput(toLibraryFileLinkResult(result), { json: ctx.json });
+}
+
 export function registerLibraryCommands(program: Command): void {
   const library = program.command("library").description("Library file operations");
   const file = library.command("file").description("Library file operations");
@@ -89,14 +100,22 @@ export function registerLibraryCommands(program: Command): void {
       .argument("<filePath>", "Library file path")
       .action(async (filePath: string, opts: BaseClientOptions) => {
         try {
-          const ctx = resolveCommandContext(opts, { requireCompany: true });
-          const search = new URLSearchParams();
-          search.set("path", filePath.trim());
-          const result = await ctx.api.get<OrganizationWorkspaceFileDetail>(
-            `/api/orgs/${ctx.orgId}/workspace/file?${search.toString()}`,
-          );
-          if (!result) throw new Error("Library file not found");
-          printOutput(toLibraryFileLinkResult(result), { json: ctx.json });
+          await printLibraryFileReference(filePath, opts);
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: true },
+  );
+
+  addCommonClientOptions(
+    file
+      .command("ref")
+      .description(getAgentCliCapabilityById("library.file.ref").description)
+      .argument("<filePath>", "Library file path")
+      .action(async (filePath: string, opts: BaseClientOptions) => {
+        try {
+          await printLibraryFileReference(filePath, opts);
         } catch (err) {
           handleCommandError(err);
         }

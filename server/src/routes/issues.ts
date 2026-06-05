@@ -670,7 +670,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     }
     assertCompanyAccess(req, issue.orgId);
     if (req.actor.type === "agent") {
-      throw forbidden("Agents must write new durable work files under `library:projects/<project-name>/`");
+      throw forbidden("Agents must write new durable work files under `library:projects/<project-key>/...`");
     }
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {

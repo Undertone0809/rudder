@@ -121,7 +121,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       ? safePath === "projects" || (parts[0] === "projects" && parts.length >= 2)
       : parts[0] === "projects" && parts.length >= 3;
     if (hasUnsafeSegment || !allowed) {
-      throw forbidden("Agent Library file access is limited to `library:projects/<project-name>/`");
+      throw forbidden("Agent Library file access is limited to `library:projects/<project-key>/...`");
     }
   }
 

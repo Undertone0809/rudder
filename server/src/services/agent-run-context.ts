@@ -2,12 +2,16 @@ import fs from "node:fs/promises";
 import { and, asc, eq } from "drizzle-orm";
 import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
-import { agents, issues, projectWorkspaces } from "@rudderhq/db";
-import type { ProjectResourceAttachment } from "@rudderhq/shared";
+import { agents, issues, projects, projectWorkspaces } from "@rudderhq/db";
+import {
+  deriveProjectUrlKey,
+  type ProjectResourceAttachment,
+} from "@rudderhq/shared";
 import { parseObject } from "../agent-runtimes/utils.js";
 import {
   ensureAgentWorkspaceLayout,
   ensureOrganizationWorkspaceLayout,
+  ensureProjectLibraryLayout,
 } from "../home-paths.js";
 import { organizationSkillService } from "./organization-skills.js";
 import { listProjectResourceAttachments } from "./resource-catalog.js";
@@ -135,7 +139,8 @@ function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
       if (sourceType === "library") {
         lines.push(
           `  - Library path: \`library:${attachment.resource.locator}\``,
-          `  - To cite this file in a comment or handoff, run \`rudder library file link "${attachment.resource.locator}" --json\` and paste the returned \`markdownLink\`.`,
+          `  - Local file path in local trusted runs: \`$RUDDER_ORG_WORKSPACE_ROOT/${attachment.resource.locator}\``,
+          `  - To cite this file in a comment or handoff, run \`rudder library file ref "${attachment.resource.locator}" --json\` and paste the returned \`markdownLink\`.`,
         );
       }
       if (attachment.resource.description?.trim()) {
@@ -157,6 +162,48 @@ function buildCompiledResourcesPrompt(
   projectResources: ProjectResourceAttachment[],
 ) {
   return buildProjectResourcesPrompt(projectResources);
+}
+
+async function resolveProjectLibraryContext(
+  db: Db,
+  orgId: string,
+  projectId: string | null | undefined,
+) {
+  if (!projectId || typeof (db as Partial<Db>).select !== "function") {
+    return {
+      projectLibraryRoot: null,
+      projectLibraryRelativePath: null,
+    };
+  }
+
+  const query = db.select({ id: projects.id, name: projects.name });
+  if (!query || typeof (query as { from?: unknown }).from !== "function") {
+    return {
+      projectLibraryRoot: null,
+      projectLibraryRelativePath: null,
+    };
+  }
+
+  const [project] = await query.from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.orgId, orgId)))
+    .limit(1);
+  if (!project) {
+    return {
+      projectLibraryRoot: null,
+      projectLibraryRelativePath: null,
+    };
+  }
+
+  const layout = await ensureProjectLibraryLayout({
+    orgId,
+    projectId: project.id,
+    projectName: project.name,
+    projectUrlKey: deriveProjectUrlKey(project.name, project.id),
+  });
+  return {
+    projectLibraryRoot: layout.root,
+    projectLibraryRelativePath: layout.relativePath,
+  };
 }
 
 export function agentRunContextService(db: Db) {
@@ -434,6 +481,11 @@ export function agentRunContextService(db: Db) {
             workspaceProjectId,
           )
         : [];
+    const projectLibraryContext = await resolveProjectLibraryContext(
+      db,
+      input.agent.orgId,
+      workspaceProjectId,
+    );
     const compiledResourcesPrompt =
       buildCompiledResourcesPrompt(projectResources);
     const rudderWorkspace = {
@@ -459,6 +511,8 @@ export function agentRunContextService(db: Db) {
       orgWorkspaceRoot: organizationWorkspace.root,
       orgAgentsDir: organizationWorkspace.agentsDir,
       orgSkillsDir: organizationWorkspace.skillsDir,
+      projectLibraryRoot: projectLibraryContext.projectLibraryRoot,
+      projectLibraryRelativePath: projectLibraryContext.projectLibraryRelativePath,
       resourcesPrompt: compiledResourcesPrompt,
       orgResourcesPrompt: compiledResourcesPrompt,
     } satisfies Record<string, unknown>;

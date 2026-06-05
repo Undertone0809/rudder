@@ -221,6 +221,8 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const agentSkillsDir = asString(workspaceContext.agentSkillsDir, "") || null;
   const orgWorkspaceRoot = asString(workspaceContext.orgWorkspaceRoot, "") || null;
   const orgSkillsDir = asString(workspaceContext.orgSkillsDir, "") || null;
+  const projectLibraryRoot = asString(workspaceContext.projectLibraryRoot, "") || null;
+  const projectLibraryPath = asString(workspaceContext.projectLibraryRelativePath, "") || null;
   const workspaceHints = Array.isArray(context.rudderWorkspaces)
     ? context.rudderWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -333,6 +335,12 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   }
   if (orgSkillsDir) {
     env.RUDDER_ORG_SKILLS_DIR = orgSkillsDir;
+  }
+  if (projectLibraryRoot) {
+    env.RUDDER_PROJECT_LIBRARY_ROOT = projectLibraryRoot;
+  }
+  if (projectLibraryPath) {
+    env.RUDDER_PROJECT_LIBRARY_PATH = projectLibraryPath;
   }
   if (workspaceHints.length > 0) {
     env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);

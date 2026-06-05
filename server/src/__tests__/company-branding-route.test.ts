@@ -259,7 +259,7 @@ describe("organization workspace file agent access", () => {
     const res = await request(app).get("/api/orgs/organization-1/workspace/files?path=agents");
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-name>/`");
+    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
   });
 
   it("rejects agent workspace file reads that traverse out of project Library paths", async () => {
@@ -272,7 +272,7 @@ describe("organization workspace file agent access", () => {
     const res = await request(app).get("/api/orgs/organization-1/workspace/files?path=projects/../agents");
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-name>/`");
+    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
   });
 
   it("limits agent workspace file writes to project Library paths", async () => {
@@ -292,7 +292,7 @@ describe("organization workspace file agent access", () => {
       .send({ filePath: "skills/agent-team-design.md", content: "# Design\n" });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-name>/`");
+    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
   });
 
   it("rejects agent workspace file writes directly under the projects root", async () => {
@@ -312,7 +312,7 @@ describe("organization workspace file agent access", () => {
       .send({ filePath: "projects/spec.md", content: "# Spec\n" });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-name>/`");
+    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
   });
 
   it("rejects agent workspace file writes that traverse out of project Library paths", async () => {
@@ -332,7 +332,7 @@ describe("organization workspace file agent access", () => {
       .send({ filePath: "projects/../skills/agent-team-design.md", content: "# Design\n" });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-name>/`");
+    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
   });
 
   it("rejects embedded image data URLs when creating workspace files", async () => {

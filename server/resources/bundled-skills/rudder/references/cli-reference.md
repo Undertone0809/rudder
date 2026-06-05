@@ -47,9 +47,10 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder project create --org-id <id> --name <name>` | Create a project in the organization. | yes | required | no | attached when available |
 | `rudder project update <project-id-or-shortname> [--org-id <id>]` | Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt. | yes | no | no | attached when available |
 | `rudder library file list [directory]` | List Library files and folders; file rows include `libraryEntryId` when a strong reference can be generated. | no | required | no | no |
-| `rudder library file get <path>` | Read one Library file; JSON includes `mentionHref` and `markdownLink`. | no | required | no | no |
-| `rudder library file link <path>` | Return the strong Markdown link for one Library file without printing file content. | no | required | no | no |
-| `rudder library file put <path> --body-file <path>` | Create or update one Library file; JSON includes `mentionHref` and `markdownLink`. | yes | required | no | attached when available |
+| `rudder library file get <path>` | Fallback read when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. | no | required | no | no |
+| `rudder library file ref <path>` | Return the stable Markdown reference for one Library file without printing file content. | no | required | no | no |
+| `rudder library file link <path>` | Compatibility alias for `rudder library file ref <path>`. | no | required | no | no |
+| `rudder library file put <path> --body-file <path>` | Fallback create/update when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. | yes | required | no | attached when available |
 | `rudder approval get <approval-id>` | Read one approval request. | no | no | no | no |
 | `rudder approval issues <approval-id>` | List the issues linked to an approval. | no | no | no | no |
 | `rudder approval comment <approval-id> --body-file <path>` | Add a comment to an approval. | yes | no | no | attached when available |
@@ -81,13 +82,16 @@ If `RUDDER_WAKE_REASON=issue_passive_followup`, the run is close-out governance 
 
 ## Renderable Library References
 
-Agents should not hand-write `library-entry://...` URLs. After creating,
-updating, or reading a durable Library file, use the CLI-returned
-`markdownLink` in issue comments, review comments, blocker notes, done comments,
-and chat replies.
+Agents should not hand-write `library-entry://...` URLs. Local trusted agents
+should create and update durable project files directly under
+`$RUDDER_PROJECT_LIBRARY_ROOT` with normal filesystem tools. After creating,
+updating, or reading a durable Library file, use `rudder library file ref` to
+get the CLI-returned `markdownLink` for issue comments, review comments,
+blocker notes, done comments, and chat replies.
 
 ```bash
-result="$(rudder library file put "projects/<project>/<issue>.md" --body-file /tmp/work.md --json)"
+printf '%s\n' "<markdown body>" > "$RUDDER_PROJECT_LIBRARY_ROOT/<issue>.md"
+result="$(rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<issue>.md" --json)"
 printf '%s\n' "$result" | jq -r .markdownLink
 ```
 
@@ -98,9 +102,18 @@ The relevant JSON fields are:
 - `markdownLink`: complete Markdown link that the renderer turns into a Library
   chip and that continues resolving after Rudder-managed rename or move.
 
-Use `rudder library file link <path> --json` when you only need the reference
-for an existing file. Treat `library-file://...` as legacy weak path syntax and
-use it only when preserving old content that has no `libraryEntryId`.
+Use `rudder library file get/put` only when local filesystem access to the
+Library is unavailable, such as remote or restricted runtimes. `rudder library
+file link <path> --json` remains as a compatibility alias for `ref`. The
+`ref` path is Library-relative, for example
+`$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>`; do not pass the absolute
+`$RUDDER_PROJECT_LIBRARY_ROOT/...` filesystem path. Posting the returned
+`markdownLink` is the Rudder-visible handoff checkpoint for direct filesystem
+writes. If `$RUDDER_PROJECT_LIBRARY_ROOT` is unset or inaccessible, use
+`rudder library file get/put "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"` as
+the remote or restricted runtime fallback. Treat `library-file://...` as legacy
+weak path syntax and use it only when preserving old content that has no
+`libraryEntryId`.
 
 ## Git Identity Policy
 
@@ -127,7 +140,7 @@ Do not rely on a free-form reject or accept comment as the review outcome. The s
 - `rudder agent config list --org-id <id>` — List redacted agent configuration snapshots for an organization.
 - `rudder agent config get <agent-id-or-shortname>` — Read one redacted agent configuration snapshot by id or shortname.
 - `rudder agent icons` — List legacy named agent icons for compatibility/debugging; normal create and hire payloads should omit icon.
-- `rudder issue documents put <issue> <key> --body-file <path>` — Legacy create or update of a DB-backed issue document; prefer `rudder library file put` for durable project files.
+- `rudder issue documents put <issue> <key> --body-file <path>` — Legacy create or update of a DB-backed issue document; prefer local project Library files under `$RUDDER_PROJECT_LIBRARY_ROOT` for durable project files.
 - `rudder issue create --org-id <id> ... [--label-id <id> ...] [--label <name> ...]` — Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied.
 - `rudder issue labels list --org-id <id>` — List organization issue labels available for issue creation.
 - `rudder approval create --org-id <id> --type <type> --payload <json>` — Create a new approval request.

@@ -16,6 +16,11 @@ vi.mock("../home-paths.js", async (importOriginal) => {
       agentsDir: "/tmp/org-home/agents",
       skillsDir: "/tmp/org-home/skills",
     })),
+    ensureProjectLibraryLayout: vi.fn(async () => ({
+      root: "/tmp/org-home/projects/product",
+      relativePath: "projects/product",
+      readmePath: "/tmp/org-home/projects/product/README.md",
+    })),
   };
 });
 
@@ -222,6 +227,8 @@ describe("agentRunContextService buildSceneContext", () => {
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("[working_set] Rudder repo");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Source type: library");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Library path: `library:projects/product/product-brief.md`");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Local file path in local trusted runs: `$RUDDER_ORG_WORKSPACE_ROOT/projects/product/product-brief.md`");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain('rudder library file ref "projects/product/product-brief.md" --json');
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Work here first");
     expect(context.rudderOrganizationResources).toEqual([]);
     expect(context.rudderProjectResources).toEqual(expect.arrayContaining([
@@ -233,6 +240,42 @@ describe("agentRunContextService buildSceneContext", () => {
       }),
     ]));
     expect(mockListOrganizationResources).not.toHaveBeenCalled();
+  });
+
+  it("exposes the project Library root for project-scoped local runs", async () => {
+    const limit = vi.fn(async () => [{ id: "project-1", name: "Product" }]);
+    const where = vi.fn(() => ({ limit }));
+    const from = vi.fn(() => ({ where }));
+    const db = { select: vi.fn(() => ({ from })) } as any;
+    mockListProjectResourceAttachments.mockResolvedValue([]);
+
+    const svc = agentRunContextService(db);
+    const context = await svc.buildSceneContext({
+      scene: "heartbeat",
+      agent: {
+        id: "agent-1",
+        orgId: "organization-1",
+        name: "Builder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      resolvedWorkspace: {
+        cwd: "/tmp/project-workspace",
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: "https://github.com/acme/repo.git",
+        repoRef: "main",
+        workspaceHints: [],
+        warnings: [],
+      },
+      runtimeConfig: {},
+    });
+
+    expect(context.rudderWorkspace).toEqual(expect.objectContaining({
+      projectLibraryRoot: "/tmp/org-home/projects/product",
+      projectLibraryRelativePath: "projects/product",
+    }));
   });
 });
 
