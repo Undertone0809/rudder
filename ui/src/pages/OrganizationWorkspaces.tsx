@@ -3870,6 +3870,7 @@ export function OrganizationWorkspaceBrowser({
     : null;
   const visibleWorkspaceBreadcrumbPath = selectedFilePath ?? selectedDirectoryPath;
   const visibleWorkspaceBreadcrumbKind = selectedFilePath ? "file" : "directory";
+  const showWorkspaceFileTabs = openFilePaths.length > 0;
   const emptyStateCreateTarget: OrganizationWorkspaceFileEntry = {
     name: selectedDirectoryPath?.split("/").filter(Boolean).at(-1) ?? "",
     path: selectedDirectoryPath ?? "",
@@ -4373,18 +4374,18 @@ export function OrganizationWorkspaceBrowser({
             data-testid="org-workspaces-editor-card"
             className="flex min-h-[420px] min-w-0 flex-col bg-transparent lg:min-h-0 lg:flex-1"
           >
-            <div
-              data-testid="org-workspaces-editor-tabs"
-              role="tablist"
-              aria-label="Open files"
-              className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-[var(--rudder-doc-editor-tab-strip-height)] shrink-0 items-stretch justify-between bg-transparent"
-            >
+            {showWorkspaceFileTabs ? (
               <div
-                ref={setOpenFileTabsScrollerRef}
-                data-testid="org-workspaces-editor-tab-scroller"
-                className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-0 pr-2 pt-1"
+                data-testid="org-workspaces-editor-tabs"
+                role="tablist"
+                aria-label="Open files"
+                className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-[var(--rudder-doc-editor-tab-strip-height)] shrink-0 items-stretch justify-between bg-transparent"
               >
-                {openFilePaths.length > 0 ? (
+                <div
+                  ref={setOpenFileTabsScrollerRef}
+                  data-testid="org-workspaces-editor-tab-scroller"
+                  className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-0 pr-2 pt-1"
+                >
                   <>
                     {openFilePaths.map((filePath, index) => {
                       const active = selectedFilePath === filePath;
@@ -4449,11 +4450,9 @@ export function OrganizationWorkspaceBrowser({
                     })}
                     <div aria-hidden="true" className="rudder-doc-editor-tab-drag-spacer mb-1 h-9 min-w-6 flex-1" />
                   </>
-                ) : (
-                  <div className="rudder-doc-editor-tab-drag-spacer mb-1 h-9 min-w-0 flex-1" aria-hidden="true" />
-                )}
+                </div>
               </div>
-            </div>
+            ) : null}
             {visibleWorkspaceBreadcrumbPath !== null ? (
               <div
                 data-testid="org-workspaces-path-breadcrumb"
@@ -4494,7 +4493,13 @@ export function OrganizationWorkspaceBrowser({
                 })}
               </div>
             ) : null}
-            <div data-testid="org-workspaces-editor-content" className="min-h-0 flex-1 overflow-hidden border-x border-b border-border bg-[color:var(--surface-elevated)]">
+            <div
+              data-testid="org-workspaces-editor-content"
+              className={cn(
+                "min-h-0 flex-1 overflow-hidden border-x border-b border-border bg-[color:var(--surface-elevated)]",
+                !showWorkspaceFileTabs && visibleWorkspaceBreadcrumbPath === null && "border-t",
+              )}
+            >
               {selectedProjectResource ? (
                 <ProjectResourceDetailPanel
                   project={selectedProjectResource.project}
