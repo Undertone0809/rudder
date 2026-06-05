@@ -2436,6 +2436,7 @@ describe("messengerService and issue follows", () => {
     const orgId = randomUUID();
     const userId = "board-user-chat-preview";
     const chatId = randomUUID();
+    const agentId = randomUUID();
     const activityAt = new Date("2026-04-12T12:00:00.000Z");
 
     await db.insert(organizations).values({
@@ -2446,11 +2447,24 @@ describe("messengerService and issue follows", () => {
       requireBoardApprovalForNewAgents: false,
     });
 
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Asher",
+      role: "general",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
     await db.insert(chatConversations).values({
       id: chatId,
       orgId,
       title: "Chat preview",
       status: "active",
+      preferredAgentId: agentId,
       lastMessageAt: activityAt,
       createdAt: activityAt,
       updatedAt: activityAt,
@@ -2471,6 +2485,9 @@ describe("messengerService and issue follows", () => {
 
     expect(chatSummary?.preview).toBe("需求: 把 Agent 的处理流程规范化");
     expect(chatSummary?.subtitle).toBe("需求: 把 Agent 的处理流程规范化");
+    expect(chatSummary?.metadata).toMatchObject({
+      preferredAgentId: agentId,
+    });
   });
 
   it("keeps pending chat approvals attention in Messenger thread summaries when chat is read", async () => {

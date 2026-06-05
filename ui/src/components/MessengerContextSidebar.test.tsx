@@ -12,6 +12,7 @@ let messengerModel: any;
 let messengerRoute: any;
 let messengerModelOptions: any[];
 let chatList: any[];
+let agentList: any[];
 let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
 let activeGeneratingChatIds: Set<string>;
@@ -21,7 +22,10 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries }),
   useQuery: (options: { queryKey?: unknown; enabled?: boolean }) => {
     queryOptions.push(options);
-    return { data: options.enabled === false ? undefined : chatList };
+    if (options.enabled === false) return { data: undefined };
+    const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
+    if (queryKey[0] === "agents") return { data: agentList };
+    return { data: chatList };
   },
 }));
 
@@ -78,6 +82,7 @@ function baseModel() {
         unreadCount: 0,
         needsAttention: false,
         isPinned: false,
+        metadata: { preferredAgentId: "agent-1" },
       },
       {
         threadKey: "issues",
@@ -130,6 +135,18 @@ describe("MessengerContextSidebar", () => {
         isPinned: false,
         primaryIssue: null,
         contextLinks: [],
+      },
+    ];
+    agentList = [
+      {
+        id: "agent-1",
+        orgId: "org-1",
+        name: "Asher",
+        urlKey: "asher",
+        role: "general",
+        title: null,
+        icon: "dicebear:notionists:asher",
+        status: "active",
       },
     ];
     activeGeneratingChatIds = new Set();
@@ -247,6 +264,9 @@ describe("MessengerContextSidebar", () => {
     expect(html).not.toContain("Hello Zee!");
     expect(html).not.toContain("Followed issues");
     expect(html).not.toContain('data-testid="messenger-thread-issues"');
+    expect(html).toContain('data-testid="messenger-thread-chat-chat-1-agent-avatar"');
+    expect(html).toMatch(/data-testid="messenger-thread-chat-chat-1-agent-avatar"[\s\S]*?<img/);
+    expect(html).toContain('title="Chat agent: Asher"');
     expect(html).toContain("items-center gap-2 px-2 py-1.5");
     expect(html).toContain("h-7 w-7");
     expect(html).toContain("grid-cols-[minmax(0,1fr)_2.75rem] items-center");

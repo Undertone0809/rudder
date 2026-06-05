@@ -588,6 +588,11 @@ export function buildMessengerChatThreadSummary(
     needsAttention: conversation.needsAttention,
     isPinned: conversation.isPinned,
     href: `/messenger/chat/${conversation.id}`,
+    metadata: {
+      preferredAgentId: conversation.preferredAgentId,
+      routedAgentId: conversation.routedAgentId,
+      runtimeAgentId: conversation.chatRuntime.runtimeAgentId,
+    },
   };
 }
 

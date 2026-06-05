@@ -234,8 +234,21 @@ type JoinRequestRow = {
 type ChatConversationRow = Awaited<ReturnType<ReturnType<typeof chatService>["list"]>>[number];
 type ChatSummarySource = Pick<
   ChatConversationRow,
-  "id" | "title" | "summary" | "latestReplyPreview" | "lastMessageAt" | "updatedAt" | "lastReadAt" | "unreadCount" | "needsAttention" | "isPinned"
->;
+  | "id"
+  | "title"
+  | "summary"
+  | "latestReplyPreview"
+  | "lastMessageAt"
+  | "updatedAt"
+  | "lastReadAt"
+  | "unreadCount"
+  | "needsAttention"
+  | "isPinned"
+  | "preferredAgentId"
+  | "routedAgentId"
+> & {
+  chatRuntime?: { runtimeAgentId?: string | null } | null;
+};
 type ChatMessageRow = Awaited<ReturnType<ReturnType<typeof chatService>["listMessages"]>>[number];
 type HeartbeatRunRow = typeof heartbeatRuns.$inferSelect;
 
@@ -637,6 +650,11 @@ function chatSummary(conversation: ChatSummarySource): MessengerThreadSummary {
     needsAttention: conversation.needsAttention,
     isPinned: conversation.isPinned,
     href: `/messenger/chat/${conversation.id}`,
+    metadata: {
+      preferredAgentId: conversation.preferredAgentId,
+      routedAgentId: conversation.routedAgentId,
+      runtimeAgentId: conversation.chatRuntime?.runtimeAgentId ?? null,
+    },
   };
 }
 

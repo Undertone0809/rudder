@@ -22,10 +22,12 @@ import {
   UserPlus,
   XCircle,
 } from "lucide-react";
-import { buildChatMentionHref, formatMessengerPreview, formatMessengerTitle, type ChatConversation } from "@rudderhq/shared";
+import { buildChatMentionHref, formatMessengerPreview, formatMessengerTitle, type Agent, type ChatConversation } from "@rudderhq/shared";
+import { agentsApi } from "@/api/agents";
 import { ApiError } from "@/api/client";
 import { chatsApi } from "@/api/chats";
 import { messengerApi } from "@/api/messenger";
+import { AgentIcon } from "@/components/AgentAvatar";
 import { Link, useLocation, useNavigate } from "@/lib/router";
 import { displayChatTitle } from "@/lib/chat-title";
 import { cn, relativeTime } from "@/lib/utils";
@@ -236,6 +238,19 @@ function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" |
   return displayChatTitle(conversation);
 }
 
+function nonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function resolveChatAgentId(conversation: Pick<ChatConversation, "preferredAgentId" | "routedAgentId" | "chatRuntime">) {
+  return (
+    conversation.chatRuntime?.runtimeAgentId
+    ?? conversation.routedAgentId
+    ?? conversation.preferredAgentId
+    ?? null
+  );
+}
+
 function threadDisplayTitle(title: string) {
   return formatMessengerTitle(title, { max: 80 }) ?? title;
 }
@@ -273,6 +288,64 @@ function ThreadAvatar({
       {unreadCount > 0 ? (
         <span
           data-testid={testId}
+          className="absolute -right-1.5 -top-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[color:var(--surface-elevated)] bg-red-500 px-1 text-[10px] font-semibold leading-none text-white shadow-[0_4px_12px_-6px_rgba(220,38,38,0.85)]"
+        >
+          {unreadCount > 99 ? "99+" : unreadCount}
+        </span>
+      ) : needsAttention ? (
+        <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full border-2 border-[color:var(--surface-elevated)] bg-red-500" />
+      ) : null}
+    </span>
+  );
+}
+
+function ChatAgentThreadAvatar({
+  agent,
+  agentId,
+  unreadCount,
+  needsAttention,
+  density,
+  testId,
+}: {
+  agent: Agent | null;
+  agentId: string | null;
+  unreadCount: number;
+  needsAttention: boolean;
+  density: MessengerThreadDensity;
+  testId: string;
+}) {
+  if (!agent && !agentId) {
+    return (
+      <ThreadAvatar
+        icon={MessageSquare}
+        unreadCount={unreadCount}
+        needsAttention={needsAttention}
+        density={density}
+        shape="rounded"
+        testId={`${testId}-unread-badge`}
+      />
+    );
+  }
+
+  const compact = density === "compact";
+  return (
+    <span
+      data-testid={testId}
+      title={agent?.name ? `Chat agent: ${agent.name}` : "Chat agent"}
+      className={cn(
+        "relative flex shrink-0 items-center justify-center overflow-visible rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)]",
+        compact ? "h-7 w-7" : "mt-0.5 h-10 w-10",
+      )}
+    >
+      <AgentIcon
+        icon={agent?.icon}
+        role={agent?.role}
+        fallbackSeed={agent?.id ?? agentId}
+        className="h-full w-full rounded-full"
+      />
+      {unreadCount > 0 ? (
+        <span
+          data-testid={`${testId}-unread-badge`}
           className="absolute -right-1.5 -top-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[color:var(--surface-elevated)] bg-red-500 px-1 text-[10px] font-semibold leading-none text-white shadow-[0_4px_12px_-6px_rgba(220,38,38,0.85)]"
         >
           {unreadCount > 99 ? "99+" : unreadCount}
@@ -396,6 +469,8 @@ function MessengerThreadSectionHeader({
 
 function ChatThreadRow({
   conversation,
+  agent,
+  agentId,
   href,
   active,
   generating,
@@ -413,6 +488,8 @@ function ChatThreadRow({
   onSelect,
 }: {
   conversation: ChatConversation;
+  agent: Agent | null;
+  agentId: string | null;
   href: string;
   active: boolean;
   generating: boolean;
@@ -449,13 +526,13 @@ function ChatThreadRow({
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
       )}
     >
-      <ThreadAvatar
-        icon={MessageSquare}
+      <ChatAgentThreadAvatar
+        agent={agent}
+        agentId={agentId}
         unreadCount={conversation.unreadCount}
         needsAttention={conversation.needsAttention}
         density={density}
-        shape="rounded"
-        testId={`${sanitizeThreadKey(`chat:${conversation.id}`)}-unread-badge`}
+        testId={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}-agent-avatar`}
       />
       {renaming ? (
         <div className="min-w-0 flex-1">
@@ -744,10 +821,20 @@ function chatConversationForThreadSummary(
   const conversationId = threadConversationId(thread.threadKey);
   if (!conversationId) return null;
 
+  const metadata = thread.metadata ?? {};
+  const preferredAgentId = nonEmptyString(metadata.preferredAgentId);
+  const routedAgentId = nonEmptyString(metadata.routedAgentId);
+  const runtimeAgentId = nonEmptyString(metadata.runtimeAgentId);
   const isPinned = typeof thread.isPinned === "boolean" ? thread.isPinned : Boolean(conversation?.isPinned);
   if (conversation) {
     return {
       ...conversation,
+      preferredAgentId: conversation.preferredAgentId ?? preferredAgentId,
+      routedAgentId: conversation.routedAgentId ?? routedAgentId,
+      chatRuntime: {
+        ...conversation.chatRuntime,
+        runtimeAgentId: conversation.chatRuntime?.runtimeAgentId ?? runtimeAgentId,
+      },
       lastReadAt: thread.lastReadAt ?? conversation.lastReadAt,
       unreadCount: thread.unreadCount,
       isUnread: thread.unreadCount > 0,
@@ -765,8 +852,8 @@ function chatConversationForThreadSummary(
     title: thread.title,
     summary: preview,
     latestReplyPreview: preview,
-    preferredAgentId: null,
-    routedAgentId: null,
+    preferredAgentId,
+    routedAgentId,
     primaryIssueId: null,
     primaryIssue: null,
     issueCreationMode: "manual_approval",
@@ -783,7 +870,7 @@ function chatConversationForThreadSummary(
     chatRuntime: {
       sourceType: "unconfigured",
       sourceLabel: "No agent selected",
-      runtimeAgentId: null,
+      runtimeAgentId,
       agentRuntimeType: null,
       model: null,
       available: false,
@@ -930,6 +1017,12 @@ export function MessengerContextSidebar() {
     enabled: !!model.selectedOrganizationId && shouldLoadSidebarConversations,
   });
 
+  const agentsQuery = useQuery({
+    queryKey: queryKeys.agents.list(model.selectedOrganizationId ?? "__none__"),
+    queryFn: () => agentsApi.list(model.selectedOrganizationId!),
+    enabled: !!model.selectedOrganizationId,
+  });
+
   const conversationsById = useMemo(() => {
     const map = new Map<string, ChatConversation>();
     for (const conversation of chatsQuery.data ?? []) {
@@ -937,6 +1030,14 @@ export function MessengerContextSidebar() {
     }
     return map;
   }, [chatsQuery.data]);
+
+  const agentsById = useMemo(() => {
+    const map = new Map<string, Agent>();
+    for (const agent of agentsQuery.data ?? []) {
+      map.set(agent.id, agent);
+    }
+    return map;
+  }, [agentsQuery.data]);
 
   const organizedThreadSections = useMemo(() => {
     const threadSummaries = splitIssueNotifications
@@ -1310,10 +1411,13 @@ export function MessengerContextSidebar() {
             {section.entries.map(({ thread, conversation }) => {
               const active = activeThreadKey === thread.threadKey;
               if (thread.kind === "chat" && conversation) {
+                const agentId = resolveChatAgentId(conversation);
                 return (
                   <ChatThreadRow
                     key={thread.threadKey}
                     conversation={conversation}
+                    agent={agentId ? agentsById.get(agentId) ?? null : null}
+                    agentId={agentId}
                     href={thread.href}
                     active={active}
                     generating={isChatGenerationActive(conversation.id)}
