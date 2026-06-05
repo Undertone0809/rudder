@@ -1121,7 +1121,7 @@ describe("MarkdownEditor", () => {
     expect(option?.textContent).not.toContain("Skill");
   });
 
-  it("renders issue mention options with status, project, and assignee metadata", async () => {
+  it("renders issue mention options without context metadata labels", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -1165,12 +1165,14 @@ describe("MarkdownEditor", () => {
     await placeCaretAndOpenMentionMenu(editable!, 4);
 
     const menu = document.body.querySelector('[data-testid="markdown-mention-menu"]');
-    expect(menu?.textContent).toContain("RUD-28 Add icon for opening a file in IDE");
+    const option = document.body.querySelector('[data-testid="markdown-mention-option-issue:issue-1"]');
+    expect(option?.textContent).toContain("RUD-28 Add icon for opening a file in IDE");
     expect(menu?.textContent).not.toContain("Todo");
-    expect(menu?.textContent).toContain("rudder dev");
-    expect(menu?.textContent).toContain("Ella");
+    expect(option?.textContent).not.toContain("rudder dev");
+    expect(option?.textContent).not.toContain("Ella");
+    expect(option?.textContent).not.toContain("Issue");
     expect(menu?.querySelector('[aria-label="Status: Todo"] [data-slot="issue-status-icon"]')).not.toBeNull();
-    expect(menu?.querySelector('[data-testid="markdown-mention-option-issue:issue-1"] .mt-0\\.5')).toBeNull();
+    expect(option?.querySelector(".mt-0\\.5")).toBeNull();
   });
 
   it("renders chat mention options as one-line rows with activity time", async () => {

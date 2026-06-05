@@ -2046,28 +2046,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                                 {option.name}
                               </div>
                             ) : option.kind === "issue" && option.issueId ? (
-                              <div className="flex min-w-0 flex-1 items-center gap-2">
-                                <span className="min-w-0 truncate font-medium text-foreground">{option.name}</span>
-                                {option.issueProjectName ? (
-                                  <span className="inline-flex min-w-0 shrink-[2] items-center gap-1 text-[11px] text-muted-foreground">
-                                    <span
-                                      className="h-2 w-2 shrink-0 rounded-full border border-border/50"
-                                      style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
-                                      aria-hidden="true"
-                                    />
-                                    <span className="truncate">{option.issueProjectName}</span>
-                                  </span>
-                                ) : null}
-                                <span className="inline-flex min-w-0 shrink-[2] items-center gap-1 text-[11px] text-muted-foreground">
-                                  {option.issueAssigneeIcon ? (
-                                    <AgentIcon
-                                      icon={option.issueAssigneeIcon}
-                                      role={option.issueAssigneeRole}
-                                      className="h-3 w-3 shrink-0 text-muted-foreground"
-                                    />
-                                  ) : null}
-                                  <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
-                                </span>
+                              <div className="min-w-0 flex-1 truncate font-medium text-foreground">
+                                {option.name}
                               </div>
                             ) : (
                               <div className="min-w-0 flex-1">
@@ -2092,16 +2072,6 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                               </div>
                             )
                           ) : null}
-                          {option.kind === "issue" && option.issueId && (
-                            <span className="ml-auto text-[11px] text-muted-foreground">
-                              Issue
-                            </span>
-                          )}
-                          {option.kind === "project" && option.projectId && (
-                            <span className="ml-auto text-[11px] text-muted-foreground">
-                              Project
-                            </span>
-                          )}
                           {option.kind === "chat" && option.chatConversationId && (
                             <span className="ml-auto shrink-0 text-[11px] text-muted-foreground" title={chatTimeTitle}>
                               {chatTimeLabel ?? "Chat"}
