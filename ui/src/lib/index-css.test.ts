@@ -173,6 +173,7 @@ describe("index.css motion rules", () => {
     expect(organizationWorkspacesSource).toContain("rounded-[var(--rudder-doc-editor-tab-radius)]");
     expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-path-breadcrumb"[\s\S]{0,240}className="[^"]*\bborder-x\b[^"]*\bborder-b\b[^"]*\bborder-border\b/);
     expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-editor-content"[\s\S]{0,160}className="[^"]*\bborder-x\b[^"]*\bborder-b\b[^"]*\bborder-border\b/);
+    expect(organizationWorkspacesSource).not.toContain("workspace-card-header");
     expect(organizationWorkspacesSource).not.toMatch(/rudder-doc-editor-tab--active[^\n]*rounded-t-\[24px]/);
     expect(organizationWorkspacesSource).not.toMatch(/mb-1 h-9[^\n]*rounded-\[18px]/);
   });
