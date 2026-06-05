@@ -4456,7 +4456,10 @@ export function OrganizationWorkspaceBrowser({
             {visibleWorkspaceBreadcrumbPath !== null ? (
               <div
                 data-testid="org-workspaces-path-breadcrumb"
-                className="flex h-9 shrink-0 items-center gap-1 overflow-hidden border-x border-b border-border bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
+                className={cn(
+                  "flex h-9 shrink-0 items-center gap-1 overflow-hidden border-x border-b border-border bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground",
+                  showWorkspaceFileTabs && "rounded-tr-[var(--desktop-workspace-radius)]",
+                )}
                 aria-label="File path"
               >
                 {workspacePathBreadcrumb(
