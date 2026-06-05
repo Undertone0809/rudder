@@ -148,13 +148,49 @@ export function issueRoutes(db: Db, storage: StorageService) {
     if (issue.status !== "in_progress" || issue.assigneeAgentId !== actorAgentId) {
       return true;
     }
+    async function logOwnershipRejected(reason: string, details?: Record<string, unknown>) {
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId: issue.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.run_ownership_rejected",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          reason,
+          status: issue.status,
+          assigneeAgentId: issue.assigneeAgentId,
+          actorAgentId,
+          actorRunId: actor.runId,
+          ...details,
+        },
+      });
+    }
     const runId = requireAgentRunId(req, res);
-    if (!runId) return false;
+    if (!runId) {
+      await logOwnershipRejected("missing_agent_run_id");
+      return false;
+    }
     if (!isUuidLike(runId)) {
+      await logOwnershipRejected("invalid_agent_run_id");
       res.status(403).json({ error: "Run context is not valid for this issue" });
       return false;
     }
-    const ownership = await svc.assertCheckoutOwner(issue.id, actorAgentId, runId);
+    let ownership;
+    try {
+      ownership = await svc.assertCheckoutOwner(issue.id, actorAgentId, runId);
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 409) {
+        await logOwnershipRejected("checkout_owner_conflict", {
+          error: err.message,
+          errorDetails: err.details,
+        });
+      }
+      throw err;
+    }
     if (ownership.adoptedFromRunId) {
       const actor = getActorInfo(req);
       await logActivity(db, {

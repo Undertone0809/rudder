@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderTemplate, selectPromptTemplate } from "@rudderhq/agent-runtime-utils/server-utils";
 import { issueRoutes } from "../routes/issues.js";
 import { errorHandler } from "../middleware/index.js";
+import { HttpError } from "../errors.js";
 
 const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
@@ -1707,6 +1708,116 @@ describe("issue lifecycle routes", () => {
         details: expect.objectContaining({
           commentId: "comment-1",
           bodySnippet: "Close-out evidence.",
+        }),
+      }),
+    );
+  });
+
+  it("allows an assignee follow-up execution run with a null checkout lock to close out", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+        status: "in_progress",
+        checkoutRunId: null,
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+        status: patch.status as "in_review",
+        checkoutRunId: null,
+        executionRunId: RUN_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done", comment: "Implemented the requested changes." });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.assertCheckoutOwner).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      ASSIGNEE_AGENT_ID,
+      RUN_ID,
+    );
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "in_review" }),
+    );
+    expect(mockHeartbeatService.reportRunActivity).toHaveBeenCalledWith(RUN_ID);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.updated",
+        runId: RUN_ID,
+        details: expect.objectContaining({
+          status: "in_review",
+          normalizedFromStatus: "done",
+          normalizedReason: "reviewed_issue_assignee_completion",
+        }),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.comment_added",
+        runId: RUN_ID,
+        details: expect.objectContaining({
+          bodySnippet: "Implemented the requested changes.",
+        }),
+      }),
+    );
+  });
+
+  it("logs ownership rejection when an assignee close-out run does not own the issue", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        checkoutRunId: "99999999-9999-4999-8999-999999999999",
+        executionRunId: "99999999-9999-4999-8999-999999999999",
+      }),
+    );
+    mockIssueService.assertCheckoutOwner.mockRejectedValueOnce(new HttpError(409, "Issue run ownership conflict", {
+      issueId: "11111111-1111-4111-8111-111111111111",
+      checkoutRunId: "99999999-9999-4999-8999-999999999999",
+      executionRunId: "99999999-9999-4999-8999-999999999999",
+      actorRunId: RUN_ID,
+    }));
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done", comment: "This run should not close out." });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: "Issue run ownership conflict",
+      details: expect.objectContaining({
+        checkoutRunId: "99999999-9999-4999-8999-999999999999",
+        executionRunId: "99999999-9999-4999-8999-999999999999",
+        actorRunId: RUN_ID,
+      }),
+    });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.run_ownership_rejected",
+        runId: RUN_ID,
+        details: expect.objectContaining({
+          reason: "checkout_owner_conflict",
+          actorAgentId: ASSIGNEE_AGENT_ID,
+          actorRunId: RUN_ID,
+          error: "Issue run ownership conflict",
+          errorDetails: expect.objectContaining({
+            checkoutRunId: "99999999-9999-4999-8999-999999999999",
+            executionRunId: "99999999-9999-4999-8999-999999999999",
+            actorRunId: RUN_ID,
+          }),
         }),
       }),
     );

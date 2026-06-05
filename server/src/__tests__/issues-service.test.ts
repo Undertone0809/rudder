@@ -1417,6 +1417,74 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
+  it("allows the current execution run to own an in-progress issue when checkout lock is null", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const executionRunId = randomUUID();
+    const otherRunId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Owner",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values([
+      {
+        id: executionRunId,
+        orgId,
+        agentId,
+        invocationSource: "automation",
+        status: "running",
+      },
+      {
+        id: otherRunId,
+        orgId,
+        agentId,
+        invocationSource: "automation",
+        status: "running",
+      },
+    ]);
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Follow-up close-out",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: agentId,
+      createdByAgentId: agentId,
+      checkoutRunId: null,
+      executionRunId,
+      executionAgentNameKey: "owner",
+      executionLockedAt: new Date(),
+      startedAt: new Date(),
+    });
+
+    await expect(svc.assertCheckoutOwner(issueId, agentId, executionRunId)).resolves.toMatchObject({
+      assigneeAgentId: agentId,
+      checkoutRunId: null,
+      executionRunId,
+      adoptedFromRunId: null,
+    });
+    await expect(svc.assertCheckoutOwner(issueId, agentId, otherRunId)).rejects.toThrow(/Issue run ownership conflict/i);
+  });
+
   it("rejects release when a different run tries to release the checkout lock", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
