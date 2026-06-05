@@ -8,8 +8,8 @@ description: >
   optimization, skill-improvement routing, and risky dirty-worktree cleanup.
   Keep thin: if the prompt clearly names release, UI polish, run/debug, local
   preview, data path, Desktop recovery, PR preview, mock data, review-only
-  work, or direct skill optimization, use the narrower maintainer or meta-skill
-  directly.
+  work, direct skill optimization, or stalled/sleep-interrupted run triage, use
+  the narrower maintainer or meta-skill directly.
 ---
 
 # Development Lifecycle Router Maintainer
@@ -40,6 +40,10 @@ Use this skill when the user asks for any of:
 - continuation after `turn_aborted`, rollback, stash/worktree confusion, or a
   long `/goal` run where the agent must recover the real current state before
   resuming
+- recovery of a long-running or apparently stuck task after host sleep, laptop
+  close/reopen, process loss, stale heartbeat, unchanged transcript, or repeated
+  no-progress retry where the safest next action may be to stop instead of
+  continue
 - destructive or ambiguous worktree cleanup requests such as "这些删了", "what are
   these changes", or "is this old Codex work" where file ownership must be
   reconstructed before removing or restoring anything
@@ -175,6 +179,9 @@ Classify the prompt into one primary stage:
   push, residual risk, or PR.
 - `recovery`: the user asks to clean, delete, restore, classify, or continue
   from a dirty worktree, stash, interrupted run, or suspected old Codex work.
+- `runtime_stall`: the user reports or evidence shows a long-running task may
+  be stuck, sleep-interrupted, process-lost, stale, or repeatedly retrying
+  without new work-loop progress.
 - `component_lab`: the user asks to build or expand UI Lab, component inventory,
   component fixtures, or design-system coverage.
 - `performance_benchmark`: the user asks to benchmark Rudder, analyze
@@ -237,6 +244,10 @@ without lifecycle sequencing, dirty-state recovery, or stage-gate decisions.
   `rudder-data-path-diagnostician-maintainer`.
 - Rudder agent run failure, transcript, logs, stdout/stderr, or run id:
   `debug-run-transcript-maintainer`.
+- Stalled, sleep-interrupted, process-lost, or no-progress long run: enter
+  `runtime_stall` first. Stop or cancel the stale execution before retries or
+  new heartbeat work, then route to `debug-run-transcript-maintainer` only after
+  the run is no longer consuming work.
 - Rudder performance benchmark, control-plane bottleneck analysis, or app/API
   optimization: first collect measured workload evidence and current validation
   readiness, then route to implementation or
@@ -381,6 +392,56 @@ sessions, rebuild state before editing or handing off:
 If a stash exists, classify it before applying or dropping it: source session,
 files included, overlap with current task, and whether applying it would
 overwrite unrelated work. Do not drop or pop a stash just to clean up state.
+
+### 3.1.1 Stop stalled or sleep-interrupted runs before retrying
+
+When the user says a task "ran too long", "卡住了", "自动停下", "盖上电脑",
+"打开电脑", "process lost", "no longer running", "stale heartbeat", or the
+visible run shows long elapsed wall-clock time with little or no transcript
+progress, enter `runtime_stall` before normal recovery or debug.
+
+The first job is to prevent more waste, not to finish the old task. Build a
+stall packet from the cheapest live sources:
+
+- current run status, elapsed wall time, latest transcript/event/log timestamp,
+  child process or pid liveness when available, and whether the UI says
+  cancelled/failed/idle/process lost
+- whether new output, file diffs, comments, issue state, or activity appeared
+  after the suspected sleep or disconnect window
+- whether the next action would be a retry, another heartbeat, or a continuation
+  with the same prompt and no new evidence
+- current user instruction; a fresh instruction to optimize the workflow or stop
+  the run beats the old embedded task
+
+Autostop rule:
+
+- If wall-clock time increased across a sleep/disconnect window but there is no
+  new transcript/event/log progress, no live child process, or only repeated
+  retry/heartbeat records, stop or cancel the stale execution when the runtime
+  exposes a stop/cancel/pause action.
+- If no stop action is available, stop issuing further work for that run and
+  hand off `blocked: stalled execution cannot be safely resumed`, with the
+  missing stop mechanism named.
+- Do not launch a retry, new heartbeat, reviewer, or long validation command
+  until the stale run is stopped or explicitly classified as still making real
+  progress.
+- Do not mark the task as done only because the UI says `idle`; inspect whether
+  the old work loop produced a terminal effect or merely stopped consuming.
+
+After stopping, decide the next owner:
+
+- If the user asked to fix the workflow or skill that allowed the waste, route
+  to `skill-optimizer` or implementation with the stalled run as evidence.
+- If the user asked why it happened, route to
+  `debug-run-transcript-maintainer` with the stall packet.
+- If the old task still matters, resume only from a current-state checkpoint:
+  latest user request, surviving diff, validation already run, exact blocker,
+  and the next single safe command.
+
+For long routed work under this skill, set a lightweight progress checkpoint
+before starting repeated or expensive actions: intended next evidence, expected
+fresh signal, and stop condition. If the same action repeats without a fresher
+signal, trigger the autostop rule instead of continuing silently.
 
 ### 3.2 Handle dirty-worktree cleanup as recovery first
 
@@ -712,6 +773,8 @@ Do not hand off as complete when any of these are true:
 - Desktop/release/package work lacks the repo-required packaged or live checks
 - git history includes unrelated files or an unsafe amend in a shared worktree
 - final answer hides failed checks, skipped evidence, or push blockers
+- a stalled or sleep-interrupted run was retried, resumed, or replaced by a new
+  heartbeat without first proving live progress or stopping the stale execution
 
 ## Common Routes
 
@@ -764,6 +827,15 @@ switch to implementation after the root cause and target fix are clear.
 After a fix, do not treat the transcript as proof that the product behavior is
 fixed. Move through verification with terminal product proof for the affected
 actor and surface.
+
+### Stalled or sleep-interrupted run
+
+Route: `runtime_stall -> recovery or debug -> implementation or handoff`.
+
+Stop the stale run first when there is no fresh progress signal, then inspect
+the run evidence or optimize the workflow that allowed the waste. Do not retry
+the same heartbeat or continue the old task just because the run list now shows
+`idle`, `cancelled`, or a recoverable-looking status.
 
 ### Agent-visible CLI or runtime workflow regression
 

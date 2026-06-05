@@ -255,6 +255,22 @@
       ]
     },
     {
+      "id": 25,
+      "prompt": "又是这种任务，跑了 8h 明明卡住了，不懂的自动停下。应该是我盖上电脑一会又打开了会这样。优化 development-lifecycle-router-maintainer，以后不要出现这种问题。",
+      "expected_output": "Classifies the turn as skill_optimization or runtime_stall evidence for the router, not as permission to retry the old heartbeat task. It treats the long elapsed time, sleep/reopen hint, stale transcript/process-loss signs, and user correction as a reusable stalled-run failure class, patches the router or evals with an autostop rule, and does not launch another heartbeat, reviewer, or long validation command for the stale run.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
+      ],
+      "expectations": [
+        "The result gives the user's current skill-optimization request precedence over the old task embedded in the screenshot or run transcript.",
+        "The result identifies the failed decision point as continuing or retrying a sleep-interrupted/no-progress run instead of stopping it first.",
+        "The result requires a stall packet such as run status, elapsed wall time, latest transcript/log timestamp, pid liveness, and fresh work-loop effects before any resume.",
+        "The result says to stop/cancel the stale execution, or block with the missing stop mechanism named, before launching retries, heartbeats, reviewers, or long validation.",
+        "The result adds or proposes a validation case that prevents the same stalled-run waste on the next router invocation."
+      ]
+    },
+    {
       "id": 7,
       "prompt": "organization-portability 这个文件太大了，一口气做完架构优化，但可以分批 commit，不要一下子来一个很大的 commit。",
       "expected_output": "Routes the long refactor through phased implementation, creates a visible phase checklist, commits coherent phases separately when safe, keeps checkpoint evidence after each phase, and requires spawned reviewers before each phase handoff or final completion.",
