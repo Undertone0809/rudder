@@ -3,9 +3,6 @@
 This guide is the entrypoint for local development.
 It keeps the shortest path here and routes deep operational details to focused docs.
 
-For Codex Desktop thread discovery, inspection, continuation, and thread-state
-boundaries, see `doc/CODEX-THREAD-TOOLS.md`.
-
 ## Deployment Modes
 
 For mode definitions and intended CLI behavior, see `doc/DEPLOYMENT-MODES.md`.
