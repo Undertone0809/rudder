@@ -127,6 +127,7 @@ export interface Config {
   heartbeatSchedulerEnabled: boolean;
   heartbeatSchedulerIntervalMs: number;
   heartbeatRunTimeoutMs: number;
+  heartbeatRunInactivityTimeoutMs: number;
   companyDeletionEnabled: boolean;
   langfuse: {
     enabled: boolean;
@@ -328,6 +329,14 @@ export function loadConfig(): Config {
       : Number.isFinite(heartbeatRunTimeoutMsRaw)
         ? Math.max(0, heartbeatRunTimeoutMsRaw)
         : 12 * 60 * 60 * 1000;
+  const heartbeatRunInactivityTimeoutMsValue = process.env.HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS?.trim();
+  const heartbeatRunInactivityTimeoutMsRaw = Number(heartbeatRunInactivityTimeoutMsValue);
+  const heartbeatRunInactivityTimeoutMs =
+    !heartbeatRunInactivityTimeoutMsValue
+      ? 30 * 60 * 1000
+      : Number.isFinite(heartbeatRunInactivityTimeoutMsRaw)
+        ? Math.max(0, heartbeatRunInactivityTimeoutMsRaw)
+        : 30 * 60 * 1000;
 
   return {
     deploymentMode,
@@ -372,6 +381,7 @@ export function loadConfig(): Config {
     heartbeatSchedulerEnabled: process.env.HEARTBEAT_SCHEDULER_ENABLED !== "false",
     heartbeatSchedulerIntervalMs: Math.max(10000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000),
     heartbeatRunTimeoutMs,
+    heartbeatRunInactivityTimeoutMs,
     companyDeletionEnabled,
     langfuse: {
       enabled: process.env.LANGFUSE_ENABLED !== undefined
