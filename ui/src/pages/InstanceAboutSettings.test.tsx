@@ -32,7 +32,6 @@ vi.mock("@/context/I18nContext", () => ({
     t: (key: string) =>
       ({
         "about.title": "About",
-        "about.description": "About page",
         "about.version.title": "Version",
         "about.version.description": "Version section",
         "about.version.current": "Version",

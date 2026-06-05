@@ -404,7 +404,6 @@ export const zhCN: Messages = {
   "langfuse.saved.body": "请先重启 app 或本地 server，再观察新 trace 是否使用了这份配置。",
   "langfuse.saveFailed.title": "保存 Langfuse 设置失败",
   "about.title": "关于",
-  "about.description": "查看当前构建和所连接的本地桌面环境，检查是否有新的桌面版发布，或打开默认邮件应用发送产品反馈。",
   "about.version.title": "版本",
   "about.version.description": "这里显示当前机器上运行的 Rudder 构建版本。",
   "about.version.current": "版本",
