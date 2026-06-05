@@ -317,6 +317,43 @@
         "The result recognizes hotspot-file risk without turning the task into an unrequested broad refactor.",
         "The result validates the actual user-visible workflow, includes an evidence ledger, and uses spawned reviewers before handoff."
       ]
+    },
+    {
+      "id": 25,
+      "prompt": "已经有两个 spawned reviewer 了。Reviewer A 看了 typecheck、unit tests、截图；Reviewer B 也看了 typecheck、unit tests、截图，都说可以。现在这个 agent-visible workflow 可以 handoff 吗？",
+      "expected_output": "Rejects the reviewer gate as incomplete because the reviewers duplicated the same functional surface. It requires at least one adversarial or heuristic lens that challenges framing, user journey, hidden assumptions, or unseen alternatives before handoff.",
+      "files": [],
+      "expectations": [
+        "The result distinguishes reviewer count from reviewer lens coverage.",
+        "The result does not accept two duplicate functional test checklists as a valid routed review gate.",
+        "The result names the missing adversarial or heuristic lens and asks for a targeted follow-up review.",
+        "The result keeps the artifact or handoff blocked until the non-functional lens has a final verdict or the user explicitly lowers the bar."
+      ]
+    },
+    {
+      "id": 26,
+      "prompt": "我们给 markdown 加了一个新的 library-file 渲染 token，UI parser、renderer、截图都过了。review 一下 Agent 之后会不会知道怎么写这个语法。",
+      "expected_output": "Treats this as an agent-visible protocol and requires functional, adversarial, and heuristic reviewer lenses. Beyond renderer proof, the review must ask whether agents can discover and author the token through CLI/runtime/context/docs, and should suggest the smallest durable authoring contract rather than stopping at UI display evidence.",
+      "files": [],
+      "expectations": [
+        "The result does not treat renderer tests and screenshots as complete proof for an agent-writable protocol.",
+        "The functional lens checks parser, renderer, navigation, and persistence evidence.",
+        "The adversarial lens challenges whether a real agent can discover, produce, and recover the token when titles or paths change.",
+        "The heuristic lens proposes the smallest durable authoring surface or protocol reference instead of broadening into an unnecessary schema system."
+      ]
+    },
+    {
+      "id": 27,
+      "prompt": "只是修一个命令 help 里的 typo，也走 lifecycle-router。你别搞很重，但最后还是给我 review 一下。",
+      "expected_output": "Keeps the route lightweight and records a mechanical exception if it uses only two spawned reviewers, but still requires one functional-trust lens and one adversarial or heuristic lens. It must not replace spawned review with self-review or let both reviewers duplicate the same typo check.",
+      "files": [],
+      "expectations": [
+        "The result identifies the change as a truly mechanical routed change and avoids an unnecessary three-reviewer heavyweight gate.",
+        "The result records why the third lens is not required for this mechanical exception.",
+        "The result still uses spawned reviewers when review is requested or required by the route.",
+        "The result requires one non-functional lens to check scope, command meaning, docs consistency, or hidden side effects.",
+        "The result does not use lightweight review to mean self-review, no review, or duplicate functional checks."
+      ]
     }
   ]
 }

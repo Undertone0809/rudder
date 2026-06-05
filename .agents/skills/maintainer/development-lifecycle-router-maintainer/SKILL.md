@@ -538,6 +538,26 @@ decision, diff, validation bundle, or handoff. This includes narrow bug fixes:
 implement first, collect verification evidence, then review the actual diff and
 evidence before final handoff.
 
+The reviewer gate is not only a functionality check. Its job is to expand the
+author's field of view. A valid gate must preserve distinct reviewer lenses so
+the parent does not receive three copies of the same test checklist. For any
+workflow, proposal, skill, agent-visible contract, UI/product journey, release,
+Desktop, runtime, or prior-failed handoff, spawn reviewers with at least these
+three lenses:
+
+- functional trust: does the artifact work, are contracts/tests/evidence real,
+  and is the handoff safe?
+- adversarial: what would make this wrong, misleading, brittle, over-scoped,
+  under-scoped, or harmful from the user's real journey?
+- heuristic: what alternative framing, smaller slice, missed user job, stronger
+  product shape, or future-proofing path would the author likely not see?
+
+For truly mechanical routed changes, two spawned reviewers are acceptable only
+when one owns functional trust and the other is explicitly adversarial or
+heuristic. Record why the third lens was not required. Do not let both
+reviewers collapse into duplicate functional checks, and do not use "lightweight"
+to mean self-review or no spawned review.
+
 Reviewer gates mean spawned reviewer agents. The author rereading the diff,
 writing two internal personas, or labeling a serial pass as "Reviewer A/B" is
 not a valid review gate for this skill.
@@ -550,6 +570,8 @@ Escalate the review depth when:
 - the change is broad, user-visible, release-related, Desktop/package-related,
   or cross-contract
 - a prior run failed because it skipped review or used the wrong stage
+- the user complains that a prior review missed risks, lacked first-principles
+  thinking, or failed to provide a new perspective
 
 Skip or defer the review gate only when:
 
@@ -582,6 +604,9 @@ or the next consequential stage, reconcile the spawned reviewer gate:
   gate states until the named blocker is fixed, the missing proof is gathered,
   or the user explicitly lowers the acceptance bar
 - do not upgrade a `stage accept` into a final handoff accept
+- reject the review gate when all reviewers evaluate the same functional
+  surface and none meaningfully challenges framing, user journey, hidden
+  assumptions, or unseen alternatives
 
 For UI, workflow, Desktop, runtime, release, or control-plane changes, the
 parent must verify that reviewer outputs distinguish author-claimed validation
@@ -608,37 +633,106 @@ artifact, validation evidence gathered so far, and the failed probe evidence, an
 stop before complete handoff unless the user explicitly changes the review
 policy.
 
-Reviewer A owns scenario correctness:
+Reviewer A owns functional trust and scenario correctness:
 
 ```text
 Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
 
-Review the stage artifact as the scenario and demand reviewer. Focus on user
-job, actors, lifecycle states, non-goals, requirement classes, edge cases, and
-whether this stage solves the right problem. Separate author-claimed proof from
+Review the stage artifact as the scenario, demand, implementation, validation,
+and handoff trust reviewer. Focus on user job, actors, lifecycle states,
+non-goals, requirement classes, object model, scope discipline, org scoping,
+contracts, tests, terminal product proof, git safety, and whether this stage
+solves the right problem. Separate author-claimed proof from reviewer-verified
+proof. Give accept / conditional accept / needs more evidence / reject, verdict
+level, blockers, and smallest changes needed.
+```
+
+Reviewer B owns adversarial review:
+
+```text
+Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
+
+Review the stage artifact adversarially. Try to disprove the author's framing
+from first principles and from the user's real journey. Look for hidden
+assumptions, wrong abstraction level, path dependence, overfitting to tests,
+weak terminal proof, old or conflicting docs, agent/operator behavior that was
+not exercised, edge cases that reverse the conclusion, and ways the artifact
+could be technically correct but product-wrong. Separate author-claimed proof
+from reviewer-verified proof. Give accept / conditional accept / needs more
+evidence / reject, verdict level, blockers, and smallest changes needed.
+```
+
+Reviewer C owns heuristic and generative review:
+
+```text
+Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
+
+Review the stage artifact as a heuristic/product-systems reviewer. Do not only
+look for bugs. Look for the better question, the smaller durable slice, the
+missing actor journey, the more teachable contract, the alternative surface or
+protocol that would make future work easier, and the second-order consequence
+the author likely missed. Identify useful next perspectives without broadening
+the current task unnecessarily. Separate author-claimed proof from
 reviewer-verified proof. Give accept / conditional accept / needs more evidence
-/ reject, verdict level, blockers, and smallest changes needed.
+/ reject, verdict level, blockers, and the smallest changes or next-slice
+recommendations.
 ```
 
-Reviewer B owns delivery trust:
+If any required reviewer rejects, names a blocker, or says the review lens was
+not answerable from available evidence, rework before final handoff or report
+the blocker as requiring user judgment. Do not collapse an adversarial or
+heuristic reviewer into a standard implementation reviewer just to get a pass.
 
-```text
-Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
+### 4.1 Reviewer Lens Validation Cases
 
-Review the stage artifact as the implementation, validation, and handoff
-reviewer. Focus on object model, scope discipline, org scoping, contracts,
-tests, terminal product proof, visual/Desktop/release evidence when relevant,
-git safety, and handoff quality. If the work affects a user-visible or
-agent-visible workflow, verify whether the actor-run-chain or terminal product
-surface was actually exercised by the reviewer or only claimed by the author.
-Give accept / conditional accept / needs more evidence / reject, verdict level,
-blockers, and smallest changes needed.
-```
+Use these cases to judge whether this router's review gate itself behaved
+correctly.
 
-If either reviewer rejects or names a blocker, rework before final handoff or
-report the blocker as requiring user judgment.
+#### Case: Agent-Writable Protocol
 
-### 4.1 Evidence ledger
+Input:
+A change adds a renderer for a new token and tests that the UI can display it.
+
+Expected behavior:
+The functional reviewer checks parser/render/navigation evidence. The
+adversarial reviewer asks whether the real agent can discover and author the
+token from CLI, skills, runtime context, or API output. The heuristic reviewer
+suggests the smallest authoring contract, such as a CLI-returned markdown link
+or protocol reference, instead of jumping to a full UI-schema system.
+
+Must not:
+Accept the change as complete only because screenshots and renderer tests pass.
+
+#### Case: UI Looks Correct But Journey Is Wrong
+
+Input:
+A visible UI patch fixes the immediate screen but the user complains the review
+missed the real workflow.
+
+Expected behavior:
+The adversarial reviewer reconstructs actor, trigger, persisted effect, and
+terminal surface. The heuristic reviewer asks whether the screen is only a
+symptom of a deeper workflow or data-path contract.
+
+Must not:
+Run two reviewers that both repeat the same DOM, typecheck, and screenshot
+checks.
+
+#### Case: Narrow Mechanical Patch
+
+Input:
+A one-line typo or command help fix with no workflow behavior.
+
+Expected behavior:
+The router may use two spawned reviewers and record a mechanical exception for
+the missing third lens, but one lens must still challenge whether the change
+accidentally alters scope, command meaning, or docs consistency.
+
+Must not:
+Spawn three heavyweight reviewers for a no-risk text correction unless the user
+explicitly asks for that depth.
+
+### 4.2 Evidence ledger
 
 Before handoff, include a compact evidence ledger:
 
@@ -802,6 +896,7 @@ Used:
 
 Review:
 - Mode: spawned reviewers / blocked: spawned reviewers unavailable / not a routed review gate
+- Lenses: functional trust / adversarial / heuristic, or mechanical exception rationale
 - Verdict: ...
 
 Validation:
