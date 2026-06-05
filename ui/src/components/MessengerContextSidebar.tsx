@@ -340,8 +340,6 @@ function MessengerThreadSectionHeader({
   const compact = density === "compact";
   const statusLabels = [
     activeRule ? threadOrganizationLabel(rule) : null,
-    compact ? "Compact" : null,
-    splitIssueNotifications ? "Split issues" : null,
   ].filter(Boolean);
   return (
     <div className="group/section flex items-center justify-between px-3.5 pt-3.5">

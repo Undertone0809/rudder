@@ -237,12 +237,12 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('aria-label="Organize threads"');
   });
 
-  it("defaults Messenger threads to compact density and split issue notifications", () => {
+  it("defaults Messenger threads to compact density and split issue notifications without status labels", () => {
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).toContain("Threads");
-    expect(html).toContain("Compact");
-    expect(html).toContain("Split issues");
+    expect(html).not.toContain("Compact");
+    expect(html).not.toContain("Split issues");
     expect(html).toContain("hi");
     expect(html).not.toContain("Hello Zee!");
     expect(html).not.toContain("Followed issues");
@@ -291,9 +291,9 @@ describe("MessengerContextSidebar", () => {
   it("hides stale aggregate Issues rows while split issue notifications are active", () => {
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
-    expect(html).toContain("Split issues");
     expect(html).not.toContain('data-testid="messenger-thread-issues"');
     expect(html).not.toContain("Followed issues");
+    expect(messengerModelOptions).toContainEqual({ splitIssues: true });
   });
 
   it("promotes pinned Messenger chats from thread summaries before chat list hydration", () => {
