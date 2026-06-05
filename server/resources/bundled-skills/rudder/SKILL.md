@@ -338,6 +338,11 @@ Use concise markdown with:
 - bullets for what changed or what is blocked
 - links to related issues, approvals, projects, agents, or documents when available
 
+**Clickable URLs are Markdown links.** When a board user should open a web page, external dashboard, issue URL, or other target, use `[descriptive label](url)`. Do not leave action URLs as bare text, and do not wrap them in code spans unless you are showing literal code or a command:
+
+- Good: `[NameSilo transfer page](https://www.namesilo.com/account_domain_manage_transfer.php)`
+- Bad: `https://www.namesilo.com/account_domain_manage_transfer.php`
+
 **Ticket references are links.** Never leave bare ticket ids like `PAP-224` in comments or descriptions when you can link them:
 
 - `[PAP-224](/PAP/issues/PAP-224)`

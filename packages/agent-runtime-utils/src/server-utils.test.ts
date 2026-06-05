@@ -384,6 +384,8 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).toContain("library-file://file?p=<url-encoded-relative-path>&t=<url-encoded-title>");
     expect(loaded.prefix).toContain("Use `/tmp` only for transient scratch files");
     expect(loaded.prefix).toContain("Local trusted runtimes may expose the host operator home as `$RUDDER_OPERATOR_HOME`");
+    expect(loaded.prefix).toContain("[NameSilo transfer page](https://www.namesilo.com/account_domain_manage_transfer.php)");
+    expect(loaded.prefix).toContain("Do not put action URLs in backticks or code blocks");
     expect(loaded.prefix).toContain("agent://agent-id?intent=wake");
     expect(loaded.prefix).toContain("Plain structured links such as `agent://agent-id` are reference-only links");
     expect(loaded.prefix).toContain("Agent-authored issue comments do not fan out peer wakeups by default");

@@ -21,9 +21,14 @@ related_code:
   - server/src/services/issues.comments-attachments.ts
   - server/src/routes/issues.comments-attachments.ts
   - server/src/routes/issues.mutations.ts
+  - packages/agent-runtime-utils/src/server-utils.prompts.ts
+  - packages/agent-runtime-utils/src/server-utils.test.ts
   - server/resources/bundled-skills/rudder/SKILL.md
+  - server/src/onboarding-assets/default/HEARTBEAT.md
+  - server/src/onboarding-assets/ceo/HEARTBEAT.md
 commit_refs:
   - fix: separate comment mention wake intent
+  - docs: teach agents clickable markdown links
 updated_at: 2026-06-06
 ---
 
@@ -82,6 +87,11 @@ Agents must know the boundary:
   fanout protection.
 - To request structured review, agents should use reviewer workflow commands;
   free-form comments and mentions are not review decisions.
+- When an agent writes a user-openable URL in a comment or chat reply, it should
+  make the URL clickable with standard Markdown syntax, for example
+  `[NameSilo transfer page](https://www.namesilo.com/account_domain_manage_transfer.php)`.
+  Bare URLs and code-spanned action URLs are not acceptable for operator-facing
+  close-out comments because they are harder to click and scan in Rudder.
 
 ## Implementation
 

@@ -32,6 +32,8 @@ If approval context is set, review linked issues and close/comment.
 
 * Do the work. Update status and comment when done.
 
+* In comments, use clickable Markdown links like `[label](url)` for pages or actions the board should open. Do not wrap action URLs in code spans unless you are showing literal code or a command.
+
 * If `RUDDER_WAKE_REASON=issue_passive_followup`, inspect current issue state first, then leave a close-out signal: progress comment, done, blocked with reason, or explicit handoff. If a reviewed issue is blocked, write the blocker clearly enough for reviewer triage.
 
 * Do not rely on an agent-authored comment mention to wake a peer agent. Use the
