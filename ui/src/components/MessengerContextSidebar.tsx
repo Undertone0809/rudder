@@ -1657,6 +1657,7 @@ export function MessengerContextSidebar() {
             collapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100",
           )}
           aria-hidden={collapsed || undefined}
+          inert={collapsed || undefined}
         >
           <div className="min-h-0 overflow-hidden">
             <div className="flex flex-col gap-1">

@@ -209,6 +209,17 @@ function renderSidebar() {
   });
 }
 
+function tabbableDescendants(root: HTMLElement) {
+  return Array.from(root.querySelectorAll<HTMLElement>(
+    'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
+  )).filter((element) => {
+    if (element.closest("[inert]")) return false;
+    if (element.getAttribute("aria-hidden") === "true") return false;
+    if ("disabled" in element && Boolean(element.disabled)) return false;
+    return true;
+  });
+}
+
 describe("MessengerContextSidebar chat actions", () => {
   beforeEach(() => {
     activeGeneratingChatIds = new Set();
@@ -593,9 +604,13 @@ describe("MessengerContextSidebar chat actions", () => {
 
     expect(projectHeader?.getAttribute("aria-expanded")).toBe("false");
     expect(document.querySelector('[data-testid="messenger-thread-section-project-project-1-attention-count"]')?.textContent).toBe("1");
-    const projectContent = document.querySelector('[data-testid="messenger-thread-section-project-project-1-content"]');
-    expect(projectContent?.getAttribute("aria-hidden")).toBe("true");
-    expect(projectContent?.className).toContain("grid-rows-[0fr]");
+    const projectContent = document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-project-project-1-content"]');
+    expect(projectContent).not.toBeNull();
+    if (!projectContent) throw new Error("Expected project content to render");
+    expect(projectContent.getAttribute("aria-hidden")).toBe("true");
+    expect(projectContent.hasAttribute("inert")).toBe(true);
+    expect(projectContent.className).toContain("grid-rows-[0fr]");
+    expect(tabbableDescendants(projectContent)).toHaveLength(0);
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-1"]')).toBeTruthy();
     expect(setItem).toHaveBeenCalledWith(
       "rudder.messengerCollapsedProjectGroupsByOrg",
