@@ -1705,6 +1705,31 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId(threadTestId("issues"))).toHaveCount(0);
   });
 
+  test("shows a newly sent Messenger chat in the sidebar without leaving the page", async ({ page }) => {
+    const organization = await createConfiguredOrganization(page, `Messenger-New-Chat-Sidebar-${Date.now()}`);
+    const message = "Refresh the Messenger sidebar immediately";
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill(message);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/[0-9a-f-]+$`), {
+      timeout: 15_000,
+    });
+
+    const chatId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const chatRow = page.getByTestId(threadTestId(`chat:${chatId}`));
+    await expect(chatRow).toBeVisible({ timeout: 15_000 });
+    await expect(chatRow).toContainText(message);
+  });
+
   test("expands empty-state prompts into concrete use cases before filling the composer", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-UseCases-${Date.now()}`);
 
