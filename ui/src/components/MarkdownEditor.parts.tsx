@@ -122,6 +122,7 @@ export interface MarkdownEditorProps {
   /** Optional surface used to align the mention menu for larger composer UIs. */
   mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
   mentionMenuPlacement?: "caret" | "container";
+  mentionMenuSize?: "default" | "compact";
   /** Called according to submitShortcut. */
   onSubmit?: () => void;
   submitShortcut?: "mod-enter" | "enter";

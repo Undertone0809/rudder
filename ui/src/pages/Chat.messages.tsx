@@ -1613,8 +1613,7 @@ export function ChatMessageItem({
               onChange={inlineEdit.onChange}
               mentions={inlineEdit.mentions}
               onMentionQueryChange={inlineEdit.onMentionQueryChange}
-              mentionMenuAnchorRef={inlineEdit.surfaceRef}
-              mentionMenuPlacement="container"
+              mentionMenuSize="compact"
               submitShortcut="enter"
               onInlineTokenClick={inlineEdit.onInlineTokenClick}
               plainText

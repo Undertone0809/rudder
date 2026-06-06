@@ -770,6 +770,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   onMentionQueryChange,
   mentionMenuAnchorRef,
   mentionMenuPlacement = "caret",
+  mentionMenuSize = "default",
   onSubmit,
   submitShortcut = "mod-enter",
   agentMentionIntent = "reference",
@@ -970,8 +971,13 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         );
       }
     }
-    return getMentionMenuPositionForViewport(mentionState, window.innerWidth, window.innerHeight);
-  }, [mentionMenuAnchorRef, mentionMenuPlacement, mentionState]);
+    return getMentionMenuPositionForViewport(
+      mentionState,
+      window.innerWidth,
+      window.innerHeight,
+      mentionMenuSize === "compact" ? { width: 320, maxHeight: 180 } : undefined,
+    );
+  }, [mentionMenuAnchorRef, mentionMenuPlacement, mentionMenuSize, mentionState]);
 
   const groupedMentionOptions = useMemo(() => {
     const labelForKind = (kind: MentionOption["kind"]) => {

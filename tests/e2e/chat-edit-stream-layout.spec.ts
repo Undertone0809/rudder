@@ -67,15 +67,30 @@ test.describe("Chat edit streaming layout", () => {
     const inlineContent = inlineEditor.locator(".rudder-mdxeditor-content").first();
     await inlineContent.click();
     await page.keyboard.press("End");
-    await page.keyboard.type(" $");
+    await page.keyboard.type(" @");
     const inlineMentionMenu = page.getByTestId("markdown-mention-menu");
     await expect(inlineMentionMenu).toBeVisible();
-    await expect(inlineMentionMenu.getByRole("menuitem").filter({ hasText: "Build Advisor" }).first()).toBeVisible();
+    await expect(inlineMentionMenu.getByRole("option").filter({ hasText: "build-advisor" }).first()).toBeVisible();
     const inlineEditorBox = await inlineEditor.boundingBox();
     const mentionMenuBox = await inlineMentionMenu.boundingBox();
+    const caretBox = await page.evaluate(() => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return null;
+      const rect = selection.getRangeAt(0).getBoundingClientRect();
+      return {
+        bottom: rect.bottom,
+        left: rect.left,
+      };
+    });
     expect(inlineEditorBox).not.toBeNull();
     expect(mentionMenuBox).not.toBeNull();
-    expect(mentionMenuBox!.y).toBeGreaterThanOrEqual(inlineEditorBox!.y + inlineEditorBox!.height - 2);
+    expect(caretBox).not.toBeNull();
+    expect(Math.abs(mentionMenuBox!.y - (caretBox!.bottom + 4))).toBeLessThanOrEqual(24);
+    expect(Math.abs(mentionMenuBox!.x - caretBox!.left)).toBeLessThanOrEqual(24);
+    expect(mentionMenuBox!.width).toBeLessThan(inlineEditorBox!.width - 32);
+    expect(mentionMenuBox!.y).toBeLessThan(inlineEditorBox!.y + inlineEditorBox!.height - 2);
+    await page.keyboard.press("Escape");
+    await expect(inlineMentionMenu).toBeHidden();
     await inlineEditor.getByRole("button", { name: "Cancel" }).click();
 
     await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Original edit target" })).toBeVisible();

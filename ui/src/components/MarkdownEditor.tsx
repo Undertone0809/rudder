@@ -159,6 +159,7 @@ export interface MarkdownEditorProps {
   /** Optional surface used to align the mention menu for larger composer UIs. */
   mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
   mentionMenuPlacement?: "caret" | "container";
+  mentionMenuSize?: "default" | "compact";
   /** Called according to submitShortcut. */
   onSubmit?: () => void;
   submitShortcut?: "mod-enter" | "enter";
@@ -768,8 +769,13 @@ function getMentionPanelPosition(anchor: HTMLElement) {
   );
 }
 
-function getMentionMenuPosition(state: MentionState) {
-  return getMentionMenuPositionForViewport(state, window.innerWidth, window.innerHeight);
+function getMentionMenuPosition(state: MentionState, size: MarkdownEditorProps["mentionMenuSize"] = "default") {
+  return getMentionMenuPositionForViewport(
+    state,
+    window.innerWidth,
+    window.innerHeight,
+    size === "compact" ? { width: 320, maxHeight: 180 } : undefined,
+  );
 }
 
 function statusLabel(status: string): string {
@@ -1009,6 +1015,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   agentMentionIntent = "reference",
   mentionMenuAnchorRef,
   mentionMenuPlacement = "caret",
+  mentionMenuSize = "default",
   onSubmit,
   submitShortcut = "mod-enter",
   plainText = false,
@@ -1096,9 +1103,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         const anchor = mentionMenuAnchorRef?.current ?? containerRef.current;
         if (anchor) return getMentionPanelPosition(anchor);
       }
-      return getMentionMenuPosition(mentionState);
+      return getMentionMenuPosition(mentionState, mentionMenuSize);
     },
-    [mentionMenuAnchorRef, mentionMenuPlacement, mentionState],
+    [mentionMenuAnchorRef, mentionMenuPlacement, mentionMenuSize, mentionState],
   );
   const groupedMentionOptions = useMemo(() => {
     const labelForKind = (kind: MentionOption["kind"]) => {
