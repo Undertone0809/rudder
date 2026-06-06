@@ -358,6 +358,7 @@ describe("messengerService and issue follows", () => {
     const orgId = randomUUID();
     const userId = "board-user-split-issues";
     const issueId = randomUUID();
+    const issueRunId = randomUUID();
     const projectId = randomUUID();
     const assigneeAgentId = randomUUID();
     const chatId = randomUUID();
@@ -421,16 +422,27 @@ describe("messengerService and issue follows", () => {
       },
     ]);
 
+    await db.insert(heartbeatRuns).values({
+      id: issueRunId,
+      orgId,
+      agentId: assigneeAgentId,
+      invocationSource: "issue",
+      status: "running",
+      createdAt: issueUpdatedAt,
+      updatedAt: issueUpdatedAt,
+    });
+
     await db.insert(issues).values({
       id: issueId,
       orgId,
       title: "Split issue row",
-      status: "todo",
+      status: "in_progress",
       priority: "medium",
       projectId,
       assigneeAgentId,
       assigneeUserId: userId,
       identifier: "SPL-1",
+      executionRunId: issueRunId,
       createdAt: issueUpdatedAt,
       updatedAt: issueUpdatedAt,
     });
@@ -465,6 +477,7 @@ describe("messengerService and issue follows", () => {
         projectName: "Operator console",
         projectColor: "#6d5dfc",
         assigneeAgentId,
+        activeExecutionRunId: issueRunId,
         assignedToMe: true,
       },
     });

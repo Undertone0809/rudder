@@ -144,6 +144,8 @@ type IssueUniverseRow = {
   reviewerUserId: string | null;
   createdByUserId: string | null;
   identifier: string | null;
+  executionRunId: string | null;
+  hasActiveExecutionRun: boolean;
   updatedAt: Date;
 };
 
@@ -801,6 +803,9 @@ function issueCard(
       status: issue.status,
       ...(statusChange ? { statusChange } : {}),
       priority: issue.priority,
+      ...(issue.hasActiveExecutionRun && issue.executionRunId
+        ? { activeExecutionRunId: issue.executionRunId }
+        : {}),
       ...(issue.assigneeAgentId ? { assigneeAgentId: issue.assigneeAgentId } : {}),
       ...(issue.projectId
         ? {
@@ -1047,6 +1052,14 @@ export function messengerService(db: Db) {
           issue_row.reviewer_user_id as "reviewerUserId",
           issue_row.created_by_user_id as "createdByUserId",
           issue_row.identifier as identifier,
+          issue_row.execution_run_id as "executionRunId",
+          exists (
+            select 1
+            from ${heartbeatRuns} active_execution_run
+            where active_execution_run.id = issue_row.execution_run_id
+              and active_execution_run.org_id = issue_row.org_id
+              and active_execution_run.status in ('queued', 'running')
+          ) as "hasActiveExecutionRun",
           issue_row.updated_at as "updatedAt",
           exists (
             select 1
@@ -1240,6 +1253,8 @@ export function messengerService(db: Db) {
       reviewerUserId: row.reviewerUserId,
       createdByUserId: row.createdByUserId,
       identifier: row.identifier,
+      executionRunId: row.executionRunId,
+      hasActiveExecutionRun: row.hasActiveExecutionRun,
       updatedAt,
       followed: row.followed,
       assigned: row.assigned,

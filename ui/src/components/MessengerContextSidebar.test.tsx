@@ -422,6 +422,42 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('data-slot="status-progress-arc"');
   });
 
+  it("shows a spinning loader for split issue rows with an active execution run", () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Running split issue",
+          preview: "The assigned agent is working on it.",
+          subtitle: "assigned to me",
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: {
+            splitIssue: true,
+            issueId: "issue-1",
+            issueIdentifier: "ISS-1",
+            status: "in_progress",
+            activeExecutionRunId: "run-1",
+          },
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain('title="Issue run in progress"');
+    expect(html).toContain('data-testid="issue-issue-1-unread-badge-active-run"');
+    expect(html).toContain("animate-spin");
+    expect(html).not.toContain('data-slot="status-progress-arc"');
+  });
+
   it("groups Messenger chats by project when the organization rule is project", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
     localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });

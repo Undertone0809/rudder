@@ -451,27 +451,38 @@ function ChatAgentThreadAvatar({
 
 function IssueStatusThreadAvatar({
   status,
+  activeExecutionRunId,
   unreadCount,
   needsAttention,
   density = "comfortable",
   testId,
 }: {
   status: string;
+  activeExecutionRunId?: string | null;
   unreadCount: number;
   needsAttention: boolean;
   density?: MessengerThreadDensity;
   testId?: string;
 }) {
   const compact = density === "compact";
+  const running = Boolean(activeExecutionRunId);
   return (
     <span
-      title={`Issue status: ${status.replace(/_/g, " ")}`}
+      title={running ? "Issue run in progress" : `Issue status: ${status.replace(/_/g, " ")}`}
       className={cn(
         "relative flex shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)]",
         compact ? "h-7 w-7" : "mt-0.5 h-10 w-10",
       )}
     >
-      <StatusIcon status={status} className={cn(compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
+      {running ? (
+        <Loader2
+          data-testid={testId ? `${testId}-active-run` : undefined}
+          className={cn("animate-spin text-cyan-600 dark:text-cyan-300", compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")}
+          aria-hidden="true"
+        />
+      ) : (
+        <StatusIcon status={status} className={cn(compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
+      )}
       {unreadCount > 0 ? (
         <span
           data-testid={testId}
@@ -795,6 +806,10 @@ function ThreadRow({
     thread.metadata?.splitIssue === true && typeof thread.metadata.status === "string"
       ? thread.metadata.status
       : null;
+  const activeExecutionRunId =
+    thread.metadata?.splitIssue === true && typeof thread.metadata.activeExecutionRunId === "string"
+      ? thread.metadata.activeExecutionRunId
+      : null;
 
   return (
     <div
@@ -811,6 +826,7 @@ function ThreadRow({
       {issueStatus ? (
         <IssueStatusThreadAvatar
           status={issueStatus}
+          activeExecutionRunId={activeExecutionRunId}
           unreadCount={thread.unreadCount}
           needsAttention={thread.needsAttention}
           density={density}
