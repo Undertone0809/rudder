@@ -925,11 +925,20 @@ export function issueService(db: Db) {
       if (issueData.goalId) {
         await assertValidGoal(existing.orgId, issueData.goalId);
       }
+      const projectChanged = issueData.projectId !== undefined && issueData.projectId !== existing.projectId;
+      if (projectChanged) {
+        if (issueData.projectWorkspaceId === undefined) {
+          patch.projectWorkspaceId = null;
+        }
+        if (issueData.executionWorkspaceId === undefined) {
+          patch.executionWorkspaceId = null;
+        }
+      }
       const nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
       const nextProjectWorkspaceId =
-        issueData.projectWorkspaceId !== undefined ? issueData.projectWorkspaceId : existing.projectWorkspaceId;
+        patch.projectWorkspaceId !== undefined ? patch.projectWorkspaceId : existing.projectWorkspaceId;
       const nextExecutionWorkspaceId =
-        issueData.executionWorkspaceId !== undefined ? issueData.executionWorkspaceId : existing.executionWorkspaceId;
+        patch.executionWorkspaceId !== undefined ? patch.executionWorkspaceId : existing.executionWorkspaceId;
       if (nextProjectWorkspaceId) {
         await assertValidProjectWorkspace(existing.orgId, nextProjectId, nextProjectWorkspaceId);
       }

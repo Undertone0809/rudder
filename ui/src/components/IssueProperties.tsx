@@ -666,6 +666,7 @@ export function IssueProperties({
             onUpdate({
               projectId: null,
               projectWorkspaceId: null,
+              executionWorkspaceId: null,
             });
             setProjectOpen(false);
           }}
@@ -689,6 +690,7 @@ export function IssueProperties({
               onUpdate({
                 projectId: p.id,
                 projectWorkspaceId: defaultProjectWorkspaceIdForProject(p),
+                executionWorkspaceId: null,
               });
               setProjectOpen(false);
             }}

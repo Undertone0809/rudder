@@ -1641,6 +1641,82 @@ describe("issueService.list participantAgentId", () => {
     expect(updated?.executionWorkspaceSettings).toEqual({ mode: "isolated_workspace" });
   });
 
+  it("clears stale execution workspace when moving an issue to another project", async () => {
+    const orgId = randomUUID();
+    const oldProjectId = randomUUID();
+    const newProjectId = randomUUID();
+    const oldProjectWorkspaceId = randomUUID();
+    const newProjectWorkspaceId = randomUUID();
+    const oldExecutionWorkspaceId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Project Move Workspace Org",
+      urlKey: deriveOrganizationUrlKey("Project Move Workspace Org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values([
+      {
+        id: oldProjectId,
+        orgId,
+        name: "Old Project",
+        status: "planned",
+      },
+      {
+        id: newProjectId,
+        orgId,
+        name: "New Project",
+        status: "planned",
+      },
+    ]);
+    await db.insert(projectWorkspaces).values([
+      {
+        id: oldProjectWorkspaceId,
+        orgId,
+        projectId: oldProjectId,
+        name: "Old workspace",
+        sourceType: "local_path",
+        cwd: "/tmp/rudder-old-workspace",
+      },
+      {
+        id: newProjectWorkspaceId,
+        orgId,
+        projectId: newProjectId,
+        name: "New workspace",
+        sourceType: "local_path",
+        cwd: "/tmp/rudder-new-workspace",
+      },
+    ]);
+    await db.insert(executionWorkspaces).values({
+      id: oldExecutionWorkspaceId,
+      orgId,
+      projectId: oldProjectId,
+      projectWorkspaceId: oldProjectWorkspaceId,
+      mode: "shared_workspace",
+      strategyType: "project_primary",
+      name: "Old execution workspace",
+    });
+
+    const created = await svc.create(orgId, {
+      title: "Move project issue",
+      status: "todo",
+      priority: "medium",
+      projectId: oldProjectId,
+      projectWorkspaceId: oldProjectWorkspaceId,
+      executionWorkspaceId: oldExecutionWorkspaceId,
+    });
+
+    const updated = await svc.update(created.id, {
+      projectId: newProjectId,
+      projectWorkspaceId: newProjectWorkspaceId,
+    });
+
+    expect(updated?.projectId).toBe(newProjectId);
+    expect(updated?.projectWorkspaceId).toBe(newProjectWorkspaceId);
+    expect(updated?.executionWorkspaceId).toBeNull();
+  });
+
   it("persists manual board order inside a status lane", async () => {
     const orgId = randomUUID();
     const firstIssueId = randomUUID();
