@@ -17,7 +17,10 @@ const mockAbortChatStream = vi.hoisted(() => vi.fn());
 const mockSetChatSendInFlight = vi.hoisted(() => vi.fn());
 const mockSetStreamDraftForChat = vi.hoisted(() => vi.fn());
 const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
+const mockMarkThreadRead = vi.hoisted(() => vi.fn());
 const invalidateQueries = vi.fn();
+const setQueryData = vi.fn();
+const setQueriesData = vi.fn();
 
 let messengerModel: any;
 let messengerRoute: any;
@@ -38,7 +41,7 @@ vi.mock("@tanstack/react-query", () => ({
     }),
     isPending: false,
   }),
-  useQueryClient: () => ({ invalidateQueries }),
+  useQueryClient: () => ({ invalidateQueries, setQueryData, setQueriesData }),
   useQuery: (options: { queryKey?: unknown; enabled?: boolean }) => {
     if (options.enabled === false) return { data: undefined };
     const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
@@ -58,7 +61,7 @@ vi.mock("@/api/chats", () => ({
 
 vi.mock("@/api/messenger", () => ({
   messengerApi: {
-    markThreadRead: vi.fn(),
+    markThreadRead: mockMarkThreadRead,
     updateThreadUserState: mockUpdateThreadUserState,
   },
 }));
@@ -235,6 +238,7 @@ describe("MessengerContextSidebar chat actions", () => {
       id: chatId,
     }));
     mockStopMessageStream.mockResolvedValue({ stopped: true });
+    mockMarkThreadRead.mockResolvedValue({ threadKey: "issue:issue-1", lastReadAt: "2026-04-11T09:40:00.000Z" });
     mockUpdateThreadUserState.mockResolvedValue({ threadKey: "issue:issue-1", pinned: true });
     mockConfirm.mockResolvedValue(true);
     Object.defineProperty(window, "localStorage", {
@@ -259,7 +263,11 @@ describe("MessengerContextSidebar chat actions", () => {
     document.body.innerHTML = "";
     vi.restoreAllMocks();
     mockConfirm.mockClear();
+    mockMarkThreadRead.mockClear();
     mockUpdateThreadUserState.mockClear();
+    invalidateQueries.mockClear();
+    setQueryData.mockClear();
+    setQueriesData.mockClear();
   });
 
   it("marks a read chat thread unread from the actions menu", () => {
@@ -626,5 +634,56 @@ describe("MessengerContextSidebar chat actions", () => {
     });
 
     expect(mockUpdateThreadUserState).toHaveBeenCalledWith("org-1", "issue:issue-1", { pinned: true });
+  });
+
+  it("optimistically clears split issue unread state before mark-read finishes", () => {
+    mockMarkThreadRead.mockReturnValue(new Promise(() => undefined));
+    chatList = [];
+    messengerRoute = { kind: "issue", issueId: "ISS-1" };
+    const unreadThread = {
+      threadKey: "issue:issue-1",
+      kind: "issues",
+      title: "ISS-1 · Split issue",
+      preview: "Followed issue update",
+      subtitle: null,
+      href: "/messenger/issues/ISS-1",
+      latestActivityAt: "2026-04-11T09:40:00.000Z",
+      lastReadAt: null,
+      unreadCount: 1,
+      needsAttention: true,
+      isPinned: false,
+      metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "todo" },
+    };
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [unreadThread],
+    };
+
+    renderSidebar();
+
+    expect(mockMarkThreadRead).toHaveBeenCalledWith("org-1", "issue:issue-1", "2026-04-11T09:40:00.000Z");
+    expect(setQueryData).toHaveBeenCalledWith(expect.any(Array), expect.any(Function));
+    expect(setQueriesData).toHaveBeenCalledWith(expect.objectContaining({ queryKey: expect.any(Array) }), expect.any(Function));
+
+    const flatUpdater = setQueryData.mock.calls.find((call) =>
+      Array.isArray(call[0]) && call[0][0] === "messenger" && call[0][2] === "threads",
+    )?.[1] as ((current: typeof unreadThread[]) => typeof unreadThread[]) | undefined;
+    const pageUpdater = setQueriesData.mock.calls.find((call) =>
+      Array.isArray(call[0]?.queryKey) && call[0].queryKey[0] === "messenger" && call[0].queryKey[2] === "threads",
+    )?.[1] as ((current: { pages: Array<{ items: typeof unreadThread[]; pageInfo: Record<string, unknown> }>; pageParams: unknown[] }) => { pages: Array<{ items: typeof unreadThread[] }> }) | undefined;
+
+    expect(flatUpdater?.([unreadThread])[0]).toMatchObject({
+      threadKey: "issue:issue-1",
+      unreadCount: 0,
+      needsAttention: false,
+    });
+    expect(pageUpdater?.({
+      pages: [{ items: [unreadThread], pageInfo: { limit: 40, nextCursor: null, hasMore: false } }],
+      pageParams: [null],
+    }).pages[0]?.items[0]).toMatchObject({
+      threadKey: "issue:issue-1",
+      unreadCount: 0,
+      needsAttention: false,
+    });
   });
 });

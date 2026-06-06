@@ -4,7 +4,7 @@ import { QueryClient } from "@tanstack/react-query";
 import type { MessengerThreadSummary } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import { queryKeys } from "@/lib/queryKeys";
-import { upsertMessengerThreadSummaryQueries } from "./messenger-query-cache";
+import { markMessengerThreadReadInCache, upsertMessengerThreadSummaryQueries } from "./messenger-query-cache";
 
 function thread(overrides: Partial<MessengerThreadSummary> & Pick<MessengerThreadSummary, "threadKey" | "title">): MessengerThreadSummary {
   return {
@@ -83,5 +83,53 @@ describe("upsertMessengerThreadSummaryQueries", () => {
     }>(queryKeys.messenger.threadPages(orgId, true))?.pages;
     expect(pages?.[0]?.items.map((item) => item.threadKey)).toEqual(["chat:incoming", "chat:older"]);
     expect(pages?.[1]?.items.map((item) => item.threadKey)).toEqual([]);
+  });
+});
+
+describe("markMessengerThreadReadInCache", () => {
+  it("clears unread state from every Messenger thread cache variant immediately", () => {
+    const queryClient = new QueryClient();
+    const orgId = "org-1";
+    const unreadIssue = thread({
+      threadKey: "issue:issue-1",
+      kind: "issues",
+      title: "ISS-1 · Needs attention",
+      latestActivityAt: new Date("2026-05-03T08:00:00.000Z"),
+      unreadCount: 2,
+      needsAttention: true,
+    });
+    const older = thread({
+      threadKey: "chat:older",
+      title: "Older chat",
+      latestActivityAt: new Date("2026-05-01T08:00:00.000Z"),
+    });
+    const pageData = {
+      pages: [{ items: [unreadIssue, older], pageInfo: { limit: 40, nextCursor: null, hasMore: false } }],
+      pageParams: [null],
+    };
+
+    queryClient.setQueryData(queryKeys.messenger.threads(orgId), [unreadIssue, older]);
+    queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, false), pageData);
+    queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, true), pageData);
+
+    markMessengerThreadReadInCache(queryClient, orgId, "issue:issue-1", "2026-05-03T08:00:00.000Z");
+
+    const flatThread = queryClient.getQueryData<MessengerThreadSummary[]>(queryKeys.messenger.threads(orgId))?.[0];
+    expect(flatThread).toMatchObject({
+      threadKey: "issue:issue-1",
+      unreadCount: 0,
+      needsAttention: false,
+    });
+    expect(flatThread?.lastReadAt?.toISOString()).toBe("2026-05-03T08:00:00.000Z");
+    for (const splitIssues of [false, true]) {
+      const pageThread = queryClient.getQueryData<typeof pageData>(queryKeys.messenger.threadPages(orgId, splitIssues))
+        ?.pages[0]?.items[0];
+      expect(pageThread).toMatchObject({
+        threadKey: "issue:issue-1",
+        unreadCount: 0,
+        needsAttention: false,
+      });
+      expect(pageThread?.lastReadAt?.toISOString()).toBe("2026-05-03T08:00:00.000Z");
+    }
   });
 });

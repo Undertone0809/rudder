@@ -39,7 +39,7 @@ import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
-import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
+import { invalidateMessengerThreadSummaryQueries, markMessengerThreadReadInCache } from "@/lib/messenger-query-cache";
 import { getMessengerUnreadScrollRequestId, MESSENGER_SCROLL_TO_UNREAD_EVENT } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
@@ -1419,6 +1419,8 @@ export function MessengerContextSidebar() {
     const marker = `${orgId}:${activeThreadKey}:${watermark}`;
     if (markedThreadRef.current === marker) return;
     markedThreadRef.current = marker;
+
+    markMessengerThreadReadInCache(queryClient, orgId, activeThreadKey, activeThreadReadAt);
 
     void messengerApi.markThreadRead(
       orgId,

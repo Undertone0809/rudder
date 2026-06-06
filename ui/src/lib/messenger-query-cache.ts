@@ -61,11 +61,59 @@ function upsertMessengerThreadPageData(current: MessengerThreadPageData | undefi
   };
 }
 
+function readAtDate(readAt?: MessengerThreadSummary["lastReadAt"] | string | null) {
+  if (!readAt) return new Date();
+  const date = new Date(readAt);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function markThreadRead(summary: MessengerThreadSummary, threadKey: string, readAt: Date) {
+  if (summary.threadKey !== threadKey) return summary;
+  return {
+    ...summary,
+    lastReadAt: readAt,
+    unreadCount: 0,
+    needsAttention: false,
+  };
+}
+
+function markThreadPageDataRead(
+  current: MessengerThreadPageData | undefined,
+  threadKey: string,
+  readAt: Date,
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      items: page.items.map((item) => markThreadRead(item, threadKey, readAt)),
+    })),
+  };
+}
+
 export function invalidateMessengerThreadSummaryQueries(queryClient: QueryClient, orgId: string) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(orgId) }),
   ]);
+}
+
+export function markMessengerThreadReadInCache(
+  queryClient: QueryClient,
+  orgId: string,
+  threadKey: string,
+  readAt?: MessengerThreadSummary["lastReadAt"] | string | null,
+) {
+  const nextReadAt = readAtDate(readAt);
+  queryClient.setQueryData<MessengerThreadSummary[]>(
+    queryKeys.messenger.threads(orgId),
+    (current) => current?.map((summary) => markThreadRead(summary, threadKey, nextReadAt)) ?? current,
+  );
+  queryClient.setQueriesData<MessengerThreadPageData>(
+    { queryKey: queryKeys.messenger.threadPages(orgId) },
+    (current) => markThreadPageDataRead(current, threadKey, nextReadAt),
+  );
 }
 
 export function upsertMessengerThreadSummaryQueries(
