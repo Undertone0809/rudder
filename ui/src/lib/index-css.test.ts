@@ -166,8 +166,16 @@ describe("index.css motion rules", () => {
     expect(activeTabCorners).toContain("width: var(--rudder-doc-editor-tab-corner-size)");
     expect(indexCss).toContain("border-bottom-right-radius: var(--rudder-doc-editor-tab-corner-size)");
     expect(indexCss).toContain("border-bottom-left-radius: var(--rudder-doc-editor-tab-corner-size)");
+    const tabStripClassMatch = organizationWorkspacesSource.match(/data-testid="org-workspaces-editor-tabs"[\s\S]{0,220}className="([^"]+)"/);
+    const tabStripClassTokens = tabStripClassMatch?.[1]?.split(/\s+/) ?? [];
+
     expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-strip-height)]");
-    expect(organizationWorkspacesSource).toContain("rounded-tr-[var(--desktop-workspace-radius)] border-r border-t border-[color:var(--border-base)]");
+    expect(tabStripClassTokens).toContain("rounded-tr-[var(--radius-lg)]");
+    expect(tabStripClassTokens).toContain("border-r");
+    expect(tabStripClassTokens).toContain("border-[color:var(--border-base)]");
+    expect(tabStripClassTokens).toContain("bg-transparent");
+    expect(tabStripClassTokens).not.toContain("border-t");
+    expect(organizationWorkspacesSource).not.toContain("rounded-tr-[var(--desktop-workspace-radius)] border-r border-t border-[color:var(--border-base)]");
     expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-active-height)]");
     expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-inactive-height)]");
     expect(organizationWorkspacesSource).toContain("rounded-t-[var(--rudder-doc-editor-tab-radius)]");

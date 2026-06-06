@@ -4379,7 +4379,7 @@ export function OrganizationWorkspaceBrowser({
                 data-testid="org-workspaces-editor-tabs"
                 role="tablist"
                 aria-label="Open files"
-                className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-[var(--rudder-doc-editor-tab-strip-height)] shrink-0 items-stretch justify-between rounded-tr-[var(--desktop-workspace-radius)] border-r border-t border-[color:var(--border-base)] bg-transparent"
+                className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-[var(--rudder-doc-editor-tab-strip-height)] shrink-0 items-stretch justify-between rounded-tr-[var(--radius-lg)] border-r border-[color:var(--border-base)] bg-transparent"
               >
                 <div
                   ref={setOpenFileTabsScrollerRef}
