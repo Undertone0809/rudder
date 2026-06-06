@@ -19,6 +19,7 @@ import {
   Search,
   Settings,
   CircleCheckBig,
+  UsersRound,
 } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "@/lib/router";
 import { cn } from "@/lib/utils";
@@ -204,7 +205,7 @@ export function PrimaryRail({
       key: "agents",
       to: "/agents",
       label: "Agents",
-      icon: Bot,
+      icon: UsersRound,
       active: /^\/agents(?:\/|$)/.test(relativePath),
     },
     {
