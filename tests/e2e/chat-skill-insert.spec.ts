@@ -31,6 +31,8 @@ async function syncAgentSkills(page: Page, agentId: string, orgId: string, desir
 }
 
 test("inserts a skill immediately, keeps it stable on click, and allows continued typing", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   const organization = await createStreamingOrg(page, `Skill-Chat-${Date.now()}`);
 
   const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -68,6 +70,24 @@ test("inserts a skill immediately, keeps it stable on click, and allows continue
 
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.fill("Please review $build");
+
+  const mentionMenu = page.getByTestId("markdown-mention-menu");
+  await expect(mentionMenu).toBeVisible({ timeout: 15_000 });
+  await expect(mentionMenu).toHaveAttribute("role", "menu");
+  await expect(mentionMenu).toContainText("Build Advisor");
+
+  const composerBox = await composer.boundingBox();
+  const menuBox = await mentionMenu.boundingBox();
+  expect(composerBox).not.toBeNull();
+  expect(menuBox).not.toBeNull();
+  expect(menuBox!.width).toBeGreaterThan(composerBox!.width);
+  expect(menuBox!.width).toBeGreaterThanOrEqual(900);
+  expect(menuBox!.width).toBeLessThanOrEqual(1000);
+  expect(menuBox!.x).toBeGreaterThanOrEqual(12);
+  expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(1440 - 12 + 1);
+
+  await page.keyboard.press("Escape");
   await composer.fill("Please review this UI.");
 
   await page.getByRole("button", { name: "Skills" }).click();
