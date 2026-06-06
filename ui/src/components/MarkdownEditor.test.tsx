@@ -376,10 +376,10 @@ describe("MarkdownEditor", () => {
     );
 
     expect(position).toMatchObject({
-      left: 308,
-      width: 960,
+      left: 420,
+      width: 760,
       bottom: 210,
-      maxHeight: 498,
+      maxHeight: 360,
     });
     expect("top" in position).toBe(false);
   });
@@ -397,10 +397,10 @@ describe("MarkdownEditor", () => {
     );
 
     expect(position).toMatchObject({
-      left: 308,
-      width: 960,
+      left: 420,
+      width: 760,
       top: 202,
-      maxHeight: 506,
+      maxHeight: 360,
     });
     expect("bottom" in position).toBe(false);
   });
@@ -418,31 +418,10 @@ describe("MarkdownEditor", () => {
     );
 
     expect(position).toMatchObject({
-      left: 308,
-      width: 960,
+      left: 420,
+      width: 760,
       top: 670,
       maxHeight: 38,
-    });
-    expect("bottom" in position).toBe(false);
-  });
-
-  it("clamps the wide mention panel inside narrow viewports", () => {
-    const position = getMentionPanelPositionForViewport(
-      {
-        viewportTop: 120,
-        viewportBottom: 192,
-        viewportLeft: 40,
-        viewportRight: 360,
-      },
-      390,
-      720,
-    );
-
-    expect(position).toMatchObject({
-      left: 12,
-      width: 366,
-      top: 202,
-      maxHeight: 506,
     });
     expect("bottom" in position).toBe(false);
   });
