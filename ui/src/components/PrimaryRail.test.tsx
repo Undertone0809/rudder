@@ -137,7 +137,15 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 
 let cleanupFn: (() => void) | null = null;
 
+function setUserAgent(userAgent: string) {
+  Object.defineProperty(window.navigator, "userAgent", {
+    configurable: true,
+    value: userAgent,
+  });
+}
+
 beforeEach(() => {
+  setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
   mockState.desktopShell.setBadgeCount.mockResolvedValue(undefined);
   mockState.desktopShell.showNotification.mockResolvedValue(undefined);
   mockState.notificationSettings = {
@@ -235,13 +243,26 @@ describe("PrimaryRail desktop inbox signals", () => {
 });
 
 describe("PrimaryRail active motion indicator", () => {
-  it("reserves the full desktop rail width for active nav affordances", async () => {
+  it("reserves the full Windows desktop rail width for active nav affordances", async () => {
     await renderPrimaryRail();
 
     const rail = document.querySelector('[data-testid="primary-rail"]');
 
     expect(rail?.getAttribute("data-desktop-shell")).toBe("true");
+    expect(rail?.getAttribute("data-desktop-platform")).toBe("windows");
     expect(rail?.className).toContain("w-[66px]");
+  });
+
+  it("preserves the compact macOS desktop rail width", async () => {
+    setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7)");
+
+    await renderPrimaryRail();
+
+    const rail = document.querySelector('[data-testid="primary-rail"]');
+
+    expect(rail?.getAttribute("data-desktop-platform")).toBe("macos");
+    expect(rail?.className).toContain("w-[40px]");
+    expect(rail?.className).not.toContain("w-[66px]");
   });
 
   it("applies rail motion styling to the create menu", async () => {

@@ -69,6 +69,14 @@ function isMessengerAttentionRoute(relativePath: string): boolean {
   return /^\/(?:messenger|chat)(?:\/|$)/.test(relativePath);
 }
 
+function resolveDesktopRailPlatform(isDesktopShell: boolean): "macos" | "windows" | "other" | null {
+  if (!isDesktopShell || typeof window === "undefined") return null;
+  const userAgent = window.navigator.userAgent;
+  if (/Mac/i.test(userAgent)) return "macos";
+  if (/Windows/i.test(userAgent)) return "windows";
+  return "other";
+}
+
 const railUtilityButtonClass = [
   "h-9 w-9 translate-x-1 rounded-lg border shadow-[0_6px_18px_-16px_rgba(15,23,42,0.55)] backdrop-blur-[22px]",
   "border-[color:color-mix(in_oklab,var(--sidebar-border)_76%,white)]",
@@ -162,6 +170,7 @@ export function PrimaryRail({
   const relativePath = toOrganizationRelativePath(location.pathname);
   const suppressInboxPopups = isMessengerAttentionRoute(relativePath);
   const isDesktopShell = readDesktopShell() !== null;
+  const desktopRailPlatform = resolveDesktopRailPlatform(isDesktopShell);
   const previousInboxCountRef = useRef<number | null>(null);
   const requestedNotificationPermissionRef = useRef(false);
   const orgGroupActive = /^\/(?:org|projects|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
@@ -318,9 +327,14 @@ export function PrimaryRail({
       data-testid="primary-rail"
       data-tour-target="primary-rail"
       data-desktop-shell={isDesktopShell ? "true" : undefined}
+      data-desktop-platform={desktopRailPlatform ?? undefined}
       className={cn(
         "my-2 flex h-[calc(100%-1rem)] shrink-0 flex-col items-center py-1.5 text-[color:color-mix(in_oklab,var(--foreground)_78%,white)]",
-        isDesktopShell ? "ml-2 mr-1 w-[66px]" : "ml-2 mr-3 px-5 w-[50px]",
+        desktopRailPlatform === "windows"
+          ? "ml-2 mr-1 w-[66px]"
+          : isDesktopShell
+            ? "ml-3 mr-1 w-[40px]"
+            : "ml-2 mr-3 px-5 w-[50px]",
       )}
     >
       <div className="flex w-full flex-col items-center gap-4">
