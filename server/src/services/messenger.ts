@@ -13,6 +13,7 @@ import {
   issues,
   joinRequests,
   messengerThreadUserStates,
+  projects,
 } from "@rudderhq/db";
 import {
   formatMessengerPreview,
@@ -135,6 +136,10 @@ type IssueUniverseRow = {
   title: string;
   status: string;
   priority: string;
+  projectId: string | null;
+  projectName: string | null;
+  projectColor: string | null;
+  assigneeAgentId: string | null;
   assigneeUserId: string | null;
   reviewerUserId: string | null;
   createdByUserId: string | null;
@@ -796,6 +801,14 @@ function issueCard(
       status: issue.status,
       ...(statusChange ? { statusChange } : {}),
       priority: issue.priority,
+      ...(issue.assigneeAgentId ? { assigneeAgentId: issue.assigneeAgentId } : {}),
+      ...(issue.projectId
+        ? {
+          projectId: issue.projectId,
+          projectName: issue.projectName ?? issue.projectId,
+          projectColor: issue.projectColor,
+        }
+        : {}),
       followed,
       createdByMe,
       assignedToMe,
@@ -1026,6 +1039,10 @@ export function messengerService(db: Db) {
           issue_row.title as title,
           issue_row.status as status,
           issue_row.priority as priority,
+          issue_row.project_id as "projectId",
+          project_row.name as "projectName",
+          project_row.color as "projectColor",
+          issue_row.assignee_agent_id as "assigneeAgentId",
           issue_row.assignee_user_id as "assigneeUserId",
           issue_row.reviewer_user_id as "reviewerUserId",
           issue_row.created_by_user_id as "createdByUserId",
@@ -1141,6 +1158,9 @@ export function messengerService(db: Db) {
           order by suppressed_activity_row.created_at desc, suppressed_activity_row.id desc
           limit 1
         ) latest_suppressed_activity on true
+        left join ${projects} project_row
+          on project_row.id = issue_row.project_id
+          and project_row.org_id = issue_row.org_id
       )
       select *
       from issue_entries
@@ -1182,6 +1202,10 @@ export function messengerService(db: Db) {
       title: row.title,
       status: row.status,
       priority: row.priority,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectColor: row.projectColor,
+      assigneeAgentId: row.assigneeAgentId,
       assigneeUserId: row.assigneeUserId,
       reviewerUserId: row.reviewerUserId,
       createdByUserId: row.createdByUserId,

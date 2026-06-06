@@ -26,6 +26,7 @@ import {
   joinRequests,
   messengerThreadUserStates,
   organizations,
+  projects,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { issueService } from "../services/issues.ts";
@@ -142,6 +143,7 @@ describe("messengerService and issue follows", () => {
     await db.delete(issueDocuments);
     await db.delete(documents);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(organizations);
   });
@@ -356,6 +358,8 @@ describe("messengerService and issue follows", () => {
     const orgId = randomUUID();
     const userId = "board-user-split-issues";
     const issueId = randomUUID();
+    const projectId = randomUUID();
+    const assigneeAgentId = randomUUID();
     const chatId = randomUUID();
     const olderChatId = randomUUID();
     const issueUpdatedAt = new Date("2026-05-03T10:30:00.000Z");
@@ -368,6 +372,26 @@ describe("messengerService and issue follows", () => {
       urlKey: deriveOrganizationUrlKey("Messenger Split Issues Org"),
       issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(projects).values({
+      id: projectId,
+      orgId,
+      name: "Operator console",
+      status: "in_progress",
+      color: "#6d5dfc",
+    });
+
+    await db.insert(agents).values({
+      id: assigneeAgentId,
+      orgId,
+      name: "Split Issue Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
     });
 
     await db.insert(chatConversations).values([
@@ -403,6 +427,8 @@ describe("messengerService and issue follows", () => {
       title: "Split issue row",
       status: "todo",
       priority: "medium",
+      projectId,
+      assigneeAgentId,
       assigneeUserId: userId,
       identifier: "SPL-1",
       createdAt: issueUpdatedAt,
@@ -435,6 +461,10 @@ describe("messengerService and issue follows", () => {
         splitIssue: true,
         issueId,
         issueIdentifier: "SPL-1",
+        projectId,
+        projectName: "Operator console",
+        projectColor: "#6d5dfc",
+        assigneeAgentId,
         assignedToMe: true,
       },
     });

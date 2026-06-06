@@ -76,6 +76,46 @@ function baseThread(threadKey: string, title: string, unreadCount = 0) {
   };
 }
 
+function baseConversation(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "project-unread-chat",
+    orgId: "org-1",
+    title: "Project unread chat",
+    summary: "Project unread preview",
+    latestReplyPreview: null,
+    latestActivityAt: "2026-04-11T09:40:00.000Z",
+    createdAt: "2026-04-11T09:30:00.000Z",
+    updatedAt: "2026-04-11T09:40:00.000Z",
+    status: "active",
+    issueCreationMode: "manual_approval",
+    planMode: false,
+    preferredAgentId: null,
+    routedAgentId: null,
+    unreadCount: 2,
+    isUnread: true,
+    needsAttention: true,
+    isPinned: false,
+    primaryIssue: null,
+    contextLinks: [
+      {
+        entityType: "project",
+        entityId: "project-1",
+        entity: { label: "Operator console" },
+      },
+    ],
+    chatRuntime: {
+      sourceType: "unconfigured",
+      sourceLabel: "No agent selected",
+      runtimeAgentId: null,
+      agentRuntimeType: null,
+      model: null,
+      available: false,
+      error: null,
+    },
+    ...overrides,
+  };
+}
+
 describe("MessengerContextSidebar unread scroll requests", () => {
   beforeEach(() => {
     intersectionCallback = null;
@@ -93,6 +133,7 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     }
     vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
     Element.prototype.scrollIntoView = vi.fn();
+    window.localStorage.clear();
     activeGeneratingChatIds = new Set();
     chatList = [];
     messengerRoute = { kind: "root" };
@@ -118,6 +159,7 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     cleanupFn?.();
     cleanupFn = null;
     document.body.innerHTML = "";
+    window.localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -145,6 +187,59 @@ describe("MessengerContextSidebar unread scroll requests", () => {
       await Promise.resolve();
     });
 
+    expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+  });
+
+  it("expands a collapsed project section before scrolling to its first unread thread", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "project" }));
+    chatList = [baseConversation()];
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: [
+        baseThread("chat:project-unread-chat", "Project unread chat", 2),
+        baseThread("chat:read-chat", "Read chat"),
+      ],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const projectHeader = document.querySelector('[data-testid="messenger-thread-section-project-project-1"]');
+    expect(projectHeader?.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('[data-messenger-thread-key="chat:project-unread-chat"]')).not.toBeNull();
+
+    await act(async () => {
+      (projectHeader as HTMLButtonElement | null)?.click();
+      await Promise.resolve();
+    });
+
+    expect(projectHeader?.getAttribute("aria-expanded")).toBe("false");
+    expect(window.localStorage.getItem("rudder.messengerCollapsedProjectGroupsByOrg")).toBe(JSON.stringify({
+      "org-1": ["project:project-1"],
+    }));
+    expect(document.querySelector('[data-messenger-thread-key="chat:project-unread-chat"]')).toBeNull();
+
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const unreadRow = document.querySelector('[data-messenger-thread-key="chat:project-unread-chat"]') as HTMLElement | null;
+    expect(projectHeader?.getAttribute("aria-expanded")).toBe("true");
+    expect(window.localStorage.getItem("rudder.messengerCollapsedProjectGroupsByOrg")).toBe(JSON.stringify({ "org-1": [] }));
+    expect(unreadRow).not.toBeNull();
     expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
   });
 

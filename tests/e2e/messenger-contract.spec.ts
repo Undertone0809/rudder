@@ -355,6 +355,124 @@ test.describe("Messenger unified threads contract", () => {
     }).toBe("archived");
   });
 
+  test("organizes Messenger sidebar by agent and collapses project sections", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Grouped-Sidebar-${Date.now()}`);
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Holden Reviewer",
+        role: "qa",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string; name: string };
+
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Launch Context Project",
+        status: "in_progress",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string };
+
+    const projectChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Project agent thread",
+        summary: "This thread should appear under both its agent and project grouping.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        preferredAgentId: agent.id,
+        contextLinks: [{ entityType: "project", entityId: project.id }],
+      },
+    });
+    expect(projectChatRes.ok()).toBe(true);
+    const projectChat = await projectChatRes.json() as { id: string };
+
+    const looseChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Loose no-agent thread",
+        summary: "This thread should remain outside the agent-owned section.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(looseChatRes.ok()).toBe(true);
+    const looseChat = await looseChatRes.json() as { id: string };
+
+    const assignedIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Assigned split issue thread",
+        description: "This split issue should group under the assigned agent.",
+        status: "todo",
+        priority: "medium",
+        projectId: project.id,
+        assigneeAgentId: agent.id,
+      },
+    });
+    expect(assignedIssueRes.ok()).toBe(true);
+    const assignedIssue = await assignedIssueRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "agent" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    await expect(page.getByText("Threads organized by agent")).toBeVisible({ timeout: 15_000 });
+    const agentSectionTestId = `messenger-thread-section-agent-${agent.id}`;
+    const projectChatTestId = threadTestId(`chat:${projectChat.id}`);
+    const looseChatTestId = threadTestId(`chat:${looseChat.id}`);
+    const assignedIssueTestId = threadTestId(`issue:${assignedIssue.id}`);
+    await expect(page.getByTestId(agentSectionTestId)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId(projectChatTestId)).toContainText("Project agent thread");
+    await expect(page.getByTestId(assignedIssueTestId)).toContainText("Assigned split issue thread");
+    await expect(page.getByTestId("messenger-thread-section-agent-none")).toBeVisible();
+    await expect(page.getByTestId(looseChatTestId)).toContainText("Loose no-agent thread");
+    for (const rowTestId of [projectChatTestId, assignedIssueTestId]) {
+      await expect.poll(async () => {
+        return await page.evaluate(({ sectionTestId, rowTestId }) => {
+          const section = document.querySelector(`[data-testid="${sectionTestId}"]`);
+          return Boolean(section?.parentElement?.querySelector(`[data-testid="${rowTestId}"]`));
+        }, { sectionTestId: agentSectionTestId, rowTestId });
+      }).toBe(true);
+    }
+    await expect.poll(async () => {
+      return await page.evaluate(({ sectionTestId, rowTestId }) => {
+        const section = document.querySelector(`[data-testid="${sectionTestId}"]`);
+        return Boolean(section?.parentElement?.querySelector(`[data-testid="${rowTestId}"]`));
+      }, { sectionTestId: "messenger-thread-section-agent-none", rowTestId: looseChatTestId });
+    }).toBe(true);
+
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
+      window.localStorage.removeItem("rudder.messengerCollapsedProjectGroupsByOrg");
+    }, organization.id);
+    await page.reload({ waitUntil: "commit" });
+
+    const projectSection = page.getByTestId(`messenger-thread-section-project-${project.id}`);
+    await expect(page.getByText("Threads organized by project")).toBeVisible({ timeout: 15_000 });
+    await expect(projectSection).toBeVisible();
+    await expect(projectSection).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId(projectChatTestId)).toBeVisible();
+    await expect(page.getByTestId(assignedIssueTestId)).toBeVisible();
+
+    await projectSection.click();
+
+    await expect(projectSection).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId(projectChatTestId)).toHaveCount(0);
+    await expect(page.getByTestId(assignedIssueTestId)).toHaveCount(0);
+    await expect(page.getByTestId(looseChatTestId)).toBeVisible();
+    await expect.poll(async () => {
+      return await page.evaluate(({ orgId, projectId }) => {
+        const raw = window.localStorage.getItem("rudder.messengerCollapsedProjectGroupsByOrg") ?? "";
+        return raw.includes(orgId) && raw.includes(`project:${projectId}`);
+      }, { orgId: organization.id, projectId: project.id });
+    }).toBe(true);
+  });
+
   test("loads older issue messages on demand instead of rendering the full issue feed", async ({ page }) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
@@ -622,8 +740,8 @@ test.describe("Messenger unified threads contract", () => {
     await page.getByRole("menuitemradio", { name: "Project" }).click();
     await expect(page.getByTestId("workspace-context-header")).toContainText("Threads organized by project");
     await expect(page.getByText("Threads · Project")).toBeVisible();
-    await expect(page.getByTestId("messenger-thread-section-Project-Atlas")).toBeVisible();
-    await expect(page.getByTestId("messenger-thread-section-System")).toBeVisible();
+    await expect(page.getByTestId(`messenger-thread-section-project-${project.id}`)).toBeVisible();
+    await expect(page.getByTestId("messenger-thread-section-system")).toBeVisible();
     await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toContainText("Messenger intake");
 
     await page.goto(`/${organizationPrefix}/messenger/issues`, { waitUntil: "commit" });

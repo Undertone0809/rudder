@@ -22,6 +22,7 @@ const invalidateQueries = vi.fn();
 let messengerModel: any;
 let messengerRoute: any;
 let chatList: any[];
+let agentList: any[];
 let activeGeneratingChatIds: Set<string>;
 let cleanupFn: (() => void) | null = null;
 let clipboardWriteText: ReturnType<typeof vi.fn>;
@@ -38,7 +39,12 @@ vi.mock("@tanstack/react-query", () => ({
     isPending: false,
   }),
   useQueryClient: () => ({ invalidateQueries }),
-  useQuery: () => ({ data: chatList }),
+  useQuery: (options: { queryKey?: unknown; enabled?: boolean }) => {
+    if (options.enabled === false) return { data: undefined };
+    const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
+    if (queryKey[0] === "agents") return { data: agentList };
+    return { data: chatList };
+  },
 }));
 
 vi.mock("@/api/chats", () => ({
@@ -145,6 +151,15 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     isPinned: false,
     primaryIssue: null,
     contextLinks: [],
+    chatRuntime: {
+      sourceType: "unconfigured",
+      sourceLabel: "No agent selected",
+      runtimeAgentId: null,
+      agentRuntimeType: null,
+      model: null,
+      available: false,
+      error: null,
+    },
     ...overrides,
   };
 }
@@ -196,6 +211,18 @@ describe("MessengerContextSidebar chat actions", () => {
     activeGeneratingChatIds = new Set();
     messengerRoute = { kind: "root" };
     chatList = [baseConversation()];
+    agentList = [
+      {
+        id: "agent-1",
+        orgId: "org-1",
+        name: "Holden",
+        urlKey: "holden",
+        role: "reviewer",
+        title: null,
+        icon: "dicebear:notionists:holden",
+        status: "active",
+      },
+    ];
     messengerModel = baseModel();
     mockUpdateUserState.mockImplementation(async (chatId: string, data: Record<string, unknown>) => ({
       ...baseConversation(),
@@ -267,8 +294,15 @@ describe("MessengerContextSidebar chat actions", () => {
   });
 
   it("copies a canonical chat reference from the actions menu", () => {
-    chatList = [baseConversation({ title: "Planning thread" })];
-    messengerModel = baseModel();
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          ...baseModel().threadSummaries[0],
+          title: "Planning thread",
+        },
+      ],
+    };
 
     renderSidebar();
 
@@ -356,6 +390,206 @@ describe("MessengerContextSidebar chat actions", () => {
     renderSidebar();
 
     expect(document.querySelector('[aria-label="Thread actions"]')).toBeNull();
+  });
+
+  it("groups split issue rows by project beside project chats", () => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => {
+          if (key === "rudder.messengerThreadOrganizationByOrg") return JSON.stringify({ "org-1": "project" });
+          return null;
+        }),
+        setItem: vi.fn(),
+      },
+    });
+    chatList = [
+      baseConversation({
+        title: "Roadmap chat",
+        unreadCount: 1,
+        needsAttention: true,
+        isUnread: true,
+        contextLinks: [
+          {
+            entityType: "project",
+            entityId: "project-1",
+            entity: { label: "Operator console" },
+          },
+        ],
+      }),
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-1",
+          kind: "chat",
+          title: "Roadmap chat",
+          preview: "Project conversation",
+          subtitle: null,
+          href: "/messenger/chat/chat-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Split issue",
+          preview: "Project issue update",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: {
+            splitIssue: true,
+            issueId: "issue-1",
+            issueIdentifier: "ISS-1",
+            status: "todo",
+            projectId: "project-1",
+            projectName: "Operator console",
+          },
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const projectSection = document.querySelector('[data-testid="messenger-thread-section-project-project-1"]')
+      ?.parentElement;
+    expect(projectSection?.textContent).toContain("Operator console");
+    expect(projectSection?.textContent).toContain("Roadmap chat");
+    expect(projectSection?.textContent).toContain("ISS-1 · Split issue");
+    expect(document.querySelector('[data-testid="messenger-thread-section-system"]')).toBeNull();
+  });
+
+  it("groups chats by selected agent", () => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => {
+          if (key === "rudder.messengerThreadOrganizationByOrg") return JSON.stringify({ "org-1": "agent" });
+          return null;
+        }),
+        setItem: vi.fn(),
+      },
+    });
+    chatList = [
+      baseConversation({
+        id: "chat-1",
+        title: "Holden thread",
+        preferredAgentId: "agent-1",
+        chatRuntime: {
+          sourceType: "agent",
+          sourceLabel: "Holden",
+          runtimeAgentId: "agent-1",
+          agentRuntimeType: "codex",
+          model: null,
+          available: true,
+          error: null,
+        },
+      }),
+      baseConversation({
+        id: "chat-2",
+        title: "Unassigned thread",
+      }),
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-1",
+          kind: "chat",
+          title: "Holden thread",
+          preview: "Agent-selected chat",
+          subtitle: null,
+          href: "/messenger/chat/chat-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: { preferredAgentId: "agent-1" },
+        },
+        {
+          threadKey: "chat:chat-2",
+          kind: "chat",
+          title: "Unassigned thread",
+          preview: "No selected agent",
+          subtitle: null,
+          href: "/messenger/chat/chat-2",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const agentSection = document.querySelector('[data-testid="messenger-thread-section-agent-agent-1"]')
+      ?.parentElement;
+    const noAgentSection = document.querySelector('[data-testid="messenger-thread-section-agent-none"]')
+      ?.parentElement;
+    expect(agentSection?.textContent).toContain("Holden");
+    expect(agentSection?.textContent).toContain("Holden thread");
+    expect(noAgentSection?.textContent).toContain("No agent");
+    expect(noAgentSection?.textContent).toContain("Unassigned thread");
+  });
+
+  it("collapses project thread groups from the project header", async () => {
+    const setItem = vi.fn();
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => {
+          if (key === "rudder.messengerThreadOrganizationByOrg") return JSON.stringify({ "org-1": "project" });
+          return null;
+        }),
+        setItem,
+      },
+    });
+    chatList = [
+      baseConversation({
+        title: "Roadmap chat",
+        contextLinks: [
+          {
+            entityType: "project",
+            entityId: "project-1",
+            entity: { label: "Operator console" },
+          },
+        ],
+      }),
+    ];
+    messengerModel = baseModel(1);
+
+    renderSidebar();
+
+    const projectHeader = document.querySelector<HTMLButtonElement>(
+      '[data-testid="messenger-thread-section-project-project-1"]',
+    );
+    expect(projectHeader?.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('[data-testid="messenger-thread-section-project-project-1-attention-count"]')?.textContent).toBe("1");
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-1"]')).toBeTruthy();
+
+    await act(async () => {
+      projectHeader?.click();
+    });
+
+    expect(projectHeader?.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector('[data-testid="messenger-thread-section-project-project-1-attention-count"]')?.textContent).toBe("1");
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-1"]')).toBeNull();
+    expect(setItem).toHaveBeenCalledWith(
+      "rudder.messengerCollapsedProjectGroupsByOrg",
+      JSON.stringify({ "org-1": ["project:project-1"] }),
+    );
   });
 
   it("pins split issue rows through issue thread user state", async () => {

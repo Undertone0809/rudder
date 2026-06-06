@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Archive,
+  ChevronDown,
+  ChevronRight,
   CircleCheckBig,
   Copy,
   DollarSign,
@@ -55,12 +57,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 
-type ThreadOrganizationRule = "latest" | "project" | "kind" | "attention";
+type ThreadOrganizationRule = "latest" | "project" | "agent" | "kind" | "attention";
 type MessengerThreadDensity = "comfortable" | "compact";
 
 const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg";
 const THREAD_DENSITY_STORAGE_KEY = "rudder.messengerThreadDensityByOrg";
 const SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY = "rudder.messengerSplitIssueNotificationsByOrg";
+const COLLAPSED_PROJECT_GROUPS_STORAGE_KEY = "rudder.messengerCollapsedProjectGroupsByOrg";
 const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
 const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "compact";
 const DEFAULT_SPLIT_ISSUE_NOTIFICATIONS = true;
@@ -68,6 +71,7 @@ const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
   { value: "latest", label: "Latest activity" },
   { value: "project", label: "Project" },
+  { value: "agent", label: "Agent" },
   { value: "kind", label: "Thread type" },
   { value: "attention", label: "Needs attention" },
 ];
@@ -153,7 +157,7 @@ function readThreadOrganizationRule(orgId: string | null | undefined): ThreadOrg
     const raw = window.localStorage.getItem(THREAD_ORGANIZATION_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
     const value = parsed[orgId];
-    if (value === "latest" || value === "project" || value === "kind" || value === "attention") return value;
+    if (value === "latest" || value === "project" || value === "agent" || value === "kind" || value === "attention") return value;
   } catch {
     // Ignore storage failures; the default latest-activity list remains usable.
   }
@@ -186,6 +190,21 @@ function readSplitIssueNotifications(orgId: string | null | undefined): boolean 
   return DEFAULT_SPLIT_ISSUE_NOTIFICATIONS;
 }
 
+function readCollapsedProjectGroups(orgId: string | null | undefined): Set<string> {
+  if (!orgId || typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_PROJECT_GROUPS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    const values = parsed[orgId];
+    if (Array.isArray(values)) {
+      return new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0));
+    }
+  } catch {
+    // Ignore storage failures; project sections stay expanded.
+  }
+  return new Set();
+}
+
 function writeThreadOrganizationRule(orgId: string, rule: ThreadOrganizationRule) {
   if (typeof window === "undefined") return;
   try {
@@ -216,6 +235,20 @@ function writeSplitIssueNotifications(orgId: string, enabled: boolean) {
     window.localStorage.setItem(SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY, JSON.stringify({ ...parsed, [orgId]: enabled }));
   } catch {
     // Ignore storage failures; the in-memory toggle still applies for this view.
+  }
+}
+
+function writeCollapsedProjectGroups(orgId: string, groups: Set<string>) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_PROJECT_GROUPS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    window.localStorage.setItem(COLLAPSED_PROJECT_GROUPS_STORAGE_KEY, JSON.stringify({
+      ...parsed,
+      [orgId]: Array.from(groups),
+    }));
+  } catch {
+    // Ignore storage failures; the in-memory section state still applies.
   }
 }
 
@@ -255,9 +288,68 @@ function threadDisplayTitle(title: string) {
   return formatMessengerTitle(title, { max: 80 }) ?? title;
 }
 
-function chatProjectGroupLabel(conversation: ChatConversation | null) {
+interface ThreadGroup {
+  key: string;
+  label: string;
+  sortLabel?: string;
+}
+
+interface FirstUnreadThreadTarget {
+  threadKey: string;
+  projectGroupKey: string | null;
+}
+
+function chatProjectGroup(conversation: ChatConversation | null): ThreadGroup {
   const projectLink = conversation?.contextLinks?.find((link) => link.entityType === "project") ?? null;
-  return projectLink?.entity?.label || projectLink?.entity?.identifier || (projectLink ? "Unknown project" : "No project");
+  const projectId = typeof projectLink?.entityId === "string" && projectLink.entityId.trim()
+    ? projectLink.entityId.trim()
+    : null;
+  const label = projectLink?.entity?.label || projectLink?.entity?.identifier || (projectLink ? "Unknown project" : "No project");
+  return projectId
+    ? { key: `project:${projectId}`, label, sortLabel: label }
+    : { key: "project:none", label };
+}
+
+function splitIssueProjectGroup(thread: MessengerThreadSummaryItem): ThreadGroup | null {
+  if (thread.metadata?.splitIssue !== true) return null;
+  const metadata = thread.metadata as Record<string, unknown>;
+  const projectId = metadataString(metadata, "projectId");
+  const label = metadataString(metadata, "projectName") ?? (projectId ? "Unknown project" : "No project");
+  return projectId
+    ? { key: `project:${projectId}`, label, sortLabel: label }
+    : { key: "project:none", label };
+}
+
+function metadataString(metadata: Record<string, unknown> | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function entryAgentGroup(entry: OrganizedThreadEntry, agentsById: Map<string, Agent>): ThreadGroup {
+  if (entry.thread.kind === "chat") {
+    const agentId = entry.conversation ? resolveChatAgentId(entry.conversation) : null;
+    if (!agentId) return { key: "agent:none", label: "No agent" };
+    const label = agentsById.get(agentId)?.name ?? "Unknown agent";
+    return { key: `agent:${agentId}`, label, sortLabel: label };
+  }
+
+  if (entry.thread.metadata?.splitIssue === true) {
+    const metadata = entry.thread.metadata as Record<string, unknown>;
+    const agentId =
+      metadataString(metadata, "assigneeAgentId")
+      ?? metadataString(metadata, "agentId")
+      ?? metadataString(metadata, "runtimeAgentId")
+      ?? metadataString(metadata, "preferredAgentId");
+    if (!agentId) return { key: "agent:none", label: "No agent" };
+    const label =
+      agentsById.get(agentId)?.name
+      ?? metadataString(metadata, "assigneeAgentName")
+      ?? metadataString(metadata, "agentName")
+      ?? "Unknown agent";
+    return { key: `agent:${agentId}`, label, sortLabel: label };
+  }
+
+  return { key: "system", label: "System" };
 }
 
 function ThreadAvatar({
@@ -918,31 +1010,42 @@ function compareThreadEntries(a: OrganizedThreadEntry, b: OrganizedThreadEntry) 
 
 function groupEntries(
   entries: OrganizedThreadEntry[],
-  labelForEntry: (entry: OrganizedThreadEntry) => string,
+  groupForEntry: (entry: OrganizedThreadEntry) => ThreadGroup,
 ) {
-  const sections = new Map<string, OrganizedThreadEntry[]>();
+  const sections = new Map<string, { group: ThreadGroup; entries: OrganizedThreadEntry[] }>();
   for (const entry of entries) {
-    const label = labelForEntry(entry);
-    sections.set(label, [...(sections.get(label) ?? []), entry]);
+    const group = groupForEntry(entry);
+    const existing = sections.get(group.key);
+    if (existing) {
+      existing.entries.push(entry);
+    } else {
+      sections.set(group.key, { group, entries: [entry] });
+    }
   }
-  return Array.from(sections.entries())
-    .sort(([a], [b]) => {
-      if (a === "Needs attention") return -1;
-      if (b === "Needs attention") return 1;
-      if (a === "No project") return 1;
-      if (b === "No project") return -1;
-      if (a === "System") return 1;
-      if (b === "System") return -1;
-      return a.localeCompare(b);
+  return Array.from(sections.values())
+    .sort((a, b) => {
+      if (a.group.key === "attention:needs") return -1;
+      if (b.group.key === "attention:needs") return 1;
+      if (a.group.key === "project:none") return 1;
+      if (b.group.key === "project:none") return -1;
+      if (a.group.key === "agent:none") return 1;
+      if (b.group.key === "agent:none") return -1;
+      if (a.group.key === "system") return 1;
+      if (b.group.key === "system") return -1;
+      return (a.group.sortLabel ?? a.group.label).localeCompare(b.group.sortLabel ?? b.group.label);
     })
-    .map(([label, sectionEntries]) => ({
-      key: label,
-      label,
+    .map(({ group, entries: sectionEntries }) => ({
+      key: group.key,
+      label: group.label,
       entries: [...sectionEntries].sort(compareThreadEntries),
     }));
 }
 
-function organizeThreadEntries(entries: OrganizedThreadEntry[], rule: ThreadOrganizationRule): OrganizedThreadSection[] {
+function organizeThreadEntries(
+  entries: OrganizedThreadEntry[],
+  rule: ThreadOrganizationRule,
+  agentsById: Map<string, Agent>,
+): OrganizedThreadSection[] {
   const sorted = [...entries].sort(compareThreadEntries);
   if (rule === "latest") {
     const pinned = sorted.filter(isPinnedEntry);
@@ -955,14 +1058,28 @@ function organizeThreadEntries(entries: OrganizedThreadEntry[], rule: ThreadOrga
   }
   if (rule === "project") {
     return groupEntries(sorted, (entry) => {
-      if (entry.thread.kind !== "chat") return "System";
-      return chatProjectGroupLabel(entry.conversation);
+      const splitIssueProject = splitIssueProjectGroup(entry.thread);
+      if (splitIssueProject) return splitIssueProject;
+      if (entry.thread.kind !== "chat") return { key: "system", label: "System" };
+      return chatProjectGroup(entry.conversation);
     });
   }
-  if (rule === "kind") {
-    return groupEntries(sorted, (entry) => messengerThreadKindLabel(entry.thread.kind));
+  if (rule === "agent") {
+    return groupEntries(sorted, (entry) => entryAgentGroup(entry, agentsById));
   }
-  return groupEntries(sorted, (entry) => entry.thread.unreadCount > 0 || entry.thread.needsAttention ? "Needs attention" : "Other threads");
+  if (rule === "kind") {
+    return groupEntries(sorted, (entry) => ({
+      key: `kind:${entry.thread.kind}`,
+      label: messengerThreadKindLabel(entry.thread.kind),
+    }));
+  }
+  return groupEntries(sorted, (entry) => entry.thread.unreadCount > 0 || entry.thread.needsAttention
+    ? { key: "attention:needs", label: "Needs attention" }
+    : { key: "attention:other", label: "Other threads" });
+}
+
+function sectionAttentionCount(section: OrganizedThreadSection) {
+  return section.entries.filter((entry) => entry.thread.unreadCount > 0 || entry.thread.needsAttention).length;
 }
 
 export function MessengerContextSidebar() {
@@ -990,18 +1107,22 @@ export function MessengerContextSidebar() {
   const loadMoreThreadSummariesRef = useRef<HTMLDivElement | null>(null);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  const [unreadScrollRequestId, setUnreadScrollRequestId] = useState(() => getMessengerUnreadScrollRequestId());
+  const [unreadScrollRequestId, setUnreadScrollRequestId] = useState(0);
   const [threadOrganizationRule, setThreadOrganizationRule] = useState<ThreadOrganizationRule>(() =>
     readThreadOrganizationRule(model.selectedOrganizationId),
   );
   const [threadDensity, setThreadDensity] = useState<MessengerThreadDensity>(() =>
     readThreadDensity(model.selectedOrganizationId),
   );
+  const [collapsedProjectGroupKeys, setCollapsedProjectGroupKeys] = useState<Set<string>>(() =>
+    readCollapsedProjectGroups(model.selectedOrganizationId),
+  );
 
   useEffect(() => {
     setThreadOrganizationRule(readThreadOrganizationRule(model.selectedOrganizationId));
     setThreadDensity(readThreadDensity(model.selectedOrganizationId));
     setSplitIssueNotifications(readSplitIssueNotifications(model.selectedOrganizationId));
+    setCollapsedProjectGroupKeys(readCollapsedProjectGroups(model.selectedOrganizationId));
   }, [model.selectedOrganizationId]);
 
   useEffect(() => {
@@ -1009,7 +1130,7 @@ export function MessengerContextSidebar() {
     void invalidateMessengerThreadSummaryQueries(queryClient, model.selectedOrganizationId);
   }, [model.selectedOrganizationId, queryClient, splitIssueNotifications]);
 
-  const shouldLoadSidebarConversations = threadOrganizationRule === "project";
+  const shouldLoadSidebarConversations = threadOrganizationRule === "project" || threadOrganizationRule === "agent";
 
   const chatsQuery = useQuery({
     queryKey: queryKeys.chats.list(model.selectedOrganizationId ?? "__none__", "all"),
@@ -1053,16 +1174,22 @@ export function MessengerContextSidebar() {
           : null,
       };
     });
-    return organizeThreadEntries(entries, threadOrganizationRule);
-  }, [conversationsById, model.selectedOrganizationId, model.threadSummaries, splitIssueNotifications, threadOrganizationRule]);
-  const firstUnreadThreadKey = useMemo(() => {
+    return organizeThreadEntries(entries, threadOrganizationRule, agentsById);
+  }, [agentsById, conversationsById, model.selectedOrganizationId, model.threadSummaries, splitIssueNotifications, threadOrganizationRule]);
+  const firstUnreadThreadTarget = useMemo<FirstUnreadThreadTarget | null>(() => {
     for (const section of organizedThreadSections) {
       for (const entry of section.entries) {
-        if (entry.thread.unreadCount > 0) return entry.thread.threadKey;
+        if (entry.thread.unreadCount > 0) {
+          return {
+            threadKey: entry.thread.threadKey,
+            projectGroupKey: threadOrganizationRule === "project" ? section.key : null,
+          };
+        }
       }
     }
     return null;
-  }, [organizedThreadSections]);
+  }, [organizedThreadSections, threadOrganizationRule]);
+  const firstUnreadThreadKey = firstUnreadThreadTarget?.threadKey ?? null;
   const setSidebarScrollRef = useCallback((element: HTMLElement | null) => {
     sidebarScrollElementRef.current = element;
     sidebarScrollbarActivityRef(element);
@@ -1133,6 +1260,21 @@ export function MessengerContextSidebar() {
     if (model.selectedOrganizationId) {
       writeSplitIssueNotifications(model.selectedOrganizationId, enabled);
     }
+  };
+
+  const handleProjectGroupToggle = (groupKey: string) => {
+    setCollapsedProjectGroupKeys((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      if (model.selectedOrganizationId) {
+        writeCollapsedProjectGroups(model.selectedOrganizationId, next);
+      }
+      return next;
+    });
   };
 
   const refreshChatViews = async (chatId?: string) => {
@@ -1299,15 +1441,32 @@ export function MessengerContextSidebar() {
   }, []);
 
   useEffect(() => {
-    if (!firstUnreadThreadKey) return;
+    if (!firstUnreadThreadTarget) return;
     if (unreadScrollRequestId <= 0) return;
+
+    if (
+      firstUnreadThreadTarget.projectGroupKey
+      && collapsedProjectGroupKeys.has(firstUnreadThreadTarget.projectGroupKey)
+    ) {
+      setCollapsedProjectGroupKeys((current) => {
+        const projectGroupKey = firstUnreadThreadTarget.projectGroupKey;
+        if (!projectGroupKey || !current.has(projectGroupKey)) return current;
+        const next = new Set(current);
+        next.delete(projectGroupKey);
+        if (model.selectedOrganizationId) {
+          writeCollapsedProjectGroups(model.selectedOrganizationId, next);
+        }
+        return next;
+      });
+      return;
+    }
 
     const scrollFirstUnreadThreadIntoView = () => {
       const container = sidebarScrollElementRef.current;
       if (!container) return;
 
       const unreadRow = Array.from(container.querySelectorAll<HTMLElement>("[data-messenger-thread-key]"))
-        .find((row) => row.dataset.messengerThreadKey === firstUnreadThreadKey);
+        .find((row) => row.dataset.messengerThreadKey === firstUnreadThreadTarget.threadKey);
 
       unreadRow?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     };
@@ -1316,7 +1475,7 @@ export function MessengerContextSidebar() {
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [firstUnreadThreadKey, unreadScrollRequestId]);
+  }, [collapsedProjectGroupKeys, firstUnreadThreadTarget, model.selectedOrganizationId, unreadScrollRequestId]);
 
   useEffect(() => {
     const sentinel = loadMoreThreadSummariesRef.current;
@@ -1401,14 +1560,43 @@ export function MessengerContextSidebar() {
         {organizedThreadSections.map((section) => (
           <div key={section.key} className="flex flex-col gap-1">
             {section.label ? (
-              <div
-                data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
-                className="px-3 pb-1 pt-2 text-[11px] font-semibold text-muted-foreground/72"
-              >
-                {section.label}
-              </div>
+              threadOrganizationRule === "project" ? (() => {
+                const attentionCount = sectionAttentionCount(section);
+                return (
+                  <button
+                    type="button"
+                    data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
+                    aria-expanded={!collapsedProjectGroupKeys.has(section.key)}
+                    className="mx-1.5 flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-1.5 pb-1 pt-2 text-left text-[11px] font-semibold text-muted-foreground/72 transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
+                    onClick={() => handleProjectGroupToggle(section.key)}
+                  >
+                    {collapsedProjectGroupKeys.has(section.key) ? (
+                      <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
+                    ) : (
+                      <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                    {attentionCount > 0 ? (
+                      <span
+                        data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-attention-count`}
+                        className="shrink-0 rounded-full bg-[color:color-mix(in_oklab,var(--accent-info)_16%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--accent-info)]"
+                      >
+                        {attentionCount}
+                      </span>
+                    ) : null}
+                    <span className="shrink-0 text-[10px] font-medium text-muted-foreground/60">{section.entries.length}</span>
+                  </button>
+                );
+              })() : (
+                <div
+                  data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
+                  className="px-3 pb-1 pt-2 text-[11px] font-semibold text-muted-foreground/72"
+                >
+                  {section.label}
+                </div>
+              )
             ) : null}
-            {section.entries.map(({ thread, conversation }) => {
+            {threadOrganizationRule === "project" && collapsedProjectGroupKeys.has(section.key) ? null : section.entries.map(({ thread, conversation }) => {
               const active = activeThreadKey === thread.threadKey;
               if (thread.kind === "chat" && conversation) {
                 const agentId = resolveChatAgentId(conversation);
