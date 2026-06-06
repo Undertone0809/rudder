@@ -85,6 +85,8 @@ test.describe("Chat edit streaming layout", () => {
     expect(inlineEditorBox).not.toBeNull();
     expect(mentionMenuBox).not.toBeNull();
     expect(caretBox).not.toBeNull();
+    expect(inlineEditorBox!.width).toBeGreaterThan(780);
+    expect(mentionMenuBox!.width).toBeGreaterThan(480);
     expect(Math.abs(mentionMenuBox!.y - (caretBox!.bottom + 4))).toBeLessThanOrEqual(24);
     expect(Math.abs(mentionMenuBox!.x - caretBox!.left)).toBeLessThanOrEqual(24);
     expect(mentionMenuBox!.width).toBeLessThan(inlineEditorBox!.width - 32);

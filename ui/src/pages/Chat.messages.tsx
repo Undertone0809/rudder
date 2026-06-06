@@ -1600,12 +1600,12 @@ export function ChatMessageItem({
 
   return (
     <div className="flex justify-end transition-all duration-200">
-      <div className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-[82%]" : "max-w-[82%]")}>
+      <div className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-full" : "max-w-[82%]")}>
         {isInlineEditing && inlineEdit ? (
           <div
             ref={inlineEdit.surfaceRef}
             data-testid="chat-inline-message-editor"
-            className="chat-message-user w-full max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
+            className="chat-message-user w-full max-w-[min(100%,88ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
           >
             <MarkdownEditor
               ref={inlineEdit.editorRef}
@@ -1613,14 +1613,13 @@ export function ChatMessageItem({
               onChange={inlineEdit.onChange}
               mentions={inlineEdit.mentions}
               onMentionQueryChange={inlineEdit.onMentionQueryChange}
-              mentionMenuSize="compact"
               submitShortcut="enter"
               onInlineTokenClick={inlineEdit.onInlineTokenClick}
               plainText
               bordered={false}
               placeholder="Edit message"
               className="rounded-[var(--radius-md)] bg-transparent"
-              contentClassName="min-h-[72px] bg-transparent text-[15px] leading-7 text-foreground"
+              contentClassName="min-h-[96px] bg-transparent text-[15px] leading-7 text-foreground"
               onSubmit={() => {
                 if (!inlineEdit.disabled) {
                   inlineEdit.onSubmit();
