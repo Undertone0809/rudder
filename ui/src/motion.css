@@ -191,7 +191,7 @@
   top: 0;
   left: 50%;
   z-index: 0;
-  width: 66px;
+  width: var(--primary-rail-item-width, 66px);
   height: var(--motion-rail-item-height);
   border-radius: var(--radius-sm);
   pointer-events: none;
@@ -200,7 +200,7 @@
     inset 0 0 0 1px rgb(222 244 235 / 0.1),
     0 10px 24px -20px rgb(15 23 42 / 0.76);
   transform: translate(
-    calc(-50% + 0.25rem),
+    calc(-50% + var(--primary-rail-item-shift, 0.25rem)),
     calc(var(--motion-rail-active-index) * (var(--motion-rail-item-height) + var(--motion-rail-item-gap)))
   );
   transition:

@@ -79,7 +79,7 @@ function resolveDesktopRailPlatform(isDesktopShell: boolean): "macos" | "windows
 }
 
 const railUtilityButtonClass = [
-  "h-9 w-9 translate-x-1 rounded-lg border shadow-[0_6px_18px_-16px_rgba(15,23,42,0.55)] backdrop-blur-[22px]",
+  "h-9 w-9 translate-x-[var(--primary-rail-item-shift,0.25rem)] rounded-lg border shadow-[0_6px_18px_-16px_rgba(15,23,42,0.55)] backdrop-blur-[22px]",
   "border-[color:color-mix(in_oklab,var(--sidebar-border)_76%,white)]",
   "bg-[color:color-mix(in_oklab,var(--sidebar)_72%,white)]",
   "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_88%,var(--sidebar))]",
@@ -116,7 +116,7 @@ function RailNavItem({
       onDoubleClick={onDoubleClick}
       className={({ isActive }) =>
         cn(
-          "relative z-10 flex min-h-[56px] w-[66px] translate-x-1 flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
+          "relative z-10 flex min-h-[56px] w-[var(--primary-rail-item-width,66px)] translate-x-[var(--primary-rail-item-shift,0.25rem)] flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
           (active ?? isActive)
             ? "text-[#def4eb] dark:text-[#def4eb]"
             : [
@@ -332,14 +332,14 @@ export function PrimaryRail({
       className={cn(
         "my-2 flex h-[calc(100%-1rem)] shrink-0 flex-col items-center py-1.5 text-[color:color-mix(in_oklab,var(--foreground)_78%,white)]",
         desktopRailPlatform === "windows"
-          ? "ml-2 mr-1 w-[66px]"
+          ? "ml-1 mr-1 w-[52px] [--primary-rail-item-shift:0px] [--primary-rail-item-width:52px]"
           : isDesktopShell
             ? "ml-3 mr-1 w-[40px]"
             : "ml-2 mr-3 px-5 w-[50px]",
       )}
     >
       <div className="flex w-full flex-col items-center gap-4">
-        <div className="translate-x-1">
+        <div className="translate-x-[var(--primary-rail-item-shift,0.25rem)]">
           <OrganizationSwitcher compact />
         </div>
         <Button
