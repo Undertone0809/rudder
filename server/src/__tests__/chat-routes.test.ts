@@ -1959,6 +1959,7 @@ describe("chat routes", () => {
 
   it("keeps copied edit attachments in the stream ack when no new files are uploaded", async () => {
     const conversation = createConversation();
+    const editUserMessageId = "10000000-0000-4000-8000-000000000099";
     const attachment = {
       id: "attachment-copied",
       orgId: "organization-1",
@@ -2002,7 +2003,7 @@ describe("chat routes", () => {
 
     const res = await request(createApp())
       .post("/api/chats/chat-1/messages/stream")
-      .send({ body: "Edited with copied attachment", editUserMessageId: "message-original" })
+      .send({ body: "Edited with copied attachment", editUserMessageId })
       .buffer(true)
       .parse((response, callback) => {
         let text = "";
@@ -2030,7 +2031,7 @@ describe("chat routes", () => {
       "chat-1",
       "organization-1",
       "Edited with copied attachment",
-      "message-original",
+      editUserMessageId,
     );
     expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledWith(expect.objectContaining({
       messages: [expect.objectContaining({

@@ -86,6 +86,7 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     invalidateQueries: mockState.invalidateQueries,
     setQueryData: vi.fn(),
+    setQueriesData: vi.fn(),
   }),
 }));
 
@@ -465,6 +466,21 @@ function dispatchPasteFiles(target: Element, files: File[]) {
   target.dispatchEvent(pasteEvent);
 }
 
+async function clickEnabledButton(container: Element, label: string) {
+  await act(async () => {
+    await Promise.resolve();
+  });
+  const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+    candidate.textContent?.includes(label)
+  );
+  expect(button).not.toBeUndefined();
+  expect(button?.disabled).toBe(false);
+  await act(async () => {
+    button?.click();
+    await Promise.resolve();
+  });
+}
+
 beforeEach(() => {
   installLocalStorageMock();
   resetChatPendingAttachmentsForTests();
@@ -659,17 +675,7 @@ describe("Chat ask_user panel", () => {
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
-    const clickButton = (label: string) => {
-      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-        candidate.textContent?.includes(label)
-      );
-      expect(button).not.toBeUndefined();
-      act(() => {
-        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-    };
-
-    clickButton("Other");
+    await clickEnabledButton(container, "Other");
     expect(panel?.textContent).toContain("Attach");
     expect(panel?.textContent).toContain("failure-log.txt");
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).not.toBeNull();
@@ -682,10 +688,7 @@ describe("Chat ask_user panel", () => {
       textarea!.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    await act(async () => {
-      clickButton("Submit answer");
-      await Promise.resolve();
-    });
+    await clickEnabledButton(container, "Submit answer");
 
     expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
     expect(mockState.sendMessageStream.mock.calls[0]?.[2]).toMatchObject({
@@ -706,17 +709,7 @@ describe("Chat ask_user panel", () => {
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
-    const clickButton = (label: string) => {
-      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-        candidate.textContent?.includes(label)
-      );
-      expect(button).not.toBeUndefined();
-      act(() => {
-        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-    };
-
-    clickButton("Other");
+    await clickEnabledButton(container, "Other");
     const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
     expect(textarea).not.toBeNull();
 
@@ -729,10 +722,7 @@ describe("Chat ask_user panel", () => {
     expect(panel?.textContent).toContain("receipt.txt");
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).not.toBeNull();
 
-    await act(async () => {
-      clickButton("Submit answer");
-      await Promise.resolve();
-    });
+    await clickEnabledButton(container, "Submit answer");
 
     expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
     const sentFiles = mockState.sendMessageStream.mock.calls[0]?.[2]?.files as File[] | undefined;
@@ -885,21 +875,10 @@ describe("Chat ask_user panel", () => {
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
-    const clickButton = async (label: string) => {
-      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-        candidate.textContent?.includes(label)
-      );
-      expect(button).not.toBeUndefined();
-      await act(async () => {
-        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-        await Promise.resolve();
-      });
-    };
-
-    await clickButton("Test output");
+    await clickEnabledButton(container, "Test output");
     expect(panel?.textContent).toContain("Screenshots");
-    await clickButton("Screenshots");
-    await clickButton("Submit answer");
+    await clickEnabledButton(container, "Screenshots");
+    await clickEnabledButton(container, "Submit answer");
 
     expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
     expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Test output, Screenshots");
