@@ -25,8 +25,9 @@ export function getProjectOrderStorageKey(orgId: string, userId: string | null |
 }
 
 export function readProjectOrder(storageKey: string): string[] {
+  if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return [];
     return normalizeIdList(JSON.parse(raw));
   } catch {
@@ -37,7 +38,7 @@ export function readProjectOrder(storageKey: string): string[] {
 export function writeProjectOrder(storageKey: string, orderedIds: string[]) {
   const normalized = normalizeIdList(orderedIds);
   try {
-    localStorage.setItem(storageKey, JSON.stringify(normalized));
+    window.localStorage.setItem(storageKey, JSON.stringify(normalized));
   } catch {
     // Ignore storage write failures in restricted browser contexts.
   }

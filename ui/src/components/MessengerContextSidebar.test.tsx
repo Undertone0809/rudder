@@ -545,6 +545,103 @@ describe("MessengerContextSidebar", () => {
     }));
   });
 
+  it("orders real project thread groups by the stored project order and keeps fixed groups at the bottom", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
+    localStorageValues["rudder.projectOrder:org-1:anonymous"] = JSON.stringify(["project-2", "project-1"]);
+    chatList = [
+      {
+        id: "chat-1",
+        title: "Alpha project chat",
+        summary: "Alpha context.",
+        latestReplyPreview: "Alpha context.",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        lastMessageAt: "2026-04-11T09:40:00.000Z",
+        unreadCount: 0,
+        needsAttention: false,
+        isUnread: false,
+        isPinned: false,
+        primaryIssue: null,
+        contextLinks: [
+          {
+            entityType: "project",
+            entityId: "project-1",
+            entity: { label: "Alpha project", identifier: null },
+          },
+        ],
+      },
+      {
+        id: "chat-2",
+        title: "Beta project chat",
+        summary: "Beta context.",
+        latestReplyPreview: "Beta context.",
+        updatedAt: "2026-04-11T09:41:00.000Z",
+        lastMessageAt: "2026-04-11T09:41:00.000Z",
+        unreadCount: 0,
+        needsAttention: false,
+        isUnread: false,
+        isPinned: false,
+        primaryIssue: null,
+        contextLinks: [
+          {
+            entityType: "project",
+            entityId: "project-2",
+            entity: { label: "Beta project", identifier: null },
+          },
+        ],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-1",
+          kind: "chat",
+          title: "Alpha project chat",
+          preview: "Alpha context.",
+          subtitle: null,
+          href: "/messenger/chat/chat-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "chat:chat-2",
+          kind: "chat",
+          title: "Beta project chat",
+          preview: "Beta context.",
+          subtitle: null,
+          href: "/messenger/chat/chat-2",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "issues",
+          kind: "issues",
+          title: "Issues",
+          preview: "Followed issues",
+          subtitle: null,
+          href: "/messenger/issues",
+          latestActivityAt: "2026-04-11T09:42:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.indexOf("Beta project")).toBeLessThan(html.indexOf("Alpha project"));
+    expect(html.indexOf("Alpha project")).toBeLessThan(html.indexOf("System"));
+  });
+
   it("shows an animated progress icon for the chat that is currently generating", () => {
     activeGeneratingChatIds = new Set(["chat-1"]);
 

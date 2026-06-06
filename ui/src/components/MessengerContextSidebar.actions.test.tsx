@@ -593,11 +593,79 @@ describe("MessengerContextSidebar chat actions", () => {
 
     expect(projectHeader?.getAttribute("aria-expanded")).toBe("false");
     expect(document.querySelector('[data-testid="messenger-thread-section-project-project-1-attention-count"]')?.textContent).toBe("1");
-    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-1"]')).toBeNull();
+    const projectContent = document.querySelector('[data-testid="messenger-thread-section-project-project-1-content"]');
+    expect(projectContent?.getAttribute("aria-hidden")).toBe("true");
+    expect(projectContent?.className).toContain("grid-rows-[0fr]");
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-1"]')).toBeTruthy();
     expect(setItem).toHaveBeenCalledWith(
       "rudder.messengerCollapsedProjectGroupsByOrg",
       JSON.stringify({ "org-1": ["project:project-1"] }),
     );
+  });
+
+  it("progressively shows and collapses large project thread groups", async () => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => {
+          if (key === "rudder.messengerThreadOrganizationByOrg") return JSON.stringify({ "org-1": "project" });
+          return null;
+        }),
+        setItem: vi.fn(),
+      },
+    });
+    chatList = Array.from({ length: 8 }, (_, index) =>
+      baseConversation({
+        id: `chat-${index + 1}`,
+        title: `Project thread ${index + 1}`,
+        contextLinks: [
+          {
+            entityType: "project",
+            entityId: "project-1",
+            entity: { label: "Operator console" },
+          },
+        ],
+      }),
+    );
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: chatList.map((conversation, index) => ({
+        threadKey: `chat:${conversation.id}`,
+        kind: "chat",
+        title: conversation.title,
+        preview: "Project conversation",
+        subtitle: null,
+        href: `/messenger/chat/${conversation.id}`,
+        latestActivityAt: `2026-04-11T09:${String(59 - index).padStart(2, "0")}:00.000Z`,
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: false,
+      })),
+    };
+
+    renderSidebar();
+
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-6"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeNull();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(
+        '[data-testid="messenger-thread-section-project-project-1-show-more"]',
+      )?.click();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-8"]')).toBeTruthy();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(
+        '[data-testid="messenger-thread-section-project-project-1-collapse"]',
+      )?.click();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-6"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeNull();
   });
 
   it("pins split issue rows through issue thread user state", async () => {

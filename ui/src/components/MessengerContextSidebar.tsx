@@ -1,5 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   AlertTriangle,
   Archive,
@@ -26,6 +36,7 @@ import {
 } from "lucide-react";
 import { buildChatMentionHref, formatMessengerPreview, formatMessengerTitle, type Agent, type ChatConversation } from "@rudderhq/shared";
 import { agentsApi } from "@/api/agents";
+import { authApi } from "@/api/auth";
 import { ApiError } from "@/api/client";
 import { chatsApi } from "@/api/chats";
 import { messengerApi } from "@/api/messenger";
@@ -42,6 +53,12 @@ import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { invalidateMessengerThreadSummaryQueries, markMessengerThreadReadInCache } from "@/lib/messenger-query-cache";
 import { getMessengerUnreadScrollRequestId, MESSENGER_SCROLL_TO_UNREAD_EVENT } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import {
+  getProjectOrderStorageKey,
+  PROJECT_ORDER_UPDATED_EVENT,
+  readProjectOrder,
+  writeProjectOrder,
+} from "@/lib/project-order";
 import { queryKeys } from "@/lib/queryKeys";
 import { StatusIcon } from "@/components/StatusIcon";
 import {
@@ -67,6 +84,8 @@ const COLLAPSED_PROJECT_GROUPS_STORAGE_KEY = "rudder.messengerCollapsedProjectGr
 const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
 const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "compact";
 const DEFAULT_SPLIT_ISSUE_NOTIFICATIONS = true;
+const PROJECT_GROUP_INITIAL_VISIBLE_COUNT = 6;
+const PROJECT_GROUP_VISIBLE_INCREMENT = 10;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
   { value: "latest", label: "Latest activity" },
@@ -297,6 +316,49 @@ interface ThreadGroup {
 interface FirstUnreadThreadTarget {
   threadKey: string;
   projectGroupKey: string | null;
+  projectEntryIndex: number | null;
+}
+
+type ProjectOrderUpdatedDetail = {
+  storageKey: string;
+  orderedIds: string[];
+};
+
+function projectIdFromSectionKey(sectionKey: string) {
+  return sectionKey.startsWith("project:") && sectionKey !== "project:none"
+    ? sectionKey.slice("project:".length)
+    : null;
+}
+
+function sortProjectThreadSections(
+  sections: OrganizedThreadSection[],
+  orderedProjectIds: string[],
+) {
+  if (sections.length === 0) return sections;
+  const orderIndex = new Map(orderedProjectIds.map((id, index) => [id, index]));
+  const realProjectSections: OrganizedThreadSection[] = [];
+  const fixedSections: OrganizedThreadSection[] = [];
+
+  for (const section of sections) {
+    if (projectIdFromSectionKey(section.key)) {
+      realProjectSections.push(section);
+    } else {
+      fixedSections.push(section);
+    }
+  }
+
+  realProjectSections.sort((a, b) => {
+    const aProjectId = projectIdFromSectionKey(a.key);
+    const bProjectId = projectIdFromSectionKey(b.key);
+    const aIndex = aProjectId ? orderIndex.get(aProjectId) : undefined;
+    const bIndex = bProjectId ? orderIndex.get(bProjectId) : undefined;
+    if (aIndex !== undefined || bIndex !== undefined) {
+      return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
+    }
+    return (a.label ?? "").localeCompare(b.label ?? "");
+  });
+
+  return [...realProjectSections, ...fixedSections];
 }
 
 function chatProjectGroup(conversation: ChatConversation | null): ThreadGroup {
@@ -918,6 +980,39 @@ function ThreadRow({
   );
 }
 
+function SortableProjectThreadSection({
+  id,
+  children,
+}: {
+  id: string;
+  children: ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 10 : undefined,
+      }}
+      className={cn("flex flex-col gap-1", isDragging && "opacity-80")}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
+}
+
 type MessengerThreadSummaryItem = ReturnType<typeof useMessengerModel>["threadSummaries"][number];
 
 function chatConversationForThreadSummary(
@@ -1149,13 +1244,57 @@ export function MessengerContextSidebar() {
   const [collapsedProjectGroupKeys, setCollapsedProjectGroupKeys] = useState<Set<string>>(() =>
     readCollapsedProjectGroups(model.selectedOrganizationId),
   );
+  const [visibleProjectEntryLimits, setVisibleProjectEntryLimits] = useState<Record<string, number>>({});
+  const sessionQuery = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
+  const projectOrderStorageKey = useMemo(() => {
+    if (!model.selectedOrganizationId) return null;
+    return getProjectOrderStorageKey(model.selectedOrganizationId, currentUserId);
+  }, [currentUserId, model.selectedOrganizationId]);
+  const [projectOrderIds, setProjectOrderIds] = useState<string[]>(() =>
+    projectOrderStorageKey ? readProjectOrder(projectOrderStorageKey) : [],
+  );
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  );
 
   useEffect(() => {
     setThreadOrganizationRule(readThreadOrganizationRule(model.selectedOrganizationId));
     setThreadDensity(readThreadDensity(model.selectedOrganizationId));
     setSplitIssueNotifications(readSplitIssueNotifications(model.selectedOrganizationId));
     setCollapsedProjectGroupKeys(readCollapsedProjectGroups(model.selectedOrganizationId));
+    setVisibleProjectEntryLimits({});
   }, [model.selectedOrganizationId]);
+
+  useEffect(() => {
+    if (!projectOrderStorageKey) {
+      setProjectOrderIds([]);
+      return;
+    }
+    setProjectOrderIds(readProjectOrder(projectOrderStorageKey));
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== projectOrderStorageKey) return;
+      setProjectOrderIds(readProjectOrder(projectOrderStorageKey));
+    };
+    const onCustomEvent = (event: Event) => {
+      const detail = (event as CustomEvent<ProjectOrderUpdatedDetail>).detail;
+      if (!detail || detail.storageKey !== projectOrderStorageKey) return;
+      setProjectOrderIds(detail.orderedIds);
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(PROJECT_ORDER_UPDATED_EVENT, onCustomEvent);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(PROJECT_ORDER_UPDATED_EVENT, onCustomEvent);
+    };
+  }, [projectOrderStorageKey]);
 
   useEffect(() => {
     if (!model.selectedOrganizationId) return;
@@ -1175,7 +1314,6 @@ export function MessengerContextSidebar() {
     queryFn: () => agentsApi.list(model.selectedOrganizationId!),
     enabled: !!model.selectedOrganizationId,
   });
-
   const conversationsById = useMemo(() => {
     const map = new Map<string, ChatConversation>();
     for (const conversation of chatsQuery.data ?? []) {
@@ -1206,15 +1344,19 @@ export function MessengerContextSidebar() {
           : null,
       };
     });
-    return organizeThreadEntries(entries, threadOrganizationRule, agentsById);
-  }, [agentsById, conversationsById, model.selectedOrganizationId, model.threadSummaries, splitIssueNotifications, threadOrganizationRule]);
+    const sections = organizeThreadEntries(entries, threadOrganizationRule, agentsById);
+    return threadOrganizationRule === "project"
+      ? sortProjectThreadSections(sections, projectOrderIds)
+      : sections;
+  }, [agentsById, conversationsById, model.selectedOrganizationId, model.threadSummaries, projectOrderIds, splitIssueNotifications, threadOrganizationRule]);
   const firstUnreadThreadTarget = useMemo<FirstUnreadThreadTarget | null>(() => {
     for (const section of organizedThreadSections) {
-      for (const entry of section.entries) {
+      for (const [index, entry] of section.entries.entries()) {
         if (entry.thread.unreadCount > 0) {
           return {
             threadKey: entry.thread.threadKey,
             projectGroupKey: threadOrganizationRule === "project" ? section.key : null,
+            projectEntryIndex: threadOrganizationRule === "project" ? index : null,
           };
         }
       }
@@ -1237,6 +1379,15 @@ export function MessengerContextSidebar() {
     if (route.kind === "system") return route.threadKind;
     return null;
   }, [model.threadSummaries, route]);
+  const projectSectionRequiredVisibleCounts = useMemo(() => {
+    if (threadOrganizationRule !== "project" || !activeThreadKey) return new Map<string, number>();
+    const required = new Map<string, number>();
+    for (const section of organizedThreadSections) {
+      const index = section.entries.findIndex((entry) => entry.thread.threadKey === activeThreadKey);
+      if (index !== -1) required.set(section.key, index + 1);
+    }
+    return required;
+  }, [activeThreadKey, organizedThreadSections, threadOrganizationRule]);
   const activeThread = useMemo(
     () => model.threadSummaries.find((thread) => thread.threadKey === activeThreadKey) ?? null,
     [activeThreadKey, model.threadSummaries],
@@ -1307,6 +1458,246 @@ export function MessengerContextSidebar() {
       }
       return next;
     });
+  };
+
+  const handleProjectSectionDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    if (!projectOrderStorageKey) return;
+
+    const projectSectionKeys = organizedThreadSections
+      .map((section) => section.key)
+      .filter((key) => projectIdFromSectionKey(key));
+    const oldIndex = projectSectionKeys.indexOf(active.id as string);
+    const newIndex = projectSectionKeys.indexOf(over.id as string);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const movedProjectIds = arrayMove(projectSectionKeys, oldIndex, newIndex)
+      .map((key) => projectIdFromSectionKey(key))
+      .filter((id): id is string => Boolean(id));
+    const movedProjectIdSet = new Set(movedProjectIds);
+    const nextProjectOrderIds = [
+      ...movedProjectIds,
+      ...projectOrderIds.filter((id) => !movedProjectIdSet.has(id)),
+    ];
+    setProjectOrderIds(nextProjectOrderIds);
+    writeProjectOrder(projectOrderStorageKey, nextProjectOrderIds);
+  }, [organizedThreadSections, projectOrderIds, projectOrderStorageKey]);
+
+  const handleShowMoreProjectSection = (section: OrganizedThreadSection, visibleCount: number) => {
+    if (visibleCount < section.entries.length) {
+      setVisibleProjectEntryLimits((current) => ({
+        ...current,
+        [section.key]: Math.min(section.entries.length, visibleCount + PROJECT_GROUP_VISIBLE_INCREMENT),
+      }));
+      return;
+    }
+    if (model.hasMoreThreadSummaries && !model.isFetchingMoreThreadSummaries) {
+      void model.loadMoreThreadSummaries?.();
+    }
+  };
+
+  const handleCollapseProjectSectionEntries = (sectionKey: string) => {
+    setVisibleProjectEntryLimits((current) => ({
+      ...current,
+      [sectionKey]: PROJECT_GROUP_INITIAL_VISIBLE_COUNT,
+    }));
+  };
+
+  const realProjectThreadSections = useMemo(
+    () => threadOrganizationRule === "project"
+      ? organizedThreadSections.filter((section) => projectIdFromSectionKey(section.key))
+      : [],
+    [organizedThreadSections, threadOrganizationRule],
+  );
+  const fixedProjectThreadSections = useMemo(
+    () => threadOrganizationRule === "project"
+      ? organizedThreadSections.filter((section) => !projectIdFromSectionKey(section.key))
+      : [],
+    [organizedThreadSections, threadOrganizationRule],
+  );
+
+  const renderThreadEntry = ({ thread, conversation }: OrganizedThreadEntry) => {
+    const active = activeThreadKey === thread.threadKey;
+    if (thread.kind === "chat" && conversation) {
+      const agentId = resolveChatAgentId(conversation);
+      return (
+        <ChatThreadRow
+          key={thread.threadKey}
+          conversation={conversation}
+          agent={agentId ? agentsById.get(agentId) ?? null : null}
+          agentId={agentId}
+          href={thread.href}
+          active={active}
+          generating={isChatGenerationActive(conversation.id)}
+          density={threadDensity}
+          renaming={renamingConversationId === conversation.id}
+          renameDraft={renameDraft}
+          onRenameDraftChange={setRenameDraft}
+          onCommitRename={submitRename}
+          onStartRename={() => {
+            setRenamingConversationId(conversation.id);
+            setRenameDraft(conversation.title);
+          }}
+          onArchive={() => {
+            updateConversationMutation.mutate({
+              chatId: conversation.id,
+              data: { status: "archived" },
+            });
+          }}
+          onDelete={async () => {
+            const confirmed = await confirm({
+              title: "Delete chat",
+              description: `Delete "${conversationDisplayTitle(conversation)}"? This cannot be undone.`,
+              confirmLabel: "Delete",
+              tone: "destructive",
+            });
+            if (!confirmed) return;
+            deleteConversationMutation.mutate({
+              chatId: conversation.id,
+              generating: isChatGenerationActive(conversation.id),
+            });
+          }}
+          onTogglePin={() => {
+            updateConversationUserStateMutation.mutate({
+              chatId: conversation.id,
+              pinned: !conversation.isPinned,
+            });
+          }}
+          onToggleUnread={() => {
+            updateConversationUserStateMutation.mutate({
+              chatId: conversation.id,
+              unread: !conversation.isUnread,
+            });
+          }}
+          onCopyConversationLink={() => void copyConversationLink(conversation)}
+          onSelect={handleMessengerEntrySelect}
+        />
+      );
+    }
+
+    return (
+      <ThreadRow
+        key={thread.threadKey}
+        thread={thread}
+        active={active}
+        density={threadDensity}
+        onTogglePin={() => {
+          updateThreadUserStateMutation.mutate({
+            threadKey: thread.threadKey,
+            pinned: !thread.isPinned,
+          });
+        }}
+        onSelect={handleMessengerEntrySelect}
+      />
+    );
+  };
+
+  const renderThreadSection = (section: OrganizedThreadSection) => {
+    const isProjectSection = threadOrganizationRule === "project";
+    const collapsed = isProjectSection && collapsedProjectGroupKeys.has(section.key);
+    const visibleCount = isProjectSection
+      ? Math.max(
+        visibleProjectEntryLimits[section.key] ?? PROJECT_GROUP_INITIAL_VISIBLE_COUNT,
+        projectSectionRequiredVisibleCounts.get(section.key) ?? PROJECT_GROUP_INITIAL_VISIBLE_COUNT,
+      )
+      : section.entries.length;
+    const visibleEntries = isProjectSection ? section.entries.slice(0, visibleCount) : section.entries;
+    const hasHiddenLoadedEntries = isProjectSection && visibleCount < section.entries.length;
+    const canFetchMoreForSection = isProjectSection
+      && Boolean(model.hasMoreThreadSummaries)
+      && visibleCount >= section.entries.length
+      && section.entries.length >= PROJECT_GROUP_INITIAL_VISIBLE_COUNT;
+    const showMoreControl = !collapsed && (hasHiddenLoadedEntries || canFetchMoreForSection || Boolean(model.isFetchingMoreThreadSummaries && canFetchMoreForSection));
+    const showCollapseControl = !collapsed && isProjectSection && visibleCount > PROJECT_GROUP_INITIAL_VISIBLE_COUNT;
+
+    return (
+      <>
+        {section.label ? (
+          isProjectSection ? (() => {
+            const attentionCount = sectionAttentionCount(section);
+            return (
+              <button
+                type="button"
+                data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
+                aria-expanded={!collapsed}
+                className="mx-1.5 flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-1.5 pb-1 pt-2 text-left text-[11px] font-semibold text-muted-foreground/72 transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
+                onClick={() => handleProjectGroupToggle(section.key)}
+              >
+                {collapsed ? (
+                  <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
+                ) : (
+                  <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
+                )}
+                <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                {attentionCount > 0 ? (
+                  <span
+                    data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-attention-count`}
+                    className="shrink-0 rounded-full bg-[color:color-mix(in_oklab,var(--accent-info)_16%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--accent-info)]"
+                  >
+                    {attentionCount}
+                  </span>
+                ) : null}
+                <span className="shrink-0 text-[10px] font-medium text-muted-foreground/60">{section.entries.length}</span>
+              </button>
+            );
+          })() : (
+            <div
+              data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
+              className="px-3 pb-1 pt-2 text-[11px] font-semibold text-muted-foreground/72"
+            >
+              {section.label}
+            </div>
+          )
+        ) : null}
+        <div
+          data-testid={isProjectSection ? `messenger-thread-section-${sanitizeThreadKey(section.key)}-content` : undefined}
+          className={cn(
+            "grid transition-[grid-template-rows,opacity] duration-150 ease-out",
+            collapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100",
+          )}
+          aria-hidden={collapsed || undefined}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div className="flex flex-col gap-1">
+              {visibleEntries.map(renderThreadEntry)}
+            </div>
+            {showMoreControl || showCollapseControl ? (
+              <div className="mx-1.5 flex items-center gap-1.5 px-2 py-1">
+                {showMoreControl ? (
+                  <button
+                    type="button"
+                    data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-show-more`}
+                    className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={model.isFetchingMoreThreadSummaries}
+                    onClick={() => handleShowMoreProjectSection(section, visibleCount)}
+                  >
+                    {model.isFetchingMoreThreadSummaries && canFetchMoreForSection ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                        Loading
+                      </span>
+                    ) : (
+                      "Show more"
+                    )}
+                  </button>
+                ) : null}
+                {showCollapseControl ? (
+                  <button
+                    type="button"
+                    data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-collapse`}
+                    className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
+                    onClick={() => handleCollapseProjectSectionEntries(section.key)}
+                  >
+                    Collapse
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </>
+    );
   };
 
   const refreshChatViews = async (chatId?: string) => {
@@ -1495,6 +1886,22 @@ export function MessengerContextSidebar() {
       return;
     }
 
+    if (
+      firstUnreadThreadTarget.projectGroupKey
+      && firstUnreadThreadTarget.projectEntryIndex !== null
+    ) {
+      const requiredVisibleCount = firstUnreadThreadTarget.projectEntryIndex + 1;
+      const currentVisibleCount = visibleProjectEntryLimits[firstUnreadThreadTarget.projectGroupKey]
+        ?? PROJECT_GROUP_INITIAL_VISIBLE_COUNT;
+      if (requiredVisibleCount > currentVisibleCount) {
+        setVisibleProjectEntryLimits((current) => ({
+          ...current,
+          [firstUnreadThreadTarget.projectGroupKey!]: requiredVisibleCount,
+        }));
+        return;
+      }
+    }
+
     const scrollFirstUnreadThreadIntoView = () => {
       const container = sidebarScrollElementRef.current;
       if (!container) return;
@@ -1509,7 +1916,7 @@ export function MessengerContextSidebar() {
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [collapsedProjectGroupKeys, firstUnreadThreadTarget, model.selectedOrganizationId, unreadScrollRequestId]);
+  }, [collapsedProjectGroupKeys, firstUnreadThreadTarget, model.selectedOrganizationId, unreadScrollRequestId, visibleProjectEntryLimits]);
 
   useEffect(() => {
     const sentinel = loadMoreThreadSummariesRef.current;
@@ -1591,122 +1998,37 @@ export function MessengerContextSidebar() {
             ))}
           </div>
         ) : null}
-        {organizedThreadSections.map((section) => (
-          <div key={section.key} className="flex flex-col gap-1">
-            {section.label ? (
-              threadOrganizationRule === "project" ? (() => {
-                const attentionCount = sectionAttentionCount(section);
-                return (
-                  <button
-                    type="button"
-                    data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
-                    aria-expanded={!collapsedProjectGroupKeys.has(section.key)}
-                    className="mx-1.5 flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-1.5 pb-1 pt-2 text-left text-[11px] font-semibold text-muted-foreground/72 transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
-                    onClick={() => handleProjectGroupToggle(section.key)}
-                  >
-                    {collapsedProjectGroupKeys.has(section.key) ? (
-                      <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
-                    ) : (
-                      <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
-                    )}
-                    <span className="min-w-0 flex-1 truncate">{section.label}</span>
-                    {attentionCount > 0 ? (
-                      <span
-                        data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-attention-count`}
-                        className="shrink-0 rounded-full bg-[color:color-mix(in_oklab,var(--accent-info)_16%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--accent-info)]"
-                      >
-                        {attentionCount}
-                      </span>
-                    ) : null}
-                    <span className="shrink-0 text-[10px] font-medium text-muted-foreground/60">{section.entries.length}</span>
-                  </button>
-                );
-              })() : (
-                <div
-                  data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
-                  className="px-3 pb-1 pt-2 text-[11px] font-semibold text-muted-foreground/72"
-                >
-                  {section.label}
-                </div>
-              )
-            ) : null}
-            {threadOrganizationRule === "project" && collapsedProjectGroupKeys.has(section.key) ? null : section.entries.map(({ thread, conversation }) => {
-              const active = activeThreadKey === thread.threadKey;
-              if (thread.kind === "chat" && conversation) {
-                const agentId = resolveChatAgentId(conversation);
-                return (
-                  <ChatThreadRow
-                    key={thread.threadKey}
-                    conversation={conversation}
-                    agent={agentId ? agentsById.get(agentId) ?? null : null}
-                    agentId={agentId}
-                    href={thread.href}
-                    active={active}
-                    generating={isChatGenerationActive(conversation.id)}
-                    density={threadDensity}
-                    renaming={renamingConversationId === conversation.id}
-                    renameDraft={renameDraft}
-                    onRenameDraftChange={setRenameDraft}
-                    onCommitRename={submitRename}
-                    onStartRename={() => {
-                      setRenamingConversationId(conversation.id);
-                      setRenameDraft(conversation.title);
-                    }}
-                    onArchive={() => {
-                      updateConversationMutation.mutate({
-                        chatId: conversation.id,
-                        data: { status: "archived" },
-                      });
-                    }}
-                    onDelete={async () => {
-                      const confirmed = await confirm({
-                        title: "Delete chat",
-                        description: `Delete "${conversationDisplayTitle(conversation)}"? This cannot be undone.`,
-                        confirmLabel: "Delete",
-                        tone: "destructive",
-                      });
-                      if (!confirmed) return;
-                      deleteConversationMutation.mutate({
-                        chatId: conversation.id,
-                        generating: isChatGenerationActive(conversation.id),
-                      });
-                    }}
-                    onTogglePin={() => {
-                      updateConversationUserStateMutation.mutate({
-                        chatId: conversation.id,
-                        pinned: !conversation.isPinned,
-                      });
-                    }}
-                    onToggleUnread={() => {
-                      updateConversationUserStateMutation.mutate({
-                        chatId: conversation.id,
-                        unread: !conversation.isUnread,
-                      });
-                    }}
-                    onCopyConversationLink={() => void copyConversationLink(conversation)}
-                    onSelect={handleMessengerEntrySelect}
-                  />
-                );
-              }
-
-              return (
-                <ThreadRow
-                  key={thread.threadKey}
-                  thread={thread}
-                  active={active}
-                  density={threadDensity}
-                  onTogglePin={() => {
-                    updateThreadUserStateMutation.mutate({
-                      threadKey: thread.threadKey,
-                      pinned: !thread.isPinned,
-                    });
-                  }}
-                  onSelect={handleMessengerEntrySelect}
-                />
-              );
-            })}
-          </div>
-        ))}
+        {threadOrganizationRule === "project" ? (
+          <>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleProjectSectionDragEnd}
+            >
+              <SortableContext
+                items={realProjectThreadSections.map((section) => section.key)}
+                strategy={verticalListSortingStrategy}
+              >
+                {realProjectThreadSections.map((section) => (
+                  <SortableProjectThreadSection key={section.key} id={section.key}>
+                    {renderThreadSection(section)}
+                  </SortableProjectThreadSection>
+                ))}
+              </SortableContext>
+            </DndContext>
+            {fixedProjectThreadSections.map((section) => (
+              <div key={section.key} className="flex flex-col gap-1">
+                {renderThreadSection(section)}
+              </div>
+            ))}
+          </>
+        ) : (
+          organizedThreadSections.map((section) => (
+            <div key={section.key} className="flex flex-col gap-1">
+              {renderThreadSection(section)}
+            </div>
+          ))
+        )}
         {model.hasMoreThreadSummaries || model.isFetchingMoreThreadSummaries ? (
           <div
             ref={loadMoreThreadSummariesRef}

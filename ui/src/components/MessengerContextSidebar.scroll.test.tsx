@@ -245,7 +245,10 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     expect(window.localStorage.getItem("rudder.messengerCollapsedProjectGroupsByOrg")).toBe(JSON.stringify({
       "org-1": ["project:project-1"],
     }));
-    expect(document.querySelector('[data-messenger-thread-key="chat:project-unread-chat"]')).toBeNull();
+    const projectContent = document.querySelector('[data-testid="messenger-thread-section-project-project-1-content"]');
+    expect(projectContent?.getAttribute("aria-hidden")).toBe("true");
+    expect(projectContent?.className).toContain("grid-rows-[0fr]");
+    expect(document.querySelector('[data-messenger-thread-key="chat:project-unread-chat"]')).not.toBeNull();
 
     await act(async () => {
       requestMessengerUnreadScroll();
@@ -255,6 +258,7 @@ describe("MessengerContextSidebar unread scroll requests", () => {
 
     const unreadRow = document.querySelector('[data-messenger-thread-key="chat:project-unread-chat"]') as HTMLElement | null;
     expect(projectHeader?.getAttribute("aria-expanded")).toBe("true");
+    expect(projectContent?.getAttribute("aria-hidden")).toBeNull();
     expect(window.localStorage.getItem("rudder.messengerCollapsedProjectGroupsByOrg")).toBe(JSON.stringify({ "org-1": [] }));
     expect(unreadRow).not.toBeNull();
     expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
