@@ -12,6 +12,7 @@ import {
   Folder,
   ListChecks,
   Loader2,
+  MessageSquare,
   MoreHorizontal,
   Paperclip,
   Pencil,
@@ -569,7 +570,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const composerUnavailable = selectedConversation ? !selectedConversation.chatRuntime.available && !canPersistSelectedAgentForConversation : !activeSelectedAgentId; const composerUnavailableMessage = activeSelectedAgentId ? selectedConversation?.chatRuntime.error ?? "Selected chat agent is unavailable." : "Create or activate an agent before sending messages."; const hasPendingLightweightProposal = rawMessages.some(
     (message) => !message.supersededAt && message.kind === "operation_proposal" && !message.approval && operationProposalStatusFromMessage(message) === "pending", ); const hasActionableApprovals = rawMessages .filter((m) => !m.supersededAt) .some((message) => approvalNeedsAction(message.approval));
   const agentPillLabel =
-    activeAgentId === NO_CHAT_AGENT_ID ? (agents ? NO_CHAT_AGENT_LABEL : "Loading agents") : (() => { const activeAgent = (agents ?? []).find((agent) => agent.id === activeAgentId); return activeAgent ? formatChatAgentLabel(activeAgent) : "Unknown agent"; })(); const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null; const activeProject = activeProjectId === NO_PROJECT_ID ? null : visibleProjects.find((project) => project.id === activeProjectId) ?? null; const projectPillLabel = activeProject ? projectDisplayName(activeProject) : activeProjectId === NO_PROJECT_ID ? "No project" : activeProjectContextLink?.entity?.label ?? "Unknown project"; const availableChatSkills = useMemo(
+    activeAgentId === NO_CHAT_AGENT_ID ? (agents ? NO_CHAT_AGENT_LABEL : "Loading agents") : (() => { const activeAgent = (agents ?? []).find((agent) => agent.id === activeAgentId); return activeAgent ? formatChatAgentLabel(activeAgent) : "Unknown agent"; })(); const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null; const activeProject = activeProjectId === NO_PROJECT_ID ? null : visibleProjects.find((project) => project.id === activeProjectId) ?? null; const projectPillLabel = activeProject ? projectDisplayName(activeProject) : activeProjectId === NO_PROJECT_ID ? "No project" : activeProjectContextLink?.entity?.label ?? "Unknown project"; const recentProjectConversations = useMemo(() => {
+    if (!activeProject) return [];
+    return [...(mentionConversationsQuery.data ?? [])]
+      .filter((conversation) => projectContextId(conversation) === activeProject.id)
+      .sort((a, b) => new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime())
+      .slice(0, 5);
+  }, [activeProject, mentionConversationsQuery.data]); const availableChatSkills = useMemo(
     () => buildChatSkillOptions({
       agent: activeSkillAgent,
       orgUrlKey: selectedOrganization?.urlKey ?? "organization",
@@ -1217,4 +1224,33 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     group={expandedPromptGroup}
                     optionsId={emptyStatePromptOptionsId}
                     entered={emptyStatePromptPanelEntered}
-                    originX={emptyStatePromptOriginX} onExampleSelect={applyEmptyStateExample} /> ) : null} </div> </div> )} </main> </div> ); } 
+                    originX={emptyStatePromptOriginX} onExampleSelect={applyEmptyStateExample} /> ) : null}
+                {recentProjectConversations.length > 0 ? (
+                  <section data-testid="chat-empty-state-recent-project-conversations" className="mt-5 w-full max-w-3xl px-1 text-left" aria-label="Recent project conversations">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+                        <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate">Recent conversations</span>
+                      </div>
+                      <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{projectDisplayName(activeProject)}</span>
+                    </div>
+                    <div className="divide-y divide-[color:var(--border-soft)] border-y border-[color:var(--border-soft)]">
+                      {recentProjectConversations.map((conversation) => (
+                        <Link
+                          key={conversation.id}
+                          to={chatConversationPath(conversation.id)}
+                          data-testid={`chat-empty-state-recent-conversation-${conversation.id}`}
+                          className="group flex min-w-0 items-center gap-3 px-1 py-2.5 text-sm transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                          onPointerDown={() => void prefetchChatConversation(queryClient, conversation.id)}
+                          onMouseEnter={() => void prefetchChatConversation(queryClient, conversation.id)}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium text-foreground">{conversationDisplayTitle(conversation)}</span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{conversationPreview(conversation)}</span>
+                          </span>
+                          <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(conversation.lastMessageAt ?? conversation.updatedAt)}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  </section>
+                ) : null} </div> </div> )} </main> </div> ); }
