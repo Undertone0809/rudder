@@ -1024,6 +1024,17 @@ function compareThreadEntries(a: OrganizedThreadEntry, b: OrganizedThreadEntry) 
   return a.thread.title.localeCompare(b.thread.title);
 }
 
+function entryActivityIsToday(entry: OrganizedThreadEntry, now = new Date()) {
+  const activityTime = entryActivityTime(entry);
+  if (!Number.isFinite(activityTime)) return false;
+  const activityDate = new Date(activityTime);
+  return (
+    activityDate.getFullYear() === now.getFullYear()
+    && activityDate.getMonth() === now.getMonth()
+    && activityDate.getDate() === now.getDate()
+  );
+}
+
 function groupEntries(
   entries: OrganizedThreadEntry[],
   groupForEntry: (entry: OrganizedThreadEntry) => ThreadGroup,
@@ -1065,12 +1076,17 @@ function organizeThreadEntries(
   const sorted = [...entries].sort(compareThreadEntries);
   if (rule === "latest") {
     const pinned = sorted.filter(isPinnedEntry);
-    const recent = sorted.filter((entry) => !isPinnedEntry(entry));
-    if (pinned.length === 0) return [{ key: "latest", label: null, entries: recent }];
-    return [
+    const unpinned = sorted.filter((entry) => !isPinnedEntry(entry));
+    const now = new Date();
+    const today = unpinned.filter((entry) => entryActivityIsToday(entry, now));
+    const recent = unpinned.filter((entry) => !entryActivityIsToday(entry, now));
+    const sections = [
       { key: "pinned", label: "Pinned", entries: pinned },
+      { key: "today", label: "Today", entries: today },
       { key: "recent", label: "Recent", entries: recent },
     ].filter((section) => section.entries.length > 0);
+    if (sections.length === 1 && sections[0]?.key === "recent") return [{ ...sections[0], key: "latest", label: null }];
+    return sections;
   }
   if (rule === "project") {
     return groupEntries(sorted, (entry) => {

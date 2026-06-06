@@ -369,11 +369,60 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Recent unpinned chat"));
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Issues"));
     expect(html).toContain("Pinned");
-    expect(html).toContain("Recent");
+    expect(html).toContain("Today");
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["chats", "org-1", "all"],
       enabled: false,
     }));
+  });
+
+  it("groups latest activity threads from today before older recent threads", () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:older-chat",
+          kind: "chat",
+          title: "Older chat",
+          preview: "Yesterday's follow-up.",
+          subtitle: null,
+          href: "/messenger/chat/older-chat",
+          latestActivityAt: "2026-04-10T12:00:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "chat:today-chat",
+          kind: "chat",
+          title: "Today chat",
+          preview: "Today's follow-up.",
+          subtitle: null,
+          href: "/messenger/chat/today-chat",
+          latestActivityAt: "2026-04-11T09:55:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.indexOf('data-testid="messenger-thread-section-today"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-chat-today-chat"'),
+    );
+    expect(html.indexOf('data-testid="messenger-thread-chat-today-chat"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-section-recent"'),
+    );
+    expect(html.indexOf('data-testid="messenger-thread-section-recent"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-chat-older-chat"'),
+    );
+    expect(html).toContain("Today");
+    expect(html).toContain("Recent");
   });
 
   it("promotes pinned split issue rows with pinned chats in latest activity mode", () => {
@@ -417,7 +466,7 @@ describe("MessengerContextSidebar", () => {
       html.indexOf('data-testid="messenger-thread-chat-chat-2"'),
     );
     expect(html).toContain("Pinned");
-    expect(html).toContain("Recent");
+    expect(html).toContain("Today");
     expect(html).toContain('aria-label="Thread actions"');
     expect(html).toContain('data-slot="status-progress-arc"');
   });

@@ -18,6 +18,7 @@ let chatList: any[];
 let activeGeneratingChatIds: Set<string>;
 let cleanupFn: (() => void) | null = null;
 let intersectionCallback: ((entries: Array<{ isIntersecting: boolean }>) => void) | null = null;
+let localStorageValues: Record<string, string>;
 
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
@@ -119,6 +120,22 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
 describe("MessengerContextSidebar unread scroll requests", () => {
   beforeEach(() => {
     intersectionCallback = null;
+    localStorageValues = {};
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn((key: string) => localStorageValues[key] ?? null),
+        setItem: vi.fn((key: string, value: string) => {
+          localStorageValues[key] = value;
+        }),
+        removeItem: vi.fn((key: string) => {
+          delete localStorageValues[key];
+        }),
+        clear: vi.fn(() => {
+          localStorageValues = {};
+        }),
+      },
+    });
     globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
       return 0;
