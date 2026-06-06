@@ -4379,7 +4379,7 @@ export function OrganizationWorkspaceBrowser({
                 data-testid="org-workspaces-editor-tabs"
                 role="tablist"
                 aria-label="Open files"
-                className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-[var(--rudder-doc-editor-tab-strip-height)] shrink-0 items-stretch justify-between bg-transparent"
+                className="rudder-doc-editor-tab-strip rudder-doc-editor-tab-strip--desktop-chrome flex h-[var(--rudder-doc-editor-tab-strip-height)] shrink-0 items-stretch justify-between rounded-tr-[var(--desktop-workspace-radius)] border-r border-t border-[color:var(--border-base)] bg-transparent"
               >
                 <div
                   ref={setOpenFileTabsScrollerRef}
@@ -4456,10 +4456,7 @@ export function OrganizationWorkspaceBrowser({
             {visibleWorkspaceBreadcrumbPath !== null ? (
               <div
                 data-testid="org-workspaces-path-breadcrumb"
-                className={cn(
-                  "flex h-9 shrink-0 items-center gap-1 overflow-hidden border-x border-b border-border bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground",
-                  showWorkspaceFileTabs && "rounded-tr-[var(--desktop-workspace-radius)]",
-                )}
+                className="flex h-9 shrink-0 items-center gap-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
                 aria-label="File path"
               >
                 {workspacePathBreadcrumb(
@@ -4499,7 +4496,7 @@ export function OrganizationWorkspaceBrowser({
             <div
               data-testid="org-workspaces-editor-content"
               className={cn(
-                "min-h-0 flex-1 overflow-hidden border-x border-b border-border bg-[color:var(--surface-elevated)]",
+                "min-h-0 flex-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)]",
                 !showWorkspaceFileTabs && visibleWorkspaceBreadcrumbPath === null && "rounded-[var(--desktop-workspace-radius)] border-t",
               )}
             >
