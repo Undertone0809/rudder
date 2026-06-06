@@ -154,6 +154,23 @@ describe("BreadcrumbBar", () => {
     expect(html).toContain("Create Issue");
   });
 
+  it("uses issue detail breadcrumbs in the messenger issue detail header", () => {
+    pathname = "/RUD/messenger/issues/RUD-357";
+    mockBreadcrumbs = [
+      { label: "Messenger", href: "/messenger" },
+      { label: "RUD-357 Review 能力优化" },
+    ];
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain('href="/messenger"');
+    expect(html).toContain("RUD-357 Review 能力优化");
+    expect(html).toContain("list-none");
+    expect(html).not.toContain("Issue Tracker");
+    expect(html).not.toContain("Search issues...");
+    expect(html).not.toContain("Create Issue");
+  });
+
   it("keeps issue detail source state on ancestor breadcrumb links", () => {
     pathname = "/RUD/issues/RUD-197";
     locationState = { issueDetailBreadcrumb: { label: "Inbox", href: "/inbox?scope=recent" } };

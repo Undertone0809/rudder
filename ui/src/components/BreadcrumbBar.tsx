@@ -78,6 +78,7 @@ export function BreadcrumbBar({
   const activeIssueSource = useMemo(() => new URLSearchParams(location.search).get("source") ?? "", [location.search]);
   const isIssuesRoute = useMemo(() => /^\/issues(?:\/|$)/.test(relativePath), [relativePath]);
   const isIssueDetailRoute = useMemo(() => /^\/issues\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
+  const isMessengerIssueDetailRoute = useMemo(() => /^\/messenger\/issues\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
   const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
   const isPrimaryRailPage = useMemo(
     () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|library|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
@@ -232,7 +233,7 @@ export function BreadcrumbBar({
   const cardHeaderBaseClass = "workspace-card-header workspace-main-header";
   const headerSurfaceClass = variant === "card" ? cardHeaderBaseClass : shellHeaderBaseClass;
   const draggableClass = desktopChrome ? "desktop-chrome desktop-window-drag" : "";
-  const hideMessengerMainHeader = variant === "card" && /^\/messenger(?:\/|$)/.test(relativePath);
+  const hideMessengerMainHeader = variant === "card" && /^\/messenger(?:\/|$)/.test(relativePath) && !isMessengerIssueDetailRoute;
   const hideAgentDetailMainHeader = variant === "card" && isAgentDetailRoute;
   const workspacesHeaderTooltip = useMemo(() => {
     if (/^\/(?:library|resources)(?:\/|$)/.test(relativePath)) {
@@ -270,7 +271,7 @@ export function BreadcrumbBar({
   }
 
   if (threeColumnTitle) {
-    const showIssueDetailBreadcrumbs = isIssuesRoute && isIssueDetailRoute && breadcrumbs.length > 1;
+    const showIssueDetailBreadcrumbs = ((isIssuesRoute && isIssueDetailRoute) || isMessengerIssueDetailRoute) && breadcrumbs.length > 1;
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
     const isDashboardIndex = /^\/dashboard\/?$/.test(relativePath);
