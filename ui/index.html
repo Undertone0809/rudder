@@ -39,15 +39,18 @@
           document.documentElement.style.colorScheme = "dark";
         }
 
-        const isMacDesktopShell =
+        const isDesktopShell =
           typeof window !== "undefined"
-          && Boolean(window.desktopShell)
+          && Boolean(window.desktopShell);
+        const isMacDesktopShell =
+          isDesktopShell
           && /Mac/i.test(window.navigator.userAgent);
+        document.documentElement.classList.toggle("desktop-shell-glass", isDesktopShell);
         document.documentElement.classList.toggle("desktop-shell-macos", isMacDesktopShell);
-        document.documentElement.style.backgroundColor = isMacDesktopShell
+        document.documentElement.style.backgroundColor = isDesktopShell
           ? "transparent"
           : (document.documentElement.classList.contains("dark") ? darkThemeColor : lightThemeColor);
-        if (isMacDesktopShell && typeof window.desktopShell?.setAppearance === "function") {
+        if (isDesktopShell && typeof window.desktopShell?.setAppearance === "function") {
           void window.desktopShell.setAppearance(theme);
         }
       })();

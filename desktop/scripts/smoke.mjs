@@ -600,8 +600,8 @@ async function verifyIssueDetailEscapeNavigation(page, companyId, issuePrefix, i
   console.log("[desktop-smoke] issue detail Escape navigation returned to issues");
 }
 
-async function verifyOrganizationWorkspacesNavigation(electronApp, page, companyId, issuePrefix) {
-  console.log("[desktop-smoke] verifying organization Workspaces navigation");
+async function verifyOrganizationLibraryNavigation(electronApp, page, companyId, issuePrefix) {
+  console.log("[desktop-smoke] verifying organization Library navigation");
   await page.evaluate(({ nextCompanyId, nextPath }) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", nextCompanyId);
     window.history.replaceState({}, "", nextPath);
@@ -612,13 +612,13 @@ async function verifyOrganizationWorkspacesNavigation(electronApp, page, company
   });
   await page.waitForURL(new RegExp(`/${issuePrefix}/org$`), { timeout: 30_000 });
 
-  await page.getByRole("link", { name: "Workspaces" }).click();
+  await page.getByRole("link", { name: "Library" }).click();
   page = await waitForBoardWindow(electronApp, page, {
-    expectedUrlPattern: new RegExp(`/${issuePrefix}/workspaces(?:[?#].*)?$`),
+    expectedUrlPattern: new RegExp(`/${issuePrefix}/library(?:[?#].*)?$`),
   });
   await page.getByTestId("org-workspaces-files-card").waitFor({ state: "visible", timeout: 30_000 });
   await page.getByTestId("org-workspaces-editor-card").waitFor({ state: "visible", timeout: 30_000 });
-  console.log("[desktop-smoke] organization Workspaces page opened");
+  console.log("[desktop-smoke] organization Library page opened");
   return page;
 }
 
@@ -747,7 +747,7 @@ async function runCleanScenario(mode) {
     firstRun.page = await verifyReloadRecovery(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
     firstRun.page = await verifyNativeApplicationMenu(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
     await verifyIssueDetailEscapeNavigation(firstRun.page, company.id, company.issuePrefix, issue);
-    firstRun.page = await verifyOrganizationWorkspacesNavigation(
+    firstRun.page = await verifyOrganizationLibraryNavigation(
       firstRun.electronApp,
       firstRun.page,
       company.id,

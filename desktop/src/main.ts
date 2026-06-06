@@ -25,6 +25,11 @@ import {
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
+import {
+  resolveDesktopWindowBackgroundColorForEffect,
+  resolveDesktopWindowEffectMode,
+  resolveDesktopWindowEffects,
+} from "./desktop-window-effects.js";
 import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
 import {
   applyThemePreferenceToNativeTheme,
@@ -174,8 +179,6 @@ type ActiveRunSummary = {
     runs: DesktopLiveRun[];
   }>;
 };
-
-type MacWindowMode = "opaque" | "transparent" | "transparent_vibrant";
 
 type OpenNotificationSettingsResult = {
   opened: boolean;
@@ -407,41 +410,6 @@ function resolveTransparentWindowBackgroundColor(appearance: DesktopAppearance =
   return TRANSPARENT_DESKTOP_WINDOW_BACKGROUND[appearance];
 }
 
-function resolveMacWindowMode(): MacWindowMode {
-  const value = process.env.RUDDER_DESKTOP_MAC_WINDOW_MODE?.trim().toLowerCase();
-  if (value === "opaque") return "opaque";
-  if (value === "transparent") return "transparent";
-  if (value === "transparent_vibrant" || value === "transparent-vibrant") return "transparent_vibrant";
-  return process.platform === "darwin" ? "transparent_vibrant" : "opaque";
-}
-
-function resolveMacWindowEffects(): Pick<BrowserWindowConstructorOptions,
-  "backgroundColor" | "titleBarStyle" | "transparent" | "vibrancy" | "visualEffectState"> {
-  const mode = resolveMacWindowMode();
-  if (mode === "transparent") {
-    return {
-      titleBarStyle: "hiddenInset",
-      transparent: true,
-      backgroundColor: resolveTransparentWindowBackgroundColor(currentAppearance),
-    };
-  }
-  if (mode === "transparent_vibrant") {
-    return {
-      titleBarStyle: "hiddenInset",
-      transparent: true,
-      backgroundColor: resolveTransparentWindowBackgroundColor(currentAppearance),
-      vibrancy: "under-window",
-      visualEffectState: "active",
-    };
-  }
-  return {
-    titleBarStyle: "hiddenInset",
-    backgroundColor: resolveDesktopWindowBackgroundColor(),
-    vibrancy: "under-window",
-    visualEffectState: "active",
-  };
-}
-
 function createDesktopWebPreferences(preloadPath: string): Electron.WebPreferences {
   return {
     preload: preloadPath,
@@ -454,9 +422,12 @@ function createDesktopWebPreferences(preloadPath: string): Electron.WebPreferenc
 function applyDesktopAppearance(appearance: DesktopAppearance): void {
   currentAppearance = appearance;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    const backgroundColor = process.platform === "darwin" && resolveMacWindowMode() !== "opaque"
-      ? resolveTransparentWindowBackgroundColor(appearance)
-      : resolveDesktopWindowBackgroundColor(appearance);
+    const backgroundColor = resolveDesktopWindowBackgroundColorForEffect({
+      mode: resolveDesktopWindowEffectMode(process.env),
+      appearance,
+      desktopWindowBackground: DESKTOP_WINDOW_BACKGROUND,
+      transparentWindowBackground: TRANSPARENT_DESKTOP_WINDOW_BACKGROUND,
+    });
     mainWindow.setBackgroundColor(backgroundColor);
   }
 }
@@ -698,11 +669,14 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
 
 async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, "preload.js");
-  const macWindowEffects = process.platform === "darwin"
-    ? resolveMacWindowEffects()
-    : {
-        backgroundColor: resolveDesktopWindowBackgroundColor(),
-      };
+  const desktopWindowEffects: Pick<BrowserWindowConstructorOptions,
+    "backgroundColor" | "titleBarStyle" | "transparent" | "vibrancy" | "visualEffectState" | "backgroundMaterial"> = resolveDesktopWindowEffects({
+      platform: process.platform,
+      mode: resolveDesktopWindowEffectMode(process.env),
+      appearance: currentAppearance,
+      desktopWindowBackground: DESKTOP_WINDOW_BACKGROUND,
+      transparentWindowBackground: TRANSPARENT_DESKTOP_WINDOW_BACKGROUND,
+    });
   const window = new BrowserWindow({
     width: 1440,
     height: 960,
@@ -711,7 +685,7 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
     title: APP_NAME,
     show: false,
     autoHideMenuBar: process.platform !== "darwin",
-    ...macWindowEffects,
+    ...desktopWindowEffects,
     ...(desktopWindowIcon ? { icon: desktopWindowIcon } : {}),
     webPreferences: createDesktopWebPreferences(preloadPath),
   });
@@ -1388,7 +1362,7 @@ async function bootstrap(): Promise<void> {
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:start", {
       profile: profile.name,
-      macWindowMode: process.platform === "darwin" ? resolveMacWindowMode() : "opaque",
+      windowEffectMode: resolveDesktopWindowEffectMode(process.env),
       bootOnly: desktopBootOnlyMode(),
     });
   }

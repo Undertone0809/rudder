@@ -60,7 +60,7 @@ function applyTheme(theme: Theme) {
   const root = document.documentElement;
   root.classList.toggle("dark", isDark);
   root.style.colorScheme = isDark ? "dark" : "light";
-  root.style.backgroundColor = root.classList.contains("desktop-shell-macos")
+  root.style.backgroundColor = root.classList.contains("desktop-shell-glass")
     ? "transparent"
     : (isDark ? DARK_THEME_COLOR : LIGHT_THEME_COLOR);
   const themeColorMeta = document.querySelector('meta[name="theme-color"]');

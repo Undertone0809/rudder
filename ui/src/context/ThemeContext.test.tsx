@@ -115,6 +115,7 @@ describe("ThemeProvider desktop shell bridge", () => {
   it("passes the stored light preference to the desktop shell even when the system is dark", () => {
     installMatchMedia(true);
     localStorage.setItem("rudder.theme", "light");
+    document.documentElement.classList.add("desktop-shell-glass");
     const setAppearance = vi.fn();
     Object.defineProperty(window, "desktopShell", {
       value: { setAppearance },
@@ -125,6 +126,7 @@ describe("ThemeProvider desktop shell bridge", () => {
 
     expect(setAppearance).toHaveBeenCalledWith("light");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(document.documentElement.style.backgroundColor).toBe("transparent");
   });
 
   it("keeps the desktop shell on system mode and reacts to system appearance changes", () => {

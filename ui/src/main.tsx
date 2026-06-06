@@ -50,12 +50,15 @@ function isDesktopShellWindow() {
 }
 
 function syncDesktopShellClass() {
+  const isDesktopShell = isDesktopShellWindow();
   const isMacDesktopShell =
-    isDesktopShellWindow()
+    isDesktopShell
     && /Mac/i.test(window.navigator.userAgent);
 
+  document.documentElement.classList.toggle("desktop-shell-glass", isDesktopShell);
   document.documentElement.classList.toggle("desktop-shell-macos", isMacDesktopShell);
   if (document.body) {
+    document.body.classList.toggle("desktop-shell-glass", isDesktopShell);
     document.body.classList.toggle("desktop-shell-macos", isMacDesktopShell);
   }
 }
@@ -84,7 +87,7 @@ syncDesktopShellClass();
 
 if (typeof document !== "undefined") {
   const root = document.documentElement;
-  root.style.backgroundColor = root.classList.contains("desktop-shell-macos")
+  root.style.backgroundColor = root.classList.contains("desktop-shell-glass")
     ? "transparent"
     : "";
 }

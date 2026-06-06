@@ -224,13 +224,13 @@
     height: 100%;
     overflow: hidden;
   }
-  body.desktop-shell-macos {
+  body.desktop-shell-glass {
     background-color: transparent;
     background-image: none;
   }
-  html.desktop-shell-macos,
-  html.desktop-shell-macos body,
-  html.desktop-shell-macos #root {
+  html.desktop-shell-glass,
+  html.desktop-shell-glass body,
+  html.desktop-shell-glass #root {
     background: transparent;
   }
   h1,
@@ -372,7 +372,7 @@
     background: var(--background);
   }
 
-  html.desktop-shell-macos .app-shell-backdrop {
+  html.desktop-shell-glass .app-shell-backdrop {
     background:
       linear-gradient(
         180deg,
@@ -383,7 +383,7 @@
     backdrop-filter: blur(38px) saturate(122%);
   }
 
-  html.dark.desktop-shell-macos .app-shell-backdrop {
+  html.dark.desktop-shell-glass .app-shell-backdrop {
     background:
       linear-gradient(
         180deg,
@@ -402,7 +402,7 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  html.desktop-shell-macos .workspace-shell {
+  html.desktop-shell-glass .workspace-shell {
     background:
       linear-gradient(
         180deg,
@@ -414,7 +414,7 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  html.dark.desktop-shell-macos .workspace-shell {
+  html.dark.desktop-shell-glass .workspace-shell {
     background:
       linear-gradient(
         180deg,
@@ -426,15 +426,15 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  html.desktop-shell-macos .workspace-shell--library-transparent,
-  html.dark.desktop-shell-macos .workspace-shell--library-transparent {
+  html.desktop-shell-glass .workspace-shell--library-transparent,
+  html.dark.desktop-shell-glass .workspace-shell--library-transparent {
     background: transparent;
   }
 
   .primary-rail-shell {
     background: transparent;
   }
-  html.desktop-shell-macos .primary-rail-shell {
+  html.desktop-shell-glass .primary-rail-shell {
     background:
       linear-gradient(
         180deg,
@@ -445,7 +445,7 @@
     -webkit-backdrop-filter: blur(22px) saturate(112%);
     backdrop-filter: blur(22px) saturate(112%);
   }
-  html.dark.desktop-shell-macos .primary-rail-shell {
+  html.dark.desktop-shell-glass .primary-rail-shell {
     background:
       linear-gradient(
         180deg,
@@ -457,7 +457,7 @@
     backdrop-filter: blur(20px) saturate(118%);
   }
 
-  html.desktop-shell-macos .workspace-shell .surface-shell {
+  html.desktop-shell-glass .workspace-shell .surface-shell {
     background:
       linear-gradient(
         180deg,
@@ -468,7 +468,7 @@
     -webkit-backdrop-filter: blur(12px) saturate(104%);
     backdrop-filter: blur(12px) saturate(104%);
   }
-  html.dark.desktop-shell-macos .workspace-shell .surface-shell {
+  html.dark.desktop-shell-glass .workspace-shell .surface-shell {
     background:
       linear-gradient(
         180deg,
@@ -502,7 +502,7 @@
       0 10px 18px -16px rgb(0 0 0 / 0.2);
   }
 
-  html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card) {
+  html.desktop-shell-glass :is(.workspace-context-card, .workspace-main-card) {
     background: var(--desktop-content-surface-light);
     border-color: rgb(220 214 207 / 0.88);
     box-shadow:
@@ -511,7 +511,7 @@
       inset 0 1px 0 rgb(255 255 255 / 0.64);
   }
 
-  html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card) {
+  html.dark.desktop-shell-glass :is(.workspace-context-card, .workspace-main-card) {
     background: var(--desktop-content-surface-dark);
     border-color: rgb(76 75 70 / 0.86);
     box-shadow:
@@ -522,8 +522,8 @@
 
   .workspace-main-card--frameless,
   .dark .workspace-main-card--frameless,
-  html.desktop-shell-macos .workspace-main-card--frameless,
-  html.dark.desktop-shell-macos .workspace-main-card--frameless {
+  html.desktop-shell-glass .workspace-main-card--frameless,
+  html.dark.desktop-shell-glass .workspace-main-card--frameless {
     background: transparent;
     border-width: 0;
     border-color: transparent;
@@ -554,11 +554,11 @@
     background: var(--desktop-content-surface-dark);
   }
 
-  html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header) {
+  html.desktop-shell-glass :is(.workspace-context-header, .workspace-main-header) {
     background: var(--desktop-content-surface-light);
   }
 
-  html.dark.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header) {
+  html.dark.desktop-shell-glass :is(.workspace-context-header, .workspace-main-header) {
     background: var(--desktop-content-surface-dark);
   }
 
@@ -592,13 +592,13 @@
     backdrop-filter: blur(30px) saturate(128%);
   }
 
-  html.desktop-shell-macos .settings-modal-backdrop {
+  html.desktop-shell-glass .settings-modal-backdrop {
     background: rgb(244 241 236 / 0.18);
     -webkit-backdrop-filter: blur(36px) saturate(118%);
     backdrop-filter: blur(36px) saturate(118%);
   }
 
-  html.dark.desktop-shell-macos .settings-modal-backdrop {
+  html.dark.desktop-shell-glass .settings-modal-backdrop {
     background: rgb(13 14 16 / 0.22);
     -webkit-backdrop-filter: blur(34px) saturate(112%);
     backdrop-filter: blur(34px) saturate(112%);
@@ -617,7 +617,7 @@
     }
   }
 
-  html.desktop-shell-macos .settings-modal-shell {
+  html.desktop-shell-glass .settings-modal-shell {
     border-color: rgb(218 212 205 / 0.9);
     background:
       linear-gradient(
@@ -631,7 +631,7 @@
       inset 0 1px 0 rgb(255 255 255 / 0.62);
   }
 
-  html.dark.desktop-shell-macos .settings-modal-shell {
+  html.dark.desktop-shell-glass .settings-modal-shell {
     border-color: rgb(76 75 70 / 0.88);
     background:
       linear-gradient(
@@ -655,7 +655,7 @@
     border-right: 1px solid color-mix(in oklab, var(--border-soft) 92%, transparent);
   }
 
-  html.desktop-shell-macos .settings-modal-sidebar {
+  html.desktop-shell-glass .settings-modal-sidebar {
     background:
       linear-gradient(
         180deg,
@@ -665,7 +665,7 @@
     border-right-color: rgb(216 211 204 / 0.9);
   }
 
-  html.dark.desktop-shell-macos .settings-modal-sidebar {
+  html.dark.desktop-shell-glass .settings-modal-sidebar {
     background:
       linear-gradient(
         180deg,

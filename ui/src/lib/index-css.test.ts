@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const indexCss = readFileSync(new URL("../index.css", import.meta.url), "utf8");
+const indexCss = readFileSync(new URL("../index.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const organizationWorkspacesSource = readFileSync(new URL("../pages/OrganizationWorkspaces.tsx", import.meta.url), "utf8");
 
 function cssBlock(selector: string) {
@@ -87,8 +87,8 @@ describe("index.css motion rules", () => {
     expect(reducedMotion).toContain(".automation-trigger-menu-content[data-state=\"open\"]");
   });
 
-  it("keeps the macOS desktop shell translucent in light mode", () => {
-    const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
+  it("keeps the desktop glass shell translucent in light mode", () => {
+    const lightDesktopBackdrop = cssBlock("html.desktop-shell-glass .app-shell-backdrop");
 
     expect(lightDesktopBackdrop).toContain("rgb(250 248 245 / 0.46)");
     expect(lightDesktopBackdrop).toContain("rgb(244 240 234 / 0.34)");
@@ -103,9 +103,9 @@ describe("index.css motion rules", () => {
   });
 
   it("removes the extra desktop shell wash behind the Library workspace", () => {
-    const libraryWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell--library-transparent");
+    const libraryWorkspaceShell = cssBlock("html.desktop-shell-glass .workspace-shell--library-transparent");
 
-    expect(indexCss).toContain("html.dark.desktop-shell-macos .workspace-shell--library-transparent");
+    expect(indexCss).toContain("html.dark.desktop-shell-glass .workspace-shell--library-transparent");
     expect(libraryWorkspaceShell).toContain("background: transparent");
   });
 
@@ -120,7 +120,7 @@ describe("index.css motion rules", () => {
   it("keeps desktop workspace shell and work-card corners aligned", () => {
     const rootTokens = cssBlock(":root");
     const workspaceShell = cssBlock(".workspace-shell");
-    const workspaceCards = cssBlock(".workspace-context-card,\n  .workspace-main-card");
+    const workspaceCards = cssBlock("  .workspace-context-card,\n  .workspace-main-card");
 
     expect(rootTokens).toContain("--desktop-workspace-radius: calc(var(--radius-sm) - 1px)");
     expect(workspaceShell).toContain("border-radius: var(--desktop-workspace-radius)");

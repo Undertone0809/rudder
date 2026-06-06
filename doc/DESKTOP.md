@@ -112,6 +112,25 @@ Platform behavior:
 - Windows: resident control lives in the notification area
 - Linux: resident control uses tray/AppIndicator support when the current desktop environment is likely to support it; otherwise Desktop safely falls back to windowed quit-on-close behavior
 
+## Desktop glass
+
+Rudder Desktop uses a transparent, tinted shell by default on all platforms so
+Windows and Linux can keep the same paper-glass workspace character as macOS
+where the native window manager supports it. macOS additionally uses native
+vibrancy. Windows uses Electron's window background material on supported
+Windows versions and otherwise keeps Rudder's tinted shell layers over the
+available window background; fully transparent framed-window fallback is not
+guaranteed on every Windows version or GPU/compositor combination. Linux support
+depends on the active compositor; the Rudder shell still uses a transparent
+window and tinted UI layers, but system-level behind-window blur is
+compositor-dependent.
+
+Use `RUDDER_DESKTOP_WINDOW_EFFECT_MODE=opaque` as the escape hatch when a
+platform, GPU driver, virtual machine, or compositor renders transparent
+windows poorly. Supported values are `opaque`, `transparent`, and
+`transparent_vibrant`. The legacy `RUDDER_DESKTOP_MAC_WINDOW_MODE` variable is
+still accepted for compatibility.
+
 ## Window chrome contract
 
 On macOS, Rudder Desktop keeps the native traffic-light window controls while hiding the default window title text.
