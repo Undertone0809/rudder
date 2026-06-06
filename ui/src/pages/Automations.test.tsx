@@ -33,6 +33,7 @@ const automation = {
   assigneeAgentId: "agent-1",
   outputMode: "track_issue",
   chatConversationId: null,
+  notifyOnIssueCreated: false,
   priority: "medium",
   status: "active",
   concurrencyPolicy: "coalesce_if_active",
@@ -578,6 +579,7 @@ describe("Automations", () => {
       assigneeAgentId: "agent-1",
       outputMode: "track_issue",
       chatConversationId: null,
+      notifyOnIssueCreated: false,
     }));
     expect(mockCreateTrigger).toHaveBeenCalledWith("created-auto-1", expect.objectContaining({
       kind: "schedule",

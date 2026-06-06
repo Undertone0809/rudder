@@ -57,6 +57,7 @@ import {
   myLastReadAtExpr,
   myLastTouchAtExpr,
   unreadForUserCondition,
+  followedByUserCondition,
   deriveIssueUserContext,
   labelMapForIssues,
   withIssueLabels,
@@ -596,7 +597,9 @@ export function issueService(db: Db) {
         );
       }
       if (!filters?.includeAutomationExecutions && !filters?.originKind && !filters?.originId) {
-        conditions.push(ne(issues.originKind, "automation_execution"));
+        conditions.push(contextUserId
+          ? or(ne(issues.originKind, "automation_execution"), followedByUserCondition(orgId, contextUserId))!
+          : ne(issues.originKind, "automation_execution"));
       }
       conditions.push(isNull(issues.hiddenAt));
 
@@ -682,7 +685,7 @@ export function issueService(db: Db) {
         eq(issues.orgId, orgId),
         isNull(issues.hiddenAt),
         unreadForUserCondition(orgId, userId),
-        ne(issues.originKind, "automation_execution"),
+        or(ne(issues.originKind, "automation_execution"), followedByUserCondition(orgId, userId))!,
       ];
       if (status) {
         const statuses = status.split(",").map((s) => s.trim()).filter(Boolean);

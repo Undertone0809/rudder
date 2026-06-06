@@ -83,6 +83,7 @@ test.describe("Automation detail layout", () => {
     const statusSwitch = headerActions.getByRole("switch", { name: "Disable automation" });
     const deleteButton = headerActions.getByRole("button", { name: "Delete automation" });
     const runButton = headerActions.getByRole("button", { name: "Run now" });
+    const notifySwitch = configurationCard.getByRole("switch", { name: "Follow issues created by this automation" });
 
     await expect(headerActions).toBeVisible();
     await expect(shell).toBeVisible();
@@ -95,9 +96,12 @@ test.describe("Automation detail layout", () => {
     await expect(triggersList).toBeVisible();
     await expect(triggerEditorBody).toBeHidden();
     await expect(statusSwitch).toBeVisible();
+    await expect(notifySwitch).toBeVisible();
+    await expect(notifySwitch).toHaveAttribute("aria-checked", "false");
     await expect(deleteButton).toBeVisible();
     await expect(runButton).toBeVisible();
-    await expect(page.getByRole("switch")).toHaveCount(1);
+    await expect(headerActions.getByRole("switch")).toHaveCount(1);
+    await expect(configurationCard.getByRole("switch")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Run now" })).toHaveCount(1);
     await expect(page.getByRole("button", { name: /^Save$/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
@@ -105,7 +109,9 @@ test.describe("Automation detail layout", () => {
     await expect(page.getByText(/Changes save automatically/)).toHaveCount(0);
     await expect(page.getByText("Configuration")).toBeVisible();
     await expect(configurationCard.getByText("Output")).toBeVisible();
-    await expect(page.getByText("Send to chat")).toBeVisible();
+    await configurationCard.getByRole("combobox").click();
+    await expect(page.getByRole("option", { name: "Send to chat" })).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(page.getByText("Run status")).toBeVisible();
     await expect(configurationCard.getByText("Triggers")).toBeVisible();
     await expect(triggersList).not.toContainText("daily-check");
@@ -116,7 +122,15 @@ test.describe("Automation detail layout", () => {
     await expect(addTriggerCard).toBeVisible();
     await expect(addTriggerCard.getByRole("button", { name: "Create trigger" })).toBeVisible();
     const addTriggerBox = await addTriggerCard.boundingBox();
+    const addTriggerButtonBoxForPopover = await addTriggerButton.boundingBox();
+    const configurationCardBoxForPopover = await configurationCard.boundingBox();
     expect(addTriggerBox).not.toBeNull();
+    expect(addTriggerButtonBoxForPopover).not.toBeNull();
+    expect(configurationCardBoxForPopover).not.toBeNull();
+    expect(addTriggerBox!.x + addTriggerBox!.width).toBeLessThanOrEqual(configurationCardBoxForPopover!.x + configurationCardBoxForPopover!.width + 16);
+    expect(addTriggerBox!.y).toBeLessThanOrEqual(addTriggerButtonBoxForPopover!.y + addTriggerButtonBoxForPopover!.height + 12);
+    await addTriggerButton.click();
+    await expect(addTriggerCard).toBeHidden();
     await triggersList.getByRole("button", { name: "Edit trigger" }).click();
     await expect(triggerEditorBody).toBeVisible();
     await expect(triggerEditorBody.getByText("Label")).toHaveCount(0);
@@ -136,6 +150,34 @@ test.describe("Automation detail layout", () => {
     const patchResponse = await patchPromise;
     expect(patchResponse.ok()).toBe(true);
     await expect(page.getByText("In sync")).toBeVisible({ timeout: 10_000 });
+
+    const notifyPatchPromise = page.waitForResponse((response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes(`/api/automations/${automation.id}`),
+    );
+    await notifySwitch.click();
+    const notifyPatchResponse = await notifyPatchPromise;
+    expect(notifyPatchResponse.ok()).toBe(true);
+    await expect(notifySwitch).toHaveAttribute("aria-checked", "true", { timeout: 10_000 });
+    const automationDetailRes = await page.request.get(`/api/automations/${automation.id}`);
+    expect(automationDetailRes.ok()).toBe(true);
+    const automationDetail = await automationDetailRes.json() as { notifyOnIssueCreated: boolean };
+    expect(automationDetail.notifyOnIssueCreated).toBe(true);
+
+    const chatOutputPatchPromise = page.waitForResponse((response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes(`/api/automations/${automation.id}`),
+    );
+    await configurationCard.getByRole("combobox").click();
+    await page.getByRole("option", { name: "Send to chat" }).click();
+    const chatOutputPatchResponse = await chatOutputPatchPromise;
+    expect(chatOutputPatchResponse.ok()).toBe(true);
+    await expect(notifySwitch).toBeHidden();
+    await expect(page.getByText("In sync")).toBeVisible({ timeout: 10_000 });
+    const chatOutputAutomationRes = await page.request.get(`/api/automations/${automation.id}`);
+    expect(chatOutputAutomationRes.ok()).toBe(true);
+    const chatOutputAutomation = await chatOutputAutomationRes.json() as { notifyOnIssueCreated: boolean };
+    expect(chatOutputAutomation.notifyOnIssueCreated).toBe(false);
 
     await deleteButton.click();
     const deleteDialog = page.getByRole("dialog", { name: /Delete/ });
@@ -175,8 +217,6 @@ test.describe("Automation detail layout", () => {
     expect(configurationCardBox!.x).toBeGreaterThan(overviewBox!.x + overviewBox!.width);
     expect(addTriggerButtonBox!.y).toBeLessThan(triggersListBox!.y + 8);
     expect(addTriggerButtonBox!.x).toBeGreaterThanOrEqual(configurationCardBox!.x - 2);
-    expect(addTriggerBox!.x + addTriggerBox!.width).toBeLessThanOrEqual(configurationCardBox!.x + 16);
-    expect(addTriggerBox!.y).toBeLessThanOrEqual(addTriggerButtonBox!.y + addTriggerButtonBox!.height + 8);
 
     await page.screenshot({
       path: testInfo.outputPath("automation-detail-layout.png"),

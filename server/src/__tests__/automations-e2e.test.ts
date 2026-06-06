@@ -31,6 +31,7 @@ import {
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { errorHandler } from "../middleware/index.js";
 import { accessService } from "../services/access.js";
+import { issueService } from "../services/issues.js";
 
 function mockServicesIndex() {
   vi.doMock("../services/index.js", async () => {
@@ -323,6 +324,7 @@ describe("automation routes end-to-end", () => {
         assigneeAgentId: agentId,
         priority: "high",
         outputMode: "track_issue",
+        notifyOnIssueCreated: true,
         concurrencyPolicy: "coalesce_if_active",
         catchUpPolicy: "skip_missed",
       });
@@ -330,6 +332,7 @@ describe("automation routes end-to-end", () => {
     expect(createRes.status).toBe(201);
     expect(createRes.body.title).toBe("Daily standup prep");
     expect(createRes.body.assigneeAgentId).toBe(agentId);
+    expect(createRes.body.notifyOnIssueCreated).toBe(true);
 
     const automationId = createRes.body.id as string;
 
@@ -358,6 +361,18 @@ describe("automation routes end-to-end", () => {
     expect(runRes.body.status).toBe("issue_created");
     expect(runRes.body.source).toBe("manual");
     expect(runRes.body.linkedIssueId).toBeTruthy();
+
+    const touchedIssues = await issueService(db).list(orgId, {
+      status: "backlog,todo,in_progress,in_review,blocked,done",
+      touchedByUserId: userId,
+    });
+    expect(touchedIssues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: runRes.body.linkedIssueId,
+        originKind: "automation_execution",
+        originId: automationId,
+      }),
+    ]));
 
     const detailRes = await request(app).get(`/api/automations/${automationId}`);
     expect(detailRes.status).toBe(200);
@@ -477,6 +492,7 @@ describe("automation routes end-to-end", () => {
         assigneeAgentId: agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         concurrencyPolicy: "coalesce_if_active",
         catchUpPolicy: "skip_missed",

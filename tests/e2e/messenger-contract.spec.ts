@@ -8,6 +8,7 @@ import {
   chatMessages,
   createDb,
   heartbeatRuns,
+  issueFollows,
   issues,
   messengerThreadUserStates,
 } from "../../packages/db/src/index.ts";
@@ -1347,6 +1348,103 @@ test.describe("Messenger unified threads contract", () => {
     await expect(issueCard).not.toContainText("assigned to me");
     await expect(issueCard).toContainText("Status changed to blocked");
     await expect(issueCard.locator('[aria-label="Status changed from todo to blocked"]')).toBeVisible();
+  });
+
+  test("surfaces followed automation execution issues while hiding unfollowed executions", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Automation-Follow-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Automation Follow Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Investigate automation follow regression",
+        description: "Created execution issues should reach Messenger only for the subscribed operator.",
+        assigneeAgentId: agent.id,
+        outputMode: "track_issue",
+        notifyOnIssueCreated: true,
+        priority: "medium",
+      },
+    });
+    expect(automationRes.ok()).toBe(true);
+    const automation = await automationRes.json() as {
+      id: string;
+      notifyOnIssueCreated: boolean;
+      notifyOnIssueCreatedUserId: string | null;
+    };
+    expect(automation.notifyOnIssueCreated).toBe(true);
+    expect(automation.notifyOnIssueCreatedUserId).toBeTruthy();
+
+    const followedIssueId = randomUUID();
+    const followedRunId = randomUUID();
+    await e2eDb.insert(issues).values({
+      id: followedIssueId,
+      orgId: organization.id,
+      title: "Investigate automation follow regression",
+      description: "Created execution issues should reach Messenger only for the subscribed operator.",
+      status: "todo",
+      priority: "medium",
+      originKind: "automation_execution",
+      originId: automation.id,
+      originRunId: followedRunId,
+      identifier: "AUTO-FOLLOWED",
+      createdAt: new Date("2026-05-20T10:01:00.000Z"),
+      updatedAt: new Date("2026-05-20T10:01:00.000Z"),
+    });
+    await e2eDb.insert(issueFollows).values({
+      orgId: organization.id,
+      issueId: followedIssueId,
+      userId: automation.notifyOnIssueCreatedUserId!,
+    });
+
+    const follows = await e2eDb
+      .select()
+      .from(issueFollows)
+      .where(eq(issueFollows.issueId, followedIssueId));
+    expect(follows.map((follow) => follow.userId)).toEqual([automation.notifyOnIssueCreatedUserId]);
+
+    const hiddenIssueId = randomUUID();
+    await e2eDb.insert(issues).values({
+      id: hiddenIssueId,
+      orgId: organization.id,
+      title: "Hidden unfollowed automation execution",
+      status: "todo",
+      priority: "medium",
+      originKind: "automation_execution",
+      originId: randomUUID(),
+      originRunId: randomUUID(),
+      identifier: "AUTO-HIDDEN",
+      createdAt: new Date("2026-05-20T10:00:00.000Z"),
+      updatedAt: new Date("2026-05-20T10:00:00.000Z"),
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/issues`, { waitUntil: "commit" });
+
+    await expect(page.getByTestId(`messenger-issue-card-${followedIssueId}`)).toContainText(
+      "Investigate automation follow regression",
+      { timeout: 15_000 },
+    );
+    await expect(page.getByTestId(threadTestId(`issue:${followedIssueId}`))).toContainText(
+      "Investigate automation follow regression",
+      { timeout: 15_000 },
+    );
+    await expect(page.getByTestId(`messenger-issue-card-${hiddenIssueId}`)).toHaveCount(0);
+    await expect(page.getByTestId(threadTestId(`issue:${hiddenIssueId}`))).toHaveCount(0);
   });
 
   test("shows the completed issue title in Messenger issue previews", async ({ page }) => {

@@ -17,6 +17,34 @@ describe("automation validators", () => {
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.outputMode).toBe("track_issue");
+      expect(parsed.data.notifyOnIssueCreated).toBe(false);
+    }
+  });
+
+  it("accepts notification opt-in for issue-tracking automations", () => {
+    const parsed = createAutomationSchema.safeParse({
+      title: "Daily inbox sweep",
+      assigneeAgentId: "11111111-1111-4111-8111-111111111111",
+      outputMode: "track_issue",
+      notifyOnIssueCreated: true,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.notifyOnIssueCreated).toBe(true);
+    }
+  });
+
+  it("normalizes notification opt-in off for chat-output automations", () => {
+    const parsed = createAutomationSchema.safeParse({
+      ...baseAutomationInput,
+      notifyOnIssueCreated: true,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.outputMode).toBe("chat_output");
+      expect(parsed.data.notifyOnIssueCreated).toBe(false);
     }
   });
 

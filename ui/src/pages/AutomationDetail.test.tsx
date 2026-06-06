@@ -14,6 +14,7 @@ const mockNavigate = vi.fn();
 const mockSetHeaderActions = vi.fn();
 const mockConfirm = vi.fn(async () => true);
 const markdownEditorProps = vi.hoisted(() => [] as Array<{ mentions?: Array<{ id: string; kind?: string; name: string }> }>);
+const mutationCalls = vi.hoisted(() => [] as Array<unknown>);
 
 const automation = {
   id: "auto-1",
@@ -26,6 +27,7 @@ const automation = {
   assigneeAgentId: "agent-1",
   outputMode: "track_issue",
   chatConversationId: null,
+  notifyOnIssueCreated: false,
   priority: "medium",
   status: "active",
   concurrencyPolicy: "coalesce_if_active",
@@ -249,7 +251,9 @@ vi.mock("@tanstack/react-query", () => ({
     return { data: [], isLoading: false, error: null };
   },
   useMutation: () => ({
-    mutate: vi.fn(),
+    mutate: vi.fn((variables: unknown) => {
+      mutationCalls.push(variables);
+    }),
     isPending: false,
   }),
   useQueryClient: () => ({
@@ -395,6 +399,7 @@ afterEach(() => {
   cleanupFn = null;
   document.body.innerHTML = "";
   markdownEditorProps.length = 0;
+  mutationCalls.length = 0;
   vi.clearAllMocks();
   mockConfirm.mockResolvedValue(true);
 });
@@ -457,7 +462,7 @@ describe("AutomationDetail", () => {
     expect(container.textContent).not.toContain("kind: schedule");
     expect(container.textContent).not.toContain("Pause automation");
     expect(container.textContent).not.toContain("Run now");
-    expect(container.querySelector('[role="switch"]')).toBeNull();
+    expect(container.querySelector('[role="switch"]')?.getAttribute("aria-label")).toBe("Follow issues created by this automation");
     const sidebar = container.querySelector("aside");
     expect(sidebar?.className).toContain("lg:sticky");
     expect(sidebar?.className).not.toContain("overflow-y-auto");
@@ -529,6 +534,28 @@ describe("AutomationDetail", () => {
     expect(container.textContent).toContain("Send to chat");
     expect(container.querySelector('[data-testid="automation-configuration-card"]')?.textContent).not.toContain("New chat");
     expect(container.textContent).not.toContain("Search chats");
+  });
+
+  it("autosaves the issue-created notification opt-in", async () => {
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const notifySwitch = container.querySelector('button[role="switch"][aria-label="Follow issues created by this automation"]');
+    expect(notifySwitch).toBeTruthy();
+    expect(notifySwitch?.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => {
+      notifySwitch?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => window.setTimeout(resolve, 760));
+    });
+
+    expect(mutationCalls).toContainEqual(expect.objectContaining({
+      notifyOnIssueCreated: true,
+      outputMode: "track_issue",
+    }));
   });
 
   it("keeps delivery rule controls contained in the sidebar width", async () => {

@@ -19,6 +19,7 @@ import {
   ensurePostgresDatabase,
   heartbeatRuns,
   issues,
+  issueFollows,
   projects,
   automationRuns,
   automations,
@@ -122,6 +123,7 @@ describe("automation service live-execution coalescing", () => {
 
   afterEach(async () => {
     await db.delete(activityLog);
+    await db.delete(issueFollows);
     await db.delete(automationRuns);
     await db.delete(automationTriggers);
     await db.delete(automations);
@@ -257,6 +259,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "track_issue",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -458,6 +461,62 @@ describe("automation service live-execution coalescing", () => {
         },
       },
     ]);
+    const follows = await db
+      .select()
+      .from(issueFollows)
+      .where(eq(issueFollows.issueId, run.linkedIssueId!));
+    expect(follows).toHaveLength(0);
+  });
+
+  it("follows the fresh execution issue when issue-created notifications are enabled", async () => {
+    const { agentId, automation, svc, wakeups } = await seedFixture();
+    await svc.update(automation.id, { notifyOnIssueCreated: true }, { userId: "board-user" });
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(run.status).toBe("issue_created");
+    expect(run.linkedIssueId).toBeTruthy();
+    expect(wakeups).toHaveLength(1);
+    expect(wakeups[0]?.agentId).toBe(agentId);
+    const follows = await db
+      .select()
+      .from(issueFollows)
+      .where(eq(issueFollows.issueId, run.linkedIssueId!));
+    expect(follows).toMatchObject([
+      {
+        orgId: automation.orgId,
+        issueId: run.linkedIssueId,
+        userId: "board-user",
+      },
+    ]);
+  });
+
+  it("keeps issue-created notifications pinned to the enabling board user", async () => {
+    const { automation, svc } = await seedFixture();
+    await svc.update(automation.id, { notifyOnIssueCreated: true }, { userId: "board-user-a" });
+    const edited = await svc.update(automation.id, { title: "edited by another board user" }, { userId: "board-user-b" });
+
+    expect(edited?.notifyOnIssueCreated).toBe(true);
+    expect(edited?.notifyOnIssueCreatedUserId).toBe("board-user-a");
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+    expect(run.linkedIssueId).toBeTruthy();
+    const follows = await db
+      .select()
+      .from(issueFollows)
+      .where(eq(issueFollows.issueId, run.linkedIssueId!));
+    expect(follows.map((follow) => follow.userId)).toEqual(["board-user-a"]);
+  });
+
+  it("clears issue-created notifications when switching to chat output", async () => {
+    const { automation, svc } = await seedFixture();
+    await svc.update(automation.id, { notifyOnIssueCreated: true }, { userId: "board-user" });
+
+    const updated = await svc.update(automation.id, { outputMode: "chat_output" }, { userId: "board-user" });
+
+    expect(updated?.outputMode).toBe("chat_output");
+    expect(updated?.notifyOnIssueCreated).toBe(false);
+    expect(updated?.notifyOnIssueCreatedUserId).toBeNull();
   });
 
   it("rejects arbitrary existing chat output destinations", async () => {
@@ -511,6 +570,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -630,6 +690,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -704,6 +765,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: issueFixture.agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -789,6 +851,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: operationFixture.agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -848,6 +911,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -906,6 +970,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -972,6 +1037,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -1052,6 +1118,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -1097,6 +1164,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "skip_if_active",
@@ -1142,6 +1210,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "chat_output",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -1186,6 +1255,7 @@ describe("automation service live-execution coalescing", () => {
         assigneeAgentId: agentId,
         outputMode: "track_issue",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",

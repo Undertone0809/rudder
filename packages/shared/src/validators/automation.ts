@@ -21,7 +21,13 @@ const automationBodySchema = z.object({
   catchUpPolicy: z.enum(AUTOMATION_CATCH_UP_POLICIES).optional().default("skip_missed"),
   outputMode: z.enum(AUTOMATION_OUTPUT_MODES).optional().default("track_issue"),
   chatConversationId: z.string().uuid().optional().nullable().default(null),
+  notifyOnIssueCreated: z.boolean().optional().default(false),
 });
+
+function normalizeAutomationNotifications<T extends { outputMode?: string; notifyOnIssueCreated?: boolean }>(value: T): T {
+  if (value.outputMode !== "chat_output" || !value.notifyOnIssueCreated) return value;
+  return { ...value, notifyOnIssueCreated: false };
+}
 
 export const createAutomationSchema = automationBodySchema.superRefine((value, ctx) => {
   if (value.chatConversationId) {
@@ -31,7 +37,7 @@ export const createAutomationSchema = automationBodySchema.superRefine((value, c
       message: "Chat output creates an automation-owned conversation; existing chats cannot be selected",
     });
   }
-});
+}).transform(normalizeAutomationNotifications);
 
 export type CreateAutomation = z.infer<typeof createAutomationSchema>;
 
@@ -43,7 +49,7 @@ export const updateAutomationSchema = automationBodySchema.partial().superRefine
       message: "Chat output creates an automation-owned conversation; existing chats cannot be selected",
     });
   }
-});
+}).transform(normalizeAutomationNotifications);
 export type UpdateAutomation = z.infer<typeof updateAutomationSchema>;
 
 const baseTriggerSchema = z.object({

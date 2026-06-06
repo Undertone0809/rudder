@@ -7,6 +7,7 @@ import {
   organizationSecrets,
   goals,
   heartbeatRuns,
+  issueFollows,
   issues,
   projects,
   automationRuns,
@@ -152,6 +153,27 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     if (parentIssue.orgId !== orgId) throw unprocessable("Parent issue must belong to same organization");
   }
 
+  async function followAutomationIssueForNotification(input: {
+    automation: AutomationRow;
+    issueId: string;
+    executor: Db;
+  }) {
+    if (input.automation.outputMode !== "track_issue" || !input.automation.notifyOnIssueCreated) return;
+    const userId = input.automation.notifyOnIssueCreatedUserId;
+    if (!userId) return;
+    await input.executor
+      .insert(issueFollows)
+      .values({
+        orgId: input.automation.orgId,
+        issueId: input.issueId,
+        userId,
+      })
+      .onConflictDoUpdate({
+        target: [issueFollows.orgId, issueFollows.issueId, issueFollows.userId],
+        set: { createdAt: new Date() },
+      });
+  }
+
   function assertChatOutputDestination(input: {
     outputMode: string;
     chatConversationId: string | null | undefined;
@@ -163,6 +185,35 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
       return;
     }
     throw unprocessable("Chat output creates an automation-owned conversation; existing chats cannot be selected");
+  }
+
+  function normalizeCreateNotification(input: CreateAutomation, actor: Actor) {
+    const enabled = input.outputMode === "track_issue" && input.notifyOnIssueCreated && Boolean(actor.userId);
+    return {
+      enabled,
+      userId: enabled ? actor.userId! : null,
+    };
+  }
+
+  function normalizeUpdateNotification(input: {
+    existing: AutomationRow;
+    patch: UpdateAutomation;
+    actor: Actor;
+    nextOutputMode: string;
+  }) {
+    if (input.nextOutputMode !== "track_issue") {
+      return { enabled: false, userId: null };
+    }
+    const enabled = input.patch.notifyOnIssueCreated ?? input.existing.notifyOnIssueCreated;
+    if (!enabled) {
+      return { enabled: false, userId: null };
+    }
+    if (input.patch.notifyOnIssueCreated === true) {
+      const userId = input.actor.userId ?? input.existing.notifyOnIssueCreatedUserId;
+      return { enabled: Boolean(userId), userId: userId ?? null };
+    }
+    const userId = input.existing.notifyOnIssueCreatedUserId;
+    return { enabled: Boolean(userId), userId: userId ?? null };
   }
 
   async function resolveAutomationRunChatConversationId(input: {
@@ -1317,6 +1368,11 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
             originId: input.automation.id,
             originRunId: createdRun.id,
           });
+          await followAutomationIssueForNotification({
+            automation: input.automation,
+            issueId: createdIssue.id,
+            executor: txDb,
+          });
         } catch (error) {
           const isOpenExecutionConflict =
             !!error &&
@@ -1602,6 +1658,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         chatConversationId: input.chatConversationId,
         isCreate: true,
       });
+      const notification = normalizeCreateNotification(input, actor);
       const [created] = await db
         .insert(automations)
         .values({
@@ -1614,6 +1671,8 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           assigneeAgentId: input.assigneeAgentId,
           outputMode: input.outputMode,
           chatConversationId: null,
+          notifyOnIssueCreated: notification.enabled,
+          notifyOnIssueCreatedUserId: notification.userId,
           priority: input.priority,
           status: input.status,
           concurrencyPolicy: input.concurrencyPolicy,
@@ -1644,6 +1703,12 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         existingChatConversationId: existing.chatConversationId,
       });
       const nextChatConversationId = null;
+      const notification = normalizeUpdateNotification({
+        existing,
+        patch,
+        actor,
+        nextOutputMode,
+      });
       const [updated] = await db
         .update(automations)
         .set({
@@ -1655,6 +1720,8 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           assigneeAgentId: nextAssigneeAgentId,
           outputMode: nextOutputMode,
           chatConversationId: nextChatConversationId,
+          notifyOnIssueCreated: notification.enabled,
+          notifyOnIssueCreatedUserId: notification.userId,
           priority: patch.priority ?? existing.priority,
           status: patch.status ?? existing.status,
           concurrencyPolicy: patch.concurrencyPolicy ?? existing.concurrencyPolicy,

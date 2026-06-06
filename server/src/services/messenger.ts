@@ -1080,8 +1080,19 @@ export function messengerService(db: Db) {
                 or latest_suppressed_activity.created_at < issue_row.updated_at - interval '5 seconds'
               )
               and (
+                latest_own_comment.created_at is null
+                or latest_own_comment.created_at < issue_row.updated_at - interval '5 seconds'
+              )
+              and (
                 issue_row.assignee_user_id = ${userId}
                 or (issue_row.reviewer_user_id = ${userId} and issue_row.status = 'in_review')
+                or exists (
+                  select 1
+                  from ${issueFollows} attention_follow_row
+                  where attention_follow_row.org_id = ${orgId}
+                    and attention_follow_row.user_id = ${userId}
+                    and attention_follow_row.issue_id = issue_row.id
+                )
               )
               then issue_row.updated_at
             else null
@@ -1098,7 +1109,16 @@ export function messengerService(db: Db) {
         from tracked_issue_ids
         inner join ${issues} issue_row
           on issue_row.id = tracked_issue_ids.id
-          and issue_row.origin_kind <> 'automation_execution'
+          and (
+            issue_row.origin_kind <> 'automation_execution'
+            or exists (
+              select 1
+              from ${issueFollows} automation_follow_row
+              where automation_follow_row.org_id = ${orgId}
+                and automation_follow_row.user_id = ${userId}
+                and automation_follow_row.issue_id = issue_row.id
+            )
+          )
         left join lateral (
           select
             comment_row.body,
@@ -1110,6 +1130,16 @@ export function messengerService(db: Db) {
           order by comment_row.created_at desc, comment_row.id desc
           limit 1
         ) latest_external_comment on true
+        left join lateral (
+          select
+            comment_row.created_at
+          from ${issueComments} comment_row
+          where comment_row.org_id = ${orgId}
+            and comment_row.issue_id = issue_row.id
+            and comment_row.author_user_id = ${userId}
+          order by comment_row.created_at desc, comment_row.id desc
+          limit 1
+        ) latest_own_comment on true
         left join lateral (
           select
             activity_row.id,
@@ -2120,11 +2150,15 @@ export function messengerService(db: Db) {
       .where(and(
         eq(issues.orgId, orgId),
         eq(issues.id, issueId),
-        ne(issues.originKind, "automation_execution"),
         or(
-          eq(issues.assigneeUserId, userId),
-          eq(issues.reviewerUserId, userId),
-          eq(issues.createdByUserId, userId),
+          and(
+            ne(issues.originKind, "automation_execution"),
+            or(
+              eq(issues.assigneeUserId, userId),
+              eq(issues.reviewerUserId, userId),
+              eq(issues.createdByUserId, userId),
+            )!,
+          ),
           sql`exists (
             select 1
             from ${issueFollows} follow_row

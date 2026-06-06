@@ -542,6 +542,63 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
+  it("allows followed automation execution issues into Messenger while hiding unfollowed automation issues", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-automation-follow";
+    const followedAutomationIssueId = randomUUID();
+    const hiddenAutomationIssueId = randomUUID();
+    const createdAt = new Date("2026-05-03T12:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Automation Follow Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Automation Follow Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: followedAutomationIssueId,
+        orgId,
+        title: "Followed automation execution",
+        status: "todo",
+        priority: "medium",
+        originKind: "automation_execution",
+        originId: "automation-1",
+        originRunId: "run-1",
+        identifier: "AUT-1",
+        createdAt,
+        updatedAt: createdAt,
+      },
+      {
+        id: hiddenAutomationIssueId,
+        orgId,
+        title: "Hidden automation execution",
+        status: "todo",
+        priority: "medium",
+        originKind: "automation_execution",
+        originId: "automation-2",
+        originRunId: "run-2",
+        identifier: "AUT-2",
+        createdAt,
+        updatedAt: createdAt,
+      },
+    ]);
+    await issueSvc.followIssue(orgId, followedAutomationIssueId, userId);
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const issueIds = new Set(thread.detail.items.map((item) => item.issueId));
+
+    expect(issueIds.has(followedAutomationIssueId)).toBe(true);
+    expect(issueIds.has(hiddenAutomationIssueId)).toBe(false);
+    expect(thread.detail.unreadCount).toBe(1);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+    const pinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${followedAutomationIssueId}`, true);
+    expect(pinnedState).toEqual({ threadKey: `issue:${followedAutomationIssueId}`, pinned: true });
+    await expect(messengerSvc.setThreadPinned(orgId, userId, `issue:${hiddenAutomationIssueId}`, true)).resolves.toBeNull();
+  });
+
   it("includes issue status transitions in Messenger issue update cards", async () => {
     const orgId = randomUUID();
     const userId = "board-user-status-transition";
@@ -884,7 +941,7 @@ describe("messengerService and issue follows", () => {
       status: "completed",
       body: "Incoming assistant reply",
     });
-    await chatSvc.markRead(conversationId, orgId, userId, new Date());
+    await chatSvc.markRead(conversationId, orgId, userId, new Date("2999-01-01T00:00:00.000Z"));
 
     const [afterRead] = await chatSvc.list(orgId, { status: "active" }, userId);
     expect(afterRead?.unreadCount).toBe(0);
@@ -1423,7 +1480,9 @@ describe("messengerService and issue follows", () => {
 
     const thread = await messengerSvc.getIssuesThread(orgId, userId);
     const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const splitSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
     const issuesSummary = summaries.find((item) => item.threadKey === "issues");
+    const splitIssueSummary = splitSummaries.find((item) => item.threadKey === `issue:${createdIssueId}`);
 
     expect(thread.detail.items.map((item) => item.issueId)).toEqual([createdIssueId]);
     expect(thread.detail.items[0]?.preview).toBeNull();
@@ -1440,6 +1499,8 @@ describe("messengerService and issue follows", () => {
     expect(thread.summary.preview).toContain("Self-created issue");
     expect(issuesSummary?.unreadCount).toBe(0);
     expect(issuesSummary?.needsAttention).toBe(false);
+    expect(splitIssueSummary?.unreadCount).toBe(0);
+    expect(splitIssueSummary?.needsAttention).toBe(false);
     expect(issuesSummary?.latestActivityAt).not.toBeNull();
     expect(issuesSummary?.preview).toContain("Self-created issue");
   });

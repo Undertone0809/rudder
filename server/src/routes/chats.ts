@@ -700,6 +700,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         catchUpPolicy: automationCreate.catchUpPolicy,
         outputMode: automationCreate.outputMode,
         chatConversationId: null,
+        notifyOnIssueCreated: false,
       }, {
         agentId: replyingAgentId,
         userId: actor.actorType === "user" ? actor.actorId : null,

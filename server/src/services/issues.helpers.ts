@@ -175,6 +175,7 @@ export function touchedByUserCondition(orgId: string, userId: string) {
       ${issues.createdByUserId} = ${userId}
       OR ${issues.assigneeUserId} = ${userId}
       OR ${issues.reviewerUserId} = ${userId}
+      OR ${followedByUserCondition(orgId, userId)}
       OR EXISTS (
         SELECT 1
         FROM ${issueReadStates}
@@ -189,6 +190,18 @@ export function touchedByUserCondition(orgId: string, userId: string) {
           AND ${issueComments.orgId} = ${orgId}
           AND ${issueComments.authorUserId} = ${userId}
       )
+    )
+  `;
+}
+
+export function followedByUserCondition(orgId: string, userId: string) {
+  return sql<boolean>`
+    EXISTS (
+      SELECT 1
+      FROM ${issueFollows}
+      WHERE ${issueFollows.issueId} = ${issues.id}
+        AND ${issueFollows.orgId} = ${orgId}
+        AND ${issueFollows.userId} = ${userId}
     )
   `;
 }
