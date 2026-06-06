@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -54,7 +54,7 @@ import { ChatRichReferences } from "@/components/chat-renderables/ChatRichRefere
 import { TextDots } from "@/components/TextDots";
 import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
-import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
+import { MarkdownEditor, type MarkdownEditorProps, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentMenuLabel, AssigneeLabel } from "@/components/AssigneeLabel";
 import { InlineEntitySelector, type InlineEntityOption } from "@/components/InlineEntitySelector";
@@ -1418,6 +1418,7 @@ export function ChatMessageItem({
   onMarkdownLinkClick,
   turnBranchControls,
   skillReferences,
+  inlineEdit,
   answered,
   askUserAnswer,
 }: {
@@ -1441,6 +1442,18 @@ export function ChatMessageItem({
   onOpenFile: (targetPath: string) => void;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   skillReferences: MarkdownSkillReferencePreview[];
+  inlineEdit?: {
+    draft: string;
+    disabled: boolean;
+    mentions: MentionOption[];
+    surfaceRef: RefObject<HTMLDivElement | null>;
+    editorRef: RefObject<MarkdownEditorRef | null>;
+    onChange: (value: string) => void;
+    onSubmit: () => void;
+    onCancel: () => void;
+    onMentionQueryChange: (query: string | null) => void;
+    onInlineTokenClick: MarkdownEditorProps["onInlineTokenClick"];
+  } | null;
   answered?: boolean;
   askUserAnswer?: AskUserAnswerRecord | null;
   turnBranchControls?: {
@@ -1510,6 +1523,7 @@ export function ChatMessageItem({
   const canContinueInterrupted = canContinueInterruptedChatMessage(message);
   const canRetryFailed = canRetryFailedChatMessage(message);
   const isEmptyStreamingAssistant = !isUser && message.status === "streaming" && message.body.trim().length === 0;
+  const isInlineEditing = isUser && Boolean(inlineEdit);
 
   if (!isUser) {
     return (
@@ -1586,8 +1600,63 @@ export function ChatMessageItem({
 
   return (
     <div className="flex justify-end transition-all duration-200">
-      <div className="group flex max-w-[82%] flex-col items-end text-left">
-        {askUserAnswer ? (
+      <div className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-[82%]" : "max-w-[82%]")}>
+        {isInlineEditing && inlineEdit ? (
+          <div
+            ref={inlineEdit.surfaceRef}
+            data-testid="chat-inline-message-editor"
+            className="chat-message-user w-full max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
+          >
+            <MarkdownEditor
+              ref={inlineEdit.editorRef}
+              value={inlineEdit.draft}
+              onChange={inlineEdit.onChange}
+              mentions={inlineEdit.mentions}
+              onMentionQueryChange={inlineEdit.onMentionQueryChange}
+              mentionMenuAnchorRef={inlineEdit.surfaceRef}
+              mentionMenuPlacement="container"
+              submitShortcut="enter"
+              onInlineTokenClick={inlineEdit.onInlineTokenClick}
+              plainText
+              bordered={false}
+              placeholder="Edit message"
+              className="rounded-[var(--radius-md)] bg-transparent"
+              contentClassName="min-h-[72px] bg-transparent text-[15px] leading-7 text-foreground"
+              onSubmit={() => {
+                if (!inlineEdit.disabled) {
+                  inlineEdit.onSubmit();
+                }
+              }}
+            />
+            {message.attachments.length > 0 ? (
+              <div className="mt-2">
+                <ChatAttachmentList
+                  attachments={message.attachments}
+                  onOpenImage={onOpenImage}
+                  onOpenFile={onOpenFile}
+                />
+              </div>
+            ) : null}
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={inlineEdit.onCancel}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={inlineEdit.disabled || inlineEdit.draft.trim().length === 0}
+                onClick={inlineEdit.onSubmit}
+              >
+                Send
+              </Button>
+            </div>
+          </div>
+        ) : askUserAnswer ? (
           <AskUserAnswerBubble answer={askUserAnswer} />
         ) : (
           <div
@@ -1618,14 +1687,14 @@ export function ChatMessageItem({
           data-testid="chat-user-message-toolbar"
           className={cn(
             "mt-1 flex h-7 items-center justify-end gap-1 text-muted-foreground",
-            chatMessageHoverBarClass,
+            isInlineEditing ? "invisible pointer-events-none" : chatMessageHoverBarClass,
           )}
         >
           <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
           <button
             type="button"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-            aria-label="Edit message in composer"
+            aria-label="Edit message"
             onClick={() => onEditUserMessage(message)}
           >
             <Pencil className="h-4 w-4" />
@@ -1708,7 +1777,7 @@ export function OptimisticUserDraftItem({
           <button
             type="button"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-            aria-label="Edit message in composer"
+            aria-label="Edit draft"
             onClick={() => onEditDraftOnly(body)}
           >
             <Pencil className="h-4 w-4" />

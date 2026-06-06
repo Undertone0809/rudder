@@ -1957,6 +1957,89 @@ describe("chat routes", () => {
     }));
   });
 
+  it("keeps copied edit attachments in the stream ack when no new files are uploaded", async () => {
+    const conversation = createConversation();
+    const attachment = {
+      id: "attachment-copied",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-edited",
+      assetId: "asset-copied",
+      provider: "local_disk",
+      objectKey: "chats/chat-1/copied.png",
+      contentType: "image/png",
+      byteSize: 8,
+      sha256: "sha256",
+      originalFilename: "copied.png",
+      createdByAgentId: null,
+      createdByUserId: "user-1",
+      contentPath: "/api/assets/asset-copied/content",
+      createdAt: new Date("2026-03-26T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+    };
+    const editedUserMessage = {
+      ...createMessage("message-edited", "user", "message", "Edited with copied attachment"),
+      attachments: [attachment],
+      turnVariant: 1,
+    };
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Done.");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(editedUserMessage);
+    mockChatService.listMessages.mockResolvedValue([editedUserMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Done.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Done.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Edited with copied attachment", editUserMessageId: "message-original" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(events[0]).toEqual(expect.objectContaining({
+      type: "ack",
+      userMessage: expect.objectContaining({
+        id: "message-edited",
+        attachments: [expect.objectContaining({ id: "attachment-copied", contentPath: "/api/assets/asset-copied/content" })],
+      }),
+    }));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
+      "chat-1",
+      "organization-1",
+      "Edited with copied attachment",
+      "message-original",
+    );
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [expect.objectContaining({
+        id: "message-edited",
+        attachments: [expect.objectContaining({ id: "attachment-copied" })],
+      })],
+    }));
+  });
+
   it("persists a stopped partial assistant message when streaming is interrupted", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
