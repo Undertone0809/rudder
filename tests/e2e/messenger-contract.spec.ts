@@ -64,6 +64,19 @@ function threadUnreadBadgeTestId(threadKey: string) {
   return `${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}-unread-badge`;
 }
 
+async function expectTestIdsInDomOrder(page: Page, testIds: string[]) {
+  await expect.poll(async () => {
+    return page.evaluate((ids) => {
+      const nodes = ids.map((id) => document.querySelector(`[data-testid="${id}"]`));
+      if (nodes.some((node) => !node)) return false;
+      return nodes.every((node, index) => {
+        const nextNode = nodes[index + 1];
+        return !nextNode || Boolean(node!.compareDocumentPosition(nextNode) & Node.DOCUMENT_POSITION_FOLLOWING);
+      });
+    }, testIds);
+  }).toBe(true);
+}
+
 async function isInElementViewport(page: Page, containerTestId: string, rowTestId: string) {
   return page.evaluate(({ containerTestId, rowTestId }) => {
     const container = document.querySelector(`[data-testid="${containerTestId}"] nav`);
@@ -233,6 +246,94 @@ test.describe("Messenger unified threads contract", () => {
 
     await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId(threadTestId(`chat:${pinnedOlderChat.id}`))).toContainText("Pinned page session 45");
+  });
+
+  test("groups latest Messenger threads into pinned, today, and recent sections", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Today-Groups-${Date.now()}`);
+    const now = new Date();
+    const pinnedActivityAt = new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000);
+    const recentActivityAt = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const todayActivityAt = new Date(now.getTime() - 5 * 60 * 1000);
+    const pinnedChatId = randomUUID();
+    const todayChatId = randomUUID();
+    const recentChatId = randomUUID();
+
+    await e2eDb.insert(chatConversations).values([
+      {
+        id: pinnedChatId,
+        orgId: organization.id,
+        title: "Pinned older planning chat",
+        summary: "Pinned should stay above today's activity.",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: currentUserId,
+        lastMessageAt: pinnedActivityAt,
+        createdAt: pinnedActivityAt,
+        updatedAt: pinnedActivityAt,
+      },
+      {
+        id: todayChatId,
+        orgId: organization.id,
+        title: "Today sidebar activity",
+        summary: "This chat should appear in the Today section.",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: currentUserId,
+        lastMessageAt: todayActivityAt,
+        createdAt: todayActivityAt,
+        updatedAt: todayActivityAt,
+      },
+      {
+        id: recentChatId,
+        orgId: organization.id,
+        title: "Older recent sidebar activity",
+        summary: "This chat should appear in the Recent section.",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: currentUserId,
+        lastMessageAt: recentActivityAt,
+        createdAt: recentActivityAt,
+        updatedAt: recentActivityAt,
+      },
+    ]);
+    await e2eDb.insert(chatConversationUserStates).values({
+      orgId: organization.id,
+      conversationId: pinnedChatId,
+      userId: currentUserId,
+      lastReadAt: pinnedActivityAt,
+      pinnedAt: new Date(now.getTime() - 60_000),
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    const pinnedThreadTestId = threadTestId(`chat:${pinnedChatId}`);
+    const todayThreadTestId = threadTestId(`chat:${todayChatId}`);
+    const recentThreadTestId = threadTestId(`chat:${recentChatId}`);
+    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("messenger-thread-section-today")).toBeVisible();
+    await expect(page.getByTestId("messenger-thread-section-recent")).toBeVisible();
+    await expect(page.getByTestId(pinnedThreadTestId)).toContainText("Pinned older planning chat");
+    await expect(page.getByTestId(todayThreadTestId)).toContainText("Today sidebar activity");
+    await expect(page.getByTestId(recentThreadTestId)).toContainText("Older recent sidebar activity");
+    await expectTestIdsInDomOrder(page, [
+      "messenger-thread-section-pinned",
+      pinnedThreadTestId,
+      "messenger-thread-section-today",
+      todayThreadTestId,
+      "messenger-thread-section-recent",
+      recentThreadTestId,
+    ]);
   });
 
   test("double-clicking primary rail Messenger scrolls the sidebar to unread threads", async ({ page }) => {
