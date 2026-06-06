@@ -235,6 +235,65 @@ function extractCodeBlockSource(children: ReactNode) {
   return source.replace(/\n$/, "");
 }
 
+function extractCodeBlockLanguage(children: ReactNode): string | null {
+  if (!isValidElement(children)) return null;
+  const childProps = children.props as { className?: unknown };
+  if (typeof childProps.className !== "string") return null;
+  const language = childProps.className.match(/\blanguage-([^\s]+)/i)?.[1];
+  return language?.toLowerCase() ?? null;
+}
+
+function isPatchCodeBlockLanguage(language: string | null) {
+  return language === "diff" || language === "patch" || language === "udiff";
+}
+
+function classifyPatchLine(line: string) {
+  if (/^(?:diff --git|index |new file mode |deleted file mode |old mode |new mode |rename from |rename to |similarity index )/.test(line)) {
+    return "meta";
+  }
+  if (line.startsWith("@@")) return "hunk";
+  if (line.startsWith("+++") || line.startsWith("---")) return "file";
+  if (line.startsWith("+")) return "add";
+  if (line.startsWith("-")) return "remove";
+  return "context";
+}
+
+function PatchCodeBlock({
+  source,
+  preProps,
+  sourceAttributes,
+}: {
+  source: string;
+  preProps: Record<string, unknown>;
+  sourceAttributes: ReturnType<typeof markdownSourceAttributes>;
+}) {
+  const lines = source.split("\n");
+
+  return (
+    <pre
+      {...preProps}
+      {...sourceAttributes}
+      className={cn(typeof preProps.className === "string" ? preProps.className : null, "rudder-markdown-patch-block")}
+    >
+      <code>
+        {lines.map((line, index) => {
+          const kind = classifyPatchLine(line);
+          const hasPatchMarker = kind === "add" || kind === "remove";
+          const marker = hasPatchMarker ? line.slice(0, 1) : "";
+          const content = hasPatchMarker ? line.slice(1) : line;
+
+          return (
+            <span key={`${index}-${kind}`} className={cn("rudder-markdown-patch-line", `rudder-markdown-patch-line--${kind}`)}>
+              <span className="rudder-markdown-patch-line-marker" aria-hidden={!marker}>{marker}</span>
+              <span className="rudder-markdown-patch-line-content">{content}</span>
+            </span>
+          );
+        })}
+      </code>
+    </pre>
+  );
+}
+
 async function writeClipboardText(text: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -407,11 +466,13 @@ function CopyableCodeBlock({
   copyText,
   preProps,
   sourceAttributes,
+  block,
 }: {
-  children: ReactNode;
+  children?: ReactNode;
   copyText: string;
   preProps: Record<string, unknown>;
   sourceAttributes: ReturnType<typeof markdownSourceAttributes>;
+  block?: ReactNode;
 }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const resetTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -433,7 +494,7 @@ function CopyableCodeBlock({
 
   return (
     <div className="rudder-code-block-copy-wrap">
-      <pre {...preProps} {...sourceAttributes}>{children}</pre>
+      {block ?? <pre {...preProps} {...sourceAttributes}>{children}</pre>}
       <TooltipProvider delayDuration={120}>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -548,6 +609,28 @@ export function MarkdownBody({
         return <MermaidDiagramBlock source={mermaidSource} darkMode={resolvedTheme === "dark"} />;
       }
       const sourceAttributes = markdownSourceAttributes(node);
+      const codeBlockLanguage = extractCodeBlockLanguage(preChildren);
+      const patchSource = isPatchCodeBlockLanguage(codeBlockLanguage) ? extractCodeBlockSource(preChildren) : null;
+      if (patchSource !== null) {
+        const patchBlock = (
+          <PatchCodeBlock
+            source={patchSource}
+            preProps={preProps}
+            sourceAttributes={sourceAttributes}
+          />
+        );
+        if (enableCodeBlockCopy) {
+          return (
+            <CopyableCodeBlock
+              copyText={patchSource}
+              preProps={{}}
+              sourceAttributes={{}}
+              block={patchBlock}
+            />
+          );
+        }
+        return patchBlock;
+      }
       if (enableCodeBlockCopy) {
         return (
           <CopyableCodeBlock

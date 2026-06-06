@@ -201,6 +201,48 @@ describe("MarkdownBody", () => {
     expect(container.querySelector(".rudder-code-block-copy-button")).toBeNull();
   });
 
+  it("renders diff fences as patch rows with additions and deletions", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"```diff\ndiff --git a/app.ts b/app.ts\n@@ -1,2 +1,2 @@\n-old value\n+new value\n context\n```"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(container.querySelector(".rudder-markdown-patch-block")).toBeTruthy();
+    expect(container.querySelector(".language-diff")).toBeNull();
+    expect(container.querySelector(".rudder-markdown-patch-line--meta")?.textContent).toContain("diff --git");
+    expect(container.querySelector(".rudder-markdown-patch-line--hunk")?.textContent).toContain("@@ -1,2 +1,2 @@");
+    expect(container.querySelector(".rudder-markdown-patch-line--remove")?.textContent).toContain("-old value");
+    expect(container.querySelector(".rudder-markdown-patch-line--add")?.textContent).toContain("+new value");
+    expect(container.querySelector(".rudder-markdown-patch-line--context")?.textContent).toContain(" context");
+  });
+
+  it("copies patch fences as their original source when code-block copy is enabled", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const patch = "```patch\n--- a/app.ts\n+++ b/app.ts\n-old value\n+new value\n```";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody enableCodeBlockCopy>{patch}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const copyButton = container.querySelector<HTMLButtonElement>(".rudder-code-block-copy-button");
+    expect(copyButton).toBeTruthy();
+    expect(container.querySelector(".rudder-markdown-patch-block")).toBeTruthy();
+
+    await act(async () => {
+      copyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith("--- a/app.ts\n+++ b/app.ts\n-old value\n+new value");
+  });
+
   it("renders chat mentions as live Messenger links", () => {
     const href = buildChatMentionHref("chat-123", "Launch planning");
     const html = renderToStaticMarkup(

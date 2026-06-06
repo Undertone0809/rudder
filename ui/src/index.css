@@ -2653,6 +2653,10 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   padding-right: 2.75rem !important;
 }
 
+.rudder-code-block-copy-wrap .rudder-markdown-patch-block {
+  padding-right: 2.75rem !important;
+}
+
 .rudder-code-block-copy-button {
   position: absolute;
   top: 0.45rem;
@@ -2691,6 +2695,63 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 .rudder-code-block-copy-button:focus-visible {
   outline: 2px solid color-mix(in oklab, var(--accent-base) 48%, transparent);
   outline-offset: 2px;
+}
+
+.rudder-markdown-patch-block {
+  padding: 0 !important;
+}
+
+.rudder-markdown-patch-block code {
+  display: block;
+  min-width: max-content;
+  padding: 0.4rem 0;
+}
+
+.rudder-markdown-patch-line {
+  display: grid;
+  grid-template-columns: 1.6rem minmax(0, 1fr);
+  min-height: 1.45rem;
+  padding: 0 0.8rem 0 0.35rem;
+  line-height: 1.45rem;
+}
+
+.rudder-markdown-patch-line-marker {
+  color: var(--code-muted);
+  font-weight: 600;
+  text-align: center;
+  user-select: none;
+}
+
+.rudder-markdown-patch-line-content {
+  white-space: pre;
+}
+
+.rudder-markdown-patch-line--add {
+  background: color-mix(in oklab, #22c55e 16%, transparent);
+  color: color-mix(in oklab, #bbf7d0 56%, var(--code-foreground));
+}
+
+.rudder-markdown-patch-line--add .rudder-markdown-patch-line-marker {
+  color: #86efac;
+}
+
+.rudder-markdown-patch-line--remove {
+  background: color-mix(in oklab, #ef4444 17%, transparent);
+  color: color-mix(in oklab, #fecaca 58%, var(--code-foreground));
+}
+
+.rudder-markdown-patch-line--remove .rudder-markdown-patch-line-marker {
+  color: #fca5a5;
+}
+
+.rudder-markdown-patch-line--hunk {
+  background: color-mix(in oklab, #38bdf8 12%, transparent);
+  color: color-mix(in oklab, #bae6fd 62%, var(--code-foreground));
+}
+
+.rudder-markdown-patch-line--file,
+.rudder-markdown-patch-line--meta {
+  color: color-mix(in oklab, var(--code-muted) 78%, var(--code-foreground));
 }
 
 .rudder-markdown code {
