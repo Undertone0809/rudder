@@ -193,6 +193,8 @@ async function verifyServerPackage(serverPackageDir) {
     "dotenv",
     "zod",
     "pino",
+    "postgres",
+    "address",
     "sharp",
     "ws",
     "jsdom",
@@ -206,7 +208,13 @@ async function verifyServerPackage(serverPackageDir) {
     "hermes-paperclip-adapter",
     "@aws-sdk/client-s3",
     "@langfuse/client",
+    "@langfuse/core",
+    "@opentelemetry/api",
+    "@opentelemetry/core",
+    "@opentelemetry/exporter-trace-otlp-http",
+    "@opentelemetry/sdk-trace-base",
     "@opentelemetry/sdk-trace-node",
+    "mustache",
   ];
   const present = new Set(packages.map((p) => p.name));
   const missingCritical = critical.filter((name) => !present.has(name));

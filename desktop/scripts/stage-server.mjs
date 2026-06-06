@@ -129,6 +129,113 @@ async function normalizeSelfReference(packageDir) {
   await Promise.all(selfReferencePaths.map((selfReferencePath) => fs.rm(selfReferencePath, { force: true })));
 }
 
+function embeddedPostgresPlatformPackageName() {
+  const arch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
+  if (process.platform === "win32") {
+    if (arch === "x64") return "@embedded-postgres/windows-x64";
+    return null;
+  }
+  if (process.platform === "darwin") {
+    if (arch === "arm64") return "@embedded-postgres/darwin-arm64";
+    if (arch === "x64") return "@embedded-postgres/darwin-x64";
+    return null;
+  }
+  if (process.platform === "linux") {
+    if (arch === "arm64") return "@embedded-postgres/linux-arm64";
+    if (arch === "arm") return "@embedded-postgres/linux-arm";
+    if (arch === "ia32") return "@embedded-postgres/linux-ia32";
+    if (arch === "ppc64") return "@embedded-postgres/linux-ppc64";
+    if (arch === "x64") return "@embedded-postgres/linux-x64";
+  }
+  return null;
+}
+
+async function stageEmbeddedPostgresPlatformPackage(packageDir) {
+  const packageName = embeddedPostgresPlatformPackageName();
+  if (!packageName) return;
+
+  const nodeModulesDir = path.join(packageDir, "node_modules");
+  const destinationPath = path.join(nodeModulesDir, ...packageName.split("/"));
+  if (await exists(destinationPath)) return;
+
+  const rootVirtualStoreDir = path.join(repoRoot, "node_modules", ".pnpm");
+  const storePrefix = `${packageName.replace("/", "+")}@`;
+  const storeEntry = (await fs.readdir(rootVirtualStoreDir, { withFileTypes: true }))
+    .find((entry) => entry.isDirectory() && entry.name.startsWith(storePrefix));
+
+  if (!storeEntry) {
+    throw new Error(`missing ${packageName} in root pnpm store; run pnpm install on this platform before packaging`);
+  }
+
+  const sourcePath = path.join(rootVirtualStoreDir, storeEntry.name, "node_modules", ...packageName.split("/"));
+  if (!(await exists(sourcePath))) {
+    throw new Error(`missing ${packageName} package payload at ${sourcePath}`);
+  }
+
+  await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+  await fs.cp(sourcePath, destinationPath, { recursive: true, dereference: true });
+}
+
+async function promoteVirtualStorePackages(packageDir) {
+  const nodeModulesDir = path.join(packageDir, "node_modules");
+  const virtualStoreDir = path.join(nodeModulesDir, ".pnpm");
+
+  if (!(await exists(virtualStoreDir))) return;
+
+  async function promotePackage(packageName, packagePath) {
+    const destinationPath = packageName.startsWith("@")
+      ? path.join(nodeModulesDir, ...packageName.split("/"))
+      : path.join(nodeModulesDir, packageName);
+
+    if (await exists(destinationPath)) return;
+
+    const stat = await fs.lstat(packagePath);
+    if (!stat.isDirectory()) return;
+
+    await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+    const linkTarget = process.platform === "win32"
+      ? packagePath
+      : path.relative(path.dirname(destinationPath), packagePath);
+
+    try {
+      await fs.symlink(linkTarget, destinationPath, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      const code = /** @type {{ code?: string }} */ (error).code;
+      if (code !== "EEXIST") throw error;
+    }
+  }
+
+  async function promotePackagesFromNodeModules(sourceNodeModulesDir) {
+    if (!(await exists(sourceNodeModulesDir))) return;
+
+    for (const packageEntry of await fs.readdir(sourceNodeModulesDir, { withFileTypes: true })) {
+      if (!packageEntry.isDirectory() && !packageEntry.isSymbolicLink()) continue;
+
+      if (packageEntry.name.startsWith("@")) {
+        const scopeDir = path.join(sourceNodeModulesDir, packageEntry.name);
+        for (const scopedEntry of await fs.readdir(scopeDir, { withFileTypes: true })) {
+          if (!scopedEntry.isDirectory() && !scopedEntry.isSymbolicLink()) continue;
+          const packageName = `${packageEntry.name}/${scopedEntry.name}`;
+          if (packageName === "@rudderhq/server" || packageName === "@rudder/server") continue;
+          await promotePackage(packageName, path.join(scopeDir, scopedEntry.name));
+        }
+        continue;
+      }
+
+      await promotePackage(packageEntry.name, path.join(sourceNodeModulesDir, packageEntry.name));
+    }
+  }
+
+  await promotePackagesFromNodeModules(path.join(virtualStoreDir, "node_modules"));
+
+  for (const storeEntry of await fs.readdir(virtualStoreDir, { withFileTypes: true })) {
+    if (!storeEntry.isDirectory()) continue;
+
+    const storeNodeModulesDir = path.join(virtualStoreDir, storeEntry.name, "node_modules");
+    await promotePackagesFromNodeModules(storeNodeModulesDir);
+  }
+}
+
 async function rewriteInternalPackages(targetDir) {
   const rudderDir = path.join(targetDir, "node_modules", "@rudderhq");
   try {
@@ -153,6 +260,8 @@ async function main() {
   }
   await rewritePublishedManifest(targetDir);
   await rewriteInternalPackages(targetDir);
+  await promoteVirtualStorePackages(targetDir);
+  await stageEmbeddedPostgresPlatformPackage(targetDir);
   await normalizeSelfReference(targetDir);
 
   const deployedEntry = path.join(targetDir, "dist", "index.js");
