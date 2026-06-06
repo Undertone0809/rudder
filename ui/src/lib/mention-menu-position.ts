@@ -1,7 +1,9 @@
 const MENTION_MENU_MIN_WIDTH = 180;
 const MENTION_MENU_DEFAULT_WIDTH = 520;
 const MENTION_MENU_MAX_HEIGHT = 200;
-const MENTION_PANEL_MAX_HEIGHT = 360;
+const MENTION_PANEL_DEFAULT_WIDTH = 960;
+const MENTION_PANEL_MAX_WIDTH = 1120;
+const MENTION_PANEL_MAX_HEIGHT = 520;
 const MENTION_MENU_VIEWPORT_PADDING = 12;
 const MENTION_MENU_OFFSET = 4;
 const MENTION_PANEL_OFFSET = 10;
@@ -85,13 +87,16 @@ export function getMentionPanelPositionForViewport(
     MENTION_MENU_MIN_WIDTH,
     viewportWidth - MENTION_MENU_VIEWPORT_PADDING * 2,
   );
+  const anchorWidth = state.viewportRight - state.viewportLeft;
+  const widthLimit = Math.min(MENTION_PANEL_MAX_WIDTH, availableWidth);
   const desiredWidth = clamp(
-    state.viewportRight - state.viewportLeft,
+    Math.max(anchorWidth, MENTION_PANEL_DEFAULT_WIDTH),
     MENTION_MENU_MIN_WIDTH,
-    availableWidth,
+    widthLimit,
   );
+  const anchorCenter = state.viewportLeft + anchorWidth / 2;
   const left = clamp(
-    state.viewportLeft,
+    anchorCenter - desiredWidth / 2,
     MENTION_MENU_VIEWPORT_PADDING,
     viewportWidth - MENTION_MENU_VIEWPORT_PADDING - desiredWidth,
   );
