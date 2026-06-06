@@ -18,6 +18,20 @@ npx @rudderhq/cli@latest start
 
 这个页面只记录稳定版本。Canary 会更频繁地用于验证和 Desktop 资产测试；如果需要查看预发布历史，可以看 [GitHub Releases](https://github.com/Undertone0809/rudder/releases)。
 
+## v0.3.2
+
+发布时间：2026-06-07
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.3.2)
+
+### 重点变化
+
+- 增加 followed automation issues，让 recurring automation 可以把关联 issue work 直接带回 operator workflow。
+- 改善 Messenger navigation 和 issue context，包括按 agent 分组的 sidebar、optimistic unread clearing、project switch 时清理 stale workspace，以及更稳的 sidebar query cache。
+- 增加 inline chat message editing，并收紧 skill/composer mention menu 的定位和宽度，编辑时不再漂移或挤压。
+- 改善 patch-style code block 的 Markdown rendering、code-copy 行为，以及 Library/chat surface 的 editor chrome。
+- 打磨 Desktop 和 shell UI，包括跨平台 dev startup 修复、Windows 限定 rail sizing、更新 rail icon，以及 workspace launcher presentation。
+
 ## v0.3.1
 
 发布时间：2026-06-06
