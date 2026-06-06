@@ -317,9 +317,10 @@ export function PrimaryRail({
     <aside
       data-testid="primary-rail"
       data-tour-target="primary-rail"
+      data-desktop-shell={isDesktopShell ? "true" : undefined}
       className={cn(
         "my-2 flex h-[calc(100%-1rem)] shrink-0 flex-col items-center py-1.5 text-[color:color-mix(in_oklab,var(--foreground)_78%,white)]",
-        isDesktopShell ? "ml-3 mr-1 w-[40px]" : "ml-2 mr-3 px-5 w-[50px]",
+        isDesktopShell ? "ml-2 mr-1 w-[66px]" : "ml-2 mr-3 px-5 w-[50px]",
       )}
     >
       <div className="flex w-full flex-col items-center gap-4">

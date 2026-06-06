@@ -235,6 +235,15 @@ describe("PrimaryRail desktop inbox signals", () => {
 });
 
 describe("PrimaryRail active motion indicator", () => {
+  it("reserves the full desktop rail width for active nav affordances", async () => {
+    await renderPrimaryRail();
+
+    const rail = document.querySelector('[data-testid="primary-rail"]');
+
+    expect(rail?.getAttribute("data-desktop-shell")).toBe("true");
+    expect(rail?.className).toContain("w-[66px]");
+  });
+
   it("applies rail motion styling to the create menu", async () => {
     await renderPrimaryRail();
 
