@@ -35,6 +35,12 @@ vi.mock("@/context/ToastContext", () => ({
   useToast: () => ({ pushToast: vi.fn() }),
 }));
 
+vi.mock("@/components/MarkdownBody", () => ({
+  MarkdownBody: ({ children, className }: { children: string; className?: string }) => (
+    <div className={className}>{children}</div>
+  ),
+}));
+
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
     <a href={to} {...props}>{children}</a>
@@ -55,6 +61,10 @@ vi.mock("@/components/ApprovalDetailDialog", () => ({
 
 vi.mock("./Chat", () => ({
   Chat: () => <div data-testid="messenger-chat-panel">Chat panel</div>,
+}));
+
+vi.mock("./IssueDetail", () => ({
+  IssueDetail: () => <div data-testid="messenger-issue-detail">Issue detail</div>,
 }));
 
 describe("Messenger auto-scroll", () => {
