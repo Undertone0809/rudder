@@ -205,6 +205,38 @@ describe("CommentThread", () => {
     expect(html).toContain("You");
   });
 
+  it("renders deleted comments as placeholders without exposing the original body or actions", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-1",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Sensitive deleted body",
+              deletedAt: new Date("2026-05-07T00:10:00.000Z"),
+              deletedByUserId: "user-1",
+              createdAt: new Date("2026-05-07T00:00:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:10:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+          onUpdate={async () => undefined}
+          onDelete={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("Comment deleted");
+    expect(html).not.toContain("Sensitive deleted body");
+    expect(html).not.toContain("Comment actions");
+    expect(html).not.toContain("Copy content");
+  });
+
   it("mixes activity items and comments in chronological order", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

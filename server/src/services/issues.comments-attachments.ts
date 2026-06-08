@@ -28,7 +28,7 @@ import {
   type IssueSearchMatch,
   type ReorderIssue,
 } from "@rudderhq/shared";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
   parseProjectExecutionWorkspacePolicy,
@@ -55,6 +55,43 @@ function stripMarkdownLinksAndCodeForBareMentions(markdown: string): string {
 
 export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentMethodContext) {
   const { db, instanceSettings, redactIssueComment } = ctx;
+  function serializeCommentForResponse<T extends { body: string; deletedAt?: Date | string | null }>(
+    comment: T,
+    censorUsernameInLogs: boolean,
+  ): T {
+    const redacted = redactIssueComment(comment, censorUsernameInLogs);
+    if (!redacted.deletedAt) return redacted;
+    return { ...redacted, body: "" };
+  }
+
+  async function getMutableUserComment(issueId: string, commentId: string, userId: string) {
+    const issue = await db
+      .select({ id: issues.id, orgId: issues.orgId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    if (!issue) throw notFound("Issue not found");
+
+    const comment = await db
+      .select()
+      .from(issueComments)
+      .where(
+        and(
+          eq(issueComments.id, commentId),
+          eq(issueComments.issueId, issue.id),
+          eq(issueComments.orgId, issue.orgId),
+        ),
+      )
+      .then((rows) => rows[0] ?? null);
+    if (!comment) throw notFound("Comment not found");
+    if (comment.deletedAt) throw forbidden("Deleted comments cannot be modified");
+    if (comment.authorAgentId || !comment.authorUserId || comment.authorUserId !== userId) {
+      throw forbidden("Only the comment author can modify this comment");
+    }
+
+    return { issue, comment };
+  }
+
   return {
     findMentionedAgents: async (orgId: string, body: string) => {
       const re = /\B@([^\s@,!?.]+)/g;
@@ -96,7 +133,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       const comments = await db
         .select({ body: issueComments.body })
         .from(issueComments)
-        .where(eq(issueComments.issueId, issueId));
+        .where(and(eq(issueComments.issueId, issueId), isNull(issueComments.deletedAt)));
 
       const mentionedIds = new Set<string>();
       for (const source of [
@@ -179,7 +216,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
 
       const comments = limit ? await query.limit(limit) : await query;
       const { censorUsernameInLogs } = await instanceSettings.getGeneral();
-      return comments.map((comment) => redactIssueComment(comment, censorUsernameInLogs));
+      return comments.map((comment) => serializeCommentForResponse(comment, censorUsernameInLogs));
     },
 
     getCommentCursor: async (issueId: string) => {
@@ -218,7 +255,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
         .where(eq(issueComments.id, commentId))
         .then((rows) => {
           const comment = rows[0] ?? null;
-          return comment ? redactIssueComment(comment, censorUsernameInLogs) : null;
+          return comment ? serializeCommentForResponse(comment, censorUsernameInLogs) : null;
         })),
 
     addComment: async (issueId: string, body: string, actor: { agentId?: string; userId?: string }) => {
@@ -252,6 +289,70 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
         .where(eq(issues.id, issueId));
 
       return redactIssueComment(comment, currentUserRedactionOptions.enabled);
+    },
+
+    updateComment: async (issueId: string, commentId: string, body: string, actor: { userId: string }) => {
+      const { issue } = await getMutableUserComment(issueId, commentId, actor.userId);
+      const currentUserRedactionOptions = {
+        enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
+      };
+      const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
+      const now = new Date();
+      const [comment] = await db
+        .update(issueComments)
+        .set({
+          body: redactedBody,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(issueComments.id, commentId),
+            eq(issueComments.issueId, issue.id),
+            eq(issueComments.orgId, issue.orgId),
+            isNull(issueComments.deletedAt),
+          ),
+        )
+        .returning();
+
+      if (!comment) throw notFound("Comment not found");
+
+      await db
+        .update(issues)
+        .set({ updatedAt: now })
+        .where(eq(issues.id, issueId));
+
+      return serializeCommentForResponse(comment, currentUserRedactionOptions.enabled);
+    },
+
+    deleteComment: async (issueId: string, commentId: string, actor: { userId: string }) => {
+      const { issue } = await getMutableUserComment(issueId, commentId, actor.userId);
+      const now = new Date();
+      const [comment] = await db
+        .update(issueComments)
+        .set({
+          deletedAt: now,
+          deletedByUserId: actor.userId,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(issueComments.id, commentId),
+            eq(issueComments.issueId, issue.id),
+            eq(issueComments.orgId, issue.orgId),
+            isNull(issueComments.deletedAt),
+          ),
+        )
+        .returning();
+
+      if (!comment) throw notFound("Comment not found");
+
+      await db
+        .update(issues)
+        .set({ updatedAt: now })
+        .where(eq(issues.id, issueId));
+
+      const { censorUsernameInLogs } = await instanceSettings.getGeneral();
+      return serializeCommentForResponse(comment, censorUsernameInLogs);
     },
 
     createAttachment: async (input: {

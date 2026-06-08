@@ -165,6 +165,8 @@ const ACTION_LABELS: Record<string, string> = {
   "issue.updated": "updated the issue",
   "issue.checked_out": "checked out the issue",
   "issue.released": "released the issue",
+  "issue.comment_updated": "edited a comment",
+  "issue.comment_deleted": "deleted a comment",
   "issue.code_committed": "committed code",
   "issue.passive_followup_queued": "queued passive follow-up",
   "issue.closure_needs_operator_review": "needs operator review for close-out",
@@ -1639,6 +1641,25 @@ export function IssueDetail() {
     },
   });
 
+  const updateComment = useMutation({
+    mutationFn: ({ commentId, body }: { commentId: string; body: string }) =>
+      issuesApi.updateComment(issueId!, commentId, body),
+    onSuccess: (comment) => {
+      queryClient.setQueryData(queryKeys.issues.comment(issueId!, comment.id), comment);
+      invalidateIssue();
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
+    },
+  });
+
+  const deleteComment = useMutation({
+    mutationFn: (commentId: string) => issuesApi.deleteComment(issueId!, commentId),
+    onSuccess: (comment) => {
+      queryClient.setQueryData(queryKeys.issues.comment(issueId!, comment.id), comment);
+      invalidateIssue();
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
+    },
+  });
+
   const uploadAttachment = useMutation({
     mutationFn: async ({
       file,
@@ -2442,11 +2463,18 @@ export function IssueDetail() {
           mentions={mentionOptions}
           onMentionQueryChange={setLibraryFileMentionQuery}
           operatorDisplayName={operatorDisplayName}
+          currentUserId={currentBoardUserId}
           hideHeading
           emptyMessage="No activity yet."
           escapeBackWhenEmpty
           onAdd={async (body, reopen) => {
             await addComment.mutateAsync({ body, reopen });
+          }}
+          onUpdate={async (commentId, body) => {
+            await updateComment.mutateAsync({ commentId, body });
+          }}
+          onDelete={async (commentId) => {
+            await deleteComment.mutateAsync(commentId);
           }}
           imageUploadHandler={async (file) => {
             const attachment = await uploadAttachment.mutateAsync({ file, usage: "comment_inline" });

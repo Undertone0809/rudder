@@ -382,6 +382,7 @@ export function issueService(db: Db) {
           and(
             eq(issueComments.orgId, orgId),
             inArray(issueComments.issueId, commentMatchedIssueIds),
+            isNull(issueComments.deletedAt),
             sql<boolean>`${issueComments.body} ILIKE ${containsPattern} ESCAPE '\\'`,
           ),
         )
@@ -495,6 +496,7 @@ export function issueService(db: Db) {
           FROM ${issueComments}
           WHERE ${issueComments.issueId} = ${issues.id}
             AND ${issueComments.orgId} = ${orgId}
+            AND ${issueComments.deletedAt} IS NULL
             AND ${issueComments.body} ILIKE ${containsPattern} ESCAPE '\\'
         )
       `;
@@ -635,6 +637,7 @@ export function issueService(db: Db) {
           and(
             eq(issueComments.orgId, orgId),
             inArray(issueComments.issueId, issueIds),
+            isNull(issueComments.deletedAt),
           ),
         )
         .groupBy(issueComments.issueId);

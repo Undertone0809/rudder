@@ -347,6 +347,101 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
+  it("allows only the authoring user to edit or soft-delete user issue comments", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+    const userCommentId = randomUUID();
+    const agentCommentId = randomUUID();
+    const agentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Comment Permissions",
+      urlKey: deriveOrganizationUrlKey("Comment Permissions"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "CommentAgent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Comment permissions",
+      status: "todo",
+      priority: "medium",
+      createdByUserId: "author-user",
+      updatedAt: new Date("2026-05-01T00:00:00.000Z"),
+    });
+    await db.insert(issueComments).values([
+      {
+        id: userCommentId,
+        orgId,
+        issueId,
+        authorUserId: "author-user",
+        body: "Original user body",
+        createdAt: new Date("2026-05-01T00:01:00.000Z"),
+        updatedAt: new Date("2026-05-01T00:01:00.000Z"),
+      },
+      {
+        id: agentCommentId,
+        orgId,
+        issueId,
+        authorAgentId: agentId,
+        body: "Agent body",
+        createdAt: new Date("2026-05-01T00:02:00.000Z"),
+        updatedAt: new Date("2026-05-01T00:02:00.000Z"),
+      },
+    ]);
+
+    await expect(svc.updateComment(issueId, userCommentId, "Intruder edit", { userId: "other-user" }))
+      .rejects.toMatchObject({ status: 403 });
+    await expect(svc.updateComment(issueId, agentCommentId, "User edit of agent comment", { userId: "author-user" }))
+      .rejects.toMatchObject({ status: 403 });
+
+    const beforeIssue = await db
+      .select({ updatedAt: issues.updatedAt })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]!);
+    const updated = await svc.updateComment(issueId, userCommentId, "Updated user body", { userId: "author-user" });
+    expect(updated.body).toBe("Updated user body");
+    expect(new Date(updated.updatedAt).getTime()).toBeGreaterThan(new Date(updated.createdAt).getTime());
+
+    const afterEditIssue = await db
+      .select({ updatedAt: issues.updatedAt })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]!);
+    expect(new Date(afterEditIssue.updatedAt).getTime()).toBeGreaterThan(new Date(beforeIssue.updatedAt).getTime());
+
+    const deleted = await svc.deleteComment(issueId, userCommentId, { userId: "author-user" });
+    expect(deleted.body).toBe("");
+    expect(deleted.deletedByUserId).toBe("author-user");
+    expect(deleted.deletedAt).toBeTruthy();
+
+    await expect(svc.updateComment(issueId, userCommentId, "Edit after delete", { userId: "author-user" }))
+      .rejects.toMatchObject({ status: 403 });
+
+    const fetchedDeleted = await svc.getComment(userCommentId);
+    expect(fetchedDeleted?.body).toBe("");
+    const storedDeleted = await db
+      .select({ body: issueComments.body, deletedAt: issueComments.deletedAt })
+      .from(issueComments)
+      .where(eq(issueComments.id, userCommentId))
+      .then((rows) => rows[0]!);
+    expect(storedDeleted.body).toBe("Updated user body");
+    expect(storedDeleted.deletedAt).toBeTruthy();
+  });
+
   it("ignores invalid project mention ids when resolving mentioned projects", async () => {
     const orgId = randomUUID();
     const projectId = randomUUID();

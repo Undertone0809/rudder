@@ -156,6 +156,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "issue.updated": "updated the issue",
   "issue.checked_out": "checked out the issue",
   "issue.released": "released the issue",
+  "issue.comment_updated": "edited a comment",
+  "issue.comment_deleted": "deleted a comment",
   "issue.code_committed": "committed code",
   "issue.passive_followup_queued": "queued passive follow-up",
   "issue.closure_needs_operator_review": "needs operator review for close-out",

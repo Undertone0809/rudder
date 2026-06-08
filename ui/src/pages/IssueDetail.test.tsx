@@ -243,6 +243,8 @@ vi.mock("../api/issues", () => ({
     markRead: vi.fn(),
     update: vi.fn(),
     addComment: vi.fn(),
+    updateComment: vi.fn(),
+    deleteComment: vi.fn(),
     uploadAttachment: vi.fn(),
     upsertDocument: vi.fn(),
     deleteAttachment: vi.fn(),
@@ -622,6 +624,16 @@ describe("IssueDetail", () => {
     expect(capturedCommentThreadProps).not.toHaveProperty("reassignOptions");
     expect(capturedCommentThreadProps).not.toHaveProperty("currentAssigneeValue");
     expect(capturedCommentThreadProps).not.toHaveProperty("suggestedAssigneeValue");
+  });
+
+  it("passes comment edit and delete handlers with the current board user", () => {
+    renderToStaticMarkup(<IssueDetail />);
+
+    expect(capturedCommentThreadProps).toMatchObject({
+      currentUserId: "user-1",
+      onUpdate: expect.any(Function),
+      onDelete: expect.any(Function),
+    });
   });
 
   it("includes the issue assignee's enabled skills in mention suggestions", () => {

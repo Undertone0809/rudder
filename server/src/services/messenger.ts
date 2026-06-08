@@ -1103,6 +1103,7 @@ export function messengerService(db: Db) {
           from ${issueComments} comment_row
           where comment_row.org_id = ${orgId}
             and comment_row.issue_id = issue_row.id
+            and comment_row.deleted_at is null
             and (comment_row.author_user_id is null or comment_row.author_user_id <> ${userId})
           order by comment_row.created_at desc, comment_row.id desc
           limit 1
@@ -1113,6 +1114,7 @@ export function messengerService(db: Db) {
           from ${issueComments} comment_row
           where comment_row.org_id = ${orgId}
             and comment_row.issue_id = issue_row.id
+            and comment_row.deleted_at is null
             and comment_row.author_user_id = ${userId}
           order by comment_row.created_at desc, comment_row.id desc
           limit 1
@@ -1194,6 +1196,7 @@ export function messengerService(db: Db) {
       .where(and(
         eq(issueComments.orgId, orgId),
         inArray(issueComments.issueId, issueIds),
+        isNull(issueComments.deletedAt),
         or(isNull(issueComments.authorUserId), ne(issueComments.authorUserId, userId)),
       ))
       .orderBy(issueComments.issueId, desc(issueComments.createdAt), desc(issueComments.id))) as IssueCommentRow[];

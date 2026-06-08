@@ -19,6 +19,8 @@ const mockIssueService = vi.hoisted(() => ({
   getComment: vi.fn(),
   getCommentCursor: vi.fn(),
   reorder: vi.fn(),
+  updateComment: vi.fn(),
+  deleteComment: vi.fn(),
   update: vi.fn(),
 }));
 
@@ -220,8 +222,34 @@ describe("issue lifecycle routes", () => {
       body,
       createdAt: new Date(),
       updatedAt: new Date(),
+      deletedAt: null,
+      deletedByUserId: null,
       authorAgentId: author.agentId ?? null,
       authorUserId: author.userId ?? "local-board",
+    }));
+    mockIssueService.updateComment.mockImplementation(async (_issueId: string, commentId: string, body: string, author: { userId: string }) => ({
+      id: commentId,
+      issueId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      body,
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-05-01T00:01:00.000Z"),
+      deletedAt: null,
+      deletedByUserId: null,
+      authorAgentId: null,
+      authorUserId: author.userId,
+    }));
+    mockIssueService.deleteComment.mockImplementation(async (_issueId: string, commentId: string, author: { userId: string }) => ({
+      id: commentId,
+      issueId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      body: "",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-05-01T00:02:00.000Z"),
+      deletedAt: new Date("2026-05-01T00:02:00.000Z"),
+      deletedByUserId: author.userId,
+      authorAgentId: null,
+      authorUserId: author.userId,
     }));
   });
 
@@ -1811,6 +1839,76 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("allows a board user to edit their own issue comment and records safe activity", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
+      .send({ body: "Updated comment body" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.body).toBe("Updated comment body");
+    expect(mockIssueService.updateComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "comment-1",
+      "Updated comment body",
+      { userId: "local-board" },
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: "user",
+        actorId: "local-board",
+        action: "issue.comment_updated",
+        entityType: "issue",
+        entityId: "11111111-1111-4111-8111-111111111111",
+        details: expect.objectContaining({
+          commentId: "comment-1",
+          identifier: "RUD-5",
+        }),
+      }),
+    );
+  });
+
+  it("allows a board user to delete their own issue comment without logging the deleted body", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const res = await request(createApp())
+      .delete("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1");
+
+    expect(res.status).toBe(200);
+    expect(res.body.body).toBe("");
+    expect(res.body.deletedByUserId).toBe("local-board");
+    expect(mockIssueService.deleteComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "comment-1",
+      { userId: "local-board" },
+    );
+    const activityCall = mockLogActivity.mock.calls.find((call) => call[1]?.action === "issue.comment_deleted");
+    expect(activityCall?.[1]).toEqual(expect.objectContaining({
+      details: expect.objectContaining({
+        commentId: "comment-1",
+        identifier: "RUD-5",
+      }),
+    }));
+    expect(JSON.stringify(activityCall?.[1]?.details)).not.toContain("Original deleted body");
+  });
+
+  it("rejects agent attempts to edit or delete issue comments", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const patchRes = await request(createApp(createAgentActor()))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
+      .send({ body: "Agent edit" });
+    const deleteRes = await request(createApp(createAgentActor()))
+      .delete("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1");
+
+    expect(patchRes.status).toBe(403);
+    expect(deleteRes.status).toBe(403);
+    expect(mockIssueService.updateComment).not.toHaveBeenCalled();
+    expect(mockIssueService.deleteComment).not.toHaveBeenCalled();
   });
 
   it("allows an assignee follow-up execution run with a null checkout lock to close out", async () => {

@@ -109,4 +109,60 @@ test("issue comment actions menu copies content and direct links", async ({ page
   await renderedCopiedLink.click();
   await expect(page).toHaveURL(`${new URL(page.url()).origin}${expectedRenderedHref}`);
   await expect(commentBlock).toHaveClass(/border-primary/);
+
+  const updatedBody = "Review note updated:\n\n- edit and delete stay owner-only";
+  await commentBlock.getByRole("button", { name: "Comment actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Edit" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+
+  const editComposer = commentBlock.locator(".rudder-milkdown-content [contenteditable='true']").first();
+  await expect(editComposer).toBeVisible();
+  await editComposer.click();
+  await editComposer.press("ControlOrMeta+A");
+  await page.keyboard.type(updatedBody);
+  const [updateResponse] = await Promise.all([
+    page.waitForResponse((response) =>
+      new RegExp(`/api/issues/${issue.id}/comments/${comment.id}$`).test(new URL(response.url()).pathname)
+      && response.request().method() === "PATCH",
+    ),
+    commentBlock.getByRole("button", { name: "Save" }).click(),
+  ]);
+  expect(updateResponse.ok()).toBe(true);
+  await expect(commentBlock).toContainText("Review note updated:");
+  await expect(commentBlock).toContainText("edited");
+
+  const refreshedCommentRes = await page.request.get(`/api/issues/${issue.id}/comments/${comment.id}`);
+  expect(refreshedCommentRes.ok()).toBe(true);
+  const refreshedComment = await refreshedCommentRes.json() as { body: string; updatedAt: string; createdAt: string };
+  expect(refreshedComment.body).toBe(updatedBody);
+  expect(new Date(refreshedComment.updatedAt).getTime()).toBeGreaterThan(new Date(refreshedComment.createdAt).getTime());
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Delete this comment?");
+    await dialog.accept();
+  });
+  await commentBlock.getByRole("button", { name: "Comment actions" }).click();
+  const [deleteResponse] = await Promise.all([
+    page.waitForResponse((response) =>
+      new RegExp(`/api/issues/${issue.id}/comments/${comment.id}$`).test(new URL(response.url()).pathname)
+      && response.request().method() === "DELETE",
+    ),
+    page.getByRole("menuitem", { name: "Delete" }).click(),
+  ]);
+  expect(deleteResponse.ok()).toBe(true);
+  await expect(commentBlock).toContainText("Comment deleted");
+  await expect(commentBlock).not.toContainText("Review note updated:");
+  await expect(commentBlock.getByRole("button", { name: "Comment actions" })).toHaveCount(0);
+
+  await page.reload();
+  await expect(commentBlock).toContainText("Comment deleted");
+  await expect(commentBlock).not.toContainText("Review note updated:");
+  await expect(commentBlock.getByRole("button", { name: "Comment actions" })).toHaveCount(0);
+
+  const deletedCommentRes = await page.request.get(`/api/issues/${issue.id}/comments/${comment.id}`);
+  expect(deletedCommentRes.ok()).toBe(true);
+  const deletedComment = await deletedCommentRes.json() as { body: string; deletedAt: string | null };
+  expect(deletedComment.body).toBe("");
+  expect(deletedComment.deletedAt).toBeTruthy();
 });
