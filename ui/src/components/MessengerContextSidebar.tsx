@@ -18,6 +18,7 @@ import {
   CircleCheckBig,
   Copy,
   DollarSign,
+  EyeOff,
   ListFilter,
   Loader2,
   Mail,
@@ -81,6 +82,8 @@ const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg
 const THREAD_DENSITY_STORAGE_KEY = "rudder.messengerThreadDensityByOrg";
 const SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY = "rudder.messengerSplitIssueNotificationsByOrg";
 const COLLAPSED_PROJECT_GROUPS_STORAGE_KEY = "rudder.messengerCollapsedProjectGroupsByOrg";
+const MESSENGER_PROJECT_GROUP_ORDER_STORAGE_PREFIX = "rudder.messengerProjectGroupOrder";
+const HIDDEN_ISSUE_THREADS_STORAGE_PREFIX = "rudder.messengerHiddenIssueThreads";
 const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
 const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "compact";
 const DEFAULT_SPLIT_ISSUE_NOTIFICATIONS = true;
@@ -224,6 +227,68 @@ function readCollapsedProjectGroups(orgId: string | null | undefined): Set<strin
   return new Set();
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function messengerUserStorageId(userId: string | null | undefined) {
+  const trimmed = userId?.trim();
+  return trimmed || "anonymous";
+}
+
+function getMessengerProjectGroupOrderStorageKey(orgId: string, userId: string | null | undefined) {
+  return `${MESSENGER_PROJECT_GROUP_ORDER_STORAGE_PREFIX}:${orgId}:${messengerUserStorageId(userId)}`;
+}
+
+function getHiddenIssueThreadsStorageKey(orgId: string, userId: string | null | undefined) {
+  return `${HIDDEN_ISSUE_THREADS_STORAGE_PREFIX}:${orgId}:${messengerUserStorageId(userId)}`;
+}
+
+function readStringList(storageKey: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    return raw ? normalizeStringList(JSON.parse(raw)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStringList(storageKey: string, values: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(normalizeStringList(values)));
+  } catch {
+    // Ignore storage failures; the in-memory order still applies for this view.
+  }
+}
+
+function readHiddenIssueThreadWatermarks(storageKey: string): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter((entry): entry is [string, string] =>
+          typeof entry[0] === "string" && entry[0].length > 0 && typeof entry[1] === "string",
+        ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeHiddenIssueThreadWatermarks(storageKey: string, watermarks: Record<string, string>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(watermarks));
+  } catch {
+    // Ignore storage failures; the in-memory hidden state still applies.
+  }
+}
+
 function writeThreadOrganizationRule(orgId: string, rule: ThreadOrganizationRule) {
   if (typeof window === "undefined") return;
   try {
@@ -330,9 +395,24 @@ function projectIdFromSectionKey(sectionKey: string) {
     : null;
 }
 
+function syntheticProjectSectionIdFromKey(sectionKey: string) {
+  return projectIdFromSectionKey(sectionKey) ? null : `messenger-section:${sectionKey}`;
+}
+
+function projectSectionKeyToStoredId(sectionKey: string) {
+  return projectIdFromSectionKey(sectionKey) ?? syntheticProjectSectionIdFromKey(sectionKey) ?? sectionKey;
+}
+
+function storedProjectSectionIdToKey(storedId: string) {
+  if (storedId.startsWith("messenger-section:")) return storedId.slice("messenger-section:".length);
+  if (storedId.startsWith("project:")) return storedId;
+  return `project:${storedId}`;
+}
+
 function sortProjectThreadSections(
   sections: OrganizedThreadSection[],
   orderedProjectIds: string[],
+  orderedSectionIds: string[] = [],
 ) {
   if (sections.length === 0) return sections;
   const orderIndex = new Map(orderedProjectIds.map((id, index) => [id, index]));
@@ -358,7 +438,21 @@ function sortProjectThreadSections(
     return (a.label ?? "").localeCompare(b.label ?? "");
   });
 
-  return [...realProjectSections, ...fixedSections];
+  const projectSortedSections = [...realProjectSections, ...fixedSections];
+  if (orderedSectionIds.length === 0) return projectSortedSections;
+
+  const sectionOrderIndex = new Map(
+    orderedSectionIds.map((id, index) => [storedProjectSectionIdToKey(id), index]),
+  );
+  const baseIndex = new Map(projectSortedSections.map((section, index) => [section.key, index]));
+  return [...projectSortedSections].sort((a, b) => {
+    const aIndex = sectionOrderIndex.get(a.key);
+    const bIndex = sectionOrderIndex.get(b.key);
+    if (aIndex !== undefined || bIndex !== undefined) {
+      return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
+    }
+    return (baseIndex.get(a.key) ?? 0) - (baseIndex.get(b.key) ?? 0);
+  });
 }
 
 function chatProjectGroup(conversation: ChatConversation | null): ThreadGroup {
@@ -851,12 +945,14 @@ function ThreadRow({
   active,
   density,
   onTogglePin,
+  onHideIssue,
   onSelect,
 }: {
   thread: ReturnType<typeof useMessengerModel>["threadSummaries"][number];
   active: boolean;
   density: MessengerThreadDensity;
   onTogglePin: () => void;
+  onHideIssue?: () => void;
   onSelect: (href: string) => void;
 }) {
   const Icon = threadIcon(thread.kind);
@@ -864,6 +960,7 @@ function ThreadRow({
   const compact = density === "compact";
   const [actionsOpen, setActionsOpen] = useState(false);
   const canTogglePin = thread.metadata?.splitIssue === true;
+  const canHideIssue = thread.metadata?.splitIssue === true && Boolean(onHideIssue);
   const issueStatus =
     thread.metadata?.splitIssue === true && typeof thread.metadata.status === "string"
       ? thread.metadata.status
@@ -944,7 +1041,7 @@ function ThreadRow({
         </span>
       </Link>
 
-      {canTogglePin ? (
+      {canTogglePin || canHideIssue ? (
         <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
           <DropdownMenuTrigger asChild>
             <button
@@ -960,19 +1057,27 @@ function ThreadRow({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="surface-overlay text-foreground">
-            <DropdownMenuItem onClick={onTogglePin}>
-              {thread.isPinned ? (
-                <>
-                  <PinOff className="h-4 w-4" />
-                  Unpin
-                </>
-              ) : (
-                <>
-                  <Pin className="h-4 w-4" />
-                  Pin
-                </>
-              )}
-            </DropdownMenuItem>
+            {canTogglePin ? (
+              <DropdownMenuItem onClick={onTogglePin}>
+                {thread.isPinned ? (
+                  <>
+                    <PinOff className="h-4 w-4" />
+                    Unpin
+                  </>
+                ) : (
+                  <>
+                    <Pin className="h-4 w-4" />
+                    Pin
+                  </>
+                )}
+              </DropdownMenuItem>
+            ) : null}
+            {canHideIssue ? (
+              <DropdownMenuItem onClick={onHideIssue}>
+                <EyeOff className="h-4 w-4" />
+                Hide
+              </DropdownMenuItem>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
@@ -1004,7 +1109,10 @@ function SortableProjectThreadSection({
         transition,
         zIndex: isDragging ? 10 : undefined,
       }}
-      className={cn("flex flex-col gap-1", isDragging && "opacity-80")}
+      className={cn(
+        "flex min-h-9 touch-none flex-col gap-1 rounded-[calc(var(--radius-md)-2px)]",
+        isDragging && "bg-[color:color-mix(in_oklab,var(--surface-active)_56%,transparent)] opacity-90 shadow-sm ring-1 ring-border/70",
+      )}
       {...attributes}
       {...listeners}
     >
@@ -1097,6 +1205,18 @@ interface OrganizedThreadSection {
 
 function isPinnedEntry(entry: OrganizedThreadEntry) {
   return typeof entry.thread.isPinned === "boolean" ? entry.thread.isPinned : Boolean(entry.conversation?.isPinned);
+}
+
+function splitIssueThreadWatermark(thread: MessengerThreadSummaryItem) {
+  if (thread.metadata?.splitIssue !== true) return null;
+  const metadata = thread.metadata as Record<string, unknown>;
+  return [
+    thread.latestActivityAt ? new Date(thread.latestActivityAt).toISOString() : "none",
+    metadataString(metadata, "status") ?? "unknown",
+    metadataString(metadata, "activeExecutionRunId") ?? "idle",
+    String(thread.unreadCount),
+    thread.needsAttention ? "attention" : "settled",
+  ].join("|");
 }
 
 function threadMatchesMessengerIssueRoute(thread: MessengerThreadSummaryItem, issueRef: string) {
@@ -1254,8 +1374,22 @@ export function MessengerContextSidebar() {
     if (!model.selectedOrganizationId) return null;
     return getProjectOrderStorageKey(model.selectedOrganizationId, currentUserId);
   }, [currentUserId, model.selectedOrganizationId]);
+  const messengerProjectGroupOrderStorageKey = useMemo(() => {
+    if (!model.selectedOrganizationId) return null;
+    return getMessengerProjectGroupOrderStorageKey(model.selectedOrganizationId, currentUserId);
+  }, [currentUserId, model.selectedOrganizationId]);
+  const hiddenIssueThreadsStorageKey = useMemo(() => {
+    if (!model.selectedOrganizationId) return null;
+    return getHiddenIssueThreadsStorageKey(model.selectedOrganizationId, currentUserId);
+  }, [currentUserId, model.selectedOrganizationId]);
   const [projectOrderIds, setProjectOrderIds] = useState<string[]>(() =>
     projectOrderStorageKey ? readProjectOrder(projectOrderStorageKey) : [],
+  );
+  const [projectSectionOrderIds, setProjectSectionOrderIds] = useState<string[]>(() =>
+    messengerProjectGroupOrderStorageKey ? readStringList(messengerProjectGroupOrderStorageKey) : [],
+  );
+  const [hiddenIssueThreadWatermarks, setHiddenIssueThreadWatermarks] = useState<Record<string, string>>(() =>
+    hiddenIssueThreadsStorageKey ? readHiddenIssueThreadWatermarks(hiddenIssueThreadsStorageKey) : {},
   );
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -1297,6 +1431,36 @@ export function MessengerContextSidebar() {
   }, [projectOrderStorageKey]);
 
   useEffect(() => {
+    if (!messengerProjectGroupOrderStorageKey) {
+      setProjectSectionOrderIds([]);
+      return;
+    }
+    setProjectSectionOrderIds(readStringList(messengerProjectGroupOrderStorageKey));
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== messengerProjectGroupOrderStorageKey) return;
+      setProjectSectionOrderIds(readStringList(messengerProjectGroupOrderStorageKey));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [messengerProjectGroupOrderStorageKey]);
+
+  useEffect(() => {
+    if (!hiddenIssueThreadsStorageKey) {
+      setHiddenIssueThreadWatermarks({});
+      return;
+    }
+    setHiddenIssueThreadWatermarks(readHiddenIssueThreadWatermarks(hiddenIssueThreadsStorageKey));
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== hiddenIssueThreadsStorageKey) return;
+      setHiddenIssueThreadWatermarks(readHiddenIssueThreadWatermarks(hiddenIssueThreadsStorageKey));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [hiddenIssueThreadsStorageKey]);
+
+  useEffect(() => {
     if (!model.selectedOrganizationId) return;
     void invalidateMessengerThreadSummaryQueries(queryClient, model.selectedOrganizationId);
   }, [model.selectedOrganizationId, queryClient, splitIssueNotifications]);
@@ -1330,10 +1494,18 @@ export function MessengerContextSidebar() {
     return map;
   }, [agentsQuery.data]);
 
+  const visibleThreadSummaries = useMemo(() => {
+    return model.threadSummaries.filter((thread) => {
+      const watermark = splitIssueThreadWatermark(thread);
+      if (!watermark) return true;
+      return hiddenIssueThreadWatermarks[thread.threadKey] !== watermark;
+    });
+  }, [hiddenIssueThreadWatermarks, model.threadSummaries]);
+
   const organizedThreadSections = useMemo(() => {
     const threadSummaries = splitIssueNotifications
-      ? model.threadSummaries.filter((thread) => thread.threadKey !== "issues")
-      : model.threadSummaries;
+      ? visibleThreadSummaries.filter((thread) => thread.threadKey !== "issues")
+      : visibleThreadSummaries;
     const entries = threadSummaries.map((thread) => {
       const conversationId = threadConversationId(thread.threadKey);
       const loadedConversation = conversationId ? conversationsById.get(conversationId) ?? null : null;
@@ -1346,9 +1518,9 @@ export function MessengerContextSidebar() {
     });
     const sections = organizeThreadEntries(entries, threadOrganizationRule, agentsById);
     return threadOrganizationRule === "project"
-      ? sortProjectThreadSections(sections, projectOrderIds)
+      ? sortProjectThreadSections(sections, projectOrderIds, projectSectionOrderIds)
       : sections;
-  }, [agentsById, conversationsById, model.selectedOrganizationId, model.threadSummaries, projectOrderIds, splitIssueNotifications, threadOrganizationRule]);
+  }, [agentsById, conversationsById, model.selectedOrganizationId, projectOrderIds, projectSectionOrderIds, splitIssueNotifications, threadOrganizationRule, visibleThreadSummaries]);
   const firstUnreadThreadTarget = useMemo<FirstUnreadThreadTarget | null>(() => {
     for (const section of organizedThreadSections) {
       for (const [index, entry] of section.entries.entries()) {
@@ -1463,16 +1635,21 @@ export function MessengerContextSidebar() {
   const handleProjectSectionDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    if (!projectOrderStorageKey) return;
+    if (!messengerProjectGroupOrderStorageKey) return;
 
     const projectSectionKeys = organizedThreadSections
-      .map((section) => section.key)
-      .filter((key) => projectIdFromSectionKey(key));
+      .map((section) => section.key);
     const oldIndex = projectSectionKeys.indexOf(active.id as string);
     const newIndex = projectSectionKeys.indexOf(over.id as string);
     if (oldIndex === -1 || newIndex === -1) return;
 
-    const movedProjectIds = arrayMove(projectSectionKeys, oldIndex, newIndex)
+    const movedProjectSectionIds = arrayMove(projectSectionKeys, oldIndex, newIndex)
+      .map(projectSectionKeyToStoredId);
+    setProjectSectionOrderIds(movedProjectSectionIds);
+    writeStringList(messengerProjectGroupOrderStorageKey, movedProjectSectionIds);
+
+    const movedProjectIds = movedProjectSectionIds
+      .map(storedProjectSectionIdToKey)
       .map((key) => projectIdFromSectionKey(key))
       .filter((id): id is string => Boolean(id));
     const movedProjectIdSet = new Set(movedProjectIds);
@@ -1481,8 +1658,10 @@ export function MessengerContextSidebar() {
       ...projectOrderIds.filter((id) => !movedProjectIdSet.has(id)),
     ];
     setProjectOrderIds(nextProjectOrderIds);
-    writeProjectOrder(projectOrderStorageKey, nextProjectOrderIds);
-  }, [organizedThreadSections, projectOrderIds, projectOrderStorageKey]);
+    if (projectOrderStorageKey) {
+      writeProjectOrder(projectOrderStorageKey, nextProjectOrderIds);
+    }
+  }, [messengerProjectGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey]);
 
   const handleShowMoreProjectSection = (section: OrganizedThreadSection, visibleCount: number) => {
     if (visibleCount < section.entries.length) {
@@ -1504,18 +1683,25 @@ export function MessengerContextSidebar() {
     }));
   };
 
-  const realProjectThreadSections = useMemo(
+  const projectThreadSections = useMemo(
     () => threadOrganizationRule === "project"
-      ? organizedThreadSections.filter((section) => projectIdFromSectionKey(section.key))
+      ? organizedThreadSections
       : [],
     [organizedThreadSections, threadOrganizationRule],
   );
-  const fixedProjectThreadSections = useMemo(
-    () => threadOrganizationRule === "project"
-      ? organizedThreadSections.filter((section) => !projectIdFromSectionKey(section.key))
-      : [],
-    [organizedThreadSections, threadOrganizationRule],
-  );
+
+  const handleHideIssueThread = (thread: MessengerThreadSummaryItem) => {
+    const watermark = splitIssueThreadWatermark(thread);
+    if (!watermark || !hiddenIssueThreadsStorageKey) return;
+    setHiddenIssueThreadWatermarks((current) => {
+      const next = {
+        ...current,
+        [thread.threadKey]: watermark,
+      };
+      writeHiddenIssueThreadWatermarks(hiddenIssueThreadsStorageKey, next);
+      return next;
+    });
+  };
 
   const renderThreadEntry = ({ thread, conversation }: OrganizedThreadEntry) => {
     const active = activeThreadKey === thread.threadKey;
@@ -1588,6 +1774,7 @@ export function MessengerContextSidebar() {
             pinned: !thread.isPinned,
           });
         }}
+        onHideIssue={() => handleHideIssueThread(thread)}
         onSelect={handleMessengerEntrySelect}
       />
     );
@@ -1621,7 +1808,7 @@ export function MessengerContextSidebar() {
                 type="button"
                 data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
                 aria-expanded={!collapsed}
-                className="mx-1.5 flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-1.5 pb-1 pt-2 text-left text-[11px] font-semibold text-muted-foreground/72 transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
+                className="mx-1.5 flex min-h-8 items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-1.5 py-1.5 text-left text-[11px] font-semibold text-muted-foreground/72 transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
                 onClick={() => handleProjectGroupToggle(section.key)}
               >
                 {collapsed ? (
@@ -1638,7 +1825,6 @@ export function MessengerContextSidebar() {
                     {attentionCount}
                   </span>
                 ) : null}
-                <span className="shrink-0 text-[10px] font-medium text-muted-foreground/60">{section.entries.length}</span>
               </button>
             );
           })() : (
@@ -2007,21 +2193,16 @@ export function MessengerContextSidebar() {
               onDragEnd={handleProjectSectionDragEnd}
             >
               <SortableContext
-                items={realProjectThreadSections.map((section) => section.key)}
+                items={projectThreadSections.map((section) => section.key)}
                 strategy={verticalListSortingStrategy}
               >
-                {realProjectThreadSections.map((section) => (
+                {projectThreadSections.map((section) => (
                   <SortableProjectThreadSection key={section.key} id={section.key}>
                     {renderThreadSection(section)}
                   </SortableProjectThreadSection>
                 ))}
               </SortableContext>
             </DndContext>
-            {fixedProjectThreadSections.map((section) => (
-              <div key={section.key} className="flex flex-col gap-1">
-                {renderThreadSection(section)}
-              </div>
-            ))}
           </>
         ) : (
           organizedThreadSections.map((section) => (

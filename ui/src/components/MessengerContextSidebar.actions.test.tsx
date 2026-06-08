@@ -209,6 +209,11 @@ function renderSidebar() {
   });
 }
 
+function cleanupSidebar() {
+  cleanupFn?.();
+  cleanupFn = null;
+}
+
 function tabbableDescendants(root: HTMLElement) {
   return Array.from(root.querySelectorAll<HTMLElement>(
     'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
@@ -218,6 +223,19 @@ function tabbableDescendants(root: HTMLElement) {
     if ("disabled" in element && Boolean(element.disabled)) return false;
     return true;
   });
+}
+
+function installLocalStorage(initial: Record<string, string> = {}) {
+  const store = { ...initial };
+  const getItem = vi.fn((key: string) => store[key] ?? null);
+  const setItem = vi.fn((key: string, value: string) => {
+    store[key] = value;
+  });
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: { getItem, setItem },
+  });
+  return { getItem, setItem, store };
 }
 
 describe("MessengerContextSidebar chat actions", () => {
@@ -269,8 +287,7 @@ describe("MessengerContextSidebar chat actions", () => {
   });
 
   afterEach(() => {
-    cleanupFn?.();
-    cleanupFn = null;
+    cleanupSidebar();
     document.body.innerHTML = "";
     vi.restoreAllMocks();
     mockConfirm.mockClear();
@@ -412,15 +429,8 @@ describe("MessengerContextSidebar chat actions", () => {
   });
 
   it("groups split issue rows by project beside project chats", () => {
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        getItem: vi.fn((key: string) => {
-          if (key === "rudder.messengerThreadOrganizationByOrg") return JSON.stringify({ "org-1": "project" });
-          return null;
-        }),
-        setItem: vi.fn(),
-      },
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),
     });
     chatList = [
       baseConversation({
@@ -484,6 +494,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(projectSection?.textContent).toContain("Operator console");
     expect(projectSection?.textContent).toContain("Roadmap chat");
     expect(projectSection?.textContent).toContain("ISS-1 · Split issue");
+    expect(document.querySelector('[data-testid="messenger-thread-section-project-project-1"]')?.textContent).not.toContain("2");
     expect(document.querySelector('[data-testid="messenger-thread-section-system"]')).toBeNull();
   });
 
@@ -564,16 +575,8 @@ describe("MessengerContextSidebar chat actions", () => {
   });
 
   it("collapses project thread groups from the project header", async () => {
-    const setItem = vi.fn();
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        getItem: vi.fn((key: string) => {
-          if (key === "rudder.messengerThreadOrganizationByOrg") return JSON.stringify({ "org-1": "project" });
-          return null;
-        }),
-        setItem,
-      },
+    const { setItem } = installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),
     });
     chatList = [
       baseConversation({
@@ -619,15 +622,8 @@ describe("MessengerContextSidebar chat actions", () => {
   });
 
   it("progressively shows and collapses large project thread groups", async () => {
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        getItem: vi.fn((key: string) => {
-          if (key === "rudder.messengerThreadOrganizationByOrg") return JSON.stringify({ "org-1": "project" });
-          return null;
-        }),
-        setItem: vi.fn(),
-      },
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),
     });
     chatList = Array.from({ length: 8 }, (_, index) =>
       baseConversation({
@@ -683,6 +679,92 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeNull();
   });
 
+  it("applies stored project-mode order to system sections and hides total group counts", () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),
+      "rudder.messengerProjectGroupOrder:org-1:anonymous": JSON.stringify([
+        "messenger-section:system",
+        "messenger-section:project:none",
+        "project-1",
+      ]),
+    });
+    chatList = [
+      baseConversation({
+        id: "chat-1",
+        title: "Project chat",
+        contextLinks: [
+          {
+            entityType: "project",
+            entityId: "project-1",
+            entity: { label: "Operator console" },
+          },
+        ],
+      }),
+      baseConversation({
+        id: "chat-2",
+        title: "Loose chat",
+      }),
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-1",
+          kind: "chat",
+          title: "Project chat",
+          preview: "Project conversation",
+          subtitle: null,
+          href: "/messenger/chat/chat-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "approvals",
+          kind: "approvals",
+          title: "Approvals",
+          preview: "Approval update",
+          subtitle: null,
+          href: "/messenger/approvals",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "chat:chat-2",
+          kind: "chat",
+          title: "Loose chat",
+          preview: "No project conversation",
+          subtitle: null,
+          href: "/messenger/chat/chat-2",
+          latestActivityAt: "2026-04-11T09:42:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const systemHeader = document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-system"]');
+    const noProjectHeader = document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-project-none"]');
+    const projectHeader = document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-project-project-1"]');
+    expect(systemHeader).toBeTruthy();
+    expect(noProjectHeader).toBeTruthy();
+    expect(projectHeader).toBeTruthy();
+    expect(systemHeader?.compareDocumentPosition(noProjectHeader!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(noProjectHeader?.compareDocumentPosition(projectHeader!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(systemHeader?.textContent).toBe("System");
+    expect(noProjectHeader?.textContent).toBe("No project");
+    expect(projectHeader?.textContent).toBe("Operator console");
+  });
+
   it("pins split issue rows through issue thread user state", async () => {
     chatList = [];
     messengerModel = {
@@ -717,6 +799,65 @@ describe("MessengerContextSidebar chat actions", () => {
     });
 
     expect(mockUpdateThreadUserState).toHaveBeenCalledWith("org-1", "issue:issue-1", { pinned: true });
+  });
+
+  it("hides split issue rows until the issue update watermark changes", async () => {
+    const storage = installLocalStorage();
+    chatList = [];
+    const issueThread = {
+      threadKey: "issue:issue-1",
+      kind: "issues",
+      title: "ISS-1 · Split issue",
+      preview: "Followed issue update",
+      subtitle: null,
+      href: "/messenger/issues/ISS-1",
+      latestActivityAt: "2026-04-11T09:40:00.000Z",
+      lastReadAt: null,
+      unreadCount: 0,
+      needsAttention: false,
+      isPinned: false,
+      metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "todo" },
+    };
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [issueThread],
+    };
+
+    renderSidebar();
+
+    expect(document.querySelector('[data-testid="messenger-thread-issue-issue-1"]')).toBeTruthy();
+    const hideButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Hide")) as HTMLButtonElement | undefined;
+    expect(hideButton).toBeTruthy();
+
+    await act(async () => {
+      hideButton?.click();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-thread-issue-issue-1"]')).toBeNull();
+    expect(JSON.parse(storage.store["rudder.messengerHiddenIssueThreads:org-1:anonymous"] ?? "{}")).toEqual({
+      "issue:issue-1": "2026-04-11T09:40:00.000Z|todo|idle|0|settled",
+    });
+
+    cleanupSidebar();
+    renderSidebar();
+    expect(document.querySelector('[data-testid="messenger-thread-issue-issue-1"]')).toBeNull();
+
+    cleanupSidebar();
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          ...issueThread,
+          latestActivityAt: "2026-04-11T09:45:00.000Z",
+          unreadCount: 1,
+          needsAttention: true,
+          metadata: { ...issueThread.metadata, status: "in_progress" },
+        },
+      ],
+    };
+    renderSidebar();
+    expect(document.querySelector('[data-testid="messenger-thread-issue-issue-1"]')).toBeTruthy();
   });
 
   it("optimistically clears split issue unread state before mark-read finishes", () => {
