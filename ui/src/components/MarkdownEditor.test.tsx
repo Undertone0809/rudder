@@ -530,6 +530,32 @@ describe("MarkdownEditor", () => {
     expect(mdxEditorMocks.lastEditorProps?.translation?.("linkPreview.edit", "Edit link URL")).toBe("Edit");
   });
 
+  it("marks the editor as having content so the placeholder layer cannot overlap pasted text", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="Cloudflare: Update nameservers for zeeland.studio 我"
+          onChange={() => undefined}
+          placeholder="Cloudflare: Update nameservers for zeeland.studio"
+          plainText
+        />,
+      );
+    });
+
+    expect(container.querySelector(".rudder-mdxeditor-scope")?.getAttribute("data-rudder-has-content")).toBe("true");
+  });
+
   it("navigates mention tokens by default when clicked", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

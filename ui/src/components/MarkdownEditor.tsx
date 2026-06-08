@@ -1281,6 +1281,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     () => (placeholder ? translateLegacyString(locale, placeholder) : undefined),
     [locale, placeholder],
   );
+  const hasEditorContent = value.replaceAll(INLINE_CARET_BOUNDARY, "").length > 0;
 
   const plugins = useMemo<RealmPlugin[]>(() => {
     const imageHandler = hasImageUpload
@@ -1711,6 +1712,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   return (
     <div
       ref={containerRef}
+      data-rudder-has-content={hasEditorContent ? "true" : "false"}
       className={cn(
         "relative rudder-mdxeditor-scope",
         bordered ? "rounded-md border border-border bg-transparent" : "bg-transparent",

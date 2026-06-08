@@ -2367,6 +2367,10 @@ button[draggable="false"] {
   color: var(--muted-foreground);
 }
 
+.rudder-mdxeditor-scope[data-rudder-has-content="true"] .rudder-mdxeditor [class*="_placeholder_"] {
+  display: none !important;
+}
+
 .rudder-mdxeditor-content {
   font-family: inherit;
   font-size: inherit;
