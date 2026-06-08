@@ -188,6 +188,7 @@ export function touchedByUserCondition(orgId: string, userId: string) {
         FROM ${issueComments}
         WHERE ${issueComments.issueId} = ${issues.id}
           AND ${issueComments.orgId} = ${orgId}
+          AND ${issueComments.deletedAt} IS NULL
           AND ${issueComments.authorUserId} = ${userId}
       )
     )
@@ -238,6 +239,7 @@ export function myLastCommentAtExpr(orgId: string, userId: string) {
       FROM ${issueComments}
       WHERE ${issueComments.issueId} = ${issues.id}
         AND ${issueComments.orgId} = ${orgId}
+        AND ${issueComments.deletedAt} IS NULL
         AND ${issueComments.authorUserId} = ${userId}
     )
   `;
@@ -280,6 +282,7 @@ export function unreadForUserCondition(orgId: string, userId: string) {
         FROM ${issueComments}
         WHERE ${issueComments.issueId} = ${issues.id}
           AND ${issueComments.orgId} = ${orgId}
+          AND ${issueComments.deletedAt} IS NULL
           AND (
             ${issueComments.authorUserId} IS NULL
             OR ${issueComments.authorUserId} <> ${userId}
