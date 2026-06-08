@@ -4,7 +4,7 @@ import { AgentIdentity } from "./AgentAvatar";
 import { resolveActivityActorName } from "@/lib/activity-actors";
 import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
-import { deriveProjectUrlKey, type ActivityEvent, type Agent } from "@rudderhq/shared";
+import { deriveProjectUrlKey, issueUpdatedChangedKeys, type ActivityEvent, type Agent } from "@rudderhq/shared";
 import { formatPriorityLabel } from "../lib/priorities";
 
 const ACTION_VERBS: Record<string, string> = {
@@ -49,18 +49,6 @@ const ACTION_VERBS: Record<string, string> = {
   "organization.budget_updated": "updated budget for",
 };
 
-const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "_references",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
-
 const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeAgentId: "assignee",
   assigneeUserId: "assignee",
@@ -83,10 +71,6 @@ const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
 function humanizeValue(value: unknown): string {
   if (typeof value !== "string") return String(value ?? "none");
   return value.replace(/_/g, " ");
-}
-
-function issueUpdatedChangedKeys(details: Record<string, unknown>): string[] {
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
 }
 
 function humanizeIssueUpdateField(key: string): string {

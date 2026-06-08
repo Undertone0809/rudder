@@ -33,6 +33,7 @@ import {
   defaultIssueExecutionWorkspaceSettingsForProject,
   parseProjectExecutionWorkspacePolicy,
 } from "./execution-workspace-policy.js";
+import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
@@ -534,24 +535,7 @@ export function issueService(db: Db) {
                     AND material_activity.entity_type = 'issue'
                     AND material_activity.entity_id = ${issues.id}::text
                     AND (
-                      (
-                        material_activity.action = 'issue.updated'
-                        AND jsonb_typeof(material_activity.details) = 'object'
-                        AND EXISTS (
-                          SELECT 1
-                          FROM jsonb_object_keys(material_activity.details) AS detail_key(key)
-                          WHERE detail_key.key NOT IN (
-                            'identifier',
-                            'issueIdentifier',
-                            '_previous',
-                            'source',
-                            'reopened',
-                            'reopenedFrom',
-                            'normalizedFromStatus',
-                            'normalizedReason'
-                          )
-                        )
-                      )
+                      ${issueMaterialUpdateActivitySql("material_activity")}
                       OR (
                         material_activity.action = 'issue.comment_added'
                         AND NOT (

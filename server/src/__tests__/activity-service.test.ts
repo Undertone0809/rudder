@@ -275,6 +275,73 @@ describe("activityService.forIssue", () => {
     expect(result.some((event) => event.entityId === unrelatedConversationId)).toBe(false);
   });
 
+  it("filters title and description-only issue updates from issue activity", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Issue under test",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "user",
+        actorId: "board",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: issueId,
+        details: {
+          title: "Renamed issue",
+          description: "Edited description",
+          _previous: { title: "Issue under test", description: "Initial description" },
+        },
+        createdAt: new Date("2026-04-01T10:00:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: "board",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: issueId,
+        details: { status: "in_progress", _previous: { status: "todo" } },
+        createdAt: new Date("2026-04-01T10:05:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: "board",
+        action: "issue.document_updated",
+        entityType: "issue",
+        entityId: issueId,
+        details: { key: "plan", title: "Plan" },
+        createdAt: new Date("2026-04-01T10:10:00.000Z"),
+      },
+    ]);
+
+    const result = await svc.forIssue(issueId);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.details).toMatchObject({ status: "in_progress" });
+
+    const orgActivity = await svc.list({ orgId });
+    expect(orgActivity.map((event) => event.action)).toEqual(["issue.document_updated", "issue.updated"]);
+    expect(orgActivity[1]?.details).toMatchObject({ status: "in_progress" });
+  });
+
   it("filters organization activity by user and agent principals", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

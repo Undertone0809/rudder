@@ -36,11 +36,13 @@ import {
   type MessengerThreadPageInfo,
   type MessengerThreadSummary,
   type MessengerThreadSummaryPage,
+  issueUpdatedChangedKeys,
 } from "@rudderhq/shared";
 import { chatService } from "./chats.js";
 import { budgetService } from "./budgets.js";
 import { redactEventPayload } from "../redaction.js";
 import { conflict } from "../errors.js";
+import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
 
 const ISSUE_ACTIVITY_ACTIONS = [
   "issue.updated",
@@ -430,18 +432,6 @@ function humanizeIssueStatus(status: string) {
   return status.replaceAll("_", " ");
 }
 
-const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "_references",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
-
 const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeAgentId: "assignee",
   assigneeUserId: "assignee",
@@ -463,10 +453,6 @@ const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
 
 function humanizeIssueUpdateField(key: string): string {
   return ISSUE_UPDATE_FIELD_LABELS[key] ?? key.replace(/Id$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
-}
-
-function issueUpdatedChangedKeys(details: Record<string, unknown>): string[] {
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
 }
 
 function issueStatusChangeFromActivity(activity: IssueActivityRow | null | undefined): IssueStatusChange | null {
@@ -984,32 +970,9 @@ export function messengerService(db: Db) {
 
   const issueActionSqlList = sql.join(ISSUE_ACTIVITY_ACTIONS.map((action) => sql`${action}`), sql`, `);
 
-  function issueDescriptionOnlyActivitySql(alias: string) {
-    return sql<boolean>`(
-      ${sql.raw(`${alias}.action`)} = 'issue.updated'
-      and jsonb_typeof(${sql.raw(`${alias}.details`)}) = 'object'
-      and ${sql.raw(`${alias}.details`)} ? 'description'
-      and not exists (
-        select 1
-        from jsonb_object_keys(${sql.raw(`${alias}.details`)}) as detail_key(key)
-        where detail_key.key not in (
-          'description',
-          'identifier',
-          'issueIdentifier',
-          '_previous',
-          'source',
-          'reopened',
-          'reopenedFrom',
-          'normalizedFromStatus',
-          'normalizedReason'
-        )
-      )
-    )`;
-  }
-
   function issueEntryRowsQuery(orgId: string, userId: string, tail = sql``) {
-    const descriptionOnlyActivity = issueDescriptionOnlyActivitySql("activity_row");
-    const externalDescriptionOnlyActivity = issueDescriptionOnlyActivitySql("external_activity_row");
+    const lowSignalContentOnlyActivity = issueLowSignalContentOnlyActivitySql("activity_row");
+    const externalLowSignalContentOnlyActivity = issueLowSignalContentOnlyActivitySql("external_activity_row");
     return sql<IssueThreadEntryRow>`
       with tracked_issue_ids as (
         select ${issues.id} as id
@@ -1071,9 +1034,9 @@ export function messengerService(db: Db) {
           ) as followed,
           (issue_row.assignee_user_id = ${userId}) as assigned,
           greatest(
-            issue_row.updated_at,
-            coalesce(latest_external_comment.created_at, issue_row.updated_at),
-            coalesce(latest_activity.created_at, issue_row.updated_at)
+            issue_row.created_at,
+            coalesce(latest_external_comment.created_at, issue_row.created_at),
+            coalesce(latest_activity.created_at, issue_row.created_at)
           ) as "latestActivityAt",
           latest_activity.id as "latestActivityId",
           latest_activity.action as "latestActivityAction",
@@ -1168,7 +1131,7 @@ export function messengerService(db: Db) {
             and activity_row.entity_type = 'issue'
             and activity_row.entity_id = issue_row.id::text
             and activity_row.action in (${issueActionSqlList})
-            and not ${descriptionOnlyActivity}
+            and not ${lowSignalContentOnlyActivity}
           order by activity_row.created_at desc, activity_row.id desc
           limit 1
         ) latest_activity on true
@@ -1186,7 +1149,7 @@ export function messengerService(db: Db) {
             and external_activity_row.entity_type = 'issue'
             and external_activity_row.entity_id = issue_row.id::text
             and external_activity_row.action in (${issueActionSqlList})
-            and not ${externalDescriptionOnlyActivity}
+            and not ${externalLowSignalContentOnlyActivity}
             and (external_activity_row.actor_type <> 'user' or external_activity_row.actor_id <> ${userId})
           order by external_activity_row.created_at desc, external_activity_row.id desc
           limit 1
@@ -1198,7 +1161,7 @@ export function messengerService(db: Db) {
             and suppressed_activity_row.entity_type = 'issue'
             and suppressed_activity_row.entity_id = issue_row.id::text
             and suppressed_activity_row.action in (${issueActionSqlList})
-            and ${issueDescriptionOnlyActivitySql("suppressed_activity_row")}
+            and ${issueLowSignalContentOnlyActivitySql("suppressed_activity_row")}
           order by suppressed_activity_row.created_at desc, suppressed_activity_row.id desc
           limit 1
         ) latest_suppressed_activity on true

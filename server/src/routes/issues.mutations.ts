@@ -19,6 +19,7 @@ import {
   upsertIssueDocumentSchema,
   updateIssueSchema,
   isUuidLike,
+  hasMaterialIssueUpdateFields,
 } from "@rudderhq/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
@@ -45,6 +46,7 @@ import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 import { registerIssueCommentAttachmentRoutes } from "./issues.comments-attachments.js";
+import { publishLiveEvent } from "../services/live-events.js";
 
 
 type IssueMutationRouteContext = {
@@ -118,8 +120,10 @@ function buildIssueUpdateActivityDetails(
       previous[key] = existing[key];
     }
   }
+  const changedKeys = Object.keys(changed);
   return {
-    hasFieldChanges: Object.keys(changed).length > 0,
+    hasFieldChanges: changedKeys.length > 0,
+    hasMaterialFieldChanges: hasMaterialIssueUpdateFields(changed),
     details: {
       ...changed,
       ...metadata,
@@ -400,6 +404,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       },
     );
     const hasFieldChanges = issueUpdateActivity.hasFieldChanges;
+    const hasMaterialFieldChanges = issueUpdateActivity.hasMaterialFieldChanges;
     const reopened =
       commentBody &&
       reopenRequested === true &&
@@ -407,7 +412,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       (issueUpdateActivity.details._previous as Record<string, unknown> | undefined)?.status !== undefined &&
       issue.status === "todo";
     const reopenFromStatus = reopened ? existing.status : null;
-    if (hasFieldChanges || reopened || reviewedCompletionNormalized) {
+    if (hasMaterialFieldChanges || reopened || reviewedCompletionNormalized) {
       const relationshipReferences = await buildIssueUpdateActivityReferences(
         svc,
         issue.orgId,
@@ -426,6 +431,20 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
           ...issueUpdateActivity.details,
           ...relationshipReferences,
           ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
+        },
+      });
+    } else if (hasFieldChanges) {
+      publishLiveEvent({
+        orgId: issue.orgId,
+        type: "issue.content_updated",
+        payload: {
+          entityType: "issue",
+          entityId: issue.id,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          details: issueUpdateActivity.details,
         },
       });
     }

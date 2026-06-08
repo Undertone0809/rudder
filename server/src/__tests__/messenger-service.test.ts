@@ -1690,9 +1690,9 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
-  it("does not count description-only issue updates as Messenger attention", async () => {
+  it("does not count title and description-only issue updates as Messenger attention", async () => {
     const orgId = randomUUID();
-    const userId = "board-user-description-only";
+    const userId = "board-user-content-only";
     const issueId = randomUUID();
     const createdAt = new Date("2026-04-10T09:00:00.000Z");
     const updatedAt = new Date("2026-04-10T10:00:00.000Z");
@@ -1708,7 +1708,7 @@ describe("messengerService and issue follows", () => {
     await db.insert(issues).values({
       id: issueId,
       orgId,
-      title: "Description-only update issue",
+      title: "Title and description-only update issue",
       status: "todo",
       priority: "medium",
       assigneeUserId: userId,
@@ -1724,7 +1724,12 @@ describe("messengerService and issue follows", () => {
       action: "issue.updated",
       entityType: "issue",
       entityId: issueId,
-      details: { description: "New description", identifier: "DSC-1", _previous: { description: "Old description" } },
+      details: {
+        title: "Renamed issue",
+        description: "New description",
+        identifier: "DSC-1",
+        _previous: { title: "Old issue", description: "Old description" },
+      },
       createdAt: new Date("2026-04-10T10:00:01.000Z"),
     });
 
@@ -1736,12 +1741,12 @@ describe("messengerService and issue follows", () => {
     expect(item?.metadata).toMatchObject({ assignedToMe: true });
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
-    expect(thread.summary.latestActivityAt?.toISOString()).toBe(updatedAt.toISOString());
-    expect(thread.summary.preview).toContain("Description-only update issue");
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(createdAt.toISOString());
+    expect(thread.summary.preview).toContain("Title and description-only update issue");
     expect(issuesSummary?.unreadCount).toBe(0);
     expect(issuesSummary?.needsAttention).toBe(false);
-    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(updatedAt.toISOString());
-    expect(issuesSummary?.preview).toContain("Description-only update issue");
+    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(createdAt.toISOString());
+    expect(issuesSummary?.preview).toContain("Title and description-only update issue");
   });
 
   it("does not count self-authored issue status updates as Messenger attention", async () => {

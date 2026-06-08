@@ -901,6 +901,14 @@ export {
 } from "./project-mentions.js";
 
 export {
+  ISSUE_UPDATE_ACTIVITY_METADATA_KEYS,
+  LOW_SIGNAL_ISSUE_UPDATE_ACTIVITY_FIELDS,
+  hasMaterialIssueUpdateFields,
+  isLowSignalIssueContentOnlyUpdate,
+  issueUpdatedChangedKeys,
+} from "./issue-activity.js";
+
+export {
   DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
   rudderConfigSchema,
   configMetaSchema,

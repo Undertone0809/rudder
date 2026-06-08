@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import type { Agent, Issue, LiveEvent } from "@rudderhq/shared";
+import { isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, type Agent, type Issue, type LiveEvent } from "@rudderhq/shared";
 import type { RunForIssue } from "../api/activity";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import { authApi } from "../api/auth";
@@ -325,17 +325,6 @@ function shouldSuppressAgentStatusToastForVisibleIssue(
 }
 
 const ISSUE_TOAST_ACTIONS = new Set(["issue.created", "issue.updated", "issue.comment_added"]);
-const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "_references",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
 const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeAgentId: "assignee",
   assigneeUserId: "assignee",
@@ -356,20 +345,16 @@ const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
 };
 const AGENT_TOAST_STATUSES = new Set(["running", "error"]);
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "timed_out", "cancelled"]);
-
 function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
-  if (!details) return [];
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+  return sharedIssueUpdatedChangedKeys(details);
 }
 
 function humanizeIssueUpdateField(key: string): string {
   return ISSUE_UPDATE_FIELD_LABELS[key] ?? key.replace(/Id$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
 }
 
-function isDescriptionOnlyIssueUpdate(action: string, details: Record<string, unknown> | null): boolean {
-  if (action !== "issue.updated") return false;
-  const changedKeys = issueUpdatedChangedKeys(details);
-  return changedKeys.length === 1 && changedKeys[0] === "description";
+function isLowSignalContentOnlyIssueUpdate(action: string, details: Record<string, unknown> | null): boolean {
+  return isLowSignalIssueContentOnlyUpdate(action, details);
 }
 
 function describeIssueUpdate(details: Record<string, unknown> | null): string | null {
@@ -428,7 +413,7 @@ function buildActivityToast(
   if (entityType !== "issue" || !entityId || !action || !ISSUE_TOAST_ACTIONS.has(action)) {
     return null;
   }
-  if (isDescriptionOnlyIssueUpdate(action, details)) {
+  if (isLowSignalContentOnlyIssueUpdate(action, details)) {
     return null;
   }
 
@@ -659,6 +644,10 @@ function invalidateActivityQueries(
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPreview(orgId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(orgId) });
     if (entityId) {
       const details = readRecord(payload.details);
       const issueRefs = resolveIssueQueryRefs(queryClient, orgId, entityId, details);
@@ -828,6 +817,11 @@ function handleLiveEvent(
     ) {
       gatedPushToast(gate, pushToast, "agent-status", toast);
     }
+    return;
+  }
+
+  if (event.type === "issue.content_updated") {
+    invalidateActivityQueries(queryClient, expectedCompanyId, payload);
     return;
   }
 

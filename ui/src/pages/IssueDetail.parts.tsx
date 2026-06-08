@@ -97,7 +97,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
+import { isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import type { Agent, Issue, IssueAttachment, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 
 export {
@@ -131,18 +131,6 @@ export function buildIssueChatHref(issue: IssueChatTarget) {
   if (issue.assigneeAgentId) params.set("agentId", issue.assigneeAgentId);
   return `/messenger/chat?${params.toString()}`;
 }
-
-export const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "_references",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
 
 export const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeAgentId: "assignee",
@@ -288,20 +276,17 @@ function renderIssueActivityReference(reference: IssueActivityReference): ReactN
 }
 
 export function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
-  if (!details) return [];
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+  return sharedIssueUpdatedChangedKeys(details);
 }
 
-export function isDescriptionOnlyIssueUpdate(evt: ActivityEvent): boolean {
-  if (evt.action !== "issue.updated") return false;
-  const changedKeys = issueUpdatedChangedKeys(asRecord(evt.details));
-  return changedKeys.length === 1 && changedKeys[0] === "description";
+export function isLowSignalContentOnlyIssueUpdate(evt: ActivityEvent): boolean {
+  return isLowSignalIssueContentOnlyUpdate(evt.action, evt.details);
 }
 
 export function shouldShowIssueActivityEvent(evt: ActivityEvent): boolean {
   if (evt.action === "issue.comment_added") return false;
   if (evt.action === "issue.document_updated") return false;
-  if (isDescriptionOnlyIssueUpdate(evt)) return false;
+  if (isLowSignalContentOnlyIssueUpdate(evt)) return false;
   return true;
 }
 

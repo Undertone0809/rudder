@@ -61,6 +61,7 @@ const mockWorkProductService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
+const mockPublishLiveEvent = vi.hoisted(() => vi.fn());
 
 const ASSIGNEE_AGENT_ID = "22222222-2222-4222-8222-222222222222";
 const REVIEWER_AGENT_ID = "33333333-3333-4333-8333-333333333333";
@@ -91,6 +92,10 @@ vi.mock("../services/index.js", () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),
   }),
   workProductService: () => mockWorkProductService,
+}));
+
+vi.mock("../services/live-events.js", () => ({
+  publishLiveEvent: mockPublishLiveEvent,
 }));
 
 function createBoardActor() {
@@ -994,6 +999,49 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("does not log low-signal title and description-only updates", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        title: "Original title",
+        description: "Original description",
+      }),
+    );
+    mockIssueService.update.mockResolvedValue(
+      makeIssue({
+        title: "Renamed title",
+        description: "Edited description",
+      }),
+    );
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ title: "Renamed title", description: "Edited description" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({
+        title: "Renamed title",
+        description: "Edited description",
+      }),
+    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockPublishLiveEvent).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      type: "issue.content_updated",
+      payload: expect.objectContaining({
+        entityType: "issue",
+        entityId: "11111111-1111-4111-8111-111111111111",
+        actorType: "user",
+        actorId: "local-board",
+        details: expect.objectContaining({
+          title: "Renamed title",
+          description: "Edited description",
+        }),
+      }),
+    });
   });
 
   it("includes parent issue references in parent update activity details", async () => {

@@ -85,7 +85,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
+import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 
 type IssueCostSummaryData = {
@@ -140,18 +140,6 @@ export function buildIssueHeaderBreadcrumbs(input: {
     { label: currentLabel },
   ];
 }
-
-const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "_references",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
 
 const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeAgentId: "assignee",
@@ -297,20 +285,17 @@ function renderIssueActivityReference(reference: IssueActivityReference): ReactN
 }
 
 function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
-  if (!details) return [];
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+  return sharedIssueUpdatedChangedKeys(details);
 }
 
-function isDescriptionOnlyIssueUpdate(evt: ActivityEvent): boolean {
-  if (evt.action !== "issue.updated") return false;
-  const changedKeys = issueUpdatedChangedKeys(asRecord(evt.details));
-  return changedKeys.length === 1 && changedKeys[0] === "description";
+function isLowSignalContentOnlyIssueUpdate(evt: ActivityEvent): boolean {
+  return isLowSignalIssueContentOnlyUpdate(evt.action, evt.details);
 }
 
 function shouldShowIssueActivityEvent(evt: ActivityEvent): boolean {
   if (evt.action === "issue.comment_added") return false;
   if (evt.action === "issue.document_updated") return false;
-  if (isDescriptionOnlyIssueUpdate(evt)) return false;
+  if (isLowSignalContentOnlyIssueUpdate(evt)) return false;
   return true;
 }
 
