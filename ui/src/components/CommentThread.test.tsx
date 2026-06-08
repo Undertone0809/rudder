@@ -5,12 +5,18 @@ import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommentThread } from "./CommentThread";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
+
+vi.mock("@/context/DialogContext", () => ({
+  useDialog: () => ({ confirm: mockConfirm }),
+}));
 
 vi.mock("./MarkdownEditor", async () => {
   const React = await import("react");
@@ -124,10 +130,15 @@ vi.mock("./transcript/RunTranscriptView", () => ({
 describe("CommentThread", () => {
   let cleanupFn: (() => void) | null = null;
 
+  beforeEach(() => {
+    mockConfirm.mockResolvedValue(true);
+  });
+
   afterEach(() => {
     cleanupFn?.();
     cleanupFn = null;
     document.body.innerHTML = "";
+    mockConfirm.mockReset();
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
@@ -340,7 +351,6 @@ describe("CommentThread", () => {
   it("lets the current user edit and delete their own user-authored comment", async () => {
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     const onDelete = vi.fn().mockResolvedValue(undefined);
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const container = renderInteractive(
       <MemoryRouter>
         <CommentThread
@@ -374,7 +384,12 @@ describe("CommentThread", () => {
 
     await click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Delete")) ?? null);
     await vi.waitFor(() => expect(onDelete).toHaveBeenCalledWith("comment-1"));
-    expect(confirmSpy).toHaveBeenCalledWith("Delete this comment? The original text will no longer be visible.");
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Delete this comment?",
+      description: "The original text will no longer be visible.",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
   });
 
   it("hides edit and delete actions for other users and agent-authored comments", () => {

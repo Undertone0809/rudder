@@ -12,6 +12,12 @@ import { CommentThread } from "./CommentThread";
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
+
+vi.mock("@/context/DialogContext", () => ({
+  useDialog: () => ({ confirm: mockConfirm }),
+}));
+
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: vi.fn().mockImplementation((query: string) => ({
@@ -72,6 +78,7 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
+  mockConfirm.mockReset();
 });
 
 function render(element: ReactNode) {

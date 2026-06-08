@@ -28,6 +28,7 @@ import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from 
 import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
+import { useDialog } from "@/context/DialogContext";
 
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 
@@ -335,6 +336,7 @@ const TimelineList = memo(function TimelineList({
 }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { confirm } = useDialog();
   const organizationPrefix = extractOrganizationPrefixFromPath(location.pathname);
   const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -547,7 +549,12 @@ const TimelineList = memo(function TimelineList({
         };
         const handleDelete = async () => {
           if (!onDelete) return;
-          const confirmed = window.confirm("Delete this comment? The original text will no longer be visible.");
+          const confirmed = await confirm({
+            title: "Delete this comment?",
+            description: "The original text will no longer be visible.",
+            confirmLabel: "Delete",
+            tone: "destructive",
+          });
           if (!confirmed) return;
           await onDelete(comment.id);
         };
