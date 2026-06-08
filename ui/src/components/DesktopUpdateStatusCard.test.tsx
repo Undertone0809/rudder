@@ -193,4 +193,40 @@ describe("DesktopUpdateStatusCard", () => {
 
     expect(document.body.textContent).toContain("The update session is no longer waiting to apply. Start the update again.");
   });
+
+  it("shows the actionable child-process diagnostic when a desktop update fails", async () => {
+    renderHarness({
+      updateId: "update-failed",
+      version: "0.3.3",
+      phase: "failed",
+      message: "Update installer exited with code 1.",
+      error: "No checksummed Rudder Desktop asset found for darwin/arm64 in Undertone0809/rudder@canary/v0.3.3-canary.0.",
+      at: new Date().toISOString(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText).toContain("Update failed");
+    expect(bodyText).toContain("No checksummed Rudder Desktop asset found for darwin/arm64");
+    expect(bodyText).not.toContain("Update failed.Update failed.");
+  });
+
+  it("uses a failed progress message when no separate error is available", async () => {
+    renderHarness({
+      updateId: "update-failed-message",
+      version: "0.3.3",
+      phase: "failed",
+      message: "Update installer exited with code 1.",
+      at: new Date().toISOString(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Update installer exited with code 1.");
+  });
 });
