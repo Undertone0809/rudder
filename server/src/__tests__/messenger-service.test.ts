@@ -698,6 +698,7 @@ describe("messengerService and issue follows", () => {
       entityId: issueId,
       details: {
         goalId,
+        _references: { goal: { id: goalId, title: "Ignored goal reference" } },
         _previous: { goalId: previousGoalId },
       },
       createdAt: activityAt,

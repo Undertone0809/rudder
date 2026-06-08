@@ -434,6 +434,7 @@ const ISSUE_UPDATE_METADATA_KEYS = new Set([
   "identifier",
   "issueIdentifier",
   "_previous",
+  "_references",
   "source",
   "reopened",
   "reopenedFrom",

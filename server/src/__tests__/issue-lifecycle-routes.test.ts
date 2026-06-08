@@ -126,6 +126,8 @@ function createApp(actor = createBoardActor()) {
 }
 
 function makeIssue(overrides?: Partial<{
+  id: string;
+  orgId: string;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
   reviewerAgentId: string | null;
@@ -136,6 +138,7 @@ function makeIssue(overrides?: Partial<{
   executionRunId: string | null;
   identifier: string;
   goalId: string | null;
+  parentId: string | null;
   projectId: string | null;
   boardOrder: number;
   status: "backlog" | "todo" | "in_progress" | "in_review" | "blocked" | "done";
@@ -156,6 +159,7 @@ function makeIssue(overrides?: Partial<{
     executionRunId: null,
     identifier: "RUD-5",
     goalId: null,
+    parentId: null,
     projectId: null,
     boardOrder: 1000,
     status: "todo" as const,
@@ -987,6 +991,49 @@ describe("issue lifecycle routes", () => {
             projectId: oldProjectId,
             goalId: oldGoalId,
           }),
+        }),
+      }),
+    );
+  });
+
+  it("includes parent issue references in parent update activity details", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    const parentIssueId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    const childIssue = makeIssue({ id: issueId });
+    const updatedChildIssue = makeIssue({ id: issueId, parentId: parentIssueId });
+    const parentIssue = makeIssue({
+      id: parentIssueId,
+      identifier: "RUD-42",
+      title: "Messenger review parent",
+    });
+
+    mockIssueService.getById.mockImplementation(async (id: string) => {
+      if (id === issueId) return childIssue;
+      if (id === parentIssueId) return parentIssue;
+      return null;
+    });
+    mockIssueService.update.mockResolvedValue(updatedChildIssue);
+
+    const res = await request(createApp())
+      .patch(`/api/issues/${issueId}`)
+      .send({ parentId: parentIssueId });
+
+    expect(res.status).toBe(200);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.updated",
+        entityId: issueId,
+        details: expect.objectContaining({
+          parentId: parentIssueId,
+          _references: {
+            parentIssue: {
+              id: parentIssueId,
+              identifier: "RUD-42",
+              title: "Messenger review parent",
+            },
+          },
+          _previous: expect.objectContaining({ parentId: null }),
         }),
       }),
     );

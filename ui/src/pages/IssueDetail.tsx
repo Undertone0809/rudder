@@ -144,6 +144,7 @@ const ISSUE_UPDATE_METADATA_KEYS = new Set([
   "identifier",
   "issueIdentifier",
   "_previous",
+  "_references",
   "source",
   "reopened",
   "reopenedFrom",
@@ -260,6 +261,38 @@ function describeIssuePrincipalChange(input: {
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+type IssueActivityReference = {
+  id: string;
+  identifier: string | null;
+  title: string | null;
+};
+
+function readIssueActivityReference(value: unknown): IssueActivityReference | null {
+  const record = asRecord(value);
+  if (!record || typeof record.id !== "string") return null;
+  return {
+    id: record.id,
+    identifier: typeof record.identifier === "string" ? record.identifier : null,
+    title: typeof record.title === "string" ? record.title : null,
+  };
+}
+
+function issueActivityReferenceLabel(reference: IssueActivityReference): string {
+  return reference.identifier || reference.title || reference.id.slice(0, 8);
+}
+
+function issueActivityReferenceLink(reference: IssueActivityReference): string {
+  return `/issues/${reference.identifier ?? reference.id}`;
+}
+
+function renderIssueActivityReference(reference: IssueActivityReference): ReactNode {
+  return (
+    <Link to={issueActivityReferenceLink(reference)} className="underline underline-offset-4 hover:text-foreground">
+      {issueActivityReferenceLabel(reference)}
+    </Link>
+  );
 }
 
 function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
@@ -667,6 +700,24 @@ function renderActivityDescription(
   currentBoardUserId?: string | null,
 ): ReactNode {
   const details = asRecord(evt.details);
+  if (evt.action === "issue.updated" && details && Object.prototype.hasOwnProperty.call(details, "parentId")) {
+    const previous = asRecord(details._previous);
+    const references = asRecord(details._references);
+    const parentIssue = readIssueActivityReference(references?.parentIssue);
+    const previousParentIssue = readIssueActivityReference(references?.previousParentIssue);
+    if (parentIssue) {
+      return (
+        <>
+          {hasIssueUpdateValue(previous?.parentId) ? "changed the parent issue to " : "set the parent issue to "}
+          {renderIssueActivityReference(parentIssue)}
+        </>
+      );
+    }
+    if (previousParentIssue) {
+      return <>cleared the parent issue {renderIssueActivityReference(previousParentIssue)}</>;
+    }
+  }
+
   if (evt.entityType === "chat") {
     const chatHref = `/chat/${evt.entityId}`;
     const label = issueActivityChatLabel(evt);

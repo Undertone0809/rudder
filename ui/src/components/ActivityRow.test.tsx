@@ -131,6 +131,46 @@ describe("ActivityRow", () => {
     expect(html).not.toContain("updated ");
   });
 
+  it("renders parent issue updates with links to the parent and child issues", () => {
+    const html = renderToStaticMarkup(
+      <ActivityRow
+        event={{
+          id: "activity-parent-update",
+          orgId: "org-1",
+          actorType: "user",
+          actorId: "user-1",
+          action: "issue.updated",
+          entityType: "issue",
+          entityId: "issue-child",
+          agentId: null,
+          runId: null,
+          details: {
+            parentId: "issue-parent",
+            _previous: { parentId: null },
+            _references: {
+              parentIssue: {
+                id: "issue-parent",
+                identifier: "ZST-442",
+                title: "Messenger review summary",
+              },
+            },
+          },
+          createdAt: new Date("2026-04-09T10:00:00.000Z"),
+        }}
+        agentMap={new Map()}
+        entityNameMap={new Map([["issue:issue-child", "ZST-363"]])}
+        entityTitleMap={new Map([["issue:issue-child", "issue update activity is too coarse"]])}
+        currentBoardUserId="user-1"
+      />,
+    );
+
+    expect(html).toContain("set parent issue to");
+    expect(html).toContain("href=\"/issues/ZST-442\"");
+    expect(html).toContain("ZST-442");
+    expect(html).toContain("href=\"/issues/ZST-363\"");
+    expect(html).toContain("ZST-363");
+  });
+
   it("renders agent activity with a production-shaped avatar image", () => {
     const html = renderToStaticMarkup(
       <ActivityRow

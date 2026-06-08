@@ -669,6 +669,29 @@ describe("IssueDetail", () => {
         createdAt: new Date("2026-04-20T01:12:00.000Z"),
       },
       {
+        id: "activity-parent",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {
+          parentId: "issue-review-summary",
+          _previous: { parentId: null },
+          _references: {
+            parentIssue: {
+              id: "issue-review-summary",
+              identifier: "ZST-442",
+              title: "Messenger review summary",
+            },
+          },
+        },
+        createdAt: new Date("2026-04-20T01:13:00.000Z"),
+      },
+      {
         id: "activity-status",
         orgId: "org-2",
         actorType: "user",
@@ -740,6 +763,9 @@ describe("IssueDetail", () => {
     expect(html).toContain("assigned the issue to Builder");
     expect(html).toContain("changed the reviewer from Builder to Me");
     expect(html).toContain("changed the goal");
+    expect(html).toContain("set the parent issue to");
+    expect(html).toContain("href=\"/issues/ZST-442\"");
+    expect(html).toContain("ZST-442");
     expect(html).toContain("moved from Todo to In Progress");
     expect(html).toContain("confirmed blocker; operator handoff needed");
     expect(html).toContain("committed abc1234: fix: report code commit");

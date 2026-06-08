@@ -229,6 +229,7 @@ describe("LiveUpdatesProvider notification preferences", () => {
             actorId: "user-2",
             details: {
               [field]: value,
+              _references: { related: { id: "reference-1", title: "Ignored reference" } },
               _previous: { [field]: `${value}-previous` },
             },
           },

@@ -54,6 +54,12 @@ type IssueMutationRouteContext = {
   [key: string]: any;
 };
 
+type IssueActivityReference = {
+  id: string;
+  identifier: string | null;
+  title: string | null;
+};
+
 const ISSUE_UPDATE_ACTIVITY_FIELDS = [
   "assigneeAgentId",
   "assigneeUserId",
@@ -120,6 +126,50 @@ function buildIssueUpdateActivityDetails(
       ...(Object.keys(previous).length > 0 ? { _previous: previous } : {}),
     },
   };
+}
+
+function toIssueActivityReference(issue: unknown): IssueActivityReference | null {
+  if (typeof issue !== "object" || issue === null) return null;
+  const row = issue as Record<string, unknown>;
+  if (typeof row.id !== "string") return null;
+  return {
+    id: row.id,
+    identifier: typeof row.identifier === "string" ? row.identifier : null,
+    title: typeof row.title === "string" ? row.title : null,
+  };
+}
+
+async function resolveIssueActivityReference(
+  svc: { getById?: (id: string) => Promise<unknown> },
+  orgId: string,
+  issueId: unknown,
+): Promise<IssueActivityReference | null> {
+  if (typeof issueId !== "string" || !issueId) return null;
+  const issue = await svc.getById?.(issueId);
+  if (!issue || typeof issue !== "object" || (issue as Record<string, unknown>).orgId !== orgId) return null;
+  return toIssueActivityReference(issue);
+}
+
+async function buildIssueUpdateActivityReferences(
+  svc: { getById?: (id: string) => Promise<unknown> },
+  orgId: string,
+  details: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const previous = typeof details._previous === "object" && details._previous !== null
+    ? details._previous as Record<string, unknown>
+    : {};
+  const references: Record<string, unknown> = {};
+
+  if (Object.prototype.hasOwnProperty.call(details, "parentId")) {
+    const [parentIssue, previousParentIssue] = await Promise.all([
+      resolveIssueActivityReference(svc, orgId, details.parentId),
+      resolveIssueActivityReference(svc, orgId, previous.parentId),
+    ]);
+    if (parentIssue) references.parentIssue = parentIssue;
+    if (previousParentIssue) references.previousParentIssue = previousParentIssue;
+  }
+
+  return Object.keys(references).length > 0 ? { _references: references } : {};
 }
 
 export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
@@ -358,6 +408,11 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       issue.status === "todo";
     const reopenFromStatus = reopened ? existing.status : null;
     if (hasFieldChanges || reopened || reviewedCompletionNormalized) {
+      const relationshipReferences = await buildIssueUpdateActivityReferences(
+        svc,
+        issue.orgId,
+        issueUpdateActivity.details,
+      );
       await logActivity(db, {
         orgId: issue.orgId,
         actorType: actor.actorType,
@@ -369,6 +424,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
         entityId: issue.id,
         details: {
           ...issueUpdateActivity.details,
+          ...relationshipReferences,
           ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
         },
       });
