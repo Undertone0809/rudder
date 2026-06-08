@@ -95,16 +95,30 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
-  it("keeps macOS desktop workspace cards translucent over the shell", () => {
-    const desktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
-    const desktopWorkspaceHeader = cssBlock("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
+  it("keeps macOS desktop glass on shell layers while workspace cards stay paper-like", () => {
+    const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
+    const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-macos .app-shell-backdrop");
+    const lightPrimaryRail = cssBlock("html.desktop-shell-macos .primary-rail-shell");
+    const lightWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell");
+    const lightDesktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
+    const darkDesktopWorkspaceCards = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
+    const lightDesktopWorkspaceHeader = cssBlock("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
+    const darkDesktopWorkspaceHeader = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
 
-    expect(desktopWorkspaceCards).toContain("rgb(250 247 242 / 0.76)");
-    expect(desktopWorkspaceCards).toContain("rgb(246 242 236 / 0.64)");
-    expect(desktopWorkspaceCards).toContain("backdrop-filter: blur(24px) saturate(116%)");
-    expect(desktopWorkspaceCards).not.toContain("var(--desktop-content-surface-light)");
-    expect(desktopWorkspaceHeader).toContain("rgb(250 247 242 / 0.58)");
-    expect(desktopWorkspaceHeader).not.toContain("var(--desktop-content-surface-light)");
+    expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
+    expect(darkDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(138%)");
+    expect(lightPrimaryRail).toContain("backdrop-filter: blur(22px) saturate(112%)");
+    expect(lightWorkspaceShell).toContain("rgb(249 247 244 / 0.12)");
+    expect(lightWorkspaceShell).toContain("rgb(243 239 234 / 0.06)");
+
+    expect(lightDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-light)");
+    expect(darkDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-dark)");
+    expect(lightDesktopWorkspaceCards).not.toContain("backdrop-filter");
+    expect(darkDesktopWorkspaceCards).not.toContain("backdrop-filter");
+    expect(lightDesktopWorkspaceHeader).toContain("background: var(--desktop-content-surface-light)");
+    expect(darkDesktopWorkspaceHeader).toContain("background: var(--desktop-content-surface-dark)");
+    expect(lightDesktopWorkspaceHeader).not.toContain("rgb(250 247 242 / 0.58)");
+    expect(darkDesktopWorkspaceHeader).not.toContain("rgb(31 31 29 / 0.54)");
   });
 
   it("keeps frameless Library work surfaces transparent over the desktop shell", () => {
