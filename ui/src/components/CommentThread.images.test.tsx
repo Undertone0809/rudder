@@ -91,6 +91,42 @@ function render(element: ReactNode) {
 }
 
 describe("CommentThread markdown images", () => {
+  it("opens issue comment image previews on double-click", () => {
+    const container = render(
+      <ThemeProvider>
+        <ToastProvider>
+          <MemoryRouter>
+            <CommentThread
+              comments={[
+                {
+                  id: "comment-1",
+                  issueId: "issue-1",
+                  orgId: "org-1",
+                  authorUserId: "user-1",
+                  authorAgentId: null,
+                  body: "Evidence: ![Screenshot](/api/attachments/comment-image/content)",
+                  createdAt: new Date("2026-05-13T00:00:00.000Z"),
+                  updatedAt: new Date("2026-05-13T00:00:00.000Z"),
+                },
+              ]}
+              onAdd={async () => undefined}
+            />
+          </MemoryRouter>
+        </ToastProvider>
+      </ThemeProvider>,
+    );
+
+    const imageButton = container.querySelector(".rudder-inspectable-image-trigger");
+    expect(imageButton).toBeTruthy();
+
+    act(() => {
+      imageButton?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    });
+
+    const previewRoot = document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"]');
+    expect(previewRoot?.querySelector("img")?.getAttribute("alt")).toBe("Screenshot");
+  });
+
   it("renders issue comment images with preview and context-menu actions", () => {
     const container = render(
       <ThemeProvider>
