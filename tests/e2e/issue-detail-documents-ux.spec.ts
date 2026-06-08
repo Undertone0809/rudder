@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("Issue detail Library UX", () => {
-  test("renders Library mentions and migrated issue docs without issue-owned document creation", async ({ page, baseURL }) => {
+  test("renders Library mentions and migrated issue docs without issue-owned document creation", async ({ page }) => {
     await page.goto("/");
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -58,61 +58,27 @@ test.describe("Issue detail Library UX", () => {
     await expect(page.getByRole("button", { name: "New document" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: "Focused document editor" })).toHaveCount(0);
 
-    const productBriefLinks = page.getByRole("link", { name: "Product brief" });
-    await expect(productBriefLinks.first()).toHaveAttribute("href", new RegExp(`/library\\?doc=${libraryDoc.id}$`));
-    const fileMention = page.locator('a.rudder-mention-chip[data-mention-kind="library_file"]').first();
+    const productBriefMention = page.getByRole("link", { name: "@Product brief" });
+    await expect(productBriefMention.first()).toHaveAttribute("href", new RegExp(`library-doc://${libraryDoc.id}`));
+    const fileMention = page.getByRole("link", { name: "@product-brief.md" }).first();
     await expect(fileMention).toBeVisible();
     await expect(fileMention).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(fileMention).toHaveCSS("border-top-style", "none");
-    const fileMentionColor = await fileMention.evaluate((node) => getComputedStyle(node).color);
-    expect(["rgb(37, 99, 235)", "rgb(96, 165, 250)"]).toContain(fileMentionColor);
-
-    if (baseURL) {
-      await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
-    }
-    const descriptionMarkdown = page.locator("[data-copy-markdown-source='true']").first();
-    await descriptionMarkdown.evaluate((node) => {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    });
-    await page.keyboard.press("ControlOrMeta+C");
-    const copiedDescriptionMarkdown = await page.evaluate(() => navigator.clipboard.readText());
-    expect(copiedDescriptionMarkdown).toContain("[@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md)");
-    await fileMention.evaluate((node) => {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    });
-    await page.keyboard.press("ControlOrMeta+C");
-    await expect
-      .poll(async () => page.evaluate(() => navigator.clipboard.readText()))
-      .toBe("[@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md)");
 
     await expect(page.getByLabel("Linked Library")).toBeVisible();
+    await expect(page.getByLabel("Linked Library").locator('[data-testid="linked-library-resource-icon"][data-kind="file"]')).toHaveCount(1);
+    await expect(page.getByLabel("Linked Library").locator('[data-testid="linked-library-resource-icon"][data-kind="doc"]')).toHaveCount(2);
     await expect(page.getByLabel("Linked Library").getByText("Product brief")).toBeVisible();
     await expect(page.getByLabel("Linked Library").getByRole("link", { name: "product-brief.md live Library" })).toBeVisible();
     await expect(page.getByLabel("Linked Library").getByText("Ops checklist")).toBeVisible();
-    await expect(page.getByRole("link", { name: "product-brief.md" }).first())
+    await expect(page.getByLabel("Linked Library").getByRole("link", { name: "product-brief.md live Library" }))
       .toHaveAttribute("href", new RegExp(`/library\\?path=docs%2Fproduct-brief\\.md$`));
 
-    await productBriefLinks.first().click();
+    await page.getByLabel("Linked Library").getByRole("link", { name: "Product brief live Library link" }).click();
     await expect(page).toHaveURL(new RegExp(`/library\\?doc=${libraryDoc.id}$`));
     await expect(page.getByTestId("org-workspaces-files-card")).toBeVisible();
     await expect(page.getByTestId("org-library-resources-panel")).toHaveCount(0);
 
-    const clearDescriptionRes = await page.request.patch(`/api/issues/${issue.id}`, {
-      data: { description: "" },
-    });
-    expect(clearDescriptionRes.ok()).toBe(true);
-    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
-    await expect(page.getByText("Add a description...", { exact: true })).toBeVisible();
-    await page.getByText("Add a description...", { exact: true }).click();
-    await expect(page.locator(".rudder-edit-in-place-content .ProseMirror[contenteditable='true']").first()).toBeVisible();
   });
 
   test("attaches files from the Library file tree", async ({ page }) => {

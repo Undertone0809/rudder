@@ -71,6 +71,7 @@ import {
   EyeOff,
   ExternalLink,
   FileCode2,
+  FileText,
   Folder,
   Hexagon,
   ListTree,
@@ -906,6 +907,20 @@ function linkedLibraryDocumentTitle(doc: Pick<LibraryDocumentSummary, "id" | "ti
   return `Document ${doc.id.slice(0, 8)}`;
 }
 
+function LinkedLibraryResourceIcon({ kind }: { kind: "doc" | "file" | "folder" }) {
+  const Icon = kind === "folder" ? Folder : FileText;
+  return (
+    <span
+      aria-hidden="true"
+      data-testid="linked-library-resource-icon"
+      data-kind={kind}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/35 text-muted-foreground"
+    >
+      <Icon className="h-4 w-4" />
+    </span>
+  );
+}
+
 function LinkedLibraryDocsSection({
   issue,
   libraryDocuments,
@@ -976,6 +991,7 @@ function LinkedLibraryDocsSection({
   return (
     <section className="space-y-3" aria-label="Linked Library">
       <div className="flex items-center gap-2">
+        <FileText className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
         <h3 className="text-sm font-medium text-muted-foreground">Library</h3>
         <span className="rounded-sm border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
           {docs.length + files.length}
@@ -986,12 +1002,15 @@ function LinkedLibraryDocsSection({
           <Link
             key={file.path}
             to={file.isDirectory ? `/library?directory=${encodeURIComponent(file.path)}` : `/library?path=${encodeURIComponent(file.path)}`}
-            className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
+            className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
           >
-            <div className="min-w-0">
-              <div className="truncate font-medium text-foreground">{file.name}</div>
-              <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                live Library {file.isDirectory ? "folder" : "file"} / {file.path}
+            <div className="flex min-w-0 items-center gap-3">
+              <LinkedLibraryResourceIcon kind={file.isDirectory ? "folder" : "file"} />
+              <div className="min-w-0">
+                <div className="truncate font-medium text-foreground">{file.name}</div>
+                <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                  live Library {file.isDirectory ? "folder" : "file"} / {file.path}
+                </div>
               </div>
             </div>
             <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
@@ -1006,20 +1025,23 @@ function LinkedLibraryDocsSection({
             <Link
               key={doc.id}
               to={`/library?doc=${encodeURIComponent(doc.id)}`}
-              className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
+              className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
             >
-              <div className="min-w-0">
-                <div className="truncate font-medium text-foreground">{title}</div>
-                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span>live Library link</span>
-                  {issueLink ? (
-                    <>
-                      <span aria-hidden="true">/</span>
-                      <span className="truncate">
-                        migrated from {issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)}:{issueLink.key}
-                      </span>
-                    </>
-                  ) : null}
+              <div className="flex min-w-0 items-center gap-3">
+                <LinkedLibraryResourceIcon kind="doc" />
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-foreground">{title}</div>
+                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span>live Library link</span>
+                    {issueLink ? (
+                      <>
+                        <span aria-hidden="true">/</span>
+                        <span className="truncate">
+                          migrated from {issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)}:{issueLink.key}
+                        </span>
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               </div>
               <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">

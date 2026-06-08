@@ -431,6 +431,7 @@ vi.mock("lucide-react", () => {
     ExternalLink: Icon,
     FileCode2: Icon,
     FileCode: Icon,
+    FileText: Icon,
     Fingerprint: Icon,
     Flame: Icon,
     Folder: Icon,
@@ -544,8 +545,11 @@ describe("IssueDetail", () => {
     capturedCommentThreadProps = null;
     mockSourceBreadcrumb = null;
     mockIssuePluginSlots = [];
+    queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "approvals", "ORG2-1"]), []);
+    queryData.set(JSON.stringify(["organizations", "org-2", "library-documents"]), []);
+    queryData.set(JSON.stringify(["organizations", "org-2", "workspace-mention-files", ""]), { entries: [] });
     queryData.delete(JSON.stringify([
       "plugins",
       "rudder.linear",
@@ -579,6 +583,29 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("New document");
     expect(html).not.toContain(">Activity</button>");
     expect(html).not.toContain("Comments &amp; Runs");
+  });
+
+  it("renders linked Library files with a stable icon affordance", () => {
+    queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), {
+      ...parentIssue,
+      description: "Use [@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md).",
+    });
+    queryData.set(JSON.stringify(["organizations", "org-2", "workspace-mention-files", ""]), {
+      entries: [{
+        name: "product-brief.md",
+        path: "docs/product-brief.md",
+        isDirectory: false,
+      }],
+    });
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('aria-label="Linked Library"');
+    expect(html).toContain('data-testid="linked-library-resource-icon"');
+    expect(html).toContain('data-kind="file"');
+    expect(html).toContain("product-brief.md");
+    expect(html).toContain("live Library file / docs/product-brief.md");
+    expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
   });
 
   it("keeps the desktop properties sidebar sticky against the issue detail page", () => {
