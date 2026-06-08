@@ -90,8 +90,8 @@ describe("index.css motion rules", () => {
   it("keeps the macOS desktop shell translucent in light mode", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
 
-    expect(lightDesktopBackdrop).toContain("rgb(250 248 245 / 0.46)");
-    expect(lightDesktopBackdrop).toContain("rgb(244 240 234 / 0.34)");
+    expect(lightDesktopBackdrop).toContain("rgb(250 248 245 / 0.34)");
+    expect(lightDesktopBackdrop).toContain("rgb(244 240 234 / 0.22)");
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
@@ -108,8 +108,8 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
     expect(darkDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(138%)");
     expect(lightPrimaryRail).toContain("backdrop-filter: blur(22px) saturate(112%)");
-    expect(lightWorkspaceShell).toContain("rgb(249 247 244 / 0.12)");
-    expect(lightWorkspaceShell).toContain("rgb(243 239 234 / 0.06)");
+    expect(lightWorkspaceShell).toContain("rgb(249 247 244 / 0.08)");
+    expect(lightWorkspaceShell).toContain("rgb(243 239 234 / 0.03)");
 
     expect(lightDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-light)");
     expect(darkDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-dark)");

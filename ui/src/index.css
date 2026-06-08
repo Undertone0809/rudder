@@ -376,8 +376,8 @@
     background:
       linear-gradient(
         180deg,
-        rgb(250 248 245 / 0.46) 0%,
-        rgb(244 240 234 / 0.34) 100%
+        rgb(250 248 245 / 0.34) 0%,
+        rgb(244 240 234 / 0.22) 100%
       );
     -webkit-backdrop-filter: blur(38px) saturate(122%);
     backdrop-filter: blur(38px) saturate(122%);
@@ -387,8 +387,8 @@
     background:
       linear-gradient(
         180deg,
-        rgb(17 18 21 / 0.48) 0%,
-        rgb(12 14 17 / 0.38) 100%
+        rgb(17 18 21 / 0.34) 0%,
+        rgb(12 14 17 / 0.26) 100%
       );
     -webkit-backdrop-filter: blur(38px) saturate(138%);
     backdrop-filter: blur(38px) saturate(138%);
@@ -406,8 +406,8 @@
     background:
       linear-gradient(
         180deg,
-        rgb(249 247 244 / 0.12) 0%,
-        rgb(243 239 234 / 0.06) 100%
+        rgb(249 247 244 / 0.08) 0%,
+        rgb(243 239 234 / 0.03) 100%
       );
     border: 0;
     box-shadow: none;
@@ -418,8 +418,8 @@
     background:
       linear-gradient(
         180deg,
-        rgb(16 17 20 / 0.18) 0%,
-        rgb(12 13 16 / 0.12) 100%
+        rgb(16 17 20 / 0.12) 0%,
+        rgb(12 13 16 / 0.08) 100%
       );
     border: 0;
     box-shadow: none;
@@ -438,10 +438,10 @@
     background:
       linear-gradient(
         180deg,
-        rgb(244 242 239 / 0.46) 0%,
-        rgb(238 235 231 / 0.34) 100%
+        rgb(244 242 239 / 0.34) 0%,
+        rgb(238 235 231 / 0.22) 100%
       );
-    border-right: 1px solid rgb(219 213 206 / 0.42);
+    border-right: 1px solid rgb(219 213 206 / 0.34);
     -webkit-backdrop-filter: blur(22px) saturate(112%);
     backdrop-filter: blur(22px) saturate(112%);
   }
@@ -449,10 +449,10 @@
     background:
       linear-gradient(
         180deg,
-        rgb(18 20 23 / 0.34) 0%,
-        rgb(14 16 19 / 0.26) 100%
+        rgb(18 20 23 / 0.24) 0%,
+        rgb(14 16 19 / 0.18) 100%
       );
-    border-right: 1px solid rgb(68 69 72 / 0.34);
+    border-right: 1px solid rgb(68 69 72 / 0.28);
     -webkit-backdrop-filter: blur(20px) saturate(118%);
     backdrop-filter: blur(20px) saturate(118%);
   }
@@ -461,8 +461,8 @@
     background:
       linear-gradient(
         180deg,
-        rgb(245 244 242 / 0.9) 0%,
-        rgb(241 239 236 / 0.84) 100%
+        rgb(245 244 242 / 0.82) 0%,
+        rgb(241 239 236 / 0.74) 100%
       );
     border-color: rgb(214 209 202 / 0.78);
     -webkit-backdrop-filter: blur(12px) saturate(104%);
@@ -472,8 +472,8 @@
     background:
       linear-gradient(
         180deg,
-        rgb(38 38 36 / 0.9) 0%,
-        rgb(33 33 31 / 0.82) 100%
+        rgb(38 38 36 / 0.78) 0%,
+        rgb(33 33 31 / 0.68) 100%
       );
     border-color: rgb(73 72 68 / 0.82);
   }
