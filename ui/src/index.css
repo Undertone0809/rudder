@@ -503,21 +503,35 @@
   }
 
   html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card) {
-    background: var(--desktop-content-surface-light);
+    background:
+      linear-gradient(
+        180deg,
+        rgb(250 247 242 / 0.76) 0%,
+        rgb(246 242 236 / 0.64) 100%
+      );
     border-color: rgb(220 214 207 / 0.88);
     box-shadow:
       0 22px 46px -36px rgb(82 69 54 / 0.18),
       0 10px 18px -16px rgb(82 69 54 / 0.08),
       inset 0 1px 0 rgb(255 255 255 / 0.64);
+    -webkit-backdrop-filter: blur(24px) saturate(116%);
+    backdrop-filter: blur(24px) saturate(116%);
   }
 
   html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card) {
-    background: var(--desktop-content-surface-dark);
+    background:
+      linear-gradient(
+        180deg,
+        rgb(34 34 32 / 0.72) 0%,
+        rgb(28 28 26 / 0.62) 100%
+      );
     border-color: rgb(76 75 70 / 0.86);
     box-shadow:
       0 30px 66px -46px rgb(0 0 0 / 0.58),
       0 12px 22px -18px rgb(0 0 0 / 0.24),
       inset 0 1px 0 rgb(255 255 255 / 0.04);
+    -webkit-backdrop-filter: blur(24px) saturate(122%);
+    backdrop-filter: blur(24px) saturate(122%);
   }
 
   .workspace-main-card--frameless,
@@ -555,11 +569,11 @@
   }
 
   html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header) {
-    background: var(--desktop-content-surface-light);
+    background: rgb(250 247 242 / 0.58);
   }
 
   html.dark.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header) {
-    background: var(--desktop-content-surface-dark);
+    background: rgb(31 31 29 / 0.54);
   }
 
   .workspace-column-resizer {

@@ -95,6 +95,18 @@ describe("index.css motion rules", () => {
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
+  it("keeps macOS desktop workspace cards translucent over the shell", () => {
+    const desktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
+    const desktopWorkspaceHeader = cssBlock("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
+
+    expect(desktopWorkspaceCards).toContain("rgb(250 247 242 / 0.76)");
+    expect(desktopWorkspaceCards).toContain("rgb(246 242 236 / 0.64)");
+    expect(desktopWorkspaceCards).toContain("backdrop-filter: blur(24px) saturate(116%)");
+    expect(desktopWorkspaceCards).not.toContain("var(--desktop-content-surface-light)");
+    expect(desktopWorkspaceHeader).toContain("rgb(250 247 242 / 0.58)");
+    expect(desktopWorkspaceHeader).not.toContain("var(--desktop-content-surface-light)");
+  });
+
   it("keeps frameless Library work surfaces transparent over the desktop shell", () => {
     const framelessWorkspaceCard = cssBlock(".workspace-main-card--frameless");
 
