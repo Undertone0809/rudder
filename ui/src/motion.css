@@ -318,6 +318,10 @@
   will-change: max-height, margin-top, opacity, transform;
 }
 
+.motion-chat-empty-recent-conversations[data-state="open"] {
+  animation: rudder-chat-empty-recent-project-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
+}
+
 .motion-chat-empty-recent-conversations[data-state="closed"] {
   margin-top: 0;
   max-height: 0;
@@ -598,6 +602,19 @@
     opacity: 1;
     filter: blur(0);
     transform: translateY(0);
+  }
+}
+
+@keyframes rudder-chat-empty-recent-project-enter {
+  0% {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translateY(10px) scale(0.99);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0) scale(1);
   }
 }
 

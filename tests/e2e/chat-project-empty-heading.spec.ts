@@ -27,24 +27,48 @@ test.describe("Chat project empty heading", () => {
     expect(betaRes.ok()).toBe(true);
     const alpha = await alphaRes.json() as { id: string; name: string };
     const beta = await betaRes.json() as { id: string; name: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Project Switcher" });
+
+    const alphaChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Alpha kickoff thread",
+        preferredAgentId: agent.id,
+        contextLinks: [{ entityType: "project", entityId: alpha.id }],
+      },
+    });
+    const betaChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Beta roadmap thread",
+        preferredAgentId: agent.id,
+        contextLinks: [{ entityType: "project", entityId: beta.id }],
+      },
+    });
+    expect(alphaChatRes.ok()).toBe(true);
+    expect(betaChatRes.ok()).toBe(true);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/messenger/chat?projectId=${alpha.id}`);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?projectId=${alpha.id}&agentId=${agent.id}`);
 
     const heading = page.locator("h1.motion-chat-empty-heading");
+    const recentConversations = page.getByTestId("chat-empty-state-recent-project-conversations");
     await expect(heading).toHaveText(`What should we build in ${alpha.name}?`, { timeout: 15_000 });
     await expect(heading).toHaveClass(/motion-chat-empty-heading/);
     await expect(page.getByTestId("chat-project-selector")).toContainText(alpha.name);
+    await expect(recentConversations).toContainText("Alpha kickoff thread", { timeout: 15_000 });
+    await expect(recentConversations).toHaveCSS("animation-name", "rudder-chat-empty-recent-project-enter");
 
     await page.getByTestId("chat-project-selector").click();
     await page.getByRole("menuitemradio", { name: new RegExp(beta.name) }).click();
 
     await expect(heading).toHaveText(`What should we build in ${beta.name}?`, { timeout: 15_000 });
     await expect(page.getByTestId("chat-project-selector")).toContainText(beta.name);
+    await expect(recentConversations).toContainText("Beta roadmap thread", { timeout: 15_000 });
+    await expect(recentConversations).not.toContainText("Alpha kickoff thread");
+    await expect(recentConversations).toHaveCSS("animation-name", "rudder-chat-empty-recent-project-enter");
 
     await page.getByTestId("chat-project-selector").click();
     await page.getByRole("menuitemradio", { name: "No project" }).click();

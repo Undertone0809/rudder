@@ -1226,6 +1226,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     entered={emptyStatePromptPanelEntered}
                     originX={emptyStatePromptOriginX} onExampleSelect={applyEmptyStateExample} /> ) : null}
                 <ChatEmptyStateRecentConversations
+                  key={activeProject ? `project:${activeProject.id}` : "no-project"}
                   conversations={recentProjectConversations}
                   projectName={activeProject ? projectDisplayName(activeProject) : null}
                   visible={showEmptyStateRecentConversations}

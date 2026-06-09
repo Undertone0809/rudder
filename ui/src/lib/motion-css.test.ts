@@ -12,6 +12,7 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-chat-options-pop");
     expect(motionCss).toContain(".motion-chat-composer-menu-pop");
     expect(motionCss).toContain(".motion-chat-empty-heading");
+    expect(motionCss).toContain(".motion-chat-empty-recent-conversations");
     expect(motionCss).toMatch(/\.motion-chat-empty-recent-conversations,[\s\S]*?animation: none !important/);
     expect(motionCss).toMatch(/\.motion-chat-empty-recent-conversations,[\s\S]*?transition: none !important/);
     expect(motionCss).toContain(".motion-organization-menu-pop");
@@ -43,6 +44,13 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-chat-empty-heading");
     expect(motionCss).toContain("@keyframes rudder-chat-empty-heading-enter");
     expect(motionCss).toContain("filter: blur(3px)");
+  });
+
+  it("defines an enter animation for recent conversations when project context changes", () => {
+    expect(motionCss).toContain('.motion-chat-empty-recent-conversations[data-state="open"]');
+    expect(motionCss).toContain("@keyframes rudder-chat-empty-recent-project-enter");
+    expect(motionCss).toContain("animation: rudder-chat-empty-recent-project-enter");
+    expect(motionCss).toContain("filter: blur(2px)");
   });
 
   it("defines sliding active indicators for navigation surfaces", () => {
