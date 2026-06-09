@@ -454,6 +454,8 @@ vi.mock("lucide-react", () => {
     Package: Icon,
     Paperclip: Icon,
     Pentagon: Icon,
+    Pin: Icon,
+    PinOff: Icon,
     Plus: Icon,
     Puzzle: Icon,
     Radar: Icon,
@@ -550,6 +552,7 @@ describe("IssueDetail", () => {
     queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "approvals", "ORG2-1"]), []);
+    queryData.set(JSON.stringify(["issues", "org-2", "follows"]), []);
     queryData.set(JSON.stringify(["organizations", "org-2", "library-documents"]), []);
     queryData.set(JSON.stringify(["organizations", "org-2", "workspace-mention-files", ""]), { entries: [] });
     queryData.delete(JSON.stringify([
@@ -615,6 +618,25 @@ describe("IssueDetail", () => {
 
     expect(html).toContain('<aside class="mt-6 xl:sticky xl:top-4 xl:mt-0">');
     expect(html).not.toContain('class="space-y-3 xl:sticky xl:top-4"');
+  });
+
+  it("exposes issue pin and unpin actions in the detail more menu", () => {
+    let html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Pin Issue");
+    expect(html).not.toContain("Unpin Issue");
+
+    queryData.set(JSON.stringify(["issues", "org-2", "follows"]), [{
+      id: "follow-1",
+      orgId: "org-2",
+      issueId: "issue-parent",
+      userId: "user-1",
+      issue: parentIssue,
+      createdAt: new Date("2026-04-20T00:10:00.000Z"),
+    }]);
+    html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Unpin Issue");
   });
 
   it("keeps assignee changes out of the issue comment composer", () => {

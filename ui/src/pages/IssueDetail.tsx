@@ -25,6 +25,7 @@ import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
 import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
 import { toOrganizationRelativePath } from "../lib/organization-routes";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
+import { useIssueFollows } from "../hooks/useIssueFollows";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
@@ -79,6 +80,8 @@ import {
   MessageSquare,
   MoreHorizontal,
   Paperclip,
+  Pin,
+  PinOff,
   Plus,
   Repeat,
   SlidersHorizontal,
@@ -1110,6 +1113,7 @@ export function IssueDetail() {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [workspaceAttachOpen, setWorkspaceAttachOpen] = useState(false);
+  const [issuePinPending, setIssuePinPending] = useState(false);
   const issueFindRootRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
@@ -1119,6 +1123,10 @@ export function IssueDetail() {
     queryFn: () => issuesApi.get(issueId!),
     enabled: !!issueId,
   });
+  const issueFollowsOrgId = issue?.orgId ?? selectedOrganizationId ?? null;
+  const { followedIssueIds, isLoading: issueFollowsLoading, toggleFollowIssue } = useIssueFollows(issueFollowsOrgId);
+  const issuePinned = issue ? followedIssueIds.has(issue.id) : false;
+  const issuePinUnavailable = issuePinPending || issueFollowsLoading || !issue;
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
 
   useEffect(() => {
@@ -1815,6 +1823,24 @@ export function IssueDetail() {
     setTimeout(() => setCopiedIssueId(false), 1500);
   };
 
+  const toggleIssuePin = async () => {
+    if (!issue || issuePinPending || issueFollowsLoading) return;
+    const nextPinned = !issuePinned;
+    setIssuePinPending(true);
+    try {
+      await toggleFollowIssue(issue.id);
+      pushToast({ title: nextPinned ? "Issue pinned" : "Issue unpinned", tone: "success" });
+    } catch (err) {
+      pushToast({
+        title: nextPinned ? "Could not pin issue" : "Could not unpin issue",
+        body: err instanceof Error ? err.message : undefined,
+        tone: "error",
+      });
+    } finally {
+      setIssuePinPending(false);
+    }
+  };
+
   const handleSubIssueSubmit = async () => {
     const nextTitle = subIssueTitle.trim();
     if (!nextTitle || createSubIssue.isPending) return;
@@ -1955,7 +1981,25 @@ export function IssueDetail() {
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-44 p-1" align="end">
+        <PopoverContent className="w-48 p-1" align="end">
+          <button
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground hover:bg-accent/50 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => {
+              void toggleIssuePin();
+              onMoreOpenChange(false);
+            }}
+            disabled={issuePinUnavailable}
+          >
+            {issuePinPending || issueFollowsLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : issuePinned ? (
+              <PinOff className="h-3 w-3" />
+            ) : (
+              <Pin className="h-3 w-3" />
+            )}
+            {issueFollowsLoading ? "Loading pin state" : issuePinned ? "Unpin Issue" : "Pin Issue"}
+          </button>
+          <div className="my-1 h-px bg-border" aria-hidden="true" />
           <button
             className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
             onClick={() => {

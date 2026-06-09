@@ -26,6 +26,11 @@ async function createIssue(page: Page, orgId: string, title: string, data: Recor
   return response.json() as Promise<{ id: string; identifier?: string | null; title: string }>;
 }
 
+async function followIssue(page: Page, issueId: string) {
+  const response = await page.request.post(`/api/issues/${issueId}/follow`);
+  expect(response.ok()).toBe(true);
+}
+
 async function createProject(page: Page, orgId: string, name: string) {
   const response = await page.request.post(`/api/orgs/${orgId}/projects`, {
     data: {
@@ -158,6 +163,50 @@ test.describe("Issues recently viewed sidebar", () => {
       "href",
       new RegExp(`/issues/${issue.identifier ?? issue.id}$`),
     );
+  });
+
+  test("pins and unpins an issue from the issue detail more menu", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Detail-Pin");
+    const issue = await createIssue(page, organization.id, "Detail menu pinned issue");
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
+    await expect(page.getByRole("heading", { name: "Detail menu pinned issue" })).toBeVisible();
+    await expect(page.getByTestId("issue-pinned-section")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "More issue actions" }).click();
+    await page.getByRole("button", { name: "Pin Issue" }).click();
+
+    await expect(page.getByTestId("issue-pinned-section")).toContainText("Pinned (1)");
+    await expect(page.getByTestId(`issue-pinned-row-${issue.id}`)).toContainText("Detail menu pinned issue");
+
+    await page.getByRole("button", { name: "More issue actions" }).click();
+    await page.getByRole("button", { name: "Unpin Issue" }).click();
+
+    await expect(page.getByTestId("issue-pinned-section")).toHaveCount(0);
+  });
+
+  test("shows unpin for an already pinned issue from the issue detail more menu", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Detail-Already-Pinned");
+    const issue = await createIssue(page, organization.id, "Already pinned detail issue");
+    await followIssue(page, issue.id);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
+    await expect(page.getByRole("heading", { name: "Already pinned detail issue" })).toBeVisible();
+    await expect(page.getByTestId("issue-pinned-section")).toContainText("Pinned (1)");
+
+    await page.getByRole("button", { name: "More issue actions" }).click();
+    await expect(page.getByRole("button", { name: "Unpin Issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pin Issue", exact: true })).toHaveCount(0);
   });
 
   test("records direct detail views and promotes sidebar recent clicks", async ({ page }) => {
