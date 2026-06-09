@@ -65,6 +65,10 @@ cannot be safely inferred.
   the user explicitly asks to retarget the release.
 - A stable release is not done until verification, npm, GitHub Release, Desktop
   assets, and public notes/announcement are all handled.
+- Stable public docs changelog entries keep the version (`## vX.Y.Z`) as the
+  only per-release heading. Repeated labels such as `Highlights`, `Install`,
+  and `重点变化` must be bold/prose labels, not `##` or `###` headings, so
+  Mintlify's page TOC lists versions instead of repeated section names.
 - Pre-stable public canaries may temporarily be the default `latest` install
   path if there is no stable npm version yet and the user explicitly wants
   `npx @rudderhq/cli@latest start` or bare `npx @rudderhq/cli start` to work
@@ -384,31 +388,35 @@ node scripts/release-package-map.mjs list
 ```
 
 3. Confirm `releases/vX.Y.Z.md` exists on the source ref.
-4. Check recent and in-progress `release.yml` runs. If there are unrelated
+4. Confirm `docs/releases.mdx` and `docs/zh/releases.mdx` are updated for the
+   stable version. In public docs changelog entries, use `## vX.Y.Z` for the
+   version and bold/prose labels for `Highlights`, `Install`, or `重点变化`;
+   do not use `##` or `###` for those repeated labels.
+5. Check recent and in-progress `release.yml` runs. If there are unrelated
    `main` push canaries in progress, decide whether they are true blockers:
    - before npm stable exists, they can temporarily move `latest` to a canary,
      but the stable publish will move it to the stable version;
    - after npm stable exists, ordinary canaries should leave `latest` alone via
      `--only-if-no-stable`;
    - do not wait for unrelated canaries merely to adopt their newer commits.
-5. If the stable contains Desktop startup, install, update, profile, migration,
+6. If the stable contains Desktop startup, install, update, profile, migration,
    or release-shell changes, choose a canary candidate and run the Desktop
    update drill below before real stable publish. If the drill cannot run on
    the local platform, name the missing platform and treat stable readiness as
    not fully proven.
-6. Run the `Release` workflow with `dry_run: true`, using the locked SHA as
+7. Run the `Release` workflow with `dry_run: true`, using the locked SHA as
    `source_ref`.
-7. If dry-run passes, rerun with `dry_run: false`, again using the same locked
+8. If dry-run passes, rerun with `dry_run: false`, again using the same locked
    SHA as `source_ref`.
-8. Wait for or request `npm-stable` approval.
-9. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
+9. Wait for or request `npm-stable` approval.
+10. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
    workflow, and assets.
-10. Clean up obsolete canary GitHub Releases and `canary/*` tags for the stable
+11. Clean up obsolete canary GitHub Releases and `canary/*` tags for the stable
     base and any older base versions after the stable is proven. Preserve the
     active next-line canary, for example keep `canary/v0.2.6-canary.N` after
     stable `v0.2.5`, and never unpublish npm canary package versions as part of
     this cleanup.
-11. Smoke test:
+12. Smoke test:
 
 ```bash
 npx @rudderhq/cli@latest start --no-open
