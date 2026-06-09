@@ -92,7 +92,7 @@ import {
 } from "@/lib/chat-agent-selection";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
-import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title";
+import { displayChatTitle, isDefaultChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { projectColorCssVars } from "@/lib/project-colors";
@@ -569,6 +569,14 @@ export function conversationDisplayTitle(conversation: Pick<ChatConversation, "t
   return displayChatTitle(conversation);
 }
 
+function recentConversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary">) {
+  if (isDefaultChatTitle(conversation.title)) {
+    return formatMessengerPreview(conversation.summary, { max: 80 }) || conversation.title;
+  }
+
+  return formatMessengerPreview(conversation.title, { max: 80 }) || conversation.title;
+}
+
 type ChatEmptyStateRecentConversationsProps = {
   conversations: ChatConversation[];
   projectName: string | null;
@@ -619,8 +627,7 @@ export function ChatEmptyStateRecentConversations({
             }}
           >
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium text-foreground">{conversationDisplayTitle(conversation)}</span>
-              <span className="mt-0.5 block truncate text-xs text-muted-foreground">{conversationPreview(conversation)}</span>
+              <span className="block truncate font-medium text-foreground">{recentConversationDisplayTitle(conversation)}</span>
             </span>
             <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(conversation.lastMessageAt ?? conversation.updatedAt)}</span>
           </Link>

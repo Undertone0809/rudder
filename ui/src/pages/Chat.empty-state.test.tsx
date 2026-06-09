@@ -138,6 +138,52 @@ describe("Chat empty-state prompt examples", () => {
 });
 
 describe("ChatEmptyStateRecentConversations", () => {
+  it("does not render latest assistant replies in the recent conversation rows", () => {
+    const container = render(
+      <ChatEmptyStateRecentConversations
+        conversations={[
+          chatConversation({
+            title: "New chat",
+            summary: "User asked about release maintainer setup.",
+            latestReplyPreview: "Confirmed: release-maintainer was forked and can be used directly.",
+          }),
+        ]}
+        projectName="Rudder dev"
+        visible
+        conversationPath={(id) => `/chat/${id}`}
+        onPrefetchConversation={vi.fn()}
+      />,
+    );
+
+    const recentSection = container.querySelector<HTMLElement>("[data-testid='chat-empty-state-recent-project-conversations']");
+
+    expect(recentSection?.textContent).toContain("User asked about release maintainer setup.");
+    expect(recentSection?.textContent).not.toContain("Confirmed: release-maintainer was forked");
+  });
+
+  it("keeps default chat titles from falling back to assistant replies", () => {
+    const container = render(
+      <ChatEmptyStateRecentConversations
+        conversations={[
+          chatConversation({
+            title: "New chat",
+            summary: null,
+            latestReplyPreview: "Assistant reply should stay hidden.",
+          }),
+        ]}
+        projectName="Rudder dev"
+        visible
+        conversationPath={(id) => `/chat/${id}`}
+        onPrefetchConversation={vi.fn()}
+      />,
+    );
+
+    const recentSection = container.querySelector<HTMLElement>("[data-testid='chat-empty-state-recent-project-conversations']");
+
+    expect(recentSection?.textContent).toContain("New chat");
+    expect(recentSection?.textContent).not.toContain("Assistant reply should stay hidden.");
+  });
+
   it("keeps recent conversations open only while the empty-state composer is empty", () => {
     const visibleContainer = render(
       <ChatEmptyStateRecentConversations

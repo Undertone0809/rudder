@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
+import { E2E_DATABASE_URL } from "./support/e2e-env";
+
+const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Chat project empty heading", () => {
   test("updates the draft chat heading when the selected project changes", async ({ page }) => {
@@ -104,6 +109,21 @@ test.describe("Chat project empty heading", () => {
       },
     });
     expect(recentChatRes.ok()).toBe(true);
+    const recentChat = await recentChatRes.json();
+    const assistantReply = "Confirmed: reply preview should stay out of the recent conversations list.";
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: recentChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: assistantReply,
+      structuredPayload: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -116,6 +136,7 @@ test.describe("Chat project empty heading", () => {
     await expect(recentConversations).toHaveAttribute("data-state", "open", { timeout: 15_000 });
     await expect(recentConversations).toContainText("Recent conversations");
     await expect(recentConversations).toContainText("Users need edit/delete comment support");
+    await expect(recentConversations).not.toContainText(assistantReply);
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });
