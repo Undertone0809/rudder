@@ -765,7 +765,7 @@ function ChatThreadRow({
   onCopyConversationLink: () => void;
   onSelect: (href: string) => void;
 }) {
-  const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt);
+  const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt, { compactDate: true });
   const [actionsOpen, setActionsOpen] = useState(false);
   const compact = density === "compact";
 
@@ -1025,7 +1025,7 @@ function ThreadRow({
                 actionsOpen && "opacity-0",
               )}
             >
-              {thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt)) : "No activity"}
+              {thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : "No activity"}
             </span>
           </span>
           {!compact ? (
