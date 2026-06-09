@@ -931,8 +931,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     )} /> </span> </button>
               <DropdownMenuSeparator className="panel-divider" />
               <DropdownMenuItem
-                asChild className="rounded-[var(--radius-md)] px-3 py-2.5 text-muted-foreground focus:text-foreground" >
-                <Link to="/organization/settings">Open chat settings</Link> </DropdownMenuItem> </DropdownMenuContent> </DropdownMenu>
+                className="rounded-[var(--radius-md)] px-3 py-2.5 text-muted-foreground focus:text-foreground"
+                onSelect={() => { setPlusMenuOpen(false); navigate("/organization/settings"); }}
+              >
+                Open chat settings </DropdownMenuItem> </DropdownMenuContent> </DropdownMenu>
           {activePlanMode ? (
             <button type="button" className="inline-flex max-w-[10rem] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:color-mix(in_oklab,var(--accent-soft)_78%,var(--surface-elevated))] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--accent-soft)_92%,var(--surface-elevated))] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Turn off plan mode" title={PLAN_MODE_HELP_TEXT} onClick={() => applyPlanMode(false)} >
               <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--ink-muted)_78%,transparent)] text-[color:var(--surface-elevated)]">
