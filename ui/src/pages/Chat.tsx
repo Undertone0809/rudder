@@ -77,6 +77,9 @@ export function Chat() { const { selectedOrganizationId } = useOrganization();
   if (!selectedOrganizationId) {
     return <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
   return <ChatWorkspace key={selectedOrganizationId} />; }
+function clipboardAttachmentPayloadKey(file: File) {
+  return `${file.name.trim()}\u0000${file.type.trim().toLowerCase()}\u0000${file.size}`;
+}
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
   const {
     abortChatStream,
@@ -113,7 +116,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           body: error instanceof Error ? error.message : undefined,
           tone: "error",
         }); } }, [pushToast, setPendingFilesForCurrentScope], ); const removePendingFile = useCallback((targetKey: string) => { setPendingFilesForCurrentScope((current) => current.filter((file) => pendingAttachmentKey(file) !== targetKey)); }, [setPendingFilesForCurrentScope]);
-  const handlePendingAttachmentPasteCapture = useCallback((event: ReactClipboardEvent<HTMLElement>) => { const clipboardData = event.clipboardData; const filesFromItems = Array.from(clipboardData?.items ?? []) .filter((item) => item.kind === "file") .map((item) => item.getAsFile()) .filter((file): file is File => file instanceof File); const seenFiles = new Set(filesFromItems.map((file) => pendingAttachmentKey(file))); const filesFromList = Array.from(clipboardData?.files ?? []) .filter((file) => !seenFiles.has(pendingAttachmentKey(file))); const files = [...filesFromItems, ...filesFromList]; if (files.length === 0) return; event.preventDefault(); event.stopPropagation(); void appendPendingFiles(files); }, [appendPendingFiles]);
+  const handlePendingAttachmentPasteCapture = useCallback((event: ReactClipboardEvent<HTMLElement>) => { const clipboardData = event.clipboardData; const filesFromItems = Array.from(clipboardData?.items ?? []) .filter((item) => item.kind === "file") .map((item) => item.getAsFile()) .filter((file): file is File => file instanceof File); const seenItemPayloads = new Map<string, number>(); for (const file of filesFromItems) { const key = clipboardAttachmentPayloadKey(file); seenItemPayloads.set(key, (seenItemPayloads.get(key) ?? 0) + 1); } const filesFromList = Array.from(clipboardData?.files ?? []) .filter((file) => { const key = clipboardAttachmentPayloadKey(file); const remaining = seenItemPayloads.get(key) ?? 0; if (remaining <= 0) return true; if (remaining === 1) { seenItemPayloads.delete(key); } else { seenItemPayloads.set(key, remaining - 1); } return false; }); const files = [...filesFromItems, ...filesFromList]; if (files.length === 0) return; event.preventDefault(); event.stopPropagation(); void appendPendingFiles(files); }, [appendPendingFiles]);
   useEffect(() => { if (draftState.scopeKey === draftStorageScopeKey) return;
     setDraftState({
       scopeKey: draftStorageScopeKey, value: readChatDraft(draftStorageOrgId, draftStorageConversationId), }); }, [draftState.scopeKey, draftStorageConversationId, draftStorageOrgId, draftStorageScopeKey]);

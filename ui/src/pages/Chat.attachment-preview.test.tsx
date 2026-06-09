@@ -452,7 +452,7 @@ function renderChat() {
   };
 }
 
-function dispatchPasteFiles(target: Element, files: File[]) {
+function dispatchPasteFiles(target: Element, files: File[], options: { clipboardFiles?: File[] } = {}) {
   const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(pasteEvent, "clipboardData", {
     value: {
@@ -460,7 +460,7 @@ function dispatchPasteFiles(target: Element, files: File[]) {
         kind: "file",
         getAsFile: () => file,
       })),
-      files,
+      files: options.clipboardFiles ?? files,
     },
   });
   target.dispatchEvent(pasteEvent);
@@ -483,6 +483,14 @@ async function clickEnabledButton(container: Element, label: string) {
 
 beforeEach(() => {
   installLocalStorageMock();
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:chat-attachment-preview"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
+  });
   resetChatPendingAttachmentsForTests();
   mockState.conversationId = "chat-1";
   mockState.conversations = [
@@ -729,6 +737,45 @@ describe("Chat ask_user panel", () => {
     expect(sentFiles).toHaveLength(1);
     expect(sentFiles?.[0]?.name).toBe("receipt.txt");
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).toBeNull();
+  });
+
+  it("dedupes pasted attachments exposed through both clipboard items and files", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    await clickEnabledButton(container, "Other");
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+
+    const clipboardItemFile = new File(["receipt image"], "receipt.png", {
+      type: "image/png",
+      lastModified: 1000,
+    });
+    const clipboardListFile = new File(["receipt image"], "receipt.png", {
+      type: "image/png",
+      lastModified: 2000,
+    });
+    await act(async () => {
+      dispatchPasteFiles(textarea!, [clipboardItemFile], { clipboardFiles: [clipboardListFile] });
+      await Promise.resolve();
+    });
+
+    expect(container.querySelectorAll("[data-testid='chat-ask-user-pending-attachment']")).toHaveLength(1);
+
+    await clickEnabledButton(container, "Submit answer");
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    const sentFiles = mockState.sendMessageStream.mock.calls[0]?.[2]?.files as File[] | undefined;
+    expect(sentFiles).toHaveLength(1);
+    expect(sentFiles?.[0]?.name).toBe("receipt.png");
   });
 
   it("renders persisted multiline Other answers without dropping bullet lines", () => {
