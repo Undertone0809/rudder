@@ -354,6 +354,34 @@
         "The result requires one non-functional lens to check scope, command meaning, docs consistency, or hidden side effects.",
         "The result does not use lightweight review to mean self-review, no review, or duplicate functional checks."
       ]
+    },
+    {
+      "id": 28,
+      "prompt": "docs changelog 这个 Mintlify 页面右侧 TOC 太吵了，有办法让这个指定页面章节只显示一级二级标题吗？如果 Highlights、Install 是三级标题，反正我就是不想它们显示在章节里。先讨论下。",
+      "expected_output": "Classifies the task as docs_site_content and treats it as a discussion-only public docs content-structure question. It checks current docs/Mintlify source-of-truth before recommending a change, prefers MDX heading/content hierarchy over CSS hacks or release work, and does not route to UI polish, release-maintainer, or skill optimization.",
+      "files": [],
+      "expectations": [
+        "The result uses docs/ and the current rendered or Mintlify-generated TOC behavior as the source of truth, not internal doc/ contributor docs.",
+        "The result recognizes discussion-only mode and does not edit files unless the user asks to implement.",
+        "The result recommends a content-structure fix such as keeping release versions as headings and demoting repeated section labels when that matches generated navigation behavior.",
+        "The result does not route the task to rudder-ui-polish-maintainer, release-maintainer, or a new docs skill."
+      ]
+    },
+    {
+      "id": 29,
+      "prompt": "[$development-lifecycle-router-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md) 看看这个优化，你的 skill 需要优化一下了。使用 [$skill-optimizer](/Users/zeeland/projects/zee-agent-skills/meta-skills/skill-optimizer/SKILL.md) 来优化。截图里是上一轮关于 Mintlify changelog TOC、Highlights 和 Install heading 的讨论。",
+      "expected_output": "Classifies the turn as skill_optimization and uses skill-optimizer as the primary workflow with development-lifecycle-router-maintainer as the target artifact. It treats the Mintlify/docs screenshot as routing-failure evidence, extracts the reusable failure class around docs-site content being confused with skill optimization or UI polish, patches the router or evals narrowly, and does not start editing the changelog page.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
+      ],
+      "expectations": [
+        "The result gives the explicit skill-optimizer instruction precedence over the docs task content embedded in the screenshot.",
+        "The result names development-lifecycle-router-maintainer as the target artifact rather than executing its normal lifecycle gate.",
+        "The result extracts a reusable decision point for docs_site_content versus skill_optimization routing.",
+        "The result updates or proposes a validation case covering the Mintlify changelog TOC failure class.",
+        "The result does not edit docs changelog content, browse docs as the primary task, or route to UI polish."
+      ]
     }
   ]
 }

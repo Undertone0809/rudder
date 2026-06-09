@@ -4,12 +4,12 @@ description: >
   Route Rudder development work when a request is ambiguous or spans lifecycle
   stages: requirements, advisor/product analysis, UI design, implementation,
   verification, review, commit/push, and handoff. Use for stage selection,
-  reviewer gates, aborted-run recovery, component-lab work, scoped performance
-  optimization, skill-improvement routing, and risky dirty-worktree cleanup.
-  Keep thin: if the prompt clearly names release, UI polish, run/debug, local
-  preview, data path, Desktop recovery, PR preview, mock data, review-only
-  work, or direct skill optimization, use the narrower maintainer or meta-skill
-  directly.
+  reviewer gates, aborted-run recovery, component-lab work, public-docs content
+  structure, scoped performance optimization, skill-improvement routing, and
+  risky dirty-worktree cleanup. Keep thin: if the prompt clearly names release,
+  UI polish, run/debug, local preview, data path, Desktop recovery, PR preview,
+  mock data, review-only work, or direct skill optimization, use the narrower
+  maintainer or meta-skill directly.
 ---
 
 # Development Lifecycle Router Maintainer
@@ -51,6 +51,10 @@ Use this skill when the user asks for any of:
 - agent-runtime, provider-adapter, transcript-parser, tool-call, or skill-usage
   contract work that must prove the same Rudder work loop across multiple agent
   runtimes before handoff
+- public docs content-structure, Mintlify page behavior, sidebar/TOC,
+  navigation, changelog, or docs information-architecture work where the route
+  must distinguish `docs/` page edits from app UI polish, release, or internal
+  `doc/` contributor guidance
 - creating or improving a reusable workflow for development tasks
 - deciding whether a named maintainer skill should be optimized, when the user
   is not already explicitly asking to run `skill-optimizer`
@@ -183,6 +187,10 @@ Classify the prompt into one primary stage:
   Pi, Cursor, or another runtime/provider behaves the same way for tools,
   skills, transcript parsing, adapter isolation, analytics, comments, CLI
   output, or any agent-visible Rudder contract.
+- `docs_site_content`: the user asks to discuss, fix, or validate public docs
+  page content, Mintlify page behavior, TOC/sidebar/navigation, MDX heading
+  hierarchy, changelog structure, docs SEO/GEO content, or docs information
+  architecture without asking to deploy or release.
 - `skill_optimization`: the user asks to optimize, harden, refactor, validate,
   benchmark, package, or improve a named skill or workflow skill based on
   conversation evidence, a session id, a screenshot, an eval failure, or a
@@ -246,6 +254,14 @@ without lifecycle sequencing, dirty-state recovery, or stage-gate decisions.
   `runtime_contract` route. Use the relevant debug or implementation workflow
   underneath, but do not hand off until a provider matrix and actor-run-chain
   prove the changed contract for the runtimes that the user cares about.
+- Public docs content, Mintlify TOC/sidebar/page-mode behavior, changelog
+  headings, docs navigation, or docs SEO/GEO content: use the
+  `docs_site_content` route with normal docs workflow. The source tree is
+  `docs/`, not internal `doc/`, unless the user asks for contributor guidance.
+  Use current Mintlify docs or local rendered/exported docs behavior when the
+  question depends on platform behavior. Do not route this to UI polish,
+  release, or a new docs skill unless the user asks for visual app UI, live
+  publication, or reusable workflow creation.
 - Local Rudder Desktop dev startup, Electron shell, embedded Postgres,
   prod-local instance confusion, or update/install failure before release:
   `rudder-desktop-dev-recovery-maintainer`.
@@ -530,6 +546,33 @@ For skill-usage analytics specifically, verify both sides:
 - ingestion: provider-specific raw transcript/tool-call shape is normalized
 - consumption: the stored analytics/readback/UI surface reports the expected
   skill usage without relying on a Codex-only `SKILL.md` read heuristic
+
+### 3.7 Keep public docs structure work narrow
+
+For public docs content, Mintlify behavior, changelog, sidebar, page TOC,
+navigation, or docs SEO/GEO content, use `docs_site_content` unless the user
+clearly asks for release/deploy, app UI polish, or internal contributor docs.
+
+Build a docs evidence packet:
+
+- target page and locale under `docs/`
+- whether the request is discussion-only, content edit, rendered validation, or
+  deployment/release
+- relevant `docs/docs.json`, MDX headings, and current rendered/exported page
+  behavior
+- current Mintlify source of truth when the platform behavior is in question
+- acceptance bar: content structure, docs validation, rendered/export/browser
+  proof, or explicit no-code recommendation
+
+For TOC/sidebar problems, prefer content hierarchy and generated-page behavior
+over CSS hacks or hidden selectors. Example: if repeated `Highlights` and
+`Install` headings make a changelog page-level TOC noisy, keep release versions
+as real headings and convert repeated section labels to prose labels or lower
+visual treatments when that preserves readability and generated navigation.
+
+Do not treat a docs-page screenshot inside a skill-optimization request as an
+active docs task. In that case it is failure evidence for the target skill; the
+route stays `skill_optimization -> skill-optimizer`.
 
 ### 4. Run default review gates
 
@@ -877,6 +920,15 @@ Build the provider matrix first. Then prove the contract at three layers:
 provider raw output, Rudder normalization/persistence, and the terminal surface
 that operators or reviewers use. For provider parity requests, at least one
 non-Codex provider must be exercised or explicitly marked blocked with evidence.
+
+### Public docs TOC or content-structure question
+
+Route: `docs_site_content -> advisor or implementation -> verification -> review -> handoff`.
+
+For discussion-only prompts, answer from current docs files plus the platform
+source of truth and stop without editing. For edit requests, patch `docs/`,
+validate docs commands, and verify rendered/exported navigation when the issue
+is visual or generated by Mintlify.
 
 ### Release request
 
