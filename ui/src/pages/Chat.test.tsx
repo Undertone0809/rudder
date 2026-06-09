@@ -113,6 +113,8 @@ function conversation(overrides: Partial<ChatConversation>): ChatConversation {
     title: "Plan mode chat",
     summary: null,
     latestReplyPreview: null,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     preferredAgentId: null,
     routedAgentId: null,
     primaryIssueId: null,

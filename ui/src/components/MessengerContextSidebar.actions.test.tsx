@@ -146,6 +146,8 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     title: "hi",
     summary: "Hello Zee!",
     latestReplyPreview: "Hello Zee!",
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     updatedAt: "2026-04-11T09:40:00.000Z",
     lastMessageAt: "2026-04-11T09:40:00.000Z",
     unreadCount: 0,

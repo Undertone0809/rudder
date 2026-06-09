@@ -172,6 +172,8 @@ function chat(overrides: Partial<ChatConversation> = {}): ChatConversation {
     title: "Pending proposal chat",
     summary: null,
     latestReplyPreview: null,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     preferredAgentId: "agent-1",
     routedAgentId: null,
     primaryIssueId: null,

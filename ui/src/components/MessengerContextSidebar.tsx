@@ -1163,6 +1163,8 @@ function chatConversationForThreadSummary(
     title: thread.title,
     summary: preview,
     latestReplyPreview: preview,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     preferredAgentId,
     routedAgentId,
     primaryIssueId: null,

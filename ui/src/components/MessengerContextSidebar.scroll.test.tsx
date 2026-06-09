@@ -84,6 +84,8 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     title: "Project unread chat",
     summary: "Project unread preview",
     latestReplyPreview: null,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     latestActivityAt: "2026-04-11T09:40:00.000Z",
     createdAt: "2026-04-11T09:30:00.000Z",
     updatedAt: "2026-04-11T09:40:00.000Z",

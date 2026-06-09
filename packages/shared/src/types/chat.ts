@@ -68,6 +68,8 @@ export interface ChatConversation {
   title: string;
   summary: string | null;
   latestReplyPreview: string | null;
+  latestUserMessagePreview: string | null;
+  userMessageCount: number;
   searchPreview?: string | null;
   preferredAgentId: string | null;
   routedAgentId: string | null;

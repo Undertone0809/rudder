@@ -737,6 +737,8 @@ const fixtureChatConversation: ChatConversation = {
   title: "UI Lab component review",
   summary: "Fixture conversation for reviewing chat components.",
   latestReplyPreview: "I split the component inventory into visible lab states.",
+  latestUserMessagePreview: "Can you split the component inventory into visible lab states?",
+  userMessageCount: 1,
   preferredAgentId: fixtureAgent.id,
   routedAgentId: fixtureAgent.id,
   primaryIssueId: fixtureIssue.id,

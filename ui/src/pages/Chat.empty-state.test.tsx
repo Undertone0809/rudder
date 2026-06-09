@@ -88,6 +88,8 @@ function chatConversation(overrides: Partial<ChatConversation> = {}): ChatConver
     title: "Recent planning chat",
     summary: "Clarified the draft scope.",
     latestReplyPreview: null,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     preferredAgentId: null,
     routedAgentId: null,
     primaryIssueId: null,
@@ -138,13 +140,14 @@ describe("Chat empty-state prompt examples", () => {
 });
 
 describe("ChatEmptyStateRecentConversations", () => {
-  it("does not render latest assistant replies in the recent conversation rows", () => {
+  it("renders the latest user question instead of the assistant reply after multiple user questions", () => {
     const container = render(
       <ChatEmptyStateRecentConversations
         conversations={[
           chatConversation({
-            title: "New chat",
-            summary: "User asked about release maintainer setup.",
+            title: "Release maintainer setup",
+            latestUserMessagePreview: "Can this release workflow run from the desktop shell?",
+            userMessageCount: 2,
             latestReplyPreview: "Confirmed: release-maintainer was forked and can be used directly.",
           }),
         ]}
@@ -157,11 +160,35 @@ describe("ChatEmptyStateRecentConversations", () => {
 
     const recentSection = container.querySelector<HTMLElement>("[data-testid='chat-empty-state-recent-project-conversations']");
 
-    expect(recentSection?.textContent).toContain("User asked about release maintainer setup.");
+    expect(recentSection?.textContent).toContain("Can this release workflow run from the desktop shell?");
     expect(recentSection?.textContent).not.toContain("Confirmed: release-maintainer was forked");
   });
 
-  it("keeps default chat titles from falling back to assistant replies", () => {
+  it("renders the assistant reply when the conversation only has one user question", () => {
+    const container = render(
+      <ChatEmptyStateRecentConversations
+        conversations={[
+          chatConversation({
+            title: "Release maintainer setup",
+            latestUserMessagePreview: "Can this release workflow run from the desktop shell?",
+            userMessageCount: 1,
+            latestReplyPreview: "Confirmed: release-maintainer was forked and can be used directly.",
+          }),
+        ]}
+        projectName="Rudder dev"
+        visible
+        conversationPath={(id) => `/chat/${id}`}
+        onPrefetchConversation={vi.fn()}
+      />,
+    );
+
+    const recentSection = container.querySelector<HTMLElement>("[data-testid='chat-empty-state-recent-project-conversations']");
+
+    expect(recentSection?.textContent).toContain("Confirmed: release-maintainer was forked");
+    expect(recentSection?.textContent).not.toContain("Can this release workflow run from the desktop shell?");
+  });
+
+  it("keeps default chat titles from falling back to assistant replies in the row title", () => {
     const container = render(
       <ChatEmptyStateRecentConversations
         conversations={[
@@ -179,9 +206,11 @@ describe("ChatEmptyStateRecentConversations", () => {
     );
 
     const recentSection = container.querySelector<HTMLElement>("[data-testid='chat-empty-state-recent-project-conversations']");
+    const row = recentSection?.querySelector<HTMLElement>("[data-testid='chat-empty-state-recent-conversation-chat-1']");
+    const rowTitle = row?.querySelector<HTMLElement>(".font-medium");
 
-    expect(recentSection?.textContent).toContain("New chat");
-    expect(recentSection?.textContent).not.toContain("Assistant reply should stay hidden.");
+    expect(rowTitle?.textContent).toBe("New chat");
+    expect(recentSection?.textContent).toContain("Assistant reply should stay hidden.");
   });
 
   it("keeps recent conversations open only while the empty-state composer is empty", () => {

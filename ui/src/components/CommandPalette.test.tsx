@@ -24,6 +24,8 @@ vi.mock("@tanstack/react-query", () => ({
             status: "active",
             summary: null,
             latestReplyPreview: "Latest assistant reply",
+            latestUserMessagePreview: null,
+            userMessageCount: 0,
             searchPreview: "Message body matched launch planning notes.",
           },
         ],

@@ -148,6 +148,8 @@ function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
     title: "New chat",
     summary: null,
     latestReplyPreview: null,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     preferredAgentId: "agent-1",
     routedAgentId: null,
     primaryIssueId: null,

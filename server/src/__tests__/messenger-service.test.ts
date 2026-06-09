@@ -926,6 +926,72 @@ describe("messengerService and issue follows", () => {
     expect(afterStatusOnlyUpdate?.needsAttention).toBe(false);
   });
 
+  it("hydrates deterministic latest user previews and user message counts", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const userId = "board-user-latest-question-preview";
+    const sharedTimestamp = new Date("2026-05-01T12:00:00.000Z");
+    const olderUserMessageId = "00000000-0000-4000-8000-000000000001";
+    const newerUserMessageId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Latest User Preview Org",
+      urlKey: deriveOrganizationUrlKey("Chat Latest User Preview Org"),
+      issuePrefix: `Q${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Latest question preview",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+      lastMessageAt: sharedTimestamp,
+      createdAt: sharedTimestamp,
+      updatedAt: sharedTimestamp,
+    });
+
+    await db.insert(chatMessages).values([
+      {
+        id: olderUserMessageId,
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        body: "Older user question with the same timestamp",
+        createdAt: sharedTimestamp,
+        updatedAt: sharedTimestamp,
+      },
+      {
+        id: newerUserMessageId,
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        body: "Newer user question with the same timestamp",
+        createdAt: sharedTimestamp,
+        updatedAt: sharedTimestamp,
+      },
+      {
+        orgId,
+        conversationId,
+        role: "assistant",
+        kind: "message",
+        body: "Assistant reply is still separately available",
+        createdAt: new Date("2026-05-01T12:01:00.000Z"),
+        updatedAt: new Date("2026-05-01T12:01:00.000Z"),
+      },
+    ]);
+
+    const [conversation] = await chatSvc.list(orgId, { status: "active" }, userId);
+
+    expect(conversation?.userMessageCount).toBe(2);
+    expect(conversation?.latestUserMessagePreview).toBe("Newer user question with the same timestamp");
+    expect(conversation?.latestReplyPreview).toBe("Assistant reply is still separately available");
+  });
+
   it("can mark a read chat unread by rewinding to the latest visible incoming message", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();

@@ -110,20 +110,93 @@ test.describe("Chat project empty heading", () => {
     });
     expect(recentChatRes.ok()).toBe(true);
     const recentChat = await recentChatRes.json();
-    const assistantReply = "Confirmed: reply preview should stay out of the recent conversations list.";
-
-    await e2eDb.insert(chatMessages).values({
-      id: randomUUID(),
-      orgId: organization.id,
-      conversationId: recentChat.id,
-      role: "assistant",
-      kind: "message",
-      status: "completed",
-      body: assistantReply,
-      structuredPayload: null,
-      chatTurnId: randomUUID(),
-      turnVariant: 0,
+    const singleQuestionChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Single question design thread",
+        preferredAgentId: agent.id,
+        contextLinks: [{ entityType: "project", entityId: project.id }],
+      },
     });
+    expect(singleQuestionChatRes.ok()).toBe(true);
+    const singleQuestionChat = await singleQuestionChatRes.json();
+    const firstUserQuestion = "Users need edit/delete comment support";
+    const secondUserQuestion = "What should we do after comment edit support ships?";
+    const assistantReply = "Confirmed: reply preview should stay out of the recent conversations list.";
+    const onlyUserQuestion = "Can the old use cases stay visible?";
+    const singleQuestionAssistantReply = "Yes, keep the old use cases visible when there are no recent chats.";
+
+    await e2eDb.insert(chatMessages).values([
+      {
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId: recentChat.id,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: firstUserQuestion,
+        structuredPayload: null,
+        chatTurnId: randomUUID(),
+        turnVariant: 0,
+        createdAt: new Date("2026-06-09T08:00:00.000Z"),
+        updatedAt: new Date("2026-06-09T08:00:00.000Z"),
+      },
+      {
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId: recentChat.id,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: assistantReply,
+        structuredPayload: null,
+        chatTurnId: randomUUID(),
+        turnVariant: 0,
+        createdAt: new Date("2026-06-09T08:01:00.000Z"),
+        updatedAt: new Date("2026-06-09T08:01:00.000Z"),
+      },
+      {
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId: recentChat.id,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: secondUserQuestion,
+        structuredPayload: null,
+        chatTurnId: randomUUID(),
+        turnVariant: 0,
+        createdAt: new Date("2026-06-09T08:02:00.000Z"),
+        updatedAt: new Date("2026-06-09T08:02:00.000Z"),
+      },
+      {
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId: singleQuestionChat.id,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: onlyUserQuestion,
+        structuredPayload: null,
+        chatTurnId: randomUUID(),
+        turnVariant: 0,
+        createdAt: new Date("2026-06-09T08:03:00.000Z"),
+        updatedAt: new Date("2026-06-09T08:03:00.000Z"),
+      },
+      {
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId: singleQuestionChat.id,
+        role: "assistant",
+        kind: "message",
+        status: "completed",
+        body: singleQuestionAssistantReply,
+        structuredPayload: null,
+        chatTurnId: randomUUID(),
+        turnVariant: 0,
+        createdAt: new Date("2026-06-09T08:04:00.000Z"),
+        updatedAt: new Date("2026-06-09T08:04:00.000Z"),
+      },
+    ]);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -136,7 +209,23 @@ test.describe("Chat project empty heading", () => {
     await expect(recentConversations).toHaveAttribute("data-state", "open", { timeout: 15_000 });
     await expect(recentConversations).toContainText("Recent conversations");
     await expect(recentConversations).toContainText("Users need edit/delete comment support");
+    await expect(recentConversations).toContainText(secondUserQuestion);
     await expect(recentConversations).not.toContainText(assistantReply);
+    await expect(recentConversations).toContainText("Single question design thread");
+    await expect(recentConversations).toContainText(singleQuestionAssistantReply);
+    await expect(recentConversations).not.toContainText(onlyUserQuestion);
+    await expect(page.getByTestId("chat-empty-state-tab-recent")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("chat-empty-state-tab-use-cases")).toHaveAttribute("aria-selected", "false");
+
+    await page.getByTestId("chat-empty-state-tab-use-cases").click();
+    await expect(page.getByTestId("chat-empty-state-tab-use-cases")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("button", { name: /Scope a new feature/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Clarify a vague request/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Turn a chat into an issue/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Review a blocker/ })).toBeVisible();
+
+    await page.getByTestId("chat-empty-state-tab-recent").click();
+    await expect(page.getByTestId("chat-empty-state-tab-recent")).toHaveAttribute("aria-selected", "true");
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -185,6 +274,8 @@ test.describe("Chat project empty heading", () => {
 
     const heading = page.locator("h1.motion-chat-empty-heading");
     await expect(heading).toHaveText(`What should we build in ${longProjectName}?`, { timeout: 15_000 });
+    await expect(page.getByTestId("chat-empty-state-tabs")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Scope a new feature/ })).toBeVisible();
 
     const headingMetrics = await heading.evaluate((element) => ({
       clientWidth: element.clientWidth,
