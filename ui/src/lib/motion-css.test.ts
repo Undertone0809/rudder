@@ -12,6 +12,8 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-chat-options-pop");
     expect(motionCss).toContain(".motion-chat-composer-menu-pop");
     expect(motionCss).toContain(".motion-chat-empty-heading");
+    expect(motionCss).toMatch(/\.motion-chat-empty-recent-conversations,[\s\S]*?animation: none !important/);
+    expect(motionCss).toMatch(/\.motion-chat-empty-recent-conversations,[\s\S]*?transition: none !important/);
     expect(motionCss).toContain(".motion-organization-menu-pop");
     expect(motionCss).toContain(".motion-disclosure-enter");
     expect(motionCss).toContain(".motion-rail-active-indicator");

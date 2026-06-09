@@ -303,6 +303,29 @@
   will-change: opacity, transform, filter;
 }
 
+.motion-chat-empty-recent-conversations {
+  margin-top: 1.25rem;
+  max-height: 26rem;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: center top;
+  transition:
+    max-height var(--motion-duration-emphasis) var(--motion-ease-standard),
+    margin-top var(--motion-duration-standard) var(--motion-ease-standard),
+    opacity var(--motion-duration-standard) var(--motion-ease-standard),
+    transform var(--motion-duration-standard) var(--motion-ease-standard);
+  will-change: max-height, margin-top, opacity, transform;
+}
+
+.motion-chat-empty-recent-conversations[data-state="closed"] {
+  margin-top: 0;
+  max-height: 0;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-8px) scale(0.992);
+}
+
 .motion-organization-menu-pop {
   transform-origin: var(--radix-dropdown-menu-content-transform-origin, left top);
   will-change: opacity, transform, clip-path;
@@ -677,6 +700,7 @@
   .motion-chat-composer-menu-pop,
   .motion-chat-composer-menu-pop [data-chat-composer-menu-item],
   .motion-chat-empty-heading,
+  .motion-chat-empty-recent-conversations,
   .motion-organization-menu-pop,
   .motion-organization-menu-pop [data-org-menu-item],
   .motion-disclosure-enter,
@@ -695,6 +719,7 @@
   .motion-draft-issue-card,
   .motion-org-layer,
   .motion-org-card,
+  .motion-chat-empty-recent-conversations,
   .motion-rail-active-indicator,
   .motion-context-active-indicator,
   .motion-disclosure-icon {

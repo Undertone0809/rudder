@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 
 test.describe("Chat project empty heading", () => {
   test("updates the draft chat heading when the selected project changes", async ({ page }) => {
@@ -52,6 +53,63 @@ test.describe("Chat project empty heading", () => {
     await expect(page.getByTestId("chat-project-selector")).toContainText("No project");
   });
 
+  test("hides recent project conversations while the new chat composer has text", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Recent-Visibility-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Rudder dev",
+        description: "Recent chat visibility test project.",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Wesley" });
+
+    const recentChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Users need edit/delete comment support",
+        preferredAgentId: agent.id,
+        contextLinks: [{ entityType: "project", entityId: project.id }],
+      },
+    });
+    expect(recentChatRes.ok()).toBe(true);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?projectId=${project.id}&agentId=${agent.id}`);
+
+    const recentConversations = page.getByTestId("chat-empty-state-recent-project-conversations");
+    await expect(recentConversations).toHaveAttribute("data-state", "open", { timeout: 15_000 });
+    await expect(recentConversations).toContainText("Recent conversations");
+    await expect(recentConversations).toContainText("Users need edit/delete comment support");
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("Draft a new implementation plan");
+
+    await expect(recentConversations).toHaveAttribute("data-state", "closed");
+    await expect(recentConversations).toHaveAttribute("aria-hidden", "true");
+    await expect(recentConversations).toHaveCSS("pointer-events", "none");
+    await expect(recentConversations).toHaveCSS("opacity", "0");
+    await expect(recentConversations).toHaveCSS("max-height", "0px");
+
+    await composer.fill("");
+
+    await expect(recentConversations).toHaveAttribute("data-state", "open");
+    await expect(recentConversations).toHaveAttribute("aria-hidden", "false");
+    await expect(recentConversations).toHaveCSS("opacity", "1");
+  });
+
   test("wraps long project names on mobile", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
 
@@ -94,7 +152,7 @@ test.describe("Chat project empty heading", () => {
       viewportWidth: window.innerWidth,
     }));
 
-    expect(headingMetrics.text).toBe(`What should we build in ${longProjectName}?`);
+    expect(headingMetrics.text?.trim()).toBe(`What should we build in ${longProjectName}?`);
     expect(headingMetrics.overflowWrap).toBe("anywhere");
     expect(headingMetrics.scrollWidth).toBeLessThanOrEqual(headingMetrics.clientWidth);
     expect(pageMetrics.bodyWidth).toBeLessThanOrEqual(pageMetrics.viewportWidth);

@@ -13,6 +13,7 @@ import {
   Folder,
   ListChecks,
   Loader2,
+  MessageSquare,
   Paperclip,
   Pencil,
   Plus,
@@ -566,6 +567,67 @@ export function conversationPreview(conversation: ChatConversation, fallbackPrev
 
 export function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestReplyPreview">) {
   return displayChatTitle(conversation);
+}
+
+type ChatEmptyStateRecentConversationsProps = {
+  conversations: ChatConversation[];
+  projectName: string | null;
+  visible: boolean;
+  conversationPath: (id: string) => string;
+  onPrefetchConversation: (id: string) => void;
+};
+
+export function ChatEmptyStateRecentConversations({
+  conversations,
+  projectName,
+  visible,
+  conversationPath,
+  onPrefetchConversation,
+}: ChatEmptyStateRecentConversationsProps) {
+  if (conversations.length === 0) return null;
+
+  return (
+    <section
+      data-testid="chat-empty-state-recent-project-conversations"
+      data-state={visible ? "open" : "closed"}
+      className="motion-chat-empty-recent-conversations w-full max-w-3xl px-1 text-left"
+      aria-label="Recent project conversations"
+      aria-hidden={!visible}
+    >
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+          <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">Recent conversations</span>
+        </div>
+        {projectName ? (
+          <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{projectName}</span>
+        ) : null}
+      </div>
+      <div className="divide-y divide-[color:var(--border-soft)] border-y border-[color:var(--border-soft)]">
+        {conversations.map((conversation) => (
+          <Link
+            key={conversation.id}
+            to={conversationPath(conversation.id)}
+            data-testid={`chat-empty-state-recent-conversation-${conversation.id}`}
+            tabIndex={visible ? undefined : -1}
+            className="group flex min-w-0 items-center gap-3 px-1 py-2.5 text-sm transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            onPointerDown={() => {
+              if (visible) onPrefetchConversation(conversation.id);
+            }}
+            onMouseEnter={() => {
+              if (visible) onPrefetchConversation(conversation.id);
+            }}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium text-foreground">{conversationDisplayTitle(conversation)}</span>
+              <span className="mt-0.5 block truncate text-xs text-muted-foreground">{conversationPreview(conversation)}</span>
+            </span>
+            <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(conversation.lastMessageAt ?? conversation.updatedAt)}</span>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 export function buildMessengerChatThreadSummary(
