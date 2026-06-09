@@ -1975,6 +1975,11 @@ button[draggable="false"] {
   --rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2);
 }
 
+.rudder-doc-editor-sidebar-header {
+  --rudder-doc-editor-tab-strip-height: 53px;
+  height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px);
+}
+
 .rudder-doc-editor-tab-strip::after {
   content: "";
   position: absolute;

@@ -2583,7 +2583,7 @@ export function OrganizationWorkspaceFilesSidebar() {
       >
         <header
           data-testid="workspace-context-header"
-          className="workspace-context-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4 py-3"
+          className="workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4"
         >
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold">Library</h2>

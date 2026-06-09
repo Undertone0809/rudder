@@ -182,9 +182,12 @@ describe("index.css motion rules", () => {
 
   it("keeps Library file-tab corners aligned with the desktop workspace radius", () => {
     const tabStrip = cssBlock(".rudder-doc-editor-tab-strip");
+    const sidebarHeader = cssBlock(".rudder-doc-editor-sidebar-header");
     const activeTabCorners = cssBlock(".rudder-doc-editor-tab--active::before,\n.rudder-doc-editor-tab--active::after");
 
     expect(tabStrip).toContain("--rudder-doc-editor-tab-strip-height: 53px");
+    expect(sidebarHeader).toContain("--rudder-doc-editor-tab-strip-height: 53px");
+    expect(sidebarHeader).toContain("height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: 46px");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-inactive-height: 40px");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-radius: var(--desktop-workspace-radius)");
@@ -196,6 +199,7 @@ describe("index.css motion rules", () => {
     const tabStripClassTokens = tabStripClassMatch?.[1]?.split(/\s+/) ?? [];
 
     expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-strip-height)]");
+    expect(organizationWorkspacesSource).toContain("workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0");
     expect(tabStripClassTokens).toContain("rounded-tr-[var(--radius-lg)]");
     expect(tabStripClassTokens).toContain("border-r");
     expect(tabStripClassTokens).toContain("border-[color:var(--border-base)]");
