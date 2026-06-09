@@ -1029,13 +1029,19 @@ export function AskUserHistoryRecord({
 
 export function AskUserAnswerBubble({
   answer,
+  animate = false,
 }: {
   answer: AskUserAnswerRecord;
+  animate?: boolean;
 }) {
   return (
     <div
       data-testid="chat-ask-user-answer"
-      className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
+      data-motion={animate ? "submitted" : undefined}
+      className={cn(
+        "chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]",
+        animate && "motion-chat-ask-user-answer-pop",
+      )}
       aria-label="Answered requested input"
     >
       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -1421,6 +1427,7 @@ export function ChatMessageItem({
   inlineEdit,
   answered,
   askUserAnswer,
+  animateAskUserAnswer,
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
@@ -1456,6 +1463,7 @@ export function ChatMessageItem({
   } | null;
   answered?: boolean;
   askUserAnswer?: AskUserAnswerRecord | null;
+  animateAskUserAnswer?: boolean;
   turnBranchControls?: {
     current: number;
     total: number;
@@ -1655,7 +1663,7 @@ export function ChatMessageItem({
             </div>
           </div>
         ) : askUserAnswer ? (
-          <AskUserAnswerBubble answer={askUserAnswer} />
+          <AskUserAnswerBubble answer={askUserAnswer} animate={animateAskUserAnswer} />
         ) : (
           <div
             data-testid="chat-user-message-bubble"
@@ -1741,6 +1749,7 @@ export function OptimisticUserDraftItem({
   skillReferences,
   onMarkdownLinkClick,
   askUserAnswer,
+  animateAskUserAnswer,
 }: {
   body: string;
   createdAt: Date;
@@ -1749,12 +1758,13 @@ export function OptimisticUserDraftItem({
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   askUserAnswer?: AskUserAnswerRecord | null;
+  animateAskUserAnswer?: boolean;
 }) {
   return (
     <div className="flex justify-end transition-all duration-200">
       <div className="group flex max-w-[82%] flex-col items-end text-left">
         {askUserAnswer ? (
-          <AskUserAnswerBubble answer={askUserAnswer} />
+          <AskUserAnswerBubble answer={askUserAnswer} animate={animateAskUserAnswer} />
         ) : (
           <div className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]">
             <ChatLongMessageBody

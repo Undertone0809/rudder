@@ -303,6 +303,12 @@
   will-change: opacity, transform, filter;
 }
 
+.motion-chat-ask-user-answer-pop {
+  transform-origin: bottom right;
+  animation: rudder-chat-ask-user-answer-pop var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+  will-change: opacity, transform, box-shadow;
+}
+
 .motion-chat-empty-recent-conversations {
   margin-top: 1.25rem;
   max-height: 26rem;
@@ -618,6 +624,28 @@
   }
 }
 
+@keyframes rudder-chat-ask-user-answer-pop {
+  0% {
+    opacity: 0;
+    transform: translate3d(18px, 28px, 0) scale(0.94);
+    box-shadow: 0 8px 20px -22px color-mix(in oklab, var(--accent-base) 38%, transparent);
+  }
+  58% {
+    opacity: 1;
+    transform: translate3d(-2px, -4px, 0) scale(1.018);
+    box-shadow: 0 22px 56px -32px color-mix(in oklab, var(--accent-base) 48%, transparent);
+  }
+  82% {
+    opacity: 1;
+    transform: translate3d(0, 1px, 0) scale(0.997);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    box-shadow: var(--shadow-sm);
+  }
+}
+
 @keyframes rudder-organization-menu-pop {
   0% {
     opacity: 0;
@@ -717,6 +745,7 @@
   .motion-chat-composer-menu-pop,
   .motion-chat-composer-menu-pop [data-chat-composer-menu-item],
   .motion-chat-empty-heading,
+  .motion-chat-ask-user-answer-pop,
   .motion-chat-empty-recent-conversations,
   .motion-organization-menu-pop,
   .motion-organization-menu-pop [data-org-menu-item],

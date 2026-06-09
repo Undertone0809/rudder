@@ -153,9 +153,22 @@ test("ask_user focuses the answer panel until the user responds", async ({ page 
 
   await expect(page.getByTestId("chat-ask-user-panel")).toHaveCount(0, { timeout: 15_000 });
   const answer = page.getByTestId("chat-ask-user-answer").last();
+  await expect(answer).toHaveClass(/motion-chat-ask-user-answer-pop/);
+  await expect(answer).toHaveAttribute("data-motion", "submitted");
+  await expect(answer).toHaveCSS("animation-name", "rudder-chat-ask-user-answer-pop");
   await expect(answer).toContainText("Answered");
   await expect(answer).toContainText("Scope");
   await expect(answer).toContainText("Narrow path");
+  await expect(answer).not.toHaveAttribute("data-motion", "submitted", { timeout: 3_000 });
+  await expect(answer).not.toHaveClass(/motion-chat-ask-user-answer-pop/);
+  await expect(answer).toHaveCSS("animation-name", "none");
+
+  await page.reload();
+  const historicalAnswer = page.getByTestId("chat-ask-user-answer").last();
+  await expect(historicalAnswer).toContainText("Answered", { timeout: 15_000 });
+  await expect(historicalAnswer).toContainText("Narrow path");
+  await expect(historicalAnswer).not.toHaveAttribute("data-motion", "submitted");
+  await expect(historicalAnswer).not.toHaveClass(/motion-chat-ask-user-answer-pop/);
   await expect(page.getByText("Answering the requested input:")).toHaveCount(0);
   await expect(page.getByTestId("chat-ask-user-history").last()).toContainText("Answered");
   await expect(page.locator(".chat-composer").last()).toBeVisible();

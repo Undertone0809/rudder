@@ -13,6 +13,7 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-chat-composer-menu-pop");
     expect(motionCss).toContain(".motion-chat-empty-heading");
     expect(motionCss).toContain(".motion-chat-empty-recent-conversations");
+    expect(motionCss).toMatch(/\.motion-chat-ask-user-answer-pop,[\s\S]*?animation: none !important/);
     expect(motionCss).toMatch(/\.motion-chat-empty-recent-conversations,[\s\S]*?animation: none !important/);
     expect(motionCss).toMatch(/\.motion-chat-empty-recent-conversations,[\s\S]*?transition: none !important/);
     expect(motionCss).toContain(".motion-organization-menu-pop");
@@ -51,6 +52,14 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("@keyframes rudder-chat-empty-recent-project-enter");
     expect(motionCss).toContain("animation: rudder-chat-empty-recent-project-enter");
     expect(motionCss).toContain("filter: blur(2px)");
+  });
+
+  it("defines a submitted-answer pop for ask_user responses", () => {
+    expect(motionCss).toContain(".motion-chat-ask-user-answer-pop");
+    expect(motionCss).toContain("@keyframes rudder-chat-ask-user-answer-pop");
+    expect(motionCss).toContain("transform-origin: bottom right");
+    expect(motionCss).toContain("translate3d(18px, 28px, 0) scale(0.94)");
+    expect(motionCss).toContain("scale(1.018)");
   });
 
   it("defines sliding active indicators for navigation surfaces", () => {
