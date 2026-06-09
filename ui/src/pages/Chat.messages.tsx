@@ -1861,9 +1861,6 @@ export function LazyStreamTranscriptItem({
             {statusHint ? (
               <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
             ) : null}
-            <span className="truncate text-muted-foreground/75">
-              · {summary.entryCount} event{summary.entryCount === 1 ? "" : "s"}
-            </span>
             <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
           </button>
           <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
