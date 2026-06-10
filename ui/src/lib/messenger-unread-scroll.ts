@@ -1,9 +1,20 @@
 export const MESSENGER_SCROLL_TO_UNREAD_EVENT = "rudder:messenger-scroll-to-unread";
 
 let messengerUnreadScrollRequestId = 0;
+let handledMessengerUnreadScrollRequestId = 0;
 
 export function getMessengerUnreadScrollRequestId() {
   return messengerUnreadScrollRequestId;
+}
+
+export function getUnhandledMessengerUnreadScrollRequestId() {
+  return messengerUnreadScrollRequestId > handledMessengerUnreadScrollRequestId
+    ? messengerUnreadScrollRequestId
+    : 0;
+}
+
+export function markMessengerUnreadScrollRequestHandled(requestId: number) {
+  handledMessengerUnreadScrollRequestId = Math.max(handledMessengerUnreadScrollRequestId, requestId);
 }
 
 export function requestMessengerUnreadScroll() {

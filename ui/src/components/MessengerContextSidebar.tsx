@@ -52,7 +52,11 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { invalidateMessengerThreadSummaryQueries, markMessengerThreadReadInCache } from "@/lib/messenger-query-cache";
-import { getMessengerUnreadScrollRequestId, MESSENGER_SCROLL_TO_UNREAD_EVENT } from "@/lib/messenger-unread-scroll";
+import {
+  getUnhandledMessengerUnreadScrollRequestId,
+  markMessengerUnreadScrollRequestHandled,
+  MESSENGER_SCROLL_TO_UNREAD_EVENT,
+} from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
   getProjectOrderStorageKey,
@@ -378,7 +382,7 @@ interface ThreadGroup {
   sortLabel?: string;
 }
 
-interface FirstUnreadThreadTarget {
+interface UnreadThreadTarget {
   threadKey: string;
   projectGroupKey: string | null;
   projectEntryIndex: number | null;
@@ -1370,6 +1374,9 @@ export function MessengerContextSidebar() {
   const sidebarScrollbarActivityRef = useScrollbarActivityRef("rudder:sidebar-scroll:messenger");
   const sidebarScrollElementRef = useRef<HTMLElement | null>(null);
   const loadMoreThreadSummariesRef = useRef<HTMLDivElement | null>(null);
+  const unreadScrollCursorRef = useRef<string | null>(null);
+  const handledUnreadScrollRequestIdRef = useRef(0);
+  const unreadLoadMoreRequestRef = useRef<{ requestId: number; loadedCount: number } | null>(null);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [unreadScrollRequestId, setUnreadScrollRequestId] = useState(0);
@@ -1540,21 +1547,45 @@ export function MessengerContextSidebar() {
       ? sortProjectThreadSections(sections, projectOrderIds, projectSectionOrderIds)
       : sections;
   }, [agentsById, conversationsById, model.selectedOrganizationId, projectOrderIds, projectSectionOrderIds, splitIssueNotifications, threadOrganizationRule, visibleThreadSummaries]);
-  const firstUnreadThreadTarget = useMemo<FirstUnreadThreadTarget | null>(() => {
+  const unreadThreadTargets = useMemo<UnreadThreadTarget[]>(() => {
+    const targets: UnreadThreadTarget[] = [];
     for (const section of organizedThreadSections) {
       for (const [index, entry] of section.entries.entries()) {
         if (entry.thread.unreadCount > 0) {
-          return {
+          targets.push({
             threadKey: entry.thread.threadKey,
             projectGroupKey: threadOrganizationRule === "project" ? section.key : null,
             projectEntryIndex: threadOrganizationRule === "project" ? index : null,
-          };
+          });
         }
       }
     }
-    return null;
+    return targets;
   }, [organizedThreadSections, threadOrganizationRule]);
-  const firstUnreadThreadKey = firstUnreadThreadTarget?.threadKey ?? null;
+  const unreadScrollTarget = useMemo<UnreadThreadTarget | null>(() => {
+    if (unreadScrollRequestId <= 0 || unreadThreadTargets.length === 0) return null;
+    const cursorKey = unreadScrollCursorRef.current;
+    const cursorIndex = cursorKey
+      ? unreadThreadTargets.findIndex((target) => target.threadKey === cursorKey)
+      : -1;
+    if (cursorIndex === unreadThreadTargets.length - 1 && model.hasMoreThreadSummaries) {
+      return null;
+    }
+    return unreadThreadTargets[(cursorIndex + 1) % unreadThreadTargets.length] ?? null;
+  }, [model.hasMoreThreadSummaries, unreadScrollRequestId, unreadThreadTargets]);
+  const shouldLoadMoreForUnreadScroll = unreadScrollRequestId > 0
+    && handledUnreadScrollRequestIdRef.current !== unreadScrollRequestId
+    && model.hasMoreThreadSummaries
+    && !model.isFetchingMoreThreadSummaries
+    && !model.isLoading
+    && (
+      unreadThreadTargets.length === 0
+      || (
+        Boolean(unreadScrollCursorRef.current)
+        && unreadThreadTargets.findIndex((target) => target.threadKey === unreadScrollCursorRef.current) === unreadThreadTargets.length - 1
+      )
+    );
+  const firstUnreadThreadKey = unreadThreadTargets[0]?.threadKey ?? null;
   const setSidebarScrollRef = useCallback((element: HTMLElement | null) => {
     sidebarScrollElementRef.current = element;
     sidebarScrollbarActivityRef(element);
@@ -2062,8 +2093,16 @@ export function MessengerContextSidebar() {
     if (typeof document === "undefined") return;
 
     const handleUnreadScrollRequest = () => {
-      setUnreadScrollRequestId(getMessengerUnreadScrollRequestId());
+      const currentRequestId = getUnhandledMessengerUnreadScrollRequestId();
+      if (currentRequestId > 0) {
+        setUnreadScrollRequestId(currentRequestId);
+      }
     };
+
+    const currentRequestId = getUnhandledMessengerUnreadScrollRequestId();
+    if (currentRequestId > 0) {
+      setUnreadScrollRequestId(currentRequestId);
+    }
 
     document.addEventListener(MESSENGER_SCROLL_TO_UNREAD_EVENT, handleUnreadScrollRequest);
     return () => {
@@ -2072,15 +2111,70 @@ export function MessengerContextSidebar() {
   }, []);
 
   useEffect(() => {
-    if (!firstUnreadThreadTarget) return;
+    unreadScrollCursorRef.current = null;
+  }, [model.selectedOrganizationId, splitIssueNotifications, threadOrganizationRule]);
+
+  useEffect(() => {
+    if (unreadThreadTargets.length > 0) return;
+    unreadScrollCursorRef.current = null;
+  }, [unreadThreadTargets.length]);
+
+  useEffect(() => {
+    if (!shouldLoadMoreForUnreadScroll) return;
+    const marker = {
+      requestId: unreadScrollRequestId,
+      loadedCount: visibleThreadSummaries.length,
+    };
+    const previous = unreadLoadMoreRequestRef.current;
+    if (
+      previous
+      && previous.requestId === marker.requestId
+      && previous.loadedCount === marker.loadedCount
+    ) {
+      return;
+    }
+    unreadLoadMoreRequestRef.current = marker;
+    void model.loadMoreThreadSummaries();
+  }, [
+    model.loadMoreThreadSummaries,
+    shouldLoadMoreForUnreadScroll,
+    unreadScrollRequestId,
+    visibleThreadSummaries.length,
+  ]);
+
+  useEffect(() => {
     if (unreadScrollRequestId <= 0) return;
+    if (handledUnreadScrollRequestIdRef.current === unreadScrollRequestId) return;
+    if (unreadScrollTarget) return;
+    if (shouldLoadMoreForUnreadScroll) return;
+    if (model.isFetchingMoreThreadSummaries || model.isLoading) return;
+    if (model.hasMoreThreadSummaries) return;
+    if (unreadThreadTargets.length > 0) return;
+
+    handledUnreadScrollRequestIdRef.current = unreadScrollRequestId;
+    markMessengerUnreadScrollRequestHandled(unreadScrollRequestId);
+    unreadLoadMoreRequestRef.current = null;
+  }, [
+    model.hasMoreThreadSummaries,
+    model.isFetchingMoreThreadSummaries,
+    model.isLoading,
+    shouldLoadMoreForUnreadScroll,
+    unreadScrollRequestId,
+    unreadScrollTarget,
+    unreadThreadTargets.length,
+  ]);
+
+  useEffect(() => {
+    if (!unreadScrollTarget) return;
+    if (unreadScrollRequestId <= 0) return;
+    if (handledUnreadScrollRequestIdRef.current === unreadScrollRequestId) return;
 
     if (
-      firstUnreadThreadTarget.projectGroupKey
-      && collapsedProjectGroupKeys.has(firstUnreadThreadTarget.projectGroupKey)
+      unreadScrollTarget.projectGroupKey
+      && collapsedProjectGroupKeys.has(unreadScrollTarget.projectGroupKey)
     ) {
       setCollapsedProjectGroupKeys((current) => {
-        const projectGroupKey = firstUnreadThreadTarget.projectGroupKey;
+        const projectGroupKey = unreadScrollTarget.projectGroupKey;
         if (!projectGroupKey || !current.has(projectGroupKey)) return current;
         const next = new Set(current);
         next.delete(projectGroupKey);
@@ -2093,16 +2187,16 @@ export function MessengerContextSidebar() {
     }
 
     if (
-      firstUnreadThreadTarget.projectGroupKey
-      && firstUnreadThreadTarget.projectEntryIndex !== null
+      unreadScrollTarget.projectGroupKey
+      && unreadScrollTarget.projectEntryIndex !== null
     ) {
-      const requiredVisibleCount = firstUnreadThreadTarget.projectEntryIndex + 1;
-      const currentVisibleCount = visibleProjectEntryLimits[firstUnreadThreadTarget.projectGroupKey]
+      const requiredVisibleCount = unreadScrollTarget.projectEntryIndex + 1;
+      const currentVisibleCount = visibleProjectEntryLimits[unreadScrollTarget.projectGroupKey]
         ?? PROJECT_GROUP_INITIAL_VISIBLE_COUNT;
       if (requiredVisibleCount > currentVisibleCount) {
         setVisibleProjectEntryLimits((current) => ({
           ...current,
-          [firstUnreadThreadTarget.projectGroupKey!]: requiredVisibleCount,
+          [unreadScrollTarget.projectGroupKey!]: requiredVisibleCount,
         }));
         return;
       }
@@ -2113,16 +2207,22 @@ export function MessengerContextSidebar() {
       if (!container) return;
 
       const unreadRow = Array.from(container.querySelectorAll<HTMLElement>("[data-messenger-thread-key]"))
-        .find((row) => row.dataset.messengerThreadKey === firstUnreadThreadTarget.threadKey);
+        .find((row) => row.dataset.messengerThreadKey === unreadScrollTarget.threadKey);
 
       unreadRow?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (unreadRow) {
+        unreadScrollCursorRef.current = unreadScrollTarget.threadKey;
+        handledUnreadScrollRequestIdRef.current = unreadScrollRequestId;
+        markMessengerUnreadScrollRequestHandled(unreadScrollRequestId);
+        unreadLoadMoreRequestRef.current = null;
+      }
     };
 
     const frame = requestAnimationFrame(scrollFirstUnreadThreadIntoView);
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [collapsedProjectGroupKeys, firstUnreadThreadTarget, model.selectedOrganizationId, unreadScrollRequestId, visibleProjectEntryLimits]);
+  }, [collapsedProjectGroupKeys, model.selectedOrganizationId, unreadScrollRequestId, unreadScrollTarget, visibleProjectEntryLimits]);
 
   useEffect(() => {
     const sentinel = loadMoreThreadSummariesRef.current;
