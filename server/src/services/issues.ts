@@ -193,10 +193,10 @@ export function issueService(db: Db) {
       .from(executionWorkspaces)
       .where(eq(executionWorkspaces.id, executionWorkspaceId))
       .then((rows) => rows[0] ?? null);
-    if (!workspace) throw notFound("Execution workspace not found");
-    if (workspace.orgId !== orgId) throw unprocessable("Execution workspace must belong to same organization");
+    if (!workspace) throw notFound("Run workspace not found");
+    if (workspace.orgId !== orgId) throw unprocessable("Run workspace must belong to same organization");
     if (projectId && workspace.projectId !== projectId) {
-      throw unprocessable("Execution workspace must belong to the selected project");
+      throw unprocessable("Run workspace must belong to the selected project");
     }
   }
 

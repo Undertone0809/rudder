@@ -768,7 +768,7 @@ export function importPortableProjectExecutionWorkspacePolicy(
     if (defaultWorkspaceId) {
       next.defaultProjectWorkspaceId = defaultWorkspaceId;
     } else {
-      warnings.push(`Project ${projectSlug} references missing workspace key ${defaultWorkspaceKey}; imported execution workspace policy without a default workspace.`);
+      warnings.push(`Project ${projectSlug} references missing workspace key ${defaultWorkspaceKey}; imported run workspace policy without a default workspace.`);
     }
   }
   delete next.defaultProjectWorkspaceKey;

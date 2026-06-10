@@ -845,6 +845,23 @@ describe("IssueDetail", () => {
         createdAt: new Date("2026-04-20T01:15:00.000Z"),
       },
       {
+        id: "activity-run-workspace-only",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {
+          executionWorkspaceId: "run-workspace-1",
+          executionWorkspaceSettings: { mode: "shared_workspace" },
+          _previous: { executionWorkspaceId: null },
+        },
+        createdAt: new Date("2026-04-20T01:15:30.000Z"),
+      },
+      {
         id: "activity-comment-updated",
         orgId: "org-2",
         actorType: "user",
@@ -945,6 +962,7 @@ describe("IssueDetail", () => {
     expect(html).toContain("pl-3");
     expect(html).toContain("tabular-nums");
     expect(html).not.toContain("updated the issue");
+    expect(html).not.toContain("run workspace");
     expect(html).not.toContain("updated the title");
     expect(html).not.toContain("updated the description");
     expect(html).not.toContain("Hidden document update unique");

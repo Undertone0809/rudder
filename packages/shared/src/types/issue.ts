@@ -1,7 +1,7 @@
 import type { IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
 import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
-import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
+import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings, IssueRunWorkspaceSettings, RunWorkspace } from "./workspace-runtime.js";
 import type { IssueWorkProduct } from "./work-product.js";
 
 export interface IssueAncestorProject {
@@ -174,8 +174,14 @@ export interface Issue {
   requestDepth: number;
   billingCode: string | null;
   assigneeAgentRuntimeOverrides: IssueAssigneeAgentRuntimeOverrides | null;
+  runWorkspaceId?: string | null;
+  runWorkspacePreference?: string | null;
+  runWorkspaceSettings?: IssueRunWorkspaceSettings | null;
+  /** @deprecated Use runWorkspaceId. */
   executionWorkspaceId: string | null;
+  /** @deprecated Use runWorkspacePreference. */
   executionWorkspacePreference: string | null;
+  /** @deprecated Use runWorkspaceSettings. */
   executionWorkspaceSettings: IssueExecutionWorkspaceSettings | null;
   startedAt: Date | null;
   completedAt: Date | null;
@@ -188,6 +194,8 @@ export interface Issue {
   legacyPlanDocument?: LegacyPlanDocument | null;
   project?: Project | null;
   goal?: Goal | null;
+  currentRunWorkspace?: RunWorkspace | null;
+  /** @deprecated Use currentRunWorkspace. */
   currentExecutionWorkspace?: ExecutionWorkspace | null;
   workProducts?: IssueWorkProduct[];
   mentionedProjects?: Project[];

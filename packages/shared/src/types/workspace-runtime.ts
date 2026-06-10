@@ -1,16 +1,16 @@
-export type ExecutionWorkspaceStrategyType =
+export type RunWorkspaceStrategyType =
   | "project_primary"
   | "git_worktree"
   | "adapter_managed"
   | "cloud_sandbox";
 
-export type ProjectExecutionWorkspaceDefaultMode =
+export type ProjectRunWorkspaceDefaultMode =
   | "shared_workspace"
   | "isolated_workspace"
   | "operator_branch"
   | "adapter_default";
 
-export type ExecutionWorkspaceMode =
+export type RunWorkspaceMode =
   | "inherit"
   | "shared_workspace"
   | "isolated_workspace"
@@ -18,21 +18,21 @@ export type ExecutionWorkspaceMode =
   | "reuse_existing"
   | "agent_default";
 
-export type ExecutionWorkspaceProviderType =
+export type RunWorkspaceProviderType =
   | "local_fs"
   | "git_worktree"
   | "adapter_managed"
   | "cloud_sandbox";
 
-export type ExecutionWorkspaceStatus =
+export type RunWorkspaceStatus =
   | "active"
   | "idle"
   | "in_review"
   | "archived"
   | "cleanup_failed";
 
-export interface ExecutionWorkspaceStrategy {
-  type: ExecutionWorkspaceStrategyType;
+export interface RunWorkspaceStrategy {
+  type: RunWorkspaceStrategyType;
   baseRef?: string | null;
   branchTemplate?: string | null;
   worktreeParentDir?: string | null;
@@ -40,12 +40,12 @@ export interface ExecutionWorkspaceStrategy {
   teardownCommand?: string | null;
 }
 
-export interface ProjectExecutionWorkspacePolicy {
+export interface ProjectRunWorkspacePolicy {
   enabled: boolean;
-  defaultMode?: ProjectExecutionWorkspaceDefaultMode;
+  defaultMode?: ProjectRunWorkspaceDefaultMode;
   allowIssueOverride?: boolean;
   defaultProjectWorkspaceId?: string | null;
-  workspaceStrategy?: ExecutionWorkspaceStrategy | null;
+  workspaceStrategy?: RunWorkspaceStrategy | null;
   workspaceRuntime?: Record<string, unknown> | null;
   branchPolicy?: Record<string, unknown> | null;
   pullRequestPolicy?: Record<string, unknown> | null;
@@ -53,28 +53,30 @@ export interface ProjectExecutionWorkspacePolicy {
   cleanupPolicy?: Record<string, unknown> | null;
 }
 
-export interface IssueExecutionWorkspaceSettings {
-  mode?: ExecutionWorkspaceMode;
-  workspaceStrategy?: ExecutionWorkspaceStrategy | null;
+export interface IssueRunWorkspaceSettings {
+  mode?: RunWorkspaceMode;
+  workspaceStrategy?: RunWorkspaceStrategy | null;
   workspaceRuntime?: Record<string, unknown> | null;
 }
 
-export interface ExecutionWorkspace {
+export interface RunWorkspace {
   id: string;
   orgId: string;
   projectId: string;
   projectWorkspaceId: string | null;
   sourceIssueId: string | null;
-  mode: Exclude<ExecutionWorkspaceMode, "inherit" | "reuse_existing" | "agent_default"> | "adapter_managed" | "cloud_sandbox";
-  strategyType: ExecutionWorkspaceStrategyType;
+  mode: Exclude<RunWorkspaceMode, "inherit" | "reuse_existing" | "agent_default"> | "adapter_managed" | "cloud_sandbox";
+  strategyType: RunWorkspaceStrategyType;
   name: string;
-  status: ExecutionWorkspaceStatus;
+  status: RunWorkspaceStatus;
   cwd: string | null;
   repoUrl: string | null;
   baseRef: string | null;
   branchName: string | null;
-  providerType: ExecutionWorkspaceProviderType;
+  providerType: RunWorkspaceProviderType;
   providerRef: string | null;
+  derivedFromRunWorkspaceId: string | null;
+  /** @deprecated Use derivedFromRunWorkspaceId. */
   derivedFromExecutionWorkspaceId: string | null;
   lastUsedAt: Date;
   openedAt: Date;
@@ -85,6 +87,25 @@ export interface ExecutionWorkspace {
   createdAt: Date;
   updatedAt: Date;
 }
+
+/** @deprecated Use RunWorkspaceStrategyType. */
+export type ExecutionWorkspaceStrategyType = RunWorkspaceStrategyType;
+/** @deprecated Use ProjectRunWorkspaceDefaultMode. */
+export type ProjectExecutionWorkspaceDefaultMode = ProjectRunWorkspaceDefaultMode;
+/** @deprecated Use RunWorkspaceMode. */
+export type ExecutionWorkspaceMode = RunWorkspaceMode;
+/** @deprecated Use RunWorkspaceProviderType. */
+export type ExecutionWorkspaceProviderType = RunWorkspaceProviderType;
+/** @deprecated Use RunWorkspaceStatus. */
+export type ExecutionWorkspaceStatus = RunWorkspaceStatus;
+/** @deprecated Use RunWorkspaceStrategy. */
+export type ExecutionWorkspaceStrategy = RunWorkspaceStrategy;
+/** @deprecated Use ProjectRunWorkspacePolicy. */
+export type ProjectExecutionWorkspacePolicy = ProjectRunWorkspacePolicy;
+/** @deprecated Use IssueRunWorkspaceSettings. */
+export type IssueExecutionWorkspaceSettings = IssueRunWorkspaceSettings;
+/** @deprecated Use RunWorkspace. */
+export type ExecutionWorkspace = RunWorkspace;
 
 export interface WorkspaceRuntimeService {
   id: string;

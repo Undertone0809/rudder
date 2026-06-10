@@ -11,7 +11,7 @@ import { calendarRoutes } from "../routes/calendar.js";
 import { chatRoutes } from "../routes/chats.js";
 import { costRoutes } from "../routes/costs.js";
 import { dashboardRoutes } from "../routes/dashboard.js";
-import { executionWorkspaceRoutes } from "../routes/execution-workspaces.js";
+import { runWorkspaceRoutes } from "../routes/execution-workspaces.js";
 import { goalRoutes } from "../routes/goals.js";
 import { healthRoutes } from "../routes/health.js";
 import { issueRoutes } from "../routes/issues.js";
@@ -59,7 +59,7 @@ export function registerApiRoutes(
   api.use(chatRoutes(db, opts.storageService));
   api.use(automationRoutes(db));
   api.use(calendarRoutes(db));
-  api.use(executionWorkspaceRoutes(db));
+  api.use(runWorkspaceRoutes(db));
   api.use(goalRoutes(db));
   api.use(approvalRoutes(db));
   api.use(secretRoutes(db));

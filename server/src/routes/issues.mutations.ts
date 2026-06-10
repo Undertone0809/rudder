@@ -26,7 +26,7 @@ import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
-  executionWorkspaceService,
+  runWorkspaceService,
   goalService,
   heartbeatService,
   issueApprovalService,
@@ -61,6 +61,32 @@ type IssueActivityReference = {
   identifier: string | null;
   title: string | null;
 };
+
+const RUN_WORKSPACE_FIELD_ALIASES = [
+  ["runWorkspaceId", "executionWorkspaceId"],
+  ["runWorkspacePreference", "executionWorkspacePreference"],
+  ["runWorkspaceSettings", "executionWorkspaceSettings"],
+] as const;
+
+function mutationValueEquals(a: unknown, b: unknown) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function normalizeIssueRunWorkspaceFields<T extends Record<string, unknown>>(body: T): T {
+  const normalized: Record<string, unknown> = { ...body };
+  for (const [canonicalKey, legacyKey] of RUN_WORKSPACE_FIELD_ALIASES) {
+    const hasCanonical = Object.prototype.hasOwnProperty.call(body, canonicalKey);
+    const hasLegacy = Object.prototype.hasOwnProperty.call(body, legacyKey);
+    if (hasCanonical && hasLegacy && !mutationValueEquals(body[canonicalKey], body[legacyKey])) {
+      throw unprocessable(`${canonicalKey} conflicts with deprecated ${legacyKey}`);
+    }
+    if (hasCanonical && !hasLegacy) {
+      normalized[legacyKey] = body[canonicalKey];
+    }
+    delete normalized[canonicalKey];
+  }
+  return normalized as T;
+}
 
 const ISSUE_UPDATE_ACTIVITY_FIELDS = [
   "assigneeAgentId",
@@ -206,19 +232,20 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
   router.post("/orgs/:orgId/issues", validate(createIssueSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    if (req.body.assigneeAgentId || req.body.assigneeUserId || req.body.reviewerAgentId || req.body.reviewerUserId) {
+    const body = normalizeIssueRunWorkspaceFields(req.body);
+    if (body.assigneeAgentId || body.assigneeUserId || body.reviewerAgentId || body.reviewerUserId) {
       await assertCanAssignTasks(req, orgId);
     }
 
     const actor = getActorInfo(req);
     const createInput = {
-      ...req.body,
+      ...body,
       createdByAgentId: actor.agentId,
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     };
     const hasExplicitAssignee =
-      Object.prototype.hasOwnProperty.call(req.body, "assigneeAgentId") ||
-      Object.prototype.hasOwnProperty.call(req.body, "assigneeUserId");
+      Object.prototype.hasOwnProperty.call(body, "assigneeAgentId") ||
+      Object.prototype.hasOwnProperty.call(body, "assigneeUserId");
     if (actor.actorType === "agent" && actor.agentId && !hasExplicitAssignee) {
       createInput.assigneeAgentId = actor.agentId;
     }
@@ -264,6 +291,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
 
   router.patch("/issues/:id", validate(updateIssueSchema), async (req, res) => {
     const id = req.params.id as string;
+    const body = normalizeIssueRunWorkspaceFields(req.body);
     const existing = await svc.getById(id);
     if (!existing) {
       res.status(404).json({ error: "Issue not found" });
@@ -271,20 +299,20 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     }
     assertCompanyAccess(req, existing.orgId);
     const assigneeWillChange =
-      (req.body.assigneeAgentId !== undefined && req.body.assigneeAgentId !== existing.assigneeAgentId) ||
-      (req.body.assigneeUserId !== undefined && req.body.assigneeUserId !== existing.assigneeUserId);
+      (body.assigneeAgentId !== undefined && body.assigneeAgentId !== existing.assigneeAgentId) ||
+      (body.assigneeUserId !== undefined && body.assigneeUserId !== existing.assigneeUserId);
     const reviewerWillChange =
-      (req.body.reviewerAgentId !== undefined && req.body.reviewerAgentId !== existing.reviewerAgentId) ||
-      (req.body.reviewerUserId !== undefined && req.body.reviewerUserId !== existing.reviewerUserId);
+      (body.reviewerAgentId !== undefined && body.reviewerAgentId !== existing.reviewerAgentId) ||
+      (body.reviewerUserId !== undefined && body.reviewerUserId !== existing.reviewerUserId);
 
     const isAgentReturningIssueToCreator =
       req.actor.type === "agent" &&
       !!req.actor.agentId &&
       existing.assigneeAgentId === req.actor.agentId &&
-      req.body.assigneeAgentId === null &&
-      typeof req.body.assigneeUserId === "string" &&
+      body.assigneeAgentId === null &&
+      typeof body.assigneeUserId === "string" &&
       !!existing.createdByUserId &&
-      req.body.assigneeUserId === existing.createdByUserId;
+      body.assigneeUserId === existing.createdByUserId;
 
     if (assigneeWillChange) {
       if (!isAgentReturningIssueToCreator) {
@@ -304,7 +332,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       hiddenAt: hiddenAtRaw,
       reviewDecision,
       ...updateFields
-    } = req.body;
+    } = body;
     if (hiddenAtRaw !== undefined) {
       updateFields.hiddenAt = hiddenAtRaw ? new Date(hiddenAtRaw) : null;
     }
@@ -356,13 +384,13 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
             orgId: existing.orgId,
             assigneePatch: {
               assigneeAgentId:
-                req.body.assigneeAgentId === undefined ? "__omitted__" : req.body.assigneeAgentId,
+                body.assigneeAgentId === undefined ? "__omitted__" : body.assigneeAgentId,
               assigneeUserId:
-                req.body.assigneeUserId === undefined ? "__omitted__" : req.body.assigneeUserId,
+                body.assigneeUserId === undefined ? "__omitted__" : body.assigneeUserId,
               reviewerAgentId:
-                req.body.reviewerAgentId === undefined ? "__omitted__" : req.body.reviewerAgentId,
+                body.reviewerAgentId === undefined ? "__omitted__" : body.reviewerAgentId,
               reviewerUserId:
-                req.body.reviewerUserId === undefined ? "__omitted__" : req.body.reviewerUserId,
+                body.reviewerUserId === undefined ? "__omitted__" : body.reviewerUserId,
             },
             currentAssignee: {
               assigneeAgentId: existing.assigneeAgentId,

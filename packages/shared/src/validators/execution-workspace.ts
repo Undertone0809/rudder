@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const executionWorkspaceStatusSchema = z.enum([
+export const runWorkspaceStatusSchema = z.enum([
   "active",
   "idle",
   "in_review",
@@ -8,11 +8,18 @@ export const executionWorkspaceStatusSchema = z.enum([
   "cleanup_failed",
 ]);
 
-export const updateExecutionWorkspaceSchema = z.object({
-  status: executionWorkspaceStatusSchema.optional(),
+export const updateRunWorkspaceSchema = z.object({
+  status: runWorkspaceStatusSchema.optional(),
   cleanupEligibleAt: z.string().datetime().optional().nullable(),
   cleanupReason: z.string().optional().nullable(),
   metadata: z.record(z.unknown()).optional().nullable(),
 }).strict();
 
-export type UpdateExecutionWorkspace = z.infer<typeof updateExecutionWorkspaceSchema>;
+export type UpdateRunWorkspace = z.infer<typeof updateRunWorkspaceSchema>;
+
+/** @deprecated Use runWorkspaceStatusSchema. */
+export const executionWorkspaceStatusSchema = runWorkspaceStatusSchema;
+/** @deprecated Use updateRunWorkspaceSchema. */
+export const updateExecutionWorkspaceSchema = updateRunWorkspaceSchema;
+/** @deprecated Use UpdateRunWorkspace. */
+export type UpdateExecutionWorkspace = UpdateRunWorkspace;

@@ -85,7 +85,7 @@ import {
   buildIssueConvergenceReviewWakeupOptions,
   buildIssueReviewCloseoutWakeupOptions,
 } from "../issue-review-wakeup.js";
-import { executionWorkspaceService } from "../execution-workspaces.js";
+import { runWorkspaceService } from "../execution-workspaces.js";
 import { buildObservedRunLangfuseScores } from "../run-intelligence.js";
 import { workspaceOperationService } from "../workspace-operations.js";
 import {
