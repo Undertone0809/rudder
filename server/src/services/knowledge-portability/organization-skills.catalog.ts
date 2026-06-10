@@ -606,8 +606,10 @@ export function normalizeGitHubSkillDirectory(
 export interface SkillWithMetadata {
   id: string;
   key: string;
+  sourceLocator?: string | null;
   metadata: {
     sourceKind?: string | null;
+    sourceRoot?: string | null;
   } | null;
 }
 
@@ -641,6 +643,28 @@ export function listStaleCommunityPresetSkillIds(
   return existingSkills
     .filter((skill) => skill.metadata?.sourceKind === "community_preset")
     .filter((skill) => !currentKeysSet.has(skill.key))
+    .map((skill) => skill.id);
+}
+
+function isSameOrChildPath(parentPath: string, candidatePath: string) {
+  const relative = path.relative(path.resolve(parentPath), path.resolve(candidatePath));
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+export function listLegacyUserHomeLocalScanSkillIds(
+  existingSkills: SkillWithMetadata[],
+  userAgentsRoot = path.join(os.homedir(), ".agents"),
+): string[] {
+  const normalizedUserAgentsRoot = path.resolve(userAgentsRoot);
+  return existingSkills
+    .filter((skill) => {
+      if (skill.metadata?.sourceKind !== "local_scan") return false;
+      const sourceRoot = asString(skill.metadata.sourceRoot);
+      const sourceLocator = normalizeSourceLocatorDirectory(skill.sourceLocator ?? null);
+      return [sourceRoot, sourceLocator]
+        .filter((value): value is string => !!value)
+        .some((value) => isSameOrChildPath(normalizedUserAgentsRoot, value));
+    })
     .map((skill) => skill.id);
 }
 
