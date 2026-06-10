@@ -607,38 +607,27 @@ function ChatAgentThreadAvatar({
 
 function IssueStatusThreadAvatar({
   status,
-  activeExecutionRunId,
   unreadCount,
   needsAttention,
   density = "comfortable",
   testId,
 }: {
   status: string;
-  activeExecutionRunId?: string | null;
   unreadCount: number;
   needsAttention: boolean;
   density?: MessengerThreadDensity;
   testId?: string;
 }) {
   const compact = density === "compact";
-  const running = Boolean(activeExecutionRunId);
   return (
     <span
-      title={running ? "Issue run in progress" : `Issue status: ${status.replace(/_/g, " ")}`}
+      title={`Issue status: ${status.replace(/_/g, " ")}`}
       className={cn(
         "relative flex shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_78%,transparent)]",
         compact ? "h-7 w-7" : "mt-0.5 h-10 w-10",
       )}
     >
-      {running ? (
-        <Loader2
-          data-testid={testId ? `${testId}-active-run` : undefined}
-          className={cn("animate-spin text-cyan-600 dark:text-cyan-300", compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")}
-          aria-hidden="true"
-        />
-      ) : (
-        <StatusIcon status={status} className={cn(compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
-      )}
+      <StatusIcon status={status} className={cn(compact ? "h-3.5 w-3.5" : "h-4.5 w-4.5")} />
       {unreadCount > 0 ? (
         <span
           data-testid={testId}
@@ -970,6 +959,10 @@ function ThreadRow({
       ? thread.metadata.activeExecutionRunId
       : null;
 
+  useEffect(() => {
+    if (activeExecutionRunId) setActionsOpen(false);
+  }, [activeExecutionRunId]);
+
   return (
     <div
       data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}
@@ -985,7 +978,6 @@ function ThreadRow({
       {issueStatus ? (
         <IssueStatusThreadAvatar
           status={issueStatus}
-          activeExecutionRunId={activeExecutionRunId}
           unreadCount={thread.unreadCount}
           needsAttention={thread.needsAttention}
           density={density}
@@ -1022,7 +1014,7 @@ function ThreadRow({
               className={cn(
                 "block shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
                 compact ? "w-11" : "mt-0.5 w-12",
-                actionsOpen && "opacity-0",
+                (actionsOpen || activeExecutionRunId) && "opacity-0",
               )}
             >
               {thread.latestActivityAt ? relativeTime(new Date(thread.latestActivityAt), { compactDate: true }) : "No activity"}
@@ -1040,6 +1032,21 @@ function ThreadRow({
           ) : null}
         </span>
       </Link>
+
+      {activeExecutionRunId ? (
+        <span
+          data-testid={`messenger-active-run-${sanitizeThreadKey(thread.threadKey)}`}
+          aria-label="Issue run in progress"
+          title="Issue run in progress"
+          className={cn(
+            "pointer-events-none absolute top-1/2 z-10 inline-flex -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
+            compact ? "right-1.5 h-5 w-5" : "right-2 h-6 w-6",
+            actionsOpen && "opacity-0",
+          )}
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.25} aria-hidden />
+        </span>
+      ) : null}
 
       {canTogglePin || canHideIssue ? (
         <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>

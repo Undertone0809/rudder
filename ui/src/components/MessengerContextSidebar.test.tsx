@@ -475,7 +475,7 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('data-slot="status-progress-arc"');
   });
 
-  it("shows a spinning loader for split issue rows with an active execution run", () => {
+  it("keeps the status icon and shows a right-side loader for split issue rows with an active execution run", () => {
     chatList = [];
     messengerModel = {
       ...baseModel(),
@@ -506,9 +506,12 @@ describe("MessengerContextSidebar", () => {
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).toContain('title="Issue run in progress"');
-    expect(html).toContain('data-testid="issue-issue-1-unread-badge-active-run"');
+    expect(html).toContain('data-testid="messenger-active-run-issue-issue-1"');
+    expect(html).toContain('aria-label="Issue run in progress"');
     expect(html).toContain("animate-spin");
-    expect(html).not.toContain('data-slot="status-progress-arc"');
+    expect(html).toContain('data-slot="status-progress-arc"');
+    expect(html).toContain("pointer-events-none absolute top-1/2");
+    expect(html).toContain("right-1.5 h-5 w-5");
   });
 
   it("groups Messenger chats by project when the organization rule is project", () => {
