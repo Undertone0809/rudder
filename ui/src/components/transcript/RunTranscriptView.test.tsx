@@ -843,6 +843,16 @@ describe("RunTranscriptView", () => {
         ts: "2026-03-12T00:00:01.000Z",
         text: "file changes: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
       },
+      {
+        kind: "system",
+        ts: "2026-03-12T00:00:02.000Z",
+        text: "file_change: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+      },
+      {
+        kind: "system",
+        ts: "2026-03-12T00:00:03.000Z",
+        text: "file changes failed: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx permission denied",
+      },
     ];
 
     const blocks = normalizeTranscript(entries, false);
@@ -858,8 +868,43 @@ describe("RunTranscriptView", () => {
     expect(blocks[1]).toMatchObject({
       type: "event",
       label: "system",
+      tone: "neutral",
       text: "file changes: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
     });
+    expect(blocks[2]).toMatchObject({
+      type: "event",
+      label: "system",
+      tone: "neutral",
+      text: "file_change: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+    });
+    expect(blocks[3]).toMatchObject({
+      type: "event",
+      label: "system",
+      tone: "warn",
+      text: "file changes failed: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx permission denied",
+    });
+  });
+
+  it("renders non-memory file changes as a normal system event", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "file changes: add /Users/zeeland/projects/rudder-oss/doc/plans/2026-06-10-unified-agent-run-architecture.md",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("file changes: add /Users/zeeland/projects/rudder-oss/doc/plans/2026-06-10-unified-agent-run-architecture.md");
+    expect(html).not.toContain("text-amber-700");
+    expect(html).not.toContain("dark:text-amber-300");
   });
 
   it("renders memory updates without exposing raw paths until details are expanded", () => {

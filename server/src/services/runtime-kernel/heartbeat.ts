@@ -82,7 +82,7 @@ import {
   buildIssueConvergenceReviewWakeupOptions,
   buildIssueReviewCloseoutWakeupOptions,
 } from "../issue-review-wakeup.js";
-import { executionWorkspaceService } from "../execution-workspaces.js";
+import { runWorkspaceService } from "../execution-workspaces.js";
 import { buildObservedRunLangfuseScores } from "../run-intelligence.js";
 import { workspaceOperationService } from "../workspace-operations.js";
 import {
@@ -150,7 +150,7 @@ export function heartbeatService(db: Db) {
   const runContextSvc = agentRunContextService(db);
   const issuesSvc = issueService(db);
   const documentsSvc = documentService(db);
-  const executionWorkspacesSvc = executionWorkspaceService(db);
+  const executionWorkspacesSvc = runWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
   const activeRunExecutions = new Set<string>();
   const budgetHooks = {

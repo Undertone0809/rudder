@@ -26,7 +26,7 @@ import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
-  executionWorkspaceService,
+  runWorkspaceService,
   goalService,
   heartbeatService,
   issueApprovalService,
@@ -62,7 +62,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   const projectsSvc = projectService(db);
   const goalsSvc = goalService(db);
   const issueApprovalsSvc = issueApprovalService(db);
-  const executionWorkspacesSvc = executionWorkspaceService(db);
+  const executionWorkspacesSvc = runWorkspaceService(db);
   const workProductsSvc = workProductService(db);
   const documentsSvc = documentService(db);
   const automationsSvc = automationService(db);
@@ -77,6 +77,24 @@ export function issueRoutes(db: Db, storage: StorageService) {
       ...attachment,
       contentPath: `/api/attachments/${attachment.id}/content`,
     };
+  }
+
+  function normalizeWorkProductRunWorkspaceFields<T extends Record<string, unknown>>(body: T): T {
+    const hasCanonical = Object.prototype.hasOwnProperty.call(body, "runWorkspaceId");
+    const hasLegacy = Object.prototype.hasOwnProperty.call(body, "executionWorkspaceId");
+    if (
+      hasCanonical &&
+      hasLegacy &&
+      JSON.stringify(body.runWorkspaceId ?? null) !== JSON.stringify(body.executionWorkspaceId ?? null)
+    ) {
+      throw unprocessable("runWorkspaceId conflicts with deprecated executionWorkspaceId");
+    }
+    const normalized: Record<string, unknown> = { ...body };
+    if (hasCanonical && !hasLegacy) {
+      normalized.executionWorkspaceId = body.runWorkspaceId;
+    }
+    delete normalized.runWorkspaceId;
+    return normalized as T;
   }
 
   async function runSingleFileUpload(req: Request, res: Response) {
@@ -577,7 +595,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const mentionedProjects = mentionedProjectIds.length > 0
       ? await projectsSvc.listByIds(issue.orgId, mentionedProjectIds)
       : [];
-    const currentExecutionWorkspace = issue.executionWorkspaceId
+    const currentRunWorkspace = issue.executionWorkspaceId
       ? await executionWorkspacesSvc.getById(issue.executionWorkspaceId)
       : null;
     const workProducts = await workProductsSvc.listForIssue(issue.id);
@@ -589,7 +607,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
       project: project ?? null,
       goal: goal ?? null,
       mentionedProjects,
-      currentExecutionWorkspace,
+      currentRunWorkspace,
+      currentExecutionWorkspace: currentRunWorkspace,
       workProducts,
     });
   });
@@ -831,9 +850,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.orgId);
+    const body = normalizeWorkProductRunWorkspaceFields(req.body);
     const product = await workProductsSvc.createForIssue(issue.id, issue.orgId, {
-      ...req.body,
-      projectId: req.body.projectId ?? issue.projectId ?? null,
+      ...body,
+      projectId: body.projectId ?? issue.projectId ?? null,
     });
     if (!product) {
       res.status(422).json({ error: "Invalid work product payload" });
@@ -862,7 +882,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, existing.orgId);
-    const product = await workProductsSvc.update(id, req.body);
+    const body = normalizeWorkProductRunWorkspaceFields(req.body);
+    const product = await workProductsSvc.update(id, body);
     if (!product) {
       res.status(404).json({ error: "Work product not found" });
       return;
@@ -877,7 +898,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       action: "issue.work_product_updated",
       entityType: "issue",
       entityId: existing.issueId,
-      details: { workProductId: product.id, changedKeys: Object.keys(req.body).sort() },
+      details: { workProductId: product.id, changedKeys: Object.keys(body).sort() },
     });
     res.json(product);
   });

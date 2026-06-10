@@ -96,6 +96,85 @@ jobs:
           mkdir -p "$RUNNER_TEMP/rudder-docs-export/.vercel"
           printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > "$RUNNER_TEMP/rudder-docs-export/.vercel/project.json"
 
+      - name: Inject production analytics id
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          env_file="$RUNNER_TEMP/vercel-production.env"
+          vercel env pull "$env_file" \
+            --yes \
+            --environment=production \
+            --scope "$VERCEL_SCOPE" \
+            --token "$VERCEL_TOKEN"
+
+          VERCEL_ENV_FILE="$env_file" EXPORT_DIR="$RUNNER_TEMP/rudder-docs-export" node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const placeholder = "__RUDDER_GA_MEASUREMENT_ID__";
+          const envFile = process.env.VERCEL_ENV_FILE;
+          const exportDir = process.env.EXPORT_DIR;
+
+          function parseDotenv(text) {
+            const values = {};
+            for (const rawLine of text.split(/\r?\n/)) {
+              const line = rawLine.trim();
+              if (!line || line.startsWith("#")) continue;
+              const equals = line.indexOf("=");
+              if (equals === -1) continue;
+              const key = line.slice(0, equals).trim();
+              let value = line.slice(equals + 1).trim();
+              if (
+                (value.startsWith('"') && value.endsWith('"')) ||
+                (value.startsWith("'") && value.endsWith("'"))
+              ) {
+                value = value.slice(1, -1);
+              }
+              values[key] = value.replace(/\\n/g, "\n");
+            }
+            return values;
+          }
+
+          const values = parseDotenv(fs.readFileSync(envFile, "utf8"));
+          const measurementId = values.RUDDER_GA_MEASUREMENT_ID;
+
+          if (!measurementId) {
+            console.log("RUDDER_GA_MEASUREMENT_ID is not set in the Vercel production environment; docs analytics remains disabled.");
+            process.exit(0);
+          }
+
+          if (!/^G-[A-Z0-9]+$/.test(measurementId || "")) {
+            throw new Error("Missing or invalid RUDDER_GA_MEASUREMENT_ID in the Vercel production environment");
+          }
+
+          let replacements = 0;
+
+          function walk(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const filePath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                walk(filePath);
+                continue;
+              }
+              const source = fs.readFileSync(filePath, "utf8");
+              if (!source.includes(placeholder)) {
+                continue;
+              }
+              fs.writeFileSync(filePath, source.split(placeholder).join(measurementId));
+              replacements += 1;
+            }
+          }
+
+          walk(exportDir);
+
+          if (replacements === 0) {
+            throw new Error("GA measurement placeholder was not found in the Mintlify export");
+          }
+
+          console.log(`Injected analytics id into ${replacements} exported file(s).`);
+          NODE
+
       - name: Deploy to Vercel production
         id: deploy
         env:

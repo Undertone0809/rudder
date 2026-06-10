@@ -483,7 +483,7 @@ export async function provisionExecutionWorktree(input: {
       agent: input.agent,
       created: input.created,
     }),
-    label: `Execution workspace provision command "${provisionCommand}"`,
+    label: `Run workspace provision command "${provisionCommand}"`,
     metadata: {
       repoRoot: input.repoRoot,
       worktreePath: input.worktreePath,

@@ -188,7 +188,7 @@ describe("index.css motion rules", () => {
     expect(tabStrip).toContain("--rudder-doc-editor-tab-strip-height: 53px");
     expect(sidebarHeader).toContain("--rudder-doc-editor-tab-strip-height: 53px");
     expect(sidebarHeader).toContain("height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
-    expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: 46px");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-inactive-height: 40px");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-radius: var(--desktop-workspace-radius)");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2)");

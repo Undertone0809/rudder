@@ -31,6 +31,8 @@ export const issueWorkProductReviewStateSchema = z.enum([
 
 export const createIssueWorkProductSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
+  runWorkspaceId: z.string().uuid().optional().nullable(),
+  /** @deprecated Use runWorkspaceId. */
   executionWorkspaceId: z.string().uuid().optional().nullable(),
   runtimeServiceId: z.string().uuid().optional().nullable(),
   type: issueWorkProductTypeSchema,

@@ -200,7 +200,7 @@ export async function cleanupExecutionWorkspaceArtifacts(input: {
         command,
         cwd: workspacePath ?? input.projectWorkspace?.cwd ?? process.cwd(),
         env: cleanupEnv,
-        label: `Execution workspace cleanup command "${command}"`,
+        label: `Run workspace cleanup command "${command}"`,
         metadata: {
           workspaceId: input.workspace.id,
           workspacePath,

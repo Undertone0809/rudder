@@ -36,6 +36,8 @@ export interface IssueWorkProduct {
   orgId: string;
   projectId: string | null;
   issueId: string;
+  runWorkspaceId: string | null;
+  /** @deprecated Use runWorkspaceId. */
   executionWorkspaceId: string | null;
   runtimeServiceId: string | null;
   type: IssueWorkProductType;

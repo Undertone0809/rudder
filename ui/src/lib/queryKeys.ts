@@ -123,10 +123,10 @@ export const queryKeys = {
         statuses?.join(",") ?? "",
       ] as const,
   },
-  executionWorkspaces: {
+  runWorkspaces: {
     list: (orgId: string, filters?: Record<string, string | boolean | undefined>) =>
-      ["execution-workspaces", orgId, filters ?? {}] as const,
-    detail: (id: string) => ["execution-workspaces", "detail", id] as const,
+      ["run-workspaces", orgId, filters ?? {}] as const,
+    detail: (id: string) => ["run-workspaces", "detail", id] as const,
   },
   projects: {
     list: (orgId: string) => ["projects", orgId] as const,

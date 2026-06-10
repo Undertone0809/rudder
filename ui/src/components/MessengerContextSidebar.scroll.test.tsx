@@ -209,6 +209,211 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
   });
 
+  it("cycles through unread thread rows on repeated primary rail requests", async () => {
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: [
+        baseThread("chat:read-chat", "Read chat"),
+        baseThread("chat:first-unread", "First unread", 1),
+        baseThread("chat:second-unread", "Second unread", 1),
+        baseThread("chat:third-unread", "Third unread", 1),
+      ],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const scrolledThreadKeys: string[] = [];
+    for (const row of Array.from(document.querySelectorAll<HTMLElement>("[data-messenger-thread-key]"))) {
+      row.scrollIntoView = vi.fn(() => {
+        scrolledThreadKeys.push(row.dataset.messengerThreadKey ?? "");
+      });
+    }
+
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+
+    expect(scrolledThreadKeys).toEqual([
+      "chat:first-unread",
+      "chat:second-unread",
+      "chat:third-unread",
+      "chat:first-unread",
+    ]);
+  });
+
+  it("consumes an unread scroll request that was fired before the sidebar mounted", async () => {
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: [
+        baseThread("chat:first-unread", "First unread", 1),
+        baseThread("chat:read-chat", "Read chat"),
+      ],
+    };
+    const scrolledThreadKeys: string[] = [];
+    Element.prototype.scrollIntoView = vi.fn(function scrollIntoView(this: Element) {
+      scrolledThreadKeys.push((this as HTMLElement).dataset.messengerThreadKey ?? "");
+    });
+
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    expect(scrolledThreadKeys).toContain("chat:first-unread");
+  });
+
+  it("loads more thread pages before wrapping to the first unread thread", async () => {
+    const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: [
+        baseThread("chat:first-unread", "First unread", 1),
+      ],
+      hasMoreThreadSummaries: true,
+      loadMoreThreadSummaries,
+    };
+    const scrolledThreadKeys: string[] = [];
+    Element.prototype.scrollIntoView = vi.fn(function scrollIntoView(this: Element) {
+      scrolledThreadKeys.push((this as HTMLElement).dataset.messengerThreadKey ?? "");
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+
+    expect(loadMoreThreadSummaries).toHaveBeenCalledTimes(1);
+    expect(scrolledThreadKeys).toEqual(["chat:first-unread"]);
+
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: [
+        baseThread("chat:first-unread", "First unread", 1),
+        baseThread("chat:second-unread", "Second unread", 1),
+      ],
+      hasMoreThreadSummaries: false,
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    expect(scrolledThreadKeys).toEqual(["chat:first-unread", "chat:second-unread"]);
+  });
+
+  it("resets the unread scroll cursor when the Messenger organization changes", async () => {
+    messengerModel = {
+      ...messengerModel,
+      selectedOrganizationId: "org-1",
+      threadSummaries: [
+        baseThread("issues", "Issues", 1),
+        baseThread("approvals", "Approvals", 1),
+      ],
+    };
+    const scrolledThreadKeys: string[] = [];
+    Element.prototype.scrollIntoView = vi.fn(function scrollIntoView(this: Element) {
+      scrolledThreadKeys.push((this as HTMLElement).dataset.messengerThreadKey ?? "");
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+
+    messengerModel = {
+      ...messengerModel,
+      selectedOrganizationId: "org-2",
+      threadSummaries: [
+        baseThread("issues", "Issues", 1),
+        baseThread("approvals", "Approvals", 1),
+      ],
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+
+    expect(scrolledThreadKeys).toHaveLength(2);
+    expect(scrolledThreadKeys[1]).toBe(scrolledThreadKeys[0]);
+  });
+
   it("expands a collapsed project section before scrolling to its first unread thread", async () => {
     window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "project" }));
     chatList = [baseConversation()];

@@ -110,7 +110,7 @@ test("issue comment actions menu copies content and direct links", async ({ page
   await expect(page).toHaveURL(`${new URL(page.url()).origin}${expectedRenderedHref}`);
   await expect(commentBlock).toHaveClass(/border-primary/);
 
-  const updatedBody = "Review note updated:\n\n- edit and delete stay owner-only";
+  const updatedBody = "Review note updated: edit and delete stay owner-only";
   await commentBlock.getByRole("button", { name: "Comment actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Edit" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
@@ -118,9 +118,48 @@ test("issue comment actions menu copies content and direct links", async ({ page
 
   const editComposer = commentBlock.locator(".rudder-milkdown-content [contenteditable='true']").first();
   await expect(editComposer).toBeVisible();
+  const editSurfaceState = await commentBlock.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const editor = element.querySelector(".rudder-milkdown-content, .rudder-mdxeditor-content");
+    const editorRect = editor instanceof HTMLElement ? editor.getBoundingClientRect() : null;
+    return {
+      className: element.getAttribute("class") ?? "",
+      width: rect.width,
+      height: rect.height,
+      editorWidth: editorRect?.width ?? 0,
+      editorHeight: editorRect?.height ?? 0,
+    };
+  });
+  expect(editSurfaceState.className).toContain("rounded-[var(--radius-lg)]");
+  expect(editSurfaceState.width).toBeGreaterThan(600);
+  expect(editSurfaceState.height).toBeGreaterThan(150);
+  expect(editSurfaceState.editorWidth).toBeGreaterThan(editSurfaceState.width - 72);
+  expect(editSurfaceState.editorHeight).toBeGreaterThanOrEqual(88);
+  await expect(commentBlock.locator('button[title="Attach file"]')).toBeVisible();
   await editComposer.click();
   await editComposer.press("ControlOrMeta+A");
   await page.keyboard.type(updatedBody);
+  const [editAttachmentResponse] = await Promise.all([
+    page.waitForResponse((response) => {
+      const pathname = new URL(response.url()).pathname;
+      return (
+        pathname.endsWith(`/api/orgs/${organization.id}/issues/${issue.id}/attachments`)
+        || pathname.endsWith(`/api/orgs/${organization.id}/issues/${routeRef}/attachments`)
+      ) && response.request().method() === "POST";
+    }),
+    commentBlock.locator('input[type="file"]').setInputFiles({
+      name: "edit-proof.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("edit attachment proof"),
+    }),
+  ]);
+  expect(editAttachmentResponse.ok()).toBe(true);
+  const editAttachment = await editAttachmentResponse.json() as { contentPath: string };
+  const expectedEditedBody = `${updatedBody}\n\n[edit-proof.txt](${editAttachment.contentPath})`;
+  await expect.poll(async () => {
+    const value = await editComposer.evaluate((element) => element.textContent ?? "");
+    return value.includes("edit-proof.txt");
+  }).toBe(true);
   const [updateResponse] = await Promise.all([
     page.waitForResponse((response) => {
       const pathname = new URL(response.url()).pathname;
@@ -143,14 +182,13 @@ test("issue comment actions menu copies content and direct links", async ({ page
   const refreshedCommentRes = await page.request.get(`/api/issues/${issue.id}/comments/${comment.id}`);
   expect(refreshedCommentRes.ok()).toBe(true);
   const refreshedComment = await refreshedCommentRes.json() as { body: string; updatedAt: string; createdAt: string };
-  expect(refreshedComment.body).toBe(updatedBody);
+  expect(refreshedComment.body).toBe(expectedEditedBody);
   expect(new Date(refreshedComment.updatedAt).getTime()).toBeGreaterThan(new Date(refreshedComment.createdAt).getTime());
 
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("Delete this comment?");
-    await dialog.accept();
-  });
   await commentBlock.getByRole("button", { name: "Comment actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "Delete this comment?" });
+  await expect(deleteDialog).toBeVisible();
   const [deleteResponse] = await Promise.all([
     page.waitForResponse((response) => {
       const pathname = new URL(response.url()).pathname;
@@ -162,7 +200,7 @@ test("issue comment actions menu copies content and direct links", async ({ page
         && response.request().method() === "DELETE"
       );
     }),
-    page.getByRole("menuitem", { name: "Delete" }).click(),
+    deleteDialog.getByRole("button", { name: "Delete" }).click(),
   ]);
   expect(deleteResponse.ok()).toBe(true);
   await expect(commentBlock).toContainText("Comment deleted");
@@ -189,7 +227,7 @@ test("issue detail delete removes the issue without retaining hidden UI", async 
   await page.goto("/");
 
   const orgRes = await page.request.post("/api/orgs", {
-    data: { name: `Issue-Delete-${Date.now()}` },
+    data: { name: `Del-${Date.now()}` },
   });
   expect(orgRes.ok()).toBe(true);
   const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -218,7 +256,8 @@ test("issue detail delete removes the issue without retaining hidden UI", async 
   await expect(page.getByText("Hide this Issue")).toHaveCount(0);
 
   await page.getByText("Delete Issue").click();
-  await expect(page.getByRole("dialog", { name: `Delete ${routeRef}?` })).toBeVisible();
+  const deleteIssueDialog = page.getByRole("dialog", { name: `Delete ${routeRef}?` });
+  await expect(deleteIssueDialog).toBeVisible();
   const [deleteResponse] = await Promise.all([
     page.waitForResponse((response) => {
       const pathname = new URL(response.url()).pathname;
@@ -227,7 +266,7 @@ test("issue detail delete removes the issue without retaining hidden UI", async 
         && response.request().method() === "DELETE"
       );
     }),
-    page.getByRole("button", { name: "Delete" }).click(),
+    deleteIssueDialog.getByRole("button", { name: "Delete" }).click(),
   ]);
   expect(deleteResponse.ok()).toBe(true);
 

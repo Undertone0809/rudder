@@ -498,6 +498,125 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     expect(readCanonicalFragmentMarkdown(fragment)).toBe("Ask [Jade](agent://agent-1) today");
   });
 
+  it("copies selected list fragments as valid Markdown bullets", () => {
+    const fragment = document.createDocumentFragment();
+    const list = document.createElement("ul");
+    for (const text of [
+      "Comment on in_progress work before exiting.",
+      "Exit cleanly if no assignments.",
+    ]) {
+      const item = document.createElement("li");
+      item.textContent = text;
+      list.append(item);
+    }
+    const itemWithCode = document.createElement("li");
+    itemWithCode.append("Reviewer work is not closed by a free-form accept/reject comment; use ");
+    const code = document.createElement("code");
+    code.textContent = "rudder issue review";
+    itemWithCode.append(code);
+    itemWithCode.append(".");
+    list.insertBefore(itemWithCode, list.lastChild);
+    fragment.append(list);
+
+    expect(readCanonicalFragmentMarkdown(fragment)).toBe([
+      "- Comment on in_progress work before exiting.",
+      "- Reviewer work is not closed by a free-form accept/reject comment; use `rudder issue review`.",
+      "- Exit cleanly if no assignments.",
+    ].join("\n"));
+  });
+
+  it("copies bare list-item fragments as valid Markdown bullets", () => {
+    const fragment = document.createDocumentFragment();
+    for (const text of [
+      "Comment on in_progress work before exiting.",
+      "Exit cleanly if no assignments.",
+    ]) {
+      const item = document.createElement("li");
+      item.textContent = text;
+      fragment.append(item);
+    }
+
+    expect(readCanonicalFragmentMarkdown(fragment)).toBe([
+      "- Comment on in_progress work before exiting.",
+      "- Exit cleanly if no assignments.",
+    ].join("\n"));
+  });
+
+  it("copies bare ordered-list item fragments with ordered markers", () => {
+    const fragment = document.createDocumentFragment();
+    for (const text of [
+      "Read today's plan from memory.",
+      "Review planned items.",
+    ]) {
+      const item = document.createElement("li");
+      item.textContent = text;
+      fragment.append(item);
+    }
+
+    expect(readCanonicalFragmentMarkdown(fragment, { bareListKind: "ordered", bareListStart: 2 })).toBe([
+      "2. Read today's plan from memory.",
+      "3. Review planned items.",
+    ].join("\n"));
+  });
+
+  it("preserves canonical Rudder links inside copied list fragments", () => {
+    const fragment = document.createDocumentFragment();
+    const list = document.createElement("ul");
+    const item = document.createElement("li");
+    item.append("Ask ");
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", "agent://agent-1");
+    anchor.textContent = "Jade";
+    item.append(anchor);
+    item.append(" to review.");
+    list.append(item);
+    fragment.append(list);
+
+    expect(readCanonicalFragmentMarkdown(fragment)).toBe("- Ask [Jade](agent://agent-1) to review.");
+  });
+
+  it("preserves ordinary links and emphasis inside copied list fragments", () => {
+    const fragment = document.createDocumentFragment();
+    const list = document.createElement("ul");
+    const item = document.createElement("li");
+    const strong = document.createElement("strong");
+    strong.textContent = "Read";
+    item.append(strong);
+    item.append(" the ");
+    const link = document.createElement("a");
+    link.setAttribute("href", "https://example.com/spec");
+    link.textContent = "spec";
+    item.append(link);
+    item.append(" with ");
+    const emphasis = document.createElement("em");
+    emphasis.textContent = "care";
+    item.append(emphasis);
+    item.append(".");
+    list.append(item);
+    fragment.append(list);
+
+    expect(readCanonicalFragmentMarkdown(fragment)).toBe("- **Read** the [spec](https://example.com/spec) with *care*.");
+  });
+
+  it("preserves nested list structure inside copied list fragments", () => {
+    const fragment = document.createDocumentFragment();
+    const list = document.createElement("ul");
+    const item = document.createElement("li");
+    item.append("Parent item");
+    const nested = document.createElement("ul");
+    const nestedItem = document.createElement("li");
+    nestedItem.textContent = "Nested item";
+    nested.append(nestedItem);
+    item.append(nested);
+    list.append(item);
+    fragment.append(list);
+
+    expect(readCanonicalFragmentMarkdown(fragment)).toBe([
+      "- Parent item",
+      "  - Nested item",
+    ].join("\n"));
+  });
+
   it("resolves special Rudder references to app navigation paths", () => {
     expect(rudderTokenNavigationPath(buildAgentMentionHref("agent-1", "bot"))).toBe("/agents/agent-1");
     expect(rudderTokenNavigationPath(buildIssueMentionHref("issue-1", "R-1"))).toBe("/issues/R-1");

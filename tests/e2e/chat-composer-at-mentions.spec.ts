@@ -21,6 +21,14 @@ async function resetComposer(composer: Locator) {
   await composer.press("ControlOrMeta+A");
   await composer.press("Backspace");
   await expect(composer).toHaveText("");
+  await expect.poll(async () => {
+    return composer.evaluate((element) => {
+      const selection = window.getSelection();
+      return Boolean(selection?.anchorNode && element.contains(selection.anchorNode));
+    });
+  }).toBe(true);
+  await composer.press("Escape");
+  await composer.click();
 }
 
 async function expectReadableReferenceIcon(token: Locator, minPx: number) {
@@ -234,4 +242,73 @@ test("chat composer inserts every @ reference type with Tab and keeps typing aft
   }
 
   await page.screenshot({ path: testInfo.outputPath("chat-composer-at-mentions.png"), fullPage: true });
+});
+
+test("chat composer sends pasted text after a clicked issue reference token", async ({ page }) => {
+  const suffix = Date.now();
+  const issueTitle = `SendAfterIssueMention${suffix}`;
+  const organization = await createOrganization(page, "Chat-Composer-Issue-After-Token");
+  const agent = await createE2EChatAgent(page.request, organization.id, {
+    name: `IssueAgent${suffix}`,
+  }) as { id: string; name: string };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: issueTitle,
+      description: "Composer send regression target.",
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; title: string };
+
+  const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: `Issue send ${suffix}`,
+      preferredAgentId: agent.id,
+    },
+  });
+  expect(chatRes.ok()).toBe(true);
+  const chat = await chatRes.json() as { id: string };
+
+  await selectOrganization(page, organization.id);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+  const composer = page.locator(".chat-composer .rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.click();
+  await page.keyboard.type(`@${issueTitle}`);
+  const option = page.getByTestId(`markdown-mention-option-issue:${issue.id}`);
+  await expect(option).toContainText(issue.title, { timeout: 15_000 });
+  await page.keyboard.press("Tab");
+
+  const token = composer.locator("[data-mention-kind='issue']").filter({ hasText: issue.title }).first();
+  await expect(token).toBeVisible({ timeout: 15_000 });
+  await token.click({ force: true });
+
+  await composer.evaluate((element) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "可以这样");
+    const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      value: dataTransfer,
+    });
+    element.dispatchEvent(pasteEvent);
+  });
+  await expect(composer).toContainText("可以这样");
+
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const userBubble = page.getByTestId("chat-user-message-bubble").last();
+  await expect(userBubble).toContainText(issue.title, { timeout: 15_000 });
+  await expect(userBubble).toContainText("可以这样", { timeout: 15_000 });
+
+  const messagesRes = await page.request.get(`/api/chats/${chat.id}/messages`);
+  expect(messagesRes.ok()).toBe(true);
+  const messages = await messagesRes.json();
+  const userMessage = [...messages].reverse().find((message: { role: string }) => message.role === "user");
+  expect(userMessage?.body).toContain(issue.title);
+  expect(userMessage?.body).toContain(`](issue://${issue.id}`);
+  expect(userMessage?.body).toContain("可以这样");
 });

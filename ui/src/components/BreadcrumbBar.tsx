@@ -448,21 +448,26 @@ export function BreadcrumbBar({
               ) : showIssueSearchScopeMenu ? (
                 <div
                   id="issue-search-menu"
-                  className="absolute left-0 top-full z-50 mt-2 w-60 rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:var(--surface-panel)] p-2 shadow-lg"
+                  data-testid="breadcrumb-issue-search-scope-menu"
+                  className="absolute left-0 top-full z-[70] mt-2 w-full overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:var(--surface-overlay)] shadow-[0_22px_60px_-34px_rgb(0_0_0/0.72)] dark:border-[color:var(--border-strong)]"
                 >
-                  <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Search in</div>
-                  {issueSearchFieldOptions.map((option) => (
-                    <label
-                      key={option.value}
-                      className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-[color:var(--surface-hover)]"
-                    >
-                      <Checkbox
-                        checked={issueSearchFields.includes(option.value)}
-                        onCheckedChange={() => updateIssueSearchFields(option.value)}
-                      />
-                      <span>{option.label}</span>
-                    </label>
-                  ))}
+                  <div className="border-b border-[color:var(--border-soft)] px-3 py-2">
+                    <div className="text-xs font-medium text-foreground">Search in</div>
+                  </div>
+                  <div className="space-y-0.5 p-1.5">
+                    {issueSearchFieldOptions.map((option) => (
+                      <label
+                        key={option.value}
+                        className="flex cursor-pointer items-center gap-2 rounded-[calc(var(--radius-sm)-2px)] px-2 py-1.5 text-sm transition-colors hover:bg-[color:var(--surface-active)] focus-within:bg-[color:var(--surface-active)]"
+                      >
+                        <Checkbox
+                          checked={issueSearchFields.includes(option.value)}
+                          onCheckedChange={() => updateIssueSearchFields(option.value)}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </div>

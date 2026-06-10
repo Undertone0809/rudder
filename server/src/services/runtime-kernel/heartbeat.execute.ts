@@ -84,7 +84,7 @@ import {
   buildIssueConvergenceReviewWakeupOptions,
   buildIssueReviewCloseoutWakeupOptions,
 } from "../issue-review-wakeup.js";
-import { executionWorkspaceService } from "../execution-workspaces.js";
+import { runWorkspaceService } from "../execution-workspaces.js";
 import { buildObservedRunLangfuseScores } from "../run-intelligence.js";
 import { workspaceOperationService } from "../workspace-operations.js";
 import {
@@ -445,7 +445,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
               executionWorkspaceCwd: executionWorkspace.cwd,
               cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
             },
-            "Failed to cleanup realized execution workspace after persistence failure",
+            "Failed to cleanup realized run workspace after persistence failure",
           );
         }
       }

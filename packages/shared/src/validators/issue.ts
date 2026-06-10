@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
 
-const executionWorkspaceStrategySchema = z
+const runWorkspaceStrategySchema = z
   .object({
     type: z.enum(["project_primary", "git_worktree", "adapter_managed", "cloud_sandbox"]).optional(),
     baseRef: z.string().optional().nullable(),
@@ -12,13 +12,16 @@ const executionWorkspaceStrategySchema = z
   })
   .strict();
 
-export const issueExecutionWorkspaceSettingsSchema = z
+export const issueRunWorkspaceSettingsSchema = z
   .object({
     mode: z.enum(["inherit", "shared_workspace", "isolated_workspace", "operator_branch", "reuse_existing", "agent_default"]).optional(),
-    workspaceStrategy: executionWorkspaceStrategySchema.optional().nullable(),
+    workspaceStrategy: runWorkspaceStrategySchema.optional().nullable(),
     workspaceRuntime: z.record(z.unknown()).optional().nullable(),
   })
   .strict();
+
+/** @deprecated Use issueRunWorkspaceSettingsSchema. */
+export const issueExecutionWorkspaceSettingsSchema = issueRunWorkspaceSettingsSchema;
 
 export const issueAssigneeAdapterOverridesSchema = z
   .object({
@@ -43,7 +46,19 @@ export const createIssueSchema = z.object({
   requestDepth: z.number().int().nonnegative().optional().default(0),
   billingCode: z.string().optional().nullable(),
   assigneeAgentRuntimeOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
+  runWorkspaceId: z.string().uuid().optional().nullable(),
+  runWorkspacePreference: z.enum([
+    "inherit",
+    "shared_workspace",
+    "isolated_workspace",
+    "operator_branch",
+    "reuse_existing",
+    "agent_default",
+  ]).optional().nullable(),
+  runWorkspaceSettings: issueRunWorkspaceSettingsSchema.optional().nullable(),
+  /** @deprecated Use runWorkspaceId. */
   executionWorkspaceId: z.string().uuid().optional().nullable(),
+  /** @deprecated Use runWorkspacePreference. */
   executionWorkspacePreference: z.enum([
     "inherit",
     "shared_workspace",
@@ -52,7 +67,8 @@ export const createIssueSchema = z.object({
     "reuse_existing",
     "agent_default",
   ]).optional().nullable(),
-  executionWorkspaceSettings: issueExecutionWorkspaceSettingsSchema.optional().nullable(),
+  /** @deprecated Use runWorkspaceSettings. */
+  executionWorkspaceSettings: issueRunWorkspaceSettingsSchema.optional().nullable(),
   labelIds: z.array(z.string().uuid()).optional(),
 });
 
@@ -82,7 +98,9 @@ export const updateIssueSchema = createIssueSchema.partial().extend({
 });
 
 export type UpdateIssue = z.infer<typeof updateIssueSchema>;
-export type IssueExecutionWorkspaceSettings = z.infer<typeof issueExecutionWorkspaceSettingsSchema>;
+export type IssueRunWorkspaceSettings = z.infer<typeof issueRunWorkspaceSettingsSchema>;
+/** @deprecated Use IssueRunWorkspaceSettings. */
+export type IssueExecutionWorkspaceSettings = IssueRunWorkspaceSettings;
 
 export const reorderIssueSchema = z
   .object({

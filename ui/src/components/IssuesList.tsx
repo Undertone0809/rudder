@@ -613,16 +613,20 @@ export function IssuesList({
                 </PopoverAnchor>
                 <PopoverContent
                   align="start"
-                  sideOffset={6}
-                  className="w-60 p-2"
+                  sideOffset={8}
+                  collisionPadding={12}
+                  data-testid="issue-search-scope-menu"
+                  className="!z-[70] w-48 overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:var(--surface-overlay)] p-0 shadow-[0_22px_60px_-34px_rgb(0_0_0/0.72)] sm:w-64 md:w-80 dark:border-[color:var(--border-strong)]"
                   onOpenAutoFocus={(event) => event.preventDefault()}
                 >
-                  <div className="space-y-1">
-                    <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Search in</div>
+                  <div className="border-b border-[color:var(--border-soft)] px-3 py-2">
+                    <div className="text-xs font-medium text-foreground">Search in</div>
+                  </div>
+                  <div className="space-y-0.5 p-1.5">
                     {issueSearchFieldOptions.map((option) => (
                       <label
                         key={option.value}
-                        className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent/50"
+                        className="flex cursor-pointer items-center gap-2 rounded-[calc(var(--radius-sm)-2px)] px-2 py-1.5 text-sm transition-colors hover:bg-accent/60 focus-within:bg-accent/60"
                       >
                         <Checkbox
                           checked={activeIssueSearchFields.includes(option.value)}

@@ -173,6 +173,10 @@ function canonicalMarkdownLink(label: string, href: string) {
   return `[${label}](${href})`;
 }
 
+function escapeInlineCode(value: string) {
+  return value.replace(/`/g, "\\`");
+}
+
 export function isRudderTokenHref(href: string, label: string) {
   return Boolean(
     parseMentionChipHref(href)
@@ -399,21 +403,122 @@ function shouldInsertTokenBoundarySpace(value: string) {
   return Boolean(firstChar) && !/^[\p{P}\p{S}]$/u.test(firstChar);
 }
 
-export function readCanonicalFragmentMarkdown(fragment: DocumentFragment) {
-  const read = (node: Node): string => {
+type FragmentMarkdownOptions = {
+  bareListKind?: "ordered" | "unordered";
+  bareListStart?: number;
+};
+
+export function readCanonicalFragmentMarkdown(fragment: DocumentFragment, options: FragmentMarkdownOptions = {}) {
+  const normalize = (value: string) => value
+    .replace(/\u200B/g, "")
+    .replace(/\u00A0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  function readInline(node: Node): string {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
     if (node instanceof HTMLBRElement) return "\n";
     if (node instanceof HTMLAnchorElement) {
       const label = node.textContent ?? "";
       const href = node.getAttribute("href") ?? "";
-      if (href && isRudderTokenHref(href, label)) {
+      if (href) {
         return canonicalMarkdownLink(label, href);
       }
     }
-    return Array.from(node.childNodes).map(read).join("");
-  };
+    if (node instanceof HTMLElement && node.tagName === "CODE" && !(node.parentElement instanceof HTMLPreElement)) {
+      return `\`${escapeInlineCode(node.textContent ?? "")}\``;
+    }
+    if (node instanceof HTMLElement && (node.tagName === "STRONG" || node.tagName === "B")) {
+      return `**${Array.from(node.childNodes).map(readInline).join("")}**`;
+    }
+    if (node instanceof HTMLElement && (node.tagName === "EM" || node.tagName === "I")) {
+      return `*${Array.from(node.childNodes).map(readInline).join("")}*`;
+    }
+    if (node instanceof HTMLUListElement || node instanceof HTMLOListElement) {
+      return `\n${readList(node, 0)}\n`;
+    }
+    if (node instanceof HTMLLIElement) {
+      const marker = options.bareListKind === "ordered" ? `${bareListOrdinal}.` : "-";
+      bareListOrdinal += 1;
+      return `${readListItem(node, marker, 0)}\n`;
+    }
+    if (node instanceof HTMLParagraphElement || node instanceof HTMLDivElement) {
+      return `${Array.from(node.childNodes).map(readInline).join("")}\n`;
+    }
+    return Array.from(node.childNodes).map(readInline).join("");
+  }
 
-  return Array.from(fragment.childNodes).map(read).join("");
+  function readListItem(item: HTMLLIElement, marker: string, indentLevel: number) {
+    const indent = "  ".repeat(indentLevel);
+    const nestedLists: string[] = [];
+    const bodyParts: string[] = [];
+
+    for (const child of Array.from(item.childNodes)) {
+      if (child instanceof HTMLUListElement || child instanceof HTMLOListElement) {
+        nestedLists.push(readList(child, indentLevel + 1));
+        continue;
+      }
+      bodyParts.push(readInline(child));
+    }
+
+    const body = normalize(bodyParts.join(""));
+    const lines = body ? body.split("\n") : [""];
+    const rendered = [`${indent}${marker} ${lines[0] ?? ""}`.trimEnd()];
+    for (const line of lines.slice(1)) {
+      rendered.push(`${indent}  ${line}`.trimEnd());
+    }
+    for (const nested of nestedLists) {
+      if (nested.trim()) rendered.push(nested);
+    }
+    return rendered.join("\n");
+  }
+
+  function readList(list: HTMLUListElement | HTMLOListElement, indentLevel: number) {
+    const ordered = list instanceof HTMLOListElement;
+    const start = Number.parseInt(list.getAttribute("start") ?? "1", 10);
+    let ordinal = Number.isFinite(start) ? start : 1;
+    const items: string[] = [];
+
+    for (const child of Array.from(list.children)) {
+      if (!(child instanceof HTMLLIElement)) continue;
+      const marker = ordered ? `${ordinal}.` : "-";
+      items.push(readListItem(child, marker, indentLevel));
+      ordinal += 1;
+    }
+
+    return items.join("\n");
+  }
+
+  let bareListOrdinal = options.bareListStart ?? 1;
+  return normalize(Array.from(fragment.childNodes).map(readInline).join(""));
+}
+
+function fragmentContainsList(fragment: DocumentFragment) {
+  return Boolean(fragment.querySelector("ul, ol, li"));
+}
+
+function listMarkdownOptionsForSelection(selection: Selection): FragmentMarkdownOptions {
+  if (selection.rangeCount === 0) return {};
+  const range = selection.getRangeAt(0);
+  const ancestor = range.commonAncestorContainer instanceof Element
+    ? range.commonAncestorContainer
+    : range.commonAncestorContainer.parentElement;
+  const list = ancestor?.closest("ol, ul");
+  if (!(list instanceof HTMLOListElement)) {
+    return list instanceof HTMLUListElement ? { bareListKind: "unordered" } : {};
+  }
+
+  const selectedListItems = Array.from(list.children)
+    .filter((child): child is HTMLLIElement => child instanceof HTMLLIElement && range.intersectsNode(child));
+  const firstSelectedIndex = selectedListItems.length > 0
+    ? Array.from(list.children).indexOf(selectedListItems[0]!)
+    : 0;
+  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10);
+  return {
+    bareListKind: "ordered",
+    bareListStart: (Number.isFinite(start) ? start : 1) + Math.max(0, firstSelectedIndex),
+  };
 }
 
 function normalizeVisibleCopyText(value: string) {
@@ -1206,25 +1311,35 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         ) {
           return;
         }
+        const selectedFragment = selection.getRangeAt(0).cloneContents();
+        const fragmentMarkdownOptions = listMarkdownOptionsForSelection(selection);
         let canonicalMarkdown = "";
+        const selectedVisibleText = normalizeVisibleCopyText(selection.toString());
+        const fullVisibleText = normalizeVisibleCopyText(editable.innerText);
+        if (selectedVisibleText && selectedVisibleText === fullVisibleText) {
+          canonicalMarkdown = latestValueRef.current;
+        }
+        if (!canonicalMarkdown && fragmentContainsList(selectedFragment)) {
+          canonicalMarkdown = readCanonicalFragmentMarkdown(selectedFragment, fragmentMarkdownOptions);
+        }
         const editor = loading ? get() : getInstance();
-        editor?.action((ctx) => {
-          const view = ctx.get(editorViewCtx) as unknown as ProseMirrorView;
-          if (view.state.selection.empty) return;
-          canonicalMarkdown = getMarkdown({
-            from: view.state.selection.from,
-            to: view.state.selection.to,
-          })(ctx);
-        });
         if (!canonicalMarkdown) {
-          const selectedVisibleText = normalizeVisibleCopyText(selection.toString());
-          const fullVisibleText = normalizeVisibleCopyText(editable.innerText);
+          editor?.action((ctx) => {
+            const view = ctx.get(editorViewCtx) as unknown as ProseMirrorView;
+            if (view.state.selection.empty) return;
+            canonicalMarkdown = getMarkdown({
+              from: view.state.selection.from,
+              to: view.state.selection.to,
+            })(ctx);
+          });
+        }
+        if (!canonicalMarkdown) {
           canonicalMarkdown = selectedVisibleText && selectedVisibleText === fullVisibleText
             ? latestValueRef.current
             : "";
         }
         if (!canonicalMarkdown) {
-          canonicalMarkdown = readCanonicalFragmentMarkdown(selection.getRangeAt(0).cloneContents());
+          canonicalMarkdown = readCanonicalFragmentMarkdown(selectedFragment, fragmentMarkdownOptions);
         }
         if (!canonicalMarkdown.trim()) return;
         event.preventDefault();

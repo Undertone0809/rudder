@@ -137,9 +137,9 @@ export const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeUserId: "assignee",
   assigneeAgentRuntimeOverrides: "assignee runtime overrides",
   billingCode: "billing code",
-  executionWorkspaceId: "execution workspace",
-  executionWorkspacePreference: "execution workspace preference",
-  executionWorkspaceSettings: "execution workspace settings",
+  executionWorkspaceId: "run workspace",
+  executionWorkspacePreference: "run workspace preference",
+  executionWorkspaceSettings: "run workspace settings",
   goalId: "goal",
   hiddenAt: "visibility",
   labelIds: "labels",
@@ -295,6 +295,7 @@ export function shouldShowIssueActivityEvent(evt: ActivityEvent): boolean {
   if (evt.action === "issue.comment_added") return false;
   if (HIDDEN_ISSUE_DETAIL_ACTIVITY_ACTIONS.has(evt.action)) return false;
   if (evt.action === "issue.document_updated") return false;
+  if (evt.action === "issue.updated" && issueUpdatedChangedKeys(evt.details as Record<string, unknown> | null).length === 0) return false;
   if (isLowSignalContentOnlyIssueUpdate(evt)) return false;
   return true;
 }

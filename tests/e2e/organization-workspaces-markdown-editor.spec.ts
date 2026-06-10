@@ -103,6 +103,90 @@ test("Library markdown paste parses markdown syntax and keeps code blocks readab
   await expect(editor).not.toContainText("## HEAD2");
 });
 
+test("Library markdown copied list selections keep Markdown bullet markers", async ({ page }) => {
+  const organization = await createOrg(page, "Library-Markdown-Copy-List");
+  const filePath = "agents/Wesley/instructions/HEARTBEAT.md";
+  const heartbeatMarkdown = [
+    "# HEARTBEAT.md -- Agent Heartbeat Checklist",
+    "",
+    "## 6. Exit",
+    "",
+    "- Comment on in_progress work before exiting.",
+    "- Reviewer work is not closed by a free-form accept/reject comment; use `rudder issue review`.",
+    "- A successful `todo` or `in_progress` issue run without a close-out signal can trigger a same-agent passive follow-up.",
+    "- Exit cleanly if no assignments.",
+    "",
+    "## Ordered Follow-up",
+    "",
+    "3. Read today's plan from memory.",
+    "4. Review planned items.",
+    "",
+  ].join("\n");
+  await writeWorkspaceFile(
+    page,
+    organization.id,
+    filePath,
+    heartbeatMarkdown,
+  );
+  await selectOrg(page, organization.id);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+
+  const editor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+  await expect(editor.locator("h2", { hasText: "Exit" })).toBeVisible();
+  const selectEditorNodeContents = async (selector: string) => {
+    await editor.evaluate(async (element, targetSelector) => {
+      const target = targetSelector === ":scope" ? element : element.querySelector(targetSelector);
+      if (!target) throw new Error(`Expected rendered Markdown node: ${targetSelector}`);
+      if (!(target instanceof Node)) throw new Error(`Rendered target is not a DOM node: ${targetSelector}`);
+      if (element instanceof HTMLElement && !element.contains(document.activeElement)) {
+        element.focus();
+        await new Promise(requestAnimationFrame);
+      }
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }, selector);
+  };
+
+  await selectEditorNodeContents("ul");
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString() ?? "")).toContain(
+    "Comment on in_progress work before exiting.",
+  );
+  await page.evaluate(() => navigator.clipboard.writeText("__rudder_clipboard_sentinel__"));
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
+
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe([
+    "- Comment on in_progress work before exiting.",
+    "- Reviewer work is not closed by a free-form accept/reject comment; use `rudder issue review`.",
+    "- A successful `todo` or `in_progress` issue run without a close-out signal can trigger a same-agent passive follow-up.",
+    "- Exit cleanly if no assignments.",
+  ].join("\n"));
+
+  await selectEditorNodeContents("ol");
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString() ?? "")).toContain(
+    "Read today's plan from memory.",
+  );
+  await page.evaluate(() => navigator.clipboard.writeText("__rudder_clipboard_sentinel__"));
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
+
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe([
+    "3. Read today's plan from memory.",
+    "4. Review planned items.",
+  ].join("\n"));
+
+  await selectEditorNodeContents(":scope");
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString() ?? "")).toContain(
+    "HEARTBEAT.md -- Agent Heartbeat Checklist",
+  );
+  await page.evaluate(() => navigator.clipboard.writeText("__rudder_clipboard_sentinel__"));
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
+
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(heartbeatMarkdown);
+});
+
 test("Library markdown pasted images are uploaded as assets before save", async ({ page }) => {
   const organization = await createOrg(page, "Library-Markdown-Image-Upload");
   const filePath = "docs/image-upload.md";

@@ -337,6 +337,11 @@ describe("IssuesList", () => {
     expect(document.body.textContent).toContain("Description");
     expect(document.body.textContent).toContain("Comments");
 
+    const scopeMenu = document.body.querySelector<HTMLElement>('[data-testid="issue-search-scope-menu"]');
+    expect(scopeMenu).toBeTruthy();
+    expect(scopeMenu?.className).toContain("bg-[color:var(--surface-overlay)]");
+    expect(scopeMenu?.className).toContain("!z-[70]");
+
     const checkboxFor = (labelText: string) => {
       const label = Array.from(document.body.querySelectorAll("label")).find(
         (entry) => entry.textContent?.trim() === labelText,

@@ -1,7 +1,7 @@
 import { Link, useParams } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
-import { executionWorkspacesApi } from "../api/execution-workspaces";
+import { runWorkspacesApi } from "../api/run-workspaces";
 import { queryKeys } from "../lib/queryKeys";
 import { formatDateTime } from "../lib/utils";
 
@@ -24,12 +24,12 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-export function ExecutionWorkspaceDetail() {
+export function RunWorkspaceDetail() {
   const { workspaceId } = useParams<{ workspaceId: string }>();
 
   const { data: workspace, isLoading, error } = useQuery({
-    queryKey: queryKeys.executionWorkspaces.detail(workspaceId!),
-    queryFn: () => executionWorkspacesApi.get(workspaceId!),
+    queryKey: queryKeys.runWorkspaces.detail(workspaceId!),
+    queryFn: () => runWorkspacesApi.get(workspaceId!),
     enabled: Boolean(workspaceId),
   });
 
@@ -40,7 +40,7 @@ export function ExecutionWorkspaceDetail() {
   return (
     <div className="max-w-2xl space-y-4">
       <div className="space-y-1">
-        <div className="text-xs text-muted-foreground">Execution workspace</div>
+        <div className="text-xs text-muted-foreground">Run workspace</div>
         <h1 className="text-2xl font-semibold">{workspace.name}</h1>
         <div className="text-sm text-muted-foreground">
           {workspace.status} · {workspace.mode} · {workspace.providerType}

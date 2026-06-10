@@ -43,7 +43,7 @@ Session routing fields:
 
 Standard outbound payload additions:
 - rudder (object): standardized Rudder context added to every gateway agent request
-- rudder.workspace (object, optional): resolved execution workspace for this run
+- rudder.workspace (object, optional): resolved run workspace for this run
 - rudder.workspaces (array, optional): additional workspace hints Rudder exposed to the run
 - rudder.workspaceRuntime (object, optional): normalized runtime service intent config for the workspace
 
