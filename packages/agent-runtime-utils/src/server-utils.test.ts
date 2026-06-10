@@ -385,6 +385,15 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).toContain("always include a user-visible Markdown link");
     expect(loaded.prefix).toContain('rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>" --json');
     expect(loaded.prefix).not.toContain("library-file://file?p=<url-encoded-relative-path>&t=<url-encoded-title>");
+    expect(loaded.prefix).toContain("## Rudder Renderable Links");
+    expect(loaded.prefix).toContain("prefer Rudder's renderable Markdown link syntax over plain IDs");
+    expect(loaded.prefix).toContain("[<identifier-or-title>](issue://<issue-id>?r=<identifier>)");
+    expect(loaded.prefix).toContain("[<agent-name>](agent://<agent-id>)");
+    expect(loaded.prefix).toContain("[<agent-name>](agent://<agent-id>?intent=wake)");
+    expect(loaded.prefix).toContain("[<project-name>](project://<project-id>)");
+    expect(loaded.prefix).toContain("[<chat-title>](chat://<conversation-id>?t=<url-encoded-title>)");
+    expect(loaded.prefix).toContain("Library files: use the `markdownLink` returned by");
+    expect(loaded.prefix).toContain("not inside code spans or code blocks");
     expect(loaded.prefix).toContain("Use `/tmp` only for transient scratch files");
     expect(loaded.prefix).toContain("Local trusted runtimes may expose the host operator home as `$RUDDER_OPERATOR_HOME`");
     expect(loaded.prefix).toContain("[NameSilo transfer page](https://www.namesilo.com/account_domain_manage_transfer.php)");
