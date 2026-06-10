@@ -56,6 +56,8 @@ describe("agent-v1 registry", () => {
       "project.update",
       "library.file.list",
       "library.file.get",
+      "library.file.ref",
+      "library.file.link",
       "library.file.put",
       "approval.get",
       "approval.issues",
