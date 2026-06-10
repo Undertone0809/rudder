@@ -62,6 +62,13 @@ export function useKeyboardShortcuts({
         return;
       }
 
+      // Cmd+N → New Issue
+      if (e.key.toLowerCase() === "n" && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        onNewIssue?.();
+        return;
+      }
+
       // C → New Issue
       if (e.key === "c" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();

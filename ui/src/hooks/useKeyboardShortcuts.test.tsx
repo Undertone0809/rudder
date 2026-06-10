@@ -12,17 +12,26 @@ import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
-function ShortcutHarness({ onNavigateBack }: { onNavigateBack: () => boolean }) {
-  useKeyboardShortcuts({ onNavigateBack });
+function ShortcutHarness({
+  onNavigateBack,
+  onNewIssue,
+}: {
+  onNavigateBack?: () => boolean;
+  onNewIssue?: () => void;
+}) {
+  useKeyboardShortcuts({ onNavigateBack, onNewIssue });
   return <div />;
 }
 
-async function renderShortcutHarness(onNavigateBack: () => boolean) {
+async function renderShortcutHarness(handlers: {
+  onNavigateBack?: () => boolean;
+  onNewIssue?: () => void;
+}) {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
   await act(async () => {
-    root!.render(<ShortcutHarness onNavigateBack={onNavigateBack} />);
+    root!.render(<ShortcutHarness {...handlers} />);
     await Promise.resolve();
   });
 }
@@ -47,6 +56,17 @@ function dispatchEscapeFrom(target: HTMLElement) {
   return event;
 }
 
+function dispatchKey(key: string, init: KeyboardEventInit = {}, target: EventTarget = document) {
+  const event = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
 describe("useKeyboardShortcuts", () => {
   afterEach(() => {
     act(() => {
@@ -60,7 +80,7 @@ describe("useKeyboardShortcuts", () => {
 
   it("navigates back on plain Escape when no Escape layer is open", async () => {
     const onNavigateBack = vi.fn(() => true);
-    await renderShortcutHarness(onNavigateBack);
+    await renderShortcutHarness({ onNavigateBack });
 
     const event = dispatchEscape();
 
@@ -70,7 +90,7 @@ describe("useKeyboardShortcuts", () => {
 
   it("lets open menus and listboxes handle Escape before back navigation", async () => {
     const onNavigateBack = vi.fn(() => true);
-    await renderShortcutHarness(onNavigateBack);
+    await renderShortcutHarness({ onNavigateBack });
 
     const menu = document.createElement("div");
     menu.setAttribute("role", "menu");
@@ -88,7 +108,7 @@ describe("useKeyboardShortcuts", () => {
 
   it("navigates back on Escape from editable content when no inner layer handled it", async () => {
     const onNavigateBack = vi.fn(() => true);
-    await renderShortcutHarness(onNavigateBack);
+    await renderShortcutHarness({ onNavigateBack });
 
     const editable = document.createElement("div");
     editable.contentEditable = "true";
@@ -98,5 +118,27 @@ describe("useKeyboardShortcuts", () => {
 
     expect(onNavigateBack).toHaveBeenCalledTimes(1);
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("opens a new issue on Command+N and suppresses the browser shortcut", async () => {
+    const onNewIssue = vi.fn();
+    await renderShortcutHarness({ onNewIssue });
+
+    const event = dispatchKey("n", { metaKey: true });
+
+    expect(onNewIssue).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("does not open a new issue from editable fields", async () => {
+    const onNewIssue = vi.fn();
+    await renderShortcutHarness({ onNewIssue });
+    const input = document.createElement("input");
+    document.body.append(input);
+
+    const event = dispatchKey("n", { metaKey: true }, input);
+
+    expect(onNewIssue).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
   });
 });
