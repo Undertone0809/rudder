@@ -399,8 +399,8 @@ export function createHeartbeatRecoveryHandlers(context: any) {
   }
 
   async function evaluateTimerPreflight(agent: typeof agents.$inferSelect): Promise<TimerPreflightResult> {
-    const pendingWakeup = await db
-      .select({ id: agentWakeupRequests.id })
+    const pendingWakeups = await db
+      .select({ id: agentWakeupRequests.id, status: agentWakeupRequests.status })
       .from(agentWakeupRequests)
       .where(
         and(
@@ -411,11 +411,8 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           lte(agentWakeupRequests.requestedAt, new Date()),
         ),
       )
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (pendingWakeup) {
-      return { shouldRun: false, skipReason: "heartbeat.preflight.pending_wakeup_request" };
-    }
+      .limit(100);
+    const pendingWakeupCount = pendingWakeups.length;
 
     const assigneeIssues = await issuesSvc.list(agent.orgId, {
       assigneeAgentId: agent.id,
@@ -435,6 +432,20 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     });
     if (reviewerIssues.length > 0) {
       return { shouldRun: true, reason: "reviewer_issue" };
+    }
+
+    if (pendingWakeupCount > 0) {
+      return {
+        shouldRun: false,
+        skipReason: "heartbeat.preflight.pending_wakeup_request",
+        diagnostics: {
+          pendingWakeupCount,
+          pendingWakeupStatuses: pendingWakeups.reduce((acc: Record<string, number>, row) => {
+            acc[row.status] = (acc[row.status] ?? 0) + 1;
+            return acc;
+          }, {}),
+        },
+      };
     }
 
     return { shouldRun: false, skipReason: "heartbeat.preflight.no_actionable_work" };
