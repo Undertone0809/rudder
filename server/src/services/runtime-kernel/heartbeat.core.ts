@@ -566,7 +566,9 @@ export function readToolCommandInput(input: unknown): string | null {
 
 export function isCommandTranscriptTool(name: string) {
   const normalized = name.trim().toLowerCase();
-  return ["command_execution", "shell", "shelltoolcall", "bash"].includes(normalized);
+  const terminalName = normalized.split(".").filter(Boolean).at(-1) ?? normalized;
+  const compact = terminalName.replace(/[\s_-]+/gu, "");
+  return ["commandexecution", "shell", "shelltoolcall", "bash", "execcommand"].includes(compact);
 }
 
 export function isReadTranscriptTool(name: string) {
