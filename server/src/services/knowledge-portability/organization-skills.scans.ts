@@ -38,6 +38,42 @@ type OrganizationSkillScanContext = {
 export function createOrganizationSkillScanHandlers(context: OrganizationSkillScanContext) {
   const { ensureSkillInventoryCurrent, listFull, projects, upsertImportedSkills } = context;
 
+  const applyLocalScanMetadata = (skill: ImportedSkill, root: string): ImportedSkill => ({
+    ...skill,
+    metadata: {
+      ...(skill.metadata ?? {}),
+      sourceKind: "local_scan",
+      sourceRoot: root,
+    },
+  });
+
+  const prepareSameDirectoryLocalScanUpdate = (
+    existingSkill: OrganizationSkill,
+    nextSkill: ImportedSkill,
+    root: string,
+  ): ImportedSkill => {
+    const existingMetadata = existingSkill.metadata ?? {};
+    const existingSourceKind = asString(existingMetadata.sourceKind);
+    const metadata: Record<string, unknown> = {
+      ...(nextSkill.metadata ?? {}),
+      ...existingMetadata,
+      sourceKind: existingSourceKind || "local_scan",
+    };
+
+    if (metadata.sourceKind === "local_scan") {
+      metadata.sourceRoot = root;
+    } else {
+      delete metadata.sourceRoot;
+    }
+
+    return {
+      ...nextSkill,
+      key: existingSkill.key,
+      slug: existingSkill.slug,
+      metadata,
+    };
+  };
+
   async function scanProjectWorkspaces(
     orgId: string,
     input: OrganizationSkillProjectScanRequest = {},
@@ -280,13 +316,8 @@ export function createOrganizationSkillScanHandlers(context: OrganizationSkillSc
 
       discovered += discoveredSkills.length;
 
-      for (const nextSkill of discoveredSkills) {
-        nextSkill.metadata = {
-          ...(nextSkill.metadata ?? {}),
-          sourceKind: "local_scan",
-          sourceRoot: root,
-        };
-
+      for (const discoveredSkill of discoveredSkills) {
+        const nextSkill = applyLocalScanMetadata(discoveredSkill, root);
         const normalizedSourceDir = normalizeSourceLocatorDirectory(nextSkill.sourceLocator);
         const existingByKey = acceptedByKey.get(nextSkill.key) ?? null;
         if (existingByKey) {
@@ -310,7 +341,24 @@ export function createOrganizationSkillScanHandlers(context: OrganizationSkillSc
             continue;
           }
 
-          const persisted = (await upsertImportedSkills(orgId, [nextSkill]))[0];
+          const persisted = (await upsertImportedSkills(orgId, [
+            prepareSameDirectoryLocalScanUpdate(existingByKey, nextSkill, root),
+          ]))[0];
+          if (!persisted) continue;
+          updated.push(persisted);
+          upsertAcceptedSkill(persisted);
+          continue;
+        }
+
+        const existingByDirectory = acceptedSkills.find((skill) => {
+          if (skill.sourceType !== "local_path") return false;
+          const existingSourceDir = normalizeSkillDirectory(skill);
+          return Boolean(existingSourceDir && normalizedSourceDir && existingSourceDir === normalizedSourceDir);
+        });
+        if (existingByDirectory) {
+          const persisted = (await upsertImportedSkills(orgId, [
+            prepareSameDirectoryLocalScanUpdate(existingByDirectory, nextSkill, root),
+          ]))[0];
           if (!persisted) continue;
           updated.push(persisted);
           upsertAcceptedSkill(persisted);
