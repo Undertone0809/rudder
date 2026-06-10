@@ -42,6 +42,18 @@ function Harness() {
   );
 }
 
+function CustomLabelHarness() {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  return (
+    <div>
+      <IssueDetailFind rootRef={rootRef} searchLabel="Find in Library" />
+      <section ref={rootRef}>
+        <p>Library document content</p>
+      </section>
+    </div>
+  );
+}
+
 describe("IssueDetailFind", () => {
   let cleanup: (() => void) | null = null;
 
@@ -109,5 +121,28 @@ describe("IssueDetailFind", () => {
 
     expect(document.querySelector("input[aria-label='Find in issue']")).toBeNull();
     expect(document.querySelector("mark[data-issue-find-highlight='true']")).toBeNull();
+  });
+
+  it("uses a contextual search label when provided", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanup = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<CustomLabelHarness />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector<HTMLInputElement>("input[aria-label='Find in Library']")).not.toBeNull();
+    expect(document.querySelector("[role='search']")?.getAttribute("aria-label")).toBe("Find in Library");
   });
 });

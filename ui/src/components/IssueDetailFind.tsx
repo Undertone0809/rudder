@@ -8,12 +8,16 @@ import {
   highlightIssueFindMatches,
   isEditableIssueFindTarget,
   isIssueFindShortcut,
+  scrollIssueFindMatchIntoView,
+  type IssueFindMatch,
 } from "@/lib/issue-detail-find";
 
 type IssueDetailFindProps = {
   rootRef: RefObject<HTMLElement | null>;
   disabled?: boolean;
   refreshKey?: string;
+  searchLabel?: string;
+  highlightMode?: "mark" | "css";
 };
 
 function hasBlockingOverlay() {
@@ -33,13 +37,19 @@ function isPlainEscape(event: KeyboardEvent) {
     !event.shiftKey;
 }
 
-export function IssueDetailFind({ rootRef, disabled = false, refreshKey }: IssueDetailFindProps) {
+export function IssueDetailFind({
+  rootRef,
+  disabled = false,
+  refreshKey,
+  searchLabel = "Find in issue",
+  highlightMode = "mark",
+}: IssueDetailFindProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [matchCount, setMatchCount] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const matchesRef = useRef<HTMLElement[]>([]);
+  const matchesRef = useRef<IssueFindMatch[]>([]);
   const activeIndexRef = useRef(0);
   const lastQueryRef = useRef("");
   const skipEditableRootRef = useRef<HTMLElement | null>(null);
@@ -78,7 +88,7 @@ export function IssueDetailFind({ rootRef, disabled = false, refreshKey }: Issue
     activeIndexRef.current = nextIndex;
     setActiveIndex(nextIndex);
     const active = activateIssueFindMatch(matches, nextIndex);
-    active?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+    scrollIssueFindMatchIntoView(active);
   }, []);
 
   useEffect(() => {
@@ -120,6 +130,7 @@ export function IssueDetailFind({ rootRef, disabled = false, refreshKey }: Issue
     if (!root || !open) return;
 
     const nextMatches = highlightIssueFindMatches(root, query, {
+      mode: highlightMode,
       skipElement: skipEditableRootRef.current,
     });
     matchesRef.current = nextMatches;
@@ -138,14 +149,14 @@ export function IssueDetailFind({ rootRef, disabled = false, refreshKey }: Issue
     setActiveIndex(nextActiveIndex);
     const active = activateIssueFindMatch(nextMatches, nextActiveIndex);
     if (trimmedQuery && active) {
-      active.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+      scrollIssueFindMatchIntoView(active);
     }
 
     return () => {
       clearIssueFindHighlights(root);
       matchesRef.current = [];
     };
-  }, [open, query, refreshKey, rootRef]);
+  }, [highlightMode, open, query, refreshKey, rootRef]);
 
   useEffect(() => {
     return () => {
@@ -164,7 +175,7 @@ export function IssueDetailFind({ rootRef, disabled = false, refreshKey }: Issue
     <div
       data-issue-find-ui
       role="search"
-      aria-label="Find in issue"
+      aria-label={searchLabel}
       className="fixed right-4 top-4 z-50 flex w-[min(420px,calc(100vw-2rem))] items-center gap-1 rounded-md border border-border bg-popover p-1.5 text-popover-foreground shadow-md"
     >
       <Search className="ml-1 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -195,7 +206,7 @@ export function IssueDetailFind({ rootRef, disabled = false, refreshKey }: Issue
         }}
         className="h-7 min-w-0 flex-1 border-0 bg-transparent px-1 text-sm shadow-none focus-visible:ring-0"
         placeholder="Find"
-        aria-label="Find in issue"
+        aria-label={searchLabel}
       />
       <span className="min-w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
         {countLabel}

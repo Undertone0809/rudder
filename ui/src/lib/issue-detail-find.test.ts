@@ -20,7 +20,7 @@ describe("issue detail find helpers", () => {
 
     const active = activateIssueFindMatch(matches, 1);
 
-    expect(active?.textContent).toBe("issue");
+    expect((active as HTMLElement | null)?.textContent).toBe("issue");
     expect(root.querySelectorAll(".issue-find-highlight--active")).toHaveLength(1);
 
     clearIssueFindHighlights(root);
@@ -43,8 +43,8 @@ describe("issue detail find helpers", () => {
     const matches = highlightIssueFindMatches(root, "issue", { skipElement: editable });
 
     expect(matches).toHaveLength(2);
-    expect(matches[0]?.textContent).toBe("issue");
-    expect(matches[1]?.closest("button")?.textContent).toBe("issue property trigger");
+    expect((matches[0] as HTMLElement | undefined)?.textContent).toBe("issue");
+    expect((matches[1] as HTMLElement | undefined)?.closest("button")?.textContent).toBe("issue property trigger");
   });
 
   it("can search inactive contenteditable text used by rendered markdown", () => {

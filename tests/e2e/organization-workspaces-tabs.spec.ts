@@ -2,6 +2,65 @@ import { expect, test } from "@playwright/test";
 
 test.use({ serviceWorkers: "block" });
 
+test("Library command-f searches the current editor tab content", async ({ page }) => {
+  const suffix = Date.now();
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Find-Shortcut-${suffix}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const filePath = `projects/find-shortcut-${suffix}/current.md`;
+  const needle = `FindLibraryNeedle${suffix}`;
+  const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+    data: {
+      filePath,
+      content: `# Searchable Library doc\n\nThis active Library tab contains ${needle} for keyword search.\n`,
+    },
+  });
+  expect(fileRes.ok()).toBe(true);
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+  await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText("current.md", { timeout: 15_000 });
+  await expect(page.getByText(needle)).toBeVisible();
+
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
+
+  const findUi = page.getByRole("search", { name: "Find in Library" });
+  await expect(findUi).toBeVisible();
+
+  const input = findUi.getByRole("textbox", { name: "Find in Library" });
+  await input.fill(needle);
+
+  await expect(findUi).toContainText("1 of 1");
+  await expect.poll(async () => page.evaluate(() => {
+    const highlights = (CSS as unknown as {
+      highlights?: { get: (name: string) => { size?: number } | undefined };
+    }).highlights;
+    return highlights?.get("rudder-issue-find-highlight")?.size ?? 0;
+  })).toBe(1);
+  await expect.poll(async () => page.evaluate(() => {
+    const highlights = (CSS as unknown as {
+      highlights?: { get: (name: string) => { size?: number } | undefined };
+    }).highlights;
+    return highlights?.get("rudder-issue-find-highlight-active")?.size ?? 0;
+  })).toBe(1);
+
+  await input.press("Escape");
+  await expect(findUi).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() => {
+    const highlights = (CSS as unknown as {
+      highlights?: { get: (name: string) => { size?: number } | undefined };
+    }).highlights;
+    return highlights?.get("rudder-issue-find-highlight")?.size ?? 0;
+  })).toBe(0);
+});
+
 test("Library markdown file links open as retained editor tabs", async ({ page }) => {
   const suffix = Date.now();
   const orgRes = await page.request.post("/api/orgs", {

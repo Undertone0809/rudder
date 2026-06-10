@@ -1,4 +1,6 @@
 export const ISSUE_FIND_MARK_SELECTOR = "mark[data-issue-find-highlight='true']";
+export const ISSUE_FIND_CSS_HIGHLIGHT_NAME = "rudder-issue-find-highlight";
+export const ISSUE_FIND_ACTIVE_CSS_HIGHLIGHT_NAME = "rudder-issue-find-highlight-active";
 
 const ISSUE_FIND_SKIP_SELECTOR = [
   "[data-issue-find-ui]",
@@ -13,7 +15,10 @@ const ISSUE_FIND_SKIP_SELECTOR = [
 
 type HighlightIssueFindOptions = {
   skipElement?: HTMLElement | null;
+  mode?: "mark" | "css";
 };
+
+export type IssueFindMatch = HTMLElement | Range;
 
 const inactiveHighlightBackground = "color-mix(in oklab, #f4c430 62%, transparent)";
 const activeHighlightBackground = "color-mix(in oklab, var(--accent-base) 58%, #f4c430)";
@@ -32,6 +37,25 @@ function nodeFilterValue(root: HTMLElement, key: "FILTER_ACCEPT" | "FILTER_REJEC
   );
 }
 
+type CssHighlightRegistry = {
+  set: (name: string, highlight: unknown) => void;
+  delete: (name: string) => void;
+};
+
+type CssHighlightConstructor = new (...ranges: Range[]) => unknown;
+
+function getCssHighlightApi(doc: Document) {
+  const view = doc.defaultView as (Window & {
+    CSS?: { highlights?: CssHighlightRegistry };
+    Highlight?: CssHighlightConstructor;
+  }) | null;
+  if (!view?.CSS?.highlights || !view.Highlight) return null;
+  return {
+    Highlight: view.Highlight,
+    highlights: view.CSS.highlights,
+  };
+}
+
 export function isEditableIssueFindTarget(target: EventTarget | null) {
   const element = target instanceof HTMLElement ? target : null;
   if (!element) return false;
@@ -47,6 +71,10 @@ export function isIssueFindShortcut(event: Pick<KeyboardEvent, "key" | "metaKey"
 }
 
 export function clearIssueFindHighlights(root: HTMLElement) {
+  const cssHighlightApi = getCssHighlightApi(root.ownerDocument);
+  cssHighlightApi?.highlights.delete(ISSUE_FIND_CSS_HIGHLIGHT_NAME);
+  cssHighlightApi?.highlights.delete(ISSUE_FIND_ACTIVE_CSS_HIGHLIGHT_NAME);
+
   const marks = Array.from(root.querySelectorAll(ISSUE_FIND_MARK_SELECTOR));
   for (const mark of marks) {
     const parent = mark.parentNode;
@@ -102,9 +130,10 @@ export function highlightIssueFindMatches(
     next = walker.nextNode();
   }
 
-  const marks: HTMLElement[] = [];
+  const marks: IssueFindMatch[] = [];
   const lowerQuery = query.toLocaleLowerCase();
   const queryLength = query.length;
+  const cssHighlightApi = options.mode === "css" ? getCssHighlightApi(doc) : null;
 
   for (const textNode of textNodes) {
     const text = textNode.nodeValue ?? "";
@@ -112,6 +141,19 @@ export function highlightIssueFindMatches(
     let fromIndex = 0;
     let matchIndex = lowerText.indexOf(lowerQuery, fromIndex);
     if (matchIndex === -1) continue;
+
+    if (cssHighlightApi) {
+      while (matchIndex !== -1) {
+        const range = doc.createRange();
+        range.setStart(textNode, matchIndex);
+        range.setEnd(textNode, matchIndex + queryLength);
+        marks.push(range);
+
+        fromIndex = matchIndex + queryLength;
+        matchIndex = lowerText.indexOf(lowerQuery, fromIndex);
+      }
+      continue;
+    }
 
     const fragment = doc.createDocumentFragment();
 
@@ -139,13 +181,34 @@ export function highlightIssueFindMatches(
     textNode.replaceWith(fragment);
   }
 
+  if (cssHighlightApi && marks.length > 0) {
+    const ranges = marks.filter((match): match is Range => match instanceof Range);
+    cssHighlightApi.highlights.set(ISSUE_FIND_CSS_HIGHLIGHT_NAME, new cssHighlightApi.Highlight(...ranges));
+  }
+
   return marks;
 }
 
-export function activateIssueFindMatch(matches: HTMLElement[], activeIndex: number): HTMLElement | null {
-  let active: HTMLElement | null = null;
+export function activateIssueFindMatch(matches: IssueFindMatch[], activeIndex: number): IssueFindMatch | null {
+  let active: IssueFindMatch | null = null;
+  const firstRange = matches.find((match): match is Range => match instanceof Range) ?? null;
+  const cssDocument = firstRange?.startContainer.ownerDocument ?? null;
+  const cssHighlightApi = cssDocument ? getCssHighlightApi(cssDocument) : null;
+
+  if (cssHighlightApi) {
+    const activeRange = matches[activeIndex] instanceof Range ? matches[activeIndex] as Range : null;
+    if (activeRange) {
+      cssHighlightApi.highlights.set(ISSUE_FIND_ACTIVE_CSS_HIGHLIGHT_NAME, new cssHighlightApi.Highlight(activeRange));
+      active = activeRange;
+    } else {
+      cssHighlightApi.highlights.delete(ISSUE_FIND_ACTIVE_CSS_HIGHLIGHT_NAME);
+    }
+    return active;
+  }
+
   for (let index = 0; index < matches.length; index += 1) {
-    const match = matches[index]!;
+    const match = matches[index];
+    if (!(match instanceof HTMLElement)) continue;
     const isActive = index === activeIndex;
     match.dataset.issueFindActive = isActive ? "true" : "false";
     match.classList.toggle("issue-find-highlight--active", isActive);
@@ -156,4 +219,16 @@ export function activateIssueFindMatch(matches: HTMLElement[], activeIndex: numb
     }
   }
   return active;
+}
+
+export function scrollIssueFindMatchIntoView(match: IssueFindMatch | null) {
+  if (!match) return;
+  if (match instanceof HTMLElement) {
+    match.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+    return;
+  }
+
+  const parent = match.startContainer.parentNode;
+  const element = parent instanceof HTMLElement ? parent : null;
+  element?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
 }

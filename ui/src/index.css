@@ -4,6 +4,16 @@
 
 @custom-variant dark (&:is(.dark *));
 
+::highlight(rudder-issue-find-highlight) {
+  background: color-mix(in oklab, #f4c430 62%, transparent);
+  color: inherit;
+}
+
+::highlight(rudder-issue-find-highlight-active) {
+  background: color-mix(in oklab, var(--accent-base) 58%, #f4c430);
+  color: inherit;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

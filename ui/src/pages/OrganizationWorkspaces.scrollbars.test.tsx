@@ -272,6 +272,9 @@ vi.mock("../components/MarkdownEditor", () => ({
     ) => void;
   }) => (
     <div>
+      <div contentEditable suppressContentEditableWarning data-testid="mock-markdown-editor-content">
+        {value ?? ""}
+      </div>
       <textarea aria-label="Markdown editor" readOnly value={value ?? ""} />
       <button
         type="button"
@@ -361,6 +364,7 @@ afterEach(() => {
   currentRoot = null;
   currentContainer = null;
   document.body.innerHTML = "";
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
@@ -684,6 +688,35 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(statusBar?.textContent).toContain("Markdown");
     expect(statusBar?.textContent).toMatch(/\d+ words?/);
     expect(statusBar?.textContent).toContain("Saved");
+  });
+
+  it("opens Library keyword search from Command+F and highlights active tab content", async () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/notes.md";
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    renderWorkspacesPage();
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const input = document.querySelector<HTMLInputElement>("input[aria-label='Find in Library']");
+    expect(input).not.toBeNull();
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(input, "README");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("1 of");
+    expect(document.querySelector("[data-testid='org-workspaces-editor-content'] mark[data-issue-find-highlight='true']"))
+      .not.toBeNull();
   });
 
   it("closes the current Library file tab on command-w without allowing the browser shortcut", async () => {

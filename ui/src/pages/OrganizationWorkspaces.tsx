@@ -46,6 +46,7 @@ import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
 import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
+import { IssueDetailFind } from "../components/IssueDetailFind";
 import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
 import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
@@ -2968,6 +2969,7 @@ export function OrganizationWorkspaceBrowser({
   const syncedFileRef = useRef<{ filePath: string | null; content: string }>({ filePath: null, content: "" });
   const saveWorkspaceFileMutateRef = useRef<((payload: { filePath: string; content: string }) => void) | null>(null);
   const editorScrollElementRef = useRef<HTMLElement | null>(null);
+  const libraryFindRootRef = useRef<HTMLDivElement | null>(null);
   const markdownEditorRef = useRef<MarkdownEditorRef | null>(null);
   const openFileTabScrollerElementRef = useRef<HTMLDivElement | null>(null);
   const openFileTabElementsRef = useRef(new Map<string, HTMLDivElement>());
@@ -3946,6 +3948,15 @@ export function OrganizationWorkspaceBrowser({
     : draftFilePath === selectedFilePath && syncedFileRef.current.filePath === selectedFilePath && draftContent !== syncedFileRef.current.content
       ? "Saving"
       : "Saved";
+  const libraryFindRefreshKey = [
+    selectedFilePath ?? "",
+    selectedFileDetail?.filePath ?? "",
+    selectedFileDetail?.previewKind ?? "",
+    selectedFileDetail?.contentPath ?? "",
+    selectedFileDetail?.message ?? "",
+    selectedFileDetail?.truncated ? "truncated" : "full",
+    selectedEditorContent,
+  ].join(":");
   const canEditSelectedFile = Boolean(
     selectedFilePath
     && selectedFileDetail
@@ -4559,12 +4570,19 @@ export function OrganizationWorkspaceBrowser({
               </div>
             ) : null}
             <div
+              ref={libraryFindRootRef}
               data-testid="org-workspaces-editor-content"
               className={cn(
                 "min-h-0 flex-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)]",
                 !showWorkspaceFileTabs && visibleWorkspaceBreadcrumbPath === null && "rounded-[var(--desktop-workspace-radius)] border-t",
               )}
             >
+              <IssueDetailFind
+                highlightMode="css"
+                rootRef={libraryFindRootRef}
+                refreshKey={libraryFindRefreshKey}
+                searchLabel="Find in Library"
+              />
               {selectedProjectResource ? (
                 <ProjectResourceDetailPanel
                   project={selectedProjectResource.project}
