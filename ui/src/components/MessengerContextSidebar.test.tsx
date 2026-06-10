@@ -475,6 +475,85 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('data-slot="status-progress-arc"');
   });
 
+  it("deduplicates repeated pinned split issue rows by thread key", () => {
+    chatList = [];
+    const pinnedIssueThread = {
+      threadKey: "issue:issue-1",
+      kind: "issues",
+      title: "ISS-1 · Pinned split issue",
+      preview: "Pinned issue should render once.",
+      subtitle: "assigned to me",
+      href: "/messenger/issues/ISS-1",
+      latestActivityAt: "2026-04-11T08:40:00.000Z",
+      lastReadAt: null,
+      unreadCount: 1,
+      needsAttention: true,
+      isPinned: true,
+      metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "in_progress" },
+    };
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        pinnedIssueThread,
+        {
+          ...pinnedIssueThread,
+          preview: "Duplicate from a later page should not render.",
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.match(/data-testid="messenger-thread-issue-issue-1"/g) ?? []).toHaveLength(1);
+    expect(html.match(/ISS-1 · Pinned split issue/g) ?? []).toHaveLength(1);
+  });
+
+  it("keeps a refreshed duplicate split issue row when the older watermark is hidden", () => {
+    chatList = [];
+    localStorageValues["rudder.messengerHiddenIssueThreads:org-1:anonymous"] = JSON.stringify({
+      "issue:issue-1": "2026-04-11T08:40:00.000Z|todo|idle|0|settled",
+    });
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Hidden old split issue",
+          preview: "Old watermark was dismissed.",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T08:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: true,
+          metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "todo" },
+        },
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Fresh split issue",
+          preview: "New watermark should render.",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:10:00.000Z",
+          lastReadAt: null,
+          unreadCount: 1,
+          needsAttention: true,
+          isPinned: true,
+          metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "in_progress" },
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.match(/data-testid="messenger-thread-issue-issue-1"/g) ?? []).toHaveLength(1);
+    expect(html).toContain("ISS-1 · Fresh split issue");
+    expect(html).not.toContain("ISS-1 · Hidden old split issue");
+  });
+
   it("keeps the status icon and shows a right-side loader for split issue rows with an active execution run", () => {
     chatList = [];
     messengerModel = {

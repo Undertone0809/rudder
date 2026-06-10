@@ -1216,6 +1216,15 @@ function isPinnedEntry(entry: OrganizedThreadEntry) {
   return typeof entry.thread.isPinned === "boolean" ? entry.thread.isPinned : Boolean(entry.conversation?.isPinned);
 }
 
+function dedupeThreadSummariesByKey(threadSummaries: MessengerThreadSummaryItem[]) {
+  const seen = new Set<string>();
+  return threadSummaries.filter((thread) => {
+    if (seen.has(thread.threadKey)) return false;
+    seen.add(thread.threadKey);
+    return true;
+  });
+}
+
 function splitIssueThreadWatermark(thread: MessengerThreadSummaryItem) {
   if (thread.metadata?.splitIssue !== true) return null;
   const metadata = thread.metadata as Record<string, unknown>;
@@ -1504,11 +1513,12 @@ export function MessengerContextSidebar() {
   }, [agentsQuery.data]);
 
   const visibleThreadSummaries = useMemo(() => {
-    return model.threadSummaries.filter((thread) => {
+    const unhiddenThreads = model.threadSummaries.filter((thread) => {
       const watermark = splitIssueThreadWatermark(thread);
       if (!watermark) return true;
       return hiddenIssueThreadWatermarks[thread.threadKey] !== watermark;
     });
+    return dedupeThreadSummariesByKey(unhiddenThreads);
   }, [hiddenIssueThreadWatermarks, model.threadSummaries]);
 
   const organizedThreadSections = useMemo(() => {
@@ -1553,13 +1563,13 @@ export function MessengerContextSidebar() {
   const activeThreadKey = useMemo(() => {
     if (route.kind === "chat" && route.conversationId) return `chat:${route.conversationId}`;
     if (route.kind === "issue") {
-      return model.threadSummaries.find((thread) => threadMatchesMessengerIssueRoute(thread, route.issueId))?.threadKey ?? `issue:${route.issueId}`;
+      return visibleThreadSummaries.find((thread) => threadMatchesMessengerIssueRoute(thread, route.issueId))?.threadKey ?? `issue:${route.issueId}`;
     }
     if (route.kind === "issues") return "issues";
     if (route.kind === "approvals") return "approvals";
     if (route.kind === "system") return route.threadKind;
     return null;
-  }, [model.threadSummaries, route]);
+  }, [route, visibleThreadSummaries]);
   const projectSectionRequiredVisibleCounts = useMemo(() => {
     if (threadOrganizationRule !== "project" || !activeThreadKey) return new Map<string, number>();
     const required = new Map<string, number>();
@@ -1570,8 +1580,8 @@ export function MessengerContextSidebar() {
     return required;
   }, [activeThreadKey, organizedThreadSections, threadOrganizationRule]);
   const activeThread = useMemo(
-    () => model.threadSummaries.find((thread) => thread.threadKey === activeThreadKey) ?? null,
-    [activeThreadKey, model.threadSummaries],
+    () => visibleThreadSummaries.find((thread) => thread.threadKey === activeThreadKey) ?? null,
+    [activeThreadKey, visibleThreadSummaries],
   );
   const activeThreadDetailReady = useMemo(() => {
     if (route.kind === "issue") return !!activeThread;
@@ -2134,7 +2144,7 @@ export function MessengerContextSidebar() {
     model.isFetchingMoreThreadSummaries,
     model.isLoading,
     model.loadMoreThreadSummaries,
-    model.threadSummaries.length,
+    visibleThreadSummaries.length,
   ]);
 
   if (!model.selectedOrganizationId) return null;
@@ -2181,7 +2191,7 @@ export function MessengerContextSidebar() {
           </span>
           <span className="truncate text-[13px] font-medium leading-tight">New chat</span>
         </Link>
-        {model.isLoading && model.threadSummaries.length === 0 ? (
+        {model.isLoading && visibleThreadSummaries.length === 0 ? (
           <div className="space-y-1 px-1.5">
             {Array.from({ length: 5 }).map((_, index) => (
               <div

@@ -492,6 +492,51 @@ describe("messengerService and issue follows", () => {
       `chat:${olderChatId}`,
     ]);
     expect(pinnedSummaries[0]?.isPinned).toBe(true);
+
+    const firstPinnedPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 2,
+      splitIssues: true,
+    });
+    const secondPinnedPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 2,
+      splitIssues: true,
+      cursor: firstPinnedPage.pageInfo.nextCursor,
+    });
+
+    expect(firstPinnedPage.items.map((item) => item.threadKey)).toEqual([
+      `issue:${issueId}`,
+      `chat:${chatId}`,
+    ]);
+    expect(secondPinnedPage.items.map((item) => item.threadKey)).toEqual([
+      `chat:${olderChatId}`,
+    ]);
+
+    const firstSingleItemPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 1,
+      splitIssues: true,
+    });
+    const secondSingleItemPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 1,
+      splitIssues: true,
+      cursor: firstSingleItemPage.pageInfo.nextCursor,
+    });
+
+    expect(firstSingleItemPage.items.map((item) => item.threadKey)).toEqual([`issue:${issueId}`]);
+    expect(secondSingleItemPage.items.map((item) => item.threadKey)).toEqual([`chat:${chatId}`]);
+
+    await chatSvc.setPinned(olderChatId, orgId, userId, true);
+    const pinnedMixFirstPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 1,
+      splitIssues: true,
+    });
+    const pinnedMixSecondPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 1,
+      splitIssues: true,
+      cursor: pinnedMixFirstPage.pageInfo.nextCursor,
+    });
+
+    expect(pinnedMixFirstPage.items.map((item) => item.threadKey)).toEqual([`issue:${issueId}`]);
+    expect(pinnedMixSecondPage.items.map((item) => item.threadKey)).toEqual([`chat:${olderChatId}`]);
   });
 
   it("clears split issue attention from the single issue read state", async () => {

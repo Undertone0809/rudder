@@ -97,6 +97,7 @@ type ThreadSummaryCursor = {
   activityAt: string;
   title: string;
   threadKey: string;
+  isPinned: boolean;
 };
 type IssueThreadEntry = {
   issue: IssueUniverseRow & { followed: boolean; assigned: boolean };
@@ -335,6 +336,7 @@ function encodeThreadSummaryCursor(summary: MessengerThreadSummary) {
     activityAt: (normalizeDate(summary.latestActivityAt) ?? new Date(0)).toISOString(),
     title: summary.title,
     threadKey: summary.threadKey,
+    isPinned: summary.isPinned,
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
@@ -350,6 +352,7 @@ function decodeThreadSummaryCursor(cursor: string | null | undefined): ThreadSum
       activityAt: decoded.activityAt,
       title: decoded.title,
       threadKey: decoded.threadKey,
+      isPinned: decoded.isPinned === true,
     };
   } catch {
     return null;
@@ -358,12 +361,17 @@ function decodeThreadSummaryCursor(cursor: string | null | undefined): ThreadSum
 
 function threadSummaryIsAfterCursor(summary: MessengerThreadSummary, cursor: ThreadSummaryCursor | null) {
   if (!cursor) return true;
-  const summaryTime = normalizeDate(summary.latestActivityAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
-  const cursorTime = new Date(cursor.activityAt).getTime();
-  if (summaryTime !== cursorTime) return summaryTime < cursorTime;
-  const titleDiff = summary.title.localeCompare(cursor.title);
-  if (titleDiff !== 0) return titleDiff > 0;
-  return summary.threadKey.localeCompare(cursor.threadKey) > 0;
+  return comparePinnedThenLatest<{
+    latestActivityAt: Date | null;
+    title: string;
+    threadKey: string;
+    isPinned: boolean;
+  }>(summary, {
+    latestActivityAt: new Date(cursor.activityAt),
+    title: cursor.title,
+    threadKey: cursor.threadKey,
+    isPinned: cursor.isPinned,
+  }) > 0;
 }
 
 function threadSummaryPageInfo(limit: number, items: MessengerThreadSummary[], hasMore: boolean): MessengerThreadPageInfo {
@@ -1998,29 +2006,39 @@ export function messengerService(db: Db) {
     if (budgetData.detail.items.length > 0) syntheticSummaries.push(budgetData.summary);
     if (joinRequestData.itemCount > 0) syntheticSummaries.push(joinRequestData.summary);
     const syntheticAfterCursor = syntheticSummaries.filter((summary) => threadSummaryIsAfterCursor(summary, cursor));
-    const pinnedChats = cursor ? [] : await chatsSvc.listPinnedSummaries(orgId, userId);
-    const chatLimit = limit + syntheticAfterCursor.length + 1;
-    const chatAfter = cursor
+    const chatAfter = cursor && !cursor.isPinned
       ? {
         activityAt: new Date(cursor.activityAt),
         title: cursor.title,
         threadKey: cursor.threadKey,
       }
       : null;
-    const chats = await chatsSvc.listSummaries(orgId, {
-      status: "active",
-      limit: chatLimit,
-      after: chatAfter,
-      excludePinned: true,
-    }, userId);
+    const [pinnedChats, chats] = await Promise.all([
+      chatsSvc.listPinnedSummaries(orgId, userId),
+      chatsSvc.listSummaries(orgId, {
+        status: "active",
+        limit: limit + syntheticAfterCursor.length + 1,
+        after: chatAfter,
+        excludePinned: true,
+      }, userId),
+    ]);
+    const chatSummaries = [
+      ...pinnedChats,
+      ...chats,
+    ].reduce<MessengerThreadSummary[]>((summaries, chat) => {
+      const summary = chatSummary(chat);
+      if (!summaries.some((item) => item.threadKey === summary.threadKey)) {
+        summaries.push(summary);
+      }
+      return summaries;
+    }, []);
     const combined = [
-      ...pinnedChats.map(chatSummary),
-      ...chats.map(chatSummary),
+      ...chatSummaries,
       ...syntheticAfterCursor,
     ]
       .filter((summary) => threadSummaryIsAfterCursor(summary, cursor))
       .sort(comparePinnedThenLatest);
-    const itemLimit = limit + pinnedChats.length;
+    const itemLimit = limit;
     const items = combined.slice(0, itemLimit);
     const hasMore = combined.length > itemLimit;
 
