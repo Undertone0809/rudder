@@ -11,10 +11,30 @@ import { CommandPalette } from "./CommandPalette";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const navigateMock = vi.fn();
+const observedQueryKeys = vi.hoisted(() => [] as Array<readonly unknown[]>);
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    observedQueryKeys.push(queryKey);
     if (!enabled) return { data: [] };
+    if (
+      queryKey[0] === "issues" &&
+      queryKey[2] === "search" &&
+      queryKey[3] === "launch" &&
+      queryKey[5] === "title,description,comment"
+    ) {
+      return {
+        data: [
+          {
+            id: "issue-1",
+            identifier: "RUD-498",
+            title: "Global search regression",
+            status: "todo",
+            assigneeAgentId: null,
+          },
+        ],
+      };
+    }
     if (queryKey[0] === "chats" && queryKey[3] === "search" && queryKey[4] === "launch") {
       return {
         data: [
@@ -117,6 +137,7 @@ let cleanupFn: (() => void) | null = null;
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
+  observedQueryKeys.length = 0;
   navigateMock.mockClear();
   document.body.innerHTML = "";
 });
@@ -183,5 +204,39 @@ describe("CommandPalette", () => {
     });
 
     expect(navigateMock).toHaveBeenCalledWith("/messenger/chat/chat-1");
+  });
+
+  it("searches issue titles, descriptions, and comments from the global command palette", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<CommandPalette />);
+    });
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+    });
+
+    const searchLaunch = container.querySelector('button[aria-label="Search launch"]');
+    act(() => {
+      searchLaunch?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(observedQueryKeys).toContainEqual([
+      "issues",
+      "org-1",
+      "search",
+      "launch",
+      "__all-projects__",
+      "title,description,comment",
+    ]);
+    expect(container.textContent).toContain("Issues");
+    expect(container.textContent).toContain("RUD-498");
+    expect(container.textContent).toContain("Global search regression");
   });
 });

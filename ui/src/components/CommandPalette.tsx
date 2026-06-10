@@ -32,6 +32,9 @@ import {
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { agentUrl, projectUrl } from "../lib/utils";
+import type { IssueSearchField } from "@rudderhq/shared";
+
+const GLOBAL_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title", "description", "comment"];
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
@@ -80,8 +83,11 @@ export function CommandPalette() {
   });
 
   const { data: searchedIssues = [] } = useQuery({
-    queryKey: queryKeys.issues.search(selectedOrganizationId!, searchQuery),
-    queryFn: () => issuesApi.list(selectedOrganizationId!, { q: searchQuery }),
+    queryKey: queryKeys.issues.search(selectedOrganizationId!, searchQuery, undefined, GLOBAL_ISSUE_SEARCH_FIELDS),
+    queryFn: () => issuesApi.list(selectedOrganizationId!, {
+      q: searchQuery,
+      searchFields: GLOBAL_ISSUE_SEARCH_FIELDS,
+    }),
     enabled: !!selectedOrganizationId && open && searchQuery.length > 0,
   });
 
