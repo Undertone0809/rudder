@@ -318,6 +318,7 @@ const TimelineList = memo(function TimelineList({
   currentUserId,
   onUpdate,
   onDelete,
+  imageUploadHandler,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
@@ -333,6 +334,7 @@ const TimelineList = memo(function TimelineList({
   currentUserId?: string | null;
   onUpdate?: (commentId: string, body: string) => Promise<void>;
   onDelete?: (commentId: string) => Promise<void>;
+  imageUploadHandler?: (file: File) => Promise<string>;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -342,7 +344,27 @@ const TimelineList = memo(function TimelineList({
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [editAttaching, setEditAttaching] = useState(false);
   const editEditorRef = useRef<MarkdownEditorRef>(null);
+  const editAttachInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function handleEditAttachFile(evt: ChangeEvent<HTMLInputElement>) {
+    const file = evt.target.files?.[0];
+    if (!file || !imageUploadHandler) return;
+    setEditAttaching(true);
+    try {
+      const url = await imageUploadHandler(file);
+      const safeName = file.name.replace(/[[\]]/g, "\\$&");
+      const markdown = file.type.startsWith("image/")
+        ? `![${safeName}](${url})`
+        : `[${safeName}](${url})`;
+      const currentMarkdown = editEditorRef.current?.getMarkdown?.() ?? editBody;
+      setEditBody(currentMarkdown ? `${currentMarkdown}\n\n${markdown}` : markdown);
+    } finally {
+      setEditAttaching(false);
+      if (editAttachInputRef.current) editAttachInputRef.current.value = "";
+    }
+  }
 
   if (timeline.length === 0) {
     return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
@@ -558,85 +580,129 @@ const TimelineList = memo(function TimelineList({
           if (!confirmed) return;
           await onDelete(comment.id);
         };
+        const authorNode = comment.authorAgentId ? (
+          <Link to={`/agents/${comment.authorAgentId}`} className="min-w-0 hover:underline">
+            <AgentIdentity
+              name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
+              icon={agentMap?.get(comment.authorAgentId)?.icon}
+              role={agentMap?.get(comment.authorAgentId)?.role}
+              size="sm"
+            />
+          </Link>
+        ) : (
+          <Identity name={resolveOperatorDisplayName(operatorDisplayName)} size="sm" />
+        );
+        const timestampNode = (
+          <a
+            href={`#comment-${comment.id}`}
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground hover:underline"
+            title={commentTimestampTitle}
+            aria-label={`Comment posted ${commentTimestampTitle}`}
+          >
+            <time dateTime={timelineDateTime(comment.createdAt)}>
+              {relativeTime(comment.createdAt)}
+            </time>
+          </a>
+        );
         return (
           <div
             key={comment.id}
             id={`comment-${comment.id}`}
-            className={`border p-3 overflow-hidden min-w-0 rounded-sm transition-colors duration-1000 ${isHighlighted ? "border-primary/50 bg-primary/5" : "border-border"}`}
+            className={
+              isEditing
+                ? `overflow-hidden min-w-0 rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-sm)] transition-colors duration-1000 ${isHighlighted ? "border-primary/50 bg-primary/5" : "border-border/80 bg-card/80"}`
+                : `border p-3 overflow-hidden min-w-0 rounded-sm transition-colors duration-1000 ${isHighlighted ? "border-primary/50 bg-primary/5" : "border-border"}`
+            }
           >
-            <div className="flex items-center justify-between mb-1">
-              {comment.authorAgentId ? (
-                <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
-                  <AgentIdentity
-                    name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
-                    icon={agentMap?.get(comment.authorAgentId)?.icon}
-                    role={agentMap?.get(comment.authorAgentId)?.role}
-                    size="sm"
-                  />
-                </Link>
-              ) : (
-                <Identity name={resolveOperatorDisplayName(operatorDisplayName)} size="sm" />
-              )}
-              <span className="flex items-center gap-1.5">
-                <a
-                  href={`#comment-${comment.id}`}
-                  className="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors"
-                  title={commentTimestampTitle}
-                  aria-label={`Comment posted ${commentTimestampTitle}`}
-                >
-                  <time dateTime={timelineDateTime(comment.createdAt)}>
-                    {relativeTime(comment.createdAt)}
-                  </time>
-                </a>
+            {isEditing ? (
+              <div className="mb-3 flex min-w-0 items-center gap-2">
+                <div className="min-w-0">{authorNode}</div>
+                <span className="shrink-0 text-sm text-muted-foreground">{relativeTime(comment.createdAt)}</span>
                 {isEdited ? (
-                  <span className="text-xs text-muted-foreground" title={formatDateTime(comment.updatedAt)}>
+                  <span className="shrink-0 text-xs text-muted-foreground" title={formatDateTime(comment.updatedAt)}>
                     edited
                   </span>
                 ) : null}
-                {!isDeleted ? (
-                  <CommentActionsMenu
-                    comment={comment}
-                    orgId={orgId}
-                    projectId={projectId}
-                    location={location}
-                    canModify={canModify}
-                    onEdit={handleStartEdit}
-                    onDelete={handleDelete}
-                  />
-                ) : null}
-              </span>
-            </div>
+              </div>
+            ) : (
+              <div className="mb-1 flex items-center justify-between">
+                {authorNode}
+                <span className="flex items-center gap-1.5">
+                  {timestampNode}
+                  {isEdited ? (
+                    <span className="text-xs text-muted-foreground" title={formatDateTime(comment.updatedAt)}>
+                      edited
+                    </span>
+                  ) : null}
+                  {!isDeleted ? (
+                    <CommentActionsMenu
+                      comment={comment}
+                      orgId={orgId}
+                      projectId={projectId}
+                      location={location}
+                      canModify={canModify}
+                      onEdit={handleStartEdit}
+                      onDelete={handleDelete}
+                    />
+                  ) : null}
+                </span>
+              </div>
+            )}
             {isDeleted ? (
               <p className="text-sm italic text-muted-foreground">Comment deleted</p>
             ) : isEditing ? (
-              <div className="space-y-2">
-                <div className="rounded-[var(--radius-md)] border border-border bg-background">
-                  <MarkdownEditor
-                    ref={editEditorRef}
-                    engine="milkdown"
-                    value={editBody}
-                    onChange={setEditBody}
-                    placeholder="Edit comment..."
-                    mentions={[]}
-                    className="rounded-[var(--radius-md)] bg-transparent"
-                    contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
-                    bordered={false}
-                    onSubmit={handleSaveEdit}
-                  />
+              <>
+                <MarkdownEditor
+                  ref={editEditorRef}
+                  engine="milkdown"
+                  value={editBody}
+                  onChange={setEditBody}
+                  placeholder="Edit comment..."
+                  mentions={[]}
+                  imageUploadHandler={imageUploadHandler}
+                  className="rounded-[var(--radius-md)] bg-transparent"
+                  contentClassName="min-h-[92px] bg-transparent text-[15px] leading-7 text-foreground"
+                  bordered={false}
+                  onSubmit={handleSaveEdit}
+                />
+                <div className="mt-5 flex items-center justify-between gap-3">
+                  {imageUploadHandler ? (
+                    <div>
+                      <input
+                        ref={editAttachInputRef}
+                        type="file"
+                        accept={COMMENT_ATTACHMENT_ACCEPT}
+                        className="hidden"
+                        onChange={handleEditAttachFile}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => editAttachInputRef.current?.click()}
+                        disabled={editAttaching || editSaving}
+                        title="Attach file"
+                      >
+                        <Paperclip className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <span aria-hidden="true" />
+                  )}
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="ghost" onClick={handleCancelEdit} disabled={editSaving}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={handleSaveEdit} disabled={editSaving || editAttaching || !editBody.trim()}>
+                      {editSaving ? "Saving..." : "Save"}
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="outline" onClick={handleCancelEdit} disabled={editSaving}>
-                    Cancel
-                  </Button>
-                  <Button size="sm" onClick={handleSaveEdit} disabled={editSaving || !editBody.trim()}>
-                    {editSaving ? "Saving..." : "Save"}
-                  </Button>
-                </div>
-              </div>
+              </>
             ) : (
               <MarkdownBody className="text-sm" agentMentions={agentMentions} skillReferences={skillReferences}>{comment.body}</MarkdownBody>
             )}
-            {!isDeleted && orgId ? (
+            {!isEditing && !isDeleted && orgId ? (
               <div className="mt-2 space-y-2">
                 <PluginSlotOutlet
                   slotTypes={["commentAnnotation"]}
@@ -654,7 +720,7 @@ const TimelineList = memo(function TimelineList({
                 />
               </div>
             ) : null}
-            {comment.runId && (
+            {!isEditing && comment.runId && (
               <div className="mt-2 pt-2 border-t border-border/60">
                 {comment.runAgentId ? (
                   <Link
@@ -922,6 +988,7 @@ export function CommentThread({
         currentUserId={currentUserId}
         onUpdate={onUpdate}
         onDelete={onDelete}
+        imageUploadHandler={imageUploadHandler}
       />
 
       {liveRunSlot}

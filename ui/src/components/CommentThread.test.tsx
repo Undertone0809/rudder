@@ -392,6 +392,88 @@ describe("CommentThread", () => {
     });
   });
 
+  it("renders comment editing as a full composer surface with attachment upload", async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    const upload = vi.fn().mockResolvedValue("/api/attachments/attachment-1/content");
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-1",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Original body",
+              createdAt: new Date("2026-05-07T00:00:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+          onUpdate={onUpdate}
+          imageUploadHandler={upload}
+        />
+      </MemoryRouter>,
+    );
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Edit")) ?? null);
+
+    const editSurface = container.querySelector("#comment-comment-1");
+    expect(editSurface?.className).toContain("rounded-[var(--radius-lg)]");
+    expect(container.querySelector('button[title="Attach file"]')).toBeTruthy();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(input).toBeTruthy();
+    const file = new File(["image"], "diagram.png", { type: "image/png" });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+
+    await act(async () => {
+      input!.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => expect(upload).toHaveBeenCalledWith(file));
+    const editor = container.querySelector('textarea[aria-label="Edit comment..."]') as HTMLTextAreaElement | null;
+    await vi.waitFor(() => expect(editor?.value).toContain("![diagram.png](/api/attachments/attachment-1/content)"));
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Save") ?? null);
+    await vi.waitFor(() => expect(onUpdate).toHaveBeenCalledWith(
+      "comment-1",
+      "Original body\n\n![diagram.png](/api/attachments/attachment-1/content)",
+    ));
+  });
+
+  it("does not show edit attachments without an upload handler", async () => {
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-1",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Original body",
+              createdAt: new Date("2026-05-07T00:00:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+          onUpdate={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Edit")) ?? null);
+
+    expect(container.querySelector('button[title="Attach file"]')).toBeNull();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+
   it("hides edit and delete actions for other users and agent-authored comments", () => {
     const container = renderInteractive(
       <MemoryRouter>
