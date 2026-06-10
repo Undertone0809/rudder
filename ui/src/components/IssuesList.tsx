@@ -329,14 +329,14 @@ export function IssuesList({
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [issueSearch, setIssueSearch] = useState(initialSearch ?? "");
   const [debouncedIssueSearch, setDebouncedIssueSearch] = useState(issueSearch);
-  const [issueSearchFields, setIssueSearchFields] = useState<IssueSearchField[]>(["title"]);
+  const [issueSearchFields, setIssueSearchFields] = useState<IssueSearchField[]>(searchFields ?? ["title"]);
   const [searchOptionsOpen, setSearchOptionsOpen] = useState(false);
   const filterAssigneeScrollRef = useScrollbarActivityRef();
   const filterLabelsScrollRef = useScrollbarActivityRef();
   const filterProjectsScrollRef = useScrollbarActivityRef();
   const assigneePickerScrollRef = useScrollbarActivityRef();
   const normalizedIssueSearch = debouncedIssueSearch.trim();
-  const activeIssueSearchFields = searchFields ?? issueSearchFields;
+  const activeIssueSearchFields = issueSearchFields;
   const searchFieldSummary = activeIssueSearchFields.length === 1
     ? issueSearchFieldOptions.find((option) => option.value === activeIssueSearchFields[0])?.label ?? "Title"
     : `${activeIssueSearchFields.length} fields`;
@@ -344,6 +344,10 @@ export function IssuesList({
   useEffect(() => {
     setIssueSearch(initialSearch ?? "");
   }, [initialSearch]);
+
+  useEffect(() => {
+    setIssueSearchFields(searchFields ?? ["title"]);
+  }, [searchFields]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {

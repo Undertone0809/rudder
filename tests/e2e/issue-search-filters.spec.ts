@@ -36,6 +36,7 @@ test.describe("Issue search filters", () => {
       },
     });
     expect(titleIssueRes.ok()).toBe(true);
+    const titleIssue = await titleIssueRes.json() as { identifier: string | null };
 
     const descriptionIssueRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/issues`, {
       data: {
@@ -76,6 +77,13 @@ test.describe("Issue search filters", () => {
     await Promise.all([
       waitForIssueSearch(page, organization.id, "search-token-title"),
       searchBox.fill("search-token-title"),
+    ]);
+    await expect(page.getByText("Title scope search-token-title", { exact: true })).toBeVisible();
+
+    expect(titleIssue.identifier).toBeTruthy();
+    await Promise.all([
+      waitForIssueSearch(page, organization.id, titleIssue.identifier!),
+      searchBox.fill(titleIssue.identifier!),
     ]);
     await expect(page.getByText("Title scope search-token-title", { exact: true })).toBeVisible();
 

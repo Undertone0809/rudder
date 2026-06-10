@@ -305,6 +305,8 @@ describe("issueService.list participantAgentId", () => {
     const orgId = randomUUID();
     const matchedIssueId = randomUUID();
     const otherIssueId = randomUUID();
+    const identifierMatchedIssueId = randomUUID();
+    const titleContainsIdentifierIssueId = randomUUID();
 
     await db.insert(organizations).values({
       id: orgId,
@@ -329,6 +331,21 @@ describe("issueService.list participantAgentId", () => {
         status: "todo",
         priority: "medium",
       },
+      {
+        id: identifierMatchedIssueId,
+        orgId,
+        identifier: "CMT-478",
+        title: "Lookup by issue reference",
+        status: "todo",
+        priority: "medium",
+      },
+      {
+        id: titleContainsIdentifierIssueId,
+        orgId,
+        title: "Mention CMT-478 in title",
+        status: "todo",
+        priority: "medium",
+      },
     ]);
     await db.insert(issueComments).values({
       id: randomUUID(),
@@ -347,6 +364,16 @@ describe("issueService.list participantAgentId", () => {
     expect(result[0]?.searchMatch).toMatchObject({
       field: "comment",
       snippet: "Only this comment mentions frobnicator-search-token.",
+    });
+
+    const identifierResult = await svc.list(orgId, { q: "CMT-478" });
+    expect(identifierResult.map((issue) => issue.id)).toEqual([
+      identifierMatchedIssueId,
+      titleContainsIdentifierIssueId,
+    ]);
+    expect(identifierResult[0]?.searchMatch).toMatchObject({
+      field: "identifier",
+      snippet: "CMT-478",
     });
   });
 

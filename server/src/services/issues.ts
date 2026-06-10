@@ -499,6 +499,8 @@ export function issueService(db: Db) {
       const containsPattern = `%${escapedSearch}%`;
       const titleStartsWithMatch = sql<boolean>`${issues.title} ILIKE ${startsWithPattern} ESCAPE '\\'`;
       const titleContainsMatch = sql<boolean>`${issues.title} ILIKE ${containsPattern} ESCAPE '\\'`;
+      const identifierStartsWithMatch = sql<boolean>`${issues.identifier} ILIKE ${startsWithPattern} ESCAPE '\\'`;
+      const identifierContainsMatch = sql<boolean>`${issues.identifier} ILIKE ${containsPattern} ESCAPE '\\'`;
       const descriptionContainsMatch = sql<boolean>`${issues.description} ILIKE ${containsPattern} ESCAPE '\\'`;
       const commentContainsMatch = sql<boolean>`
         EXISTS (
@@ -583,7 +585,7 @@ export function issueService(db: Db) {
         conditions.push(inArray(issues.id, labeledIssueIds.map((row) => row.issueId)));
       }
       if (hasSearch) {
-        const searchConditions = [];
+        const searchConditions = [identifierContainsMatch];
         if (searchFields.has("title")) searchConditions.push(titleContainsMatch);
         if (searchFields.has("description")) searchConditions.push(descriptionContainsMatch);
         if (searchFields.has("comment")) searchConditions.push(commentContainsMatch);
@@ -600,9 +602,11 @@ export function issueService(db: Db) {
       const searchOrder = sql<number>`
         CASE
           WHEN ${searchFields.has("title")} AND ${titleStartsWithMatch} THEN 0
-          WHEN ${searchFields.has("title")} AND ${titleContainsMatch} THEN 1
-          WHEN ${searchFields.has("description")} AND ${descriptionContainsMatch} THEN 2
-          WHEN ${searchFields.has("comment")} AND ${commentContainsMatch} THEN 3
+          WHEN ${identifierStartsWithMatch} THEN 1
+          WHEN ${identifierContainsMatch} THEN 2
+          WHEN ${searchFields.has("title")} AND ${titleContainsMatch} THEN 3
+          WHEN ${searchFields.has("description")} AND ${descriptionContainsMatch} THEN 4
+          WHEN ${searchFields.has("comment")} AND ${commentContainsMatch} THEN 5
           ELSE 6
         END
       `;

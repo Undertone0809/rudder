@@ -159,6 +159,9 @@ export function buildSearchSnippet(value: string, query: string, maxLength = 160
 }
 
 export function fieldSearchMatch(row: IssueRow, query: string, searchFields: ReadonlySet<IssueSearchField>): IssueSearchMatch | null {
+  if (textContains(row.identifier, query)) {
+    return { field: "identifier", snippet: row.identifier ?? "" };
+  }
   if (searchFields.has("title") && textContains(row.title, query)) {
     return { field: "title", snippet: buildSearchSnippet(row.title, query) };
   }
