@@ -23,7 +23,7 @@ import { Messenger } from "./pages/Messenger";
 import { Automations } from "./pages/Automations";
 import { AutomationDetail } from "./pages/AutomationDetail";
 import { Calendar as CalendarPage } from "./pages/Calendar";
-import { ExecutionWorkspaceDetail } from "./pages/ExecutionWorkspaceDetail";
+import { RunWorkspaceDetail } from "./pages/RunWorkspaceDetail";
 import { Goals } from "./pages/Goals";
 import { GoalDetail } from "./pages/GoalDetail";
 import { Costs } from "./pages/Costs";
@@ -237,7 +237,8 @@ function boardRoutes() {
       <Route path="automations" element={<Automations />} />
       <Route path="automations/:automationId" element={<AutomationDetail />} />
       <Route path="calendar" element={<LegacyCalendarRedirect />} />
-      <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />
+      <Route path="run-workspaces/:workspaceId" element={<RunWorkspaceDetail />} />
+      <Route path="execution-workspaces/:workspaceId" element={<RunWorkspaceDetail />} />
       <Route path="goals" element={<Goals />} />
       <Route path="goals/:goalId" element={<GoalDetail />} />
       <Route path="costs" element={<Costs />} />

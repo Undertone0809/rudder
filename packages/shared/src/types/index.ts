@@ -133,15 +133,24 @@ export type {
   CreateProjectInlineResourceInput,
 } from "./resource.js";
 export type {
+  RunWorkspace,
   ExecutionWorkspace,
   WorkspaceRuntimeService,
+  RunWorkspaceStrategyType,
   ExecutionWorkspaceStrategyType,
+  RunWorkspaceMode,
   ExecutionWorkspaceMode,
+  RunWorkspaceProviderType,
   ExecutionWorkspaceProviderType,
+  RunWorkspaceStatus,
   ExecutionWorkspaceStatus,
+  RunWorkspaceStrategy,
   ExecutionWorkspaceStrategy,
+  ProjectRunWorkspacePolicy,
   ProjectExecutionWorkspacePolicy,
+  ProjectRunWorkspaceDefaultMode,
   ProjectExecutionWorkspaceDefaultMode,
+  IssueRunWorkspaceSettings,
   IssueExecutionWorkspaceSettings,
 } from "./workspace-runtime.js";
 export type {

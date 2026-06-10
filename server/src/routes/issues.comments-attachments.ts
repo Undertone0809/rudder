@@ -26,7 +26,7 @@ import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
-  executionWorkspaceService,
+  runWorkspaceService,
   goalService,
   heartbeatService,
   issueApprovalService,

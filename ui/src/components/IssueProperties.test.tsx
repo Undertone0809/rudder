@@ -256,7 +256,7 @@ describe("IssueProperties", () => {
     expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("break-words")).toBe(true);
   });
 
-  it("clears stale execution workspace state when selecting a project", () => {
+  it("clears stale run workspace state when selecting a project", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -327,7 +327,7 @@ describe("IssueProperties", () => {
     });
 
     expect(container.textContent).not.toContain("Workspace");
-    expect(container.textContent).not.toContain("Execution workspace");
+    expect(container.textContent).not.toContain("Run workspace");
   });
 
   it("renders parent issue as an editable property when no parent is set", () => {

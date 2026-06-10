@@ -59,7 +59,11 @@ const mockProjectService = vi.hoisted(() => ({
 }));
 
 const mockWorkProductService = vi.hoisted(() => ({
+  createForIssue: vi.fn(),
+  getById: vi.fn(),
   listForIssue: vi.fn(),
+  remove: vi.fn(),
+  update: vi.fn(),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
@@ -76,6 +80,7 @@ vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
   documentService: () => mockDocumentService,
+  runWorkspaceService: () => ({}),
   executionWorkspaceService: () => ({}),
   goalService: () => mockGoalService,
   heartbeatService: () => mockHeartbeatService,
@@ -214,7 +219,11 @@ describe("issue lifecycle routes", () => {
     mockGoalService.getDefaultCompanyGoal.mockResolvedValue(null);
     mockProjectService.getById.mockResolvedValue(null);
     mockProjectService.listByIds.mockResolvedValue([]);
+    mockWorkProductService.createForIssue.mockResolvedValue(null);
+    mockWorkProductService.getById.mockResolvedValue(null);
     mockWorkProductService.listForIssue.mockResolvedValue([]);
+    mockWorkProductService.remove.mockResolvedValue(null);
+    mockWorkProductService.update.mockResolvedValue(null);
     mockIssueService.addComment.mockImplementation(async (_issueId: string, body: string, author: { agentId?: string; userId?: string }) => ({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",
@@ -918,6 +927,37 @@ describe("issue lifecycle routes", () => {
     expect(res.body.assigneeAgentId).toBeNull();
   });
 
+  it("accepts canonical run workspace fields when creating issues", async () => {
+    const runWorkspaceId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    mockIssueService.create.mockImplementationOnce(async (_orgId: string, data: Record<string, unknown>) =>
+      makeIssue({
+        title: data.title as string,
+      }),
+    );
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/issues")
+      .send({
+        title: "Board-created issue",
+        runWorkspaceId,
+        runWorkspacePreference: "reuse_existing",
+        runWorkspaceSettings: { mode: "reuse_existing" },
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        executionWorkspaceId: runWorkspaceId,
+        executionWorkspacePreference: "reuse_existing",
+        executionWorkspaceSettings: { mode: "reuse_existing" },
+      }),
+    );
+    expect(mockIssueService.create.mock.calls[0]?.[1]).not.toHaveProperty("runWorkspaceId");
+    expect(mockIssueService.create.mock.calls[0]?.[1]).not.toHaveProperty("runWorkspacePreference");
+    expect(mockIssueService.create.mock.calls[0]?.[1]).not.toHaveProperty("runWorkspaceSettings");
+  });
+
   it("queues a review wakeup when a reviewer issue is created directly in review", async () => {
     mockIssueService.create.mockResolvedValue(
       makeIssue({
@@ -986,6 +1026,86 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("accepts canonical run workspace fields when updating issues", async () => {
+    const runWorkspaceId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    mockIssueService.getById.mockResolvedValueOnce(makeIssue());
+    mockIssueService.update.mockImplementationOnce(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        title: (patch.title as string | undefined) ?? "Lifecycle hardening",
+      }),
+    );
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        runWorkspaceId,
+        runWorkspacePreference: "reuse_existing",
+        runWorkspaceSettings: { mode: "reuse_existing" },
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({
+        executionWorkspaceId: runWorkspaceId,
+        executionWorkspacePreference: "reuse_existing",
+        executionWorkspaceSettings: { mode: "reuse_existing" },
+      }),
+    );
+    expect(mockIssueService.update.mock.calls[0]?.[1]).not.toHaveProperty("runWorkspaceId");
+    expect(mockIssueService.update.mock.calls[0]?.[1]).not.toHaveProperty("runWorkspacePreference");
+    expect(mockIssueService.update.mock.calls[0]?.[1]).not.toHaveProperty("runWorkspaceSettings");
+  });
+
+  it("rejects conflicting canonical and legacy run workspace fields", async () => {
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        runWorkspaceId: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+        executionWorkspaceId: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb",
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("runWorkspaceId conflicts");
+    expect(mockIssueService.getById).not.toHaveBeenCalled();
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
+  it("accepts canonical run workspace fields when creating work products", async () => {
+    const runWorkspaceId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    mockIssueService.getById.mockResolvedValueOnce(makeIssue({ projectId: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb" }));
+    mockWorkProductService.createForIssue.mockImplementationOnce(
+      async (_issueId: string, _orgId: string, data: Record<string, unknown>) => ({
+        id: "work-product-1",
+        orgId: "organization-1",
+        issueId: "11111111-1111-4111-8111-111111111111",
+        type: data.type,
+        provider: data.provider,
+        executionWorkspaceId: data.executionWorkspaceId,
+      }),
+    );
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/work-products")
+      .send({
+        runWorkspaceId,
+        type: "preview_url",
+        provider: "custom",
+        title: "Preview",
+        url: "https://example.com/preview",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockWorkProductService.createForIssue).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "organization-1",
+      expect.objectContaining({
+        executionWorkspaceId: runWorkspaceId,
+      }),
+    );
+    expect(mockWorkProductService.createForIssue.mock.calls[0]?.[2]).not.toHaveProperty("runWorkspaceId");
   });
 
   it("logs activity details from the final persisted issue changes", async () => {

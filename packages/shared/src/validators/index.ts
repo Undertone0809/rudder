@@ -225,6 +225,7 @@ export {
   updateIssueLabelSchema,
   updateIssueSchema,
   reorderIssueSchema,
+  issueRunWorkspaceSettingsSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
   addIssueCommentSchema,
@@ -244,6 +245,7 @@ export {
   type UpdateIssueLabel,
   type UpdateIssue,
   type ReorderIssue,
+  type IssueRunWorkspaceSettings,
   type IssueExecutionWorkspaceSettings,
   type CheckoutIssue,
   type AddIssueComment,
@@ -270,6 +272,9 @@ export {
 } from "./work-product.js";
 
 export {
+  updateRunWorkspaceSchema,
+  runWorkspaceStatusSchema,
+  type UpdateRunWorkspace,
   updateExecutionWorkspaceSchema,
   executionWorkspaceStatusSchema,
   type UpdateExecutionWorkspace,

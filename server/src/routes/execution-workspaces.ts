@@ -2,9 +2,9 @@ import { and, eq } from "drizzle-orm";
 import { Router } from "express";
 import type { Db } from "@rudderhq/db";
 import { issues, projects, projectWorkspaces } from "@rudderhq/db";
-import { updateExecutionWorkspaceSchema } from "@rudderhq/shared";
+import { updateRunWorkspaceSchema } from "@rudderhq/shared";
 import { validate } from "../middleware/validate.js";
-import { executionWorkspaceService, logActivity, workspaceOperationService } from "../services/index.js";
+import { logActivity, runWorkspaceService, workspaceOperationService } from "../services/index.js";
 import { parseProjectExecutionWorkspacePolicy } from "../services/execution-workspace-policy.js";
 import {
   cleanupExecutionWorkspaceArtifacts,
@@ -14,12 +14,12 @@ import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
 const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled"]);
 
-export function executionWorkspaceRoutes(db: Db) {
+export function runWorkspaceRoutes(db: Db) {
   const router = Router();
-  const svc = executionWorkspaceService(db);
+  const svc = runWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
 
-  router.get("/orgs/:orgId/execution-workspaces", async (req, res) => {
+  router.get(["/orgs/:orgId/run-workspaces", "/orgs/:orgId/execution-workspaces"], async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const workspaces = await svc.list(orgId, {
@@ -32,22 +32,22 @@ export function executionWorkspaceRoutes(db: Db) {
     res.json(workspaces);
   });
 
-  router.get("/execution-workspaces/:id", async (req, res) => {
+  router.get(["/run-workspaces/:id", "/execution-workspaces/:id"], async (req, res) => {
     const id = req.params.id as string;
     const workspace = await svc.getById(id);
     if (!workspace) {
-      res.status(404).json({ error: "Execution workspace not found" });
+      res.status(404).json({ error: "Run workspace not found" });
       return;
     }
     assertCompanyAccess(req, workspace.orgId);
     res.json(workspace);
   });
 
-  router.patch("/execution-workspaces/:id", validate(updateExecutionWorkspaceSchema), async (req, res) => {
+  router.patch(["/run-workspaces/:id", "/execution-workspaces/:id"], validate(updateRunWorkspaceSchema), async (req, res) => {
     const id = req.params.id as string;
     const existing = await svc.getById(id);
     if (!existing) {
-      res.status(404).json({ error: "Execution workspace not found" });
+      res.status(404).json({ error: "Run workspace not found" });
       return;
     }
     assertCompanyAccess(req, existing.orgId);
@@ -70,7 +70,7 @@ export function executionWorkspaceRoutes(db: Db) {
 
       if (activeLinkedIssues.length > 0) {
         res.status(409).json({
-          error: `Cannot archive execution workspace while ${activeLinkedIssues.length} linked issue(s) are still open`,
+          error: `Cannot archive run workspace while ${activeLinkedIssues.length} linked issue(s) are still open`,
         });
         return;
       }
@@ -83,7 +83,7 @@ export function executionWorkspaceRoutes(db: Db) {
         cleanupReason: null,
       });
       if (!archivedWorkspace) {
-        res.status(404).json({ error: "Execution workspace not found" });
+        res.status(404).json({ error: "Run workspace not found" });
         return;
       }
       workspace = archivedWorkspace;
@@ -147,14 +147,14 @@ export function executionWorkspaceRoutes(db: Db) {
             cleanupReason: failureReason,
           })) ?? workspace;
         res.status(500).json({
-          error: `Failed to archive execution workspace: ${failureReason}`,
+          error: `Failed to archive run workspace: ${failureReason}`,
         });
         return;
       }
     } else {
       const updatedWorkspace = await svc.update(id, patch);
       if (!updatedWorkspace) {
-        res.status(404).json({ error: "Execution workspace not found" });
+        res.status(404).json({ error: "Run workspace not found" });
         return;
       }
       workspace = updatedWorkspace;
@@ -166,8 +166,8 @@ export function executionWorkspaceRoutes(db: Db) {
       actorId: actor.actorId,
       agentId: actor.agentId,
       runId: actor.runId,
-      action: "execution_workspace.updated",
-      entityType: "execution_workspace",
+      action: "run_workspace.updated",
+      entityType: "run_workspace",
       entityId: workspace.id,
       details: {
         changedKeys: Object.keys(req.body).sort(),
@@ -179,3 +179,6 @@ export function executionWorkspaceRoutes(db: Db) {
 
   return router;
 }
+
+/** @deprecated Use runWorkspaceRoutes. */
+export const executionWorkspaceRoutes = runWorkspaceRoutes;

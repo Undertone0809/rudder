@@ -135,4 +135,4 @@ pnpm rudder worktree env --json
 eval "$(pnpm rudder worktree env)"
 ```
 
-For project execution worktrees, Rudder can also run a project-defined provision command after it creates or reuses an isolated git worktree. Configure this on the project's execution workspace policy (`workspaceStrategy.provisionCommand`). The command runs inside the derived worktree and receives `RUDDER_WORKSPACE_*`, `RUDDER_PROJECT_ID`, `RUDDER_AGENT_ID`, and `RUDDER_ISSUE_*` environment variables so each repo can bootstrap itself however it wants.
+For project run workspaces, Rudder can also run a project-defined provision command after it creates or reuses an isolated git worktree. Configure this on the project's run workspace policy (`workspaceStrategy.provisionCommand`). The command runs inside the derived worktree and receives `RUDDER_WORKSPACE_*`, `RUDDER_PROJECT_ID`, `RUDDER_AGENT_ID`, and `RUDDER_ISSUE_*` environment variables so each repo can bootstrap itself however it wants. Some persisted database fields still use legacy `executionWorkspace*` names for compatibility.

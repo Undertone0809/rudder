@@ -9,6 +9,8 @@ export type WorkspaceOperationStatus = "running" | "succeeded" | "failed" | "ski
 export interface WorkspaceOperation {
   id: string;
   orgId: string;
+  runWorkspaceId: string | null;
+  /** @deprecated Use runWorkspaceId. */
   executionWorkspaceId: string | null;
   heartbeatRunId: string | null;
   phase: WorkspaceOperationPhase;

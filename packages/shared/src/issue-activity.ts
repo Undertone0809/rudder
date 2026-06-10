@@ -12,8 +12,20 @@ export const ISSUE_UPDATE_ACTIVITY_METADATA_KEYS = [
 
 export const LOW_SIGNAL_ISSUE_UPDATE_ACTIVITY_FIELDS = ["description", "title"] as const;
 
+export const INTERNAL_ISSUE_UPDATE_ACTIVITY_FIELDS = [
+  "executionWorkspaceId",
+  "executionWorkspacePreference",
+  "executionWorkspaceSettings",
+  "currentExecutionWorkspace",
+  "runWorkspaceId",
+  "runWorkspacePreference",
+  "runWorkspaceSettings",
+  "currentRunWorkspace",
+] as const;
+
 const ISSUE_UPDATE_ACTIVITY_METADATA_KEY_SET = new Set<string>(ISSUE_UPDATE_ACTIVITY_METADATA_KEYS);
 const LOW_SIGNAL_ISSUE_UPDATE_ACTIVITY_FIELD_SET = new Set<string>(LOW_SIGNAL_ISSUE_UPDATE_ACTIVITY_FIELDS);
+const INTERNAL_ISSUE_UPDATE_ACTIVITY_FIELD_SET = new Set<string>(INTERNAL_ISSUE_UPDATE_ACTIVITY_FIELDS);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -21,7 +33,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function issueUpdatedChangedKeys(details: unknown): string[] {
   if (!isRecord(details)) return [];
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_ACTIVITY_METADATA_KEY_SET.has(key));
+  return Object.keys(details).filter((key) =>
+    !ISSUE_UPDATE_ACTIVITY_METADATA_KEY_SET.has(key) &&
+    !INTERNAL_ISSUE_UPDATE_ACTIVITY_FIELD_SET.has(key)
+  );
 }
 
 export function hasMaterialIssueUpdateFields(details: unknown): boolean {

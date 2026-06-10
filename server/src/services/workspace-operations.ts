@@ -15,6 +15,7 @@ function toWorkspaceOperation(row: WorkspaceOperationRow): WorkspaceOperation {
   return {
     id: row.id,
     orgId: row.orgId,
+    runWorkspaceId: row.executionWorkspaceId ?? null,
     executionWorkspaceId: row.executionWorkspaceId ?? null,
     heartbeatRunId: row.heartbeatRunId ?? null,
     phase: row.phase as WorkspaceOperationPhase,

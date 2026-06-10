@@ -382,10 +382,10 @@ describe("NewIssueDialog", () => {
     expect(capturedMarkdownEditorProps?.mentionMenuPlacement).toBeUndefined();
   });
 
-  it("does not render the execution workspace controls", () => {
+  it("does not render the run workspace controls", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
-    expect(html).not.toContain("Execution workspace");
+    expect(html).not.toContain("Run workspace");
     expect(html).not.toContain("Reuse existing workspace");
   });
 

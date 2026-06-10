@@ -4,8 +4,8 @@ Status: experimental, runtime-only, not shipping as a user-facing feature yet.
 
 This branch contains the runtime and seeding work needed for issue-scoped worktrees:
 
-- project execution workspace policy support
-- issue-level execution workspace settings
+- project run workspace policy support
+- issue-level run workspace settings
 - git worktree realization for isolated issue execution
 - optional command-based worktree provisioning
 - seeded worktree fixes for secrets key compatibility
@@ -15,8 +15,8 @@ We are intentionally not shipping the UI for this yet. The runtime code remains 
 
 ## What works today
 
-- projects can carry execution workspace policy in the backend
-- issues can carry execution workspace settings in the backend
+- projects can carry run workspace policy in the backend
+- issues can carry run workspace settings in the backend
 - heartbeat execution can realize isolated git worktrees
 - runtime can run a project-defined provision command inside the derived worktree
 - seeded worktree instances can keep local-encrypted secrets working
@@ -28,19 +28,19 @@ These are the current user-facing UI surfaces for the feature, now intentionally
 
 - project settings:
   - `ui/src/components/ProjectProperties.tsx`
-  - execution workspace policy controls
+  - run workspace policy controls
   - git worktree base ref / branch template / parent dir
   - provision / teardown command inputs
 
 - issue creation:
   - `ui/src/components/NewIssueDialog.tsx`
   - isolated issue checkout toggle
-  - defaulting issue execution workspace settings from project policy
+  - defaulting issue run workspace settings from project policy
 
 - issue editing:
   - `ui/src/components/IssueProperties.tsx`
   - issue-level workspace mode toggle
-  - defaulting issue execution workspace settings when project changes
+  - defaulting issue run workspace settings when project changes
 
 - agent/runtime settings:
   - `ui/src/agent-runtimes/runtime-json-fields.tsx`
