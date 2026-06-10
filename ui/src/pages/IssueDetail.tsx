@@ -15,6 +15,7 @@ import { useNavigationBack } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
@@ -1103,6 +1104,7 @@ export function IssueDetail() {
   const location = useLocation();
   const navigateBack = useNavigationBack();
   const { pushToast } = useToast();
+  const { confirm } = useDialog();
   const operatorDisplayName = useOperatorDisplayName();
   const relativePath = toOrganizationRelativePath(location.pathname);
   const issueRouteBasePath = relativePath.startsWith("/messenger/issues") ? "/messenger/issues" : "/issues";
@@ -1621,6 +1623,20 @@ export function IssueDetail() {
       });
     },
   });
+  const issueDisplayId = issue?.identifier ?? (issue?.id ? issue.id.slice(0, 8) : issueId ?? "issue");
+
+  const confirmAndDeleteIssue = useCallback(async () => {
+    const confirmed = await confirm({
+      title: `Delete ${issueDisplayId}?`,
+      description: "This removes the issue from Rudder.",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    deleteIssue.mutate();
+    setHeaderMoreOpen(false);
+    setSidebarMoreOpen(false);
+  }, [confirm, deleteIssue, issueDisplayId]);
 
   const updateSubIssueStatus = useMutation({
     mutationFn: ({
@@ -1956,7 +1972,6 @@ export function IssueDetail() {
     </>
   );
 
-  const issueDisplayId = issue.identifier ?? issue.id.slice(0, 8);
   const issueFindRefreshKey = [
     issue.id,
     issue.updatedAt,
@@ -2032,9 +2047,7 @@ export function IssueDetail() {
           <button
             className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive disabled:cursor-not-allowed disabled:opacity-60"
             onClick={() => {
-              if (!window.confirm(`Delete ${issueDisplayId}? This removes the issue from Rudder.`)) return;
-              deleteIssue.mutate();
-              onMoreOpenChange(false);
+              void confirmAndDeleteIssue();
             }}
             disabled={deleteIssue.isPending}
           >

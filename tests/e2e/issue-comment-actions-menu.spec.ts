@@ -217,11 +217,8 @@ test("issue detail delete removes the issue without retaining hidden UI", async 
   await expect(page.getByText("Delete Issue")).toBeVisible();
   await expect(page.getByText("Hide this Issue")).toHaveCount(0);
 
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain(`Delete ${routeRef}?`);
-    await dialog.accept();
-  });
-
+  await page.getByText("Delete Issue").click();
+  await expect(page.getByRole("dialog", { name: `Delete ${routeRef}?` })).toBeVisible();
   const [deleteResponse] = await Promise.all([
     page.waitForResponse((response) => {
       const pathname = new URL(response.url()).pathname;
@@ -230,7 +227,7 @@ test("issue detail delete removes the issue without retaining hidden UI", async 
         && response.request().method() === "DELETE"
       );
     }),
-    page.getByText("Delete Issue").click(),
+    page.getByRole("button", { name: "Delete" }).click(),
   ]);
   expect(deleteResponse.ok()).toBe(true);
 

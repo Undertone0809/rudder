@@ -208,6 +208,10 @@ vi.mock("../context/ToastContext", () => ({
   useToast: () => ({ pushToast: vi.fn() }),
 }));
 
+vi.mock("../context/DialogContext", () => ({
+  useDialog: () => ({ confirm: vi.fn(async () => true) }),
+}));
+
 vi.mock("../context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs: vi.fn() }),
 }));
