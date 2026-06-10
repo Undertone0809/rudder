@@ -1,12 +1,14 @@
 import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { buildIssueMentionHref } from "@rudderhq/shared";
 import type { IssueComment, Agent } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
-import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, TerminalSquare } from "lucide-react";
+import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { LiveRunForIssue } from "../api/heartbeats";
@@ -26,6 +28,7 @@ import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from 
 import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
+import { useDialog } from "@/context/DialogContext";
 
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 
@@ -59,6 +62,9 @@ interface CommentThreadProps {
   orgId?: string | null;
   projectId?: string | null;
   onAdd: (body: string, reopen?: boolean) => Promise<void>;
+  onUpdate?: (commentId: string, body: string) => Promise<void>;
+  onDelete?: (commentId: string) => Promise<void>;
+  currentUserId?: string | null;
   issueStatus?: string;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
@@ -148,14 +154,16 @@ function shouldSkipRunRowNavigation(target: EventTarget | null): boolean {
     : false;
 }
 
-function buildCommentLink(commentId: string, location: ReturnType<typeof useLocation>) {
-  const path = `${location.pathname}${location.search}`;
-  if (typeof window === "undefined") return `${path}#comment-${commentId}`;
-  return `${window.location.origin}${path}#comment-${commentId}`;
+function extractIssueRouteRef(location: ReturnType<typeof useLocation>) {
+  const segments = location.pathname.split("/").filter(Boolean);
+  const issuesIndex = segments.lastIndexOf("issues");
+  const routeRef = issuesIndex >= 0 ? segments[issuesIndex + 1] : null;
+  return routeRef ? decodeURIComponent(routeRef) : null;
 }
 
-function buildCommentMarkdownLink(commentId: string, location: ReturnType<typeof useLocation>) {
-  return `[Issue comment ${commentId.slice(0, 8)}](<${buildCommentLink(commentId, location)}>)`;
+function buildCommentMarkdownLink(comment: CommentWithRunMeta, location: ReturnType<typeof useLocation>) {
+  const href = buildIssueMentionHref(comment.issueId, extractIssueRouteRef(location), comment.id);
+  return `[Issue comment ${comment.id.slice(0, 8)}](${href})`;
 }
 
 function timelineDateTime(date: Date | string) {
@@ -168,11 +176,17 @@ function CommentActionsMenu({
   orgId,
   projectId,
   location,
+  canModify,
+  onEdit,
+  onDelete,
 }: {
   comment: CommentWithRunMeta;
   orgId?: string | null;
   projectId?: string | null;
   location: ReturnType<typeof useLocation>;
+  canModify: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
   const [copiedAction, setCopiedAction] = useState<"content" | "link" | null>(null);
 
@@ -200,10 +214,29 @@ function CommentActionsMenu({
           {copiedAction === "content" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           Copy content
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => copyToClipboard("link", buildCommentMarkdownLink(comment.id, location))}>
+        <DropdownMenuItem onSelect={() => copyToClipboard("link", buildCommentMarkdownLink(comment, location))}>
           {copiedAction === "link" ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
           Copy link
         </DropdownMenuItem>
+        {canModify ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={onEdit}>
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onSelect={(event) => {
+                event.preventDefault();
+                onDelete();
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </DropdownMenuItem>
+          </>
+        ) : null}
         {orgId ? (
           <PluginSlotOutlet
             slotTypes={["commentContextMenuItem"]}
@@ -282,6 +315,9 @@ const TimelineList = memo(function TimelineList({
   agentMentions,
   skillReferences,
   emptyMessage,
+  currentUserId,
+  onUpdate,
+  onDelete,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
@@ -294,11 +330,19 @@ const TimelineList = memo(function TimelineList({
   agentMentions?: MarkdownAgentMentionPreview[];
   skillReferences?: MarkdownSkillReferencePreview[];
   emptyMessage: string;
+  currentUserId?: string | null;
+  onUpdate?: (commentId: string, body: string) => Promise<void>;
+  onDelete?: (commentId: string) => Promise<void>;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { confirm } = useDialog();
   const organizationPrefix = extractOrganizationPrefixFromPath(location.pathname);
   const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editBody, setEditBody] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const editEditorRef = useRef<MarkdownEditorRef>(null);
 
   if (timeline.length === 0) {
     return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
@@ -479,6 +523,41 @@ const TimelineList = memo(function TimelineList({
         const comment = item.comment;
         const isHighlighted = highlightCommentId === comment.id;
         const commentTimestampTitle = formatDateTime(comment.createdAt);
+        const isDeleted = !!comment.deletedAt;
+        const isEdited = !isDeleted && new Date(comment.updatedAt).getTime() > new Date(comment.createdAt).getTime() + 1000;
+        const canModify = !isDeleted && !!currentUserId && !comment.authorAgentId && comment.authorUserId === currentUserId;
+        const isEditing = editingCommentId === comment.id;
+        const handleStartEdit = () => {
+          setEditingCommentId(comment.id);
+          setEditBody(comment.body);
+        };
+        const handleCancelEdit = () => {
+          setEditingCommentId(null);
+          setEditBody("");
+        };
+        const handleSaveEdit = async () => {
+          if (!onUpdate) return;
+          const nextBody = (editEditorRef.current?.getMarkdown?.() ?? editBody).trim();
+          if (!nextBody) return;
+          setEditSaving(true);
+          try {
+            await onUpdate(comment.id, nextBody);
+            handleCancelEdit();
+          } finally {
+            setEditSaving(false);
+          }
+        };
+        const handleDelete = async () => {
+          if (!onDelete) return;
+          const confirmed = await confirm({
+            title: "Delete this comment?",
+            description: "The original text will no longer be visible.",
+            confirmLabel: "Delete",
+            tone: "destructive",
+          });
+          if (!confirmed) return;
+          await onDelete(comment.id);
+        };
         return (
           <div
             key={comment.id}
@@ -509,16 +588,55 @@ const TimelineList = memo(function TimelineList({
                     {relativeTime(comment.createdAt)}
                   </time>
                 </a>
-                <CommentActionsMenu
-                  comment={comment}
-                  orgId={orgId}
-                  projectId={projectId}
-                  location={location}
-                />
+                {isEdited ? (
+                  <span className="text-xs text-muted-foreground" title={formatDateTime(comment.updatedAt)}>
+                    edited
+                  </span>
+                ) : null}
+                {!isDeleted ? (
+                  <CommentActionsMenu
+                    comment={comment}
+                    orgId={orgId}
+                    projectId={projectId}
+                    location={location}
+                    canModify={canModify}
+                    onEdit={handleStartEdit}
+                    onDelete={handleDelete}
+                  />
+                ) : null}
               </span>
             </div>
-            <MarkdownBody className="text-sm" agentMentions={agentMentions} skillReferences={skillReferences}>{comment.body}</MarkdownBody>
-            {orgId ? (
+            {isDeleted ? (
+              <p className="text-sm italic text-muted-foreground">Comment deleted</p>
+            ) : isEditing ? (
+              <div className="space-y-2">
+                <div className="rounded-[var(--radius-md)] border border-border bg-background">
+                  <MarkdownEditor
+                    ref={editEditorRef}
+                    engine="milkdown"
+                    value={editBody}
+                    onChange={setEditBody}
+                    placeholder="Edit comment..."
+                    mentions={[]}
+                    className="rounded-[var(--radius-md)] bg-transparent"
+                    contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
+                    bordered={false}
+                    onSubmit={handleSaveEdit}
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="outline" onClick={handleCancelEdit} disabled={editSaving}>
+                    Cancel
+                  </Button>
+                  <Button size="sm" onClick={handleSaveEdit} disabled={editSaving || !editBody.trim()}>
+                    {editSaving ? "Saving..." : "Save"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <MarkdownBody className="text-sm" agentMentions={agentMentions} skillReferences={skillReferences}>{comment.body}</MarkdownBody>
+            )}
+            {!isDeleted && orgId ? (
               <div className="mt-2 space-y-2">
                 <PluginSlotOutlet
                   slotTypes={["commentAnnotation"]}
@@ -566,6 +684,9 @@ export function CommentThread({
   orgId,
   projectId,
   onAdd,
+  onUpdate,
+  onDelete,
+  currentUserId,
   issueStatus,
   agentMap,
   imageUploadHandler,
@@ -798,6 +919,9 @@ export function CommentThread({
         agentMentions={agentMentions}
         skillReferences={skillReferences}
         emptyMessage={emptyMessage}
+        currentUserId={currentUserId}
+        onUpdate={onUpdate}
+        onDelete={onDelete}
       />
 
       {liveRunSlot}
@@ -815,6 +939,7 @@ export function CommentThread({
           onChange={setBody}
           placeholder="Leave a comment..."
           mentions={mentions}
+          agentMentionIntent="wake"
           onMentionQueryChange={onMentionQueryChange}
           mentionMenuAnchorRef={composerSurfaceRef}
           mentionMenuPlacement="container"

@@ -118,6 +118,8 @@ function makeConversation(overrides: Partial<ChatConversation> = {}): ChatConver
     title: "Profile prompt test",
     summary: null,
     latestReplyPreview: null,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     preferredAgentId: "agent-1",
     routedAgentId: null,
     primaryIssueId: null,

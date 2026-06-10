@@ -930,6 +930,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     // then resume any persisted queued runs that were waiting on the previous process.
     void heartbeat
       .reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs })
+      .then(() => heartbeat.reapInactiveRuns({ maxInactivityMs: config.heartbeatRunInactivityTimeoutMs }))
       .then(() => heartbeat.reapOrphanedRuns())
       .then(() => heartbeat.resumeQueuedRuns())
       .catch((err) => {
@@ -962,6 +963,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       // persisted queued work is still being driven forward.
       void heartbeat
         .reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs })
+        .then(() => heartbeat.reapInactiveRuns({ maxInactivityMs: config.heartbeatRunInactivityTimeoutMs }))
         .then(() => heartbeat.reapOrphanedRuns({ staleThresholdMs: 5 * 60 * 1000 }))
         .then(() => heartbeat.resumeQueuedRuns())
         .catch((err) => {

@@ -339,6 +339,7 @@ export type {
   IssueWorkProductReviewState,
   Issue,
   IssueAssigneeAgentRuntimeOverrides,
+  IssueSearchField,
   IssueSearchMatch,
   IssueComment,
   IssueCommitReport,
@@ -634,6 +635,7 @@ export {
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
   addIssueCommentSchema,
+  updateIssueCommentSchema,
   reportIssueCommitSchema,
   linkIssueApprovalSchema,
   createIssueAttachmentMetadataSchema,
@@ -658,6 +660,7 @@ export {
   type ReorderIssue,
   type CheckoutIssue,
   type AddIssueComment,
+  type UpdateIssueComment,
   type ReportIssueCommit,
   type LinkIssueApproval,
   type CreateIssueAttachmentMetadata,
@@ -881,6 +884,7 @@ export {
   buildLibraryFileMentionMarkdown,
   buildProjectMentionHref,
   extractAgentMentionIds,
+  extractAgentWakeMentionIds,
   extractChatMentionIds,
   extractIssueMentionIds,
   extractLibraryDirectoryMentionPaths,
@@ -904,6 +908,14 @@ export {
   type ParsedLibraryFileMention,
   type ParsedProjectMention,
 } from "./project-mentions.js";
+
+export {
+  ISSUE_UPDATE_ACTIVITY_METADATA_KEYS,
+  LOW_SIGNAL_ISSUE_UPDATE_ACTIVITY_FIELDS,
+  hasMaterialIssueUpdateFields,
+  isLowSignalIssueContentOnlyUpdate,
+  issueUpdatedChangedKeys,
+} from "./issue-activity.js";
 
 export {
   DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,

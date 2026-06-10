@@ -179,6 +179,83 @@ describe("MarkdownBody", () => {
     expect(copyEvent.defaultPrevented).toBe(true);
   });
 
+  it("copies block code when code-block copy is enabled without adding inline-code buttons", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody enableCodeBlockCopy>{"Inline `code`\n\n```sh\npnpm test\n```"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const copyButton = container.querySelector<HTMLButtonElement>(".rudder-code-block-copy-button");
+    expect(copyButton).toBeTruthy();
+    expect(container.querySelector("p code")).toBeTruthy();
+    expect(container.querySelectorAll(".rudder-code-block-copy-button")).toHaveLength(1);
+
+    await act(async () => {
+      copyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith("pnpm test");
+    expect(copyButton?.getAttribute("aria-label")).toBe("Copied");
+  });
+
+  it("does not render code-block copy controls by default", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"```sh\npnpm test\n```"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(container.querySelector(".rudder-code-block-copy-button")).toBeNull();
+  });
+
+  it("renders diff fences as patch rows with additions and deletions", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"```diff\ndiff --git a/app.ts b/app.ts\n@@ -1,2 +1,2 @@\n-old value\n+new value\n context\n```"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(container.querySelector(".rudder-markdown-patch-block")).toBeTruthy();
+    expect(container.querySelector(".language-diff")).toBeNull();
+    expect(container.querySelector(".rudder-markdown-patch-line--meta")?.textContent).toContain("diff --git");
+    expect(container.querySelector(".rudder-markdown-patch-line--hunk")?.textContent).toContain("@@ -1,2 +1,2 @@");
+    expect(container.querySelector(".rudder-markdown-patch-line--remove")?.textContent).toContain("-old value");
+    expect(container.querySelector(".rudder-markdown-patch-line--add")?.textContent).toContain("+new value");
+    expect(container.querySelector(".rudder-markdown-patch-line--context")?.textContent).toContain(" context");
+  });
+
+  it("copies patch fences as their original source when code-block copy is enabled", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const patch = "```patch\n--- a/app.ts\n+++ b/app.ts\n-old value\n+new value\n```";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody enableCodeBlockCopy>{patch}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const copyButton = container.querySelector<HTMLButtonElement>(".rudder-code-block-copy-button");
+    expect(copyButton).toBeTruthy();
+    expect(container.querySelector(".rudder-markdown-patch-block")).toBeTruthy();
+
+    await act(async () => {
+      copyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith("--- a/app.ts\n+++ b/app.ts\n-old value\n+new value");
+  });
+
   it("renders chat mentions as live Messenger links", () => {
     const href = buildChatMentionHref("chat-123", "Launch planning");
     const html = renderToStaticMarkup(
@@ -354,6 +431,20 @@ describe("MarkdownBody", () => {
     expect(html).toContain('data-mention-kind="issue"');
     expect(html).toContain(">PAP-123 auth flow</a>");
     expect(html).not.toContain(">@PAP-123 auth flow</a>");
+  });
+
+  it("renders issue comment mentions as chips that link to the comment anchor", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[Issue comment abc12345](${buildIssueMentionHref("issue-789", "PAP-123", "comment-123")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/issues/PAP-123#comment-comment-123"');
+    expect(html).toContain('data-mention-kind="issue"');
+    expect(html).toContain(">Issue comment abc12345</a>");
   });
 
   it("renders skill references as non-interactive tokens instead of links", () => {

@@ -99,7 +99,11 @@ export function PriorityIcon({ priority, onChange, className, showLabel }: Prior
   if (!onChange) return showLabel ? <span className="inline-flex items-center gap-1.5">{icon}<span className="text-sm">{config.label}</span></span> : icon;
 
   const trigger = showLabel ? (
-    <button type="button" className="-mx-1 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-[color:var(--surface-active)]">
+    <button
+      type="button"
+      aria-label={`Edit priority, current priority ${config.label}`}
+      className="-mx-1 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-[color:var(--surface-active)]"
+    >
       {icon}
       <span className="text-sm">{config.label}</span>
     </button>

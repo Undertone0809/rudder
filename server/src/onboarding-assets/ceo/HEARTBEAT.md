@@ -78,5 +78,5 @@ If `RUDDER_APPROVAL_ID` is set:
 
 - Always use the Rudder skill for coordination.
 - Mutating `rudder` CLI commands attach `RUDDER_RUN_ID` automatically when it is available.
-- Comment in concise markdown: status line + bullets + links.
-- Self-assign via checkout only when explicitly @-mentioned.
+- Comment in concise markdown: status line + bullets + links. Use `[label](url)` for pages or actions the board should open; do not wrap action URLs in code spans unless you are showing literal code or a command.
+- Self-assign via checkout only when a wake comment explicitly asks you to take ownership. Plain `agent://...` links are references; board/operator `@Name` or `agent://...?intent=wake` comments are attention signals, not automatic ownership transfer.

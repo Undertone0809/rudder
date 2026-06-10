@@ -201,12 +201,90 @@ export function chatService(db: Db) {
           incomingMessagePreviewSql(),
         ),
       )
-      .orderBy(desc(chatMessages.createdAt));
+      .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id));
 
     const map = new Map<string, string | null>();
     for (const row of rows) {
       if (!map.has(row.conversationId)) {
         map.set(row.conversationId, truncatePreview(row.body));
+      }
+    }
+    return map;
+  }
+
+  async function listUserMessageSummaries(orgId: string, conversationIds: string[]) {
+    if (conversationIds.length === 0) return new Map<string, { count: number; latestPreview: string | null }>();
+
+    const countRows = await db
+      .select({
+        conversationId: chatMessages.conversationId,
+        count: sql<number>`count(*)`,
+      })
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.orgId, orgId),
+          inArray(chatMessages.conversationId, conversationIds),
+          isNull(chatMessages.supersededAt),
+          eq(chatMessages.role, "user"),
+          eq(chatMessages.kind, "message"),
+          sql<boolean>`btrim(${chatMessages.body}) <> ''`,
+        ),
+      )
+      .groupBy(chatMessages.conversationId);
+
+    const latestUserAt = db
+      .select({
+        conversationId: chatMessages.conversationId,
+        latestUserAt: sql<Date>`max(${chatMessages.createdAt})`.as("latest_user_at"),
+      })
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.orgId, orgId),
+          inArray(chatMessages.conversationId, conversationIds),
+          isNull(chatMessages.supersededAt),
+          eq(chatMessages.role, "user"),
+          eq(chatMessages.kind, "message"),
+          sql<boolean>`btrim(${chatMessages.body}) <> ''`,
+        ),
+      )
+      .groupBy(chatMessages.conversationId)
+      .as("latest_chat_user_at");
+
+    const previewRows = await db
+      .select({
+        conversationId: chatMessages.conversationId,
+        body: chatMessages.body,
+      })
+      .from(chatMessages)
+      .innerJoin(
+        latestUserAt,
+        and(
+          eq(chatMessages.conversationId, latestUserAt.conversationId),
+          eq(chatMessages.createdAt, latestUserAt.latestUserAt),
+        ),
+      )
+      .where(
+        and(
+          eq(chatMessages.orgId, orgId),
+          inArray(chatMessages.conversationId, conversationIds),
+          isNull(chatMessages.supersededAt),
+          eq(chatMessages.role, "user"),
+          eq(chatMessages.kind, "message"),
+          sql<boolean>`btrim(${chatMessages.body}) <> ''`,
+        ),
+      )
+      .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id));
+
+    const map = new Map<string, { count: number; latestPreview: string | null }>();
+    for (const row of countRows) {
+      map.set(row.conversationId, { count: Number(row.count ?? 0), latestPreview: null });
+    }
+    for (const row of previewRows) {
+      const current = map.get(row.conversationId) ?? { count: 0, latestPreview: null };
+      if (!current.latestPreview) {
+        map.set(row.conversationId, { ...current, latestPreview: truncatePreview(row.body) });
       }
     }
     return map;
@@ -272,6 +350,7 @@ export function chatService(db: Db) {
       unreadCountsByConversationId,
       pendingProposalConversationIds,
       latestReplyPreviewsByConversationId,
+      userMessageSummariesByConversationId,
     ] = await Promise.all([
       listContextLinksForConversationIds(db, rows.map((row) => row.id)),
       listPrimaryIssues(db, rows),
@@ -287,11 +366,16 @@ export function chatService(db: Db) {
       orgId
         ? listLatestReplyPreviews(orgId, conversationIds)
         : Promise.resolve(new Map<string, string | null>()),
+      orgId
+        ? listUserMessageSummaries(orgId, conversationIds)
+        : Promise.resolve(new Map<string, { count: number; latestPreview: string | null }>()),
     ]);
     return rows.map((row) => ({
       ...row,
       primaryIssue: row.primaryIssueId ? (primaryIssuesById.get(row.primaryIssueId) ?? null) : null,
       latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
+      latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
+      userMessageCount: userMessageSummariesByConversationId.get(row.id)?.count ?? 0,
       contextLinks: contextLinksByConversationId.get(row.id) ?? [],
       lastReadAt: userStatesByConversationId.get(row.id)?.lastReadAt ?? null,
       isPinned: Boolean(userStatesByConversationId.get(row.id)?.pinnedAt),
@@ -316,6 +400,7 @@ export function chatService(db: Db) {
       unreadCountsByConversationId,
       pendingProposalConversationIds,
       latestReplyPreviewsByConversationId,
+      userMessageSummariesByConversationId,
     ] = await Promise.all([
       userId && orgId
         ? listConversationUserStates(orgId, userId, conversationIds)
@@ -329,10 +414,15 @@ export function chatService(db: Db) {
       orgId
         ? listLatestReplyPreviews(orgId, conversationIds)
         : Promise.resolve(new Map<string, string | null>()),
+      orgId
+        ? listUserMessageSummaries(orgId, conversationIds)
+        : Promise.resolve(new Map<string, { count: number; latestPreview: string | null }>()),
     ]);
     return rows.map((row) => ({
       ...row,
       latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
+      latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
+      userMessageCount: userMessageSummariesByConversationId.get(row.id)?.count ?? 0,
       lastReadAt: userStatesByConversationId.get(row.id)?.lastReadAt ?? null,
       isPinned: Boolean(userStatesByConversationId.get(row.id)?.pinnedAt),
       unreadCount: unreadCountsByConversationId.get(row.id) ?? 0,

@@ -31,7 +31,10 @@ const mockState = vi.hoisted(() => ({
   mutations: [] as unknown[],
   navigate: vi.fn(),
   pushToast: vi.fn(),
+  queryKeys: [] as unknown[][],
   sendMessageStream: vi.fn(),
+  setQueriesData: vi.fn(),
+  setQueryData: vi.fn(),
   setBreadcrumbs: vi.fn(),
   streamDrafts: {} as Record<string, ChatStreamDraft>,
 }));
@@ -39,6 +42,7 @@ const mockState = vi.hoisted(() => ({
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled = true }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
     if (!enabled) return { data: undefined, isPending: false, isLoading: false, error: null };
+    mockState.queryKeys.push([...queryKey]);
     if (queryKey[0] === "chats" && queryKey[2] === "active") {
       return { data: mockState.conversations, isPending: false, isLoading: false, error: null };
     }
@@ -83,7 +87,8 @@ vi.mock("@tanstack/react-query", () => ({
   }),
   useQueryClient: () => ({
     invalidateQueries: mockState.invalidateQueries,
-    setQueryData: vi.fn(),
+    setQueryData: mockState.setQueryData,
+    setQueriesData: mockState.setQueriesData,
   }),
 }));
 
@@ -169,6 +174,8 @@ function chat(overrides: Partial<ChatConversation> = {}): ChatConversation {
     title: "Pending proposal chat",
     summary: null,
     latestReplyPreview: null,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     preferredAgentId: "agent-1",
     routedAgentId: null,
     primaryIssueId: null,
@@ -449,7 +456,7 @@ function renderChat() {
   };
 }
 
-function dispatchPasteFiles(target: Element, files: File[]) {
+function dispatchPasteFiles(target: Element, files: File[], options: { clipboardFiles?: File[] } = {}) {
   const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(pasteEvent, "clipboardData", {
     value: {
@@ -457,14 +464,37 @@ function dispatchPasteFiles(target: Element, files: File[]) {
         kind: "file",
         getAsFile: () => file,
       })),
-      files,
+      files: options.clipboardFiles ?? files,
     },
   });
   target.dispatchEvent(pasteEvent);
 }
 
+async function clickEnabledButton(container: Element, label: string) {
+  await act(async () => {
+    await Promise.resolve();
+  });
+  const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+    candidate.textContent?.includes(label)
+  );
+  expect(button).not.toBeUndefined();
+  expect(button?.disabled).toBe(false);
+  await act(async () => {
+    button?.click();
+    await Promise.resolve();
+  });
+}
+
 beforeEach(() => {
   installLocalStorageMock();
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:chat-attachment-preview"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
+  });
   resetChatPendingAttachmentsForTests();
   mockState.conversationId = "chat-1";
   mockState.conversations = [
@@ -489,7 +519,10 @@ beforeEach(() => {
   mockState.mutations = [];
   mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
+  mockState.queryKeys = [];
   mockState.sendMessageStream.mockReset();
+  mockState.setQueriesData.mockReset();
+  mockState.setQueryData.mockReset();
   mockState.sendMessageStream.mockImplementation(async (chatId: string, body: string, options: {
     onEvent: (event: unknown) => void | Promise<void>;
   }) => {
@@ -544,6 +577,84 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("Chat mention sources", () => {
+  it("uses active conversations for mention options instead of archived threads", () => {
+    renderChat();
+
+    const chatListStatuses = mockState.queryKeys
+      .filter((queryKey) => queryKey[0] === "chats" && queryKey.length === 3)
+      .map((queryKey) => queryKey[2]);
+    expect(chatListStatuses).toContain("active");
+    expect(chatListStatuses).not.toContain("all");
+  });
+});
+
+describe("Chat unread state", () => {
+  it("optimistically clears the selected Messenger chat before mark-read finishes", () => {
+    const unreadChat = chat({
+      id: "chat-1",
+      title: "Unread chat",
+      isUnread: true,
+      unreadCount: 2,
+      needsAttention: true,
+      lastMessageAt: new Date("2026-05-12T09:05:00.000Z"),
+    });
+    mockState.conversations = [unreadChat];
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-message-1",
+          role: "assistant",
+          kind: "message",
+          body: "Unread assistant reply",
+          createdAt: new Date("2026-05-12T09:05:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:05:00.000Z"),
+        }),
+      ],
+    };
+
+    renderChat();
+
+    expect(mockState.markRead).toHaveBeenCalledWith("chat-1");
+
+    const detailUpdater = mockState.setQueryData.mock.calls.find((call) =>
+      Array.isArray(call[0]) && call[0][0] === "chats" && call[0][1] === "detail" && call[0][2] === "chat-1",
+    )?.[1] as ((current: ChatConversation) => ChatConversation) | undefined;
+    expect(detailUpdater?.(unreadChat)).toMatchObject({
+      isUnread: false,
+      unreadCount: 0,
+      needsAttention: false,
+    });
+
+    const threadPageUpdater = mockState.setQueriesData.mock.calls.find((call) =>
+      Array.isArray(call[0]?.queryKey) && call[0].queryKey[0] === "messenger" && call[0].queryKey[2] === "threads",
+    )?.[1] as ((current: {
+      pages: Array<{ items: Array<{ threadKey: string; unreadCount: number; needsAttention: boolean }>; pageInfo: Record<string, unknown> }>;
+      pageParams: unknown[];
+    }) => {
+      pages: Array<{ items: Array<{ threadKey: string; unreadCount: number; needsAttention: boolean }> }>;
+    }) | undefined;
+    expect(threadPageUpdater?.({
+      pages: [{
+        items: [{ threadKey: "chat:chat-1", unreadCount: 2, needsAttention: true }],
+        pageInfo: { limit: 40, nextCursor: null, hasMore: false },
+      }],
+      pageParams: [null],
+    }).pages[0]?.items[0]).toMatchObject({
+      unreadCount: 0,
+      needsAttention: false,
+    });
+
+    const badgeUpdater = mockState.setQueryData.mock.calls.find((call) =>
+      Array.isArray(call[0]) && call[0][0] === "sidebar-badges" && call[0][1] === "org-1",
+    )?.[1] as ((current: { inbox: number; chatAttention: number }) => { inbox: number; chatAttention: number }) | undefined;
+    expect(badgeUpdater?.({ inbox: 3, chatAttention: 2 })).toMatchObject({
+      inbox: 2,
+      chatAttention: 1,
+    });
+  });
+});
+
 describe("Chat attachment previews", () => {
   it("does not over-cancel the workspace main padding on desktop", () => {
     const { container } = renderChat();
@@ -578,6 +689,48 @@ describe("Chat attachment previews", () => {
     rerender();
 
     expect(document.body.querySelector("[data-testid='chat-image-preview-dialog']")).toBeNull();
+  });
+
+  it("approves issue proposals with the operator-selected issue status", async () => {
+    const { container } = renderChat();
+
+    const statusTrigger = container.querySelector<HTMLButtonElement>('button[aria-label="Edit status"]');
+    expect(statusTrigger).not.toBeNull();
+
+    await act(async () => {
+      statusTrigger?.dispatchEvent(new MouseEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      }));
+      await Promise.resolve();
+    });
+
+    const inReviewOption = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (candidate) => candidate.textContent?.includes("in review"),
+    );
+    expect(inReviewOption).not.toBeUndefined();
+
+    await act(async () => {
+      inReviewOption?.click();
+      await Promise.resolve();
+    });
+
+    await clickEnabledButton(container, "Approve");
+
+    expect(mockState.mutations.at(-1)).toMatchObject({
+      approvalId: "approval-1",
+      action: "approve",
+      messageId: "proposal-1",
+      payloadOverride: {
+        proposedIssue: {
+          title: "Fix attachment preview",
+          description: "Move the preview dialog outside the composer.",
+          priority: "medium",
+          status: "in_review",
+        },
+      },
+    });
   });
 });
 
@@ -644,17 +797,7 @@ describe("Chat ask_user panel", () => {
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
-    const clickButton = (label: string) => {
-      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-        candidate.textContent?.includes(label)
-      );
-      expect(button).not.toBeUndefined();
-      act(() => {
-        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-    };
-
-    clickButton("Other");
+    await clickEnabledButton(container, "Other");
     expect(panel?.textContent).toContain("Attach");
     expect(panel?.textContent).toContain("failure-log.txt");
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).not.toBeNull();
@@ -667,10 +810,7 @@ describe("Chat ask_user panel", () => {
       textarea!.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    await act(async () => {
-      clickButton("Submit answer");
-      await Promise.resolve();
-    });
+    await clickEnabledButton(container, "Submit answer");
 
     expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
     expect(mockState.sendMessageStream.mock.calls[0]?.[2]).toMatchObject({
@@ -691,17 +831,7 @@ describe("Chat ask_user panel", () => {
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
-    const clickButton = (label: string) => {
-      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-        candidate.textContent?.includes(label)
-      );
-      expect(button).not.toBeUndefined();
-      act(() => {
-        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-    };
-
-    clickButton("Other");
+    await clickEnabledButton(container, "Other");
     const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
     expect(textarea).not.toBeNull();
 
@@ -714,16 +844,52 @@ describe("Chat ask_user panel", () => {
     expect(panel?.textContent).toContain("receipt.txt");
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).not.toBeNull();
 
-    await act(async () => {
-      clickButton("Submit answer");
-      await Promise.resolve();
-    });
+    await clickEnabledButton(container, "Submit answer");
 
     expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
     const sentFiles = mockState.sendMessageStream.mock.calls[0]?.[2]?.files as File[] | undefined;
     expect(sentFiles).toHaveLength(1);
     expect(sentFiles?.[0]?.name).toBe("receipt.txt");
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).toBeNull();
+  });
+
+  it("dedupes pasted attachments exposed through both clipboard items and files", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    await clickEnabledButton(container, "Other");
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+
+    const clipboardItemFile = new File(["receipt image"], "receipt.png", {
+      type: "image/png",
+      lastModified: 1000,
+    });
+    const clipboardListFile = new File(["receipt image"], "receipt.png", {
+      type: "image/png",
+      lastModified: 2000,
+    });
+    await act(async () => {
+      dispatchPasteFiles(textarea!, [clipboardItemFile], { clipboardFiles: [clipboardListFile] });
+      await Promise.resolve();
+    });
+
+    expect(container.querySelectorAll("[data-testid='chat-ask-user-pending-attachment']")).toHaveLength(1);
+
+    await clickEnabledButton(container, "Submit answer");
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    const sentFiles = mockState.sendMessageStream.mock.calls[0]?.[2]?.files as File[] | undefined;
+    expect(sentFiles).toHaveLength(1);
+    expect(sentFiles?.[0]?.name).toBe("receipt.png");
   });
 
   it("renders persisted multiline Other answers without dropping bullet lines", () => {
@@ -870,21 +1036,10 @@ describe("Chat ask_user panel", () => {
     const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
     expect(panel).not.toBeNull();
 
-    const clickButton = async (label: string) => {
-      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-        candidate.textContent?.includes(label)
-      );
-      expect(button).not.toBeUndefined();
-      await act(async () => {
-        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-        await Promise.resolve();
-      });
-    };
-
-    await clickButton("Test output");
+    await clickEnabledButton(container, "Test output");
     expect(panel?.textContent).toContain("Screenshots");
-    await clickButton("Screenshots");
-    await clickButton("Submit answer");
+    await clickEnabledButton(container, "Screenshots");
+    await clickEnabledButton(container, "Submit answer");
 
     expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
     expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Test output, Screenshots");

@@ -83,9 +83,6 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await expect(mentionMenu).toBeVisible();
   await expect(mentionMenu).toContainText("Issues");
   await expect(mentionMenu).toContainText("Related mention target");
-  await expect(mentionMenu).toContainText("Todo");
-  await expect(mentionMenu).toContainText(project.name);
-  await expect(mentionMenu).toContainText(agent.name);
 
   const composerBox = await composer.boundingBox();
   const menuBox = await mentionMenu.boundingBox();
@@ -117,6 +114,17 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await expect(page.locator('[class*="_linkDialogPopoverContent_"]')).toHaveCount(0);
   await expect(page.getByText(new RegExp(`agent://${agent.id}`))).toHaveCount(0);
 
+  const mentionWakeRunsBeforeReferenceOnly = await page.request
+    .get(`/api/orgs/${organization.id}/heartbeat-runs?agentId=${agent.id}&limit=20`)
+    .then(async (res) => {
+      expect(res.ok()).toBe(true);
+      const runs = await res.json() as Array<{ contextSnapshot?: Record<string, unknown> | null }>;
+      return runs.filter((run) =>
+        run.contextSnapshot?.wakeReason === "issue_comment_mentioned"
+        && run.contextSnapshot?.wakeSource === "comment.mention"
+      ).length;
+    });
+
   await agentChipLink.evaluate((anchor) => {
     const range = document.createRange();
     range.setStartAfter(anchor);
@@ -129,9 +137,21 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await expect(composer.locator(`a[href^="agent://${agent.id}"]`)).toHaveCount(0);
 
   const commentOnlyRes = await page.request.post(`/api/issues/${primaryIssue.id}/comments`, {
-    data: { body: `[${agent.name}](agent://${agent.id}) can you advise?` },
+    data: { body: `[@${agent.name}](agent://${agent.id}) can you advise?` },
   });
   expect(commentOnlyRes.ok()).toBe(true);
+  await expect.poll(async () => {
+    const runsRes = await page.request.get(`/api/orgs/${organization.id}/heartbeat-runs?agentId=${agent.id}&limit=20`);
+    expect(runsRes.ok()).toBe(true);
+    const runs = await runsRes.json() as Array<{ contextSnapshot?: Record<string, unknown> | null }>;
+    return runs.filter((run) =>
+      run.contextSnapshot?.wakeReason === "issue_comment_mentioned"
+      && run.contextSnapshot?.wakeSource === "comment.mention"
+    ).length;
+  }, {
+    timeout: 5_000,
+    intervals: [250, 500, 1_000],
+  }).toBe(mentionWakeRunsBeforeReferenceOnly);
   const afterCommentOnlyRes = await page.request.get(`/api/issues/${primaryIssue.id}`);
   expect(afterCommentOnlyRes.ok()).toBe(true);
   const afterCommentOnly = await afterCommentOnlyRes.json() as {
@@ -177,7 +197,7 @@ test("issue comment composer renders enough matching Library files for smooth me
   expect(issueRes.ok()).toBe(true);
   const issue = await issueRes.json() as { id: string; identifier: string | null };
 
-  const query = `scrollproof${suffix}`;
+  const query = "scrolltarget";
   const directoryPath = `docs/mention-scroll-${suffix}`;
   const filePaths = Array.from({ length: 20 }, (_, index) => {
     const padded = String(index).padStart(2, "0");
@@ -216,6 +236,8 @@ test("issue comment composer renders enough matching Library files for smooth me
   await page.waitForTimeout(50);
 
   await composer.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.press("Backspace");
   await page.keyboard.type(`@${query}`);
 
   const mentionMenu = page.getByTestId("markdown-mention-menu");

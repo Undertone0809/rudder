@@ -138,6 +138,18 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     }
   });
 
+  it("can serialize selected agent mentions as issue-comment wake requests", () => {
+    const option: MentionOption = {
+      id: "agent:agent-1",
+      name: "Jade",
+      kind: "agent",
+      agentId: "agent-1",
+      agentIcon: "bot",
+    };
+
+    expect(mentionMarkdown(option, "wake")).toBe(`[Jade](${buildAgentMentionHref("agent-1", "bot", "wake")}) `);
+  });
+
   it("recognizes Rudder mention and skill links as token links", () => {
     expect(isRudderTokenHref("agent://agent-1", "Jade")).toBe(true);
     expect(isRudderTokenHref("issue://issue-1?ref=R-1", "R-1")).toBe(true);
@@ -489,6 +501,9 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
   it("resolves special Rudder references to app navigation paths", () => {
     expect(rudderTokenNavigationPath(buildAgentMentionHref("agent-1", "bot"))).toBe("/agents/agent-1");
     expect(rudderTokenNavigationPath(buildIssueMentionHref("issue-1", "R-1"))).toBe("/issues/R-1");
+    expect(rudderTokenNavigationPath(buildIssueMentionHref("issue-1", "R-1", "comment-1"))).toBe(
+      "/issues/R-1#comment-comment-1",
+    );
     expect(rudderTokenNavigationPath(buildLibraryFileMentionHref("docs/spec.md", "spec.md"))).toBe(
       "/library?path=docs%2Fspec.md",
     );

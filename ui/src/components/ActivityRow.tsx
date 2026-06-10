@@ -4,7 +4,7 @@ import { AgentIdentity } from "./AgentAvatar";
 import { resolveActivityActorName } from "@/lib/activity-actors";
 import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
-import { deriveProjectUrlKey, type ActivityEvent, type Agent } from "@rudderhq/shared";
+import { deriveProjectUrlKey, issueUpdatedChangedKeys, type ActivityEvent, type Agent } from "@rudderhq/shared";
 import { formatPriorityLabel } from "../lib/priorities";
 
 const ACTION_VERBS: Record<string, string> = {
@@ -13,6 +13,8 @@ const ACTION_VERBS: Record<string, string> = {
   "issue.checked_out": "checked out",
   "issue.released": "released",
   "issue.comment_added": "commented on",
+  "issue.comment_updated": "edited a comment on",
+  "issue.comment_deleted": "deleted a comment from",
   "issue.code_committed": "committed",
   "issue.attachment_added": "attached file to",
   "issue.attachment_removed": "removed attachment from",
@@ -49,17 +51,6 @@ const ACTION_VERBS: Record<string, string> = {
   "organization.budget_updated": "updated budget for",
 };
 
-const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
-
 const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeAgentId: "assignee",
   assigneeUserId: "assignee",
@@ -84,10 +75,6 @@ function humanizeValue(value: unknown): string {
   return value.replace(/_/g, " ");
 }
 
-function issueUpdatedChangedKeys(details: Record<string, unknown>): string[] {
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
-}
-
 function humanizeIssueUpdateField(key: string): string {
   return ISSUE_UPDATE_FIELD_LABELS[key] ?? key.replace(/Id$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
 }
@@ -101,6 +88,55 @@ function formatIssueFieldVerb(fieldLabel: string, next: unknown, previous: unkno
   if (hasIssueUpdateValue(next)) return `set ${fieldLabel} on`;
   if (hasIssueUpdateValue(previous)) return `cleared ${fieldLabel} on`;
   return `updated ${fieldLabel} on`;
+}
+
+type IssueActivityReference = {
+  id: string;
+  identifier: string | null;
+  title: string | null;
+};
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function readIssueReference(value: unknown): IssueActivityReference | null {
+  const record = readRecord(value);
+  if (!record || typeof record.id !== "string") return null;
+  return {
+    id: record.id,
+    identifier: typeof record.identifier === "string" ? record.identifier : null,
+    title: typeof record.title === "string" ? record.title : null,
+  };
+}
+
+function issueReferenceLabel(reference: IssueActivityReference): string {
+  return reference.identifier || reference.title || reference.id.slice(0, 8);
+}
+
+function issueReferenceLink(reference: IssueActivityReference): string {
+  return `/issues/${reference.identifier ?? reference.id}`;
+}
+
+function issueParentChange(details?: Record<string, unknown> | null): {
+  verb: string;
+  target: IssueActivityReference;
+} | null {
+  if (!details || !Object.prototype.hasOwnProperty.call(details, "parentId")) return null;
+  const previous = readRecord(details._previous);
+  const references = readRecord(details._references);
+  const parentIssue = readIssueReference(references?.parentIssue);
+  const previousParentIssue = readIssueReference(references?.previousParentIssue);
+  if (parentIssue) {
+    return {
+      verb: hasIssueUpdateValue(previous?.parentId) ? "changed parent issue to" : "set parent issue to",
+      target: parentIssue,
+    };
+  }
+  if (previousParentIssue) {
+    return { verb: "cleared parent issue", target: previousParentIssue };
+  }
+  return null;
 }
 
 function formatVerb(action: string, details?: Record<string, unknown> | null): string {
@@ -176,7 +212,8 @@ export function ActivityRow({
   currentBoardUserId,
   operatorDisplayName,
 }: ActivityRowProps) {
-  const verb = formatVerb(event.action, event.details);
+  const parentChange = event.action === "issue.updated" ? issueParentChange(event.details) : null;
+  const verb = parentChange ? parentChange.verb : formatVerb(event.action, event.details);
 
   const isHeartbeatEvent = event.entityType === "heartbeat_run";
   const heartbeatAgentId = isHeartbeatEvent
@@ -198,6 +235,14 @@ export function ActivityRow({
   const actorName = actor?.name ?? resolveActivityActorName(event, agentMap, currentBoardUserId, operatorDisplayName);
   const entityLabel = activityEntityLabel(event.entityType);
 
+  const entityLinkNode = name && link ? (
+    <Link to={link} className="font-medium underline underline-offset-4 hover:text-foreground">
+      {name}
+    </Link>
+  ) : name ? (
+    <span className="font-medium">{name}</span>
+  ) : null;
+
   const inner = (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
       <p className="min-w-0 truncate leading-5">
@@ -217,8 +262,19 @@ export function ActivityRow({
           />
         )}
         <span className="text-muted-foreground ml-1">{verb} </span>
+        {parentChange ? (
+          <>
+            <Link
+              to={issueReferenceLink(parentChange.target)}
+              className="font-medium underline underline-offset-4 hover:text-foreground"
+            >
+              {issueReferenceLabel(parentChange.target)}
+            </Link>
+            <span className="text-muted-foreground"> on </span>
+          </>
+        ) : null}
         {entityLabel && <span className="text-muted-foreground">{entityLabel} </span>}
-        {name && <span className="font-medium">{name}</span>}
+        {parentChange ? entityLinkNode : name && <span className="font-medium">{name}</span>}
         {entityTitle && entityTitle !== name && <span className="text-muted-foreground ml-1">— {entityTitle}</span>}
       </p>
       <span className="shrink-0 text-xs leading-5 text-muted-foreground tabular-nums">{timeAgo(event.createdAt)}</span>
@@ -227,11 +283,11 @@ export function ActivityRow({
 
   const classes = cn(
     "px-4 py-2 text-sm",
-    link && "cursor-pointer hover:bg-accent/50 transition-colors",
+    link && !parentChange && "cursor-pointer hover:bg-accent/50 transition-colors",
     className,
   );
 
-  if (link) {
+  if (link && !parentChange) {
     return (
       <Link to={link} className={cn(classes, "no-underline text-inherit block")}>
         {inner}

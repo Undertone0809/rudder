@@ -12,7 +12,7 @@ export function SettingsPageHeader({
   eyebrow?: string;
   icon?: LucideIcon;
   title: string;
-  description: ReactNode;
+  description?: ReactNode;
 }) {
   return (
     <header className="space-y-2.5">
@@ -27,9 +27,11 @@ export function SettingsPageHeader({
           <h1 className="font-display text-[1.4rem] leading-none text-foreground sm:text-[1.55rem]">
             {title}
           </h1>
-          <p className="max-w-3xl text-[13px] leading-5 text-muted-foreground">
-            {description}
-          </p>
+          {description ? (
+            <p className="max-w-3xl text-[13px] leading-5 text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
         </div>
       </div>
     </header>

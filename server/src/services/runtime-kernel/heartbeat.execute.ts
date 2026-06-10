@@ -607,6 +607,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let handle: RunLogHandle | null = null;
     let stdoutExcerpt = "";
     let stderrExcerpt = "";
+    let lastRunActivityTouchMs = 0;
     try {
       await preflightManagedAgentWorkspace({
         agentHome: readNonEmptyString(runtimeSceneContext.rudderWorkspace.agentHome) ?? "",
@@ -687,6 +688,14 @@ export function createHeartbeatExecuteHandlers(context: any) {
             chunk: sanitizedChunk,
             ts,
           });
+        }
+        const nowMs = Date.now();
+        if (nowMs - lastRunActivityTouchMs >= 30_000) {
+          lastRunActivityTouchMs = nowMs;
+          await db
+            .update(heartbeatRuns)
+            .set({ updatedAt: new Date(nowMs) })
+            .where(eq(heartbeatRuns.id, run.id));
         }
 
         const payloadChunk =

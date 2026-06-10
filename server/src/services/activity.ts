@@ -1,6 +1,7 @@
 import { and, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { activityLog, chatContextLinks, chatConversations, heartbeatRuns, issues } from "@rudderhq/db";
+import { isLowSignalIssueContentOnlyUpdate } from "@rudderhq/shared";
 
 export interface ActivityFilters {
   orgId: string;
@@ -12,35 +13,18 @@ export interface ActivityFilters {
   entityId?: string;
 }
 
-const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function issueUpdatedChangedKeys(details: unknown): string[] {
-  if (!isRecord(details)) return [];
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
-}
-
-function isDescriptionOnlyIssueUpdate(event: typeof activityLog.$inferSelect): boolean {
-  if (event.action !== "issue.updated") return false;
-  const changedKeys = issueUpdatedChangedKeys(event.details);
-  return changedKeys.length === 1 && changedKeys[0] === "description";
+function isLowSignalContentOnlyIssueUpdate(event: typeof activityLog.$inferSelect): boolean {
+  return isLowSignalIssueContentOnlyUpdate(event.action, event.details);
 }
 
 function shouldShowIssueActivity(event: typeof activityLog.$inferSelect): boolean {
   if (event.action === "issue.document_updated") return false;
-  if (isDescriptionOnlyIssueUpdate(event)) return false;
+  if (isLowSignalContentOnlyIssueUpdate(event)) return false;
+  return true;
+}
+
+function shouldShowOrganizationActivity(event: typeof activityLog.$inferSelect): boolean {
+  if (isLowSignalContentOnlyIssueUpdate(event)) return false;
   return true;
 }
 
@@ -99,7 +83,7 @@ export function activityService(db: Db) {
           ),
         )
         .orderBy(desc(activityLog.createdAt))
-        .then((rows) => rows.map((r) => r.activityLog));
+        .then((rows) => rows.map((r) => r.activityLog).filter(shouldShowOrganizationActivity));
     },
 
     forIssue: async (issueId: string) => {

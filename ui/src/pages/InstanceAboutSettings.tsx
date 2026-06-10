@@ -404,7 +404,6 @@ export function InstanceAboutSettings() {
       <SettingsPageHeader
         icon={Info}
         title={t("about.title")}
-        description={t("about.description")}
       />
 
       {actionError ? (

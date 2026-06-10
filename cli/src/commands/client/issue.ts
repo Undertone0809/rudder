@@ -932,7 +932,10 @@ function buildIssueListPath(orgId: string, opts: IssueSearchOptions, searchQuery
   if (opts.status) params.set("status", opts.status);
   if (opts.assigneeAgentId) params.set("assigneeAgentId", opts.assigneeAgentId);
   if (opts.projectId) params.set("projectId", opts.projectId);
-  if (searchQuery?.trim()) params.set("q", searchQuery.trim());
+  if (searchQuery?.trim()) {
+    params.set("q", searchQuery.trim());
+    params.set("searchFields", "title,description,comment");
+  }
 
   const query = params.toString();
   return `/api/orgs/${orgId}/issues${query ? `?${query}` : ""}`;

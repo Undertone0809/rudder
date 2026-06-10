@@ -135,8 +135,8 @@ export function DesktopUpdateStatusCard() {
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{progressLabel}</span>
               ) : null}
             </div>
-            <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
-              {currentProgress.error ?? t(PHASE_LABEL_KEYS[currentProgress.phase])}
+            <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-4 text-muted-foreground">
+              {currentProgress.error ?? currentProgress.message ?? t(PHASE_LABEL_KEYS[currentProgress.phase])}
             </p>
             {actionError ? (
               <p className="mt-2 rounded-[var(--radius-sm)] border border-destructive/25 bg-destructive/8 px-2.5 py-2 text-xs leading-4 text-destructive">

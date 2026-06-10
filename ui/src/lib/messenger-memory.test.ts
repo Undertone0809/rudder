@@ -64,6 +64,7 @@ describe("messenger memory", () => {
     expect(sanitizeRememberedMessengerPath("/messenger/chat")).toBe("/messenger/chat");
     expect(sanitizeRememberedMessengerPath("/messenger/chat/chat-123?prefill=hello")).toBe("/messenger/chat/chat-123");
     expect(sanitizeRememberedMessengerPath("/messenger/issues")).toBe("/messenger/issues");
+    expect(sanitizeRememberedMessengerPath("/messenger/issues/ISS-1#activity")).toBe("/messenger/issues/ISS-1");
     expect(sanitizeRememberedMessengerPath("/messenger/system/failed-runs")).toBe("/messenger/system/failed-runs");
     expect(sanitizeRememberedMessengerPath("/messenger/system/agent-errors")).toBeNull();
     expect(sanitizeRememberedMessengerPath("/issues/ISS-1")).toBeNull();
@@ -89,14 +90,14 @@ describe("messenger memory", () => {
   });
 
   it("reuses a remembered non-chat messenger thread directly", () => {
-    rememberMessengerPath("org-1", "/messenger/issues");
+    rememberMessengerPath("org-1", "/messenger/issues/ISS-1");
 
     expect(
       resolveRememberedMessengerEntry({
         orgId: "org-1",
         threadSummaries: [],
       }),
-    ).toBe("/messenger/issues");
+    ).toBe("/messenger/issues/ISS-1");
   });
 
   it("reuses a remembered chat thread when it is still present", () => {

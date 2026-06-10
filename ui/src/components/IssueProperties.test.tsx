@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Issue } from "@rudderhq/shared";
+import type { Issue, Project } from "@rudderhq/shared";
 import { IssueProperties } from "./IssueProperties";
 
 (
@@ -12,6 +12,7 @@ import { IssueProperties } from "./IssueProperties";
 
 const openNewIssue = vi.hoisted(() => vi.fn());
 const mockIssues = vi.hoisted(() => ({ current: [] as Issue[] }));
+const mockProjects = vi.hoisted(() => ({ current: [] as Project[] }));
 const longAgentName = "ZST Runtime Smoke Agent With A Very Long Operational Name";
 
 vi.mock("@tanstack/react-query", () => ({
@@ -42,6 +43,13 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "issues" && queryKey.length === 2) {
       return {
         data: mockIssues.current,
+        isLoading: false,
+        error: null,
+      };
+    }
+    if (queryKey[0] === "projects" && queryKey.length === 2) {
+      return {
+        data: mockProjects.current,
         isLoading: false,
         error: null,
       };
@@ -91,6 +99,7 @@ beforeEach(() => {
   document.body.innerHTML = "";
   openNewIssue.mockReset();
   mockIssues.current = [];
+  mockProjects.current = [];
 });
 
 afterEach(() => {
@@ -137,6 +146,69 @@ const baseIssue: Issue = {
   updatedAt: new Date("2026-04-19T08:00:00.000Z"),
 };
 
+function project(overrides: Partial<Project> = {}): Project {
+  const id = overrides.id ?? "project-1";
+  return {
+    id,
+    orgId: "org-1",
+    urlKey: id,
+    goalId: null,
+    goalIds: [],
+    goals: [],
+    name: "Target project",
+    description: null,
+    status: "in_progress",
+    leadAgentId: null,
+    targetDate: null,
+    color: "#22c55e",
+    pauseReason: null,
+    pausedAt: null,
+    executionWorkspacePolicy: null,
+    codebase: {
+      configured: true,
+      scope: "project",
+      workspaceId: "workspace-1",
+      repoUrl: null,
+      repoRef: null,
+      defaultRef: null,
+      repoName: null,
+      localFolder: null,
+      managedFolder: "",
+      effectiveLocalFolder: "",
+      origin: "local_folder",
+    },
+    resources: [],
+    workspaces: [
+      {
+        id: "workspace-1",
+        orgId: "org-1",
+        projectId: id,
+        name: "Primary workspace",
+        sourceType: "local_path",
+        cwd: "/tmp/target-project",
+        repoUrl: null,
+        repoRef: null,
+        defaultRef: null,
+        visibility: "default",
+        setupCommand: null,
+        cleanupCommand: null,
+        remoteProvider: null,
+        remoteWorkspaceRef: null,
+        sharedWorkspaceKey: null,
+        metadata: null,
+        isPrimary: true,
+        createdAt: new Date("2026-04-19T08:00:00.000Z"),
+        updatedAt: new Date("2026-04-19T08:00:00.000Z"),
+      },
+    ],
+    primaryWorkspace: null,
+    archivedAt: null,
+    createdAt: new Date("2026-04-19T08:00:00.000Z"),
+    updatedAt: new Date("2026-04-19T08:00:00.000Z"),
+    ...overrides,
+  };
+}
+
 describe("IssueProperties", () => {
   it("allows long assignee labels to shrink inside the properties panel", () => {
     const container = document.createElement("div");
@@ -182,6 +254,60 @@ describe("IssueProperties", () => {
     expect(label?.querySelector('[data-slot="agent-title-badge"]')?.classList.contains("w-full")).toBe(false);
     expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("truncate")).toBe(false);
     expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("break-words")).toBe(true);
+  });
+
+  it("clears stale execution workspace state when selecting a project", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onUpdate = vi.fn();
+    mockProjects.current = [project()];
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={{
+            ...baseIssue,
+            executionWorkspaceId: "old-execution-workspace",
+          }}
+          onUpdate={onUpdate}
+          inline
+        />,
+      );
+    });
+
+    act(() => {
+      container
+        .querySelectorAll<HTMLButtonElement>("button")
+        .forEach((button) => {
+          if (button.textContent?.trim() === "No project") {
+            button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          }
+        });
+    });
+
+    act(() => {
+      container
+        .querySelectorAll<HTMLButtonElement>("button")
+        .forEach((button) => {
+          if (button.textContent?.trim() === "Target project") {
+            button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          }
+        });
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      projectId: "project-1",
+      projectWorkspaceId: "workspace-1",
+      executionWorkspaceId: null,
+    });
   });
 
   it("does not render a workspace property row", () => {
@@ -375,6 +501,55 @@ describe("IssueProperties", () => {
     expect(container.textContent).toContain("Follow-up implementation");
     expect(container.textContent).toContain("RUD-2");
     expect(container.querySelector('a[href="/issues/RUD-2"]')).toBeTruthy();
+  });
+
+  it("opens parent issues by full id when the parent has no identifier", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const parentedIssue: Issue = {
+      ...baseIssue,
+      parentId: "legacy-parent-full-id",
+      ancestors: [
+        {
+          id: "legacy-parent-full-id",
+          identifier: null,
+          title: "Legacy parent task",
+          description: null,
+          status: "todo",
+          priority: "medium",
+          assigneeAgentId: null,
+          assigneeUserId: null,
+          reviewerAgentId: null,
+          reviewerUserId: null,
+          projectId: null,
+          goalId: null,
+          project: null,
+          goal: null,
+        },
+      ],
+    };
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={parentedIssue}
+          onUpdate={vi.fn()}
+          childIssues={[]}
+        />,
+      );
+    });
+
+    expect(container.querySelector('a[href="/issues/legacy-parent-full-id"]')).toBeTruthy();
+    expect(container.textContent).toContain("legacy-");
+    expect(container.textContent).toContain("Legacy parent task");
   });
 
   it("opens the shared new issue dialog with parent defaults from the properties row", () => {

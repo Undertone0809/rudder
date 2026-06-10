@@ -53,8 +53,8 @@ export const queryKeys = {
     list: (orgId: string) => ["issues", orgId] as const,
     children: (orgId: string, parentId: string) => ["issues", orgId, "children", parentId] as const,
     follows: (orgId: string) => ["issues", orgId, "follows"] as const,
-    search: (orgId: string, q: string, projectId?: string) =>
-      ["issues", orgId, "search", q, projectId ?? "__all-projects__"] as const,
+    search: (orgId: string, q: string, projectId?: string, searchFields: readonly string[] = ["title"]) =>
+      ["issues", orgId, "search", q, projectId ?? "__all-projects__", searchFields.join(",")] as const,
     listAssignedToMe: (orgId: string) => ["issues", orgId, "assigned-to-me"] as const,
     listTouchedByMe: (orgId: string) => ["issues", orgId, "touched-by-me"] as const,
     listUnreadTouchedByMe: (orgId: string) => ["issues", orgId, "unread-touched-by-me"] as const,

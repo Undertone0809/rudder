@@ -426,6 +426,7 @@ export function Automations() {
         catchUpPolicy: draft.catchUpPolicy,
         outputMode: "track_issue",
         chatConversationId: null,
+        notifyOnIssueCreated: false,
       });
 
       if (draft.scheduleCron.trim()) {

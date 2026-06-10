@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderTemplate, selectPromptTemplate } from "@rudderhq/agent-runtime-utils/server-utils";
 import { issueRoutes } from "../routes/issues.js";
 import { errorHandler } from "../middleware/index.js";
+import { HttpError } from "../errors.js";
 
 const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
@@ -18,6 +19,8 @@ const mockIssueService = vi.hoisted(() => ({
   getComment: vi.fn(),
   getCommentCursor: vi.fn(),
   reorder: vi.fn(),
+  updateComment: vi.fn(),
+  deleteComment: vi.fn(),
   update: vi.fn(),
 }));
 
@@ -30,6 +33,10 @@ const mockHeartbeatService = vi.hoisted(() => ({
   getRun: vi.fn(),
   reportRunActivity: vi.fn(async () => undefined),
   wakeup: vi.fn(async () => undefined),
+}));
+
+const mockMessengerService = vi.hoisted(() => ({
+  setThreadRead: vi.fn(async () => undefined),
 }));
 
 const mockAgentService = vi.hoisted(() => ({
@@ -56,6 +63,7 @@ const mockWorkProductService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
+const mockPublishLiveEvent = vi.hoisted(() => vi.fn());
 
 const ASSIGNEE_AGENT_ID = "22222222-2222-4222-8222-222222222222";
 const REVIEWER_AGENT_ID = "33333333-3333-4333-8333-333333333333";
@@ -73,6 +81,7 @@ vi.mock("../services/index.js", () => ({
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => ({}),
   issueService: () => mockIssueService,
+  messengerService: () => mockMessengerService,
   organizationIntelligenceProfileService: () => ({
     list: vi.fn(),
     getByPurpose: vi.fn(),
@@ -85,6 +94,10 @@ vi.mock("../services/index.js", () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),
   }),
   workProductService: () => mockWorkProductService,
+}));
+
+vi.mock("../services/live-events.js", () => ({
+  publishLiveEvent: mockPublishLiveEvent,
 }));
 
 function createBoardActor() {
@@ -120,6 +133,8 @@ function createApp(actor = createBoardActor()) {
 }
 
 function makeIssue(overrides?: Partial<{
+  id: string;
+  orgId: string;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
   reviewerAgentId: string | null;
@@ -130,6 +145,7 @@ function makeIssue(overrides?: Partial<{
   executionRunId: string | null;
   identifier: string;
   goalId: string | null;
+  parentId: string | null;
   projectId: string | null;
   boardOrder: number;
   status: "backlog" | "todo" | "in_progress" | "in_review" | "blocked" | "done";
@@ -150,6 +166,7 @@ function makeIssue(overrides?: Partial<{
     executionRunId: null,
     identifier: "RUD-5",
     goalId: null,
+    parentId: null,
     projectId: null,
     boardOrder: 1000,
     status: "todo" as const,
@@ -205,8 +222,34 @@ describe("issue lifecycle routes", () => {
       body,
       createdAt: new Date(),
       updatedAt: new Date(),
+      deletedAt: null,
+      deletedByUserId: null,
       authorAgentId: author.agentId ?? null,
       authorUserId: author.userId ?? "local-board",
+    }));
+    mockIssueService.updateComment.mockImplementation(async (_issueId: string, commentId: string, body: string, author: { userId: string }) => ({
+      id: commentId,
+      issueId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      body,
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-05-01T00:01:00.000Z"),
+      deletedAt: null,
+      deletedByUserId: null,
+      authorAgentId: null,
+      authorUserId: author.userId,
+    }));
+    mockIssueService.deleteComment.mockImplementation(async (_issueId: string, commentId: string, author: { userId: string }) => ({
+      id: commentId,
+      issueId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      body: "",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-05-01T00:02:00.000Z"),
+      deletedAt: new Date("2026-05-01T00:02:00.000Z"),
+      deletedByUserId: author.userId,
+      authorAgentId: null,
+      authorUserId: author.userId,
     }));
   });
 
@@ -987,6 +1030,92 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+  it("does not log low-signal title and description-only updates", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        title: "Original title",
+        description: "Original description",
+      }),
+    );
+    mockIssueService.update.mockResolvedValue(
+      makeIssue({
+        title: "Renamed title",
+        description: "Edited description",
+      }),
+    );
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ title: "Renamed title", description: "Edited description" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({
+        title: "Renamed title",
+        description: "Edited description",
+      }),
+    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockPublishLiveEvent).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      type: "issue.content_updated",
+      payload: expect.objectContaining({
+        entityType: "issue",
+        entityId: "11111111-1111-4111-8111-111111111111",
+        actorType: "user",
+        actorId: "local-board",
+        details: expect.objectContaining({
+          title: "Renamed title",
+          description: "Edited description",
+        }),
+      }),
+    });
+  });
+
+  it("includes parent issue references in parent update activity details", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    const parentIssueId = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    const childIssue = makeIssue({ id: issueId });
+    const updatedChildIssue = makeIssue({ id: issueId, parentId: parentIssueId });
+    const parentIssue = makeIssue({
+      id: parentIssueId,
+      identifier: "RUD-42",
+      title: "Messenger review parent",
+    });
+
+    mockIssueService.getById.mockImplementation(async (id: string) => {
+      if (id === issueId) return childIssue;
+      if (id === parentIssueId) return parentIssue;
+      return null;
+    });
+    mockIssueService.update.mockResolvedValue(updatedChildIssue);
+
+    const res = await request(createApp())
+      .patch(`/api/issues/${issueId}`)
+      .send({ parentId: parentIssueId });
+
+    expect(res.status).toBe(200);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.updated",
+        entityId: issueId,
+        details: expect.objectContaining({
+          parentId: parentIssueId,
+          _references: {
+            parentIssue: {
+              id: parentIssueId,
+              identifier: "RUD-42",
+              title: "Messenger review parent",
+            },
+          },
+          _previous: expect.objectContaining({ parentId: null }),
+        }),
+      }),
+    );
+  });
+
   it("does not log a generic issue update for comment-only patches", async () => {
     const issue = makeIssue();
     mockIssueService.getById.mockResolvedValue(issue);
@@ -1713,6 +1842,186 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+  it("allows a board user to edit their own issue comment and records safe activity", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
+      .send({ body: "Updated comment body" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.body).toBe("Updated comment body");
+    expect(mockIssueService.updateComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "comment-1",
+      "Updated comment body",
+      { userId: "local-board" },
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: "user",
+        actorId: "local-board",
+        action: "issue.comment_updated",
+        entityType: "issue",
+        entityId: "11111111-1111-4111-8111-111111111111",
+        details: expect.objectContaining({
+          commentId: "comment-1",
+          identifier: "RUD-5",
+        }),
+      }),
+    );
+  });
+
+  it("allows a board user to delete their own issue comment without logging the deleted body", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const res = await request(createApp())
+      .delete("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1");
+
+    expect(res.status).toBe(200);
+    expect(res.body.body).toBe("");
+    expect(res.body.deletedByUserId).toBe("local-board");
+    expect(mockIssueService.deleteComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "comment-1",
+      { userId: "local-board" },
+    );
+    const activityCall = mockLogActivity.mock.calls.find((call) => call[1]?.action === "issue.comment_deleted");
+    expect(activityCall?.[1]).toEqual(expect.objectContaining({
+      details: expect.objectContaining({
+        commentId: "comment-1",
+        identifier: "RUD-5",
+      }),
+    }));
+    expect(JSON.stringify(activityCall?.[1]?.details)).not.toContain("Original deleted body");
+  });
+
+  it("rejects agent attempts to edit or delete issue comments", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const patchRes = await request(createApp(createAgentActor()))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1")
+      .send({ body: "Agent edit" });
+    const deleteRes = await request(createApp(createAgentActor()))
+      .delete("/api/issues/11111111-1111-4111-8111-111111111111/comments/comment-1");
+
+    expect(patchRes.status).toBe(403);
+    expect(deleteRes.status).toBe(403);
+    expect(mockIssueService.updateComment).not.toHaveBeenCalled();
+    expect(mockIssueService.deleteComment).not.toHaveBeenCalled();
+  });
+
+  it("allows an assignee follow-up execution run with a null checkout lock to close out", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+        status: "in_progress",
+        checkoutRunId: null,
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+        status: patch.status as "in_review",
+        checkoutRunId: null,
+        executionRunId: RUN_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done", comment: "Implemented the requested changes." });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.assertCheckoutOwner).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      ASSIGNEE_AGENT_ID,
+      RUN_ID,
+    );
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "in_review" }),
+    );
+    expect(mockHeartbeatService.reportRunActivity).toHaveBeenCalledWith(RUN_ID);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.updated",
+        runId: RUN_ID,
+        details: expect.objectContaining({
+          status: "in_review",
+          normalizedFromStatus: "done",
+          normalizedReason: "reviewed_issue_assignee_completion",
+        }),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.comment_added",
+        runId: RUN_ID,
+        details: expect.objectContaining({
+          bodySnippet: "Implemented the requested changes.",
+        }),
+      }),
+    );
+  });
+
+  it("logs ownership rejection when an assignee close-out run does not own the issue", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        checkoutRunId: "99999999-9999-4999-8999-999999999999",
+        executionRunId: "99999999-9999-4999-8999-999999999999",
+      }),
+    );
+    mockIssueService.assertCheckoutOwner.mockRejectedValueOnce(new HttpError(409, "Issue run ownership conflict", {
+      issueId: "11111111-1111-4111-8111-111111111111",
+      checkoutRunId: "99999999-9999-4999-8999-999999999999",
+      executionRunId: "99999999-9999-4999-8999-999999999999",
+      actorRunId: RUN_ID,
+    }));
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done", comment: "This run should not close out." });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: "Issue run ownership conflict",
+      details: expect.objectContaining({
+        checkoutRunId: "99999999-9999-4999-8999-999999999999",
+        executionRunId: "99999999-9999-4999-8999-999999999999",
+        actorRunId: RUN_ID,
+      }),
+    });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.run_ownership_rejected",
+        runId: RUN_ID,
+        details: expect.objectContaining({
+          reason: "checkout_owner_conflict",
+          actorAgentId: ASSIGNEE_AGENT_ID,
+          actorRunId: RUN_ID,
+          error: "Issue run ownership conflict",
+          errorDetails: expect.objectContaining({
+            checkoutRunId: "99999999-9999-4999-8999-999999999999",
+            executionRunId: "99999999-9999-4999-8999-999999999999",
+            actorRunId: RUN_ID,
+          }),
+        }),
+      }),
+    );
+  });
+
 
   it("does not fan out mention wakeups from agent-authored issue comments", async () => {
     mockIssueService.getById.mockResolvedValue(
@@ -1971,6 +2280,35 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("does not fan out mention wakeups from agent-authored issue update comments", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        checkoutRunId: RUN_ID,
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: (patch.status as string | undefined) ?? "in_progress",
+        checkoutRunId: RUN_ID,
+        executionRunId: RUN_ID,
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ comment: "@Peer Agent I handled the review feedback." });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockIssueService.findMentionedAgents).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
   it("rejects issue completion from a mention-only agent run that does not own the issue", async () => {

@@ -13,6 +13,7 @@ import {
   issues,
   joinRequests,
   messengerThreadUserStates,
+  projects,
 } from "@rudderhq/db";
 import {
   formatMessengerPreview,
@@ -35,11 +36,13 @@ import {
   type MessengerThreadPageInfo,
   type MessengerThreadSummary,
   type MessengerThreadSummaryPage,
+  issueUpdatedChangedKeys,
 } from "@rudderhq/shared";
 import { chatService } from "./chats.js";
 import { budgetService } from "./budgets.js";
 import { redactEventPayload } from "../redaction.js";
 import { conflict } from "../errors.js";
+import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
 
 const ISSUE_ACTIVITY_ACTIONS = [
   "issue.updated",
@@ -94,6 +97,7 @@ type ThreadSummaryCursor = {
   activityAt: string;
   title: string;
   threadKey: string;
+  isPinned: boolean;
 };
 type IssueThreadEntry = {
   issue: IssueUniverseRow & { followed: boolean; assigned: boolean };
@@ -135,10 +139,16 @@ type IssueUniverseRow = {
   title: string;
   status: string;
   priority: string;
+  projectId: string | null;
+  projectName: string | null;
+  projectColor: string | null;
+  assigneeAgentId: string | null;
   assigneeUserId: string | null;
   reviewerUserId: string | null;
   createdByUserId: string | null;
   identifier: string | null;
+  executionRunId: string | null;
+  hasActiveExecutionRun: boolean;
   updatedAt: Date;
 };
 
@@ -234,8 +244,21 @@ type JoinRequestRow = {
 type ChatConversationRow = Awaited<ReturnType<ReturnType<typeof chatService>["list"]>>[number];
 type ChatSummarySource = Pick<
   ChatConversationRow,
-  "id" | "title" | "summary" | "latestReplyPreview" | "lastMessageAt" | "updatedAt" | "lastReadAt" | "unreadCount" | "needsAttention" | "isPinned"
->;
+  | "id"
+  | "title"
+  | "summary"
+  | "latestReplyPreview"
+  | "lastMessageAt"
+  | "updatedAt"
+  | "lastReadAt"
+  | "unreadCount"
+  | "needsAttention"
+  | "isPinned"
+  | "preferredAgentId"
+  | "routedAgentId"
+> & {
+  chatRuntime?: { runtimeAgentId?: string | null } | null;
+};
 type ChatMessageRow = Awaited<ReturnType<ReturnType<typeof chatService>["listMessages"]>>[number];
 type HeartbeatRunRow = typeof heartbeatRuns.$inferSelect;
 
@@ -313,6 +336,7 @@ function encodeThreadSummaryCursor(summary: MessengerThreadSummary) {
     activityAt: (normalizeDate(summary.latestActivityAt) ?? new Date(0)).toISOString(),
     title: summary.title,
     threadKey: summary.threadKey,
+    isPinned: summary.isPinned,
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
@@ -328,6 +352,7 @@ function decodeThreadSummaryCursor(cursor: string | null | undefined): ThreadSum
       activityAt: decoded.activityAt,
       title: decoded.title,
       threadKey: decoded.threadKey,
+      isPinned: decoded.isPinned === true,
     };
   } catch {
     return null;
@@ -336,12 +361,17 @@ function decodeThreadSummaryCursor(cursor: string | null | undefined): ThreadSum
 
 function threadSummaryIsAfterCursor(summary: MessengerThreadSummary, cursor: ThreadSummaryCursor | null) {
   if (!cursor) return true;
-  const summaryTime = normalizeDate(summary.latestActivityAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
-  const cursorTime = new Date(cursor.activityAt).getTime();
-  if (summaryTime !== cursorTime) return summaryTime < cursorTime;
-  const titleDiff = summary.title.localeCompare(cursor.title);
-  if (titleDiff !== 0) return titleDiff > 0;
-  return summary.threadKey.localeCompare(cursor.threadKey) > 0;
+  return comparePinnedThenLatest<{
+    latestActivityAt: Date | null;
+    title: string;
+    threadKey: string;
+    isPinned: boolean;
+  }>(summary, {
+    latestActivityAt: new Date(cursor.activityAt),
+    title: cursor.title,
+    threadKey: cursor.threadKey,
+    isPinned: cursor.isPinned,
+  }) > 0;
 }
 
 function threadSummaryPageInfo(limit: number, items: MessengerThreadSummary[], hasMore: boolean): MessengerThreadPageInfo {
@@ -391,6 +421,10 @@ function issueHref(issue: IssueUniverseRow) {
   return `/issues/${issue.identifier ?? issue.id}`;
 }
 
+function messengerIssueHref(issue: IssueUniverseRow) {
+  return `/messenger/issues/${issue.identifier ?? issue.id}`;
+}
+
 function issueDisplayLabel(issue: IssueUniverseRow) {
   return issue.identifier ? `${issue.identifier} · ${issue.title}` : issue.title;
 }
@@ -405,17 +439,6 @@ function issueThreadPreview(issue: IssueUniverseRow, preview: string | null) {
 function humanizeIssueStatus(status: string) {
   return status.replaceAll("_", " ");
 }
-
-const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
 
 const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeAgentId: "assignee",
@@ -438,10 +461,6 @@ const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
 
 function humanizeIssueUpdateField(key: string): string {
   return ISSUE_UPDATE_FIELD_LABELS[key] ?? key.replace(/Id$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
-}
-
-function issueUpdatedChangedKeys(details: Record<string, unknown>): string[] {
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
 }
 
 function issueStatusChangeFromActivity(activity: IssueActivityRow | null | undefined): IssueStatusChange | null {
@@ -633,6 +652,11 @@ function chatSummary(conversation: ChatSummarySource): MessengerThreadSummary {
     needsAttention: conversation.needsAttention,
     isPinned: conversation.isPinned,
     href: `/messenger/chat/${conversation.id}`,
+    metadata: {
+      preferredAgentId: conversation.preferredAgentId,
+      routedAgentId: conversation.routedAgentId,
+      runtimeAgentId: conversation.chatRuntime?.runtimeAgentId ?? null,
+    },
   };
 }
 
@@ -664,7 +688,8 @@ function splitIssueSummary(
   lastReadAt: Date | null,
   threadState: ThreadStateRow | null,
 ): MessengerThreadSummary {
-  const unreadCount = entry.attentionActivityAt && (!lastReadAt || entry.attentionActivityAt.getTime() > lastReadAt.getTime())
+  const effectiveLastReadAt = maxDate(lastReadAt, threadState?.lastReadAt ?? null);
+  const unreadCount = entry.attentionActivityAt && (!effectiveLastReadAt || entry.attentionActivityAt.getTime() > effectiveLastReadAt.getTime())
     ? 1
     : 0;
   return {
@@ -674,11 +699,11 @@ function splitIssueSummary(
     subtitle: item.subtitle,
     preview: item.preview ?? item.body,
     latestActivityAt: item.latestActivityAt,
-    lastReadAt,
+    lastReadAt: effectiveLastReadAt,
     unreadCount,
     needsAttention: unreadCount > 0,
     isPinned: Boolean(threadState?.pinnedAt),
-    href: item.href ?? issueHref(entry.issue),
+    href: messengerIssueHref(entry.issue),
     metadata: {
       ...item.metadata,
       splitIssue: true,
@@ -773,6 +798,17 @@ function issueCard(
       status: issue.status,
       ...(statusChange ? { statusChange } : {}),
       priority: issue.priority,
+      ...(issue.hasActiveExecutionRun && issue.executionRunId
+        ? { activeExecutionRunId: issue.executionRunId }
+        : {}),
+      ...(issue.assigneeAgentId ? { assigneeAgentId: issue.assigneeAgentId } : {}),
+      ...(issue.projectId
+        ? {
+          projectId: issue.projectId,
+          projectName: issue.projectName ?? issue.projectId,
+          projectColor: issue.projectColor,
+        }
+        : {}),
       followed,
       createdByMe,
       assignedToMe,
@@ -942,32 +978,9 @@ export function messengerService(db: Db) {
 
   const issueActionSqlList = sql.join(ISSUE_ACTIVITY_ACTIONS.map((action) => sql`${action}`), sql`, `);
 
-  function issueDescriptionOnlyActivitySql(alias: string) {
-    return sql<boolean>`(
-      ${sql.raw(`${alias}.action`)} = 'issue.updated'
-      and jsonb_typeof(${sql.raw(`${alias}.details`)}) = 'object'
-      and ${sql.raw(`${alias}.details`)} ? 'description'
-      and not exists (
-        select 1
-        from jsonb_object_keys(${sql.raw(`${alias}.details`)}) as detail_key(key)
-        where detail_key.key not in (
-          'description',
-          'identifier',
-          'issueIdentifier',
-          '_previous',
-          'source',
-          'reopened',
-          'reopenedFrom',
-          'normalizedFromStatus',
-          'normalizedReason'
-        )
-      )
-    )`;
-  }
-
   function issueEntryRowsQuery(orgId: string, userId: string, tail = sql``) {
-    const descriptionOnlyActivity = issueDescriptionOnlyActivitySql("activity_row");
-    const externalDescriptionOnlyActivity = issueDescriptionOnlyActivitySql("external_activity_row");
+    const lowSignalContentOnlyActivity = issueLowSignalContentOnlyActivitySql("activity_row");
+    const externalLowSignalContentOnlyActivity = issueLowSignalContentOnlyActivitySql("external_activity_row");
     return sql<IssueThreadEntryRow>`
       with tracked_issue_ids as (
         select ${issues.id} as id
@@ -1003,10 +1016,22 @@ export function messengerService(db: Db) {
           issue_row.title as title,
           issue_row.status as status,
           issue_row.priority as priority,
+          issue_row.project_id as "projectId",
+          project_row.name as "projectName",
+          project_row.color as "projectColor",
+          issue_row.assignee_agent_id as "assigneeAgentId",
           issue_row.assignee_user_id as "assigneeUserId",
           issue_row.reviewer_user_id as "reviewerUserId",
           issue_row.created_by_user_id as "createdByUserId",
           issue_row.identifier as identifier,
+          issue_row.execution_run_id as "executionRunId",
+          exists (
+            select 1
+            from ${heartbeatRuns} active_execution_run
+            where active_execution_run.id = issue_row.execution_run_id
+              and active_execution_run.org_id = issue_row.org_id
+              and active_execution_run.status in ('queued', 'running')
+          ) as "hasActiveExecutionRun",
           issue_row.updated_at as "updatedAt",
           exists (
             select 1
@@ -1017,9 +1042,9 @@ export function messengerService(db: Db) {
           ) as followed,
           (issue_row.assignee_user_id = ${userId}) as assigned,
           greatest(
-            issue_row.updated_at,
-            coalesce(latest_external_comment.created_at, issue_row.updated_at),
-            coalesce(latest_activity.created_at, issue_row.updated_at)
+            issue_row.created_at,
+            coalesce(latest_external_comment.created_at, issue_row.created_at),
+            coalesce(latest_activity.created_at, issue_row.created_at)
           ) as "latestActivityAt",
           latest_activity.id as "latestActivityId",
           latest_activity.action as "latestActivityAction",
@@ -1040,8 +1065,19 @@ export function messengerService(db: Db) {
                 or latest_suppressed_activity.created_at < issue_row.updated_at - interval '5 seconds'
               )
               and (
+                latest_own_comment.created_at is null
+                or latest_own_comment.created_at < issue_row.updated_at - interval '5 seconds'
+              )
+              and (
                 issue_row.assignee_user_id = ${userId}
                 or (issue_row.reviewer_user_id = ${userId} and issue_row.status = 'in_review')
+                or exists (
+                  select 1
+                  from ${issueFollows} attention_follow_row
+                  where attention_follow_row.org_id = ${orgId}
+                    and attention_follow_row.user_id = ${userId}
+                    and attention_follow_row.issue_id = issue_row.id
+                )
               )
               then issue_row.updated_at
             else null
@@ -1058,7 +1094,16 @@ export function messengerService(db: Db) {
         from tracked_issue_ids
         inner join ${issues} issue_row
           on issue_row.id = tracked_issue_ids.id
-          and issue_row.origin_kind <> 'automation_execution'
+          and (
+            issue_row.origin_kind <> 'automation_execution'
+            or exists (
+              select 1
+              from ${issueFollows} automation_follow_row
+              where automation_follow_row.org_id = ${orgId}
+                and automation_follow_row.user_id = ${userId}
+                and automation_follow_row.issue_id = issue_row.id
+            )
+          )
         left join lateral (
           select
             comment_row.body,
@@ -1066,10 +1111,22 @@ export function messengerService(db: Db) {
           from ${issueComments} comment_row
           where comment_row.org_id = ${orgId}
             and comment_row.issue_id = issue_row.id
+            and comment_row.deleted_at is null
             and (comment_row.author_user_id is null or comment_row.author_user_id <> ${userId})
           order by comment_row.created_at desc, comment_row.id desc
           limit 1
         ) latest_external_comment on true
+        left join lateral (
+          select
+            comment_row.created_at
+          from ${issueComments} comment_row
+          where comment_row.org_id = ${orgId}
+            and comment_row.issue_id = issue_row.id
+            and comment_row.deleted_at is null
+            and comment_row.author_user_id = ${userId}
+          order by comment_row.created_at desc, comment_row.id desc
+          limit 1
+        ) latest_own_comment on true
         left join lateral (
           select
             activity_row.id,
@@ -1084,7 +1141,7 @@ export function messengerService(db: Db) {
             and activity_row.entity_type = 'issue'
             and activity_row.entity_id = issue_row.id::text
             and activity_row.action in (${issueActionSqlList})
-            and not ${descriptionOnlyActivity}
+            and not ${lowSignalContentOnlyActivity}
           order by activity_row.created_at desc, activity_row.id desc
           limit 1
         ) latest_activity on true
@@ -1102,7 +1159,7 @@ export function messengerService(db: Db) {
             and external_activity_row.entity_type = 'issue'
             and external_activity_row.entity_id = issue_row.id::text
             and external_activity_row.action in (${issueActionSqlList})
-            and not ${externalDescriptionOnlyActivity}
+            and not ${externalLowSignalContentOnlyActivity}
             and (external_activity_row.actor_type <> 'user' or external_activity_row.actor_id <> ${userId})
           order by external_activity_row.created_at desc, external_activity_row.id desc
           limit 1
@@ -1114,10 +1171,13 @@ export function messengerService(db: Db) {
             and suppressed_activity_row.entity_type = 'issue'
             and suppressed_activity_row.entity_id = issue_row.id::text
             and suppressed_activity_row.action in (${issueActionSqlList})
-            and ${issueDescriptionOnlyActivitySql("suppressed_activity_row")}
+            and ${issueLowSignalContentOnlyActivitySql("suppressed_activity_row")}
           order by suppressed_activity_row.created_at desc, suppressed_activity_row.id desc
           limit 1
         ) latest_suppressed_activity on true
+        left join ${projects} project_row
+          on project_row.id = issue_row.project_id
+          and project_row.org_id = issue_row.org_id
       )
       select *
       from issue_entries
@@ -1144,6 +1204,7 @@ export function messengerService(db: Db) {
       .where(and(
         eq(issueComments.orgId, orgId),
         inArray(issueComments.issueId, issueIds),
+        isNull(issueComments.deletedAt),
         or(isNull(issueComments.authorUserId), ne(issueComments.authorUserId, userId)),
       ))
       .orderBy(issueComments.issueId, desc(issueComments.createdAt), desc(issueComments.id))) as IssueCommentRow[];
@@ -1159,10 +1220,16 @@ export function messengerService(db: Db) {
       title: row.title,
       status: row.status,
       priority: row.priority,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectColor: row.projectColor,
+      assigneeAgentId: row.assigneeAgentId,
       assigneeUserId: row.assigneeUserId,
       reviewerUserId: row.reviewerUserId,
       createdByUserId: row.createdByUserId,
       identifier: row.identifier,
+      executionRunId: row.executionRunId,
+      hasActiveExecutionRun: row.hasActiveExecutionRun,
       updatedAt,
       followed: row.followed,
       assigned: row.assigned,
@@ -1235,9 +1302,14 @@ export function messengerService(db: Db) {
         count(*) filter (
           where "attentionActivityAt" is not null
             and (${lastReadAtIso}::timestamptz is null or "attentionActivityAt" > ${lastReadAtIso}::timestamptz)
+            and (issue_thread_state.last_read_at is null or "attentionActivityAt" > issue_thread_state.last_read_at)
         )::int as "unreadCount",
         max("latestActivityAt") as "latestActivityAt"
       from (${issueEntryRowsQuery(orgId, userId)}) issue_entry_stats
+      left join ${messengerThreadUserStates} issue_thread_state
+        on issue_thread_state.org_id = ${orgId}
+        and issue_thread_state.user_id = ${userId}
+        and issue_thread_state.thread_key = 'issue:' || issue_entry_stats.id::text
     `)) as IssueThreadStats[];
     const row = rows[0];
     return row
@@ -1934,29 +2006,39 @@ export function messengerService(db: Db) {
     if (budgetData.detail.items.length > 0) syntheticSummaries.push(budgetData.summary);
     if (joinRequestData.itemCount > 0) syntheticSummaries.push(joinRequestData.summary);
     const syntheticAfterCursor = syntheticSummaries.filter((summary) => threadSummaryIsAfterCursor(summary, cursor));
-    const pinnedChats = cursor ? [] : await chatsSvc.listPinnedSummaries(orgId, userId);
-    const chatLimit = limit + syntheticAfterCursor.length + 1;
-    const chatAfter = cursor
+    const chatAfter = cursor && !cursor.isPinned
       ? {
         activityAt: new Date(cursor.activityAt),
         title: cursor.title,
         threadKey: cursor.threadKey,
       }
       : null;
-    const chats = await chatsSvc.listSummaries(orgId, {
-      status: "active",
-      limit: chatLimit,
-      after: chatAfter,
-      excludePinned: true,
-    }, userId);
+    const [pinnedChats, chats] = await Promise.all([
+      chatsSvc.listPinnedSummaries(orgId, userId),
+      chatsSvc.listSummaries(orgId, {
+        status: "active",
+        limit: limit + syntheticAfterCursor.length + 1,
+        after: chatAfter,
+        excludePinned: true,
+      }, userId),
+    ]);
+    const chatSummaries = [
+      ...pinnedChats,
+      ...chats,
+    ].reduce<MessengerThreadSummary[]>((summaries, chat) => {
+      const summary = chatSummary(chat);
+      if (!summaries.some((item) => item.threadKey === summary.threadKey)) {
+        summaries.push(summary);
+      }
+      return summaries;
+    }, []);
     const combined = [
-      ...pinnedChats.map(chatSummary),
-      ...chats.map(chatSummary),
+      ...chatSummaries,
       ...syntheticAfterCursor,
     ]
       .filter((summary) => threadSummaryIsAfterCursor(summary, cursor))
       .sort(comparePinnedThenLatest);
-    const itemLimit = limit + pinnedChats.length;
+    const itemLimit = limit;
     const items = combined.slice(0, itemLimit);
     const hasMore = combined.length > itemLimit;
 
@@ -2027,6 +2109,11 @@ export function messengerService(db: Db) {
       return { lastReadAt: state.lastReadAt } as ThreadReadState;
     }
 
+    if (threadKey.startsWith("issue:")) {
+      const issueId = threadKey.slice("issue:".length);
+      if (!await canUseIssueThread(orgId, userId, issueId)) return null;
+    }
+
     const now = new Date();
     const effectiveReadAt =
       threadKey === "issues"
@@ -2063,11 +2150,15 @@ export function messengerService(db: Db) {
       .where(and(
         eq(issues.orgId, orgId),
         eq(issues.id, issueId),
-        ne(issues.originKind, "automation_execution"),
         or(
-          eq(issues.assigneeUserId, userId),
-          eq(issues.reviewerUserId, userId),
-          eq(issues.createdByUserId, userId),
+          and(
+            ne(issues.originKind, "automation_execution"),
+            or(
+              eq(issues.assigneeUserId, userId),
+              eq(issues.reviewerUserId, userId),
+              eq(issues.createdByUserId, userId),
+            )!,
+          ),
           sql`exists (
             select 1
             from ${issueFollows} follow_row

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
@@ -8,6 +8,7 @@ import {
   chatMessages,
   createDb,
   heartbeatRuns,
+  issueFollows,
   issues,
   messengerThreadUserStates,
 } from "../../packages/db/src/index.ts";
@@ -56,7 +57,37 @@ function threadTestId(threadKey: string) {
 }
 
 function chatUnreadBadgeTestId(chatId: string) {
-  return `${`chat:${chatId}`.replace(/[^a-zA-Z0-9_-]/g, "-")}-unread-badge`;
+  return `${threadTestId(`chat:${chatId}`)}-agent-avatar-unread-badge`;
+}
+
+function threadUnreadBadgeTestId(threadKey: string) {
+  return `${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}-unread-badge`;
+}
+
+async function expectTestIdsInDomOrder(page: Page, testIds: string[]) {
+  await expect.poll(async () => {
+    return page.evaluate((ids) => {
+      const nodes = ids.map((id) => document.querySelector(`[data-testid="${id}"]`));
+      if (nodes.some((node) => !node)) return false;
+      return nodes.every((node, index) => {
+        const nextNode = nodes[index + 1];
+        return !nextNode || Boolean(node!.compareDocumentPosition(nextNode) & Node.DOCUMENT_POSITION_FOLLOWING);
+      });
+    }, testIds);
+  }).toBe(true);
+}
+
+async function dragMessengerSectionOver(page: Page, source: Locator, target: Locator) {
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!sourceBox || !targetBox) {
+    throw new Error("Could not resolve Messenger project section bounds");
+  }
+
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height - 4, { steps: 12 });
+  await page.mouse.up();
 }
 
 async function isInElementViewport(page: Page, containerTestId: string, rowTestId: string) {
@@ -230,6 +261,94 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId(threadTestId(`chat:${pinnedOlderChat.id}`))).toContainText("Pinned page session 45");
   });
 
+  test("groups latest Messenger threads into pinned, today, and recent sections", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Today-Groups-${Date.now()}`);
+    const now = new Date();
+    const pinnedActivityAt = new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000);
+    const recentActivityAt = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const todayActivityAt = new Date(now.getTime() - 5 * 60 * 1000);
+    const pinnedChatId = randomUUID();
+    const todayChatId = randomUUID();
+    const recentChatId = randomUUID();
+
+    await e2eDb.insert(chatConversations).values([
+      {
+        id: pinnedChatId,
+        orgId: organization.id,
+        title: "Pinned older planning chat",
+        summary: "Pinned should stay above today's activity.",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: currentUserId,
+        lastMessageAt: pinnedActivityAt,
+        createdAt: pinnedActivityAt,
+        updatedAt: pinnedActivityAt,
+      },
+      {
+        id: todayChatId,
+        orgId: organization.id,
+        title: "Today sidebar activity",
+        summary: "This chat should appear in the Today section.",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: currentUserId,
+        lastMessageAt: todayActivityAt,
+        createdAt: todayActivityAt,
+        updatedAt: todayActivityAt,
+      },
+      {
+        id: recentChatId,
+        orgId: organization.id,
+        title: "Older recent sidebar activity",
+        summary: "This chat should appear in the Recent section.",
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: currentUserId,
+        lastMessageAt: recentActivityAt,
+        createdAt: recentActivityAt,
+        updatedAt: recentActivityAt,
+      },
+    ]);
+    await e2eDb.insert(chatConversationUserStates).values({
+      orgId: organization.id,
+      conversationId: pinnedChatId,
+      userId: currentUserId,
+      lastReadAt: pinnedActivityAt,
+      pinnedAt: new Date(now.getTime() - 60_000),
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    const pinnedThreadTestId = threadTestId(`chat:${pinnedChatId}`);
+    const todayThreadTestId = threadTestId(`chat:${todayChatId}`);
+    const recentThreadTestId = threadTestId(`chat:${recentChatId}`);
+    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("messenger-thread-section-today")).toBeVisible();
+    await expect(page.getByTestId("messenger-thread-section-recent")).toBeVisible();
+    await expect(page.getByTestId(pinnedThreadTestId)).toContainText("Pinned older planning chat");
+    await expect(page.getByTestId(todayThreadTestId)).toContainText("Today sidebar activity");
+    await expect(page.getByTestId(recentThreadTestId)).toContainText("Older recent sidebar activity");
+    await expectTestIdsInDomOrder(page, [
+      "messenger-thread-section-pinned",
+      pinnedThreadTestId,
+      "messenger-thread-section-today",
+      todayThreadTestId,
+      "messenger-thread-section-recent",
+      recentThreadTestId,
+    ]);
+  });
+
   test("double-clicking primary rail Messenger scrolls the sidebar to unread threads", async ({ page }) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
@@ -349,6 +468,244 @@ test.describe("Messenger unified threads contract", () => {
       const archivedChat = await archivedChatRes.json();
       return archivedChat.status;
     }).toBe("archived");
+  });
+
+  test("organizes Messenger sidebar by agent and collapses project sections", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Grouped-Sidebar-${Date.now()}`);
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Holden Reviewer",
+        role: "qa",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string; name: string };
+
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Launch Context Project",
+        status: "in_progress",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string };
+
+    const projectChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Project agent thread",
+        summary: "This thread should appear under both its agent and project grouping.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        preferredAgentId: agent.id,
+        contextLinks: [{ entityType: "project", entityId: project.id }],
+      },
+    });
+    expect(projectChatRes.ok()).toBe(true);
+    const projectChat = await projectChatRes.json() as { id: string };
+
+    const looseChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Loose no-agent thread",
+        summary: "This thread should remain outside the agent-owned section.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(looseChatRes.ok()).toBe(true);
+    const looseChat = await looseChatRes.json() as { id: string };
+
+    const assignedIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Assigned split issue thread",
+        description: "This split issue should group under the assigned agent.",
+        status: "todo",
+        priority: "medium",
+        projectId: project.id,
+        assigneeAgentId: agent.id,
+      },
+    });
+    expect(assignedIssueRes.ok()).toBe(true);
+    const assignedIssue = await assignedIssueRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "agent" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    await expect(page.getByText("Threads organized by agent")).toBeVisible({ timeout: 15_000 });
+    const agentSectionTestId = `messenger-thread-section-agent-${agent.id}`;
+    const projectChatTestId = threadTestId(`chat:${projectChat.id}`);
+    const looseChatTestId = threadTestId(`chat:${looseChat.id}`);
+    const assignedIssueTestId = threadTestId(`issue:${assignedIssue.id}`);
+    await expect(page.getByTestId(agentSectionTestId)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId(projectChatTestId)).toContainText("Project agent thread");
+    await expect(page.getByTestId(assignedIssueTestId)).toContainText("Assigned split issue thread");
+    await expect(page.getByTestId("messenger-thread-section-agent-none")).toBeVisible();
+    await expect(page.getByTestId(looseChatTestId)).toContainText("Loose no-agent thread");
+    for (const rowTestId of [projectChatTestId, assignedIssueTestId]) {
+      await expect.poll(async () => {
+        return await page.evaluate(({ sectionTestId, rowTestId }) => {
+          const section = document.querySelector(`[data-testid="${sectionTestId}"]`);
+          return Boolean(section?.parentElement?.querySelector(`[data-testid="${rowTestId}"]`));
+        }, { sectionTestId: agentSectionTestId, rowTestId });
+      }).toBe(true);
+    }
+    await expect.poll(async () => {
+      return await page.evaluate(({ sectionTestId, rowTestId }) => {
+        const section = document.querySelector(`[data-testid="${sectionTestId}"]`);
+        return Boolean(section?.parentElement?.querySelector(`[data-testid="${rowTestId}"]`));
+      }, { sectionTestId: "messenger-thread-section-agent-none", rowTestId: looseChatTestId });
+    }).toBe(true);
+
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
+      window.localStorage.removeItem("rudder.messengerCollapsedProjectGroupsByOrg");
+    }, organization.id);
+    await page.reload({ waitUntil: "commit" });
+
+    const projectSection = page.getByTestId(`messenger-thread-section-project-${project.id}`);
+    await expect(page.getByText("Threads organized by project")).toBeVisible({ timeout: 15_000 });
+    await expect(projectSection).toBeVisible();
+    await expect(projectSection).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId(projectChatTestId)).toBeVisible();
+    await expect(page.getByTestId(assignedIssueTestId)).toBeVisible();
+
+    await projectSection.click();
+
+    await expect(projectSection).toHaveAttribute("aria-expanded", "false");
+    const projectSectionContent = page.getByTestId(`messenger-thread-section-project-${project.id}-content`);
+    await expect(projectSectionContent).toHaveAttribute("aria-hidden", "true");
+    await expect(projectSectionContent).toHaveClass(/grid-rows-\[0fr\]/);
+    await expect(page.getByTestId(looseChatTestId)).toBeVisible();
+    await expect.poll(async () => {
+      return await page.evaluate(({ orgId, projectId }) => {
+        const raw = window.localStorage.getItem("rudder.messengerCollapsedProjectGroupsByOrg") ?? "";
+        return raw.includes(orgId) && raw.includes(`project:${projectId}`);
+      }, { orgId: organization.id, projectId: project.id });
+    }).toBe(true);
+  });
+
+  test("sorts Messenger project groups by drag and progressively expands large project groups", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Project-Sort-${Date.now()}`);
+    const gettingStartedRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Getting Started",
+        status: "in_progress",
+      },
+    });
+    const launchRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Launch Systems",
+        status: "in_progress",
+      },
+    });
+    expect(gettingStartedRes.ok()).toBe(true);
+    expect(launchRes.ok()).toBe(true);
+    const gettingStarted = await gettingStartedRes.json() as { id: string; name: string };
+    const launch = await launchRes.json() as { id: string; name: string };
+
+    const gettingStartedChats: Array<{ id: string }> = [];
+    for (let index = 1; index <= 8; index += 1) {
+      const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title: `Getting Started thread ${index}`,
+          summary: `Getting Started thread ${index} summary`,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+          contextLinks: [{ entityType: "project", entityId: gettingStarted.id }],
+        },
+      });
+      expect(res.ok()).toBe(true);
+      gettingStartedChats.push(await res.json() as { id: string });
+    }
+    const launchChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Launch project thread",
+        summary: "Launch project summary",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        contextLinks: [{ entityType: "project", entityId: launch.id }],
+      },
+    });
+    const looseChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Loose no project thread",
+        summary: "No project summary",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "System issue aggregate",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(launchChatRes.ok()).toBe(true);
+    expect(looseChatRes.ok()).toBe(true);
+    expect(issueRes.ok()).toBe(true);
+    const launchChat = await launchChatRes.json() as { id: string };
+    const looseChat = await looseChatRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "project" }));
+      window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: false }));
+      window.localStorage.removeItem("rudder.messengerCollapsedProjectGroupsByOrg");
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    const gettingStartedSectionId = `messenger-thread-section-project-${gettingStarted.id}`;
+    const launchSectionId = `messenger-thread-section-project-${launch.id}`;
+    const oldestThreadId = threadTestId(`chat:${gettingStartedChats[0]!.id}`);
+    const secondOldestThreadId = threadTestId(`chat:${gettingStartedChats[1]!.id}`);
+    await expect(page.getByTestId(gettingStartedSectionId)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId(launchSectionId)).toBeVisible();
+    await expect(page.getByTestId(threadTestId(`chat:${gettingStartedChats[7]!.id}`))).toBeVisible();
+    await expect(page.getByTestId(oldestThreadId)).toHaveCount(0);
+
+    await page.getByTestId(`${gettingStartedSectionId}-show-more`).click();
+
+    await expect(page.getByTestId(oldestThreadId)).toBeVisible();
+    await expect(page.getByTestId(secondOldestThreadId)).toBeVisible();
+
+    await page.getByTestId(`${gettingStartedSectionId}-collapse`).click();
+
+    await expect(page.getByTestId(oldestThreadId)).toHaveCount(0);
+
+    await page.getByTestId(gettingStartedSectionId).click();
+    await expect(page.getByTestId(gettingStartedSectionId)).toHaveAttribute("aria-expanded", "false");
+
+    await dragMessengerSectionOver(
+      page,
+      page.getByTestId(gettingStartedSectionId),
+      page.getByTestId(launchSectionId),
+    );
+
+    await expectTestIdsInDomOrder(page, [
+      launchSectionId,
+      gettingStartedSectionId,
+      "messenger-thread-section-system",
+      "messenger-thread-section-project-none",
+    ]);
+
+    await page.reload({ waitUntil: "commit" });
+
+    await expect(page.getByTestId(launchSectionId)).toBeVisible({ timeout: 15_000 });
+    await expectTestIdsInDomOrder(page, [
+      launchSectionId,
+      gettingStartedSectionId,
+      "messenger-thread-section-system",
+      "messenger-thread-section-project-none",
+    ]);
+    await expect(page.getByTestId(threadTestId(`chat:${launchChat.id}`))).toBeVisible();
+    await expect(page.getByTestId(threadTestId(`chat:${looseChat.id}`))).toBeVisible();
   });
 
   test("loads older issue messages on demand instead of rendering the full issue feed", async ({ page }) => {
@@ -618,8 +975,8 @@ test.describe("Messenger unified threads contract", () => {
     await page.getByRole("menuitemradio", { name: "Project" }).click();
     await expect(page.getByTestId("workspace-context-header")).toContainText("Threads organized by project");
     await expect(page.getByText("Threads · Project")).toBeVisible();
-    await expect(page.getByTestId("messenger-thread-section-Project-Atlas")).toBeVisible();
-    await expect(page.getByTestId("messenger-thread-section-System")).toBeVisible();
+    await expect(page.getByTestId(`messenger-thread-section-project-${project.id}`)).toBeVisible();
+    await expect(page.getByTestId("messenger-thread-section-system")).toBeVisible();
     await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toContainText("Messenger intake");
 
     await page.goto(`/${organizationPrefix}/messenger/issues`, { waitUntil: "commit" });
@@ -676,13 +1033,13 @@ test.describe("Messenger unified threads contract", () => {
     const openIssueLink = issueCard.getByRole("link", { name: "Open issue" });
     await expect(openIssueLink).toHaveAttribute(
       "href",
-      new RegExp(`/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`),
+      new RegExp(`/messenger/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`),
     );
     await expect(issueCard.getByRole("button", { name: "Assign to me" })).toHaveCount(0);
     await expect(issueCard.getByRole("button", { name: "Unassign me" })).toHaveCount(0);
 
     await openIssueLink.click();
-    await expect(page).toHaveURL(new RegExp(`/${organizationPrefix}/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`));
+    await expect(page).toHaveURL(new RegExp(`/${organizationPrefix}/messenger/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`));
     const highlightedComment = page.locator(`#comment-${createdCommentId}`);
     await expect(highlightedComment).toBeVisible({ timeout: 15_000 });
     await expect(highlightedComment).toHaveClass(/bg-primary\/5/);
@@ -818,6 +1175,9 @@ test.describe("Messenger unified threads contract", () => {
     await expect(splitIssueRow).toContainText("Split sidebar issue", { timeout: 15_000 });
     await expect(splitIssueRow).toContainText(issueRef);
     await expect(splitIssueRow).toContainText("assigned to me");
+    await expect(splitIssueRow.locator('[data-slot="issue-status-icon"][data-status="todo"]')).toBeVisible();
+    await expect(page.getByTestId(threadUnreadBadgeTestId(`issue:${issue.id}`))).toHaveText("1");
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
 
     const sidebarThreads = page.locator('[data-testid="workspace-sidebar"] [data-messenger-thread-key]');
     await expect(sidebarThreads).toHaveCount(3);
@@ -861,9 +1221,21 @@ test.describe("Messenger unified threads contract", () => {
     ]);
 
     await splitIssueRow.click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${issueRef}$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/issues/${issueRef}$`));
+    await expect(page.getByTestId("workspace-context-header")).toContainText("Messenger");
+    await expect(page.locator("#main-content").getByRole("heading", { name: "Split sidebar issue" })).toBeVisible({ timeout: 15_000 });
+    await expect.poll(async () => {
+      const rows = await e2eDb
+        .select({ lastReadAt: messengerThreadUserStates.lastReadAt })
+        .from(messengerThreadUserStates)
+        .where(eq(messengerThreadUserStates.threadKey, `issue:${issue.id}`));
+      return (rows[0]?.lastReadAt?.getTime() ?? 0) >= (baseTime + 5 * 60_000);
+    }).toBe(true);
+
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
     await expect(splitIssueRow).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId(threadUnreadBadgeTestId(`issue:${issue.id}`))).toHaveCount(0);
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveCount(0);
 
     await clickMessengerViewCheckbox(page, "Compact mode");
     await expect(page.getByText("Threads · Compact · Split issues")).toBeVisible({ timeout: 15_000 });
@@ -1212,6 +1584,103 @@ test.describe("Messenger unified threads contract", () => {
     await expect(issueCard.locator('[aria-label="Status changed from todo to blocked"]')).toBeVisible();
   });
 
+  test("surfaces followed automation execution issues while hiding unfollowed executions", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Automation-Follow-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Automation Follow Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Investigate automation follow regression",
+        description: "Created execution issues should reach Messenger only for the subscribed operator.",
+        assigneeAgentId: agent.id,
+        outputMode: "track_issue",
+        notifyOnIssueCreated: true,
+        priority: "medium",
+      },
+    });
+    expect(automationRes.ok()).toBe(true);
+    const automation = await automationRes.json() as {
+      id: string;
+      notifyOnIssueCreated: boolean;
+      notifyOnIssueCreatedUserId: string | null;
+    };
+    expect(automation.notifyOnIssueCreated).toBe(true);
+    expect(automation.notifyOnIssueCreatedUserId).toBeTruthy();
+
+    const followedIssueId = randomUUID();
+    const followedRunId = randomUUID();
+    await e2eDb.insert(issues).values({
+      id: followedIssueId,
+      orgId: organization.id,
+      title: "Investigate automation follow regression",
+      description: "Created execution issues should reach Messenger only for the subscribed operator.",
+      status: "todo",
+      priority: "medium",
+      originKind: "automation_execution",
+      originId: automation.id,
+      originRunId: followedRunId,
+      identifier: "AUTO-FOLLOWED",
+      createdAt: new Date("2026-05-20T10:01:00.000Z"),
+      updatedAt: new Date("2026-05-20T10:01:00.000Z"),
+    });
+    await e2eDb.insert(issueFollows).values({
+      orgId: organization.id,
+      issueId: followedIssueId,
+      userId: automation.notifyOnIssueCreatedUserId!,
+    });
+
+    const follows = await e2eDb
+      .select()
+      .from(issueFollows)
+      .where(eq(issueFollows.issueId, followedIssueId));
+    expect(follows.map((follow) => follow.userId)).toEqual([automation.notifyOnIssueCreatedUserId]);
+
+    const hiddenIssueId = randomUUID();
+    await e2eDb.insert(issues).values({
+      id: hiddenIssueId,
+      orgId: organization.id,
+      title: "Hidden unfollowed automation execution",
+      status: "todo",
+      priority: "medium",
+      originKind: "automation_execution",
+      originId: randomUUID(),
+      originRunId: randomUUID(),
+      identifier: "AUTO-HIDDEN",
+      createdAt: new Date("2026-05-20T10:00:00.000Z"),
+      updatedAt: new Date("2026-05-20T10:00:00.000Z"),
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/issues`, { waitUntil: "commit" });
+
+    await expect(page.getByTestId(`messenger-issue-card-${followedIssueId}`)).toContainText(
+      "Investigate automation follow regression",
+      { timeout: 15_000 },
+    );
+    await expect(page.getByTestId(threadTestId(`issue:${followedIssueId}`))).toContainText(
+      "Investigate automation follow regression",
+      { timeout: 15_000 },
+    );
+    await expect(page.getByTestId(`messenger-issue-card-${hiddenIssueId}`)).toHaveCount(0);
+    await expect(page.getByTestId(threadTestId(`issue:${hiddenIssueId}`))).toHaveCount(0);
+  });
+
   test("shows the completed issue title in Messenger issue previews", async ({ page }) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
@@ -1468,6 +1937,31 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.locator('[data-testid="workspace-sidebar"] [data-testid^="messenger-thread-"]')).toHaveCount(0);
     await expect(page.getByTestId(threadTestId("approvals"))).toHaveCount(0);
     await expect(page.getByTestId(threadTestId("issues"))).toHaveCount(0);
+  });
+
+  test("shows a newly sent Messenger chat in the sidebar without leaving the page", async ({ page }) => {
+    const organization = await createConfiguredOrganization(page, `Messenger-New-Chat-Sidebar-${Date.now()}`);
+    const message = "Refresh the Messenger sidebar immediately";
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill(message);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/[0-9a-f-]+$`), {
+      timeout: 15_000,
+    });
+
+    const chatId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const chatRow = page.getByTestId(threadTestId(`chat:${chatId}`));
+    await expect(chatRow).toBeVisible({ timeout: 15_000 });
+    await expect(chatRow).toContainText(message);
   });
 
   test("expands empty-state prompts into concrete use cases before filling the composer", async ({ page }) => {

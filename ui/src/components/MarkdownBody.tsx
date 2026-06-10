@@ -1,12 +1,14 @@
-import { isValidElement, useEffect, useId, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
+import { isValidElement, useCallback, useEffect, useId, useRef, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { buildAgentMentionHref } from "@rudderhq/shared";
+import { Check, Copy } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
-import { mentionChipInlineStyle, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
+import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
 import { parseSkillReference } from "../lib/skill-reference";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { ImagePreviewDialog, type ImagePreviewState } from "./ImagePreviewDialog";
 import { InspectableImage } from "./InspectableImage";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "./SkillReferenceToken";
@@ -21,6 +23,7 @@ interface MarkdownBodyProps {
   skillReferences?: MarkdownSkillReferencePreview[];
   enableImagePreview?: boolean;
   copyMarkdownOnCopy?: boolean;
+  enableCodeBlockCopy?: boolean;
 }
 
 export interface MarkdownAgentMentionPreview {
@@ -48,6 +51,9 @@ function flattenText(value: ReactNode): string {
   if (value == null) return "";
   if (typeof value === "string" || typeof value === "number") return String(value);
   if (Array.isArray(value)) return value.map((item) => flattenText(item)).join("");
+  if (isValidElement(value)) {
+    return flattenText((value.props as { children?: ReactNode }).children);
+  }
   return "";
 }
 
@@ -224,6 +230,89 @@ function extractMermaidSource(children: ReactNode): string | null {
   return flattenText(childProps.children).replace(/\n$/, "");
 }
 
+function extractCodeBlockSource(children: ReactNode) {
+  const source = flattenText(children);
+  return source.replace(/\n$/, "");
+}
+
+function extractCodeBlockLanguage(children: ReactNode): string | null {
+  if (!isValidElement(children)) return null;
+  const childProps = children.props as { className?: unknown };
+  if (typeof childProps.className !== "string") return null;
+  const language = childProps.className.match(/\blanguage-([^\s]+)/i)?.[1];
+  return language?.toLowerCase() ?? null;
+}
+
+function isPatchCodeBlockLanguage(language: string | null) {
+  return language === "diff" || language === "patch" || language === "udiff";
+}
+
+function classifyPatchLine(line: string) {
+  if (/^(?:diff --git|index |new file mode |deleted file mode |old mode |new mode |rename from |rename to |similarity index )/.test(line)) {
+    return "meta";
+  }
+  if (line.startsWith("@@")) return "hunk";
+  if (line.startsWith("+++") || line.startsWith("---")) return "file";
+  if (line.startsWith("+")) return "add";
+  if (line.startsWith("-")) return "remove";
+  return "context";
+}
+
+function PatchCodeBlock({
+  source,
+  preProps,
+  sourceAttributes,
+}: {
+  source: string;
+  preProps: Record<string, unknown>;
+  sourceAttributes: ReturnType<typeof markdownSourceAttributes>;
+}) {
+  const lines = source.split("\n");
+
+  return (
+    <pre
+      {...preProps}
+      {...sourceAttributes}
+      className={cn(typeof preProps.className === "string" ? preProps.className : null, "rudder-markdown-patch-block")}
+    >
+      <code>
+        {lines.map((line, index) => {
+          const kind = classifyPatchLine(line);
+          const hasPatchMarker = kind === "add" || kind === "remove";
+          const marker = hasPatchMarker ? line.slice(0, 1) : "";
+          const content = hasPatchMarker ? line.slice(1) : line;
+
+          return (
+            <span key={`${index}-${kind}`} className={cn("rudder-markdown-patch-line", `rudder-markdown-patch-line--${kind}`)}>
+              <span className="rudder-markdown-patch-line-marker" aria-hidden={!marker}>{marker}</span>
+              <span className="rudder-markdown-patch-line-content">{content}</span>
+            </span>
+          );
+        })}
+      </code>
+    </pre>
+  );
+}
+
+async function writeClipboardText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand?.("copy");
+  textarea.remove();
+  if (!copied) throw new Error("Clipboard write failed.");
+}
+
 function getMarkdownImagePreviewName(image: HTMLImageElement) {
   const alt = image.alt.trim();
   if (alt) return alt;
@@ -372,6 +461,66 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
   );
 }
 
+function CopyableCodeBlock({
+  children,
+  copyText,
+  preProps,
+  sourceAttributes,
+  block,
+}: {
+  children?: ReactNode;
+  copyText: string;
+  preProps: Record<string, unknown>;
+  sourceAttributes: ReturnType<typeof markdownSourceAttributes>;
+  block?: ReactNode;
+}) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const tooltipLabel =
+    copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy code";
+
+  useEffect(() => () => clearTimeout(resetTimerRef.current), []);
+
+  const handleCopy = useCallback(async () => {
+    clearTimeout(resetTimerRef.current);
+    try {
+      await writeClipboardText(copyText);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    resetTimerRef.current = setTimeout(() => setCopyState("idle"), 1600);
+  }, [copyText]);
+
+  return (
+    <div className="rudder-code-block-copy-wrap">
+      {block ?? <pre {...preProps} {...sourceAttributes}>{children}</pre>}
+      <TooltipProvider delayDuration={120}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="rudder-code-block-copy-button"
+              aria-label={tooltipLabel}
+              data-copy-state={copyState}
+              onClick={() => void handleCopy()}
+            >
+              {copyState === "copied" ? (
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={8}>
+            {tooltipLabel}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
+  );
+}
+
 export function MarkdownBody({
   children,
   className,
@@ -381,6 +530,7 @@ export function MarkdownBody({
   skillReferences,
   enableImagePreview = true,
   copyMarkdownOnCopy = false,
+  enableCodeBlockCopy = false,
 }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
   const { mentions } = useMarkdownMentions();
@@ -458,7 +608,41 @@ export function MarkdownBody({
       if (mermaidSource) {
         return <MermaidDiagramBlock source={mermaidSource} darkMode={resolvedTheme === "dark"} />;
       }
-      return <pre {...preProps} {...markdownSourceAttributes(node)}>{preChildren}</pre>;
+      const sourceAttributes = markdownSourceAttributes(node);
+      const codeBlockLanguage = extractCodeBlockLanguage(preChildren);
+      const patchSource = isPatchCodeBlockLanguage(codeBlockLanguage) ? extractCodeBlockSource(preChildren) : null;
+      if (patchSource !== null) {
+        const patchBlock = (
+          <PatchCodeBlock
+            source={patchSource}
+            preProps={preProps}
+            sourceAttributes={sourceAttributes}
+          />
+        );
+        if (enableCodeBlockCopy) {
+          return (
+            <CopyableCodeBlock
+              copyText={patchSource}
+              preProps={{}}
+              sourceAttributes={{}}
+              block={patchBlock}
+            />
+          );
+        }
+        return patchBlock;
+      }
+      if (enableCodeBlockCopy) {
+        return (
+          <CopyableCodeBlock
+            copyText={extractCodeBlockSource(preChildren)}
+            preProps={preProps}
+            sourceAttributes={sourceAttributes}
+          >
+            {preChildren}
+          </CopyableCodeBlock>
+        );
+      }
+      return <pre {...preProps} {...sourceAttributes}>{preChildren}</pre>;
     },
     a: ({ node, href, children: linkChildren }) => {
       const parsed = href ? parseMentionChipHref(href) : null;
@@ -470,21 +654,7 @@ export function MarkdownBody({
             }
           : parsed;
         const mentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren));
-        const targetHref = mention.kind === "project"
-          ? `/projects/${mention.projectId}`
-          : mention.kind === "issue"
-            ? `/issues/${mention.ref ?? mention.issueId}`
-            : mention.kind === "chat"
-              ? `/messenger/chat/${mention.conversationId}`
-              : mention.kind === "library_doc"
-                ? `/library?doc=${encodeURIComponent(mention.documentId)}`
-                : mention.kind === "library_entry"
-                  ? `/library?entry=${encodeURIComponent(mention.entryId)}`
-                  : mention.kind === "library_file"
-                    ? `/library?path=${encodeURIComponent(mention.filePath)}`
-                    : mention.kind === "library_directory"
-                      ? `/library?directory=${encodeURIComponent(mention.directoryPath)}`
-                  : `/agents/${mention.agentId}`;
+        const targetHref = mentionChipNavigationPath(mention);
         return (
           <a
             href={targetHref}

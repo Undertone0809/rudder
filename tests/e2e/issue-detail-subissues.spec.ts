@@ -121,6 +121,29 @@ test.describe("Issue detail sub-issues", () => {
 
     await page.goto(`/issues/${issue.identifier ?? issue.id}`);
 
+    const parentContext = page.getByLabel("Parent issue context");
+    await expect(parentContext).toBeVisible();
+    await expect(parentContext.getByText("Sub-issue of", { exact: true })).toBeVisible();
+    await expect(parentContext.getByRole("link")).toHaveAttribute(
+      "href",
+      new RegExp(`/issues/${parentIssue.identifier ?? parentIssue.id}$`),
+    );
+    await expect(
+      parentContext.getByText(parentIssue.identifier ?? parentIssue.id.slice(0, 8), { exact: true }),
+    ).toBeVisible();
+    await expect(parentContext.getByText("Parent issue container", { exact: true })).toBeVisible();
+
+    const parentContextLayout = await parentContext.evaluate((node) => ({
+      clientWidth: node.clientWidth,
+      scrollWidth: node.scrollWidth,
+    }));
+    expect(parentContextLayout.scrollWidth).toBeLessThanOrEqual(parentContextLayout.clientWidth);
+
+    await parentContext.getByRole("link").click();
+    await expect(page).toHaveURL(new RegExp(`/issues/${parentIssue.identifier ?? parentIssue.id}$`));
+    await expect(page.locator("h2").filter({ hasText: "Parent issue container" })).toBeVisible();
+    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
+
     const subIssuesSection = page.getByLabel("Sub-issues");
 
     await expect(page.getByRole("tab", { name: "Sub-issues" })).toHaveCount(0);

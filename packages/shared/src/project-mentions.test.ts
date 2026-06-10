@@ -11,6 +11,7 @@ import {
   buildLibraryFileMentionMarkdown,
   buildProjectMentionHref,
   extractAgentMentionIds,
+  extractAgentWakeMentionIds,
   extractChatMentionIds,
   extractIssueMentionIds,
   extractLibraryDirectoryMentionPaths,
@@ -53,8 +54,10 @@ describe("project-mentions", () => {
     expect(parseAgentMentionHref(href)).toEqual({
       agentId: "agent-123",
       icon: "code",
+      intent: "reference",
     });
     expect(extractAgentMentionIds(`[@CodexCoder](${href})`)).toEqual(["agent-123"]);
+    expect(extractAgentWakeMentionIds(`[@CodexCoder](${href})`)).toEqual([]);
   });
 
   it("round-trips agent mentions with avatar metadata", () => {
@@ -63,7 +66,23 @@ describe("project-mentions", () => {
     expect(parseAgentMentionHref(href)).toEqual({
       agentId: "agent-123",
       icon,
+      intent: "reference",
     });
+  });
+
+  it("extracts only wake-intent agent mentions for runtime wakeups", () => {
+    const referenceHref = buildAgentMentionHref("agent-reference", "code");
+    const wakeHref = buildAgentMentionHref("agent-wake", "code", "wake");
+
+    expect(parseAgentMentionHref(wakeHref)).toEqual({
+      agentId: "agent-wake",
+      icon: "code",
+      intent: "wake",
+    });
+    expect(extractAgentMentionIds(`[@Reference](${referenceHref}) [@Wake](${wakeHref})`))
+      .toEqual(["agent-reference", "agent-wake"]);
+    expect(extractAgentWakeMentionIds(`[@Reference](${referenceHref}) [@Wake](${wakeHref})`))
+      .toEqual(["agent-wake"]);
   });
 
   it("round-trips issue mentions with identifier metadata", () => {
@@ -71,8 +90,24 @@ describe("project-mentions", () => {
     expect(parseIssueMentionHref(href)).toEqual({
       issueId: "issue-123",
       ref: "PAP-123",
+      commentId: null,
     });
     expect(extractIssueMentionIds(`[@PAP-123](${href})`)).toEqual(["issue-123"]);
+  });
+
+  it("round-trips issue mentions with comment anchors", () => {
+    const href = buildIssueMentionHref("issue-123", "PAP-123", "comment-456");
+    expect(href).toBe("issue://issue-123?r=PAP-123&c=comment-456");
+    expect(parseIssueMentionHref(href)).toEqual({
+      issueId: "issue-123",
+      ref: "PAP-123",
+      commentId: "comment-456",
+    });
+    expect(parseIssueMentionHref("issue://issue-123?ref=PAP-123&commentId=comment-456")).toEqual({
+      issueId: "issue-123",
+      ref: "PAP-123",
+      commentId: "comment-456",
+    });
   });
 
   it("round-trips chat mentions with title metadata", () => {

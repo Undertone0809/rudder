@@ -40,6 +40,11 @@ export function formatDate(date: Date | string): string {
       }).format(new Date(date));
 }
 
+export function formatCompactDate(date: Date | string): string {
+  const value = new Date(date);
+  return `${value.getFullYear()}.${value.getMonth() + 1}.${value.getDate()}`;
+}
+
 export function formatDateTime(date: Date | string): string {
   const locale = getUiLocale();
   const resolvedLocale = locale === "zh-CN" ? "zh-CN" : "en-US";
@@ -82,7 +87,7 @@ export function formatDateTimeSeconds(date: Date | string): string {
   ].join("-") + ` ${pad(timestamp.getHours())}:${pad(timestamp.getMinutes())}:${pad(timestamp.getSeconds())}`;
 }
 
-export function relativeTime(date: Date | string): string {
+export function relativeTime(date: Date | string, options: { compactDate?: boolean } = {}): string {
   const locale = getUiLocale();
   const now = Date.now();
   const then = new Date(date).getTime();
@@ -94,7 +99,7 @@ export function relativeTime(date: Date | string): string {
   if (diffHr < 24) return locale === "zh-CN" ? `${diffHr} 小时前` : `${diffHr}h ago`;
   const diffDay = Math.round(diffHr / 24);
   if (diffDay < 30) return locale === "zh-CN" ? `${diffDay} 天前` : `${diffDay}d ago`;
-  return formatDate(date);
+  return options.compactDate ? formatCompactDate(date) : formatDate(date);
 }
 
 export function formatElapsedDuration(ms: number): string {

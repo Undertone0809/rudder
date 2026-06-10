@@ -137,7 +137,15 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 
 let cleanupFn: (() => void) | null = null;
 
+function setUserAgent(userAgent: string) {
+  Object.defineProperty(window.navigator, "userAgent", {
+    configurable: true,
+    value: userAgent,
+  });
+}
+
 beforeEach(() => {
+  setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
   mockState.desktopShell.setBadgeCount.mockResolvedValue(undefined);
   mockState.desktopShell.showNotification.mockResolvedValue(undefined);
   mockState.notificationSettings = {
@@ -235,6 +243,48 @@ describe("PrimaryRail desktop inbox signals", () => {
 });
 
 describe("PrimaryRail active motion indicator", () => {
+  it("uses a narrow Windows desktop rail with platform-scoped active affordances", async () => {
+    await renderPrimaryRail();
+
+    const rail = document.querySelector('[data-testid="primary-rail"]');
+
+    expect(rail?.getAttribute("data-desktop-shell")).toBe("true");
+    expect(rail?.getAttribute("data-desktop-platform")).toBe("windows");
+    expect(rail?.className).toContain("w-[52px]");
+    expect(rail?.className).toContain("[--primary-rail-item-width:52px]");
+    expect(rail?.className).toContain("[--primary-rail-item-shift:0px]");
+  });
+
+  it("uses the same rail shift variable for utility controls and nav items", async () => {
+    await renderPrimaryRail();
+
+    const searchButton = document.querySelector('button[aria-label="common.search"]');
+    const dashboardLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Dashboard"));
+    const organizationSwitcher = Array.from(document.querySelectorAll("div"))
+      .find((element) =>
+        element.textContent === "Organization switcher"
+        && element.className.includes("translate-x-[var(--primary-rail-item-shift,0.25rem)]")
+      );
+
+    expect(searchButton?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
+    expect(dashboardLink?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
+    expect(organizationSwitcher?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
+  });
+
+  it("preserves the compact macOS desktop rail width", async () => {
+    setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7)");
+
+    await renderPrimaryRail();
+
+    const rail = document.querySelector('[data-testid="primary-rail"]');
+
+    expect(rail?.getAttribute("data-desktop-platform")).toBe("macos");
+    expect(rail?.className).toContain("w-[40px]");
+    expect(rail?.className).not.toContain("w-[52px]");
+    expect(rail?.className).not.toContain("[--primary-rail-item-width:52px]");
+  });
+
   it("applies rail motion styling to the create menu", async () => {
     await renderPrimaryRail();
 

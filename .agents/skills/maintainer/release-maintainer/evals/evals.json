@@ -36,6 +36,17 @@
       "prompt": "0.2.6 stable 准备发了，这次主要修 Desktop 点 Restart to update 后会弹 write EPIPE。CI、npm dry-run、Desktop assets 都绿了，可以 promote stable 吗？",
       "expected_output": "Requires a real Desktop update drill before stable promotion because the risk is installed in-app update behavior. The answer should choose a candidate canary, verify an older installed Rudder.app can Check update, download, Restart to update, reopen on the candidate version, preserve data/profile/workspace, and show no EPIPE or Electron main-process error. It must not treat npm dry-run, release assets, or ordinary smoke as enough proof.",
       "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "发 stable 的时候顺便更新 docs/releases.mdx。右侧 Mintlify TOC 只想看到 v0.3.3、v0.3.2 这些版本，Highlights 和 Install 不要出现在章节目录里。",
+      "expected_output": "Keeps the stable release route in release-maintainer and updates or instructs the public docs changelog with only version headings. The version remains `## vX.Y.Z`; repeated labels such as `Highlights`, `Install`, and `重点变化` are bold/prose labels rather than `##` or `###` headings, while GitHub Release notes may still use their normal `## Highlights` and `## Install` body shape.",
+      "files": [
+        ".agents/skills/maintainer/release-maintainer/SKILL.md",
+        "doc/RELEASING.md",
+        "docs/releases.mdx",
+        "docs/zh/releases.mdx"
+      ]
     }
   ]
 }

@@ -1,14 +1,58 @@
-// @vitest-environment node
+// @vitest-environment jsdom
 
+import { act } from "react";
 import type { ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommentThread } from "./CommentThread";
 
-vi.mock("./MarkdownEditor", () => ({
-  MarkdownEditor: () => <div>Markdown editor</div>,
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
+
+vi.mock("@/context/DialogContext", () => ({
+  useDialog: () => ({ confirm: mockConfirm }),
 }));
+
+vi.mock("./MarkdownEditor", async () => {
+  const React = await import("react");
+  return {
+    MarkdownEditor: React.forwardRef(
+      (
+        {
+          agentMentionIntent,
+          onChange,
+          placeholder,
+          value,
+        }: {
+          agentMentionIntent?: string;
+          onChange?: (value: string) => void;
+          placeholder?: string;
+          value?: string;
+        },
+        ref,
+      ) => {
+        const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+        React.useImperativeHandle(ref, () => ({
+          getMarkdown: () => textareaRef.current?.value ?? value ?? "",
+        }));
+        return (
+          <textarea
+            ref={textareaRef}
+            aria-label={placeholder ?? "Markdown editor"}
+            data-agent-mention-intent={agentMentionIntent ?? ""}
+            onChange={(event) => onChange?.(event.currentTarget.value)}
+            value={value ?? ""}
+          />
+        );
+      },
+    ),
+  };
+});
 
 vi.mock("./MarkdownBody", () => ({
   MarkdownBody: ({
@@ -36,9 +80,34 @@ vi.mock("@/plugins/slots", () => ({
 }));
 
 vi.mock("@/components/ui/button", () => ({
-  Button: ({ children, title }: { children: ReactNode; title?: string }) => (
-    <button title={title}>{children}</button>
+  Button: ({ children, title, ...props }: { children: ReactNode; title?: string }) => (
+    <button title={title} {...props}>{children}</button>
   ),
+}));
+
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({ children }: { children: ReactNode }) => <div role="menu">{children}</div>,
+  DropdownMenuItem: ({
+    children,
+    className,
+    onSelect,
+  }: {
+    children: ReactNode;
+    className?: string;
+    onSelect?: (event: { preventDefault: () => void }) => void;
+  }) => (
+    <button
+      className={className}
+      role="menuitem"
+      type="button"
+      onClick={() => onSelect?.({ preventDefault: vi.fn() })}
+    >
+      {children}
+    </button>
+  ),
+  DropdownMenuSeparator: () => <div role="separator" />,
+  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 vi.mock("./transcript/useLiveRunTranscripts", () => ({
@@ -59,9 +128,53 @@ vi.mock("./transcript/RunTranscriptView", () => ({
 }));
 
 describe("CommentThread", () => {
+  let cleanupFn: (() => void) | null = null;
+
+  beforeEach(() => {
+    mockConfirm.mockResolvedValue(true);
+  });
+
   afterEach(() => {
+    cleanupFn?.();
+    cleanupFn = null;
+    document.body.innerHTML = "";
+    mockConfirm.mockReset();
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
+
+  function renderInteractive(element: ReactNode) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+    act(() => {
+      root.render(element);
+    });
+    return container;
+  }
+
+  async function click(element: Element | null) {
+    expect(element).toBeTruthy();
+    await act(async () => {
+      element!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+  }
+
+  function change(element: Element | null, value: string) {
+    expect(element).toBeTruthy();
+    act(() => {
+      const input = element as HTMLTextAreaElement;
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
 
   it("offers a general file attachment control for comments", () => {
     const html = renderToStaticMarkup(
@@ -78,6 +191,7 @@ describe("CommentThread", () => {
     expect(html).toContain("text/csv");
     expect(html).toContain('title="Attach file"');
     expect(html).toContain("chat-composer");
+    expect(html).toContain('data-agent-mention-intent="wake"');
     expect(html).not.toContain("Assignee");
   });
 
@@ -200,6 +314,121 @@ describe("CommentThread", () => {
     );
 
     expect(html).toContain("You");
+  });
+
+  it("renders deleted comments as placeholders without exposing the original body or actions", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-1",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Sensitive deleted body",
+              deletedAt: new Date("2026-05-07T00:10:00.000Z"),
+              deletedByUserId: "user-1",
+              createdAt: new Date("2026-05-07T00:00:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:10:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+          onUpdate={async () => undefined}
+          onDelete={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("Comment deleted");
+    expect(html).not.toContain("Sensitive deleted body");
+    expect(html).not.toContain("Comment actions");
+    expect(html).not.toContain("Copy content");
+  });
+
+  it("lets the current user edit and delete their own user-authored comment", async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-1",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Original body",
+              createdAt: new Date("2026-05-07T00:00:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(container.textContent).toContain("Edit");
+    expect(container.textContent).toContain("Delete");
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Edit")) ?? null);
+    change(container.querySelector('textarea[aria-label="Edit comment..."]'), "Updated body");
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Save") ?? null);
+    await vi.waitFor(() => expect(onUpdate).toHaveBeenCalledWith("comment-1", "Updated body"));
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Delete")) ?? null);
+    await vi.waitFor(() => expect(onDelete).toHaveBeenCalledWith("comment-1"));
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Delete this comment?",
+      description: "The original text will no longer be visible.",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+  });
+
+  it("hides edit and delete actions for other users and agent-authored comments", () => {
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-other-user",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-2",
+              authorAgentId: null,
+              body: "Other user body",
+              createdAt: new Date("2026-05-07T00:00:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+            },
+            {
+              id: "comment-agent",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: null,
+              authorAgentId: "agent-1",
+              body: "Agent body",
+              createdAt: new Date("2026-05-07T00:01:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:01:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+          onUpdate={async () => undefined}
+          onDelete={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(container.textContent).toContain("Copy content");
+    expect(container.textContent).not.toContain("Edit");
+    expect(container.textContent).not.toContain("Delete");
   });
 
   it("mixes activity items and comments in chronological order", () => {

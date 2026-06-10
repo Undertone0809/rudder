@@ -4,6 +4,7 @@ import type { Db } from "@rudderhq/db";
 import { buildIssueDocumentsPrompt } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   addIssueCommentSchema,
+  updateIssueCommentSchema,
   createIssueAttachmentMetadataSchema,
   createIssueWorkspaceAttachmentSchema,
   createIssueWorkProductSchema,
@@ -115,6 +116,76 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
       res.status(404).json({ error: "Comment not found" });
       return;
     }
+    res.json(comment);
+  });
+
+  router.patch("/issues/:id/comments/:commentId", validate(updateIssueCommentSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const commentId = req.params.commentId as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.orgId);
+    assertBoard(req);
+
+    const actor = getActorInfo(req);
+    const comment = await svc.updateComment(id, commentId, req.body.body, {
+      userId: actor.actorId,
+    });
+
+    await logActivity(db, {
+      orgId: issue.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.comment_updated",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        commentId: comment.id,
+        identifier: issue.identifier,
+        issueTitle: issue.title,
+      },
+    });
+
+    res.json(comment);
+  });
+
+  router.delete("/issues/:id/comments/:commentId", async (req, res) => {
+    const id = req.params.id as string;
+    const commentId = req.params.commentId as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.orgId);
+    assertBoard(req);
+
+    const actor = getActorInfo(req);
+    const comment = await svc.deleteComment(id, commentId, {
+      userId: actor.actorId,
+    });
+
+    await logActivity(db, {
+      orgId: issue.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.comment_deleted",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        commentId: comment.id,
+        identifier: issue.identifier,
+        issueTitle: issue.title,
+      },
+    });
+
     res.json(comment);
   });
 

@@ -251,6 +251,7 @@ describe("heartbeat orphaned process recovery", () => {
       processLossRetryCount: input?.processLossRetryCount ?? 0,
       errorCode: input?.runErrorCode ?? null,
       error: input?.runError ?? null,
+      createdAt: input?.startedAt ?? now,
       startedAt: input?.startedAt ?? now,
       updatedAt: input?.updatedAt ?? new Date("2026-03-19T00:00:00.000Z"),
     });
@@ -326,6 +327,98 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(agents.id, agentId))
       .then((rows) => rows[0] ?? null);
     expect(agent?.status).toBe("error");
+  });
+
+  it("times out active runs that stop producing server-visible activity", async () => {
+    const child = spawnAliveProcess();
+    childProcesses.add(child);
+    expect(child.pid).toBeTypeOf("number");
+
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const timedOutAt = new Date("2026-03-19T00:31:00.000Z");
+    const { agentId, runId, wakeupRequestId, issueId } = await seedRunFixture({
+      processPid: child.pid ?? null,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    runningProcesses.set(runId, { child, graceSec: 1 });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.reapInactiveRuns({
+      maxInactivityMs: 30 * 60 * 1000,
+      now: timedOutAt,
+    });
+
+    expect(result).toEqual({ timedOut: 1, runIds: [runId] });
+    expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+
+    const run = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(run?.status).toBe("timed_out");
+    expect(run?.errorCode).toBe("inactivity_timeout");
+    expect(run?.error).toBe("Run had no recorded activity for 30m 0s");
+    expect(run?.finishedAt?.toISOString()).toBe(timedOutAt.toISOString());
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupRequestId))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup?.status).toBe("timed_out");
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue?.executionRunId).toBeNull();
+    expect(issue?.executionLockedAt).toBeNull();
+
+    const agent = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .then((rows) => rows[0] ?? null);
+    expect(agent?.status).toBe("error");
+  });
+
+  it("keeps active runs when a recent run event proves progress", async () => {
+    const staleAt = new Date("2026-03-19T00:00:00.000Z");
+    const recentAt = new Date("2026-03-19T00:25:00.000Z");
+    const checkedAt = new Date("2026-03-19T00:40:00.000Z");
+    const { orgId, agentId, runId } = await seedRunFixture({
+      processPid: null,
+      startedAt: staleAt,
+      updatedAt: staleAt,
+    });
+    await db.insert(heartbeatRunEvents).values({
+      orgId,
+      agentId,
+      runId,
+      seq: 1,
+      eventType: "adapter.invoke",
+      stream: "system",
+      level: "info",
+      message: "adapter invocation",
+      createdAt: recentAt,
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.reapInactiveRuns({
+      maxInactivityMs: 30 * 60 * 1000,
+      now: checkedAt,
+    });
+
+    expect(result).toEqual({ timedOut: 0, runIds: [] });
+    const run = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(run?.status).toBe("running");
   });
 
   it("terminates a detached local child and queues a retry instead of leaving the run stuck", async () => {

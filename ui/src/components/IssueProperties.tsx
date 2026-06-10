@@ -24,7 +24,7 @@ import { AgentMenuLabel, AssigneeLabel, AssigneeSelfActionLabel } from "./Assign
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { IssueLabelChip } from "./IssueLabelChip";
-import { formatDate, formatDateTime, cn, projectUrl } from "../lib/utils";
+import { formatDate, formatDateTime, cn, issueUrl, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -666,6 +666,7 @@ export function IssueProperties({
             onUpdate({
               projectId: null,
               projectWorkspaceId: null,
+              executionWorkspaceId: null,
             });
             setProjectOpen(false);
           }}
@@ -689,6 +690,7 @@ export function IssueProperties({
               onUpdate({
                 projectId: p.id,
                 projectWorkspaceId: defaultProjectWorkspaceIdForProject(p),
+                executionWorkspaceId: null,
               });
               setProjectOpen(false);
             }}
@@ -770,7 +772,9 @@ export function IssueProperties({
 
   const parentTrigger = parentIssue ? (
     <>
-      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{issueRef(parentIssue)}</span>
+      <span className="max-w-20 shrink truncate font-mono text-[11px] text-muted-foreground">
+        {issueRef(parentIssue)}
+      </span>
       <span className="min-w-0 truncate text-sm">{parentIssue.title}</span>
     </>
   ) : (
@@ -1013,7 +1017,7 @@ export function IssueProperties({
           popoverClassName="w-72"
           extra={parentIssue ? (
             <Link
-              to={`/issues/${issueRef(parentIssue)}`}
+              to={issueUrl(parentIssue)}
               aria-label="Open parent issue"
               className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
               onClick={(e) => e.stopPropagation()}

@@ -78,13 +78,25 @@ vi.mock("../lib/mention-chips", () => ({
     if (scheme === "chat") return { kind: "chat", conversationId: rest.split("?")[0] };
     if (scheme === "issue") {
       const [issueId, query = ""] = rest.split("?");
+      const params = new URLSearchParams(query);
       return {
         kind: "issue",
         issueId,
-        ref: new URLSearchParams(query).get("r"),
+        ref: params.get("r"),
+        commentId: params.get("c"),
       };
     }
     return null;
+  },
+  mentionChipNavigationPath: (mention: { kind: string; [key: string]: string | null }) => {
+    if (mention.kind === "agent") return `/agents/${mention.agentId}`;
+    if (mention.kind === "project") return `/projects/${mention.projectId}`;
+    if (mention.kind === "chat") return `/messenger/chat/${mention.conversationId}`;
+    if (mention.kind === "issue") {
+      const basePath = `/issues/${mention.ref ?? mention.issueId}`;
+      return mention.commentId ? `${basePath}#comment-${encodeURIComponent(mention.commentId)}` : basePath;
+    }
+    return "/";
   },
   stripMentionChipLabelPrefix: (value: string) => value.replace(/^@(?=\S)/, ""),
 }));
@@ -516,6 +528,32 @@ describe("MarkdownEditor", () => {
     expect(mdxEditorMocks.lastEditorProps?.translation?.("createLink.url", "URL")).toBe("Page or URL");
     expect(mdxEditorMocks.lastEditorProps?.translation?.("createLink.text", "Anchor text")).toBe("Link title");
     expect(mdxEditorMocks.lastEditorProps?.translation?.("linkPreview.edit", "Edit link URL")).toBe("Edit");
+  });
+
+  it("marks the editor as having content so the placeholder layer cannot overlap pasted text", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="Cloudflare: Update nameservers for zeeland.studio 我"
+          onChange={() => undefined}
+          placeholder="Cloudflare: Update nameservers for zeeland.studio"
+          plainText
+        />,
+      );
+    });
+
+    expect(container.querySelector(".rudder-mdxeditor-scope")?.getAttribute("data-rudder-has-content")).toBe("true");
   });
 
   it("navigates mention tokens by default when clicked", () => {
@@ -1109,7 +1147,7 @@ describe("MarkdownEditor", () => {
     expect(option?.textContent).not.toContain("Skill");
   });
 
-  it("renders issue mention options with status, project, and assignee metadata", async () => {
+  it("renders issue mention options without context metadata labels", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -1153,11 +1191,14 @@ describe("MarkdownEditor", () => {
     await placeCaretAndOpenMentionMenu(editable!, 4);
 
     const menu = document.body.querySelector('[data-testid="markdown-mention-menu"]');
-    expect(menu?.textContent).toContain("RUD-28 Add icon for opening a file in IDE");
-    expect(menu?.textContent).toContain("Todo");
-    expect(menu?.textContent).toContain("rudder dev");
-    expect(menu?.textContent).toContain("Ella");
-    expect(menu?.querySelector('[aria-label="Status: Todo"]')?.className).toContain("text-muted-foreground");
+    const option = document.body.querySelector('[data-testid="markdown-mention-option-issue:issue-1"]');
+    expect(option?.textContent).toContain("RUD-28 Add icon for opening a file in IDE");
+    expect(menu?.textContent).not.toContain("Todo");
+    expect(option?.textContent).not.toContain("rudder dev");
+    expect(option?.textContent).not.toContain("Ella");
+    expect(option?.textContent).not.toContain("Issue");
+    expect(menu?.querySelector('[aria-label="Status: Todo"] [data-slot="issue-status-icon"]')).not.toBeNull();
+    expect(option?.querySelector(".mt-0\\.5")).toBeNull();
   });
 
   it("renders chat mention options as one-line rows with activity time", async () => {

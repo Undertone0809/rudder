@@ -364,7 +364,8 @@ describe("selectPromptTemplate", () => {
     expect(mentionPrompt).toContain("You were mentioned in a comment and your attention is needed.");
     expect(mentionPrompt).toContain("From: Alex Operator (user)");
     expect(mentionPrompt).toContain("@builder please use the compact interaction pattern.");
-    expect(mentionPrompt).toContain("An @mention is an explicit request for attention or collaboration");
+    expect(mentionPrompt).toContain("A mention-triggered comment wake is a request for attention or collaboration");
+    expect(mentionPrompt).toContain("Plain structured agent links such as `agent://agent-id` are reference-only");
     expect(mentionPrompt).toContain("not an automatic transfer of issue ownership");
   });
 });
@@ -386,7 +387,11 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).not.toContain("library-file://file?p=<url-encoded-relative-path>&t=<url-encoded-title>");
     expect(loaded.prefix).toContain("Use `/tmp` only for transient scratch files");
     expect(loaded.prefix).toContain("Local trusted runtimes may expose the host operator home as `$RUDDER_OPERATOR_HOME`");
-    expect(loaded.prefix).toContain("structured markdown link like `[@AgentName](agent://agent-id)`");
+    expect(loaded.prefix).toContain("[NameSilo transfer page](https://www.namesilo.com/account_domain_manage_transfer.php)");
+    expect(loaded.prefix).toContain("Do not put action URLs in backticks or code blocks");
+    expect(loaded.prefix).toContain("agent://agent-id?intent=wake");
+    expect(loaded.prefix).toContain("Plain structured links such as `agent://agent-id` are reference-only links");
+    expect(loaded.prefix).toContain("Agent-authored issue comments do not fan out peer wakeups by default");
     expect(loaded.prefix).toContain("attach the image with the Rudder CLI `--image <path>` option");
     expect(loaded.commandNotes).toEqual(["Loaded Rudder agent operating contract from runtime code"]);
     expect(loaded.readFailed).toBe(false);

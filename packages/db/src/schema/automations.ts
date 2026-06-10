@@ -31,6 +31,8 @@ export const automations = pgTable(
     assigneeAgentId: uuid("assignee_agent_id").notNull().references(() => agents.id),
     outputMode: text("output_mode").notNull().default("chat_output"),
     chatConversationId: uuid("chat_conversation_id").references(() => chatConversations.id, { onDelete: "set null" }),
+    notifyOnIssueCreated: boolean("notify_on_issue_created").notNull().default(false),
+    notifyOnIssueCreatedUserId: text("notify_on_issue_created_user_id"),
     priority: text("priority").notNull().default("medium"),
     status: text("status").notNull().default("active"),
     concurrencyPolicy: text("concurrency_policy").notNull().default("coalesce_if_active"),

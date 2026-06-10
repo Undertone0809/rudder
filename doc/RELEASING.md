@@ -218,8 +218,8 @@ The public docs changelog must be updated in the same stable-release pass:
 
 Canaries do not get changelog files.
 
-Use this body shape because GitHub already renders the release title, tag,
-author, and publish date around the notes:
+Use this body shape for `releases/vX.Y.Z.md` because GitHub already renders the
+release title, tag, author, and publish date around the notes:
 
 ```md
 ## Highlights
@@ -233,6 +233,31 @@ author, and publish date around the notes:
 
 Do not add an initial `# Rudder vX.Y.Z` heading, `Released: YYYY-MM-DD` line, or
 standalone prose summary before `## Highlights`.
+
+For the public docs changelog, keep the version as the only release-level
+heading so Mintlify's page TOC stays scannable:
+
+````md
+## vX.Y.Z
+
+Released: YYYY-MM-DD
+
+[GitHub Release](...)
+
+**Highlights**
+
+- ...
+
+**Install**
+
+```sh
+npx @rudderhq/cli@latest start
+```
+````
+
+Do not write repeated public-doc labels such as `Highlights`, `Install`, or
+`重点变化` with `##` or `###` heading syntax in `docs/releases.mdx` or
+`docs/zh/releases.mdx`. Use bold labels or prose labels instead.
 
 Recommended local generation flow:
 

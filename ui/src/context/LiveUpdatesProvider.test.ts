@@ -157,7 +157,7 @@ describe("LiveUpdatesProvider notification preferences", () => {
     expect(toasts).toEqual([]);
   });
 
-  it("does not push issue toasts for description-only updates", () => {
+  it("does not push issue toasts for title and description-only updates", () => {
     const toasts: unknown[] = [];
 
     __liveUpdatesTestUtils.handleLiveEvent(
@@ -175,8 +175,9 @@ describe("LiveUpdatesProvider notification preferences", () => {
           actorId: "user-2",
           details: {
             identifier: "ORG-1",
+            title: "Renamed issue",
             description: "New description",
-            _previous: { description: "Old description" },
+            _previous: { title: "Old issue", description: "Old description" },
           },
         },
       } as never,
@@ -190,6 +191,54 @@ describe("LiveUpdatesProvider notification preferences", () => {
     );
 
     expect(toasts).toEqual([]);
+  });
+
+  it("refreshes issue queries without a toast for quiet issue content updates", () => {
+    const toasts: unknown[] = [];
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+      },
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.handleLiveEvent(
+      queryClient as never,
+      "organization-1",
+      "/ORG/dashboard",
+      {
+        type: "issue.content_updated",
+        orgId: "organization-1",
+        payload: {
+          entityType: "issue",
+          entityId: "issue-1",
+          details: {
+            identifier: "ORG-1",
+            title: "Renamed issue",
+            description: "New description",
+          },
+        },
+      } as never,
+      (toast) => {
+        toasts.push(toast);
+        return "toast-1";
+      },
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: "user-1", agentId: null },
+      { issueNotifications: true, chatNotifications: true },
+    );
+
+    expect(toasts).toEqual([]);
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.issues.detail("issue-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.activity("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.threadPreview("organization-1"),
+    });
   });
 
   it("labels field-level issue update toasts for goals, projects, and unknown fields", () => {
@@ -229,6 +278,7 @@ describe("LiveUpdatesProvider notification preferences", () => {
             actorId: "user-2",
             details: {
               [field]: value,
+              _references: { related: { id: "reference-1", title: "Ignored reference" } },
               _previous: { [field]: `${value}-previous` },
             },
           },

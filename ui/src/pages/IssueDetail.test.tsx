@@ -208,6 +208,10 @@ vi.mock("../context/ToastContext", () => ({
   useToast: () => ({ pushToast: vi.fn() }),
 }));
 
+vi.mock("../context/DialogContext", () => ({
+  useDialog: () => ({ confirm: vi.fn(async () => true) }),
+}));
+
 vi.mock("../context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs: vi.fn() }),
 }));
@@ -242,7 +246,10 @@ vi.mock("../api/issues", () => ({
     listAttachments: vi.fn(),
     markRead: vi.fn(),
     update: vi.fn(),
+    remove: vi.fn(),
     addComment: vi.fn(),
+    updateComment: vi.fn(),
+    deleteComment: vi.fn(),
     uploadAttachment: vi.fn(),
     upsertDocument: vi.fn(),
     deleteAttachment: vi.fn(),
@@ -431,6 +438,7 @@ vi.mock("lucide-react", () => {
     ExternalLink: Icon,
     FileCode2: Icon,
     FileCode: Icon,
+    FileText: Icon,
     Fingerprint: Icon,
     Flame: Icon,
     Folder: Icon,
@@ -451,6 +459,8 @@ vi.mock("lucide-react", () => {
     Package: Icon,
     Paperclip: Icon,
     Pentagon: Icon,
+    Pin: Icon,
+    PinOff: Icon,
     Plus: Icon,
     Puzzle: Icon,
     Radar: Icon,
@@ -544,8 +554,12 @@ describe("IssueDetail", () => {
     capturedCommentThreadProps = null;
     mockSourceBreadcrumb = null;
     mockIssuePluginSlots = [];
+    queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "approvals", "ORG2-1"]), []);
+    queryData.set(JSON.stringify(["issues", "org-2", "follows"]), []);
+    queryData.set(JSON.stringify(["organizations", "org-2", "library-documents"]), []);
+    queryData.set(JSON.stringify(["organizations", "org-2", "workspace-mention-files", ""]), { entries: [] });
     queryData.delete(JSON.stringify([
       "plugins",
       "rudder.linear",
@@ -581,11 +595,84 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("Comments &amp; Runs");
   });
 
+  it("shows parent issue context directly under the title for sub-issues", () => {
+    queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), {
+      ...childIssue,
+      title: "Child issue with title context",
+      ancestors: [parentIssue],
+    });
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Parent issue context");
+    expect(html).toContain("Sub-issue of");
+    expect(html).toContain('href="/issues/ORG2-1"');
+    expect(html).toContain("ORG2-1");
+    expect(html).toContain("Parent issue");
+  });
+
+  it("routes parent issue context with the full id when no identifier exists", () => {
+    queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), {
+      ...childIssue,
+      title: "Legacy child issue",
+      ancestors: [{ ...parentIssue, identifier: null }],
+    });
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('href="/issues/issue-parent"');
+    expect(html).toContain("issue-pa");
+  });
+
+  it("renders linked Library files with a stable icon affordance", () => {
+    queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), {
+      ...parentIssue,
+      description: "Use [@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md).",
+    });
+    queryData.set(JSON.stringify(["organizations", "org-2", "workspace-mention-files", ""]), {
+      entries: [{
+        name: "product-brief.md",
+        path: "docs/product-brief.md",
+        isDirectory: false,
+      }],
+    });
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('aria-label="Linked Library"');
+    expect(html).toContain('data-testid="linked-library-resource-icon"');
+    expect(html).toContain('data-kind="file"');
+    expect(html).toContain("product-brief.md");
+    expect(html).toContain("live Library file / docs/product-brief.md");
+    expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
+  });
+
   it("keeps the desktop properties sidebar sticky against the issue detail page", () => {
     const html = renderToStaticMarkup(<IssueDetail />);
 
     expect(html).toContain('<aside class="mt-6 xl:sticky xl:top-4 xl:mt-0">');
     expect(html).not.toContain('class="space-y-3 xl:sticky xl:top-4"');
+  });
+
+  it("exposes issue pin and unpin actions in the detail more menu", () => {
+    let html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Pin Issue");
+    expect(html).toContain("Delete Issue");
+    expect(html).not.toContain("Hide this Issue");
+    expect(html).not.toContain("Unpin Issue");
+
+    queryData.set(JSON.stringify(["issues", "org-2", "follows"]), [{
+      id: "follow-1",
+      orgId: "org-2",
+      issueId: "issue-parent",
+      userId: "user-1",
+      issue: parentIssue,
+      createdAt: new Date("2026-04-20T00:10:00.000Z"),
+    }]);
+    html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Unpin Issue");
   });
 
   it("keeps assignee changes out of the issue comment composer", () => {
@@ -595,6 +682,16 @@ describe("IssueDetail", () => {
     expect(capturedCommentThreadProps).not.toHaveProperty("reassignOptions");
     expect(capturedCommentThreadProps).not.toHaveProperty("currentAssigneeValue");
     expect(capturedCommentThreadProps).not.toHaveProperty("suggestedAssigneeValue");
+  });
+
+  it("passes comment edit and delete handlers with the current board user", () => {
+    renderToStaticMarkup(<IssueDetail />);
+
+    expect(capturedCommentThreadProps).toMatchObject({
+      currentUserId: "user-1",
+      onUpdate: expect.any(Function),
+      onDelete: expect.any(Function),
+    });
   });
 
   it("includes the issue assignee's enabled skills in mention suggestions", () => {
@@ -656,6 +753,36 @@ describe("IssueDetail", () => {
         createdAt: new Date("2026-04-20T01:10:00.000Z"),
       },
       {
+        id: "activity-title-only",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: { title: "New title", _previous: { title: "Old title" } },
+        createdAt: new Date("2026-04-20T01:11:00.000Z"),
+      },
+      {
+        id: "activity-title-description-only",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {
+          title: "Combined title",
+          description: "Combined description",
+          _previous: { title: "Previous title", description: "Previous description" },
+        },
+        createdAt: new Date("2026-04-20T01:11:30.000Z"),
+      },
+      {
         id: "activity-goal",
         orgId: "org-2",
         actorType: "user",
@@ -667,6 +794,29 @@ describe("IssueDetail", () => {
         runId: null,
         details: { goalId: "goal-new", _previous: { goalId: "goal-old" } },
         createdAt: new Date("2026-04-20T01:12:00.000Z"),
+      },
+      {
+        id: "activity-parent",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {
+          parentId: "issue-review-summary",
+          _previous: { parentId: null },
+          _references: {
+            parentIssue: {
+              id: "issue-review-summary",
+              identifier: "ZST-442",
+              title: "Messenger review summary",
+            },
+          },
+        },
+        createdAt: new Date("2026-04-20T01:13:00.000Z"),
       },
       {
         id: "activity-status",
@@ -693,6 +843,45 @@ describe("IssueDetail", () => {
         runId: null,
         details: { key: "note", title: "Hidden document update unique" },
         createdAt: new Date("2026-04-20T01:15:00.000Z"),
+      },
+      {
+        id: "activity-comment-updated",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.comment_updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: { commentId: "comment-1" },
+        createdAt: new Date("2026-04-20T01:16:00.000Z"),
+      },
+      {
+        id: "activity-comment-deleted",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.comment_deleted",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: { commentId: "comment-1" },
+        createdAt: new Date("2026-04-20T01:17:00.000Z"),
+      },
+      {
+        id: "activity-issue-deleted",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.deleted",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {},
+        createdAt: new Date("2026-04-20T01:18:00.000Z"),
       },
       {
         id: "activity-review-handoff",
@@ -740,6 +929,9 @@ describe("IssueDetail", () => {
     expect(html).toContain("assigned the issue to Builder");
     expect(html).toContain("changed the reviewer from Builder to Me");
     expect(html).toContain("changed the goal");
+    expect(html).toContain("set the parent issue to");
+    expect(html).toContain("href=\"/issues/ZST-442\"");
+    expect(html).toContain("ZST-442");
     expect(html).toContain("moved from Todo to In Progress");
     expect(html).toContain("confirmed blocker; operator handoff needed");
     expect(html).toContain("committed abc1234: fix: report code commit");
@@ -753,8 +945,12 @@ describe("IssueDetail", () => {
     expect(html).toContain("pl-3");
     expect(html).toContain("tabular-nums");
     expect(html).not.toContain("updated the issue");
+    expect(html).not.toContain("updated the title");
     expect(html).not.toContain("updated the description");
     expect(html).not.toContain("Hidden document update unique");
+    expect(html).not.toContain("edited a comment");
+    expect(html).not.toContain("deleted a comment");
+    expect(html).not.toContain("deleted the issue");
   });
 
   it("renders approval link events as ordinary activity rows", () => {

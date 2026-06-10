@@ -17,6 +17,10 @@ import {
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
 } from "./update-check.js";
+import {
+  appendBoundedDesktopUpdateOutput,
+  summarizeDesktopUpdateChildOutput,
+} from "./desktop-update-diagnostics.js";
 
 export const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
@@ -192,7 +196,7 @@ export function createDesktopUpdateFlow(context: {
       ...(normalizeProgressPercent(record.percent) === undefined ? {} : { percent: normalizeProgressPercent(record.percent) }),
       ...(transferredBytes === undefined ? {} : { transferredBytes }),
       ...(totalBytes === undefined ? {} : { totalBytes }),
-      ...(typeof record.error === "string" ? { error: record.error.slice(0, 500) } : {}),
+      ...(typeof record.error === "string" ? { error: record.error.slice(0, 1000) } : {}),
       at: typeof record.at === "string" ? record.at : new Date().toISOString(),
     };
   }
@@ -396,6 +400,8 @@ export function createDesktopUpdateFlow(context: {
         stdin: child.stdin,
       });
       let stdoutBuffer = "";
+      let diagnosticStdout = "";
+      let diagnosticStderr = "";
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
         stdoutBuffer += chunk;
@@ -403,13 +409,18 @@ export function createDesktopUpdateFlow(context: {
         stdoutBuffer = lines.pop() ?? "";
         for (const line of lines) {
           const event = parseDesktopUpdateProgressLine(updateId, normalizedVersion, line.trim());
-          if (event) publishDesktopUpdateProgress(event);
+          if (event) {
+            publishDesktopUpdateProgress(event);
+          } else {
+            diagnosticStdout = appendBoundedDesktopUpdateOutput(diagnosticStdout, `${line}\n`);
+          }
         }
       });
       child.stderr?.setEncoding("utf8");
       child.stderr?.on("data", (chunk: string) => {
         const trimmed = chunk.trim();
         if (trimmed) console.warn("[rudder-desktop] update child stderr", trimmed);
+        diagnosticStderr = appendBoundedDesktopUpdateOutput(diagnosticStderr, chunk);
       });
       child.on("error", (error) => {
         activeDesktopUpdates.delete(updateId);
@@ -421,10 +432,18 @@ export function createDesktopUpdateFlow(context: {
       });
       child.on("exit", (code) => {
         activeDesktopUpdates.delete(updateId);
+        if (stdoutBuffer.trim()) {
+          diagnosticStdout = appendBoundedDesktopUpdateOutput(diagnosticStdout, `${stdoutBuffer}\n`);
+        }
         if (code && code !== 0) {
+          const diagnostic = summarizeDesktopUpdateChildOutput({
+            stdout: diagnosticStdout,
+            stderr: diagnosticStderr,
+          });
           updateDesktopUpdateProgress(updateId, normalizedVersion, {
             phase: "failed",
             message: `Update installer exited with code ${code}.`,
+            ...(diagnostic ? { error: diagnostic } : {}),
           });
         }
       });

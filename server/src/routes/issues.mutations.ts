@@ -19,6 +19,7 @@ import {
   upsertIssueDocumentSchema,
   updateIssueSchema,
   isUuidLike,
+  hasMaterialIssueUpdateFields,
 } from "@rudderhq/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
@@ -45,6 +46,7 @@ import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 import { registerIssueCommentAttachmentRoutes } from "./issues.comments-attachments.js";
+import { publishLiveEvent } from "../services/live-events.js";
 
 
 type IssueMutationRouteContext = {
@@ -52,6 +54,12 @@ type IssueMutationRouteContext = {
   db: Db;
   storage: StorageService;
   [key: string]: any;
+};
+
+type IssueActivityReference = {
+  id: string;
+  identifier: string | null;
+  title: string | null;
 };
 
 const ISSUE_UPDATE_ACTIVITY_FIELDS = [
@@ -112,14 +120,60 @@ function buildIssueUpdateActivityDetails(
       previous[key] = existing[key];
     }
   }
+  const changedKeys = Object.keys(changed);
   return {
-    hasFieldChanges: Object.keys(changed).length > 0,
+    hasFieldChanges: changedKeys.length > 0,
+    hasMaterialFieldChanges: hasMaterialIssueUpdateFields(changed),
     details: {
       ...changed,
       ...metadata,
       ...(Object.keys(previous).length > 0 ? { _previous: previous } : {}),
     },
   };
+}
+
+function toIssueActivityReference(issue: unknown): IssueActivityReference | null {
+  if (typeof issue !== "object" || issue === null) return null;
+  const row = issue as Record<string, unknown>;
+  if (typeof row.id !== "string") return null;
+  return {
+    id: row.id,
+    identifier: typeof row.identifier === "string" ? row.identifier : null,
+    title: typeof row.title === "string" ? row.title : null,
+  };
+}
+
+async function resolveIssueActivityReference(
+  svc: { getById?: (id: string) => Promise<unknown> },
+  orgId: string,
+  issueId: unknown,
+): Promise<IssueActivityReference | null> {
+  if (typeof issueId !== "string" || !issueId) return null;
+  const issue = await svc.getById?.(issueId);
+  if (!issue || typeof issue !== "object" || (issue as Record<string, unknown>).orgId !== orgId) return null;
+  return toIssueActivityReference(issue);
+}
+
+async function buildIssueUpdateActivityReferences(
+  svc: { getById?: (id: string) => Promise<unknown> },
+  orgId: string,
+  details: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const previous = typeof details._previous === "object" && details._previous !== null
+    ? details._previous as Record<string, unknown>
+    : {};
+  const references: Record<string, unknown> = {};
+
+  if (Object.prototype.hasOwnProperty.call(details, "parentId")) {
+    const [parentIssue, previousParentIssue] = await Promise.all([
+      resolveIssueActivityReference(svc, orgId, details.parentId),
+      resolveIssueActivityReference(svc, orgId, previous.parentId),
+    ]);
+    if (parentIssue) references.parentIssue = parentIssue;
+    if (previousParentIssue) references.previousParentIssue = previousParentIssue;
+  }
+
+  return Object.keys(references).length > 0 ? { _references: references } : {};
 }
 
 export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
@@ -350,6 +404,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       },
     );
     const hasFieldChanges = issueUpdateActivity.hasFieldChanges;
+    const hasMaterialFieldChanges = issueUpdateActivity.hasMaterialFieldChanges;
     const reopened =
       commentBody &&
       reopenRequested === true &&
@@ -357,7 +412,12 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       (issueUpdateActivity.details._previous as Record<string, unknown> | undefined)?.status !== undefined &&
       issue.status === "todo";
     const reopenFromStatus = reopened ? existing.status : null;
-    if (hasFieldChanges || reopened || reviewedCompletionNormalized) {
+    if (hasMaterialFieldChanges || reopened || reviewedCompletionNormalized) {
+      const relationshipReferences = await buildIssueUpdateActivityReferences(
+        svc,
+        issue.orgId,
+        issueUpdateActivity.details,
+      );
       await logActivity(db, {
         orgId: issue.orgId,
         actorType: actor.actorType,
@@ -369,7 +429,22 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
         entityId: issue.id,
         details: {
           ...issueUpdateActivity.details,
+          ...relationshipReferences,
           ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
+        },
+      });
+    } else if (hasFieldChanges) {
+      publishLiveEvent({
+        orgId: issue.orgId,
+        type: "issue.content_updated",
+        payload: {
+          entityType: "issue",
+          entityId: issue.id,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          details: issueUpdateActivity.details,
         },
       });
     }

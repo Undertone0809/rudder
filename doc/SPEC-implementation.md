@@ -648,7 +648,11 @@ Chat behavior requirements:
 - a conversation can exist without any issue
 - a conversation can convert into at most one primary issue
 - chat-driven issue creation and lightweight operations reuse the approval system
-- `track_issue` automations create normal issue-backed execution work
+- `track_issue` automations create normal issue-backed execution work; when a
+  board user enables issue-created notifications, Rudder stores that user as
+  the stable notification recipient and follows newly created automation
+  execution issues for that user, making only those followed execution issues
+  visible in Messenger
 - `chat_output` automations execute as chat-native runs: Rudder creates or
   reuses the run-owned chat conversation, appends the automation prompt as a
   user message, streams the agent process into a normal assistant message, and

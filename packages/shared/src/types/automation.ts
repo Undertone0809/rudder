@@ -44,6 +44,8 @@ export interface Automation {
   assigneeAgentId: string;
   outputMode: "track_issue" | "chat_output";
   chatConversationId: string | null;
+  notifyOnIssueCreated: boolean;
+  notifyOnIssueCreatedUserId: string | null;
   priority: string;
   status: string;
   concurrencyPolicy: string;

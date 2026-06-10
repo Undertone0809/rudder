@@ -49,6 +49,14 @@ test.describe("Issue activity", () => {
     });
     expect(descriptionRes.ok()).toBe(true);
 
+    const titleDescriptionRes = await page.request.patch(`/api/issues/${issue.id}`, {
+      data: {
+        title: "Activity behavior issue renamed",
+        description: "Title and description update should not render as activity.",
+      },
+    });
+    expect(titleDescriptionRes.ok()).toBe(true);
+
     const createDocumentRes = await page.request.put(`/api/issues/${issue.id}/documents/note`, {
       data: { title: "Activity note", format: "markdown", body: "# First revision" },
     });
@@ -72,6 +80,7 @@ test.describe("Issue activity", () => {
     await expect(statusActivity).toBeVisible();
     await expect(statusActivity.getByTestId("issue-activity-summary")).toHaveClass(/whitespace-nowrap/);
     await expect(statusActivity.locator('[data-slot="issue-status-icon"][data-status="in_progress"]')).toBeVisible();
+    await expect(activity.getByText("updated the title", { exact: false })).toHaveCount(0);
     await expect(activity.getByText("updated the description", { exact: false })).toHaveCount(0);
     await expect(activity.getByText("updated a document note", { exact: false })).toHaveCount(0);
   });

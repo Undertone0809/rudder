@@ -451,8 +451,6 @@ export const en = {
   "langfuse.saved.body": "Restart the app or local server before expecting new traces to use this configuration.",
   "langfuse.saveFailed.title": "Failed to save Langfuse settings",
   "about.title": "About",
-  "about.description":
-    "See the running build, inspect which local desktop shell you are attached to, check whether a newer desktop release exists, or open your default mail app to send product feedback.",
   "about.version.title": "Version",
   "about.version.description": "This identifies the Rudder build currently running on this machine.",
   "about.version.current": "Version",

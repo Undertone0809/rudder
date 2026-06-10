@@ -97,7 +97,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
+import { isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import type { Agent, Issue, IssueAttachment, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 
 export {
@@ -132,17 +132,6 @@ export function buildIssueChatHref(issue: IssueChatTarget) {
   return `/messenger/chat?${params.toString()}`;
 }
 
-export const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
-
 export const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeAgentId: "assignee",
   assigneeUserId: "assignee",
@@ -167,6 +156,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "issue.updated": "updated the issue",
   "issue.checked_out": "checked out the issue",
   "issue.released": "released the issue",
+  "issue.comment_updated": "edited a comment",
+  "issue.comment_deleted": "deleted a comment",
   "issue.code_committed": "committed code",
   "issue.passive_followup_queued": "queued passive follow-up",
   "issue.closure_needs_operator_review": "needs operator review for close-out",
@@ -191,6 +182,12 @@ export const ACTION_LABELS: Record<string, string> = {
   "approval.approved": "approved",
   "approval.rejected": "rejected",
 };
+
+export const HIDDEN_ISSUE_DETAIL_ACTIVITY_ACTIONS = new Set([
+  "issue.comment_updated",
+  "issue.comment_deleted",
+  "issue.deleted",
+]);
 
 export function humanizeValue(value: unknown): string {
   if (typeof value !== "string") return String(value ?? "none");
@@ -254,21 +251,51 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
-  if (!details) return [];
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+type IssueActivityReference = {
+  id: string;
+  identifier: string | null;
+  title: string | null;
+};
+
+function readIssueActivityReference(value: unknown): IssueActivityReference | null {
+  const record = asRecord(value);
+  if (!record || typeof record.id !== "string") return null;
+  return {
+    id: record.id,
+    identifier: typeof record.identifier === "string" ? record.identifier : null,
+    title: typeof record.title === "string" ? record.title : null,
+  };
 }
 
-export function isDescriptionOnlyIssueUpdate(evt: ActivityEvent): boolean {
-  if (evt.action !== "issue.updated") return false;
-  const changedKeys = issueUpdatedChangedKeys(asRecord(evt.details));
-  return changedKeys.length === 1 && changedKeys[0] === "description";
+function issueActivityReferenceLabel(reference: IssueActivityReference): string {
+  return reference.identifier || reference.title || reference.id.slice(0, 8);
+}
+
+function issueActivityReferenceLink(reference: IssueActivityReference): string {
+  return `/issues/${reference.identifier ?? reference.id}`;
+}
+
+function renderIssueActivityReference(reference: IssueActivityReference): ReactNode {
+  return (
+    <Link to={issueActivityReferenceLink(reference)} className="underline underline-offset-4 hover:text-foreground">
+      {issueActivityReferenceLabel(reference)}
+    </Link>
+  );
+}
+
+export function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
+  return sharedIssueUpdatedChangedKeys(details);
+}
+
+export function isLowSignalContentOnlyIssueUpdate(evt: ActivityEvent): boolean {
+  return isLowSignalIssueContentOnlyUpdate(evt.action, evt.details);
 }
 
 export function shouldShowIssueActivityEvent(evt: ActivityEvent): boolean {
   if (evt.action === "issue.comment_added") return false;
+  if (HIDDEN_ISSUE_DETAIL_ACTIVITY_ACTIONS.has(evt.action)) return false;
   if (evt.action === "issue.document_updated") return false;
-  if (isDescriptionOnlyIssueUpdate(evt)) return false;
+  if (isLowSignalContentOnlyIssueUpdate(evt)) return false;
   return true;
 }
 
@@ -689,6 +716,24 @@ export function renderActivityDescription(
   currentBoardUserId?: string | null,
 ): ReactNode {
   const details = asRecord(evt.details);
+  if (evt.action === "issue.updated" && details && Object.prototype.hasOwnProperty.call(details, "parentId")) {
+    const previous = asRecord(details._previous);
+    const references = asRecord(details._references);
+    const parentIssue = readIssueActivityReference(references?.parentIssue);
+    const previousParentIssue = readIssueActivityReference(references?.previousParentIssue);
+    if (parentIssue) {
+      return (
+        <>
+          {hasIssueUpdateValue(previous?.parentId) ? "changed the parent issue to " : "set the parent issue to "}
+          {renderIssueActivityReference(parentIssue)}
+        </>
+      );
+    }
+    if (previousParentIssue) {
+      return <>cleared the parent issue {renderIssueActivityReference(previousParentIssue)}</>;
+    }
+  }
+
   if (evt.entityType === "chat") {
     const chatHref = `/chat/${evt.entityId}`;
     const label = issueActivityChatLabel(evt);

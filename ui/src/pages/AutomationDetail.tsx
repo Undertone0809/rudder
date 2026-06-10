@@ -95,6 +95,7 @@ export function AutomationDetail() {
     catchUpPolicy: "skip_missed",
     outputMode: "track_issue",
     chatConversationId: "",
+    notifyOnIssueCreated: false,
   });
 
   const { data: automation, isLoading, error } = useQuery({
@@ -171,6 +172,7 @@ export function AutomationDetail() {
             catchUpPolicy: automation.catchUpPolicy,
             outputMode: automation.outputMode,
             chatConversationId: "",
+            notifyOnIssueCreated: automation.notifyOnIssueCreated,
           }
         : null,
     [automation],
@@ -185,7 +187,8 @@ export function AutomationDetail() {
       editDraft.priority !== automationDefaults.priority ||
       editDraft.concurrencyPolicy !== automationDefaults.concurrencyPolicy ||
       editDraft.catchUpPolicy !== automationDefaults.catchUpPolicy ||
-      editDraft.outputMode !== automationDefaults.outputMode
+      editDraft.outputMode !== automationDefaults.outputMode ||
+      editDraft.notifyOnIssueCreated !== automationDefaults.notifyOnIssueCreated
     );
   }, [editDraft, automationDefaults]);
   const canAutoSaveAutomation = Boolean(
@@ -203,6 +206,7 @@ export function AutomationDetail() {
       catchUpPolicy: editDraft.catchUpPolicy,
       outputMode: editDraft.outputMode,
       chatConversationId: null,
+      notifyOnIssueCreated: editDraft.notifyOnIssueCreated,
     }),
     [editDraft],
   );
@@ -1090,14 +1094,15 @@ export function AutomationDetail() {
               </SidebarPropertyRow>
 
               <SidebarPropertyRow label="Output">
-                <Select
-                  value={editDraft.outputMode}
-                  onValueChange={(outputMode) => setEditDraft((current) => ({
-                    ...current,
-                    outputMode,
-                    chatConversationId: "",
-                  }))}
-                >
+                  <Select
+                    value={editDraft.outputMode}
+                    onValueChange={(outputMode) => setEditDraft((current) => ({
+                      ...current,
+                      outputMode,
+                      chatConversationId: "",
+                      notifyOnIssueCreated: outputMode === "track_issue" ? current.notifyOnIssueCreated : false,
+                    }))}
+                  >
                   <SelectTrigger size="sm" className="-mx-1 h-7 w-fit border-0 bg-transparent px-1 py-0.5 text-sm shadow-none hover:bg-accent/50">
                     <SelectValue />
                   </SelectTrigger>
@@ -1107,6 +1112,20 @@ export function AutomationDetail() {
                   </SelectContent>
                 </Select>
               </SidebarPropertyRow>
+              {editDraft.outputMode === "track_issue" ? (
+                <SidebarPropertyRow label="Follow created issues">
+                  <ToggleSwitch
+                    checked={editDraft.notifyOnIssueCreated}
+                    size="sm"
+                    aria-label="Follow issues created by this automation"
+                    title="Follow issues created by this automation"
+                    onClick={() => setEditDraft((current) => ({
+                      ...current,
+                      notifyOnIssueCreated: !current.notifyOnIssueCreated,
+                    }))}
+                  />
+                </SidebarPropertyRow>
+              ) : null}
               <SidebarPropertyRow label="Repeats">
                 <span className="min-w-0 truncate text-sm text-foreground" title={summarizeTrigger(nextTrigger)}>
                   {summarizeTrigger(nextTrigger)}

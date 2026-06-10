@@ -19,6 +19,7 @@ export type ParsedMentionChip =
       kind: "issue";
       issueId: string;
       ref: string | null;
+      commentId: string | null;
     }
   | {
       kind: "chat";
@@ -78,6 +79,7 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
       kind: "issue",
       issueId: issue.issueId,
       ref: issue.ref,
+      commentId: issue.commentId,
     };
   }
 
@@ -128,6 +130,20 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
   }
 
   return null;
+}
+
+export function mentionChipNavigationPath(mention: ParsedMentionChip): string {
+  if (mention.kind === "project") return `/projects/${mention.projectId}`;
+  if (mention.kind === "issue") {
+    const basePath = `/issues/${mention.ref ?? mention.issueId}`;
+    return mention.commentId ? `${basePath}#comment-${encodeURIComponent(mention.commentId)}` : basePath;
+  }
+  if (mention.kind === "chat") return `/messenger/chat/${mention.conversationId}`;
+  if (mention.kind === "library_doc") return `/library?doc=${encodeURIComponent(mention.documentId)}`;
+  if (mention.kind === "library_entry") return `/library?entry=${encodeURIComponent(mention.entryId)}`;
+  if (mention.kind === "library_file") return `/library?path=${encodeURIComponent(mention.filePath)}`;
+  if (mention.kind === "library_directory") return `/library?directory=${encodeURIComponent(mention.directoryPath)}`;
+  return `/agents/${mention.agentId}`;
 }
 
 export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSProperties | undefined {

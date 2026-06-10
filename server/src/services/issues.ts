@@ -25,6 +25,7 @@ import {
   extractAgentMentionIds,
   extractProjectMentionIds,
   isUuidLike,
+  type IssueSearchField,
   type IssueSearchMatch,
   type ReorderIssue,
 } from "@rudderhq/shared";
@@ -33,6 +34,7 @@ import {
   defaultIssueExecutionWorkspaceSettingsForProject,
   parseProjectExecutionWorkspacePolicy,
 } from "./execution-workspace-policy.js";
+import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
@@ -57,6 +59,7 @@ import {
   myLastReadAtExpr,
   myLastTouchAtExpr,
   unreadForUserCondition,
+  followedByUserCondition,
   deriveIssueUserContext,
   labelMapForIssues,
   withIssueLabels,
@@ -74,6 +77,15 @@ import {
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
 export type { IssueFilters } from "./issues.helpers.js";
 export { deriveIssueUserContext } from "./issues.helpers.js";
+
+const DEFAULT_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title"];
+
+function normalizeIssueSearchFields(fields: IssueSearchField[] | undefined): Set<IssueSearchField> {
+  const allowed = new Set<IssueSearchField>(["title", "description", "comment"]);
+  const normalized = (fields ?? DEFAULT_ISSUE_SEARCH_FIELDS).filter((field): field is IssueSearchField => allowed.has(field));
+  return new Set(normalized.length > 0 ? normalized : DEFAULT_ISSUE_SEARCH_FIELDS);
+}
+
 export function issueService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
 
@@ -356,19 +368,20 @@ export function issueService(db: Db) {
     rows: IssueWithLabelsAndRun[],
     query: string,
     containsPattern: string,
+    searchFields: ReadonlySet<IssueSearchField>,
   ): Promise<IssueWithSearchMatch[]> {
     if (rows.length === 0) return [];
 
     const matchesByIssueId = new Map<string, IssueSearchMatch>();
     for (const row of rows) {
-      const match = fieldSearchMatch(row, query);
+      const match = fieldSearchMatch(row, query, searchFields);
       if (match) matchesByIssueId.set(row.id, match);
     }
 
     const commentMatchedIssueIds = rows
       .map((row) => row.id)
       .filter((id) => !matchesByIssueId.has(id));
-    if (commentMatchedIssueIds.length > 0) {
+    if (searchFields.has("comment") && commentMatchedIssueIds.length > 0) {
       const commentRows = await db
         .select({
           id: issueComments.id,
@@ -380,6 +393,7 @@ export function issueService(db: Db) {
           and(
             eq(issueComments.orgId, orgId),
             inArray(issueComments.issueId, commentMatchedIssueIds),
+            isNull(issueComments.deletedAt),
             sql<boolean>`${issueComments.body} ILIKE ${containsPattern} ESCAPE '\\'`,
           ),
         )
@@ -479,6 +493,7 @@ export function issueService(db: Db) {
       const contextUserId = unreadForUserId ?? touchedByUserId;
       const rawSearch = filters?.q?.trim() ?? "";
       const hasSearch = rawSearch.length > 0;
+      const searchFields = normalizeIssueSearchFields(filters?.searchFields);
       const escapedSearch = hasSearch ? escapeLikePattern(rawSearch) : "";
       const startsWithPattern = `${escapedSearch}%`;
       const containsPattern = `%${escapedSearch}%`;
@@ -493,6 +508,7 @@ export function issueService(db: Db) {
           FROM ${issueComments}
           WHERE ${issueComments.issueId} = ${issues.id}
             AND ${issueComments.orgId} = ${orgId}
+            AND ${issueComments.deletedAt} IS NULL
             AND ${issueComments.body} ILIKE ${containsPattern} ESCAPE '\\'
         )
       `;
@@ -533,24 +549,7 @@ export function issueService(db: Db) {
                     AND material_activity.entity_type = 'issue'
                     AND material_activity.entity_id = ${issues.id}::text
                     AND (
-                      (
-                        material_activity.action = 'issue.updated'
-                        AND jsonb_typeof(material_activity.details) = 'object'
-                        AND EXISTS (
-                          SELECT 1
-                          FROM jsonb_object_keys(material_activity.details) AS detail_key(key)
-                          WHERE detail_key.key NOT IN (
-                            'identifier',
-                            'issueIdentifier',
-                            '_previous',
-                            'source',
-                            'reopened',
-                            'reopenedFrom',
-                            'normalizedFromStatus',
-                            'normalizedReason'
-                          )
-                        )
-                      )
+                      ${issueMaterialUpdateActivitySql("material_activity")}
                       OR (
                         material_activity.action = 'issue.comment_added'
                         AND NOT (
@@ -586,29 +585,28 @@ export function issueService(db: Db) {
         conditions.push(inArray(issues.id, labeledIssueIds.map((row) => row.issueId)));
       }
       if (hasSearch) {
-        conditions.push(
-          or(
-            titleContainsMatch,
-            identifierContainsMatch,
-            descriptionContainsMatch,
-            commentContainsMatch,
-          )!,
-        );
+        const searchConditions = [identifierContainsMatch];
+        if (searchFields.has("title")) searchConditions.push(titleContainsMatch);
+        if (searchFields.has("description")) searchConditions.push(descriptionContainsMatch);
+        if (searchFields.has("comment")) searchConditions.push(commentContainsMatch);
+        conditions.push(or(...searchConditions)!);
       }
       if (!filters?.includeAutomationExecutions && !filters?.originKind && !filters?.originId) {
-        conditions.push(ne(issues.originKind, "automation_execution"));
+        conditions.push(contextUserId
+          ? or(ne(issues.originKind, "automation_execution"), followedByUserCondition(orgId, contextUserId))!
+          : ne(issues.originKind, "automation_execution"));
       }
       conditions.push(isNull(issues.hiddenAt));
 
       const priorityOrder = sql`CASE ${issues.priority} WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`;
       const searchOrder = sql<number>`
         CASE
-          WHEN ${titleStartsWithMatch} THEN 0
-          WHEN ${titleContainsMatch} THEN 1
-          WHEN ${identifierStartsWithMatch} THEN 2
-          WHEN ${identifierContainsMatch} THEN 3
-          WHEN ${descriptionContainsMatch} THEN 4
-          WHEN ${commentContainsMatch} THEN 5
+          WHEN ${searchFields.has("title")} AND ${titleStartsWithMatch} THEN 0
+          WHEN ${identifierStartsWithMatch} THEN 1
+          WHEN ${identifierContainsMatch} THEN 2
+          WHEN ${searchFields.has("title")} AND ${titleContainsMatch} THEN 3
+          WHEN ${searchFields.has("description")} AND ${descriptionContainsMatch} THEN 4
+          WHEN ${searchFields.has("comment")} AND ${commentContainsMatch} THEN 5
           ELSE 6
         END
       `;
@@ -621,7 +619,7 @@ export function issueService(db: Db) {
       const runMap = await activeRunMapForIssues(db, withLabels);
       const withRuns = withActiveRuns(withLabels, runMap);
       const withSearchMatches = hasSearch
-        ? await attachSearchMatches(orgId, withRuns, rawSearch, containsPattern)
+        ? await attachSearchMatches(orgId, withRuns, rawSearch, containsPattern, searchFields)
         : withRuns;
       if (!contextUserId || withSearchMatches.length === 0) {
         return withSearchMatches;
@@ -648,6 +646,7 @@ export function issueService(db: Db) {
           and(
             eq(issueComments.orgId, orgId),
             inArray(issueComments.issueId, issueIds),
+            isNull(issueComments.deletedAt),
           ),
         )
         .groupBy(issueComments.issueId);
@@ -682,7 +681,7 @@ export function issueService(db: Db) {
         eq(issues.orgId, orgId),
         isNull(issues.hiddenAt),
         unreadForUserCondition(orgId, userId),
-        ne(issues.originKind, "automation_execution"),
+        or(ne(issues.originKind, "automation_execution"), followedByUserCondition(orgId, userId))!,
       ];
       if (status) {
         const statuses = status.split(",").map((s) => s.trim()).filter(Boolean);
@@ -922,11 +921,20 @@ export function issueService(db: Db) {
       if (issueData.goalId) {
         await assertValidGoal(existing.orgId, issueData.goalId);
       }
+      const projectChanged = issueData.projectId !== undefined && issueData.projectId !== existing.projectId;
+      if (projectChanged) {
+        if (issueData.projectWorkspaceId === undefined) {
+          patch.projectWorkspaceId = null;
+        }
+        if (issueData.executionWorkspaceId === undefined) {
+          patch.executionWorkspaceId = null;
+        }
+      }
       const nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
       const nextProjectWorkspaceId =
-        issueData.projectWorkspaceId !== undefined ? issueData.projectWorkspaceId : existing.projectWorkspaceId;
+        patch.projectWorkspaceId !== undefined ? patch.projectWorkspaceId : existing.projectWorkspaceId;
       const nextExecutionWorkspaceId =
-        issueData.executionWorkspaceId !== undefined ? issueData.executionWorkspaceId : existing.executionWorkspaceId;
+        patch.executionWorkspaceId !== undefined ? patch.executionWorkspaceId : existing.executionWorkspaceId;
       if (nextProjectWorkspaceId) {
         await assertValidProjectWorkspace(existing.orgId, nextProjectId, nextProjectWorkspaceId);
       }
@@ -1100,6 +1108,9 @@ export function issueService(db: Db) {
           .from(issueDocuments)
           .where(eq(issueDocuments.issueId, id));
 
+        await tx.delete(issueReadStates).where(eq(issueReadStates.issueId, id));
+        await tx.delete(issueComments).where(eq(issueComments.issueId, id));
+
         const removedIssue = await tx
           .delete(issues)
           .where(eq(issues.id, id))
@@ -1258,6 +1269,7 @@ export function issueService(db: Db) {
           status: issues.status,
           assigneeAgentId: issues.assigneeAgentId,
           checkoutRunId: issues.checkoutRunId,
+          executionRunId: issues.executionRunId,
         })
         .from(issues)
         .where(eq(issues.id, id))
@@ -1269,6 +1281,16 @@ export function issueService(db: Db) {
         current.status === "in_progress" &&
         current.assigneeAgentId === actorAgentId &&
         sameRunLock(current.checkoutRunId, actorRunId)
+      ) {
+        return { ...current, adoptedFromRunId: null as string | null };
+      }
+
+      if (
+        actorRunId &&
+        current.status === "in_progress" &&
+        current.assigneeAgentId === actorAgentId &&
+        current.checkoutRunId == null &&
+        current.executionRunId === actorRunId
       ) {
         return { ...current, adoptedFromRunId: null as string | null };
       }
@@ -1300,6 +1322,7 @@ export function issueService(db: Db) {
         status: current.status,
         assigneeAgentId: current.assigneeAgentId,
         checkoutRunId: current.checkoutRunId,
+        executionRunId: current.executionRunId,
         actorAgentId,
         actorRunId,
       });

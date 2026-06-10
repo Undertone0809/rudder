@@ -59,6 +59,8 @@ export interface IssueSearchMatch {
   commentId?: string | null;
 }
 
+export type IssueSearchField = "title" | "description" | "comment";
+
 export type DocumentFormat = "markdown";
 
 export interface IssueDocumentSummary {
@@ -204,6 +206,8 @@ export interface IssueComment {
   authorAgentId: string | null;
   authorUserId: string | null;
   body: string;
+  deletedAt?: Date | null;
+  deletedByUserId?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

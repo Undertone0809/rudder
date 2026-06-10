@@ -301,10 +301,12 @@ describe("issueService.list participantAgentId", () => {
     expect(result.map((issue) => issue.id)).toEqual([matchedIssueId]);
   });
 
-  it("finds issues by comment text when using server-side q search", async () => {
+  it("defaults issue search to title and only finds comments when comment search is enabled", async () => {
     const orgId = randomUUID();
     const matchedIssueId = randomUUID();
     const otherIssueId = randomUUID();
+    const identifierMatchedIssueId = randomUUID();
+    const titleContainsIdentifierIssueId = randomUUID();
 
     await db.insert(organizations).values({
       id: orgId,
@@ -329,6 +331,21 @@ describe("issueService.list participantAgentId", () => {
         status: "todo",
         priority: "medium",
       },
+      {
+        id: identifierMatchedIssueId,
+        orgId,
+        identifier: "CMT-478",
+        title: "Lookup by issue reference",
+        status: "todo",
+        priority: "medium",
+      },
+      {
+        id: titleContainsIdentifierIssueId,
+        orgId,
+        title: "Mention CMT-478 in title",
+        status: "todo",
+        priority: "medium",
+      },
     ]);
     await db.insert(issueComments).values({
       id: randomUUID(),
@@ -338,13 +355,121 @@ describe("issueService.list participantAgentId", () => {
       body: "Only this comment mentions frobnicator-search-token.",
     });
 
-    const result = await svc.list(orgId, { q: "frobnicator-search-token" });
+    const defaultResult = await svc.list(orgId, { q: "frobnicator-search-token" });
+    expect(defaultResult).toEqual([]);
+
+    const result = await svc.list(orgId, { q: "frobnicator-search-token", searchFields: ["comment"] });
 
     expect(result.map((issue) => issue.id)).toEqual([matchedIssueId]);
     expect(result[0]?.searchMatch).toMatchObject({
       field: "comment",
       snippet: "Only this comment mentions frobnicator-search-token.",
     });
+
+    const identifierResult = await svc.list(orgId, { q: "CMT-478" });
+    expect(identifierResult.map((issue) => issue.id)).toEqual([
+      identifierMatchedIssueId,
+      titleContainsIdentifierIssueId,
+    ]);
+    expect(identifierResult[0]?.searchMatch).toMatchObject({
+      field: "identifier",
+      snippet: "CMT-478",
+    });
+  });
+
+  it("allows only the authoring user to edit or soft-delete user issue comments", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+    const userCommentId = randomUUID();
+    const agentCommentId = randomUUID();
+    const agentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Comment Permissions",
+      urlKey: deriveOrganizationUrlKey("Comment Permissions"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "CommentAgent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Comment permissions",
+      status: "todo",
+      priority: "medium",
+      createdByUserId: "author-user",
+      updatedAt: new Date("2026-05-01T00:00:00.000Z"),
+    });
+    await db.insert(issueComments).values([
+      {
+        id: userCommentId,
+        orgId,
+        issueId,
+        authorUserId: "author-user",
+        body: "Original user body",
+        createdAt: new Date("2026-05-01T00:01:00.000Z"),
+        updatedAt: new Date("2026-05-01T00:01:00.000Z"),
+      },
+      {
+        id: agentCommentId,
+        orgId,
+        issueId,
+        authorAgentId: agentId,
+        body: "Agent body",
+        createdAt: new Date("2026-05-01T00:02:00.000Z"),
+        updatedAt: new Date("2026-05-01T00:02:00.000Z"),
+      },
+    ]);
+
+    await expect(svc.updateComment(issueId, userCommentId, "Intruder edit", { userId: "other-user" }))
+      .rejects.toMatchObject({ status: 403 });
+    await expect(svc.updateComment(issueId, agentCommentId, "User edit of agent comment", { userId: "author-user" }))
+      .rejects.toMatchObject({ status: 403 });
+
+    const beforeIssue = await db
+      .select({ updatedAt: issues.updatedAt })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]!);
+    const updated = await svc.updateComment(issueId, userCommentId, "Updated user body", { userId: "author-user" });
+    expect(updated.body).toBe("Updated user body");
+    expect(new Date(updated.updatedAt).getTime()).toBeGreaterThan(new Date(updated.createdAt).getTime());
+
+    const afterEditIssue = await db
+      .select({ updatedAt: issues.updatedAt })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]!);
+    expect(new Date(afterEditIssue.updatedAt).getTime()).toBeGreaterThan(new Date(beforeIssue.updatedAt).getTime());
+
+    const deleted = await svc.deleteComment(issueId, userCommentId, { userId: "author-user" });
+    expect(deleted.body).toBe("");
+    expect(deleted.deletedByUserId).toBe("author-user");
+    expect(deleted.deletedAt).toBeTruthy();
+
+    await expect(svc.updateComment(issueId, userCommentId, "Edit after delete", { userId: "author-user" }))
+      .rejects.toMatchObject({ status: 403 });
+
+    const fetchedDeleted = await svc.getComment(userCommentId);
+    expect(fetchedDeleted?.body).toBe("");
+    const storedDeleted = await db
+      .select({ body: issueComments.body, deletedAt: issueComments.deletedAt })
+      .from(issueComments)
+      .where(eq(issueComments.id, userCommentId))
+      .then((rows) => rows[0]!);
+    expect(storedDeleted.body).toBe("Updated user body");
+    expect(storedDeleted.deletedAt).toBeTruthy();
   });
 
   it("ignores invalid project mention ids when resolving mentioned projects", async () => {
@@ -381,32 +506,68 @@ describe("issueService.list participantAgentId", () => {
   });
 
 
-  it("treats agent mention links as render-only references when resolving agent wake mentions", async () => {
+  it("distinguishes render-only and wake-intent agent links when resolving agent wake mentions", async () => {
     const orgId = randomUUID();
+    const otherOrgId = randomUUID();
     const agentId = randomUUID();
+    const otherOrgAgentId = randomUUID();
 
-    await db.insert(organizations).values({
-      id: orgId,
-      name: "Agent Mention Org",
-      urlKey: deriveOrganizationUrlKey("Agent Mention Org"),
-      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
-    await db.insert(agents).values({
-      id: agentId,
-      orgId,
-      name: "Wesley",
-      role: "reviewer",
-      status: "active",
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {},
-      runtimeConfig: {},
-      permissions: {},
-    });
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Agent Mention Org",
+        urlKey: deriveOrganizationUrlKey("Agent Mention Org"),
+        issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Agent Mention Org",
+        urlKey: deriveOrganizationUrlKey("Other Agent Mention Org"),
+        issuePrefix: `B${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values([
+      {
+        id: agentId,
+        orgId,
+        name: "Wesley",
+        role: "reviewer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: otherOrgAgentId,
+        orgId: otherOrgId,
+        name: "OtherOrgAgent",
+        role: "reviewer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
 
     await expect(svc.findMentionedAgents(orgId, "@Wesley please check this")).resolves.toEqual([agentId]);
     await expect(
       svc.findMentionedAgents(orgId, `Render-only reference: [Wesley](${buildAgentMentionHref(agentId, "code")})`),
+    ).resolves.toEqual([]);
+    await expect(
+      svc.findMentionedAgents(orgId, `Renderer label reference: [@Wesley](${buildAgentMentionHref(agentId, "code")})`),
+    ).resolves.toEqual([]);
+    await expect(
+      svc.findMentionedAgents(orgId, "Code is not a wake request: `@Wesley`"),
+    ).resolves.toEqual([]);
+    await expect(
+      svc.findMentionedAgents(orgId, `Wake request: [Wesley](${buildAgentMentionHref(agentId, "code", "wake")})`),
+    ).resolves.toEqual([agentId]);
+    await expect(
+      svc.findMentionedAgents(orgId, `Cross-org wake request: [OtherOrgAgent](${buildAgentMentionHref(otherOrgAgentId, "code", "wake")})`),
     ).resolves.toEqual([]);
   });
   it("persists and filters reviewer principals", async () => {
@@ -1417,6 +1578,74 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
+  it("allows the current execution run to own an in-progress issue when checkout lock is null", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const executionRunId = randomUUID();
+    const otherRunId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Owner",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values([
+      {
+        id: executionRunId,
+        orgId,
+        agentId,
+        invocationSource: "automation",
+        status: "running",
+      },
+      {
+        id: otherRunId,
+        orgId,
+        agentId,
+        invocationSource: "automation",
+        status: "running",
+      },
+    ]);
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Follow-up close-out",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: agentId,
+      createdByAgentId: agentId,
+      checkoutRunId: null,
+      executionRunId,
+      executionAgentNameKey: "owner",
+      executionLockedAt: new Date(),
+      startedAt: new Date(),
+    });
+
+    await expect(svc.assertCheckoutOwner(issueId, agentId, executionRunId)).resolves.toMatchObject({
+      assigneeAgentId: agentId,
+      checkoutRunId: null,
+      executionRunId,
+      adoptedFromRunId: null,
+    });
+    await expect(svc.assertCheckoutOwner(issueId, agentId, otherRunId)).rejects.toThrow(/Issue run ownership conflict/i);
+  });
+
   it("rejects release when a different run tries to release the checkout lock", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -1535,6 +1764,82 @@ describe("issueService.list participantAgentId", () => {
 
     expect(updated?.executionWorkspacePreference).toBe("isolated_workspace");
     expect(updated?.executionWorkspaceSettings).toEqual({ mode: "isolated_workspace" });
+  });
+
+  it("clears stale execution workspace when moving an issue to another project", async () => {
+    const orgId = randomUUID();
+    const oldProjectId = randomUUID();
+    const newProjectId = randomUUID();
+    const oldProjectWorkspaceId = randomUUID();
+    const newProjectWorkspaceId = randomUUID();
+    const oldExecutionWorkspaceId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Project Move Workspace Org",
+      urlKey: deriveOrganizationUrlKey("Project Move Workspace Org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(projects).values([
+      {
+        id: oldProjectId,
+        orgId,
+        name: "Old Project",
+        status: "planned",
+      },
+      {
+        id: newProjectId,
+        orgId,
+        name: "New Project",
+        status: "planned",
+      },
+    ]);
+    await db.insert(projectWorkspaces).values([
+      {
+        id: oldProjectWorkspaceId,
+        orgId,
+        projectId: oldProjectId,
+        name: "Old workspace",
+        sourceType: "local_path",
+        cwd: "/tmp/rudder-old-workspace",
+      },
+      {
+        id: newProjectWorkspaceId,
+        orgId,
+        projectId: newProjectId,
+        name: "New workspace",
+        sourceType: "local_path",
+        cwd: "/tmp/rudder-new-workspace",
+      },
+    ]);
+    await db.insert(executionWorkspaces).values({
+      id: oldExecutionWorkspaceId,
+      orgId,
+      projectId: oldProjectId,
+      projectWorkspaceId: oldProjectWorkspaceId,
+      mode: "shared_workspace",
+      strategyType: "project_primary",
+      name: "Old execution workspace",
+    });
+
+    const created = await svc.create(orgId, {
+      title: "Move project issue",
+      status: "todo",
+      priority: "medium",
+      projectId: oldProjectId,
+      projectWorkspaceId: oldProjectWorkspaceId,
+      executionWorkspaceId: oldExecutionWorkspaceId,
+    });
+
+    const updated = await svc.update(created.id, {
+      projectId: newProjectId,
+      projectWorkspaceId: newProjectWorkspaceId,
+    });
+
+    expect(updated?.projectId).toBe(newProjectId);
+    expect(updated?.projectWorkspaceId).toBe(newProjectWorkspaceId);
+    expect(updated?.executionWorkspaceId).toBeNull();
   });
 
   it("persists manual board order inside a status lane", async () => {

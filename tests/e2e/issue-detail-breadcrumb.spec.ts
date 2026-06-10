@@ -143,8 +143,13 @@ test.describe("Issue detail breadcrumb", () => {
     await expect(issueCard).toContainText(issue.title, { timeout: 15_000 });
 
     await issueCard.getByRole("link", { name: "Open issue" }).click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/issues/${issue.identifier ?? issue.id}$`));
     await expect(page.getByRole("heading", { name: issue.title })).toBeVisible({ timeout: 15_000 });
+    const breadcrumb = page.getByTestId("issue-detail-breadcrumb");
+    await expect(breadcrumb.getByRole("link", { name: "Messenger" })).toBeVisible();
+    await expect(breadcrumb).toContainText(`${issue.identifier ?? issue.id} ${issue.title}`);
+    await expect(page.getByRole("textbox", { name: "Search issues" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Create Issue" })).toHaveCount(0);
 
     await page.locator("#main-content").focus();
     await page.keyboard.press("Escape");

@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { formatDateTime, formatDateTimeSeconds, formatTime, formatTokens } from "./utils";
+import { formatDateTime, formatDateTimeSeconds, formatTime, formatTokens, relativeTime } from "./utils";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("formatTokens", () => {
   it("uses billion units for billion-scale token counts", () => {
@@ -33,5 +37,22 @@ describe("24-hour time formatting", () => {
   it("formats standalone times with 00-23 hours", () => {
     expect(formatTime(new Date(2026, 4, 11, 3, 4, 5), { seconds: true })).toBe("03:04:05");
     expect(formatTime(new Date(2026, 4, 11, 16, 35, 18))).toBe("16:35");
+  });
+});
+
+describe("relativeTime", () => {
+  it("keeps the default absolute fallback localized", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 9, 12, 0, 0));
+
+    expect(relativeTime(new Date(2026, 4, 15, 12, 0, 0))).toBe("25d ago");
+    expect(relativeTime(new Date(2026, 4, 9, 12, 0, 0))).toBe("May 9, 2026");
+  });
+
+  it("can render older dates with compact numeric labels", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 9, 12, 0, 0));
+
+    expect(relativeTime(new Date(2026, 4, 9, 12, 0, 0), { compactDate: true })).toBe("2026.5.9");
   });
 });

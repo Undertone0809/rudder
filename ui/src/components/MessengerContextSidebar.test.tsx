@@ -12,6 +12,7 @@ let messengerModel: any;
 let messengerRoute: any;
 let messengerModelOptions: any[];
 let chatList: any[];
+let agentList: any[];
 let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
 let activeGeneratingChatIds: Set<string>;
@@ -21,7 +22,10 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries }),
   useQuery: (options: { queryKey?: unknown; enabled?: boolean }) => {
     queryOptions.push(options);
-    return { data: options.enabled === false ? undefined : chatList };
+    if (options.enabled === false) return { data: undefined };
+    const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
+    if (queryKey[0] === "agents") return { data: agentList };
+    return { data: chatList };
   },
 }));
 
@@ -78,6 +82,7 @@ function baseModel() {
         unreadCount: 0,
         needsAttention: false,
         isPinned: false,
+        metadata: { preferredAgentId: "agent-1" },
       },
       {
         threadKey: "issues",
@@ -122,6 +127,8 @@ describe("MessengerContextSidebar", () => {
         title: "hi",
         summary: "Hello Zee!",
         latestReplyPreview: "Hello Zee!",
+        latestUserMessagePreview: null,
+        userMessageCount: 0,
         updatedAt: "2026-04-11T09:40:00.000Z",
         lastMessageAt: "2026-04-11T09:40:00.000Z",
         unreadCount: 0,
@@ -130,6 +137,18 @@ describe("MessengerContextSidebar", () => {
         isPinned: false,
         primaryIssue: null,
         contextLinks: [],
+      },
+    ];
+    agentList = [
+      {
+        id: "agent-1",
+        orgId: "org-1",
+        name: "Asher",
+        urlKey: "asher",
+        role: "general",
+        title: null,
+        icon: "dicebear:notionists:asher",
+        status: "active",
       },
     ];
     activeGeneratingChatIds = new Set();
@@ -163,6 +182,7 @@ describe("MessengerContextSidebar", () => {
   });
 
   it("formats markdown heading previews as readable sidebar summaries", () => {
+    localStorageValues["rudder.messengerThreadDensityByOrg"] = JSON.stringify({ "org-1": "comfortable" });
     chatList = [];
     messengerModel = {
       ...baseModel(),
@@ -195,6 +215,8 @@ describe("MessengerContextSidebar", () => {
         title: rawTitle,
         summary: "Start conversation",
         latestReplyPreview: null,
+        latestUserMessagePreview: null,
+        userMessageCount: 0,
         updatedAt: "2026-04-11T09:40:00.000Z",
         lastMessageAt: "2026-04-11T09:40:00.000Z",
         unreadCount: 0,
@@ -236,23 +258,45 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('aria-label="Organize threads"');
   });
 
-  it("renders Messenger threads as one-line rows in compact density", () => {
-    localStorageValues["rudder.messengerThreadDensityByOrg"] = JSON.stringify({ "org-1": "compact" });
+  it("defaults Messenger threads to compact density and split issue notifications without status labels", () => {
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("Threads");
+    expect(html).not.toContain("Compact");
+    expect(html).not.toContain("Split issues");
+    expect(html).toContain("hi");
+    expect(html).not.toContain("Hello Zee!");
+    expect(html).not.toContain("Followed issues");
+    expect(html).not.toContain('data-testid="messenger-thread-issues"');
+    expect(html).toContain('data-testid="messenger-thread-chat-chat-1-agent-avatar"');
+    expect(html).toMatch(/data-testid="messenger-thread-chat-chat-1-agent-avatar"[\s\S]*?<img/);
+    expect(html).toContain('title="Chat agent: Asher"');
+    expect(html).toContain("items-center gap-2 px-2 py-1.5");
+    expect(html).toContain("h-7 w-7");
+    expect(html).toContain("grid-cols-[minmax(0,1fr)_2.75rem] items-center");
+    expect(messengerModelOptions).toContainEqual({ splitIssues: true });
+  });
+
+  it("respects stored comfortable density and aggregate issue notification preferences", () => {
+    localStorageValues["rudder.messengerThreadDensityByOrg"] = JSON.stringify({ "org-1": "comfortable" });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).toContain("Threads");
-    expect(html).toContain("Compact");
-    expect(html).toContain("hi");
+    expect(html).not.toContain("Compact");
+    expect(html).not.toContain("Split issues");
     expect(html).toContain("Issues");
-    expect(html).not.toContain("Hello Zee!");
-    expect(html).not.toContain("Followed issues");
-    expect(html).toContain("items-center gap-2 px-2 py-1.5");
-    expect(html).toContain("h-7 w-7");
-    expect(html).toContain("grid-cols-[minmax(0,1fr)_2.75rem] items-center");
+    expect(html).toContain("Hello Zee!");
+    expect(html).toContain("Followed issues");
+    expect(html).toContain("gap-3 px-3 py-2.5");
+    expect(html).toContain("h-10 w-10");
+    expect(messengerModelOptions).toContainEqual({ splitIssues: false });
   });
 
-  it("keeps the aggregate Issues row free of thread pin actions by default", () => {
+  it("keeps the aggregate Issues row free of thread pin actions when split issue notifications are off", () => {
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
+
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html).toContain("Issues");
@@ -260,15 +304,24 @@ describe("MessengerContextSidebar", () => {
   });
 
   it("restores the split issue notifications preference for the current organization", () => {
-    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": true });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
-    expect(html).toContain("Split issues");
+    expect(html).not.toContain("Split issues");
+    expect(messengerModelOptions).toContainEqual({ splitIssues: false });
+  });
+
+  it("hides stale aggregate Issues rows while split issue notifications are active", () => {
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).not.toContain('data-testid="messenger-thread-issues"');
+    expect(html).not.toContain("Followed issues");
     expect(messengerModelOptions).toContainEqual({ splitIssues: true });
   });
 
   it("promotes pinned Messenger chats from thread summaries before chat list hydration", () => {
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
     chatList = [];
     messengerModel = {
       ...baseModel(),
@@ -320,11 +373,60 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Recent unpinned chat"));
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Issues"));
     expect(html).toContain("Pinned");
-    expect(html).toContain("Recent");
+    expect(html).toContain("Today");
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["chats", "org-1", "all"],
       enabled: false,
     }));
+  });
+
+  it("groups latest activity threads from today before older recent threads", () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:older-chat",
+          kind: "chat",
+          title: "Older chat",
+          preview: "Yesterday's follow-up.",
+          subtitle: null,
+          href: "/messenger/chat/older-chat",
+          latestActivityAt: "2026-04-10T12:00:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "chat:today-chat",
+          kind: "chat",
+          title: "Today chat",
+          preview: "Today's follow-up.",
+          subtitle: null,
+          href: "/messenger/chat/today-chat",
+          latestActivityAt: "2026-04-11T09:55:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.indexOf('data-testid="messenger-thread-section-today"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-chat-today-chat"'),
+    );
+    expect(html.indexOf('data-testid="messenger-thread-chat-today-chat"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-section-recent"'),
+    );
+    expect(html.indexOf('data-testid="messenger-thread-section-recent"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-chat-older-chat"'),
+    );
+    expect(html).toContain("Today");
+    expect(html).toContain("Recent");
   });
 
   it("promotes pinned split issue rows with pinned chats in latest activity mode", () => {
@@ -351,13 +453,13 @@ describe("MessengerContextSidebar", () => {
           title: "ISS-1 · Pinned split issue",
           preview: "Pinned issue should sort with pinned rows.",
           subtitle: "assigned to me",
-          href: "/issues/ISS-1",
+          href: "/messenger/issues/ISS-1",
           latestActivityAt: "2026-04-11T08:40:00.000Z",
           lastReadAt: null,
           unreadCount: 1,
           needsAttention: true,
           isPinned: true,
-          metadata: { splitIssue: true },
+          metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "in_progress" },
         },
       ],
     };
@@ -368,18 +470,140 @@ describe("MessengerContextSidebar", () => {
       html.indexOf('data-testid="messenger-thread-chat-chat-2"'),
     );
     expect(html).toContain("Pinned");
-    expect(html).toContain("Recent");
+    expect(html).toContain("Today");
     expect(html).toContain('aria-label="Thread actions"');
+    expect(html).toContain('data-slot="status-progress-arc"');
+  });
+
+  it("deduplicates repeated pinned split issue rows by thread key", () => {
+    chatList = [];
+    const pinnedIssueThread = {
+      threadKey: "issue:issue-1",
+      kind: "issues",
+      title: "ISS-1 · Pinned split issue",
+      preview: "Pinned issue should render once.",
+      subtitle: "assigned to me",
+      href: "/messenger/issues/ISS-1",
+      latestActivityAt: "2026-04-11T08:40:00.000Z",
+      lastReadAt: null,
+      unreadCount: 1,
+      needsAttention: true,
+      isPinned: true,
+      metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "in_progress" },
+    };
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        pinnedIssueThread,
+        {
+          ...pinnedIssueThread,
+          preview: "Duplicate from a later page should not render.",
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.match(/data-testid="messenger-thread-issue-issue-1"/g) ?? []).toHaveLength(1);
+    expect(html.match(/ISS-1 · Pinned split issue/g) ?? []).toHaveLength(1);
+  });
+
+  it("keeps a refreshed duplicate split issue row when the older watermark is hidden", () => {
+    chatList = [];
+    localStorageValues["rudder.messengerHiddenIssueThreads:org-1:anonymous"] = JSON.stringify({
+      "issue:issue-1": "2026-04-11T08:40:00.000Z|todo|idle|0|settled",
+    });
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Hidden old split issue",
+          preview: "Old watermark was dismissed.",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T08:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: true,
+          metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "todo" },
+        },
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Fresh split issue",
+          preview: "New watermark should render.",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:10:00.000Z",
+          lastReadAt: null,
+          unreadCount: 1,
+          needsAttention: true,
+          isPinned: true,
+          metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "in_progress" },
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.match(/data-testid="messenger-thread-issue-issue-1"/g) ?? []).toHaveLength(1);
+    expect(html).toContain("ISS-1 · Fresh split issue");
+    expect(html).not.toContain("ISS-1 · Hidden old split issue");
+  });
+
+  it("keeps the status icon and shows a right-side loader for split issue rows with an active execution run", () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Running split issue",
+          preview: "The assigned agent is working on it.",
+          subtitle: "assigned to me",
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: {
+            splitIssue: true,
+            issueId: "issue-1",
+            issueIdentifier: "ISS-1",
+            status: "in_progress",
+            activeExecutionRunId: "run-1",
+          },
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain('title="Issue run in progress"');
+    expect(html).toContain('data-testid="messenger-active-run-issue-issue-1"');
+    expect(html).toContain('aria-label="Issue run in progress"');
+    expect(html).toContain("animate-spin");
+    expect(html).toContain('data-slot="status-progress-arc"');
+    expect(html).toContain("pointer-events-none absolute top-1/2");
+    expect(html).toContain("right-1.5 h-5 w-5");
   });
 
   it("groups Messenger chats by project when the organization rule is project", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
     chatList = [
       {
         id: "chat-1",
         title: "Project-linked chat",
         summary: "Project context is set.",
         latestReplyPreview: "Project context is set.",
+        latestUserMessagePreview: null,
+        userMessageCount: 0,
         updatedAt: "2026-04-11T09:40:00.000Z",
         lastMessageAt: "2026-04-11T09:40:00.000Z",
         unreadCount: 0,
@@ -409,6 +633,107 @@ describe("MessengerContextSidebar", () => {
     }));
   });
 
+  it("orders real project thread groups by the stored project order and keeps fixed groups at the bottom", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "project" });
+    localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
+    localStorageValues["rudder.projectOrder:org-1:anonymous"] = JSON.stringify(["project-2", "project-1"]);
+    chatList = [
+      {
+        id: "chat-1",
+        title: "Alpha project chat",
+        summary: "Alpha context.",
+        latestReplyPreview: "Alpha context.",
+        latestUserMessagePreview: null,
+        userMessageCount: 0,
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        lastMessageAt: "2026-04-11T09:40:00.000Z",
+        unreadCount: 0,
+        needsAttention: false,
+        isUnread: false,
+        isPinned: false,
+        primaryIssue: null,
+        contextLinks: [
+          {
+            entityType: "project",
+            entityId: "project-1",
+            entity: { label: "Alpha project", identifier: null },
+          },
+        ],
+      },
+      {
+        id: "chat-2",
+        title: "Beta project chat",
+        summary: "Beta context.",
+        latestReplyPreview: "Beta context.",
+        latestUserMessagePreview: null,
+        userMessageCount: 0,
+        updatedAt: "2026-04-11T09:41:00.000Z",
+        lastMessageAt: "2026-04-11T09:41:00.000Z",
+        unreadCount: 0,
+        needsAttention: false,
+        isUnread: false,
+        isPinned: false,
+        primaryIssue: null,
+        contextLinks: [
+          {
+            entityType: "project",
+            entityId: "project-2",
+            entity: { label: "Beta project", identifier: null },
+          },
+        ],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-1",
+          kind: "chat",
+          title: "Alpha project chat",
+          preview: "Alpha context.",
+          subtitle: null,
+          href: "/messenger/chat/chat-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "chat:chat-2",
+          kind: "chat",
+          title: "Beta project chat",
+          preview: "Beta context.",
+          subtitle: null,
+          href: "/messenger/chat/chat-2",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "issues",
+          kind: "issues",
+          title: "Issues",
+          preview: "Followed issues",
+          subtitle: null,
+          href: "/messenger/issues",
+          latestActivityAt: "2026-04-11T09:42:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.indexOf("Beta project")).toBeLessThan(html.indexOf("Alpha project"));
+    expect(html.indexOf("Alpha project")).toBeLessThan(html.indexOf("System"));
+  });
+
   it("shows an animated progress icon for the chat that is currently generating", () => {
     activeGeneratingChatIds = new Set(["chat-1"]);
 
@@ -417,7 +742,7 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('data-testid="messenger-generating-chat-chat-1"');
     expect(html).toContain('aria-label="Chat reply in progress"');
     expect(html).toContain("pointer-events-none absolute top-1/2");
-    expect(html).toContain("right-2 h-6 w-6");
+    expect(html).toContain("right-1.5 h-5 w-5");
     expect(html).toContain("20m ago");
   });
 

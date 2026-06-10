@@ -199,6 +199,101 @@ test.describe("Chat options menu", () => {
     );
   });
 
+  test("shows recent conversations for the selected project on new chat", async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("rudder.theme", "dark");
+    });
+    await page.setViewportSize({ width: 860, height: 720 });
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Project-Recent-Chat-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Project Recent Agent",
+      command: E2E_CODEX_STUB,
+    });
+
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Launch Context",
+        status: "in_progress",
+      },
+    });
+    const otherProjectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Ops Context",
+        status: "in_progress",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    expect(otherProjectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string };
+    const otherProject = await otherProjectRes.json() as { id: string; name: string };
+
+    const olderProjectChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Launch kickoff decisions",
+        summary: "Review launch blockers and decide the first follow-up.",
+        preferredAgentId: chatAgent.id,
+        contextLinks: [{ entityType: "project", entityId: project.id }],
+      },
+    });
+    const otherProjectChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Ops billing cleanup",
+        summary: "This conversation belongs to a different project.",
+        preferredAgentId: chatAgent.id,
+        contextLinks: [{ entityType: "project", entityId: otherProject.id }],
+      },
+    });
+    const newerProjectChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Launch scope review",
+        summary: "Confirm the current launch scope before creating issues.",
+        preferredAgentId: chatAgent.id,
+        contextLinks: [{ entityType: "project", entityId: project.id }],
+      },
+    });
+    expect(olderProjectChatRes.ok()).toBe(true);
+    expect(otherProjectChatRes.ok()).toBe(true);
+    expect(newerProjectChatRes.ok()).toBe(true);
+    const olderProjectChat = await olderProjectChatRes.json();
+    const newerProjectChat = await newerProjectChatRes.json();
+
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${chatAgent.id}&projectId=${project.id}`);
+    await expect(page.getByTestId("chat-project-selector")).toContainText(project.name, { timeout: 15_000 });
+
+    const recentSection = page.getByTestId("chat-empty-state-recent-project-conversations");
+    await expect(recentSection).toBeVisible();
+    await expect(recentSection).toContainText("Recent conversations");
+    await expect(recentSection).toContainText("Launch scope review");
+    await expect(recentSection).toContainText("Launch kickoff decisions");
+    await expect(recentSection).not.toContainText("Ops billing cleanup");
+
+    const recentRows = recentSection.locator("a");
+    await expect(recentRows).toHaveCount(2);
+    await expect(recentRows.first()).toContainText("Launch scope review");
+    await expect(page.getByTestId(`chat-empty-state-recent-conversation-${newerProjectChat.id}`)).toContainText("Launch scope review");
+
+    await page.screenshot({
+      path: testInfo.outputPath("project-new-chat-recent-conversations.png"),
+      fullPage: true,
+    });
+
+    await page.getByTestId(`chat-empty-state-recent-conversation-${olderProjectChat.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${olderProjectChat.id}$`));
+    await expect(page.getByTestId("chat-actions-trigger")).toBeVisible();
+  });
+
   test("defaults new chat project context from the current agent's recent project", async ({ page }) => {
     await page.goto("/");
 

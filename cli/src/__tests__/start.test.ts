@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import { access, chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -74,6 +75,25 @@ const npmInstallSpawnOptions = {
   stdio: ["inherit", "pipe", "pipe"],
   ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
 };
+
+function currentEmbeddedPostgresPlatformPackage(): string | null {
+  if (process.platform === "darwin" && process.arch === "arm64") return "@embedded-postgres/darwin-arm64";
+  if (process.platform === "darwin" && process.arch === "x64") return "@embedded-postgres/darwin-x64";
+  if (process.platform === "linux" && process.arch === "arm64") return "@embedded-postgres/linux-arm64";
+  if (process.platform === "linux" && process.arch === "arm") return "@embedded-postgres/linux-arm";
+  if (process.platform === "linux" && process.arch === "ia32") return "@embedded-postgres/linux-ia32";
+  if (process.platform === "linux" && process.arch === "ppc64") return "@embedded-postgres/linux-ppc64";
+  if (process.platform === "linux" && process.arch === "x64") return "@embedded-postgres/linux-x64";
+  if (process.platform === "win32" && process.arch === "x64") return "@embedded-postgres/windows-x64";
+  return null;
+}
+
+function writeRuntimePackageSync(cacheDir: string, packageName: string, version = "1.0.0"): void {
+  const packageDir = path.join(cacheDir, "node_modules", ...packageName.split("/"));
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ name: packageName, version }), "utf8");
+  writeFileSync(path.join(packageDir, "index.js"), "", "utf8");
+}
 
 async function writeRuntimeCacheEntry(
   homeDir: string,
@@ -1229,6 +1249,42 @@ describe("runtime install helpers", () => {
     }
   });
 
+  it("rejects runtime cache hits when the embedded Postgres platform package is missing", async () => {
+    const platformPackage = currentEmbeddedPostgresPlatformPackage();
+    if (!platformPackage) return;
+
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-platform-cache-test."));
+    try {
+      const cacheDir = resolveRuntimeCacheDir("1.2.3", root);
+      const packageDir = path.join(cacheDir, "node_modules", "@rudderhq", "server");
+      await mkdir(packageDir, { recursive: true });
+      await writeFile(path.join(cacheDir, "package.json"), JSON.stringify({ private: true }), "utf8");
+      await writeFile(
+        path.join(cacheDir, RUNTIME_METADATA_FILE),
+        JSON.stringify({ version: 1, packageName: "@rudderhq/server", packageVersion: "1.2.3", installedAt: "now" }),
+        "utf8",
+      );
+      await writeFile(path.join(packageDir, "package.json"), JSON.stringify({ name: "@rudderhq/server", version: "1.2.3" }), "utf8");
+      await mkdir(path.join(cacheDir, "node_modules", "embedded-postgres"), { recursive: true });
+      await writeFile(
+        path.join(cacheDir, "node_modules", "embedded-postgres", "package.json"),
+        JSON.stringify({ name: "embedded-postgres", version: "18.1.0-beta.16" }),
+        "utf8",
+      );
+      await writeFile(path.join(cacheDir, "node_modules", "embedded-postgres", "index.js"), "", "utf8");
+      const spawnSyncImpl = vi.fn(() => ({ status: 1, stdout: "", stderr: "registry unavailable" }));
+
+      await expect(
+        ensureRuntimeInstalled({ version: "1.2.3", homeDir: root, spawnSyncImpl: spawnSyncImpl as never }),
+      ).rejects.toMatchObject({
+        name: "RuntimeInstallError",
+      } satisfies Partial<RuntimeInstallError>);
+      expect(spawnSyncImpl).toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("includes npm output and retry command when runtime installation fails", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-fail-test."));
     try {
@@ -1277,6 +1333,30 @@ describe("runtime install helpers", () => {
           ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
         },
       );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails runtime installs that omit the embedded Postgres platform package", async () => {
+    const platformPackage = currentEmbeddedPostgresPlatformPackage();
+    if (!platformPackage) return;
+
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-platform-install-test."));
+    try {
+      const spawnSyncImpl = vi.fn((_command, args: string[]) => {
+        const prefixIndex = args.indexOf("--prefix");
+        const cacheDir = args[prefixIndex + 1];
+        writeRuntimePackageSync(cacheDir, "embedded-postgres", "18.1.0-beta.16");
+        return { status: 0, stdout: "added 1 package", stderr: "" };
+      });
+
+      await expect(
+        ensureRuntimeInstalled({ version: "1.2.3", homeDir: root, spawnSyncImpl: spawnSyncImpl as never }),
+      ).rejects.toMatchObject({
+        name: "RuntimeInstallError",
+        output: expect.stringContaining(`Missing required optional dependency: ${platformPackage}`),
+      } satisfies Partial<RuntimeInstallError>);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

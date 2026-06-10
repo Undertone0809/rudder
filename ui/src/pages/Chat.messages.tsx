@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -33,6 +33,8 @@ import {
   type ChatOperationProposalDecisionStatus,
   type ChatPrimaryIssueSummary,
   type Issue,
+  ISSUE_PRIORITIES,
+  ISSUE_STATUSES,
   formatMessengerPreview,
   type MessengerThreadSummary,
   type Project,
@@ -54,7 +56,7 @@ import { ChatRichReferences } from "@/components/chat-renderables/ChatRichRefere
 import { TextDots } from "@/components/TextDots";
 import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
-import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
+import { MarkdownEditor, type MarkdownEditorProps, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentMenuLabel, AssigneeLabel } from "@/components/AssigneeLabel";
 import { InlineEntitySelector, type InlineEntityOption } from "@/components/InlineEntitySelector";
@@ -197,6 +199,32 @@ const proposalPrincipalFieldKeys = {
     user: "reviewerUserId",
   },
 } as const;
+
+export function issueProposalWithStatus(
+  proposal: Record<string, unknown>,
+  status: string,
+) {
+  const nextStatus = ISSUE_STATUSES.includes(status as (typeof ISSUE_STATUSES)[number])
+    ? status
+    : "todo";
+  return {
+    ...proposal,
+    status: nextStatus,
+  };
+}
+
+export function issueProposalWithPriority(
+  proposal: Record<string, unknown>,
+  priority: string,
+) {
+  const nextPriority = ISSUE_PRIORITIES.includes(priority as (typeof ISSUE_PRIORITIES)[number])
+    ? priority
+    : "medium";
+  return {
+    ...proposal,
+    priority: nextPriority,
+  };
+}
 
 export function issueProposalPrincipalSelectionValue(
   proposal: Record<string, unknown>,
@@ -410,6 +438,44 @@ function ProposalPrincipalSelector({
   );
 }
 
+function ProposalStatusSelector({
+  proposal,
+  status,
+  onChange,
+}: {
+  proposal: Record<string, unknown>;
+  status: string;
+  onChange: (nextProposal: Record<string, unknown>) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Edit status"
+          className="rounded-[var(--radius-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <StatusBadge status={status} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        {ISSUE_STATUSES.map((option) => (
+          <DropdownMenuItem
+            key={option}
+            className="justify-between gap-2"
+            onClick={() => onChange(issueProposalWithStatus(proposal, option))}
+          >
+            <StatusBadge status={option} />
+            {option === status ? (
+              <span className="text-xs text-muted-foreground">Selected</span>
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function ProposalCard({
   conversation,
   message,
@@ -469,12 +535,16 @@ export function ProposalCard({
     issueProposal && typeof issueProposal.status === "string" && issueProposal.status.trim()
       ? issueProposal.status.trim()
       : "todo";
+  const proposalIssuePriority =
+    issueProposal && typeof issueProposal.priority === "string" && issueProposal.priority.trim()
+      ? issueProposal.priority.trim()
+      : "medium";
   const proposalAssigneeUnassignedReason =
     issueProposal && typeof issueProposal.assigneeUnassignedReason === "string"
       ? issueProposal.assigneeUnassignedReason.trim() || null
       : null;
   const proposalDescription = issueProposal ? String(issueProposal.description) : "";
-  const canEditIssueProposalPrincipals = Boolean(issueProposal && (showApprovalActions || canConvertDirectly) && onIssueProposalChange);
+  const canEditIssueProposal = Boolean(issueProposal && (showApprovalActions || canConvertDirectly) && onIssueProposalChange);
   const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
   const [proposalDetailsCanExpand, setProposalDetailsCanExpand] = useState(false);
   const proposalDetailsRef = useRef<HTMLDivElement | null>(null);
@@ -566,21 +636,38 @@ export function ProposalCard({
                   </div>
                   <div className="chat-review-fact-ledger">
                     <ProposalFactRow label="Priority">
-                      <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
+                      <PriorityIcon
+                        priority={proposalIssuePriority}
+                        showLabel
+                        onChange={canEditIssueProposal
+                          ? (nextPriority) => onIssueProposalChange?.(
+                              message.id,
+                              issueProposalWithPriority(issueProposal, nextPriority),
+                            )
+                          : undefined}
+                      />
                     </ProposalFactRow>
                     <ProposalFactRow label="Status">
-                      <span
-                        className={cn(
-                          "inline-flex shrink-0 items-center rounded-[calc(var(--radius-sm)-1px)] border px-2.5 py-1 text-xs font-medium whitespace-nowrap",
-                          statusBadge[proposalIssueStatus] ?? statusBadgeDefault,
-                        )}
-                      >
-                        {proposalIssueStatus.replace("_", " ")}
-                      </span>
+                      {canEditIssueProposal ? (
+                        <ProposalStatusSelector
+                          proposal={issueProposal}
+                          status={proposalIssueStatus}
+                          onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
+                        />
+                      ) : (
+                        <span
+                          className={cn(
+                            "inline-flex shrink-0 items-center rounded-[calc(var(--radius-sm)-1px)] border px-2.5 py-1 text-xs font-medium whitespace-nowrap",
+                            statusBadge[proposalIssueStatus] ?? statusBadgeDefault,
+                          )}
+                        >
+                          {proposalIssueStatus.replace("_", " ")}
+                        </span>
+                      )}
                     </ProposalFactRow>
                     <ProposalFactRow label="Owner">
                       <div className="flex min-w-0 flex-col items-end gap-1 text-right">
-                        {canEditIssueProposalPrincipals ? (
+                        {canEditIssueProposal ? (
                           <ProposalPrincipalSelector
                             proposal={issueProposal}
                             role="assignee"
@@ -604,7 +691,7 @@ export function ProposalCard({
                       </div>
                     </ProposalFactRow>
                     <ProposalFactRow label="Reviewer">
-                      {canEditIssueProposalPrincipals ? (
+                      {canEditIssueProposal ? (
                         <ProposalPrincipalSelector
                           proposal={issueProposal}
                           role="reviewer"
@@ -675,7 +762,7 @@ export function ProposalCard({
                 proposalDetailsCanExpand && !proposalDetailsExpanded && "chat-review-details-body--can-expand",
               )}
             >
-              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
                 {proposalDescription}
               </MarkdownBody>
             </div>
@@ -688,7 +775,7 @@ export function ProposalCard({
               <div className="text-[11px] font-medium text-muted-foreground">{planDocument.title}</div>
             ) : null}
             <div className="mt-3 text-sm leading-6 text-foreground">
-              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
                 {planDocument.body}
               </MarkdownBody>
             </div>
@@ -855,7 +942,7 @@ export function ChatLongMessageBody({
   return (
     <div className={cn("min-w-0", className)}>
       <div data-testid="chat-long-message-body" className="min-w-0">
-        <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+        <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
           {body}
         </MarkdownBody>
       </div>
@@ -966,7 +1053,7 @@ export function ChatSystemMessageBody({
   }
 
   return (
-    <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+    <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
       {message.body}
     </MarkdownBody>
   );
@@ -1029,13 +1116,19 @@ export function AskUserHistoryRecord({
 
 export function AskUserAnswerBubble({
   answer,
+  animate = false,
 }: {
   answer: AskUserAnswerRecord;
+  animate?: boolean;
 }) {
   return (
     <div
       data-testid="chat-ask-user-answer"
-      className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
+      data-motion={animate ? "submitted" : undefined}
+      className={cn(
+        "chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]",
+        animate && "motion-chat-ask-user-answer-pop",
+      )}
       aria-label="Answered requested input"
     >
       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -1418,8 +1511,10 @@ export function ChatMessageItem({
   onMarkdownLinkClick,
   turnBranchControls,
   skillReferences,
+  inlineEdit,
   answered,
   askUserAnswer,
+  animateAskUserAnswer,
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
@@ -1441,8 +1536,21 @@ export function ChatMessageItem({
   onOpenFile: (targetPath: string) => void;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   skillReferences: MarkdownSkillReferencePreview[];
+  inlineEdit?: {
+    draft: string;
+    disabled: boolean;
+    mentions: MentionOption[];
+    surfaceRef: RefObject<HTMLDivElement | null>;
+    editorRef: RefObject<MarkdownEditorRef | null>;
+    onChange: (value: string) => void;
+    onSubmit: () => void;
+    onCancel: () => void;
+    onMentionQueryChange: (query: string | null) => void;
+    onInlineTokenClick: MarkdownEditorProps["onInlineTokenClick"];
+  } | null;
   answered?: boolean;
   askUserAnswer?: AskUserAnswerRecord | null;
+  animateAskUserAnswer?: boolean;
   turnBranchControls?: {
     current: number;
     total: number;
@@ -1510,6 +1618,7 @@ export function ChatMessageItem({
   const canContinueInterrupted = canContinueInterruptedChatMessage(message);
   const canRetryFailed = canRetryFailedChatMessage(message);
   const isEmptyStreamingAssistant = !isUser && message.status === "streaming" && message.body.trim().length === 0;
+  const isInlineEditing = isUser && Boolean(inlineEdit);
 
   if (!isUser) {
     return (
@@ -1586,9 +1695,62 @@ export function ChatMessageItem({
 
   return (
     <div className="flex justify-end transition-all duration-200">
-      <div className="group flex max-w-[82%] flex-col items-end text-left">
-        {askUserAnswer ? (
-          <AskUserAnswerBubble answer={askUserAnswer} />
+      <div className={cn("group flex flex-col items-end text-left", isInlineEditing ? "w-full max-w-full" : "max-w-[82%]")}>
+        {isInlineEditing && inlineEdit ? (
+          <div
+            ref={inlineEdit.surfaceRef}
+            data-testid="chat-inline-message-editor"
+            className="chat-message-user w-full max-w-[min(100%,88ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
+          >
+            <MarkdownEditor
+              ref={inlineEdit.editorRef}
+              value={inlineEdit.draft}
+              onChange={inlineEdit.onChange}
+              mentions={inlineEdit.mentions}
+              onMentionQueryChange={inlineEdit.onMentionQueryChange}
+              submitShortcut="enter"
+              onInlineTokenClick={inlineEdit.onInlineTokenClick}
+              plainText
+              bordered={false}
+              placeholder="Edit message"
+              className="rounded-[var(--radius-md)] bg-transparent"
+              contentClassName="min-h-[96px] bg-transparent text-[15px] leading-7 text-foreground"
+              onSubmit={() => {
+                if (!inlineEdit.disabled) {
+                  inlineEdit.onSubmit();
+                }
+              }}
+            />
+            {message.attachments.length > 0 ? (
+              <div className="mt-2">
+                <ChatAttachmentList
+                  attachments={message.attachments}
+                  onOpenImage={onOpenImage}
+                  onOpenFile={onOpenFile}
+                />
+              </div>
+            ) : null}
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={inlineEdit.onCancel}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={inlineEdit.disabled || inlineEdit.draft.trim().length === 0}
+                onClick={inlineEdit.onSubmit}
+              >
+                Send
+              </Button>
+            </div>
+          </div>
+        ) : askUserAnswer ? (
+          <AskUserAnswerBubble answer={askUserAnswer} animate={animateAskUserAnswer} />
         ) : (
           <div
             data-testid="chat-user-message-bubble"
@@ -1618,14 +1780,14 @@ export function ChatMessageItem({
           data-testid="chat-user-message-toolbar"
           className={cn(
             "mt-1 flex h-7 items-center justify-end gap-1 text-muted-foreground",
-            chatMessageHoverBarClass,
+            isInlineEditing ? "invisible pointer-events-none" : chatMessageHoverBarClass,
           )}
         >
           <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
           <button
             type="button"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-            aria-label="Edit message in composer"
+            aria-label="Edit message"
             onClick={() => onEditUserMessage(message)}
           >
             <Pencil className="h-4 w-4" />
@@ -1674,6 +1836,7 @@ export function OptimisticUserDraftItem({
   skillReferences,
   onMarkdownLinkClick,
   askUserAnswer,
+  animateAskUserAnswer,
 }: {
   body: string;
   createdAt: Date;
@@ -1682,12 +1845,13 @@ export function OptimisticUserDraftItem({
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   askUserAnswer?: AskUserAnswerRecord | null;
+  animateAskUserAnswer?: boolean;
 }) {
   return (
     <div className="flex justify-end transition-all duration-200">
       <div className="group flex max-w-[82%] flex-col items-end text-left">
         {askUserAnswer ? (
-          <AskUserAnswerBubble answer={askUserAnswer} />
+          <AskUserAnswerBubble answer={askUserAnswer} animate={animateAskUserAnswer} />
         ) : (
           <div className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]">
             <ChatLongMessageBody
@@ -1708,7 +1872,7 @@ export function OptimisticUserDraftItem({
           <button
             type="button"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-            aria-label="Edit message in composer"
+            aria-label="Edit draft"
             onClick={() => onEditDraftOnly(body)}
           >
             <Pencil className="h-4 w-4" />
@@ -1794,9 +1958,6 @@ export function LazyStreamTranscriptItem({
             {statusHint ? (
               <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
             ) : null}
-            <span className="truncate text-muted-foreground/75">
-              · {summary.entryCount} event{summary.entryCount === 1 ? "" : "s"}
-            </span>
             <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
           </button>
           <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />

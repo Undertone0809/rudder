@@ -13,6 +13,7 @@ export const DEFAULT_RUNTIME_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 export const DEFAULT_RUNTIME_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const DEFAULT_RUNTIME_CACHE_KEEP_PREVIOUS = 0;
 const RUNTIME_NPM_INSTALL_FLAGS = ["--omit=dev", "--include=optional", "--no-audit", "--no-fund"];
+const EMBEDDED_POSTGRES_PACKAGE_NAME = "embedded-postgres";
 
 export interface RuntimeInstallMetadata {
   version: 1;
@@ -135,6 +136,56 @@ async function touchRuntimeInstallMetadata(cacheDir: string): Promise<void> {
   }
 }
 
+function resolveEmbeddedPostgresPlatformPackage(
+  platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch,
+): string | null {
+  if (platform === "darwin" && arch === "arm64") return "@embedded-postgres/darwin-arm64";
+  if (platform === "darwin" && arch === "x64") return "@embedded-postgres/darwin-x64";
+  if (platform === "linux" && arch === "arm64") return "@embedded-postgres/linux-arm64";
+  if (platform === "linux" && arch === "arm") return "@embedded-postgres/linux-arm";
+  if (platform === "linux" && arch === "ia32") return "@embedded-postgres/linux-ia32";
+  if (platform === "linux" && arch === "ppc64") return "@embedded-postgres/linux-ppc64";
+  if (platform === "linux" && arch === "x64") return "@embedded-postgres/linux-x64";
+  if (platform === "win32" && arch === "x64") return "@embedded-postgres/windows-x64";
+  return null;
+}
+
+async function canResolveRuntimePackage(cacheDir: string, packageName: string): Promise<boolean> {
+  try {
+    await readFile(path.join(cacheDir, "node_modules", ...packageName.split("/"), "package.json"), "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function hasRequiredRuntimePlatformDependencies(cacheDir: string): Promise<boolean> {
+  if (!await canResolveRuntimePackage(cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return true;
+  const platformPackage = resolveEmbeddedPostgresPlatformPackage();
+  if (!platformPackage) return true;
+  return await canResolveRuntimePackage(cacheDir, platformPackage);
+}
+
+async function assertRequiredRuntimePlatformDependencies(cacheDir: string, command: string, output: string): Promise<void> {
+  if (!await canResolveRuntimePackage(cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return;
+  const platformPackage = resolveEmbeddedPostgresPlatformPackage();
+  if (!platformPackage || await canResolveRuntimePackage(cacheDir, platformPackage)) return;
+
+  throw new RuntimeInstallError(
+    `Rudder runtime installation is missing required platform package ${platformPackage}. Re-run manually: ${command}`,
+    {
+      cacheDir,
+      command,
+      output: [
+        output,
+        `Missing required optional dependency: ${platformPackage}`,
+        "Your npm registry, mirror, proxy, or cache may have skipped the embedded PostgreSQL platform package.",
+      ].filter((line) => line.trim().length > 0).join("\n"),
+    },
+  );
+}
+
 export async function isRuntimeCacheHit(options: {
   cacheDir: string;
   version: string;
@@ -150,7 +201,8 @@ export async function isRuntimeCacheHit(options: {
   try {
     const packageJsonPath = path.join(options.cacheDir, "node_modules", ...packageName.split("/"), "package.json");
     const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as { version?: string };
-    return packageVersion === "latest" || packageJson.version === packageVersion;
+    const packageVersionMatches = packageVersion === "latest" || packageJson.version === packageVersion;
+    return packageVersionMatches && await hasRequiredRuntimePlatformDependencies(options.cacheDir);
   } catch {
     return false;
   }
@@ -176,6 +228,7 @@ export async function ensureRuntimeInstalled(
     return { status: "hit", cacheDir, packageSpec, command, output: "", ...(prune ? { prune } : {}) };
   }
 
+  await rm(cacheDir, { recursive: true, force: true });
   await mkdir(cacheDir, { recursive: true });
   await writeFile(path.join(cacheDir, "package.json"), `${JSON.stringify({ private: true, type: "module" }, null, 2)}\n`, "utf8");
 
@@ -199,12 +252,14 @@ export async function ensureRuntimeInstalled(
       };
     }
 
+    await rm(fallbackCacheDir, { recursive: true, force: true });
     await mkdir(fallbackCacheDir, { recursive: true });
     await writeFile(path.join(fallbackCacheDir, "package.json"), `${JSON.stringify({ private: true, type: "module" }, null, 2)}\n`, "utf8");
 
     const fallbackResult = runNpmRuntimeInstall(spawnSyncImpl, fallbackCacheDir, fallbackSpec);
     const fallbackOutput = collectSpawnOutput(fallbackResult);
     if (fallbackResult.status === 0) {
+      await assertRequiredRuntimePlatformDependencies(fallbackCacheDir, formatRuntimeInstallCommand(fallbackCacheDir, fallbackSpec), fallbackOutput);
       const fallbackMetadata: RuntimeInstallMetadata = {
         version: 1,
         packageName,
@@ -229,6 +284,8 @@ export async function ensureRuntimeInstalled(
       { cacheDir, command, output },
     );
   }
+
+  await assertRequiredRuntimePlatformDependencies(cacheDir, command, output);
 
   const metadata: RuntimeInstallMetadata = {
     version: 1,

@@ -116,6 +116,12 @@ export const addIssueCommentSchema = z.object({
 
 export type AddIssueComment = z.infer<typeof addIssueCommentSchema>;
 
+export const updateIssueCommentSchema = z.object({
+  body: z.string().trim().min(1),
+});
+
+export type UpdateIssueComment = z.infer<typeof updateIssueCommentSchema>;
+
 export const reportIssueCommitSchema = z.object({
   sha: z.string().trim().regex(/^[0-9a-f]{7,64}$/i, "Commit SHA must be 7 to 64 hexadecimal characters"),
   message: z.string().trim().min(1).max(500),

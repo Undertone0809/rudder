@@ -19,6 +19,7 @@ import {
   upsertIssueDocumentSchema,
   updateIssueSchema,
   isUuidLike,
+  type IssueSearchField,
 } from "@rudderhq/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
@@ -30,6 +31,7 @@ import {
   heartbeatService,
   issueApprovalService,
   issueService,
+  messengerService,
   documentService,
   logActivity,
   projectService,
@@ -48,10 +50,12 @@ import { registerIssueCommentAttachmentRoutes } from "./issues.comments-attachme
 import { registerIssueMutationRoutes } from "./issues.mutations.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
+const ISSUE_SEARCH_FIELDS = new Set<IssueSearchField>(["title", "description", "comment"]);
 
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
   const svc = issueService(db);
+  const messengerSvc = messengerService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const agentsSvc = agentService(db);
@@ -148,13 +152,49 @@ export function issueRoutes(db: Db, storage: StorageService) {
     if (issue.status !== "in_progress" || issue.assigneeAgentId !== actorAgentId) {
       return true;
     }
+    async function logOwnershipRejected(reason: string, details?: Record<string, unknown>) {
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId: issue.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.run_ownership_rejected",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          reason,
+          status: issue.status,
+          assigneeAgentId: issue.assigneeAgentId,
+          actorAgentId,
+          actorRunId: actor.runId,
+          ...details,
+        },
+      });
+    }
     const runId = requireAgentRunId(req, res);
-    if (!runId) return false;
+    if (!runId) {
+      await logOwnershipRejected("missing_agent_run_id");
+      return false;
+    }
     if (!isUuidLike(runId)) {
+      await logOwnershipRejected("invalid_agent_run_id");
       res.status(403).json({ error: "Run context is not valid for this issue" });
       return false;
     }
-    const ownership = await svc.assertCheckoutOwner(issue.id, actorAgentId, runId);
+    let ownership;
+    try {
+      ownership = await svc.assertCheckoutOwner(issue.id, actorAgentId, runId);
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 409) {
+        await logOwnershipRejected("checkout_owner_conflict", {
+          error: err.message,
+          errorDetails: err.details,
+        });
+      }
+      throw err;
+    }
     if (ownership.adoptedFromRunId) {
       const actor = getActorInfo(req);
       await logActivity(db, {
@@ -239,6 +279,15 @@ export function issueRoutes(db: Db, storage: StorageService) {
   function boardUserId(req: Request) {
     assertBoard(req);
     return req.actor.userId ?? "local-board";
+  }
+
+  function parseIssueSearchFields(raw: unknown): IssueSearchField[] | undefined {
+    if (typeof raw !== "string") return undefined;
+    const fields = raw
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry): entry is IssueSearchField => ISSUE_SEARCH_FIELDS.has(entry as IssueSearchField));
+    return fields.length > 0 ? fields : undefined;
   }
 
   function issueHasReviewer(issue: { reviewerAgentId: string | null; reviewerUserId: string | null }) {
@@ -372,6 +421,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       includeAutomationExecutions:
         req.query.includeAutomationExecutions === "true" || req.query.includeAutomationExecutions === "1",
       q: req.query.q as string | undefined,
+      searchFields: parseIssueSearchFields(req.query.searchFields),
     });
     res.json(result);
   });
@@ -876,7 +926,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
       res.status(403).json({ error: "Board user context required" });
       return;
     }
-    const readState = await svc.markRead(issue.orgId, issue.id, req.actor.userId, new Date());
+    const readAt = new Date();
+    const readState = await svc.markRead(issue.orgId, issue.id, req.actor.userId, readAt);
+    await messengerSvc.setThreadRead(issue.orgId, req.actor.userId, `issue:${issue.id}`, readAt);
     res.json(readState);
   });
 

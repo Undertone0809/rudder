@@ -45,8 +45,10 @@ import { heartbeatsApi } from "@/api/heartbeats";
 import { displayChatTitle } from "@/lib/chat-title";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
+import { sidebarAgentStatusTag } from "@/lib/agent-sidebar-status";
 import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
+import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { relativeTime } from "@/lib/utils";
 import {
   RECENT_ISSUES_CHANGED_EVENT,
@@ -675,13 +677,13 @@ function SidebarIssueListSection({
                       : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
                   )}
                 >
-                  <span className="shrink-0">
+                  <span className="flex h-5 w-4 shrink-0 items-center justify-center">
                     <StatusIcon status={issue.status} />
                   </span>
-                  <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-                    <span className="shrink-0 font-mono text-[11px] text-muted-foreground/78">{issueRef}</span>
-                    <span className="shrink-0 text-muted-foreground/55">·</span>
-                    <span className="min-w-0 truncate">{issue.title}</span>
+                  <span className="flex min-h-5 min-w-0 flex-1 items-center gap-1.5">
+                    <span className="shrink-0 font-mono text-[11px] leading-5 text-muted-foreground/78">{issueRef}</span>
+                    <span className="shrink-0 leading-5 text-muted-foreground/55">·</span>
+                    <span className="min-w-0 truncate leading-5">{issue.title}</span>
                   </span>
                 </Link>
               );
@@ -1766,6 +1768,7 @@ export function ThreeColumnContextSidebar() {
         {visibleAgents.map((agent) => {
           const liveCount = liveCountByAgent.get(agent.id) ?? 0;
           const active = activeAgentRef === agent.urlKey || activeAgentRef === agent.id;
+          const statusTag = sidebarAgentStatusTag(agent);
           return (
             <div
               key={agent.id}
@@ -1786,6 +1789,17 @@ export function ThreeColumnContextSidebar() {
                 <span className="flex-1 truncate" title={formatSidebarAgentLabel(agent)}>
                   {formatSidebarAgentLabel(agent)}
                 </span>
+                {statusTag ? (
+                  <span
+                    title={`Agent status: ${statusTag}`}
+                    className={cn(
+                      "ml-auto inline-flex h-5 shrink-0 items-center rounded-[calc(var(--radius-sm)-1px)] border px-1.5 text-[10px] font-medium leading-none whitespace-nowrap",
+                      statusBadge[statusTag] ?? statusBadgeDefault,
+                    )}
+                  >
+                    {statusTag}
+                  </span>
+                ) : null}
                 {liveCount > 0 ? <SidebarLiveCount count={liveCount} /> : null}
               </Link>
               <AgentActionsMenu

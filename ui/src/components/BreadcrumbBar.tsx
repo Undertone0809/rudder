@@ -6,6 +6,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useDialog } from "@/context/DialogContext";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -27,7 +28,7 @@ import { projectsApi } from "@/api/projects";
 import { queryKeys } from "@/lib/queryKeys";
 import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
 import { StatusIcon } from "@/components/StatusIcon";
-import type { Issue } from "@rudderhq/shared";
+import type { Issue, IssueSearchField } from "@rudderhq/shared";
 
 type GlobalToolbarContext = { orgId: string | null; orgPrefix: string | null };
 
@@ -59,6 +60,30 @@ function issueResultLabel(issue: Pick<Issue, "id" | "identifier">) {
   return issue.identifier ?? issue.id.slice(0, 8);
 }
 
+const issueSearchFieldOptions: Array<{ value: IssueSearchField; label: string }> = [
+  { value: "title", label: "Title" },
+  { value: "description", label: "Description" },
+  { value: "comment", label: "Comments" },
+];
+
+const issueSearchFieldValues = new Set<IssueSearchField>(
+  issueSearchFieldOptions.map((option) => option.value),
+);
+
+function parseIssueSearchFields(raw: string | null): IssueSearchField[] {
+  if (!raw) return ["title"];
+  const fields = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry): entry is IssueSearchField => issueSearchFieldValues.has(entry as IssueSearchField));
+  return fields.length > 0 ? fields : ["title"];
+}
+
+function serializeIssueSearchFields(fields: IssueSearchField[]): string | null {
+  if (fields.length === 1 && fields[0] === "title") return null;
+  return fields.join(",");
+}
+
 export function BreadcrumbBar({
   desktopChrome = false,
   variant = "shell",
@@ -72,12 +97,14 @@ export function BreadcrumbBar({
   const navigate = useNavigate();
   const [issueSearch, setIssueSearch] = useState("");
   const [issueSearchMenuOpen, setIssueSearchMenuOpen] = useState(false);
+  const [issueSearchFields, setIssueSearchFields] = useState<IssueSearchField[]>(["title"]);
   const issueSearchInputRef = useRef<HTMLInputElement | null>(null);
   const issueSearchContainerRef = useRef<HTMLDivElement | null>(null);
   const relativePath = useMemo(() => toOrganizationRelativePath(location.pathname), [location.pathname]);
   const activeIssueSource = useMemo(() => new URLSearchParams(location.search).get("source") ?? "", [location.search]);
   const isIssuesRoute = useMemo(() => /^\/issues(?:\/|$)/.test(relativePath), [relativePath]);
   const isIssueDetailRoute = useMemo(() => /^\/issues\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
+  const isMessengerIssueDetailRoute = useMemo(() => /^\/messenger\/issues\/[^/]+(?:\/|$)/.test(relativePath), [relativePath]);
   const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
   const isPrimaryRailPage = useMemo(
     () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|library|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
@@ -110,11 +137,13 @@ export function BreadcrumbBar({
     enabled: !!selectedOrganizationId && /^\/projects(?:\/|$)/.test(relativePath),
   });
   const issueSearchQuery = issueSearch.trim();
-  const showIssueSearchMenu = isIssueDetailRoute && !isLinearIssueSource && issueSearchMenuOpen && issueSearchQuery.length > 0;
+  const showIssueResultSearchMenu = isIssueDetailRoute && !isLinearIssueSource && issueSearchMenuOpen && issueSearchQuery.length > 0;
+  const showIssueSearchScopeMenu = isIssuesRoute && !isIssueDetailRoute && !isLinearIssueSource && issueSearchMenuOpen;
+  const showIssueSearchMenu = showIssueResultSearchMenu || showIssueSearchScopeMenu;
   const { data: searchedIssues = [], isFetching: issueSearchFetching } = useQuery({
-    queryKey: queryKeys.issues.search(selectedOrganizationId ?? "__none__", issueSearchQuery),
-    queryFn: () => issuesApi.list(selectedOrganizationId!, { q: issueSearchQuery }),
-    enabled: !!selectedOrganizationId && showIssueSearchMenu,
+    queryKey: queryKeys.issues.search(selectedOrganizationId ?? "__none__", issueSearchQuery, undefined, issueSearchFields),
+    queryFn: () => issuesApi.list(selectedOrganizationId!, { q: issueSearchQuery, searchFields: issueSearchFields }),
+    enabled: !!selectedOrganizationId && showIssueResultSearchMenu,
   });
 
   const globalToolbarSlotContext = useMemo(
@@ -141,8 +170,10 @@ export function BreadcrumbBar({
 
   useEffect(() => {
     if (!isIssuesRoute) return;
-    const query = new URLSearchParams(location.search).get("q") ?? "";
+    const params = new URLSearchParams(location.search);
+    const query = params.get("q") ?? "";
     setIssueSearch(query);
+    setIssueSearchFields(parseIssueSearchFields(params.get("searchFields")));
     setIssueSearchMenuOpen(query.trim().length > 0 && isIssueDetailRoute);
   }, [isIssueDetailRoute, isIssuesRoute, location.search]);
 
@@ -170,6 +201,31 @@ export function BreadcrumbBar({
     setIssueSearchMenuOpen(false);
     issueSearchInputRef.current?.blur();
     navigate(`/issues/${issue.identifier ?? issue.id}`);
+  };
+
+  const updateIssueSearchFields = (field: IssueSearchField) => {
+    setIssueSearchFields((current) => {
+      const next = current.includes(field)
+        ? current.length === 1
+          ? current
+          : current.filter((entry) => entry !== field)
+        : issueSearchFieldOptions
+          .map((option) => option.value)
+          .filter((entry) => entry === field || current.includes(entry));
+
+      const params = new URLSearchParams(location.search);
+      const serialized = serializeIssueSearchFields(next);
+      if (serialized) params.set("searchFields", serialized);
+      else params.delete("searchFields");
+      navigate(
+        {
+          pathname: location.pathname,
+          search: params.toString() ? `?${params.toString()}` : "",
+        },
+        { replace: true },
+      );
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -232,7 +288,7 @@ export function BreadcrumbBar({
   const cardHeaderBaseClass = "workspace-card-header workspace-main-header";
   const headerSurfaceClass = variant === "card" ? cardHeaderBaseClass : shellHeaderBaseClass;
   const draggableClass = desktopChrome ? "desktop-chrome desktop-window-drag" : "";
-  const hideMessengerMainHeader = variant === "card" && /^\/messenger(?:\/|$)/.test(relativePath);
+  const hideMessengerMainHeader = variant === "card" && /^\/messenger(?:\/|$)/.test(relativePath) && !isMessengerIssueDetailRoute;
   const hideAgentDetailMainHeader = variant === "card" && isAgentDetailRoute;
   const workspacesHeaderTooltip = useMemo(() => {
     if (/^\/(?:library|resources)(?:\/|$)/.test(relativePath)) {
@@ -270,7 +326,7 @@ export function BreadcrumbBar({
   }
 
   if (threeColumnTitle) {
-    const showIssueDetailBreadcrumbs = isIssuesRoute && isIssueDetailRoute && breadcrumbs.length > 1;
+    const showIssueDetailBreadcrumbs = ((isIssuesRoute && isIssueDetailRoute) || isMessengerIssueDetailRoute) && breadcrumbs.length > 1;
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
     const isDashboardIndex = /^\/dashboard\/?$/.test(relativePath);
@@ -339,9 +395,10 @@ export function BreadcrumbBar({
                 value={issueSearch}
                 onChange={(event) => {
                   setIssueSearch(event.target.value);
-                  setIssueSearchMenuOpen(event.target.value.trim().length > 0 && isIssueDetailRoute);
+                  setIssueSearchMenuOpen(isIssueDetailRoute ? event.target.value.trim().length > 0 : !isLinearIssueSource);
                 }}
-                onFocus={() => setIssueSearchMenuOpen(issueSearchQuery.length > 0 && isIssueDetailRoute)}
+                onClick={() => setIssueSearchMenuOpen(isIssueDetailRoute ? issueSearchQuery.length > 0 : !isLinearIssueSource)}
+                onFocus={() => setIssueSearchMenuOpen(isIssueDetailRoute ? issueSearchQuery.length > 0 : !isLinearIssueSource)}
                 onKeyDown={(event) => {
                   if (event.key === "Escape" && issueSearchMenuOpen) {
                     event.preventDefault();
@@ -358,7 +415,7 @@ export function BreadcrumbBar({
                 aria-expanded={showIssueSearchMenu}
                 aria-controls={showIssueSearchMenu ? "issue-search-menu" : undefined}
               />
-              {showIssueSearchMenu ? (
+              {showIssueResultSearchMenu ? (
                 <div
                   id="issue-search-menu"
                   role="listbox"
@@ -387,6 +444,25 @@ export function BreadcrumbBar({
                   ) : (
                     <div className="px-3 py-2 text-xs text-muted-foreground">No matching issues.</div>
                   )}
+                </div>
+              ) : showIssueSearchScopeMenu ? (
+                <div
+                  id="issue-search-menu"
+                  className="absolute left-0 top-full z-50 mt-2 w-60 rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:var(--surface-panel)] p-2 shadow-lg"
+                >
+                  <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Search in</div>
+                  {issueSearchFieldOptions.map((option) => (
+                    <label
+                      key={option.value}
+                      className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-[color:var(--surface-hover)]"
+                    >
+                      <Checkbox
+                        checked={issueSearchFields.includes(option.value)}
+                        onCheckedChange={() => updateIssueSearchFields(option.value)}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  ))}
                 </div>
               ) : null}
             </div>

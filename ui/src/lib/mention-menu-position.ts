@@ -6,6 +6,11 @@ const MENTION_MENU_VIEWPORT_PADDING = 12;
 const MENTION_MENU_OFFSET = 4;
 const MENTION_PANEL_OFFSET = 10;
 
+export interface MentionMenuPositionOptions {
+  width?: number;
+  maxHeight?: number;
+}
+
 export interface MentionMenuAnchor {
   viewportTop: number;
   viewportBottom: number;
@@ -28,12 +33,13 @@ export function getMentionMenuPositionForViewport(
   state: MentionMenuAnchor,
   viewportWidth: number,
   viewportHeight: number,
+  options: MentionMenuPositionOptions = {},
 ) {
   const availableWidth = Math.max(
     MENTION_MENU_MIN_WIDTH,
     viewportWidth - MENTION_MENU_VIEWPORT_PADDING * 2,
   );
-  const width = Math.min(MENTION_MENU_DEFAULT_WIDTH, availableWidth);
+  const width = Math.min(options.width ?? MENTION_MENU_DEFAULT_WIDTH, availableWidth);
   const availableBelow = Math.max(
     0,
     viewportHeight - state.viewportBottom - MENTION_MENU_VIEWPORT_PADDING - MENTION_MENU_OFFSET,
@@ -44,7 +50,7 @@ export function getMentionMenuPositionForViewport(
   );
   const openUpward = availableBelow < 140 && availableAbove > availableBelow;
   const maxHeight = Math.min(
-    MENTION_MENU_MAX_HEIGHT,
+    options.maxHeight ?? MENTION_MENU_MAX_HEIGHT,
     openUpward ? availableAbove : availableBelow,
   );
   const left = clamp(

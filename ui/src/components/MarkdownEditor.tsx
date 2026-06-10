@@ -40,6 +40,7 @@ import { useNavigate } from "@/lib/router";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
 import { AgentIcon } from "./AgentIconPicker";
+import { StatusIcon } from "./StatusIcon";
 import {
   $createParagraphNode,
   $createRangeSelection,
@@ -55,13 +56,13 @@ import {
 import {
   applyMentionChipDecoration,
   clearMentionChipDecoration,
+  mentionChipNavigationPath,
   parseMentionChipHref,
   stripMentionChipLabelPrefix,
 } from "../lib/mention-chips";
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
 import { $createMentionTokenNode, mentionTokenPlugin } from "../lib/mention-token-node";
-import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   applySkillTokenDecoration,
@@ -154,9 +155,12 @@ export interface MarkdownEditorProps {
   /** List of mentionable entities. Enables @-mention autocomplete. */
   mentions?: MentionOption[];
   onMentionQueryChange?: (query: string | null) => void;
+  /** Whether selected agent mentions are plain references or comment wake requests. */
+  agentMentionIntent?: "reference" | "wake";
   /** Optional surface used to align the mention menu for larger composer UIs. */
   mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
   mentionMenuPlacement?: "caret" | "container";
+  mentionMenuSize?: "default" | "compact";
   /** Called according to submitShortcut. */
   onSubmit?: () => void;
   submitShortcut?: "mod-enter" | "enter";
@@ -766,16 +770,21 @@ function getMentionPanelPosition(anchor: HTMLElement) {
   );
 }
 
-function getMentionMenuPosition(state: MentionState) {
-  return getMentionMenuPositionForViewport(state, window.innerWidth, window.innerHeight);
+function getMentionMenuPosition(state: MentionState, size: MarkdownEditorProps["mentionMenuSize"] = "default") {
+  return getMentionMenuPositionForViewport(
+    state,
+    window.innerWidth,
+    window.innerHeight,
+    size === "compact" ? { width: 320, maxHeight: 180 } : undefined,
+  );
 }
 
 function statusLabel(status: string): string {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function mentionMarkdown(option: MentionOption): string {
-  const token = mentionTokenDetails(option);
+function mentionMarkdown(option: MentionOption, agentMentionIntent?: "reference" | "wake"): string {
+  const token = mentionTokenDetails(option, agentMentionIntent);
   return token ? `[${token.label}](${token.href}) ` : "";
 }
 
@@ -783,7 +792,7 @@ function mentionVisibleLabel(option: MentionOption): string {
   return mentionTokenDetails(option)?.label ?? option.name;
 }
 
-function mentionTokenDetails(option: MentionOption): { href: string; isSkill: boolean; label: string } | null {
+function mentionTokenDetails(option: MentionOption, agentMentionIntent?: "reference" | "wake"): { href: string; isSkill: boolean; label: string } | null {
   if (option.kind === "skill") {
     if (!option.skillMarkdownTarget || !option.skillRefLabel) return null;
     return { href: option.skillMarkdownTarget, isSkill: true, label: option.skillRefLabel };
@@ -834,7 +843,7 @@ function mentionTokenDetails(option: MentionOption): { href: string; isSkill: bo
   }
   const agentId = option.agentId ?? option.id.replace(/^agent:/, "");
   return {
-    href: buildAgentMentionHref(agentId, option.agentIcon ?? null),
+    href: buildAgentMentionHref(agentId, option.agentIcon ?? null, agentMentionIntent),
     isSkill: false,
     label: option.name,
   };
@@ -907,9 +916,15 @@ function findActiveMentionIndex(markdown: string, state: MentionState, editable:
 }
 
 /** Replace the active trigger query range with the selected mention token. */
-function applyMention(markdown: string, state: MentionState, option: MentionOption, editable: HTMLElement | null): string {
+function applyMention(
+  markdown: string,
+  state: MentionState,
+  option: MentionOption,
+  editable: HTMLElement | null,
+  agentMentionIntent?: "reference" | "wake",
+): string {
   const search = `${state.trigger}${state.query}`;
-  const replacement = mentionMarkdown(option);
+  const replacement = mentionMarkdown(option, agentMentionIntent);
   if (!replacement) return markdown;
   const idx = findActiveMentionIndex(markdown, state, editable);
   if (idx === -1) return markdown;
@@ -925,9 +940,10 @@ function replaceMentionInLexicalEditor(
   state: MentionState,
   option: MentionOption,
   editable: HTMLElement,
+  agentMentionIntent?: "reference" | "wake",
 ) {
   if (!editable.contains(state.textNode)) return false;
-  const token = mentionTokenDetails(option);
+  const token = mentionTokenDetails(option, agentMentionIntent);
   if (!token) return false;
 
   const text = state.textNode.textContent ?? "";
@@ -999,8 +1015,10 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   bordered = true,
   mentions,
   onMentionQueryChange,
+  agentMentionIntent = "reference",
   mentionMenuAnchorRef,
   mentionMenuPlacement = "caret",
+  mentionMenuSize = "default",
   onSubmit,
   submitShortcut = "mod-enter",
   plainText = false,
@@ -1091,9 +1109,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         const anchor = mentionMenuAnchorRef?.current ?? containerRef.current;
         if (anchor) return getMentionPanelPosition(anchor);
       }
-      return getMentionMenuPosition(mentionState);
+      return getMentionMenuPosition(mentionState, mentionMenuSize);
     },
-    [mentionMenuAnchorRef, mentionMenuPlacement, mentionState],
+    [mentionMenuAnchorRef, mentionMenuPlacement, mentionMenuSize, mentionState],
   );
   const groupedMentionOptions = useMemo(() => {
     const labelForKind = (kind: MentionOption["kind"]) => {
@@ -1269,6 +1287,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     () => (placeholder ? translateLegacyString(locale, placeholder) : undefined),
     [locale, placeholder],
   );
+  const hasEditorContent = value.replaceAll(INLINE_CARET_BOUNDARY, "").length > 0;
 
   const plugins = useMemo<RealmPlugin[]>(() => {
     const imageHandler = hasImageUpload
@@ -1543,9 +1562,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       const visibleMentionStart = editableElement && editableElement.contains(state.textNode)
         ? getVisibleTextOffsetAtPosition(editableElement, state.textNode, state.atPos)
         : null;
-      const replacement = mentionMarkdown(option);
+      const replacement = mentionMarkdown(option, agentMentionIntent);
       const activeMarkdownIndex = findActiveMentionIndex(current, state, editableElement);
-      const next = applyMention(current, state, option, editableElement);
+      const next = applyMention(current, state, option, editableElement, agentMentionIntent);
       const editorNext = plainText && activeMarkdownIndex !== -1
         ? next.slice(0, activeMarkdownIndex + replacement.length)
           + INLINE_CARET_BOUNDARY
@@ -1566,7 +1585,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         }
         const lexicalEditor = lexicalEditorRef.current;
         didReplaceInLexical = Boolean(lexicalEditor && editableElement
-          ? replaceMentionInLexicalEditor(lexicalEditor, state, option, editableElement)
+          ? replaceMentionInLexicalEditor(lexicalEditor, state, option, editableElement, agentMentionIntent)
           : false);
         if (!didReplaceInLexical) {
           ref.current?.setMarkdown(editorNext);
@@ -1680,21 +1699,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     if (token.kind === "mention") {
       const parsed = parseMentionChipHref(token.href);
       if (!parsed) return;
-      const target = parsed.kind === "agent"
-        ? `/agents/${parsed.agentId}`
-        : parsed.kind === "issue"
-          ? `/issues/${parsed.ref ?? parsed.issueId}`
-          : parsed.kind === "chat"
-            ? `/messenger/chat/${parsed.conversationId}`
-            : parsed.kind === "library_doc"
-              ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
-              : parsed.kind === "library_entry"
-                ? `/library?entry=${encodeURIComponent(parsed.entryId)}`
-                : parsed.kind === "library_file"
-                  ? `/library?path=${encodeURIComponent(parsed.filePath)}`
-                  : parsed.kind === "library_directory"
-                    ? `/library?directory=${encodeURIComponent(parsed.directoryPath)}`
-                : `/projects/${parsed.projectId}`;
+      const target = mentionChipNavigationPath(parsed);
       navigate(target);
       return;
     }
@@ -1715,6 +1720,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   return (
     <div
       ref={containerRef}
+      data-rudder-has-content={hasEditorContent ? "true" : "false"}
       className={cn(
         "relative rudder-mdxeditor-scope",
         bordered ? "rounded-md border border-border bg-transparent" : "bg-transparent",
@@ -2040,15 +2046,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                             />
                           ) : option.kind === "issue" && option.issueId ? (
                             <span
-                              className={cn(
-                                "relative inline-flex h-4 w-4 shrink-0 rounded-full border-2",
-                                option.issueStatus ? issueStatusIcon[option.issueStatus] ?? issueStatusIconDefault : issueStatusIconDefault,
-                              )}
+                              className="inline-flex shrink-0"
                               aria-label={`Status: ${issueStatusLabel}`}
+                              title={issueStatusLabel}
                             >
-                              {option.issueStatus === "done" ? (
-                                <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
-                              ) : null}
+                              <StatusIcon status={option.issueStatus ?? "default"} />
                             </span>
                           ) : option.kind === "chat" ? (
                             <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -2070,34 +2072,13 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                               <div className="min-w-0 flex-1 truncate font-medium text-foreground">
                                 {option.name}
                               </div>
+                            ) : option.kind === "issue" && option.issueId ? (
+                              <div className="min-w-0 flex-1 truncate font-medium text-foreground">
+                                {option.name}
+                              </div>
                             ) : (
                               <div className="min-w-0 flex-1">
                                 <div className="truncate font-medium text-foreground">{option.name}</div>
-                                {option.kind === "issue" && option.issueId ? (
-                                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-                                    {option.issueStatus ? <span>{issueStatusLabel}</span> : null}
-                                    {option.issueProjectName ? (
-                                      <span className="inline-flex min-w-0 items-center gap-1">
-                                        <span
-                                          className="h-2 w-2 shrink-0 rounded-full border border-border/50"
-                                          style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
-                                          aria-hidden="true"
-                                        />
-                                        <span className="truncate">{option.issueProjectName}</span>
-                                      </span>
-                                    ) : null}
-                                    <span className="inline-flex min-w-0 items-center gap-1">
-                                      {option.issueAssigneeIcon ? (
-                                        <AgentIcon
-                                          icon={option.issueAssigneeIcon}
-                                          role={option.issueAssigneeRole}
-                                          className="h-3 w-3 shrink-0 text-muted-foreground"
-                                        />
-                                      ) : null}
-                                      <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
-                                    </span>
-                                  </div>
-                                ) : null}
                                 {option.kind === "skill" ? (
                                   <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                                     {option.skillCategoryLabel ? (
@@ -2118,16 +2099,6 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                               </div>
                             )
                           ) : null}
-                          {option.kind === "issue" && option.issueId && (
-                            <span className="ml-auto text-[11px] text-muted-foreground">
-                              Issue
-                            </span>
-                          )}
-                          {option.kind === "project" && option.projectId && (
-                            <span className="ml-auto text-[11px] text-muted-foreground">
-                              Project
-                            </span>
-                          )}
                           {option.kind === "chat" && option.chatConversationId && (
                             <span className="ml-auto shrink-0 text-[11px] text-muted-foreground" title={chatTimeTitle}>
                               {chatTimeLabel ?? "Chat"}

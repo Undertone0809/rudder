@@ -38,11 +38,11 @@ import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import {
   mentionChipInlineStyle,
+  mentionChipNavigationPath,
   parseMentionChipHref,
   stripMentionChipLabelPrefix,
   type ParsedMentionChip,
 } from "../lib/mention-chips";
-import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   parseSkillReference,
@@ -51,6 +51,7 @@ import {
 import { filterMentionOptions } from "../lib/mention-filter";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
+import { StatusIcon } from "./StatusIcon";
 import type { MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
 import {
   getMentionMenuPositionForViewport,
@@ -112,6 +113,7 @@ type ProseMirrorView = {
   state: ProseMirrorState;
   dispatch: (transaction: ProseMirrorTransaction) => void;
   focus?: () => void;
+  posAtDOM?: (node: Node, offset: number) => number;
 };
 
 type RudderTokenRange = {
@@ -127,7 +129,7 @@ function linkHrefFromTextNode(node: {
   return node.marks?.find((mark) => mark.type?.name === "link" && mark.attrs?.href)?.attrs?.href?.trim() ?? "";
 }
 
-function mentionTokenDetails(option: MentionOption): { href: string; label: string } | null {
+function mentionTokenDetails(option: MentionOption, agentMentionIntent?: "reference" | "wake"): { href: string; label: string } | null {
   if (option.kind === "skill") {
     if (!option.skillMarkdownTarget || !option.skillRefLabel) return null;
     return { href: option.skillMarkdownTarget, label: option.skillRefLabel };
@@ -159,11 +161,11 @@ function mentionTokenDetails(option: MentionOption): { href: string; label: stri
     return { href: buildProjectMentionHref(option.projectId, option.projectColor ?? null), label: option.name };
   }
   const agentId = option.agentId ?? option.id.replace(/^agent:/, "");
-  return { href: buildAgentMentionHref(agentId, option.agentIcon ?? null), label: option.name };
+  return { href: buildAgentMentionHref(agentId, option.agentIcon ?? null, agentMentionIntent), label: option.name };
 }
 
-export function mentionMarkdown(option: MentionOption): string {
-  const token = mentionTokenDetails(option);
+export function mentionMarkdown(option: MentionOption, agentMentionIntent?: "reference" | "wake"): string {
+  const token = mentionTokenDetails(option, agentMentionIntent);
   return token ? `[${token.label}](${token.href}) ` : "";
 }
 
@@ -200,14 +202,7 @@ export function hasRudderMarkdownReference(markdown: string) {
 export function rudderTokenNavigationPath(href: string) {
   const parsed = parseMentionChipHref(href);
   if (parsed) {
-    if (parsed.kind === "project") return `/projects/${parsed.projectId}`;
-    if (parsed.kind === "issue") return `/issues/${parsed.ref ?? parsed.issueId}`;
-    if (parsed.kind === "chat") return `/messenger/chat/${parsed.conversationId}`;
-    if (parsed.kind === "library_doc") return `/library?doc=${encodeURIComponent(parsed.documentId)}`;
-    if (parsed.kind === "library_entry") return `/library?entry=${encodeURIComponent(parsed.entryId)}`;
-    if (parsed.kind === "library_file") return `/library?path=${encodeURIComponent(parsed.filePath)}`;
-    if (parsed.kind === "library_directory") return `/library?directory=${encodeURIComponent(parsed.directoryPath)}`;
-    return `/agents/${parsed.agentId}`;
+    return mentionChipNavigationPath(parsed);
   }
 
   return null;
@@ -495,9 +490,15 @@ function findActiveMentionIndex(markdown: string, state: MentionState, editable:
   return ordinalIndex ?? indexes[indexes.length - 1]!;
 }
 
-export function applyMention(markdown: string, state: MentionState, option: MentionOption, editable: HTMLElement | null): string {
+export function applyMention(
+  markdown: string,
+  state: MentionState,
+  option: MentionOption,
+  editable: HTMLElement | null,
+  agentMentionIntent?: "reference" | "wake",
+): string {
   const search = `${state.trigger}${state.query}`;
-  const replacement = mentionMarkdown(option);
+  const replacement = mentionMarkdown(option, agentMentionIntent);
   if (!replacement) return markdown;
   const index = findActiveMentionIndex(markdown, state, editable);
   if (index === -1) {
@@ -516,17 +517,19 @@ export function insertMentionIntoProseMirrorView(
   view: ProseMirrorView,
   state: MentionState,
   option: MentionOption,
+  agentMentionIntent?: "reference" | "wake",
 ) {
-  const token = mentionTokenDetails(option);
+  const token = mentionTokenDetails(option, agentMentionIntent);
   if (!token) return false;
   const triggerText = `${state.trigger}${state.query}`;
   const { from, to } = view.state.selection;
   const start = Math.max(0, from - triggerText.length);
+  const replaceTo = isWhitespaceText(textAt(view.state.doc, to, to + 1)) ? to + 1 : to;
   const linkMark = view.state.schema.marks.link?.create({ href: token.href });
   const mentionNode = view.state.schema.text(token.label, linkMark ? [linkMark] : undefined);
   const spaceNode = view.state.schema.text(" ");
   const tr = view.state.tr
-    .replaceWith(start, to, [mentionNode, spaceNode])
+    .replaceWith(start, replaceTo, [mentionNode, spaceNode])
     .setStoredMarks([]);
   const selectionPos = start + token.label.length + 1;
   if (tr.doc) {
@@ -581,6 +584,35 @@ export function moveSelectionAfterRudderTokenBoundary(view: ProseMirrorView) {
   }
   tr.setStoredMarks([]);
   view.dispatch(tr);
+  return true;
+}
+
+function placeSelectionAfterRudderTokenAnchor(view: ProseMirrorView, anchor: HTMLAnchorElement) {
+  if (!view.posAtDOM) return false;
+  const lastChild = anchor.lastChild;
+  const targetNode = lastChild ?? anchor;
+  const targetOffset = targetNode.nodeType === Node.TEXT_NODE
+    ? (targetNode.textContent ?? "").length
+    : anchor.childNodes.length;
+  let targetPos: number;
+  try {
+    targetPos = view.posAtDOM(targetNode, targetOffset);
+  } catch {
+    return false;
+  }
+  const range =
+    findRudderTokenRangeAt(view.state.doc, Math.max(0, targetPos - 1))
+    ?? findRudderTokenRangeAt(view.state.doc, targetPos);
+  if (!range) return false;
+  const tr = view.state.tr
+    .setSelection(TextSelection.create(
+      view.state.doc as unknown as Parameters<typeof TextSelection.create>[0],
+      range.to,
+    ))
+    .setStoredMarks([]);
+  view.dispatch(tr);
+  moveSelectionAfterRudderTokenBoundary(view);
+  view.focus?.();
   return true;
 }
 
@@ -744,8 +776,10 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   onMentionQueryChange,
   mentionMenuAnchorRef,
   mentionMenuPlacement = "caret",
+  mentionMenuSize = "default",
   onSubmit,
   submitShortcut = "mod-enter",
+  agentMentionIntent = "reference",
   onInlineTokenClick,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
@@ -943,8 +977,13 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         );
       }
     }
-    return getMentionMenuPositionForViewport(mentionState, window.innerWidth, window.innerHeight);
-  }, [mentionMenuAnchorRef, mentionMenuPlacement, mentionState]);
+    return getMentionMenuPositionForViewport(
+      mentionState,
+      window.innerWidth,
+      window.innerHeight,
+      mentionMenuSize === "compact" ? { width: 320, maxHeight: 180 } : undefined,
+    );
+  }, [mentionMenuAnchorRef, mentionMenuPlacement, mentionMenuSize, mentionState]);
 
   const groupedMentionOptions = useMemo(() => {
     const labelForKind = (kind: MentionOption["kind"]) => {
@@ -996,10 +1035,16 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       state,
       option,
       editable instanceof HTMLElement ? editable : null,
+      agentMentionIntent,
     );
     let insertedInEditor = false;
     editor?.action((ctx) => {
-      insertedInEditor = insertMentionIntoProseMirrorView(ctx.get(editorViewCtx) as unknown as ProseMirrorView, state, option);
+      insertedInEditor = insertMentionIntoProseMirrorView(
+        ctx.get(editorViewCtx) as unknown as ProseMirrorView,
+        state,
+        option,
+        agentMentionIntent,
+      );
     });
     if (insertedInEditor && next !== latestValueRef.current) {
       latestValueRef.current = next;
@@ -1012,10 +1057,19 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         editor?.action(replaceAll(next, true));
       }
     }
-    requestAnimationFrame(() => focus());
+    requestAnimationFrame(() => {
+      const currentEditor = loading ? get() : getInstance();
+      currentEditor?.action((ctx) => {
+        if (insertedInEditor) {
+          ctx.get(editorViewCtx).focus();
+          return;
+        }
+        focusProseMirrorViewAtEnd(ctx.get(editorViewCtx) as unknown as ProseMirrorView);
+      });
+    });
     mentionStateRef.current = null;
     setMentionState(null);
-  }, [focus, get, getInstance, loading]);
+  }, [get, getInstance, loading]);
 
   const removeAdjacentRudderToken = useCallback((direction: "backward" | "forward") => {
     const editor = loading ? get() : getInstance();
@@ -1183,6 +1237,14 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         const href = anchor.getAttribute("href") ?? "";
         if (!href || !isRudderTokenHref(href, label)) return;
         event.preventDefault();
+        event.stopPropagation();
+        if (!event.metaKey && !event.ctrlKey) {
+          const editor = loading ? get() : getInstance();
+          editor?.action((ctx) => {
+            placeSelectionAfterRudderTokenAnchor(ctx.get(editorViewCtx) as unknown as ProseMirrorView, anchor);
+          });
+          return;
+        }
         if (onInlineTokenClick) {
           const skillReference = parseSkillReference(href, label);
           onInlineTokenClick(
@@ -1344,15 +1406,11 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                         />
                       ) : option.kind === "issue" && option.issueId ? (
                         <span
-                          className={cn(
-                            "relative inline-flex h-4 w-4 shrink-0 rounded-full border-2",
-                            option.issueStatus ? issueStatusIcon[option.issueStatus] ?? issueStatusIconDefault : issueStatusIconDefault,
-                          )}
+                          className="inline-flex shrink-0"
                           aria-label={`Status: ${issueStatusLabel}`}
+                          title={issueStatusLabel}
                         >
-                          {option.issueStatus === "done" ? (
-                            <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
-                          ) : null}
+                          <StatusIcon status={option.issueStatus ?? "default"} />
                         </span>
                       ) : option.kind === "chat" ? (
                         <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -1370,62 +1428,36 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                         />
                       )}
                       {!(option.kind === "skill" && isContainerMenu) ? (
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium text-foreground">{option.name}</div>
-                          {option.kind === "issue" && option.issueId ? (
-                            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-                              {option.issueStatus ? <span>{issueStatusLabel}</span> : null}
-                              {option.issueProjectName ? (
-                                <span className="inline-flex min-w-0 items-center gap-1">
-                                  <span
-                                    className="h-2 w-2 shrink-0 rounded-full border border-border/50"
-                                    style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
-                                    aria-hidden="true"
-                                  />
-                                  <span className="truncate">{option.issueProjectName}</span>
-                                </span>
-                              ) : null}
-                              <span className="inline-flex min-w-0 items-center gap-1">
-                                {option.issueAssigneeIcon ? (
-                                  <AgentIcon
-                                    icon={option.issueAssigneeIcon}
-                                    role={option.issueAssigneeRole}
-                                    className="h-3 w-3 shrink-0 text-muted-foreground"
-                                  />
+                        option.kind === "chat" ? (
+                          <div className="min-w-0 flex-1 truncate font-medium text-foreground">
+                            {option.name}
+                          </div>
+                        ) : option.kind === "issue" && option.issueId ? (
+                          <div className="min-w-0 flex-1 truncate font-medium text-foreground">
+                            {option.name}
+                          </div>
+                        ) : (
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-medium text-foreground">{option.name}</div>
+                            {option.kind === "skill" ? (
+                              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                                {option.skillCategoryLabel ? (
+                                  <span className="inline-flex shrink-0 items-center rounded-[var(--radius-sm)] border border-border/70 bg-muted/50 px-1.5 py-0.5 leading-none">
+                                    {option.skillCategoryLabel}
+                                  </span>
                                 ) : null}
-                                <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
-                              </span>
-                            </div>
-                          ) : null}
-                          {option.kind === "skill" ? (
-                            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                              {option.skillCategoryLabel ? (
-                                <span className="inline-flex shrink-0 items-center rounded-[var(--radius-sm)] border border-border/70 bg-muted/50 px-1.5 py-0.5 leading-none">
-                                  {option.skillCategoryLabel}
+                                <span className="min-w-0 truncate">
+                                  {option.skillDescription ?? option.skillLocationLabel ?? option.skillDisplayName}
                                 </span>
-                              ) : null}
-                              <span className="min-w-0 truncate">
-                                {option.skillDescription ?? option.skillLocationLabel ?? option.skillDisplayName}
-                              </span>
-                            </div>
-                          ) : null}
-                          {option.kind === "chat" ? (
-                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                              {option.chatSummary ?? option.chatStatus ?? "Chat"}
-                            </div>
-                          ) : null}
-                          {option.kind === "library_doc" || option.kind === "library_file" || option.kind === "library_directory" ? (
-                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                              {option.libraryDirectoryPath ?? option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {option.kind === "issue" && option.issueId ? (
-                        <span className="ml-auto text-[11px] text-muted-foreground">Issue</span>
-                      ) : null}
-                      {option.kind === "project" && option.projectId ? (
-                        <span className="ml-auto text-[11px] text-muted-foreground">Project</span>
+                              </div>
+                            ) : null}
+                            {option.kind === "library_doc" || option.kind === "library_file" || option.kind === "library_directory" ? (
+                              <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                {option.libraryDirectoryPath ?? option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
+                              </div>
+                            ) : null}
+                          </div>
+                        )
                       ) : null}
                       {option.kind === "chat" && option.chatConversationId ? (
                         <span className="ml-auto text-[11px] text-muted-foreground">Chat</span>

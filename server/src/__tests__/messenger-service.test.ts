@@ -26,6 +26,7 @@ import {
   joinRequests,
   messengerThreadUserStates,
   organizations,
+  projects,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { issueService } from "../services/issues.ts";
@@ -142,6 +143,7 @@ describe("messengerService and issue follows", () => {
     await db.delete(issueDocuments);
     await db.delete(documents);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(organizations);
   });
@@ -356,6 +358,9 @@ describe("messengerService and issue follows", () => {
     const orgId = randomUUID();
     const userId = "board-user-split-issues";
     const issueId = randomUUID();
+    const issueRunId = randomUUID();
+    const projectId = randomUUID();
+    const assigneeAgentId = randomUUID();
     const chatId = randomUUID();
     const olderChatId = randomUUID();
     const issueUpdatedAt = new Date("2026-05-03T10:30:00.000Z");
@@ -368,6 +373,26 @@ describe("messengerService and issue follows", () => {
       urlKey: deriveOrganizationUrlKey("Messenger Split Issues Org"),
       issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(projects).values({
+      id: projectId,
+      orgId,
+      name: "Operator console",
+      status: "in_progress",
+      color: "#6d5dfc",
+    });
+
+    await db.insert(agents).values({
+      id: assigneeAgentId,
+      orgId,
+      name: "Split Issue Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
     });
 
     await db.insert(chatConversations).values([
@@ -397,14 +422,27 @@ describe("messengerService and issue follows", () => {
       },
     ]);
 
+    await db.insert(heartbeatRuns).values({
+      id: issueRunId,
+      orgId,
+      agentId: assigneeAgentId,
+      invocationSource: "issue",
+      status: "running",
+      createdAt: issueUpdatedAt,
+      updatedAt: issueUpdatedAt,
+    });
+
     await db.insert(issues).values({
       id: issueId,
       orgId,
       title: "Split issue row",
-      status: "todo",
+      status: "in_progress",
       priority: "medium",
+      projectId,
+      assigneeAgentId,
       assigneeUserId: userId,
       identifier: "SPL-1",
+      executionRunId: issueRunId,
       createdAt: issueUpdatedAt,
       updatedAt: issueUpdatedAt,
     });
@@ -428,13 +466,18 @@ describe("messengerService and issue follows", () => {
       threadKey: `issue:${issueId}`,
       kind: "issues",
       title: "SPL-1 · Split issue row",
-      href: "/issues/SPL-1",
+      href: "/messenger/issues/SPL-1",
       unreadCount: 1,
       needsAttention: true,
       metadata: {
         splitIssue: true,
         issueId,
         issueIdentifier: "SPL-1",
+        projectId,
+        projectName: "Operator console",
+        projectColor: "#6d5dfc",
+        assigneeAgentId,
+        activeExecutionRunId: issueRunId,
         assignedToMe: true,
       },
     });
@@ -449,6 +492,169 @@ describe("messengerService and issue follows", () => {
       `chat:${olderChatId}`,
     ]);
     expect(pinnedSummaries[0]?.isPinned).toBe(true);
+
+    const firstPinnedPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 2,
+      splitIssues: true,
+    });
+    const secondPinnedPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 2,
+      splitIssues: true,
+      cursor: firstPinnedPage.pageInfo.nextCursor,
+    });
+
+    expect(firstPinnedPage.items.map((item) => item.threadKey)).toEqual([
+      `issue:${issueId}`,
+      `chat:${chatId}`,
+    ]);
+    expect(secondPinnedPage.items.map((item) => item.threadKey)).toEqual([
+      `chat:${olderChatId}`,
+    ]);
+
+    const firstSingleItemPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 1,
+      splitIssues: true,
+    });
+    const secondSingleItemPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 1,
+      splitIssues: true,
+      cursor: firstSingleItemPage.pageInfo.nextCursor,
+    });
+
+    expect(firstSingleItemPage.items.map((item) => item.threadKey)).toEqual([`issue:${issueId}`]);
+    expect(secondSingleItemPage.items.map((item) => item.threadKey)).toEqual([`chat:${chatId}`]);
+
+    await chatSvc.setPinned(olderChatId, orgId, userId, true);
+    const pinnedMixFirstPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 1,
+      splitIssues: true,
+    });
+    const pinnedMixSecondPage = await messengerSvc.listThreadSummaryPage(orgId, userId, {
+      limit: 1,
+      splitIssues: true,
+      cursor: pinnedMixFirstPage.pageInfo.nextCursor,
+    });
+
+    expect(pinnedMixFirstPage.items.map((item) => item.threadKey)).toEqual([`issue:${issueId}`]);
+    expect(pinnedMixSecondPage.items.map((item) => item.threadKey)).toEqual([`chat:${olderChatId}`]);
+  });
+
+  it("clears split issue attention from the single issue read state", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-split-issue-read";
+    const issueId = randomUUID();
+    const unrelatedIssueId = randomUUID();
+    const issueUpdatedAt = new Date("2026-05-03T10:30:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Split Issue Read Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Split Issue Read Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        orgId,
+        title: "Split issue read state",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        identifier: "SPL-READ-1",
+        createdAt: issueUpdatedAt,
+        updatedAt: issueUpdatedAt,
+      },
+      {
+        id: unrelatedIssueId,
+        orgId,
+        title: "Unrelated split issue read state",
+        status: "todo",
+        priority: "medium",
+        identifier: "SPL-READ-2",
+        createdAt: issueUpdatedAt,
+        updatedAt: issueUpdatedAt,
+      },
+    ]);
+
+    const beforeReadSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    const beforeReadIssue = beforeReadSummaries.find((item) => item.threadKey === `issue:${issueId}`);
+    expect(beforeReadIssue?.unreadCount).toBe(1);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+
+    const rejectedState = await messengerSvc.setThreadRead(orgId, userId, `issue:${unrelatedIssueId}`, issueUpdatedAt);
+    expect(rejectedState).toBeNull();
+
+    const state = await messengerSvc.setThreadRead(orgId, userId, `issue:${issueId}`, issueUpdatedAt);
+    expect(state?.lastReadAt.toISOString()).toBe(issueUpdatedAt.toISOString());
+
+    const afterReadSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    const afterReadAggregateSummary = await messengerSvc.listThreadSummaries(orgId, userId);
+    const afterReadIssue = afterReadSummaries.find((item) => item.threadKey === `issue:${issueId}`);
+    const issuesSummary = afterReadAggregateSummary.find((item) => item.threadKey === "issues");
+
+    expect(afterReadIssue?.unreadCount).toBe(0);
+    expect(afterReadIssue?.needsAttention).toBe(false);
+    expect(issuesSummary?.unreadCount).toBe(0);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
+  });
+
+  it("allows followed automation execution issues into Messenger while hiding unfollowed automation issues", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-automation-follow";
+    const followedAutomationIssueId = randomUUID();
+    const hiddenAutomationIssueId = randomUUID();
+    const createdAt = new Date("2026-05-03T12:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Automation Follow Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Automation Follow Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: followedAutomationIssueId,
+        orgId,
+        title: "Followed automation execution",
+        status: "todo",
+        priority: "medium",
+        originKind: "automation_execution",
+        originId: "automation-1",
+        originRunId: "run-1",
+        identifier: "AUT-1",
+        createdAt,
+        updatedAt: createdAt,
+      },
+      {
+        id: hiddenAutomationIssueId,
+        orgId,
+        title: "Hidden automation execution",
+        status: "todo",
+        priority: "medium",
+        originKind: "automation_execution",
+        originId: "automation-2",
+        originRunId: "run-2",
+        identifier: "AUT-2",
+        createdAt,
+        updatedAt: createdAt,
+      },
+    ]);
+    await issueSvc.followIssue(orgId, followedAutomationIssueId, userId);
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const issueIds = new Set(thread.detail.items.map((item) => item.issueId));
+
+    expect(issueIds.has(followedAutomationIssueId)).toBe(true);
+    expect(issueIds.has(hiddenAutomationIssueId)).toBe(false);
+    expect(thread.detail.unreadCount).toBe(1);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+    const pinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${followedAutomationIssueId}`, true);
+    expect(pinnedState).toEqual({ threadKey: `issue:${followedAutomationIssueId}`, pinned: true });
+    await expect(messengerSvc.setThreadPinned(orgId, userId, `issue:${hiddenAutomationIssueId}`, true)).resolves.toBeNull();
   });
 
   it("includes issue status transitions in Messenger issue update cards", async () => {
@@ -537,6 +743,7 @@ describe("messengerService and issue follows", () => {
       entityId: issueId,
       details: {
         goalId,
+        _references: { goal: { id: goalId, title: "Ignored goal reference" } },
         _previous: { goalId: previousGoalId },
       },
       createdAt: activityAt,
@@ -764,6 +971,72 @@ describe("messengerService and issue follows", () => {
     expect(afterStatusOnlyUpdate?.needsAttention).toBe(false);
   });
 
+  it("hydrates deterministic latest user previews and user message counts", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const userId = "board-user-latest-question-preview";
+    const sharedTimestamp = new Date("2026-05-01T12:00:00.000Z");
+    const olderUserMessageId = "00000000-0000-4000-8000-000000000001";
+    const newerUserMessageId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Latest User Preview Org",
+      urlKey: deriveOrganizationUrlKey("Chat Latest User Preview Org"),
+      issuePrefix: `Q${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Latest question preview",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+      lastMessageAt: sharedTimestamp,
+      createdAt: sharedTimestamp,
+      updatedAt: sharedTimestamp,
+    });
+
+    await db.insert(chatMessages).values([
+      {
+        id: olderUserMessageId,
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        body: "Older user question with the same timestamp",
+        createdAt: sharedTimestamp,
+        updatedAt: sharedTimestamp,
+      },
+      {
+        id: newerUserMessageId,
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        body: "Newer user question with the same timestamp",
+        createdAt: sharedTimestamp,
+        updatedAt: sharedTimestamp,
+      },
+      {
+        orgId,
+        conversationId,
+        role: "assistant",
+        kind: "message",
+        body: "Assistant reply is still separately available",
+        createdAt: new Date("2026-05-01T12:01:00.000Z"),
+        updatedAt: new Date("2026-05-01T12:01:00.000Z"),
+      },
+    ]);
+
+    const [conversation] = await chatSvc.list(orgId, { status: "active" }, userId);
+
+    expect(conversation?.userMessageCount).toBe(2);
+    expect(conversation?.latestUserMessagePreview).toBe("Newer user question with the same timestamp");
+    expect(conversation?.latestReplyPreview).toBe("Assistant reply is still separately available");
+  });
+
   it("can mark a read chat unread by rewinding to the latest visible incoming message", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();
@@ -793,7 +1066,7 @@ describe("messengerService and issue follows", () => {
       status: "completed",
       body: "Incoming assistant reply",
     });
-    await chatSvc.markRead(conversationId, orgId, userId, new Date());
+    await chatSvc.markRead(conversationId, orgId, userId, new Date("2999-01-01T00:00:00.000Z"));
 
     const [afterRead] = await chatSvc.list(orgId, { status: "active" }, userId);
     expect(afterRead?.unreadCount).toBe(0);
@@ -1332,7 +1605,9 @@ describe("messengerService and issue follows", () => {
 
     const thread = await messengerSvc.getIssuesThread(orgId, userId);
     const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const splitSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
     const issuesSummary = summaries.find((item) => item.threadKey === "issues");
+    const splitIssueSummary = splitSummaries.find((item) => item.threadKey === `issue:${createdIssueId}`);
 
     expect(thread.detail.items.map((item) => item.issueId)).toEqual([createdIssueId]);
     expect(thread.detail.items[0]?.preview).toBeNull();
@@ -1349,6 +1624,8 @@ describe("messengerService and issue follows", () => {
     expect(thread.summary.preview).toContain("Self-created issue");
     expect(issuesSummary?.unreadCount).toBe(0);
     expect(issuesSummary?.needsAttention).toBe(false);
+    expect(splitIssueSummary?.unreadCount).toBe(0);
+    expect(splitIssueSummary?.needsAttention).toBe(false);
     expect(issuesSummary?.latestActivityAt).not.toBeNull();
     expect(issuesSummary?.preview).toContain("Self-created issue");
   });
@@ -1524,9 +1801,9 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
-  it("does not count description-only issue updates as Messenger attention", async () => {
+  it("does not count title and description-only issue updates as Messenger attention", async () => {
     const orgId = randomUUID();
-    const userId = "board-user-description-only";
+    const userId = "board-user-content-only";
     const issueId = randomUUID();
     const createdAt = new Date("2026-04-10T09:00:00.000Z");
     const updatedAt = new Date("2026-04-10T10:00:00.000Z");
@@ -1542,7 +1819,7 @@ describe("messengerService and issue follows", () => {
     await db.insert(issues).values({
       id: issueId,
       orgId,
-      title: "Description-only update issue",
+      title: "Title and description-only update issue",
       status: "todo",
       priority: "medium",
       assigneeUserId: userId,
@@ -1558,7 +1835,12 @@ describe("messengerService and issue follows", () => {
       action: "issue.updated",
       entityType: "issue",
       entityId: issueId,
-      details: { description: "New description", identifier: "DSC-1", _previous: { description: "Old description" } },
+      details: {
+        title: "Renamed issue",
+        description: "New description",
+        identifier: "DSC-1",
+        _previous: { title: "Old issue", description: "Old description" },
+      },
       createdAt: new Date("2026-04-10T10:00:01.000Z"),
     });
 
@@ -1570,12 +1852,12 @@ describe("messengerService and issue follows", () => {
     expect(item?.metadata).toMatchObject({ assignedToMe: true });
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
-    expect(thread.summary.latestActivityAt?.toISOString()).toBe(updatedAt.toISOString());
-    expect(thread.summary.preview).toContain("Description-only update issue");
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(createdAt.toISOString());
+    expect(thread.summary.preview).toContain("Title and description-only update issue");
     expect(issuesSummary?.unreadCount).toBe(0);
     expect(issuesSummary?.needsAttention).toBe(false);
-    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(updatedAt.toISOString());
-    expect(issuesSummary?.preview).toContain("Description-only update issue");
+    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(createdAt.toISOString());
+    expect(issuesSummary?.preview).toContain("Title and description-only update issue");
   });
 
   it("does not count self-authored issue status updates as Messenger attention", async () => {
@@ -2375,6 +2657,7 @@ describe("messengerService and issue follows", () => {
     const orgId = randomUUID();
     const userId = "board-user-chat-preview";
     const chatId = randomUUID();
+    const agentId = randomUUID();
     const activityAt = new Date("2026-04-12T12:00:00.000Z");
 
     await db.insert(organizations).values({
@@ -2385,11 +2668,24 @@ describe("messengerService and issue follows", () => {
       requireBoardApprovalForNewAgents: false,
     });
 
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Asher",
+      role: "general",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
     await db.insert(chatConversations).values({
       id: chatId,
       orgId,
       title: "Chat preview",
       status: "active",
+      preferredAgentId: agentId,
       lastMessageAt: activityAt,
       createdAt: activityAt,
       updatedAt: activityAt,
@@ -2410,6 +2706,9 @@ describe("messengerService and issue follows", () => {
 
     expect(chatSummary?.preview).toBe("需求: 把 Agent 的处理流程规范化");
     expect(chatSummary?.subtitle).toBe("需求: 把 Agent 的处理流程规范化");
+    expect(chatSummary?.metadata).toMatchObject({
+      preferredAgentId: agentId,
+    });
   });
 
   it("keeps pending chat approvals attention in Messenger thread summaries when chat is read", async () => {

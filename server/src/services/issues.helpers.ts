@@ -25,6 +25,7 @@ import {
   extractAgentMentionIds,
   extractProjectMentionIds,
   isUuidLike,
+  type IssueSearchField,
   type IssueSearchMatch,
   type ReorderIssue,
 } from "@rudderhq/shared";
@@ -96,6 +97,7 @@ export interface IssueFilters {
   originId?: string;
   includeAutomationExecutions?: boolean;
   q?: string;
+  searchFields?: IssueSearchField[];
 }
 
 export type IssueRow = typeof issues.$inferSelect;
@@ -156,14 +158,14 @@ export function buildSearchSnippet(value: string, query: string, maxLength = 160
   return `${prefix}${compact.slice(start, end).trim()}${suffix}`;
 }
 
-export function fieldSearchMatch(row: IssueRow, query: string): IssueSearchMatch | null {
+export function fieldSearchMatch(row: IssueRow, query: string, searchFields: ReadonlySet<IssueSearchField>): IssueSearchMatch | null {
   if (textContains(row.identifier, query)) {
-    return { field: "identifier", snippet: buildSearchSnippet(row.identifier, query) };
+    return { field: "identifier", snippet: row.identifier ?? "" };
   }
-  if (textContains(row.title, query)) {
+  if (searchFields.has("title") && textContains(row.title, query)) {
     return { field: "title", snippet: buildSearchSnippet(row.title, query) };
   }
-  if (textContains(row.description, query)) {
+  if (searchFields.has("description") && textContains(row.description, query)) {
     return { field: "description", snippet: buildSearchSnippet(row.description, query) };
   }
   return null;
@@ -175,6 +177,7 @@ export function touchedByUserCondition(orgId: string, userId: string) {
       ${issues.createdByUserId} = ${userId}
       OR ${issues.assigneeUserId} = ${userId}
       OR ${issues.reviewerUserId} = ${userId}
+      OR ${followedByUserCondition(orgId, userId)}
       OR EXISTS (
         SELECT 1
         FROM ${issueReadStates}
@@ -187,8 +190,21 @@ export function touchedByUserCondition(orgId: string, userId: string) {
         FROM ${issueComments}
         WHERE ${issueComments.issueId} = ${issues.id}
           AND ${issueComments.orgId} = ${orgId}
+          AND ${issueComments.deletedAt} IS NULL
           AND ${issueComments.authorUserId} = ${userId}
       )
+    )
+  `;
+}
+
+export function followedByUserCondition(orgId: string, userId: string) {
+  return sql<boolean>`
+    EXISTS (
+      SELECT 1
+      FROM ${issueFollows}
+      WHERE ${issueFollows.issueId} = ${issues.id}
+        AND ${issueFollows.orgId} = ${orgId}
+        AND ${issueFollows.userId} = ${userId}
     )
   `;
 }
@@ -225,6 +241,7 @@ export function myLastCommentAtExpr(orgId: string, userId: string) {
       FROM ${issueComments}
       WHERE ${issueComments.issueId} = ${issues.id}
         AND ${issueComments.orgId} = ${orgId}
+        AND ${issueComments.deletedAt} IS NULL
         AND ${issueComments.authorUserId} = ${userId}
     )
   `;
@@ -267,6 +284,7 @@ export function unreadForUserCondition(orgId: string, userId: string) {
         FROM ${issueComments}
         WHERE ${issueComments.issueId} = ${issues.id}
           AND ${issueComments.orgId} = ${orgId}
+          AND ${issueComments.deletedAt} IS NULL
           AND (
             ${issueComments.authorUserId} IS NULL
             OR ${issueComments.authorUserId} <> ${userId}

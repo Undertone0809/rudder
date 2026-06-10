@@ -31,6 +31,8 @@ import {
   isAskUserMessageAnswered,
   isUserVisibleIncomingChatMessage,
   issueProposalPrincipalSelectionValue,
+  issueProposalWithPriority,
+  issueProposalWithStatus,
   issueProposalWithPrincipalSelection,
   parseAskUserAnswerMessage,
   rememberChatProjectId,
@@ -113,6 +115,8 @@ function conversation(overrides: Partial<ChatConversation>): ChatConversation {
     title: "Plan mode chat",
     summary: null,
     latestReplyPreview: null,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
     preferredAgentId: null,
     routedAgentId: null,
     primaryIssueId: null,
@@ -518,6 +522,7 @@ describe("ProposalCard", () => {
 
     expect(html).toContain('aria-label="Edit owner"');
     expect(html).toContain('aria-label="Edit reviewer"');
+    expect(html).toContain('aria-label="Edit status"');
     expect(html).toContain("grid-cols-[4.5rem_minmax(0,1fr)]");
     expect(html).toContain("w-full max-w-full justify-end");
     expect(html).toContain("Wesley");
@@ -560,16 +565,19 @@ describe("ProposalCard", () => {
     expect(html).not.toContain("Owner decision missing");
   });
 
-  it("applies proposal principal overrides to approval payloads", () => {
+  it("applies proposal metadata overrides to approval payloads", () => {
     const proposal = {
       title: "Route proposal edits",
       description: "Approve with the operator-edited owner and reviewer.",
       assigneeUserId: "local-board",
       reviewerAgentId: "agent-1",
+      status: "todo",
     };
 
     const nextOwner = issueProposalWithPrincipalSelection(proposal, "assignee", "agent:agent-2");
     const nextReviewer = issueProposalWithPrincipalSelection(nextOwner, "reviewer", "user:local-board");
+    const nextStatus = issueProposalWithStatus(nextReviewer, "in_review");
+    const nextPriority = issueProposalWithPriority(nextStatus, "critical");
     const payload = chatIssueApprovalPayloadWithProposalOverride({
       chatConversationId: "chat-1",
       chatMessageId: "message-1",
@@ -578,14 +586,17 @@ describe("ProposalCard", () => {
         description: "Original description",
         assigneeUserId: "someone-else",
         reviewerAgentId: "agent-1",
+        status: "todo",
       },
-    }, nextReviewer);
+    }, nextPriority);
 
-    expect(issueProposalPrincipalSelectionValue(nextReviewer, "assignee")).toBe("agent:agent-2");
-    expect(issueProposalPrincipalSelectionValue(nextReviewer, "reviewer")).toBe("user:local-board");
+    expect(issueProposalPrincipalSelectionValue(nextPriority, "assignee")).toBe("agent:agent-2");
+    expect(issueProposalPrincipalSelectionValue(nextPriority, "reviewer")).toBe("user:local-board");
     expect(payload.proposedIssue).toMatchObject({
       title: "Route proposal edits",
       description: "Approve with the operator-edited owner and reviewer.",
+      status: "in_review",
+      priority: "critical",
       assigneeAgentId: "agent-2",
       assigneeUserId: null,
       reviewerAgentId: null,

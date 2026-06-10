@@ -298,6 +298,77 @@ describe("IssuesList", () => {
     expect(document.body.querySelector('[data-testid="issue-row-assignee-picker-scroll"]')?.classList.contains("scrollbar-auto-hide")).toBe(true);
   });
 
+  it("opens issue search scope options from the search input and keeps one scope selected", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({ viewMode: "list" }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[baseIssue]}
+          viewStateKey="test:issues"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Search issues"]');
+    expect(input).toBeTruthy();
+
+    act(() => {
+      input?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(document.body.textContent).toContain("Search in");
+    expect(document.body.textContent).toContain("Title");
+    expect(document.body.textContent).toContain("Description");
+    expect(document.body.textContent).toContain("Comments");
+
+    const checkboxFor = (labelText: string) => {
+      const label = Array.from(document.body.querySelectorAll("label")).find(
+        (entry) => entry.textContent?.trim() === labelText,
+      );
+      return label?.querySelector<HTMLElement>('[data-slot="checkbox"]') ?? null;
+    };
+
+    const titleCheckbox = checkboxFor("Title");
+    const descriptionCheckbox = checkboxFor("Description");
+
+    expect(titleCheckbox?.getAttribute("data-state")).toBe("checked");
+    expect(descriptionCheckbox?.getAttribute("data-state")).toBe("unchecked");
+
+    act(() => {
+      descriptionCheckbox?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(descriptionCheckbox?.getAttribute("data-state")).toBe("checked");
+
+    act(() => {
+      titleCheckbox?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(titleCheckbox?.getAttribute("data-state")).toBe("unchecked");
+
+    act(() => {
+      descriptionCheckbox?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(descriptionCheckbox?.getAttribute("data-state")).toBe("checked");
+  });
+
   it("renders project groups when the saved view groups issues by project", () => {
     window.localStorage.setItem(
       "test:issues:org-1",

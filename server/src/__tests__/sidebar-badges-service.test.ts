@@ -16,6 +16,7 @@ import {
   ensurePostgresDatabase,
   heartbeatRuns,
   issueComments,
+  issueFollows,
   issueReadStates,
   issues,
   messengerThreadUserStates,
@@ -123,6 +124,7 @@ describe("sidebarBadgeService", () => {
     await db.delete(heartbeatRuns);
     await db.delete(messengerThreadUserStates);
     await db.delete(issueComments);
+    await db.delete(issueFollows);
     await db.delete(issueReadStates);
     await db.delete(issues);
     await db.delete(agents);
@@ -305,6 +307,12 @@ describe("sidebarBadgeService", () => {
       { orgId, issueId: automationIssueId, userId, lastReadAt: readAt },
       { orgId: otherOrgId, issueId: otherOrgIssueId, userId, lastReadAt: readAt },
     ]);
+    await db.insert(issueFollows).values({
+      orgId,
+      issueId: automationIssueId,
+      userId,
+      createdAt: readAt,
+    });
 
     await db.insert(issueComments).values([
       { orgId, issueId, body: "external update", createdAt: unreadAt },

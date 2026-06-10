@@ -225,9 +225,17 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         messageFiles,
         actor,
       );
+      const mergedUserAttachmentsById = new Map<string, ChatAttachment>();
+      for (const attachment of userMessage.attachments ?? []) {
+        mergedUserAttachmentsById.set(attachment.id, attachment);
+      }
+      for (const attachment of userAttachments) {
+        mergedUserAttachmentsById.set(attachment.id, attachment);
+      }
+      const mergedUserAttachments = [...mergedUserAttachmentsById.values()];
       const hydratedUserMessage = {
         ...userMessage,
-        attachments: userAttachments,
+        attachments: mergedUserAttachments,
       } as ChatMessage;
       turnContextForPartial = turnContextFromUserMessage(userMessage);
       chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
@@ -239,7 +247,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           stream: true,
           userMessageId: userMessage.id,
           editUserMessageId: parsedBody.data.editUserMessageId ?? null,
-          attachmentCount: userAttachments.length,
+          attachmentCount: mergedUserAttachments.length,
         },
       });
       const traceInputBase = {

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const indexCss = readFileSync(new URL("../index.css", import.meta.url), "utf8");
+const organizationWorkspacesSource = readFileSync(new URL("../pages/OrganizationWorkspaces.tsx", import.meta.url), "utf8");
 
 function cssBlock(selector: string) {
   const start = indexCss.indexOf(selector);
@@ -89,9 +90,49 @@ describe("index.css motion rules", () => {
   it("keeps the macOS desktop shell translucent in light mode", () => {
     const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
 
-    expect(lightDesktopBackdrop).toContain("rgb(250 248 245 / 0.46)");
-    expect(lightDesktopBackdrop).toContain("rgb(244 240 234 / 0.34)");
+    expect(lightDesktopBackdrop).toContain("rgb(250 248 245 / 0.34)");
+    expect(lightDesktopBackdrop).toContain("rgb(244 240 234 / 0.22)");
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
+  });
+
+  it("keeps macOS desktop glass on shell layers while workspace cards stay paper-like", () => {
+    const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
+    const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-macos .app-shell-backdrop");
+    const lightPrimaryRail = cssBlock("html.desktop-shell-macos .primary-rail-shell");
+    const lightWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell");
+    const lightDesktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
+    const darkDesktopWorkspaceCards = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
+    const lightDesktopWorkspaceHeader = cssBlock("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
+    const darkDesktopWorkspaceHeader = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
+
+    expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
+    expect(darkDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(138%)");
+    expect(lightPrimaryRail).toContain("backdrop-filter: blur(22px) saturate(112%)");
+    expect(lightWorkspaceShell).toContain("rgb(249 247 244 / 0.08)");
+    expect(lightWorkspaceShell).toContain("rgb(243 239 234 / 0.03)");
+
+    expect(lightDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-light)");
+    expect(darkDesktopWorkspaceCards).toContain("background: var(--desktop-content-surface-dark)");
+    expect(lightDesktopWorkspaceCards).not.toContain("backdrop-filter");
+    expect(darkDesktopWorkspaceCards).not.toContain("backdrop-filter");
+    expect(lightDesktopWorkspaceHeader).toContain("background: var(--desktop-content-surface-light)");
+    expect(darkDesktopWorkspaceHeader).toContain("background: var(--desktop-content-surface-dark)");
+    expect(lightDesktopWorkspaceHeader).not.toContain("rgb(250 247 242 / 0.58)");
+    expect(darkDesktopWorkspaceHeader).not.toContain("rgb(31 31 29 / 0.54)");
+  });
+
+  it("keeps frameless Library work surfaces transparent over the desktop shell", () => {
+    const framelessWorkspaceCard = cssBlock(".workspace-main-card--frameless");
+
+    expect(framelessWorkspaceCard).toContain("background: transparent");
+    expect(framelessWorkspaceCard).toContain("box-shadow: none");
+  });
+
+  it("removes the extra desktop shell wash behind the Library workspace", () => {
+    const libraryWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell--library-transparent");
+
+    expect(indexCss).toContain("html.dark.desktop-shell-macos .workspace-shell--library-transparent");
+    expect(libraryWorkspaceShell).toContain("background: transparent");
   });
 
   it("keeps the macOS desktop shell top chrome compact", () => {
@@ -100,6 +141,16 @@ describe("index.css motion rules", () => {
     expect(rootTokens).toContain("--desktop-titlebar-top-gap: 0.625rem");
     expect(rootTokens).toContain("--desktop-sidebar-top-clearance: 2.125rem");
     expect(rootTokens).toContain("--desktop-content-top-gap: 0.375rem");
+  });
+
+  it("keeps desktop workspace shell and work-card corners aligned", () => {
+    const rootTokens = cssBlock(":root");
+    const workspaceShell = cssBlock(".workspace-shell");
+    const workspaceCards = cssBlock(".workspace-context-card,\n  .workspace-main-card");
+
+    expect(rootTokens).toContain("--desktop-workspace-radius: calc(var(--radius-sm) - 1px)");
+    expect(workspaceShell).toContain("border-radius: var(--desktop-workspace-radius)");
+    expect(workspaceCards).toContain("border-radius: var(--desktop-workspace-radius)");
   });
 
   it("keeps dashboard run previews compact even when transcripts contain markdown headings", () => {
@@ -127,5 +178,46 @@ describe("index.css motion rules", () => {
     const tabScrollerScrollbar = cssBlock(".rudder-doc-editor-tab-scroller::-webkit-scrollbar");
 
     expect(tabScrollerScrollbar).toContain("height: 4px !important");
+  });
+
+  it("keeps Library file-tab corners aligned with the desktop workspace radius", () => {
+    const tabStrip = cssBlock(".rudder-doc-editor-tab-strip");
+    const sidebarHeader = cssBlock(".rudder-doc-editor-sidebar-header");
+    const activeTabCorners = cssBlock(".rudder-doc-editor-tab--active::before,\n.rudder-doc-editor-tab--active::after");
+
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-strip-height: 53px");
+    expect(sidebarHeader).toContain("--rudder-doc-editor-tab-strip-height: 53px");
+    expect(sidebarHeader).toContain("height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: 46px");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-inactive-height: 40px");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-radius: var(--desktop-workspace-radius)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2)");
+    expect(activeTabCorners).toContain("width: var(--rudder-doc-editor-tab-corner-size)");
+    expect(indexCss).toContain("border-bottom-right-radius: var(--rudder-doc-editor-tab-corner-size)");
+    expect(indexCss).toContain("border-bottom-left-radius: var(--rudder-doc-editor-tab-corner-size)");
+    const tabStripClassMatch = organizationWorkspacesSource.match(/data-testid="org-workspaces-editor-tabs"[\s\S]{0,220}className="([^"]+)"/);
+    const tabStripClassTokens = tabStripClassMatch?.[1]?.split(/\s+/) ?? [];
+
+    expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-strip-height)]");
+    expect(organizationWorkspacesSource).toContain("workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0");
+    expect(tabStripClassTokens).toContain("rounded-tr-[var(--radius-lg)]");
+    expect(tabStripClassTokens).toContain("border-r");
+    expect(tabStripClassTokens).toContain("border-[color:var(--border-base)]");
+    expect(tabStripClassTokens).toContain("bg-transparent");
+    expect(tabStripClassTokens).not.toContain("border-t");
+    expect(organizationWorkspacesSource).not.toContain("rounded-tr-[var(--desktop-workspace-radius)] border-r border-t border-[color:var(--border-base)]");
+    expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-active-height)]");
+    expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-inactive-height)]");
+    expect(organizationWorkspacesSource).toContain("rounded-t-[var(--rudder-doc-editor-tab-radius)]");
+    expect(organizationWorkspacesSource).toContain("rounded-[var(--rudder-doc-editor-tab-radius)]");
+    expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-path-breadcrumb"[\s\S]{0,260}className="[^"]*\bborder-x\b[^"]*\bborder-b\b[^"]*border-\[color:var\(--border-base\)\]/);
+    expect(organizationWorkspacesSource).not.toContain("showWorkspaceFileTabs && \"rounded-tr-[var(--desktop-workspace-radius)] border-t\"");
+    expect(organizationWorkspacesSource).toContain("const showWorkspaceFileTabs = openFilePaths.length > 0");
+    expect(organizationWorkspacesSource).toMatch(/\{showWorkspaceFileTabs \? \([\s\S]{0,240}data-testid="org-workspaces-editor-tabs"/);
+    expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-editor-content"[\s\S]{0,260}className=\{cn\([\s\S]{0,240}\bborder-x\b[\s\S]{0,80}\bborder-b\b[\s\S]{0,120}border-\[color:var\(--border-base\)\]/);
+    expect(organizationWorkspacesSource).toContain("!showWorkspaceFileTabs && visibleWorkspaceBreadcrumbPath === null && \"rounded-[var(--desktop-workspace-radius)] border-t\"");
+    expect(organizationWorkspacesSource).not.toContain("workspace-card-header");
+    expect(organizationWorkspacesSource).not.toMatch(/rudder-doc-editor-tab--active[^\n]*rounded-t-\[24px]/);
+    expect(organizationWorkspacesSource).not.toMatch(/mb-1 h-9[^\n]*rounded-\[18px]/);
   });
 });

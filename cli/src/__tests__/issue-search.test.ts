@@ -52,6 +52,7 @@ describe("issue search command", () => {
     const requestedUrl = new URL(url);
     expect(requestedUrl.pathname).toBe("/api/orgs/org-1/issues");
     expect(requestedUrl.searchParams.get("q")).toBe("needle comment");
+    expect(requestedUrl.searchParams.get("searchFields")).toBe("title,description,comment");
     expect(requestedUrl.searchParams.get("status")).toBe("todo");
     expect(requestedUrl.searchParams.get("projectId")).toBe("project-1");
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer token-1");
@@ -107,6 +108,7 @@ describe("issue search command", () => {
     const requestedUrl = new URL(url);
     expect(requestedUrl.pathname).toBe("/api/orgs/org-1/issues");
     expect(requestedUrl.searchParams.get("q")).toBe("server text");
+    expect(requestedUrl.searchParams.get("searchFields")).toBe("title,description,comment");
 
     const output = stdout.mock.calls.map((call) => String(call[0])).join("");
     expect(JSON.parse(output)).toEqual([expect.objectContaining({ id: "issue-1" })]);

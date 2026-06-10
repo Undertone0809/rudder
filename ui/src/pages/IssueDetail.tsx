@@ -15,6 +15,7 @@ import { useNavigationBack } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
@@ -22,13 +23,17 @@ import { queryKeys } from "../lib/queryKeys";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/detail-escape";
 import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
+import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
+import { toOrganizationRelativePath } from "../lib/organization-routes";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
+import { useIssueFollows } from "../hooks/useIssueFollows";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
 import { IssueDetailFind } from "../components/IssueDetailFind";
+import { IssueParentContext } from "../components/IssueParentContext";
 import { IssueProperties } from "../components/IssueProperties";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
@@ -66,9 +71,9 @@ import {
   Check,
   ChevronRight,
   Copy,
-  EyeOff,
   ExternalLink,
   FileCode2,
+  FileText,
   Folder,
   Hexagon,
   ListTree,
@@ -76,13 +81,15 @@ import {
   MessageSquare,
   MoreHorizontal,
   Paperclip,
+  Pin,
+  PinOff,
   Plus,
   Repeat,
   SlidersHorizontal,
   Trash2,
   Upload,
 } from "lucide-react";
-import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
+import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 
 type IssueCostSummaryData = {
@@ -118,7 +125,7 @@ type IssueHeaderBreadcrumbSource = {
 
 type IssueHeaderBreadcrumbTarget = Pick<Issue, "id" | "identifier" | "title" | "ancestors">;
 
-const EMPTY_ISSUE_ANCESTORS: Issue["ancestors"] = [];
+const EMPTY_ISSUE_ANCESTORS: NonNullable<Issue["ancestors"]> = [];
 
 export function buildIssueHeaderBreadcrumbs(input: {
   sourceBreadcrumb: IssueHeaderBreadcrumbSource;
@@ -137,17 +144,6 @@ export function buildIssueHeaderBreadcrumbs(input: {
     { label: currentLabel },
   ];
 }
-
-const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
 
 const ISSUE_UPDATE_FIELD_LABELS: Record<string, string> = {
   assigneeAgentId: "assignee",
@@ -173,6 +169,8 @@ const ACTION_LABELS: Record<string, string> = {
   "issue.updated": "updated the issue",
   "issue.checked_out": "checked out the issue",
   "issue.released": "released the issue",
+  "issue.comment_updated": "edited a comment",
+  "issue.comment_deleted": "deleted a comment",
   "issue.code_committed": "committed code",
   "issue.passive_followup_queued": "queued passive follow-up",
   "issue.closure_needs_operator_review": "needs operator review for close-out",
@@ -197,6 +195,12 @@ const ACTION_LABELS: Record<string, string> = {
   "approval.approved": "approved",
   "approval.rejected": "rejected",
 };
+
+const HIDDEN_ISSUE_DETAIL_ACTIVITY_ACTIONS = new Set([
+  "issue.comment_updated",
+  "issue.comment_deleted",
+  "issue.deleted",
+]);
 
 function humanizeValue(value: unknown): string {
   if (typeof value !== "string") return String(value ?? "none");
@@ -260,21 +264,51 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
-  if (!details) return [];
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+type IssueActivityReference = {
+  id: string;
+  identifier: string | null;
+  title: string | null;
+};
+
+function readIssueActivityReference(value: unknown): IssueActivityReference | null {
+  const record = asRecord(value);
+  if (!record || typeof record.id !== "string") return null;
+  return {
+    id: record.id,
+    identifier: typeof record.identifier === "string" ? record.identifier : null,
+    title: typeof record.title === "string" ? record.title : null,
+  };
 }
 
-function isDescriptionOnlyIssueUpdate(evt: ActivityEvent): boolean {
-  if (evt.action !== "issue.updated") return false;
-  const changedKeys = issueUpdatedChangedKeys(asRecord(evt.details));
-  return changedKeys.length === 1 && changedKeys[0] === "description";
+function issueActivityReferenceLabel(reference: IssueActivityReference): string {
+  return reference.identifier || reference.title || reference.id.slice(0, 8);
+}
+
+function issueActivityReferenceLink(reference: IssueActivityReference): string {
+  return `/issues/${reference.identifier ?? reference.id}`;
+}
+
+function renderIssueActivityReference(reference: IssueActivityReference): ReactNode {
+  return (
+    <Link to={issueActivityReferenceLink(reference)} className="underline underline-offset-4 hover:text-foreground">
+      {issueActivityReferenceLabel(reference)}
+    </Link>
+  );
+}
+
+function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
+  return sharedIssueUpdatedChangedKeys(details);
+}
+
+function isLowSignalContentOnlyIssueUpdate(evt: ActivityEvent): boolean {
+  return isLowSignalIssueContentOnlyUpdate(evt.action, evt.details);
 }
 
 function shouldShowIssueActivityEvent(evt: ActivityEvent): boolean {
   if (evt.action === "issue.comment_added") return false;
+  if (HIDDEN_ISSUE_DETAIL_ACTIVITY_ACTIONS.has(evt.action)) return false;
   if (evt.action === "issue.document_updated") return false;
-  if (isDescriptionOnlyIssueUpdate(evt)) return false;
+  if (isLowSignalContentOnlyIssueUpdate(evt)) return false;
   return true;
 }
 
@@ -665,6 +699,24 @@ function renderActivityDescription(
   currentBoardUserId?: string | null,
 ): ReactNode {
   const details = asRecord(evt.details);
+  if (evt.action === "issue.updated" && details && Object.prototype.hasOwnProperty.call(details, "parentId")) {
+    const previous = asRecord(details._previous);
+    const references = asRecord(details._references);
+    const parentIssue = readIssueActivityReference(references?.parentIssue);
+    const previousParentIssue = readIssueActivityReference(references?.previousParentIssue);
+    if (parentIssue) {
+      return (
+        <>
+          {hasIssueUpdateValue(previous?.parentId) ? "changed the parent issue to " : "set the parent issue to "}
+          {renderIssueActivityReference(parentIssue)}
+        </>
+      );
+    }
+    if (previousParentIssue) {
+      return <>cleared the parent issue {renderIssueActivityReference(previousParentIssue)}</>;
+    }
+  }
+
   if (evt.entityType === "chat") {
     const chatHref = `/chat/${evt.entityId}`;
     const label = issueActivityChatLabel(evt);
@@ -853,6 +905,20 @@ function linkedLibraryDocumentTitle(doc: Pick<LibraryDocumentSummary, "id" | "ti
   return `Document ${doc.id.slice(0, 8)}`;
 }
 
+function LinkedLibraryResourceIcon({ kind }: { kind: "doc" | "file" | "folder" }) {
+  const Icon = kind === "folder" ? Folder : FileText;
+  return (
+    <span
+      aria-hidden="true"
+      data-testid="linked-library-resource-icon"
+      data-kind={kind}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/35 text-muted-foreground"
+    >
+      <Icon className="h-4 w-4" />
+    </span>
+  );
+}
+
 function LinkedLibraryDocsSection({
   issue,
   libraryDocuments,
@@ -923,6 +989,7 @@ function LinkedLibraryDocsSection({
   return (
     <section className="space-y-3" aria-label="Linked Library">
       <div className="flex items-center gap-2">
+        <FileText className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
         <h3 className="text-sm font-medium text-muted-foreground">Library</h3>
         <span className="rounded-sm border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
           {docs.length + files.length}
@@ -933,12 +1000,15 @@ function LinkedLibraryDocsSection({
           <Link
             key={file.path}
             to={file.isDirectory ? `/library?directory=${encodeURIComponent(file.path)}` : `/library?path=${encodeURIComponent(file.path)}`}
-            className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
+            className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
           >
-            <div className="min-w-0">
-              <div className="truncate font-medium text-foreground">{file.name}</div>
-              <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                live Library {file.isDirectory ? "folder" : "file"} / {file.path}
+            <div className="flex min-w-0 items-center gap-3">
+              <LinkedLibraryResourceIcon kind={file.isDirectory ? "folder" : "file"} />
+              <div className="min-w-0">
+                <div className="truncate font-medium text-foreground">{file.name}</div>
+                <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                  live Library {file.isDirectory ? "folder" : "file"} / {file.path}
+                </div>
               </div>
             </div>
             <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
@@ -953,20 +1023,23 @@ function LinkedLibraryDocsSection({
             <Link
               key={doc.id}
               to={`/library?doc=${encodeURIComponent(doc.id)}`}
-              className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
+              className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
             >
-              <div className="min-w-0">
-                <div className="truncate font-medium text-foreground">{title}</div>
-                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span>live Library link</span>
-                  {issueLink ? (
-                    <>
-                      <span aria-hidden="true">/</span>
-                      <span className="truncate">
-                        migrated from {issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)}:{issueLink.key}
-                      </span>
-                    </>
-                  ) : null}
+              <div className="flex min-w-0 items-center gap-3">
+                <LinkedLibraryResourceIcon kind="doc" />
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-foreground">{title}</div>
+                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span>live Library link</span>
+                    {issueLink ? (
+                      <>
+                        <span aria-hidden="true">/</span>
+                        <span className="truncate">
+                          migrated from {issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)}:{issueLink.key}
+                        </span>
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               </div>
               <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
@@ -1031,7 +1104,10 @@ export function IssueDetail() {
   const location = useLocation();
   const navigateBack = useNavigationBack();
   const { pushToast } = useToast();
+  const { confirm } = useDialog();
   const operatorDisplayName = useOperatorDisplayName();
+  const relativePath = toOrganizationRelativePath(location.pathname);
+  const issueRouteBasePath = relativePath.startsWith("/messenger/issues") ? "/messenger/issues" : "/issues";
   const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
   const [sidebarMoreOpen, setSidebarMoreOpen] = useState(false);
   const [copiedIssueId, setCopiedIssueId] = useState(false);
@@ -1046,6 +1122,7 @@ export function IssueDetail() {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [workspaceAttachOpen, setWorkspaceAttachOpen] = useState(false);
+  const [issuePinPending, setIssuePinPending] = useState(false);
   const issueFindRootRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
@@ -1055,6 +1132,10 @@ export function IssueDetail() {
     queryFn: () => issuesApi.get(issueId!),
     enabled: !!issueId,
   });
+  const issueFollowsOrgId = issue?.orgId ?? selectedOrganizationId ?? null;
+  const { followedIssueIds, isLoading: issueFollowsLoading, toggleFollowIssue } = useIssueFollows(issueFollowsOrgId);
+  const issuePinned = issue ? followedIssueIds.has(issue.id) : false;
+  const issuePinUnavailable = issuePinPending || issueFollowsLoading || !issue;
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
 
   useEffect(() => {
@@ -1103,10 +1184,15 @@ export function IssueDetail() {
 
   const hasLiveRuns = (liveRuns ?? []).length > 0 || !!activeRun;
   const sourceBreadcrumb = useMemo(
-    () => readIssueDetailBreadcrumb(location.state) ?? { label: "Issues", href: "/issues" },
-    [location.state],
+    () => readIssueDetailBreadcrumb(location.state) ?? (
+      issueRouteBasePath === "/messenger/issues"
+        ? { label: "Messenger", href: "/messenger" }
+        : { label: "Issues", href: "/issues" }
+    ),
+    [issueRouteBasePath, location.state],
   );
   const ancestors = issue?.ancestors ?? EMPTY_ISSUE_ANCESTORS;
+  const parentIssue = issue?.parentId ? ancestors[0] ?? null : null;
   const issueHeaderBreadcrumbs = useMemo(() => {
     return buildIssueHeaderBreadcrumbs({
       sourceBreadcrumb,
@@ -1501,6 +1587,7 @@ export function IssueDetail() {
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(issueOrgId) });
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(issueOrgId) });
         queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(issueOrgId) });
+        invalidateMessengerThreadSummaryQueries(queryClient, issueOrgId);
       }
     },
   });
@@ -1516,6 +1603,41 @@ export function IssueDetail() {
       invalidateIssue();
     },
   });
+
+  const deleteIssue = useMutation({
+    mutationFn: () => issuesApi.remove(issueId!),
+    onSuccess: (deleted) => {
+      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(issueId!) });
+      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(deleted.id) });
+      if (deleted.identifier) {
+        queryClient.removeQueries({ queryKey: queryKeys.issues.detail(deleted.identifier) });
+      }
+      invalidateIssue();
+      pushToast({ title: "Issue deleted", tone: "success" });
+      navigate("/issues/all");
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Failed to delete issue",
+        body: err instanceof Error ? err.message : "Try again.",
+        tone: "error",
+      });
+    },
+  });
+  const issueDisplayId = issue?.identifier ?? (issue?.id ? issue.id.slice(0, 8) : issueId ?? "issue");
+
+  const confirmAndDeleteIssue = useCallback(async () => {
+    const confirmed = await confirm({
+      title: `Delete ${issueDisplayId}?`,
+      description: "This removes the issue from Rudder.",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    deleteIssue.mutate();
+    setHeaderMoreOpen(false);
+    setSidebarMoreOpen(false);
+  }, [confirm, deleteIssue, issueDisplayId]);
 
   const updateSubIssueStatus = useMutation({
     mutationFn: ({
@@ -1568,6 +1690,25 @@ export function IssueDetail() {
     mutationFn: ({ body, reopen }: { body: string; reopen?: boolean }) =>
       issuesApi.addComment(issueId!, body, reopen),
     onSuccess: () => {
+      invalidateIssue();
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
+    },
+  });
+
+  const updateComment = useMutation({
+    mutationFn: ({ commentId, body }: { commentId: string; body: string }) =>
+      issuesApi.updateComment(issueId!, commentId, body),
+    onSuccess: (comment) => {
+      queryClient.setQueryData(queryKeys.issues.comment(issueId!, comment.id), comment);
+      invalidateIssue();
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
+    },
+  });
+
+  const deleteComment = useMutation({
+    mutationFn: (commentId: string) => issuesApi.deleteComment(issueId!, commentId),
+    onSuccess: (comment) => {
+      queryClient.setQueryData(queryKeys.issues.comment(issueId!, comment.id), comment);
       invalidateIssue();
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
     },
@@ -1693,9 +1834,9 @@ export function IssueDetail() {
 
   useEffect(() => {
     if (issue?.identifier && issueId !== issue.identifier) {
-      navigate(`/issues/${issue.identifier}`, { replace: true, state: location.state });
+      navigate(`${issueRouteBasePath}/${issue.identifier}`, { replace: true, state: location.state });
     }
-  }, [issue, issueId, navigate, location.state]);
+  }, [issue, issueId, issueRouteBasePath, navigate, location.state]);
 
   useLayoutEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1726,6 +1867,24 @@ export function IssueDetail() {
     setCopiedIssueId(true);
     pushToast({ title: "Copied issue ID", tone: "success" });
     setTimeout(() => setCopiedIssueId(false), 1500);
+  };
+
+  const toggleIssuePin = async () => {
+    if (!issue || issuePinPending || issueFollowsLoading) return;
+    const nextPinned = !issuePinned;
+    setIssuePinPending(true);
+    try {
+      await toggleFollowIssue(issue.id);
+      pushToast({ title: nextPinned ? "Issue pinned" : "Issue unpinned", tone: "success" });
+    } catch (err) {
+      pushToast({
+        title: nextPinned ? "Could not pin issue" : "Could not unpin issue",
+        body: err instanceof Error ? err.message : undefined,
+        tone: "error",
+      });
+    } finally {
+      setIssuePinPending(false);
+    }
   };
 
   const handleSubIssueSubmit = async () => {
@@ -1814,7 +1973,6 @@ export function IssueDetail() {
     </>
   );
 
-  const issueDisplayId = issue.identifier ?? issue.id.slice(0, 8);
   const issueFindRefreshKey = [
     issue.id,
     issue.updatedAt,
@@ -1868,19 +2026,34 @@ export function IssueDetail() {
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-44 p-1" align="end">
+        <PopoverContent className="w-48 p-1" align="end">
           <button
-            className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground hover:bg-accent/50 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={() => {
-              updateIssue.mutate(
-                { hiddenAt: new Date().toISOString() },
-                { onSuccess: () => navigate("/issues/all") },
-              );
+              void toggleIssuePin();
               onMoreOpenChange(false);
             }}
+            disabled={issuePinUnavailable}
           >
-            <EyeOff className="h-3 w-3" />
-            Hide this Issue
+            {issuePinPending || issueFollowsLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : issuePinned ? (
+              <PinOff className="h-3 w-3" />
+            ) : (
+              <Pin className="h-3 w-3" />
+            )}
+            {issueFollowsLoading ? "Loading pin state" : issuePinned ? "Unpin Issue" : "Pin Issue"}
+          </button>
+          <div className="my-1 h-px bg-border" aria-hidden="true" />
+          <button
+            className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => {
+              void confirmAndDeleteIssue();
+            }}
+            disabled={deleteIssue.isPending}
+          >
+            {deleteIssue.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+            Delete Issue
           </button>
         </PopoverContent>
       </Popover>
@@ -1894,28 +2067,21 @@ export function IssueDetail() {
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
       <div className="min-w-0 space-y-6">
-        {issue.hiddenAt && (
-          <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            <EyeOff className="h-4 w-4 shrink-0" />
-            This issue is hidden
-          </div>
-        )}
-
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0 flex-wrap">
-          {hasLiveRuns && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-medium text-cyan-600 dark:text-cyan-400 shrink-0">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-400" />
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+            {hasLiveRuns && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-medium text-cyan-600 dark:text-cyan-400 shrink-0">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-400" />
+                </span>
+                Live
               </span>
-              Live
-            </span>
-          )}
+            )}
 
-          {issue.originKind === "automation_execution" && issue.originId && (
-            <Link
+            {issue.originKind === "automation_execution" && issue.originId && (
+              <Link
               to={`/automations/${issue.originId}`}
               className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400 shrink-0 hover:bg-violet-500/20 transition-colors"
             >
@@ -1966,6 +2132,8 @@ export function IssueDetail() {
           as="h2"
           className="text-xl font-bold"
         />
+
+        <IssueParentContext parentIssue={parentIssue} />
 
         <InlineEditor
           value={issue.description ?? ""}
@@ -2248,7 +2416,7 @@ export function IssueDetail() {
                     className="flex min-w-0 flex-1 items-center justify-between gap-3"
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      <span className="max-w-28 shrink truncate font-mono text-xs text-muted-foreground">
                         {childPathId}
                       </span>
                       <span className="truncate">{child.title}</span>
@@ -2376,11 +2544,18 @@ export function IssueDetail() {
           mentions={mentionOptions}
           onMentionQueryChange={setLibraryFileMentionQuery}
           operatorDisplayName={operatorDisplayName}
+          currentUserId={currentBoardUserId}
           hideHeading
           emptyMessage="No activity yet."
           escapeBackWhenEmpty
           onAdd={async (body, reopen) => {
             await addComment.mutateAsync({ body, reopen });
+          }}
+          onUpdate={async (commentId, body) => {
+            await updateComment.mutateAsync({ commentId, body });
+          }}
+          onDelete={async (commentId) => {
+            await deleteComment.mutateAsync(commentId);
           }}
           imageUploadHandler={async (file) => {
             const attachment = await uploadAttachment.mutateAsync({ file, usage: "comment_inline" });

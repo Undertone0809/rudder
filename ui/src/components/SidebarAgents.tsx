@@ -10,7 +10,9 @@ import { authApi } from "../api/auth";
 import { heartbeatsApi } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
 import { formatSidebarAgentLabel } from "../lib/agent-labels";
-import { agentRouteRef, agentUrl } from "../lib/utils";
+import { sidebarAgentStatusTag } from "../lib/agent-sidebar-status";
+import { statusBadge, statusBadgeDefault } from "../lib/status-colors";
+import { agentRouteRef, agentUrl, cn } from "../lib/utils";
 import { useAgentOrder } from "../hooks/useAgentOrder";
 import { AgentIcon } from "./AgentIconPicker";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
@@ -96,6 +98,7 @@ export function SidebarAgents() {
         <div className="flex flex-col gap-0.5 mt-0.5">
           {orderedAgents.map((agent: Agent) => {
             const runCount = liveCountByAgent.get(agent.id) ?? 0;
+            const statusTag = sidebarAgentStatusTag(agent);
             return (
               <NavLink
                 key={agent.id}
@@ -112,8 +115,19 @@ export function SidebarAgents() {
                 <span className="flex-1 truncate" title={formatSidebarAgentLabel(agent)}>
                   {formatSidebarAgentLabel(agent)}
                 </span>
-                {(agent.pauseReason === "budget" || runCount > 0) && (
+                {(statusTag || agent.pauseReason === "budget" || runCount > 0) && (
                   <span className="ml-auto flex items-center gap-1.5 shrink-0">
+                    {statusTag ? (
+                      <span
+                        title={`Agent status: ${statusTag}`}
+                        className={cn(
+                          "inline-flex h-5 shrink-0 items-center rounded-[calc(var(--radius-sm)-1px)] border px-1.5 text-[10px] font-medium leading-none whitespace-nowrap",
+                          statusBadge[statusTag] ?? statusBadgeDefault,
+                        )}
+                      >
+                        {statusTag}
+                      </span>
+                    ) : null}
                     {agent.pauseReason === "budget" ? (
                       <BudgetSidebarMarker title="Agent paused by budget" />
                     ) : null}

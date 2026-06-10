@@ -6,7 +6,7 @@ export function OrganizationResources() {
       breadcrumbLabel="Library"
       emptyMessage="Select an organization to browse Library."
       editorTitle="File editor"
-      noSelectionMessage="Choose a Markdown, CSV, JSON, HTML, skill, or workspace file from the Library tree. Humans and agents share this file-native space."
+      noSelectionMessage="Select a file to preview or edit."
     />
   );
 }
