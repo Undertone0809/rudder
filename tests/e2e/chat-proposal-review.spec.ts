@@ -355,20 +355,20 @@ test.describe("Chat proposal review block", () => {
     expect(issues.find((issue: { title: string }) => issue.title === "Default todo proposal status test")?.status).toBe("todo");
   });
 
-  test("lets operators edit proposal status before approval", async ({ page }) => {
-    const command = await writeProposalStub("proposal-review-edit-status", {
+  test("lets operators edit proposal status and priority before approval", async ({ page }) => {
+    const command = await writeProposalStub("proposal-review-edit-status-priority", {
       kind: "issue_proposal",
-      body: "Create a runnable issue with an operator-selected status.",
+      body: "Create a runnable issue with operator-selected status and priority.",
       structuredPayload: {
         issueProposal: {
-          title: "Editable proposal status test",
-          description: "Verify status edits are used when approving a chat issue proposal.",
+          title: "Editable proposal metadata test",
+          description: "Verify status and priority edits are used when approving a chat issue proposal.",
           priority: "medium",
           assigneeUnassignedReason: "The operator will choose an owner after the issue is created.",
         },
       },
     });
-    const organization = await createProposalOrg(page, `EditableStatus-${Date.now()}`, command);
+    const organization = await createProposalOrg(page, `EditableMetadata-${Date.now()}`, command);
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
     const composer = page.locator(".rudder-mdxeditor-content").first();
@@ -385,6 +385,10 @@ test.describe("Chat proposal review block", () => {
     await page.getByRole("menuitem", { name: /in review/i }).click();
     await expect(reviewBlock).toContainText("in review");
 
+    await reviewBlock.getByRole("button", { name: /Edit priority/i }).click();
+    await page.getByRole("menuitemradio", { name: /High/i }).click();
+    await expect(reviewBlock).toContainText("High");
+
     await reviewBlock.getByRole("button", { name: "Approve" }).click();
 
     await expect(reviewBlock).toHaveAttribute("data-status", "approved", { timeout: 15_000 });
@@ -394,7 +398,9 @@ test.describe("Chat proposal review block", () => {
     const issuesRes = await page.request.get(`/api/orgs/${organization.id}/issues`);
     expect(issuesRes.ok()).toBe(true);
     const issues = await issuesRes.json();
-    expect(issues.find((issue: { title: string }) => issue.title === "Editable proposal status test")?.status).toBe("in_review");
+    const createdIssue = issues.find((issue: { title: string }) => issue.title === "Editable proposal metadata test");
+    expect(createdIssue?.status).toBe("in_review");
+    expect(createdIssue?.priority).toBe("high");
   });
 
   test("shows reviewer metadata on chat issue proposals and preserves it after approval", async ({ page }) => {

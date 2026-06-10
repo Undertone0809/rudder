@@ -33,6 +33,7 @@ import {
   type ChatOperationProposalDecisionStatus,
   type ChatPrimaryIssueSummary,
   type Issue,
+  ISSUE_PRIORITIES,
   ISSUE_STATUSES,
   formatMessengerPreview,
   type MessengerThreadSummary,
@@ -209,6 +210,19 @@ export function issueProposalWithStatus(
   return {
     ...proposal,
     status: nextStatus,
+  };
+}
+
+export function issueProposalWithPriority(
+  proposal: Record<string, unknown>,
+  priority: string,
+) {
+  const nextPriority = ISSUE_PRIORITIES.includes(priority as (typeof ISSUE_PRIORITIES)[number])
+    ? priority
+    : "medium";
+  return {
+    ...proposal,
+    priority: nextPriority,
   };
 }
 
@@ -521,6 +535,10 @@ export function ProposalCard({
     issueProposal && typeof issueProposal.status === "string" && issueProposal.status.trim()
       ? issueProposal.status.trim()
       : "todo";
+  const proposalIssuePriority =
+    issueProposal && typeof issueProposal.priority === "string" && issueProposal.priority.trim()
+      ? issueProposal.priority.trim()
+      : "medium";
   const proposalAssigneeUnassignedReason =
     issueProposal && typeof issueProposal.assigneeUnassignedReason === "string"
       ? issueProposal.assigneeUnassignedReason.trim() || null
@@ -618,7 +636,16 @@ export function ProposalCard({
                   </div>
                   <div className="chat-review-fact-ledger">
                     <ProposalFactRow label="Priority">
-                      <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
+                      <PriorityIcon
+                        priority={proposalIssuePriority}
+                        showLabel
+                        onChange={canEditIssueProposal
+                          ? (nextPriority) => onIssueProposalChange?.(
+                              message.id,
+                              issueProposalWithPriority(issueProposal, nextPriority),
+                            )
+                          : undefined}
+                      />
                     </ProposalFactRow>
                     <ProposalFactRow label="Status">
                       {canEditIssueProposal ? (

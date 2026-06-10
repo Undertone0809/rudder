@@ -31,6 +31,7 @@ import {
   isAskUserMessageAnswered,
   isUserVisibleIncomingChatMessage,
   issueProposalPrincipalSelectionValue,
+  issueProposalWithPriority,
   issueProposalWithStatus,
   issueProposalWithPrincipalSelection,
   parseAskUserAnswerMessage,
@@ -576,6 +577,7 @@ describe("ProposalCard", () => {
     const nextOwner = issueProposalWithPrincipalSelection(proposal, "assignee", "agent:agent-2");
     const nextReviewer = issueProposalWithPrincipalSelection(nextOwner, "reviewer", "user:local-board");
     const nextStatus = issueProposalWithStatus(nextReviewer, "in_review");
+    const nextPriority = issueProposalWithPriority(nextStatus, "critical");
     const payload = chatIssueApprovalPayloadWithProposalOverride({
       chatConversationId: "chat-1",
       chatMessageId: "message-1",
@@ -586,14 +588,15 @@ describe("ProposalCard", () => {
         reviewerAgentId: "agent-1",
         status: "todo",
       },
-    }, nextStatus);
+    }, nextPriority);
 
-    expect(issueProposalPrincipalSelectionValue(nextStatus, "assignee")).toBe("agent:agent-2");
-    expect(issueProposalPrincipalSelectionValue(nextStatus, "reviewer")).toBe("user:local-board");
+    expect(issueProposalPrincipalSelectionValue(nextPriority, "assignee")).toBe("agent:agent-2");
+    expect(issueProposalPrincipalSelectionValue(nextPriority, "reviewer")).toBe("user:local-board");
     expect(payload.proposedIssue).toMatchObject({
       title: "Route proposal edits",
       description: "Approve with the operator-edited owner and reviewer.",
       status: "in_review",
+      priority: "critical",
       assigneeAgentId: "agent-2",
       assigneeUserId: null,
       reviewerAgentId: null,
