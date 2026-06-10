@@ -183,7 +183,9 @@ function makeIssue(overrides?: Partial<{
 }
 
 async function flushAsyncWork() {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  for (let i = 0; i < 3; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 describe("issue lifecycle routes", () => {
