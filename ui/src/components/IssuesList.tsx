@@ -34,7 +34,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Pin, SlidersHorizontal } from "lucide-react";
 import { DEFAULT_ISSUE_DISPLAY_PROPERTIES, KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
-import type { AgentRole, Issue, ReorderIssue } from "@rudderhq/shared";
+import type { AgentRole, Issue, IssueSearchField, ReorderIssue } from "@rudderhq/shared";
 
 /* ── Helpers ── */
 
@@ -94,6 +94,12 @@ const quickFilterPresets = [
   { label: "Active", statuses: ["todo", "in_progress", "in_review", "blocked"] },
   { label: "Backlog", statuses: ["backlog"] },
   { label: "Done", statuses: ["done", "cancelled"] },
+];
+
+const issueSearchFieldOptions: Array<{ value: IssueSearchField; label: string }> = [
+  { value: "title", label: "Title" },
+  { value: "description", label: "Description" },
+  { value: "comment", label: "Comments" },
 ];
 
 const ONBOARDING_PROJECT_NAME = "Getting Started";
@@ -264,6 +270,7 @@ interface IssuesListProps {
   searchFilters?: {
     participantAgentId?: string;
   };
+  searchFields?: IssueSearchField[];
   onSearchChange?: (search: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
   onReorderIssue?: (data: ReorderIssue) => void;
@@ -294,6 +301,7 @@ export function IssuesList({
   onTogglePinnedIssue,
   onOpenIssue,
   searchFilters,
+  searchFields,
   onSearchChange,
   onUpdateIssue,
   onReorderIssue,
@@ -321,11 +329,17 @@ export function IssuesList({
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [issueSearch, setIssueSearch] = useState(initialSearch ?? "");
   const [debouncedIssueSearch, setDebouncedIssueSearch] = useState(issueSearch);
+  const [issueSearchFields, setIssueSearchFields] = useState<IssueSearchField[]>(["title"]);
+  const [searchOptionsOpen, setSearchOptionsOpen] = useState(false);
   const filterAssigneeScrollRef = useScrollbarActivityRef();
   const filterLabelsScrollRef = useScrollbarActivityRef();
   const filterProjectsScrollRef = useScrollbarActivityRef();
   const assigneePickerScrollRef = useScrollbarActivityRef();
   const normalizedIssueSearch = debouncedIssueSearch.trim();
+  const activeIssueSearchFields = searchFields ?? issueSearchFields;
+  const searchFieldSummary = activeIssueSearchFields.length === 1
+    ? issueSearchFieldOptions.find((option) => option.value === activeIssueSearchFields[0])?.label ?? "Title"
+    : `${activeIssueSearchFields.length} fields`;
 
   useEffect(() => {
     setIssueSearch(initialSearch ?? "");
@@ -357,10 +371,15 @@ export function IssuesList({
 
   const { data: searchedIssues = [] } = useQuery({
     queryKey: [
-      ...queryKeys.issues.search(selectedOrganizationId!, normalizedIssueSearch, projectId),
+      ...queryKeys.issues.search(selectedOrganizationId!, normalizedIssueSearch, projectId, activeIssueSearchFields),
       searchFilters ?? {},
     ],
-    queryFn: () => issuesApi.list(selectedOrganizationId!, { q: normalizedIssueSearch, projectId, ...searchFilters }),
+    queryFn: () => issuesApi.list(selectedOrganizationId!, {
+      q: normalizedIssueSearch,
+      projectId,
+      searchFields: activeIssueSearchFields,
+      ...searchFilters,
+    }),
     enabled: !!selectedOrganizationId && normalizedIssueSearch.length > 0,
   });
 
@@ -541,6 +560,18 @@ export function IssuesList({
     setAssigneeSearch("");
   };
 
+  const toggleIssueSearchField = (field: IssueSearchField) => {
+    setIssueSearchFields((current) => {
+      if (current.includes(field)) {
+        if (current.length === 1) return current;
+        return current.filter((entry) => entry !== field);
+      }
+      return issueSearchFieldOptions
+        .map((option) => option.value)
+        .filter((entry) => entry === field || current.includes(entry));
+    });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       {toolbarMode !== "hidden" && (
@@ -555,19 +586,50 @@ export function IssuesList({
                 <Plus className="h-4 w-4 sm:mr-1" />
                 <span className="hidden sm:inline">New Issue</span>
               </Button>
-              <div className="relative w-48 sm:w-64 md:w-80">
-                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={issueSearch}
-                  onChange={(e) => {
-                    setIssueSearch(e.target.value);
-                    onSearchChange?.(e.target.value);
-                  }}
-                  placeholder="Search issues..."
-                  className="pl-7 text-xs sm:text-sm"
-                  aria-label="Search issues"
-                />
-              </div>
+              <Popover open={searchOptionsOpen} onOpenChange={setSearchOptionsOpen}>
+                <PopoverAnchor asChild>
+                  <div className="relative w-48 sm:w-64 md:w-80">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={issueSearch}
+                      onFocus={() => setSearchOptionsOpen(true)}
+                      onClick={() => setSearchOptionsOpen(true)}
+                      onChange={(e) => {
+                        setIssueSearch(e.target.value);
+                        onSearchChange?.(e.target.value);
+                      }}
+                      placeholder="Search issues..."
+                      className="pl-7 pr-16 text-xs sm:text-sm"
+                      aria-label="Search issues"
+                    />
+                    <span className="pointer-events-none absolute right-2 top-1/2 max-w-14 -translate-y-1/2 truncate text-[11px] text-muted-foreground">
+                      {searchFieldSummary}
+                    </span>
+                  </div>
+                </PopoverAnchor>
+                <PopoverContent
+                  align="start"
+                  sideOffset={6}
+                  className="w-60 p-2"
+                  onOpenAutoFocus={(event) => event.preventDefault()}
+                >
+                  <div className="space-y-1">
+                    <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">Search in</div>
+                    {issueSearchFieldOptions.map((option) => (
+                      <label
+                        key={option.value}
+                        className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent/50"
+                      >
+                        <Checkbox
+                          checked={activeIssueSearchFields.includes(option.value)}
+                          onCheckedChange={() => toggleIssueSearchField(option.value)}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </>
           ) : (
             <div className="flex min-w-0 items-center gap-2">

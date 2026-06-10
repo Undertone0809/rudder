@@ -301,7 +301,7 @@ describe("issueService.list participantAgentId", () => {
     expect(result.map((issue) => issue.id)).toEqual([matchedIssueId]);
   });
 
-  it("finds issues by comment text when using server-side q search", async () => {
+  it("defaults issue search to title and only finds comments when comment search is enabled", async () => {
     const orgId = randomUUID();
     const matchedIssueId = randomUUID();
     const otherIssueId = randomUUID();
@@ -338,7 +338,10 @@ describe("issueService.list participantAgentId", () => {
       body: "Only this comment mentions frobnicator-search-token.",
     });
 
-    const result = await svc.list(orgId, { q: "frobnicator-search-token" });
+    const defaultResult = await svc.list(orgId, { q: "frobnicator-search-token" });
+    expect(defaultResult).toEqual([]);
+
+    const result = await svc.list(orgId, { q: "frobnicator-search-token", searchFields: ["comment"] });
 
     expect(result.map((issue) => issue.id)).toEqual([matchedIssueId]);
     expect(result[0]?.searchMatch).toMatchObject({

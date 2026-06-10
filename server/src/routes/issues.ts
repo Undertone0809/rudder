@@ -19,6 +19,7 @@ import {
   upsertIssueDocumentSchema,
   updateIssueSchema,
   isUuidLike,
+  type IssueSearchField,
 } from "@rudderhq/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
@@ -49,6 +50,7 @@ import { registerIssueCommentAttachmentRoutes } from "./issues.comments-attachme
 import { registerIssueMutationRoutes } from "./issues.mutations.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
+const ISSUE_SEARCH_FIELDS = new Set<IssueSearchField>(["title", "description", "comment"]);
 
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
@@ -279,6 +281,15 @@ export function issueRoutes(db: Db, storage: StorageService) {
     return req.actor.userId ?? "local-board";
   }
 
+  function parseIssueSearchFields(raw: unknown): IssueSearchField[] | undefined {
+    if (typeof raw !== "string") return undefined;
+    const fields = raw
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry): entry is IssueSearchField => ISSUE_SEARCH_FIELDS.has(entry as IssueSearchField));
+    return fields.length > 0 ? fields : undefined;
+  }
+
   function issueHasReviewer(issue: { reviewerAgentId: string | null; reviewerUserId: string | null }) {
     return Boolean(issue.reviewerAgentId || issue.reviewerUserId);
   }
@@ -410,6 +421,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       includeAutomationExecutions:
         req.query.includeAutomationExecutions === "true" || req.query.includeAutomationExecutions === "1",
       q: req.query.q as string | undefined,
+      searchFields: parseIssueSearchFields(req.query.searchFields),
     });
     res.json(result);
   });

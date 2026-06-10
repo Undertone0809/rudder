@@ -25,6 +25,7 @@ import {
   extractAgentMentionIds,
   extractProjectMentionIds,
   isUuidLike,
+  type IssueSearchField,
   type IssueSearchMatch,
   type ReorderIssue,
 } from "@rudderhq/shared";
@@ -76,6 +77,15 @@ import {
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
 export type { IssueFilters } from "./issues.helpers.js";
 export { deriveIssueUserContext } from "./issues.helpers.js";
+
+const DEFAULT_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title"];
+
+function normalizeIssueSearchFields(fields: IssueSearchField[] | undefined): Set<IssueSearchField> {
+  const allowed = new Set<IssueSearchField>(["title", "description", "comment"]);
+  const normalized = (fields ?? DEFAULT_ISSUE_SEARCH_FIELDS).filter((field): field is IssueSearchField => allowed.has(field));
+  return new Set(normalized.length > 0 ? normalized : DEFAULT_ISSUE_SEARCH_FIELDS);
+}
+
 export function issueService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
 
@@ -358,19 +368,20 @@ export function issueService(db: Db) {
     rows: IssueWithLabelsAndRun[],
     query: string,
     containsPattern: string,
+    searchFields: ReadonlySet<IssueSearchField>,
   ): Promise<IssueWithSearchMatch[]> {
     if (rows.length === 0) return [];
 
     const matchesByIssueId = new Map<string, IssueSearchMatch>();
     for (const row of rows) {
-      const match = fieldSearchMatch(row, query);
+      const match = fieldSearchMatch(row, query, searchFields);
       if (match) matchesByIssueId.set(row.id, match);
     }
 
     const commentMatchedIssueIds = rows
       .map((row) => row.id)
       .filter((id) => !matchesByIssueId.has(id));
-    if (commentMatchedIssueIds.length > 0) {
+    if (searchFields.has("comment") && commentMatchedIssueIds.length > 0) {
       const commentRows = await db
         .select({
           id: issueComments.id,
@@ -482,13 +493,12 @@ export function issueService(db: Db) {
       const contextUserId = unreadForUserId ?? touchedByUserId;
       const rawSearch = filters?.q?.trim() ?? "";
       const hasSearch = rawSearch.length > 0;
+      const searchFields = normalizeIssueSearchFields(filters?.searchFields);
       const escapedSearch = hasSearch ? escapeLikePattern(rawSearch) : "";
       const startsWithPattern = `${escapedSearch}%`;
       const containsPattern = `%${escapedSearch}%`;
       const titleStartsWithMatch = sql<boolean>`${issues.title} ILIKE ${startsWithPattern} ESCAPE '\\'`;
       const titleContainsMatch = sql<boolean>`${issues.title} ILIKE ${containsPattern} ESCAPE '\\'`;
-      const identifierStartsWithMatch = sql<boolean>`${issues.identifier} ILIKE ${startsWithPattern} ESCAPE '\\'`;
-      const identifierContainsMatch = sql<boolean>`${issues.identifier} ILIKE ${containsPattern} ESCAPE '\\'`;
       const descriptionContainsMatch = sql<boolean>`${issues.description} ILIKE ${containsPattern} ESCAPE '\\'`;
       const commentContainsMatch = sql<boolean>`
         EXISTS (
@@ -573,14 +583,11 @@ export function issueService(db: Db) {
         conditions.push(inArray(issues.id, labeledIssueIds.map((row) => row.issueId)));
       }
       if (hasSearch) {
-        conditions.push(
-          or(
-            titleContainsMatch,
-            identifierContainsMatch,
-            descriptionContainsMatch,
-            commentContainsMatch,
-          )!,
-        );
+        const searchConditions = [];
+        if (searchFields.has("title")) searchConditions.push(titleContainsMatch);
+        if (searchFields.has("description")) searchConditions.push(descriptionContainsMatch);
+        if (searchFields.has("comment")) searchConditions.push(commentContainsMatch);
+        conditions.push(or(...searchConditions)!);
       }
       if (!filters?.includeAutomationExecutions && !filters?.originKind && !filters?.originId) {
         conditions.push(contextUserId
@@ -592,12 +599,10 @@ export function issueService(db: Db) {
       const priorityOrder = sql`CASE ${issues.priority} WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`;
       const searchOrder = sql<number>`
         CASE
-          WHEN ${titleStartsWithMatch} THEN 0
-          WHEN ${titleContainsMatch} THEN 1
-          WHEN ${identifierStartsWithMatch} THEN 2
-          WHEN ${identifierContainsMatch} THEN 3
-          WHEN ${descriptionContainsMatch} THEN 4
-          WHEN ${commentContainsMatch} THEN 5
+          WHEN ${searchFields.has("title")} AND ${titleStartsWithMatch} THEN 0
+          WHEN ${searchFields.has("title")} AND ${titleContainsMatch} THEN 1
+          WHEN ${searchFields.has("description")} AND ${descriptionContainsMatch} THEN 2
+          WHEN ${searchFields.has("comment")} AND ${commentContainsMatch} THEN 3
           ELSE 6
         END
       `;
@@ -610,7 +615,7 @@ export function issueService(db: Db) {
       const runMap = await activeRunMapForIssues(db, withLabels);
       const withRuns = withActiveRuns(withLabels, runMap);
       const withSearchMatches = hasSearch
-        ? await attachSearchMatches(orgId, withRuns, rawSearch, containsPattern)
+        ? await attachSearchMatches(orgId, withRuns, rawSearch, containsPattern, searchFields)
         : withRuns;
       if (!contextUserId || withSearchMatches.length === 0) {
         return withSearchMatches;

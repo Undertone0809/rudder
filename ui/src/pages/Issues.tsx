@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useCallback, useRef, useState, type ReactElement } from "react";
 import { useLocation, useSearchParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Agent, Project, ReorderIssue } from "@rudderhq/shared";
+import type { Agent, IssueSearchField, Project, ReorderIssue } from "@rudderhq/shared";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -64,6 +64,16 @@ function resolveDraftAssigneeLabel(
 }
 
 const DRAFT_ISSUE_DELETE_EXIT_MS = 220;
+const ISSUE_SEARCH_FIELDS = new Set<IssueSearchField>(["title", "description", "comment"]);
+
+function parseIssueSearchFieldsParam(raw: string | null): IssueSearchField[] {
+  if (!raw) return ["title"];
+  const fields = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry): entry is IssueSearchField => ISSUE_SEARCH_FIELDS.has(entry as IssueSearchField));
+  return fields.length > 0 ? fields : ["title"];
+}
 
 function prefersReducedMotion() {
   if (typeof window === "undefined") return false;
@@ -209,6 +219,10 @@ export function Issues() {
   const queryClient = useQueryClient();
 
   const initialSearch = searchParams.get("q") ?? "";
+  const issueSearchFields = useMemo(
+    () => parseIssueSearchFieldsParam(searchParams.get("searchFields")),
+    [searchParams],
+  );
   const issueSource = searchParams.get("source") ?? "";
   const issueScope = searchParams.get("scope") ?? "";
   const effectiveIssueScope = issueScope === "recent" ? "" : issueScope === "starred" ? "pinned" : issueScope;
@@ -474,6 +488,7 @@ export function Issues() {
         issueLinkState={issueLinkState}
         initialAssignees={searchParams.get("assignee") ? [searchParams.get("assignee")!] : undefined}
         initialSearch={initialSearch}
+        searchFields={issueSearchFields}
         initialGroupBy={initialGroupBy}
         toolbarMode="controls-only"
         pinnedIssueIds={[...followedIssueIds]}

@@ -59,6 +59,8 @@ export interface IssueSearchMatch {
   commentId?: string | null;
 }
 
+export type IssueSearchField = "title" | "description" | "comment";
+
 export type DocumentFormat = "markdown";
 
 export interface IssueDocumentSummary {

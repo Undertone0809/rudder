@@ -7,6 +7,7 @@ import type {
   IssueComment,
   IssueDocument,
   IssueLabel,
+  IssueSearchField,
   IssueWorkProduct,
   ReorderIssue,
   UpsertIssueDocument,
@@ -32,6 +33,7 @@ export const issuesApi = {
       originId?: string;
       includeAutomationExecutions?: boolean;
       q?: string;
+      searchFields?: IssueSearchField[];
     },
   ) => {
     const params = new URLSearchParams();
@@ -50,6 +52,7 @@ export const issuesApi = {
     if (filters?.originId) params.set("originId", filters.originId);
     if (filters?.includeAutomationExecutions) params.set("includeAutomationExecutions", "true");
     if (filters?.q) params.set("q", filters.q);
+    if (filters?.searchFields?.length) params.set("searchFields", filters.searchFields.join(","));
     const qs = params.toString();
     return api.get<Issue[]>(`/orgs/${orgId}/issues${qs ? `?${qs}` : ""}`);
   },
