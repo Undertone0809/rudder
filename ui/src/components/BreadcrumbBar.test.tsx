@@ -222,6 +222,50 @@ describe("BreadcrumbBar", () => {
     expect(document.activeElement).not.toBe(input);
   });
 
+  it("opens the issue search scope panel from the issues header search", async () => {
+    pathname = "/RUD/issues";
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<BreadcrumbBar variant="card" />);
+      await Promise.resolve();
+    });
+
+    const input = container.querySelector<HTMLInputElement>("input[aria-label='Search issues']");
+    expect(input).not.toBeNull();
+
+    await act(async () => {
+      input!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    const scopeMenu = container.querySelector<HTMLElement>('[data-testid="breadcrumb-issue-search-scope-menu"]');
+    expect(scopeMenu).not.toBeNull();
+    expect(scopeMenu?.className).toContain("w-full");
+    expect(scopeMenu?.className).toContain("bg-[color:var(--surface-overlay)]");
+    expect(scopeMenu?.className).toContain("z-[70]");
+    expect(scopeMenu?.textContent).toContain("Search in");
+    expect(scopeMenu?.textContent).toContain("Title");
+    expect(scopeMenu?.textContent).toContain("Description");
+    expect(scopeMenu?.textContent).toContain("Comments");
+
+    const titleLabel = Array.from(scopeMenu!.querySelectorAll("label")).find(
+      (entry) => entry.textContent?.trim() === "Title",
+    );
+    const descriptionLabel = Array.from(scopeMenu!.querySelectorAll("label")).find(
+      (entry) => entry.textContent?.trim() === "Description",
+    );
+
+    expect(titleLabel?.querySelector('[data-slot="checkbox"]')?.getAttribute("data-state")).toBe("checked");
+    expect(descriptionLabel?.querySelector('[data-slot="checkbox"]')?.getAttribute("data-state")).toBe("unchecked");
+  });
+
   it("opens an issue result menu from issue detail search and navigates to the selected issue", async () => {
     pathname = "/RUD/issues/RUD-197";
     mockBreadcrumbs = [
