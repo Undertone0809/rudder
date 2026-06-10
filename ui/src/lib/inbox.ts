@@ -52,6 +52,37 @@ export interface InboxNotificationContent {
   body?: string;
 }
 
+function pluralizeCount(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatInboxNotificationBreakdown(badgeCounts: InboxBadgeData | undefined): string | null {
+  if (!badgeCounts) return null;
+
+  const parts = [
+    badgeCounts.chatAttention > 0
+      ? pluralizeCount(badgeCounts.chatAttention, "chat thread")
+      : null,
+    badgeCounts.unreadTouchedIssues > 0
+      ? pluralizeCount(badgeCounts.unreadTouchedIssues, "issue update")
+      : null,
+    badgeCounts.approvals > 0
+      ? pluralizeCount(badgeCounts.approvals, "approval")
+      : null,
+    badgeCounts.failedRuns > 0
+      ? pluralizeCount(badgeCounts.failedRuns, "failed run")
+      : null,
+    badgeCounts.joinRequests > 0
+      ? pluralizeCount(badgeCounts.joinRequests, "join request")
+      : null,
+    badgeCounts.alerts > 0
+      ? pluralizeCount(badgeCounts.alerts, "system alert")
+      : null,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
 export function loadDismissedInboxItems(): Set<string> {
   try {
     const raw = localStorage.getItem(DISMISSED_KEY);
@@ -303,15 +334,22 @@ function compareMessengerThreadActivity(a: MessengerThreadSummary, b: MessengerT
 
 export function getInboxNotificationContent({
   unreadCount,
+  badgeCounts,
   messengerThreads,
 }: {
   unreadCount: number;
+  badgeCounts?: InboxBadgeData;
   messengerThreads: MessengerThreadSummary[];
 }): InboxNotificationContent {
   const normalizedUnreadCount = Math.max(0, Math.floor(unreadCount));
-  const fallbackBody = normalizedUnreadCount === 1
-    ? "You have 1 unread inbox item."
-    : `You have ${normalizedUnreadCount} unread inbox items.`;
+  const breakdown = formatInboxNotificationBreakdown(badgeCounts);
+  const fallbackBody = breakdown
+    ? normalizedUnreadCount === 1
+      ? `You have 1 inbox item needing attention: ${breakdown}.`
+      : `You have ${normalizedUnreadCount} inbox items needing attention: ${breakdown}.`
+    : normalizedUnreadCount === 1
+      ? "You have 1 unread inbox item."
+      : `You have ${normalizedUnreadCount} unread inbox items.`;
   const fallback = {
     title: "New inbox activity",
     body: fallbackBody,

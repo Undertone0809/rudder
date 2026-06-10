@@ -424,4 +424,25 @@ describe("inbox helpers", () => {
       body: "You have 1 unread inbox item.",
     });
   });
+
+  it("explains aggregate inbox notification counts with their source breakdown", () => {
+    expect(
+      getInboxNotificationContent({
+        unreadCount: 33,
+        badgeCounts: {
+          inbox: 33,
+          approvals: 1,
+          failedRuns: 2,
+          joinRequests: 0,
+          unreadTouchedIssues: 20,
+          chatAttention: 10,
+          alerts: 0,
+        },
+        messengerThreads: [],
+      }),
+    ).toEqual({
+      title: "New inbox activity",
+      body: "You have 33 inbox items needing attention: 10 chat threads, 20 issue updates, 1 approval, 2 failed runs.",
+    });
+  });
 });

@@ -130,6 +130,7 @@ export function useInboxBadge(orgId: string | null | undefined) {
       ...badgeCounts,
       notificationContent: getInboxNotificationContent({
         unreadCount: badgeCounts.inbox,
+        badgeCounts,
         messengerThreads,
       }),
     };

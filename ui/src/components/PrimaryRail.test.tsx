@@ -21,7 +21,12 @@ const mockState = vi.hoisted(() => ({
   },
   inboxBadge: {
     inbox: 4,
+    approvals: 0,
     failedRuns: 0,
+    joinRequests: 0,
+    unreadTouchedIssues: 0,
+    chatAttention: 4,
+    alerts: 0,
     notificationContent: {
       title: "Unread inbox",
       body: "4 unread items",
@@ -154,7 +159,12 @@ beforeEach(() => {
   };
   mockState.inboxBadge = {
     inbox: 4,
+    approvals: 0,
     failedRuns: 0,
+    joinRequests: 0,
+    unreadTouchedIssues: 0,
+    chatAttention: 4,
+    alerts: 0,
     notificationContent: {
       title: "Unread inbox",
       body: "4 unread items",
@@ -239,6 +249,42 @@ describe("PrimaryRail desktop inbox signals", () => {
 
     expect(mockState.desktopShell.setBadgeCount).toHaveBeenLastCalledWith(2);
     expect(mockState.desktopShell.showNotification).not.toHaveBeenCalled();
+  });
+
+  it("uses the aggregate inbox count for rail, dock badge, and desktop notifications", async () => {
+    mockState.inboxBadge = {
+      ...mockState.inboxBadge,
+      inbox: 32,
+      unreadTouchedIssues: 22,
+      chatAttention: 10,
+      notificationContent: {
+        title: "New inbox activity",
+        body: "You have 32 inbox items needing attention: 10 chat threads, 22 issue updates.",
+      },
+    };
+    const view = await renderPrimaryRail();
+
+    expect(document.querySelector('[data-testid="rail-badge-messenger"]')?.textContent).toBe("32");
+    expect(mockState.desktopShell.setBadgeCount).toHaveBeenLastCalledWith(32);
+
+    mockState.inboxBadge = {
+      ...mockState.inboxBadge,
+      inbox: 33,
+      unreadTouchedIssues: 23,
+      chatAttention: 10,
+      notificationContent: {
+        title: "New inbox activity",
+        body: "You have 33 inbox items needing attention: 10 chat threads, 23 issue updates.",
+      },
+    };
+    await view.rerender();
+
+    expect(document.querySelector('[data-testid="rail-badge-messenger"]')?.textContent).toBe("33");
+    expect(mockState.desktopShell.setBadgeCount).toHaveBeenLastCalledWith(33);
+    expect(mockState.desktopShell.showNotification).toHaveBeenLastCalledWith({
+      title: "New inbox activity",
+      body: "You have 33 inbox items needing attention: 10 chat threads, 23 issue updates.",
+    });
   });
 });
 
