@@ -41,6 +41,7 @@ import { assetsApi } from "../api/assets";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { AgentIcon } from "../components/AgentIconPicker";
+import { ProjectIcon } from "../components/ProjectIdentity";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -1360,10 +1361,19 @@ function WorkspaceTreeNode({
             ) : isAgentsRoot ? (
               <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             ) : isProjectLibraryFolder ? (
-              <PackageOpen
-                data-testid="org-workspaces-project-icon"
-                className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-              />
+              projectResourceGroup ? (
+                <ProjectIcon
+                  color={projectResourceGroup.project.color}
+                  icon={projectResourceGroup.project.icon}
+                  size="xs"
+                  testId="org-workspaces-project-icon"
+                />
+              ) : (
+                <PackageOpen
+                  data-testid="org-workspaces-project-icon"
+                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                />
+              )
             ) : (
               <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             )}
@@ -4532,7 +4542,7 @@ export function OrganizationWorkspaceBrowser({
             {visibleWorkspaceBreadcrumbPath !== null ? (
               <div
                 data-testid="org-workspaces-path-breadcrumb"
-                className="flex h-9 shrink-0 items-center gap-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
+                className="flex h-8 shrink-0 items-center gap-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
                 aria-label="File path"
               >
                 {workspacePathBreadcrumb(

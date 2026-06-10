@@ -23,6 +23,7 @@ describe("mention chips", () => {
       kind: "project",
       projectId: "project-123",
       color: "#336699",
+      icon: null,
     });
 
     expect(element.textContent).toBe("rudder dev");
@@ -34,9 +35,11 @@ describe("mention chips", () => {
       kind: "project",
       projectId: "project-123",
       color: "#336699",
+      icon: null,
     }) as Record<string, string>;
 
     expect(style["--rudder-mention-project-color"]).toBe("#336699");
+    expect(style["--rudder-mention-icon-mask"]).toContain("data:image/svg+xml");
     expect(style.color).toBeUndefined();
     expect(style.borderColor).toBeUndefined();
     expect(style.backgroundColor).toBeUndefined();

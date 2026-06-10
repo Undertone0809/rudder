@@ -1,4 +1,4 @@
-import type { PauseReason, ProjectStatus } from "../constants.js";
+import type { PauseReason, ProjectIconName, ProjectStatus } from "../constants.js";
 import type { ProjectExecutionWorkspacePolicy, WorkspaceRuntimeService } from "./workspace-runtime.js";
 import type { ProjectResourceAttachment } from "./resource.js";
 
@@ -64,6 +64,7 @@ export interface Project {
   leadAgentId: string | null;
   targetDate: string | null;
   color: string | null;
+  icon: ProjectIconName;
   pauseReason: PauseReason | null;
   pausedAt: Date | null;
   executionWorkspacePolicy: ProjectExecutionWorkspacePolicy | null;

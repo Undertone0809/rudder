@@ -2496,10 +2496,17 @@ button[draggable="false"] {
 a.rudder-mention-chip[data-mention-kind="project"]::before {
   content: "";
   flex: none;
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 999px;
+  width: 1.08em;
+  height: 1.08em;
   background: var(--rudder-mention-project-color, currentColor);
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
 }
 
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="agent"]::before,

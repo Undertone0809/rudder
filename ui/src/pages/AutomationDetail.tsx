@@ -28,12 +28,12 @@ import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { buildAutomationTriggerPatch } from "../lib/automation-trigger-patch";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
+import { ProjectIcon } from "../components/ProjectIdentity";
 import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
@@ -1154,10 +1154,7 @@ export function AutomationDetail() {
                     renderTriggerValue={(option) =>
                       option && currentProject ? (
                         <SidebarSelectValue>
-                          <span
-                            className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                            style={projectColorBackgroundStyle(currentProject.color)}
-                          />
+                          <ProjectIcon color={currentProject.color} icon={currentProject.icon} size="xs" />
                           <span className="truncate">{option.label}</span>
                         </SidebarSelectValue>
                       ) : (
@@ -1171,10 +1168,7 @@ export function AutomationDetail() {
                       const project = projectById.get(option.id);
                       return (
                         <>
-                          <span
-                            className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                            style={projectColorBackgroundStyle(project?.color)}
-                          />
+                          <ProjectIcon color={project?.color} icon={project?.icon} size="xs" />
                           <span className="truncate">{option.label}</span>
                         </>
                       );

@@ -10,6 +10,7 @@ import { EntityRow } from "../components/EntityRow";
 import { StatusBadge } from "../components/StatusBadge";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { ProjectIcon } from "../components/ProjectIdentity";
 import { formatDate, projectUrl } from "../lib/utils";
 import { Hexagon } from "lucide-react";
 
@@ -65,6 +66,7 @@ export function Projects() {
               title={project.name}
               subtitle={project.description ?? undefined}
               to={projectUrl(project)}
+              leading={<ProjectIcon color={project.color} icon={project.icon} size="md" />}
               trailing={
                 <div className="flex items-center gap-3">
                   {project.targetDate && (

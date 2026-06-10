@@ -1376,6 +1376,7 @@ export function IssueDetail() {
         kind: "project",
         projectId: project.id,
         projectColor: project.color,
+        projectIcon: project.icon,
       });
     }
     for (const relatedIssue of allIssues ?? []) {
@@ -1405,6 +1406,7 @@ export function IssueDetail() {
         issueStatus: relatedIssue.status,
         issueProjectName: relatedIssueProject?.name ?? null,
         issueProjectColor: relatedIssueProject?.color ?? null,
+        issueProjectIcon: relatedIssueProject?.icon ?? null,
         issueAssigneeName: relatedIssueAssigneeName,
         issueAssigneeIcon: relatedIssueAssignee?.icon ?? null,
         issueAssigneeRole: relatedIssueAssignee?.role ?? null,

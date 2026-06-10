@@ -17,7 +17,7 @@ import {
   projectWorkspaces,
   projects,
 } from "@rudderhq/db";
-import { deriveOrganizationUrlKey } from "@rudderhq/shared";
+import { DEFAULT_PROJECT_ICON, deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { projectService } from "../services/projects.js";
 import { resolveOrganizationWorkspaceRoot, resolveProjectLibraryDir } from "../home-paths.js";
 
@@ -149,6 +149,7 @@ describe("project service workspace resolution", () => {
     });
 
     expect(created.workspaces).toEqual([]);
+    expect(created.icon).toBe(DEFAULT_PROJECT_ICON);
     expect(created.primaryWorkspace).toBeNull();
     expect(created.codebase.configured).toBe(true);
     expect(created.codebase.scope).toBe("organization");

@@ -61,7 +61,6 @@ import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/me
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
 import { $createMentionTokenNode, mentionTokenPlugin } from "../lib/mention-token-node";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   applySkillTokenDecoration,
   clearSkillTokenDecoration,
@@ -87,11 +86,13 @@ export interface MentionOption {
   agentRole?: AgentRole | null;
   projectId?: string;
   projectColor?: string | null;
+  projectIcon?: string | null;
   issueId?: string;
   issueIdentifier?: string | null;
   issueStatus?: string | null;
   issueProjectName?: string | null;
   issueProjectColor?: string | null;
+  issueProjectIcon?: string | null;
   issueAssigneeName?: string | null;
   issueAssigneeIcon?: string | null;
   issueAssigneeRole?: AgentRole | null;
@@ -848,7 +849,7 @@ export function mentionTokenDetails(
   }
   if (option.kind === "project" && option.projectId) {
     return {
-      href: buildProjectMentionHref(option.projectId, option.projectColor ?? null),
+      href: buildProjectMentionHref(option.projectId, option.projectColor ?? null, option.projectIcon ?? null),
       isSkill: false,
       label: option.name,
     };

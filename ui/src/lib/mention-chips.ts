@@ -3,6 +3,7 @@ import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, par
 import { FileText, Folder } from "lucide-react";
 import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
 import { getAgentIcon } from "./agent-icons";
+import { getProjectIconComponent, normalizeProjectIconName } from "./project-icons";
 
 export type ParsedMentionChip =
   | {
@@ -14,6 +15,7 @@ export type ParsedMentionChip =
       kind: "project";
       projectId: string;
       color: string | null;
+      icon: string | null;
     }
   | {
       kind: "issue";
@@ -70,6 +72,7 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
       kind: "project",
       projectId: project.projectId,
       color: project.color,
+      icon: project.icon ?? null,
     };
   }
 
@@ -151,6 +154,14 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
 
   if (mention.kind === "project" && mention.color) {
     style["--rudder-mention-project-color"] = mention.color;
+  }
+
+  if (mention.kind === "project") {
+    const iconName = normalizeProjectIconName(mention.icon);
+    const iconMask = buildLucideIconMask(getProjectIconComponent(iconName), `project:${iconName}`);
+    if (iconMask) {
+      style["--rudder-mention-icon-mask"] = iconMask;
+    }
   }
 
   if (mention.kind === "agent") {

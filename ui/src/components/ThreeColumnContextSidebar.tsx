@@ -46,7 +46,6 @@ import { displayChatTitle } from "@/lib/chat-title";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 import { sidebarAgentStatusTag } from "@/lib/agent-sidebar-status";
-import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { relativeTime } from "@/lib/utils";
@@ -66,6 +65,7 @@ import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentActionsMenu } from "@/components/AgentActionsMenu";
 import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
+import { ProjectIcon } from "@/components/ProjectIdentity";
 import { StatusIcon } from "@/components/StatusIcon";
 import {
   DropdownMenu,
@@ -529,7 +529,7 @@ function ProjectListSection({
   onNewProject,
   scrollRef,
 }: {
-  visibleProjects: Array<{ id: string; name: string; description: string | null; color?: string | null; urlKey?: string | null }>;
+  visibleProjects: Array<{ id: string; name: string; description: string | null; color?: string | null; icon?: string | null; urlKey?: string | null }>;
   activeProjectRef: string | null;
   closeMobileSidebar: () => void;
   onNewProject: () => void;
@@ -583,10 +583,11 @@ function ProjectListSection({
               )}
             >
               <div className="flex items-center gap-2">
-                <span
-                  data-testid={`workspace-project-color-${project.id}`}
-                  className="h-4 w-4 shrink-0 rounded-[calc(var(--radius-sm)-3px)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_20%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_72%,transparent)]"
-                  style={projectColorBackgroundStyle(project.color)}
+                <ProjectIcon
+                  color={project.color}
+                  icon={project.icon}
+                  size="sm"
+                  testId={`workspace-project-color-${project.id}`}
                 />
                 <span className="truncate text-sm font-medium text-foreground">{project.name}</span>
               </div>
@@ -1376,10 +1377,11 @@ export function ThreeColumnContextSidebar() {
                         : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
                     )}
                   >
-                    <Circle
-                      data-testid={`issue-project-color-${project.id}`}
-                      className="h-2.5 w-2.5 shrink-0 fill-current"
-                      style={{ color: projectColorAccent(project.color) }}
+                    <ProjectIcon
+                      color={project.color}
+                      icon={project.icon}
+                      size="xs"
+                      testId={`issue-project-color-${project.id}`}
                     />
                     <span className="min-w-0 flex-1 truncate">{project.name}</span>
                     {liveCount > 0 ? <SidebarLiveCount count={liveCount} /> : null}

@@ -50,6 +50,7 @@ import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
 import { ResourceLocatorField, suggestResourceNameFromLocator } from "./ResourceLocatorField";
 import { StatusBadge } from "./StatusBadge";
+import { ProjectIcon, ProjectIdentityPicker } from "./ProjectIdentity";
 
 const projectStatuses = [
   { value: "backlog", label: "Backlog" },
@@ -61,6 +62,10 @@ const projectStatuses = [
 
 const resourceControlClass =
   "w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)] px-2.5 py-1.5 text-sm shadow-none outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
+
+function randomProjectColor() {
+  return PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)] ?? PROJECT_COLORS[0];
+}
 
 type DraftAttachedResource = {
   kind: "existing";
@@ -128,6 +133,8 @@ export function NewProjectDialog() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState("planned");
+  const [color, setColor] = useState<string>(randomProjectColor);
+  const [icon, setIcon] = useState("folder");
   const [goalIds, setGoalIds] = useState<string[]>([]);
   const [targetDate, setTargetDate] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -180,6 +187,8 @@ export function NewProjectDialog() {
     setName("");
     setDescription("");
     setStatus("planned");
+    setColor(randomProjectColor());
+    setIcon("folder");
     setGoalIds([]);
     setTargetDate("");
     setExpanded(false);
@@ -351,7 +360,8 @@ export function NewProjectDialog() {
         name: name.trim(),
         description: description.trim() || undefined,
         status,
-        color: PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)],
+        color,
+        icon,
         ...(goalIds.length > 0 ? { goalIds } : {}),
         ...(targetDate ? { targetDate } : {}),
         ...(resourceAttachments.length > 0 ? { resourceAttachments } : {}),
@@ -425,19 +435,41 @@ export function NewProjectDialog() {
         </div>
 
         <div className="px-4 pt-4 pb-2 shrink-0">
-          <input
-            className="w-full text-lg font-semibold bg-transparent outline-none placeholder:text-muted-foreground/50"
-            placeholder="Project name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Tab" && !e.shiftKey) {
-                e.preventDefault();
-                descriptionEditorRef.current?.focus();
-              }
-            }}
-            autoFocus
-          />
+          <div className="flex items-center gap-3">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] outline-none transition-[box-shadow,transform] hover:scale-[1.03] focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="Choose project identity"
+                  title="Choose project identity"
+                >
+                  <ProjectIcon color={color} icon={icon} size="lg" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-auto p-0">
+                <ProjectIdentityPicker
+                  color={color}
+                  icon={icon}
+                  onColorChange={setColor}
+                  onIconChange={setIcon}
+                />
+              </PopoverContent>
+            </Popover>
+            <input
+              className="min-w-0 flex-1 bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground/50"
+              placeholder="Project name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Tab" && !e.shiftKey) {
+                  e.preventDefault();
+                  descriptionEditorRef.current?.focus();
+                }
+              }}
+              autoFocus
+            />
+          </div>
         </div>
 
         <div className="px-4 pb-2">

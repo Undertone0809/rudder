@@ -43,7 +43,6 @@ import {
   stripMentionChipLabelPrefix,
   type ParsedMentionChip,
 } from "../lib/mention-chips";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   parseSkillReference,
   skillTokenIconInlineStyle,
@@ -51,6 +50,7 @@ import {
 import { filterMentionOptions } from "../lib/mention-filter";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
+import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
 import type { MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
 import {
@@ -158,7 +158,7 @@ function mentionTokenDetails(option: MentionOption, agentMentionIntent?: "refere
     return { href: buildLibraryDirectoryMentionHref(option.libraryDirectoryPath, option.name), label: option.name };
   }
   if (option.kind === "project" && option.projectId) {
-    return { href: buildProjectMentionHref(option.projectId, option.projectColor ?? null), label: option.name };
+    return { href: buildProjectMentionHref(option.projectId, option.projectColor ?? null, option.projectIcon ?? null), label: option.name };
   }
   const agentId = option.agentId ?? option.id.replace(/^agent:/, "");
   return { href: buildAgentMentionHref(agentId, option.agentIcon ?? null, agentMentionIntent), label: option.name };
@@ -277,7 +277,11 @@ function refreshMilkdownMentionTokenStyles(root: HTMLElement | null, mentions: M
     const mention = parsed.kind === "agent"
       ? { ...parsed, icon: optionByKey.get(`agent:${parsed.agentId}`)?.agentIcon ?? parsed.icon ?? null }
       : parsed.kind === "project"
-        ? { ...parsed, color: parsed.color ?? optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? null }
+        ? {
+            ...parsed,
+            color: parsed.color ?? optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? null,
+            icon: parsed.icon ?? optionByKey.get(`project:${parsed.projectId}`)?.projectIcon ?? null,
+          }
         : parsed;
     applyMentionStyleProperties(element, mention);
   }
@@ -325,7 +329,11 @@ function buildMilkdownTokenDecorations(doc: ProseMirrorDoc, mentions: MentionOpt
       const mention = parsed.kind === "agent"
         ? { ...parsed, icon: optionByKey.get(`agent:${parsed.agentId}`)?.agentIcon ?? parsed.icon ?? null }
         : parsed.kind === "project"
-          ? { ...parsed, color: parsed.color ?? optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? null }
+          ? {
+              ...parsed,
+              color: parsed.color ?? optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? null,
+              icon: parsed.icon ?? optionByKey.get(`project:${parsed.projectId}`)?.projectIcon ?? null,
+            }
           : parsed;
       decorations.push(Decoration.inline(pos, pos + node.nodeSize, milkdownMentionDecorationAttrs(mention, label, href)));
       return;
@@ -1561,10 +1569,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                       ) : option.kind === "skill" ? (
                         <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
                       ) : option.kind === "project" && option.projectId ? (
-                        <span
-                          className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full border border-border/50"
-                          style={projectColorBackgroundStyle(option.projectColor)}
-                        />
+                        <ProjectIcon color={option.projectColor} icon={option.projectIcon} size="xs" />
                       ) : option.kind === "issue" && option.issueId ? (
                         <span
                           className="inline-flex shrink-0"

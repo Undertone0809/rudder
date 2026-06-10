@@ -1,7 +1,9 @@
 import {
   AGENT_AVATAR_BACKGROUND_PRESET_IDS,
   AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX,
+  DEFAULT_PROJECT_ICON,
   PROJECT_COLORS,
+  PROJECT_ICONS,
 } from "./constants.js";
 
 export const PROJECT_MENTION_SCHEME = "project://";
@@ -33,11 +35,13 @@ const AGENT_DICEBEAR_NOTIONISTS_ICON_RE = new RegExp(
   "i",
 );
 const PROJECT_COLOR_VALUES = new Set<string>(PROJECT_COLORS);
+const PROJECT_ICON_VALUES = new Set<string>(PROJECT_ICONS);
 const AGENT_AVATAR_BACKGROUND_VALUES = new Set<string>(AGENT_AVATAR_BACKGROUND_PRESET_IDS);
 
 export interface ParsedProjectMention {
   projectId: string;
   color: string | null;
+  icon?: string | null;
 }
 
 export interface ParsedAgentMention {
@@ -108,6 +112,12 @@ function normalizeProjectMentionColor(input: string | null | undefined): string 
   return null;
 }
 
+function normalizeProjectMentionIcon(input: string | null | undefined): string | null {
+  const normalized = input?.trim().toLowerCase();
+  if (!normalized) return null;
+  return PROJECT_ICON_VALUES.has(normalized as (typeof PROJECT_ICONS)[number]) ? normalized : null;
+}
+
 function encodeMentionParam(value: string): string {
   return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
@@ -118,14 +128,21 @@ function stripMarkdownCode(markdown: string): string {
     .replace(/`[^`\n]*`/g, "");
 }
 
-export function buildProjectMentionHref(projectId: string, color?: string | null): string {
+export function buildProjectMentionHref(projectId: string, color?: string | null, icon?: string | null): string {
   const trimmedProjectId = projectId.trim();
   const normalizedColor = normalizeProjectMentionColor(color ?? null);
-  if (!normalizedColor) {
+  const normalizedIcon = normalizeProjectMentionIcon(icon ?? null);
+  if (!normalizedColor && (!normalizedIcon || normalizedIcon === DEFAULT_PROJECT_ICON)) {
     return `${PROJECT_MENTION_SCHEME}${trimmedProjectId}`;
   }
-  const colorParam = normalizedColor.startsWith("#") ? normalizedColor.slice(1) : normalizedColor;
-  return `${PROJECT_MENTION_SCHEME}${trimmedProjectId}?c=${encodeMentionParam(colorParam)}`;
+  const params = new URLSearchParams();
+  if (normalizedColor) {
+    params.set("c", normalizedColor.startsWith("#") ? normalizedColor.slice(1) : normalizedColor);
+  }
+  if (normalizedIcon && normalizedIcon !== DEFAULT_PROJECT_ICON) {
+    params.set("i", normalizedIcon);
+  }
+  return `${PROJECT_MENTION_SCHEME}${trimmedProjectId}?${params.toString()}`;
 }
 
 export function parseProjectMentionHref(href: string): ParsedProjectMention | null {
@@ -144,10 +161,12 @@ export function parseProjectMentionHref(href: string): ParsedProjectMention | nu
   if (!projectId) return null;
 
   const color = normalizeProjectMentionColor(url.searchParams.get("c") ?? url.searchParams.get("color"));
+  const icon = normalizeProjectMentionIcon(url.searchParams.get("i") ?? url.searchParams.get("icon"));
 
   return {
     projectId,
     color,
+    ...(icon ? { icon } : {}),
   };
 }
 

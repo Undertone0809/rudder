@@ -46,7 +46,6 @@ import { heartbeatsApi } from "@/api/heartbeats";
 import { displayChatTitle } from "@/lib/chat-title";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
-import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
 import { relativeTime } from "@/lib/utils";
 import {
@@ -64,6 +63,7 @@ import { useIssueFollows } from "@/hooks/useIssueFollows";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentActionsMenu } from "@/components/AgentActionsMenu";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
+import { ProjectIcon } from "@/components/ProjectIdentity";
 import { StatusIcon } from "@/components/StatusIcon";
 import {
   DropdownMenu,
@@ -527,7 +527,7 @@ export function ProjectListSection({
   onNewProject,
   scrollRef,
 }: {
-  visibleProjects: Array<{ id: string; name: string; description: string | null; color?: string | null; urlKey?: string | null }>;
+  visibleProjects: Array<{ id: string; name: string; description: string | null; color?: string | null; icon?: string | null; urlKey?: string | null }>;
   activeProjectRef: string | null;
   closeMobileSidebar: () => void;
   onNewProject: () => void;
@@ -581,10 +581,11 @@ export function ProjectListSection({
               )}
             >
               <div className="flex items-center gap-2">
-                <span
-                  data-testid={`workspace-project-color-${project.id}`}
-                  className="h-4 w-4 shrink-0 rounded-[calc(var(--radius-sm)-3px)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_20%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_72%,transparent)]"
-                  style={projectColorBackgroundStyle(project.color)}
+                <ProjectIcon
+                  color={project.color}
+                  icon={project.icon}
+                  size="sm"
+                  testId={`workspace-project-color-${project.id}`}
                 />
                 <span className="truncate text-sm font-medium text-foreground">{project.name}</span>
               </div>

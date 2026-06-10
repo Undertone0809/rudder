@@ -11,7 +11,6 @@ import { organizationSkillsApi } from "../api/organizationSkills";
 import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   buildNewIssueCreateRequest,
   clearIssueAutosave,
@@ -248,4 +247,3 @@ export function defaultProjectWorkspaceIdForProject(project: {
     ?? project.workspaces?.[0]?.id
     ?? "";
 }
-

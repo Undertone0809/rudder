@@ -304,6 +304,28 @@ export const PROJECT_COLORS = [
   "linear-gradient(135deg, #334155 0%, #7c3aed 100%)",
 ] as const;
 
+export const DEFAULT_PROJECT_ICON = "folder" as const;
+
+export const PROJECT_ICONS = [
+  "folder",
+  "book",
+  "plane",
+  "globe",
+  "code",
+  "rocket",
+  "target",
+  "lightbulb",
+  "wrench",
+  "shield",
+  "database",
+  "megaphone",
+  "palette",
+  "users",
+  "calendar",
+  "package",
+] as const;
+export type ProjectIconName = (typeof PROJECT_ICONS)[number];
+
 export const APPROVAL_TYPES = [
   "hire_agent",
   "approve_ceo_strategy",

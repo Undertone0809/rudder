@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PROJECT_COLORS, PROJECT_STATUSES } from "../constants.js";
+import { PROJECT_COLORS, PROJECT_ICONS, PROJECT_STATUSES } from "../constants.js";
 import {
   createProjectInlineResourceSchema,
   projectResourceAttachmentInputSchema,
@@ -56,6 +56,7 @@ const projectColorSchema = z.string().refine(
   (value) => legacyProjectColorSchema.safeParse(value).success || projectColorValues.has(value),
   "Color must be a 6-digit hex value or a supported project gradient",
 );
+const projectIconSchema = z.enum(PROJECT_ICONS);
 
 function validateProjectWorkspace(value: Record<string, unknown>, ctx: z.RefinementCtx) {
   const sourceType = value.sourceType ?? "local_path";
@@ -107,6 +108,7 @@ const projectFields = {
   leadAgentId: z.string().uuid().optional().nullable(),
   targetDate: z.string().optional().nullable(),
   color: projectColorSchema.optional().nullable(),
+  icon: projectIconSchema.optional().nullable(),
   executionWorkspacePolicy: projectExecutionWorkspacePolicySchema.optional().nullable(),
   resourceAttachments: z.array(projectResourceAttachmentInputSchema).optional(),
   newResources: z.array(createProjectInlineResourceSchema).optional(),

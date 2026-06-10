@@ -49,6 +49,16 @@ describe("project-mentions", () => {
     expect(extractProjectMentionIds(`[@Rudder App](${href})`)).toEqual(["project-123"]);
   });
 
+  it("round-trips project mentions with icon metadata", () => {
+    const href = buildProjectMentionHref("project-123", "#336699", "plane");
+    expect(parseProjectMentionHref(href)).toEqual({
+      projectId: "project-123",
+      color: "#336699",
+      icon: "plane",
+    });
+    expect(href).toContain("i=plane");
+  });
+
   it("round-trips agent mentions with icon metadata", () => {
     const href = buildAgentMentionHref("agent-123", "code");
     expect(parseAgentMentionHref(href)).toEqual({

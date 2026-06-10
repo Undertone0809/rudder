@@ -47,6 +47,7 @@ export interface OrganizationPortabilityProjectManifestEntry {
   leadAgentSlug: string | null;
   targetDate: string | null;
   color: string | null;
+  icon: string | null;
   status: string | null;
   executionWorkspacePolicy: Record<string, unknown> | null;
   workspaces: OrganizationPortabilityProjectWorkspaceManifestEntry[];

@@ -3,6 +3,7 @@
 import { act } from "react";
 import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import { DEFAULT_PROJECT_ICON } from "@rudderhq/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NewProjectDialog } from "./NewProjectDialog";
 
@@ -205,7 +206,11 @@ describe("NewProjectDialog", () => {
 
     expect(mockState.createProject).toHaveBeenCalledWith(
       "org-1",
-      expect.objectContaining({ name: "New project" }),
+      expect.objectContaining({
+        name: "New project",
+        color: expect.any(String),
+        icon: DEFAULT_PROJECT_ICON,
+      }),
     );
     expect(mockState.closeNewProject).toHaveBeenCalledTimes(1);
     expect(mockState.navigate).toHaveBeenCalledWith("/issues?projectId=project-created-1");

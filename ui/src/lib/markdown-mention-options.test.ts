@@ -30,6 +30,7 @@ describe("buildMarkdownMentionOptions", () => {
           name: "Rudder dev",
           description: null,
           color: "#3b82f6",
+          icon: "folder",
         },
       ],
       issues: [

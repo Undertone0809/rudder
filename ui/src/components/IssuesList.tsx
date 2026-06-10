@@ -20,6 +20,7 @@ import { EmptyState } from "./EmptyState";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { IssueRow } from "./IssueRow";
 import { PageSkeleton } from "./PageSkeleton";
+import { ProjectIcon } from "./ProjectIdentity";
 import {
   issuePriorityOrder as priorityOrder,
   issueSortOptions,
@@ -248,6 +249,8 @@ interface Agent {
 interface ProjectOption {
   id: string;
   name: string;
+  color?: string | null;
+  icon?: string | null;
 }
 
 interface IssuesListProps {
@@ -845,6 +848,7 @@ export function IssuesList({
                                 checked={viewState.projects.includes(project.id)}
                                 onCheckedChange={() => updateView({ projects: toggleInArray(viewState.projects, project.id) })}
                               />
+                              <ProjectIcon color={project.color} icon={project.icon} size="xs" />
                               <span className="text-sm">{project.name}</span>
                             </label>
                           ))}

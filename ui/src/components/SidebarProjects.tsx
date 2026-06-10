@@ -18,10 +18,10 @@ import { useSidebar } from "../context/SidebarContext";
 import { authApi } from "../api/auth";
 import { projectsApi } from "../api/projects";
 import { queryKeys } from "../lib/queryKeys";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { cn, projectRouteRef } from "../lib/utils";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
+import { ProjectIcon } from "./ProjectIdentity";
 import { SidebarSectionActionButton, SidebarSectionHeader } from "./SidebarSectionHeader";
 import { sidebarItemVariants } from "./sidebarItemStyles";
 import {
@@ -84,10 +84,11 @@ function SortableProjectItem({
             active: activeProjectRef === routeRef || activeProjectRef === project.id,
           })}
         >
-          <span
-            data-testid={`project-sidebar-color-${project.id}`}
-            className="shrink-0 h-3.5 w-3.5 rounded-[calc(var(--radius-sm)-3px)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_22%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_72%,transparent)]"
-            style={projectColorBackgroundStyle(project.color)}
+          <ProjectIcon
+            color={project.color}
+            icon={project.icon}
+            size="xs"
+            testId={`project-sidebar-color-${project.id}`}
           />
           <span className="flex-1 truncate">{project.name}</span>
           {project.pauseReason === "budget" ? <BudgetSidebarMarker title="Project paused by budget" /> : null}

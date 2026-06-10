@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useParams, useNavigate, useLocation, Navigate } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { PROJECT_COLORS, isUuidLike, type BudgetPolicySummary } from "@rudderhq/shared";
+import { isUuidLike, type BudgetPolicySummary } from "@rudderhq/shared";
 import { budgetsApi } from "../api/budgets";
 import { chatsApi } from "../api/chats";
 import { projectsApi } from "../api/projects";
@@ -13,8 +13,8 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { ProjectProperties, type ProjectConfigFieldKey, type ProjectFieldSaveState } from "../components/ProjectProperties";
+import { ProjectIcon, ProjectIdentityPicker } from "../components/ProjectIdentity";
 import { ProjectResourcesPanel } from "../components/ProjectResourcesPanel";
 import { InlineEditor } from "../components/InlineEditor";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
@@ -23,6 +23,7 @@ import { PageTabBar } from "../components/PageTabBar";
 import { projectRouteRef, cn } from "../lib/utils";
 import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { semanticBadgeToneClasses } from "@/components/ui/semanticTones";
 import { MessageSquare } from "lucide-react";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
@@ -50,63 +51,6 @@ function resolveProjectTab(pathname: string, projectId: string): ProjectTab | nu
   if (tab === "budget") return "budget";
   if (tab === "issues") return "issues";
   return null;
-}
-
-/* ── Color picker popover ── */
-
-function ColorPicker({
-  currentColor,
-  onSelect,
-}: {
-  currentColor: string;
-  onSelect: (color: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="shrink-0 h-5 w-5 rounded-md cursor-pointer shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_24%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_76%,transparent)] transition-[box-shadow] hover:ring-2 hover:ring-foreground/20"
-        style={projectColorBackgroundStyle(currentColor)}
-        aria-label="Change project color"
-      />
-      {open && (
-        <div className="absolute top-full left-0 mt-2 p-2 bg-popover border border-border rounded-lg shadow-lg z-50 w-max">
-          <div className="grid grid-cols-5 gap-1.5">
-            {PROJECT_COLORS.map((color) => (
-              <button
-                key={color}
-                onClick={() => {
-                  onSelect(color);
-                  setOpen(false);
-                }}
-                className={`h-6 w-6 rounded-md cursor-pointer transition-[transform,box-shadow] duration-150 hover:scale-110 ${
-                  color === currentColor
-                    ? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
-                    : "hover:ring-2 hover:ring-foreground/30"
-                }`}
-                style={projectColorBackgroundStyle(color)}
-                aria-label={`Select color ${color}`}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }
 
 /* ── Main project page ── */
@@ -441,10 +385,26 @@ export function ProjectDetail() {
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <div className="h-7 flex items-center">
-            <ColorPicker
-              currentColor={project.color ?? "#6366f1"}
-              onSelect={(color) => updateProject.mutate({ color })}
-            />
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] outline-none transition-[box-shadow,transform] hover:scale-[1.03] focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="Change project identity"
+                  title="Change project identity"
+                >
+                  <ProjectIcon color={project.color} icon={project.icon} size="lg" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-auto p-0">
+                <ProjectIdentityPicker
+                  color={project.color}
+                  icon={project.icon}
+                  onColorChange={(color) => updateProject.mutate({ color })}
+                  onIconChange={(icon) => updateProject.mutate({ icon })}
+                />
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="min-w-0 space-y-2">
             <InlineEditor

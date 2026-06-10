@@ -567,6 +567,7 @@ export function createOrganizationPortabilityExportHandlers(context: ExportConte
         leadAgentSlug: project.leadAgentId ? (idToSlug.get(project.leadAgentId) ?? null) : null,
         targetDate: project.targetDate ?? null,
         color: project.color ?? null,
+        icon: project.icon ?? null,
         status: project.status,
         executionWorkspacePolicy: exportPortableProjectExecutionWorkspacePolicy(
           slug,

@@ -760,6 +760,7 @@ export function buildManifestFromPackageFiles(
       leadAgentSlug: asString(extension.leadAgentSlug),
       targetDate: asString(extension.targetDate),
       color: asString(extension.color),
+      icon: asString(extension.icon),
       status: asString(extension.status),
       executionWorkspacePolicy: isPlainRecord(extension.executionWorkspacePolicy)
         ? extension.executionWorkspacePolicy

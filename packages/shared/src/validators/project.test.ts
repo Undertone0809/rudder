@@ -14,7 +14,18 @@ describe("project validators", () => {
     expect(updateProjectSchema.parse({ color: "#336699" }).color).toBe("#336699");
   });
 
+  it("accepts supported project icon tokens", () => {
+    expect(createProjectSchema.parse({
+      name: "Icon project",
+      icon: "plane",
+    }).icon).toBe("plane");
+  });
+
   it("rejects arbitrary CSS color payloads", () => {
     expect(() => updateProjectSchema.parse({ color: "url(https://example.com/color.png)" })).toThrow();
+  });
+
+  it("rejects unsupported project icon payloads", () => {
+    expect(() => updateProjectSchema.parse({ icon: "custom-upload" })).toThrow();
   });
 });

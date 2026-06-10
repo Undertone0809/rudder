@@ -30,7 +30,6 @@ import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { getAutomationRunDisplay } from "../lib/automation-run-display";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { cn, formatDateTimeSeconds, getUiLocale } from "../lib/utils";
@@ -38,6 +37,7 @@ import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
+import { ProjectIcon } from "../components/ProjectIdentity";
 import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
@@ -741,10 +741,7 @@ export function Automations() {
                 renderTriggerValue={(option) =>
                   option && currentProject ? (
                     <>
-                      <span
-                        className="h-3 w-3 shrink-0 rounded-[3px]"
-                        style={projectColorBackgroundStyle(currentProject.color)}
-                      />
+                      <ProjectIcon color={currentProject.color} icon={currentProject.icon} size="xs" />
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
@@ -759,10 +756,7 @@ export function Automations() {
                   const project = projectById.get(option.id);
                   return (
                     <>
-                      <span
-                        className="h-3 w-3 shrink-0 rounded-[3px]"
-                        style={projectColorBackgroundStyle(project?.color)}
-                      />
+                      <ProjectIcon color={project?.color} icon={project?.icon} size="xs" />
                       <span className="truncate">{option.label}</span>
                     </>
                   );
@@ -972,9 +966,10 @@ export function Automations() {
                       <td className="px-3 py-2.5">
                         {automation.projectId ? (
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <span
-                              className="shrink-0 h-3 w-3 rounded-sm"
-                              style={projectColorBackgroundStyle(projectById.get(automation.projectId)?.color)}
+                            <ProjectIcon
+                              color={projectById.get(automation.projectId)?.color}
+                              icon={projectById.get(automation.projectId)?.icon}
+                              size="xs"
                             />
                             <span className="truncate">{projectById.get(automation.projectId)?.name ?? "Unknown"}</span>
                           </div>

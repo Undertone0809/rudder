@@ -4,7 +4,7 @@ import { formatChatAgentLabel } from "./agent-labels";
 import { formatAssigneeUserLabel } from "./assignees";
 
 type MentionAgent = Pick<Agent, "id" | "name" | "role" | "title" | "icon" | "status">;
-type MentionProject = Pick<Project, "id" | "name" | "description" | "color">;
+type MentionProject = Pick<Project, "id" | "name" | "description" | "color" | "icon">;
 type MentionIssue = Pick<
   Issue,
   "id" | "identifier" | "title" | "status" | "projectId" | "assigneeAgentId" | "assigneeUserId"
@@ -65,6 +65,7 @@ export function buildMarkdownMentionOptions(params: {
       searchText: [project.name, project.description].filter(Boolean).join(" "),
       projectId: project.id,
       projectColor: project.color,
+      projectIcon: project.icon,
     });
   }
 
@@ -91,6 +92,7 @@ export function buildMarkdownMentionOptions(params: {
       issueStatus: issue.status,
       issueProjectName: issueProject?.name ?? null,
       issueProjectColor: issueProject?.color ?? null,
+      issueProjectIcon: issueProject?.icon ?? null,
       issueAssigneeName: assigneeName,
       issueAssigneeIcon: assigneeAgent?.icon ?? null,
       issueAssigneeRole: assigneeAgent?.role ?? null,

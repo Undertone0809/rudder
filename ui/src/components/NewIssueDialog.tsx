@@ -13,7 +13,6 @@ import { organizationSkillsApi } from "../api/organizationSkills";
 import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   buildNewIssueCreateRequest,
   clearIssueAutosave,
@@ -82,6 +81,7 @@ import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./Ma
 import { AgentMenuLabel } from "./AssigneeLabel";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
+import { ProjectIcon } from "./ProjectIdentity";
 import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName } from "./PriorityIcon";
 import { priorityOptions } from "../lib/priorities";
 
@@ -1378,10 +1378,7 @@ export function NewIssueDialog() {
                 renderTriggerValue={(option) =>
                   option && currentProject ? (
                     <>
-                      <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={projectColorBackgroundStyle(currentProject.color)}
-                      />
+                      <ProjectIcon color={currentProject.color} icon={currentProject.icon} size="xs" />
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
@@ -1393,10 +1390,7 @@ export function NewIssueDialog() {
                   const project = orderedProjects.find((item) => item.id === option.id);
                   return (
                     <>
-                      <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={projectColorBackgroundStyle(project?.color)}
-                      />
+                      <ProjectIcon color={project?.color} icon={project?.icon} size="xs" />
                       <span className="truncate">{option.label}</span>
                     </>
                   );

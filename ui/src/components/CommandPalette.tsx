@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
+import { ProjectIcon } from "./ProjectIdentity";
 import { agentUrl, projectUrl } from "../lib/utils";
 import type { IssueSearchField } from "@rudderhq/shared";
 
@@ -266,7 +267,7 @@ export function CommandPalette() {
             <CommandGroup heading="Projects">
               {projects.slice(0, 10).map((project) => (
                 <CommandItem key={project.id} onSelect={() => go(projectUrl(project))}>
-                  <Hexagon className="mr-2 h-4 w-4" />
+                  <ProjectIcon color={project.color} icon={project.icon} size="sm" className="mr-2" />
                   {project.name}
                 </CommandItem>
               ))}

@@ -52,6 +52,7 @@ function createProject() {
     leadAgentId: null,
     targetDate: null,
     color: "#60a5fa",
+    icon: "folder",
     pauseReason: null,
     pausedAt: null,
     executionWorkspacePolicy: null,
@@ -93,6 +94,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
   beforeEach(() => {
     mockProjectService.create.mockReset();
     mockProjectService.getById.mockReset();
+    mockProjectService.update.mockReset();
     mockLogActivity.mockReset();
     mockProjectService.resolveByReference.mockResolvedValue({ project: null, ambiguous: false });
     mockResourceCatalogService.createProjectResourceAttachment.mockReset();
@@ -170,6 +172,42 @@ describe("POST /api/orgs/:orgId/projects", () => {
         action: "project.created",
       }),
     );
+  });
+
+  it("passes project icon tokens through create and update payload validation", async () => {
+    mockProjectService.create.mockResolvedValue({ ...createProject(), icon: "plane" });
+    mockProjectService.getById.mockResolvedValue({ ...createProject(), icon: "plane" });
+    mockProjectService.update.mockResolvedValue({ ...createProject(), icon: "book" });
+    const app = createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    });
+
+    const created = await request(app)
+      .post("/api/orgs/organization-1/projects")
+      .send({
+        name: "Travel Ops",
+        icon: "plane",
+      });
+
+    expect(created.status).toBe(201);
+    expect(mockProjectService.create).toHaveBeenCalledWith("organization-1", {
+      name: "Travel Ops",
+      icon: "plane",
+      status: "backlog",
+    });
+
+    const updated = await request(app)
+      .patch("/api/projects/project-1")
+      .send({
+        icon: "book",
+      });
+
+    expect(updated.status).toBe(200);
+    expect(mockProjectService.update).toHaveBeenCalledWith("project-1", {
+      icon: "book",
+    });
   });
 
   it("rejects agent project creation outside the authenticated organization", async () => {

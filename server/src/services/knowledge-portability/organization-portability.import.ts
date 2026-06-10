@@ -450,6 +450,7 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
           leadAgentId: projectLeadAgentId,
           targetDate: manifestProject.targetDate,
           color: manifestProject.color,
+          icon: manifestProject.icon,
           status: manifestProject.status && PROJECT_STATUSES.includes(manifestProject.status as any)
             ? manifestProject.status as typeof PROJECT_STATUSES[number]
             : "backlog",

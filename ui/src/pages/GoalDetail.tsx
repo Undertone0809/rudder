@@ -16,6 +16,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { GoalProperties } from "../components/GoalProperties";
 import { GoalTree } from "../components/GoalTree";
 import { StatusBadge } from "../components/StatusBadge";
+import { ProjectIcon } from "../components/ProjectIdentity";
 import { InlineEditor } from "../components/InlineEditor";
 import { EntityRow } from "../components/EntityRow";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -72,6 +73,7 @@ function WorkSection({
                 title={project.name}
                 subtitle={project.description ?? undefined}
                 to={projectUrl(project)}
+                leading={<ProjectIcon color={project.color} icon={project.icon} size="md" />}
                 trailing={<StatusBadge status={project.status} />}
               />
             ))}

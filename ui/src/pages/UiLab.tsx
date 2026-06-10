@@ -524,6 +524,7 @@ const fixtureProject: Project = {
   leadAgentId: fixtureAgent.id,
   targetDate: "2026-06-01",
   color: "#0ea5e9",
+  icon: "folder",
   pauseReason: null,
   pausedAt: null,
   executionWorkspacePolicy: null,

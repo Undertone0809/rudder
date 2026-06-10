@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { projects, projectGoals, goals, agents, projectWorkspaces, workspaceRuntimeServices } from "@rudderhq/db";
 import {
+  DEFAULT_PROJECT_ICON,
   PROJECT_COLORS,
   deriveProjectUrlKey,
   isUuidLike,
@@ -102,6 +103,7 @@ async function attachGoals(db: Db, rows: ProjectRow[]): Promise<ProjectWithGoals
     const g = map.get(r.id) ?? [];
     return {
       ...r,
+      icon: r.icon ?? DEFAULT_PROJECT_ICON,
       urlKey: deriveProjectUrlKey(r.name, r.id),
       goalIds: g.map((x) => x.id),
       goals: g,
@@ -516,6 +518,7 @@ export function projectService(db: Db) {
         const nextColor = PROJECT_COLORS.find((c) => !usedColors.has(c)) ?? PROJECT_COLORS[existing.length % PROJECT_COLORS.length];
         projectData.color = nextColor;
       }
+      projectData.icon = projectData.icon ?? DEFAULT_PROJECT_ICON;
 
       const existingProjects = await db
         .select({ id: projects.id, name: projects.name })
@@ -663,7 +666,7 @@ export function projectService(db: Db) {
         .then((rows) => {
           const row = rows[0] ?? null;
           if (!row) return null;
-          return { ...row, urlKey: deriveProjectUrlKey(row.name, row.id) };
+          return { ...row, icon: row.icon ?? DEFAULT_PROJECT_ICON, urlKey: deriveProjectUrlKey(row.name, row.id) };
         }),
 
     listWorkspaces: async (projectId: string): Promise<ProjectWorkspace[]> => {

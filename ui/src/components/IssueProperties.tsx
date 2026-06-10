@@ -12,7 +12,6 @@ import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { agentTitleBadgeLabel, formatChatAgentLabel } from "../lib/agent-labels";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -23,6 +22,7 @@ import { PriorityIcon } from "./PriorityIcon";
 import { AgentMenuLabel, AssigneeLabel, AssigneeSelfActionLabel } from "./AssigneeLabel";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
+import { ProjectIcon } from "./ProjectIdentity";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { formatDate, formatDateTime, cn, issueUrl, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
@@ -632,9 +632,10 @@ export function IssueProperties({
 
   const projectTrigger = issue.projectId ? (
     <>
-      <span
-        className="shrink-0 h-3 w-3 rounded-sm"
-        style={projectColorBackgroundStyle(orderedProjects.find((p) => p.id === issue.projectId)?.color)}
+      <ProjectIcon
+        color={orderedProjects.find((p) => p.id === issue.projectId)?.color}
+        icon={orderedProjects.find((p) => p.id === issue.projectId)?.icon}
+        size="xs"
       />
       <span className="text-sm truncate">{projectName(issue.projectId)}</span>
       <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden="true" />
@@ -695,10 +696,7 @@ export function IssueProperties({
               setProjectOpen(false);
             }}
           >
-            <span
-              className="shrink-0 h-3 w-3 rounded-sm"
-              style={projectColorBackgroundStyle(p.color)}
-            />
+            <ProjectIcon color={p.color} icon={p.icon} size="xs" />
             {p.name}
           </button>
         ))}

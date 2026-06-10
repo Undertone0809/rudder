@@ -74,7 +74,7 @@ vi.mock("../lib/mention-chips", () => ({
     const [scheme, rest] = href.split("://");
     if (!rest) return null;
     if (scheme === "agent") return { kind: "agent", agentId: rest.split("?")[0], icon: null };
-    if (scheme === "project") return { kind: "project", projectId: rest.split("?")[0], color: null };
+    if (scheme === "project") return { kind: "project", projectId: rest.split("?")[0], color: null, icon: null };
     if (scheme === "chat") return { kind: "chat", conversationId: rest.split("?")[0] };
     if (scheme === "issue") {
       const [issueId, query = ""] = rest.split("?");

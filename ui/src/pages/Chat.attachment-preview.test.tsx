@@ -220,6 +220,7 @@ function project(overrides: Partial<Project> = {}): Project {
     leadAgentId: null,
     targetDate: null,
     color: "#82b366",
+    icon: "folder",
     pauseReason: null,
     pausedAt: null,
     executionWorkspacePolicy: null,

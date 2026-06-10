@@ -40,6 +40,7 @@ import { useNavigate } from "@/lib/router";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
 import { AgentIcon } from "./AgentIconPicker";
+import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
 import {
   $createParagraphNode,
@@ -63,7 +64,6 @@ import {
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
 import { $createMentionTokenNode, mentionTokenPlugin } from "../lib/mention-token-node";
-import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   applySkillTokenDecoration,
   clearSkillTokenDecoration,
@@ -105,11 +105,13 @@ export interface MentionOption {
   agentRole?: AgentRole | null;
   projectId?: string;
   projectColor?: string | null;
+  projectIcon?: string | null;
   issueId?: string;
   issueIdentifier?: string | null;
   issueStatus?: string | null;
   issueProjectName?: string | null;
   issueProjectColor?: string | null;
+  issueProjectIcon?: string | null;
   issueAssigneeName?: string | null;
   issueAssigneeIcon?: string | null;
   issueAssigneeRole?: AgentRole | null;
@@ -913,7 +915,7 @@ function mentionTokenDetails(option: MentionOption, agentMentionIntent?: "refere
   }
   if (option.kind === "project" && option.projectId) {
     return {
-      href: buildProjectMentionHref(option.projectId, option.projectColor ?? null),
+      href: buildProjectMentionHref(option.projectId, option.projectColor ?? null, option.projectIcon ?? null),
       isSkill: false,
       label: option.name,
     };
@@ -1548,6 +1550,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
           applyMentionChipDecoration(link, {
             ...parsed,
             color: parsed.color ?? option?.projectColor ?? null,
+            icon: parsed.icon ?? option?.projectIcon ?? null,
           });
           continue;
         }
@@ -1757,7 +1760,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
             : (() => {
                 const visibleLabel = mentionVisibleLabel(option);
                 const mentionHref = option.kind === "project" && option.projectId
-                  ? buildProjectMentionHref(option.projectId, option.projectColor ?? null)
+                  ? buildProjectMentionHref(option.projectId, option.projectColor ?? null, option.projectIcon ?? null)
                   : option.kind === "issue" && option.issueId
                     ? buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null)
                     : option.kind === "chat" && option.chatConversationId
@@ -2206,10 +2209,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                           ) : option.kind === "skill" ? (
                             <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
                           ) : option.kind === "project" && option.projectId ? (
-                            <span
-                              className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full border border-border/50"
-                              style={projectColorBackgroundStyle(option.projectColor)}
-                            />
+                        <ProjectIcon color={option.projectColor} icon={option.projectIcon} size="xs" />
                           ) : option.kind === "issue" && option.issueId ? (
                             <span
                               className="inline-flex shrink-0"
