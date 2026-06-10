@@ -2006,7 +2006,7 @@ button[draggable="false"] {
   position: relative;
   isolation: isolate;
   --rudder-doc-editor-tab-strip-height: 53px;
-  --rudder-doc-editor-tab-active-height: 46px;
+  --rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px);
   --rudder-doc-editor-tab-inactive-height: 40px;
   --rudder-doc-editor-tab-radius: var(--desktop-workspace-radius);
   --rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2);
