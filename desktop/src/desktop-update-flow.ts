@@ -37,6 +37,14 @@ export function createDesktopUpdateFlow(context: {
   getBootState: () => any;
   listActiveRunsForQuit: () => Promise<ActiveRunSummary>;
   formatQuitRunDetail: (summary: ActiveRunSummary) => string;
+  promptForDeferredUpdate?: (prompt: {
+    title: string;
+    message: string;
+    detail: string;
+    totalRuns: number;
+    confirmLabel: string;
+    cancelLabel: string;
+  }) => Promise<"wait" | "cancel" | null | undefined>;
   showMainWindow: () => void;
 }) {
   let latestDesktopUpdateProgress: DesktopUpdateProgressEvent | null = null;
@@ -234,6 +242,28 @@ export function createDesktopUpdateFlow(context: {
 
   async function promptForDeferredUpdate(summary: ActiveRunSummary): Promise<"wait" | "cancel"> {
     const detail = context.formatQuitRunDetail(summary);
+    const message = summary.totalRuns === 1
+      ? "There is 1 active agent run."
+      : `There are ${summary.totalRuns} active agent runs.`;
+    const prompt = {
+      title: context.appName,
+      message,
+      detail:
+        "Rudder can download the installer now, keep active work running, then apply the update after the runs finish. "
+        + "The desktop app may close and reopen automatically when it is safe to replace.\n\n"
+        + detail,
+      totalRuns: summary.totalRuns,
+      confirmLabel: "Download and Update When Idle",
+      cancelLabel: "Cancel",
+    };
+    const rendererDecision = await context.promptForDeferredUpdate?.(prompt).catch((error) => {
+      console.warn("[rudder-desktop] renderer deferred update prompt failed", error);
+      return null;
+    });
+    if (rendererDecision === "wait" || rendererDecision === "cancel") {
+      return rendererDecision;
+    }
+
     const response = await showMessageBox({
       type: "warning",
       title: context.appName,
@@ -241,13 +271,8 @@ export function createDesktopUpdateFlow(context: {
       defaultId: 0,
       cancelId: 1,
       noLink: true,
-      message: summary.totalRuns === 1
-        ? "There is 1 active agent run."
-        : `There are ${summary.totalRuns} active agent runs.`,
-      detail:
-        "Rudder can download the installer now, keep active work running, then apply the update after the runs finish. "
-        + "The desktop app may close and reopen automatically when it is safe to replace.\n\n"
-        + detail,
+      message,
+      detail: prompt.detail,
     });
 
     return response.response === 0 ? "wait" : "cancel";

@@ -85,6 +85,18 @@ export type DesktopUpdateApplyResult =
   | { status: "unavailable"; message: string }
   | { status: "failed"; message: string };
 
+export type DesktopDeferredUpdatePrompt = {
+  promptId: string;
+  title: string;
+  message: string;
+  detail: string;
+  totalRuns: number;
+  confirmLabel: string;
+  cancelLabel: string;
+};
+
+export type DesktopDeferredUpdatePromptDecision = "wait" | "cancel";
+
 export type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: string;
@@ -147,6 +159,9 @@ export type DesktopShellApi = {
   applyUpdate?(updateId: string): Promise<DesktopUpdateApplyResult>;
   getUpdateProgress?(): Promise<DesktopUpdateProgressEvent | null>;
   onUpdateProgress?(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
+  setDeferredUpdatePromptReady?(ready: boolean): Promise<void>;
+  onDeferredUpdatePrompt?(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
+  respondDeferredUpdatePrompt?(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;
   sendFeedback(): Promise<void>;
   openExternal(target: string): Promise<void>;

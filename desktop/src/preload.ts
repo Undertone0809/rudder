@@ -81,6 +81,18 @@ type DesktopUpdateApplyResult =
   | { status: "unavailable"; message: string }
   | { status: "failed"; message: string };
 
+type DesktopDeferredUpdatePrompt = {
+  promptId: string;
+  title: string;
+  message: string;
+  detail: string;
+  totalRuns: number;
+  confirmLabel: string;
+  cancelLabel: string;
+};
+
+type DesktopDeferredUpdatePromptDecision = "wait" | "cancel";
+
 type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: NodeJS.Platform;
@@ -190,6 +202,19 @@ contextBridge.exposeInMainWorld("desktopShell", {
       ipcRenderer.removeListener("desktop:update-progress", wrapped);
     };
   },
+  setDeferredUpdatePromptReady: (ready: boolean) =>
+    ipcRenderer.invoke("desktop:set-deferred-update-prompt-ready", Boolean(ready)) as Promise<void>,
+  onDeferredUpdatePrompt: (listener: (prompt: DesktopDeferredUpdatePrompt) => void) => {
+    const wrapped = (_event: IpcRendererEvent, payload: DesktopDeferredUpdatePrompt) => {
+      listener(payload);
+    };
+    ipcRenderer.on("desktop:deferred-update-prompt", wrapped);
+    return () => {
+      ipcRenderer.removeListener("desktop:deferred-update-prompt", wrapped);
+    };
+  },
+  respondDeferredUpdatePrompt: (promptId: string, decision: DesktopDeferredUpdatePromptDecision) =>
+    ipcRenderer.invoke("desktop:respond-deferred-update-prompt", { promptId, decision }) as Promise<void>,
   getSystemPermissions: () =>
     ipcRenderer.invoke("desktop:get-system-permissions") as Promise<DesktopSystemPermissions>,
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
@@ -227,6 +252,9 @@ declare global {
       applyUpdate(updateId: string): Promise<DesktopUpdateApplyResult>;
       getUpdateProgress(): Promise<DesktopUpdateProgressEvent | null>;
       onUpdateProgress(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
+      setDeferredUpdatePromptReady(ready: boolean): Promise<void>;
+      onDeferredUpdatePrompt(listener: (prompt: DesktopDeferredUpdatePrompt) => void): () => void;
+      respondDeferredUpdatePrompt(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
       getSystemPermissions(): Promise<DesktopSystemPermissions>;
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;

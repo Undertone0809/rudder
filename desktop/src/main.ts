@@ -161,6 +161,18 @@ type DesktopPathPickResult = {
   path: string | null;
 };
 
+type DeferredUpdatePromptDecision = "wait" | "cancel";
+
+type DesktopDeferredUpdatePrompt = {
+  promptId: string;
+  title: string;
+  message: string;
+  detail: string;
+  totalRuns: number;
+  confirmLabel: string;
+  cancelLabel: string;
+};
+
 type DesktopIdeTarget = {
   id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
   label: string;
@@ -366,6 +378,33 @@ let startInFlight: Promise<void> | null = null;
 let pendingDesktopNavigationPath: string | null = null;
 let lastKnownAppUrl: string | null = null;
 let rendererRecoveryInFlight = false;
+let deferredUpdatePromptRendererReady = false;
+const pendingDeferredUpdatePrompts = new Map<string, {
+  resolve: (decision: DeferredUpdatePromptDecision | null) => void;
+  timeout: NodeJS.Timeout;
+}>();
+
+function promptRendererForDeferredUpdate(
+  payload: Omit<DesktopDeferredUpdatePrompt, "promptId">,
+): Promise<DeferredUpdatePromptDecision | null> {
+  showMainWindow();
+  const window = mainWindow;
+  if (!deferredUpdatePromptRendererReady || !window || window.isDestroyed() || window.webContents.isDestroyed()) {
+    return Promise.resolve(null);
+  }
+
+  const promptId = randomUUID();
+  const prompt: DesktopDeferredUpdatePrompt = { promptId, ...payload };
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingDeferredUpdatePrompts.delete(promptId);
+      resolve(null);
+    }, 30 * 60 * 1000);
+    pendingDeferredUpdatePrompts.set(promptId, { resolve, timeout });
+    window.webContents.send("desktop:deferred-update-prompt", prompt);
+  });
+}
+
 const desktopQuitFlow = createDesktopQuitFlow({
   appName: APP_NAME,
   getMainWindow: () => mainWindow,
@@ -391,6 +430,7 @@ const desktopUpdateFlow = createDesktopUpdateFlow({
   getBootState: () => currentBootState,
   listActiveRunsForQuit,
   formatQuitRunDetail,
+  promptForDeferredUpdate: promptRendererForDeferredUpdate,
   showMainWindow,
 });
 const {
@@ -1272,6 +1312,23 @@ function registerIpc(): void {
   ipcMain.handle("desktop:install-update", async (_event, version: string) => installUpdate(version));
   ipcMain.handle("desktop:apply-update", async (_event, updateId: string) => applyUpdate(updateId));
   ipcMain.handle("desktop:get-update-progress", async () => getDesktopUpdateProgress());
+  ipcMain.handle("desktop:set-deferred-update-prompt-ready", async (event, ready: boolean) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    deferredUpdatePromptRendererReady = Boolean(ready);
+  });
+  ipcMain.handle("desktop:respond-deferred-update-prompt", async (event, payload: {
+    promptId?: string;
+    decision?: DeferredUpdatePromptDecision;
+  }) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    const promptId = payload.promptId?.trim();
+    if (!promptId) return;
+    const pending = pendingDeferredUpdatePrompts.get(promptId);
+    if (!pending) return;
+    pendingDeferredUpdatePrompts.delete(promptId);
+    clearTimeout(pending.timeout);
+    pending.resolve(payload.decision === "wait" ? "wait" : "cancel");
+  });
   ipcMain.handle("desktop:send-feedback", async () => {
     await shell.openExternal(createFeedbackMailtoUrl());
   });

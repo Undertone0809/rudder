@@ -6,6 +6,7 @@ import { DesktopSettingsModalFrame, Layout } from "./components/Layout";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { ProductTourOverlay } from "./components/ProductTourOverlay";
 import { ToastViewport } from "./components/ToastViewport";
+import { DesktopUpdatePromptBridge } from "./components/DesktopUpdatePromptBridge";
 import { DesktopUpdateStatusCard } from "./components/DesktopUpdateStatusCard";
 import { accessApi } from "./api/access";
 import { agentsApi } from "./api/agents";
@@ -614,6 +615,7 @@ export function App() {
       ) : null}
       <OnboardingWizard />
       <ProductTourOverlay />
+      <DesktopUpdatePromptBridge />
       <ToastViewport />
       <DesktopUpdateStatusCard />
     </>
