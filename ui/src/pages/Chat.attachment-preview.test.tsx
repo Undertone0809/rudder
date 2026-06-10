@@ -33,6 +33,8 @@ const mockState = vi.hoisted(() => ({
   pushToast: vi.fn(),
   queryKeys: [] as unknown[][],
   sendMessageStream: vi.fn(),
+  setQueriesData: vi.fn(),
+  setQueryData: vi.fn(),
   setBreadcrumbs: vi.fn(),
   streamDrafts: {} as Record<string, ChatStreamDraft>,
 }));
@@ -85,8 +87,8 @@ vi.mock("@tanstack/react-query", () => ({
   }),
   useQueryClient: () => ({
     invalidateQueries: mockState.invalidateQueries,
-    setQueryData: vi.fn(),
-    setQueriesData: vi.fn(),
+    setQueryData: mockState.setQueryData,
+    setQueriesData: mockState.setQueriesData,
   }),
 }));
 
@@ -519,6 +521,8 @@ beforeEach(() => {
   mockState.pushToast.mockReset();
   mockState.queryKeys = [];
   mockState.sendMessageStream.mockReset();
+  mockState.setQueriesData.mockReset();
+  mockState.setQueryData.mockReset();
   mockState.sendMessageStream.mockImplementation(async (chatId: string, body: string, options: {
     onEvent: (event: unknown) => void | Promise<void>;
   }) => {
@@ -582,6 +586,72 @@ describe("Chat mention sources", () => {
       .map((queryKey) => queryKey[2]);
     expect(chatListStatuses).toContain("active");
     expect(chatListStatuses).not.toContain("all");
+  });
+});
+
+describe("Chat unread state", () => {
+  it("optimistically clears the selected Messenger chat before mark-read finishes", () => {
+    const unreadChat = chat({
+      id: "chat-1",
+      title: "Unread chat",
+      isUnread: true,
+      unreadCount: 2,
+      needsAttention: true,
+      lastMessageAt: new Date("2026-05-12T09:05:00.000Z"),
+    });
+    mockState.conversations = [unreadChat];
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-message-1",
+          role: "assistant",
+          kind: "message",
+          body: "Unread assistant reply",
+          createdAt: new Date("2026-05-12T09:05:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:05:00.000Z"),
+        }),
+      ],
+    };
+
+    renderChat();
+
+    expect(mockState.markRead).toHaveBeenCalledWith("chat-1");
+
+    const detailUpdater = mockState.setQueryData.mock.calls.find((call) =>
+      Array.isArray(call[0]) && call[0][0] === "chats" && call[0][1] === "detail" && call[0][2] === "chat-1",
+    )?.[1] as ((current: ChatConversation) => ChatConversation) | undefined;
+    expect(detailUpdater?.(unreadChat)).toMatchObject({
+      isUnread: false,
+      unreadCount: 0,
+      needsAttention: false,
+    });
+
+    const threadPageUpdater = mockState.setQueriesData.mock.calls.find((call) =>
+      Array.isArray(call[0]?.queryKey) && call[0].queryKey[0] === "messenger" && call[0].queryKey[2] === "threads",
+    )?.[1] as ((current: {
+      pages: Array<{ items: Array<{ threadKey: string; unreadCount: number; needsAttention: boolean }>; pageInfo: Record<string, unknown> }>;
+      pageParams: unknown[];
+    }) => {
+      pages: Array<{ items: Array<{ threadKey: string; unreadCount: number; needsAttention: boolean }> }>;
+    }) | undefined;
+    expect(threadPageUpdater?.({
+      pages: [{
+        items: [{ threadKey: "chat:chat-1", unreadCount: 2, needsAttention: true }],
+        pageInfo: { limit: 40, nextCursor: null, hasMore: false },
+      }],
+      pageParams: [null],
+    }).pages[0]?.items[0]).toMatchObject({
+      unreadCount: 0,
+      needsAttention: false,
+    });
+
+    const badgeUpdater = mockState.setQueryData.mock.calls.find((call) =>
+      Array.isArray(call[0]) && call[0][0] === "sidebar-badges" && call[0][1] === "org-1",
+    )?.[1] as ((current: { inbox: number; chatAttention: number }) => { inbox: number; chatAttention: number }) | undefined;
+    expect(badgeUpdater?.({ inbox: 3, chatAttention: 2 })).toMatchObject({
+      inbox: 2,
+      chatAttention: 1,
+    });
   });
 });
 

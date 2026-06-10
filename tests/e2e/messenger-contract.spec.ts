@@ -57,7 +57,7 @@ function threadTestId(threadKey: string) {
 }
 
 function chatUnreadBadgeTestId(chatId: string) {
-  return `${`chat:${chatId}`.replace(/[^a-zA-Z0-9_-]/g, "-")}-unread-badge`;
+  return `${threadTestId(`chat:${chatId}`)}-agent-avatar-unread-badge`;
 }
 
 function threadUnreadBadgeTestId(threadKey: string) {

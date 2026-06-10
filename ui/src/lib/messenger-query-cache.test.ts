@@ -1,10 +1,10 @@
 // @vitest-environment node
 
 import { QueryClient } from "@tanstack/react-query";
-import type { MessengerThreadSummary } from "@rudderhq/shared";
+import type { ChatConversation, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import { queryKeys } from "@/lib/queryKeys";
-import { markMessengerThreadReadInCache, upsertMessengerThreadSummaryQueries } from "./messenger-query-cache";
+import { markMessengerChatReadInCache, markMessengerThreadReadInCache, upsertMessengerThreadSummaryQueries } from "./messenger-query-cache";
 
 function thread(overrides: Partial<MessengerThreadSummary> & Pick<MessengerThreadSummary, "threadKey" | "title">): MessengerThreadSummary {
   return {
@@ -111,6 +111,10 @@ describe("markMessengerThreadReadInCache", () => {
     queryClient.setQueryData(queryKeys.messenger.threads(orgId), [unreadIssue, older]);
     queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, false), pageData);
     queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, true), pageData);
+    queryClient.setQueryData(queryKeys.messenger.threadPreview(orgId), {
+      items: [unreadIssue, older],
+      pageInfo: { limit: 10, nextCursor: null, hasMore: false },
+    });
 
     markMessengerThreadReadInCache(queryClient, orgId, "issue:issue-1", "2026-05-03T08:00:00.000Z");
 
@@ -131,5 +135,87 @@ describe("markMessengerThreadReadInCache", () => {
       });
       expect(pageThread?.lastReadAt?.toISOString()).toBe("2026-05-03T08:00:00.000Z");
     }
+    expect(queryClient.getQueryData<{
+      items: MessengerThreadSummary[];
+    }>(queryKeys.messenger.threadPreview(orgId))?.items[0]).toMatchObject({
+      threadKey: "issue:issue-1",
+      unreadCount: 0,
+      needsAttention: false,
+    });
+  });
+
+  it("optimistically clears a chat conversation and decrements the cached rail badge once", () => {
+    const queryClient = new QueryClient();
+    const orgId = "org-1";
+    const unreadChat = thread({
+      threadKey: "chat:chat-1",
+      title: "Unread chat",
+      unreadCount: 3,
+      needsAttention: true,
+      latestActivityAt: new Date("2026-05-03T08:00:00.000Z"),
+    });
+    const conversation: ChatConversation = {
+      id: "chat-1",
+      orgId,
+      status: "active",
+      title: "Unread chat",
+      summary: null,
+      latestReplyPreview: null,
+      latestUserMessagePreview: null,
+      userMessageCount: 0,
+      preferredAgentId: null,
+      routedAgentId: null,
+      primaryIssueId: null,
+      primaryIssue: null,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: null,
+      lastMessageAt: new Date("2026-05-03T08:00:00.000Z"),
+      lastReadAt: null,
+      isPinned: false,
+      isUnread: true,
+      unreadCount: 3,
+      needsAttention: true,
+      resolvedAt: null,
+      contextLinks: [],
+      chatRuntime: { sourceType: "unconfigured", sourceLabel: "", runtimeAgentId: null, agentRuntimeType: null, model: null, available: false, error: null },
+      createdAt: new Date("2026-05-01T08:00:00.000Z"),
+      updatedAt: new Date("2026-05-03T08:00:00.000Z"),
+    };
+    const badges: SidebarBadges = {
+      inbox: 4,
+      approvals: 1,
+      failedRuns: 0,
+      joinRequests: 0,
+      unreadTouchedIssues: 1,
+      chatAttention: 2,
+      alerts: 0,
+    };
+
+    queryClient.setQueryData(queryKeys.chats.detail("chat-1"), conversation);
+    queryClient.setQueryData(queryKeys.chats.list(orgId, "active"), [conversation]);
+    queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, true), {
+      pages: [{ items: [unreadChat], pageInfo: { limit: 40, nextCursor: null, hasMore: false } }],
+      pageParams: [null],
+    });
+    queryClient.setQueryData(queryKeys.sidebarBadges(orgId), badges);
+
+    markMessengerChatReadInCache(queryClient, orgId, conversation, { decrementSidebarBadge: true });
+
+    expect(queryClient.getQueryData<typeof conversation>(queryKeys.chats.detail("chat-1"))).toMatchObject({
+      isUnread: false,
+      unreadCount: 0,
+      needsAttention: false,
+    });
+    expect(queryClient.getQueryData<SidebarBadges>(queryKeys.sidebarBadges(orgId))).toMatchObject({
+      inbox: 3,
+      chatAttention: 1,
+    });
+    expect(queryClient.getQueryData<{
+      pages: Array<{ items: MessengerThreadSummary[] }>;
+    }>(queryKeys.messenger.threadPages(orgId, true))?.pages[0]?.items[0]).toMatchObject({
+      unreadCount: 0,
+      needsAttention: false,
+    });
   });
 });

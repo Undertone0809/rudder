@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { MessengerThreadSummary } from "@rudderhq/shared";
+import type { ChatConversation, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
 import { queryKeys } from "@/lib/queryKeys";
 
 interface MessengerThreadPageData {
@@ -8,6 +8,11 @@ interface MessengerThreadPageData {
     pageInfo: { limit?: number; nextCursor?: string | null; hasMore?: boolean };
   }>;
   pageParams: unknown[];
+}
+
+interface MessengerThreadPreviewData {
+  items: MessengerThreadSummary[];
+  pageInfo: { limit?: number; nextCursor?: string | null; hasMore?: boolean };
 }
 
 function encodeMessengerThreadSummaryCursor(summary: MessengerThreadSummary) {
@@ -92,6 +97,38 @@ function markThreadPageDataRead(
   };
 }
 
+function markThreadPreviewDataRead(
+  current: MessengerThreadPreviewData | undefined,
+  threadKey: string,
+  readAt: Date,
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    items: current.items.map((item) => markThreadRead(item, threadKey, readAt)),
+  };
+}
+
+function markChatConversationRead(conversation: ChatConversation, readAt: Date): ChatConversation {
+  return {
+    ...conversation,
+    lastReadAt: readAt,
+    isUnread: false,
+    unreadCount: 0,
+    needsAttention: false,
+  };
+}
+
+function decrementUnreadChatSidebarBadge(current: SidebarBadges | undefined) {
+  if (!current) return current;
+  const chatAttention = Math.max(0, current.chatAttention - 1);
+  return {
+    ...current,
+    inbox: Math.max(0, current.inbox - (current.chatAttention > chatAttention ? 1 : 0)),
+    chatAttention,
+  };
+}
+
 export function invalidateMessengerThreadSummaryQueries(queryClient: QueryClient, orgId: string) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
@@ -114,6 +151,42 @@ export function markMessengerThreadReadInCache(
     { queryKey: queryKeys.messenger.threadPages(orgId) },
     (current) => markThreadPageDataRead(current, threadKey, nextReadAt),
   );
+  queryClient.setQueryData<MessengerThreadPreviewData>(
+    queryKeys.messenger.threadPreview(orgId),
+    (current) => markThreadPreviewDataRead(current, threadKey, nextReadAt),
+  );
+}
+
+export function markMessengerChatReadInCache(
+  queryClient: QueryClient,
+  orgId: string,
+  conversation: ChatConversation,
+  options: { decrementSidebarBadge?: boolean; readAt?: ChatConversation["lastReadAt"] | string | null } = {},
+) {
+  const nextReadAt = readAtDate(options.readAt ?? conversation.lastMessageAt ?? conversation.updatedAt);
+  const nextConversation = markChatConversationRead(conversation, nextReadAt);
+
+  queryClient.setQueryData<ChatConversation>(
+    queryKeys.chats.detail(conversation.id),
+    (current) => current ? markChatConversationRead(current, nextReadAt) : nextConversation,
+  );
+  for (const status of ["active", "all"] as const) {
+    queryClient.setQueryData<ChatConversation[]>(
+      queryKeys.chats.list(orgId, status),
+      (current) => current?.map((item) =>
+        item.id === conversation.id ? markChatConversationRead(item, nextReadAt) : item,
+      ) ?? current,
+    );
+  }
+
+  markMessengerThreadReadInCache(queryClient, orgId, `chat:${conversation.id}`, nextReadAt);
+
+  if (options.decrementSidebarBadge) {
+    queryClient.setQueryData<SidebarBadges>(
+      queryKeys.sidebarBadges(orgId),
+      decrementUnreadChatSidebarBadge,
+    );
+  }
 }
 
 export function upsertMessengerThreadSummaryQueries(

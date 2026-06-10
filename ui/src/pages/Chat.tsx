@@ -54,7 +54,7 @@ import {
   isSelectableChatAgentId,
   rememberChatAgentId,
   resolveDefaultChatAgentId,
-  selectableChatAgents, } from "@/lib/chat-agent-selection"; import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state"; import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options"; import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options"; import { parseMentionChipHref } from "@/lib/mention-chips"; import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom"; import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title"; import { formatChatAgentLabel } from "@/lib/agent-labels"; import { rememberMessengerPath } from "@/lib/messenger-memory"; import { invalidateMessengerThreadSummaryQueries, upsertMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache"; import { projectColorCssVars } from "@/lib/project-colors"; import { queryKeys } from "@/lib/queryKeys";
+  selectableChatAgents, } from "@/lib/chat-agent-selection"; import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state"; import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options"; import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options"; import { parseMentionChipHref } from "@/lib/mention-chips"; import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom"; import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title"; import { formatChatAgentLabel } from "@/lib/agent-labels"; import { rememberMessengerPath } from "@/lib/messenger-memory"; import { invalidateMessengerThreadSummaryQueries, markMessengerChatReadInCache, upsertMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache"; import { projectColorCssVars } from "@/lib/project-colors"; import { queryKeys } from "@/lib/queryKeys";
 import {
   formatChatProcessDuration,
   lastTranscriptAtMs,
@@ -377,7 +377,20 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         body: error instanceof Error ? error.message : "Try again.",
         tone: "error", }); }, }); const markConversationReadMutation = useMutation({
     mutationFn: (chatId: string) => chatsApi.markRead(chatId),
-    onSuccess: async (_result, chatId) => { await refreshChat(chatId); }, }); const convertToIssueMutation = useMutation({
+    onSuccess: async (_result, chatId) => {
+      await refreshChat(chatId);
+      if (selectedOrganizationId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedOrganizationId) });
+      }
+    },
+    onError: async () => {
+      if (!selectedOrganizationId) return;
+      await Promise.all([
+        invalidateMessengerThreadSummaryQueries(queryClient, selectedOrganizationId),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPreview(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedOrganizationId) }),
+      ]);
+    }, }); const convertToIssueMutation = useMutation({
     mutationFn: ({ chatId, message, proposalOverride }: { chatId: string; message: ChatMessage; proposalOverride?: Record<string, unknown> }) =>
       chatsApi.convertToIssue(chatId, {
         messageId: message.id,
@@ -560,14 +573,25 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
     hasMessages: rawMessages.length > 0,
     hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeEditCutoffMs === null ? displayedMessages : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs); const visibleMessages = activeStream ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const pendingAskUserMessage = useMemo(
-    () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null);
+    () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
   useEffect(() => { if (!pendingAskUserRequest) return; closeComposerContextMenus(); }, [closeComposerContextMenus, pendingAskUserRequest]);
   useEffect(() => { const chatId = selectedConversation?.id ?? null; if (!chatId || showMessagesLoading) return; if (initialScrolledConversationRef.current === chatId) return; initialScrolledConversationRef.current = chatId; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; scrollChatMessagesToBottom(scrollElement); }); return () => cancelAnimationFrame(frame); }, [selectedConversation?.id, showMessagesLoading, visibleMessages.length]);
-  useEffect(() => { if (!selectedConversation?.id || !latestIncomingMessageId) return; if (typeof document !== "undefined" && document.visibilityState !== "visible") return; const shouldMarkRead = selectedConversation.isUnread || latestIncomingMessageId !== lastMarkedReadKeyRef.current?.split(":")[1]; if (!shouldMarkRead) return; const nextKey = `${selectedConversation.id}:${latestIncomingMessageId}`; if (lastMarkedReadKeyRef.current === nextKey) return; lastMarkedReadKeyRef.current = nextKey; markConversationReadMutation.mutate(selectedConversation.id);
+  useEffect(() => { if (!selectedConversation?.id || !latestIncomingMessageId) return; if (typeof document !== "undefined" && document.visibilityState !== "visible") return; const shouldMarkRead = selectedConversation.isUnread || latestIncomingMessageId !== lastMarkedReadKeyRef.current?.split(":")[1]; if (!shouldMarkRead) return; const nextKey = `${selectedConversation.id}:${latestIncomingMessageId}`; const shouldDecrementSidebarBadge = selectedConversation.isUnread && optimisticReadBadgeMarkerRef.current !== nextKey; if (selectedOrganizationId) {
+      markMessengerChatReadInCache(queryClient, selectedOrganizationId, selectedConversation, {
+        decrementSidebarBadge: shouldDecrementSidebarBadge,
+      });
+      if (shouldDecrementSidebarBadge) {
+        optimisticReadBadgeMarkerRef.current = nextKey;
+      }
+    }
+    if (lastMarkedReadKeyRef.current === nextKey) return; lastMarkedReadKeyRef.current = nextKey; markConversationReadMutation.mutate(selectedConversation.id);
   }, [
     latestIncomingMessageId,
     markConversationReadMutation,
-    selectedConversation?.id, selectedConversation?.isUnread, ]); const showOptimisticUserMessage = Boolean(
+    queryClient,
+    selectedConversation,
+    selectedOrganizationId,
+  ]); const showOptimisticUserMessage = Boolean(
     activeStream && (
       activeEditCutoffMs !== null
       || !activeStream.userMessageId || !rawMessages.some((message) => message.id === activeStream.userMessageId) ), );
