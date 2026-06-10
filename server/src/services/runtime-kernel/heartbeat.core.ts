@@ -149,7 +149,7 @@ export const SESSIONED_LOCAL_ADAPTERS = new Set([
 
 export type TimerPreflightResult =
   | { shouldRun: true; reason: string }
-  | { shouldRun: false; skipReason: string };
+  | { shouldRun: false; skipReason: string; diagnostics?: Record<string, unknown> };
 
 export const heartbeatRunListColumns = {
   id: heartbeatRuns.id,

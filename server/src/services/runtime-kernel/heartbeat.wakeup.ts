@@ -169,10 +169,17 @@ export function createHeartbeatWakeupHandlers(context: any) {
       explicitResumeSession?.sessionDisplayId ??
       await resolveSessionBeforeForWakeup(agent, effectiveTaskKey);
 
-    const writeSkippedRequest = async (skipReason: string) => {
+    const writeSkippedRequest = async (skipReason: string, diagnostics?: Record<string, unknown>) => {
+      const skippedPayload = diagnostics
+        ? {
+            ...(payload ?? {}),
+            preflight: diagnostics,
+          }
+        : payload;
       if (existingWakeupRequestId) {
         await setWakeupStatus(existingWakeupRequestId, "skipped", {
           reason: skipReason,
+          payload: skippedPayload,
           finishedAt: new Date(),
           runId: null,
           claimedAt: null,
@@ -187,7 +194,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         source,
         triggerDetail,
         reason: skipReason,
-        payload,
+        payload: skippedPayload,
         status: "skipped",
         requestedByActorType: opts.requestedByActorType ?? null,
         requestedByActorId: opts.requestedByActorId ?? null,
@@ -303,9 +310,12 @@ export function createHeartbeatWakeupHandlers(context: any) {
       return null;
     }
     if (source === "timer" && policy.preflightEnabled && !issueId) {
+      const recoveredRun = await recoverPendingWakeupForTimer(agent);
+      if (recoveredRun) return recoveredRun;
+
       const preflight = await evaluateTimerPreflight(agent);
       if (!preflight.shouldRun) {
-        await writeSkippedRequest(preflight.skipReason);
+        await writeSkippedRequest(preflight.skipReason, preflight.diagnostics);
         await markAgentHeartbeatChecked(agent, "skipped");
         return null;
       }
@@ -769,6 +779,182 @@ export function createHeartbeatWakeupHandlers(context: any) {
     await startNextQueuedRunForAgent(agent.id);
 
     return newRun;
+  }
+
+  async function recoverPendingWakeupForTimer(agent: typeof agents.$inferSelect) {
+    const pendingWakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(
+        and(
+          eq(agentWakeupRequests.orgId, agent.orgId),
+          eq(agentWakeupRequests.agentId, agent.id),
+          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
+          sql`${agentWakeupRequests.runId} is null`,
+          lte(agentWakeupRequests.requestedAt, new Date()),
+        ),
+      )
+      .orderBy(asc(agentWakeupRequests.requestedAt))
+      .limit(25);
+
+    for (const pendingWakeup of pendingWakeups) {
+      const pendingPayload = readDeferredWakePayload(pendingWakeup.payload);
+      const pendingContext = readDeferredWakeContext(pendingWakeup.payload);
+      const pendingIssueId =
+        readNonEmptyString(pendingPayload.issueId) ??
+        readNonEmptyString(pendingContext.issueId);
+
+      if (pendingWakeup.status === "deferred_issue_execution" && !pendingIssueId) {
+        await setWakeupStatus(pendingWakeup.id, "failed", {
+          finishedAt: new Date(),
+          error: "Deferred issue wake could not be recovered: missing issueId",
+          runId: null,
+          claimedAt: null,
+        });
+        continue;
+      }
+
+      if (pendingIssueId) {
+        const issue = await db
+          .select({
+            id: issues.id,
+            orgId: issues.orgId,
+            executionRunId: issues.executionRunId,
+          })
+          .from(issues)
+          .where(and(eq(issues.id, pendingIssueId), eq(issues.orgId, agent.orgId)))
+          .then((rows) => rows[0] ?? null);
+
+        if (!issue) {
+          await setWakeupStatus(pendingWakeup.id, "skipped", {
+            reason: "issue_execution_issue_not_found",
+            finishedAt: new Date(),
+            runId: null,
+            claimedAt: null,
+            error: null,
+          });
+          continue;
+        }
+
+        const liveExecutionRun = issue.executionRunId
+          ? await db
+              .select({ id: heartbeatRuns.id })
+              .from(heartbeatRuns)
+              .where(
+                and(
+                  eq(heartbeatRuns.id, issue.executionRunId),
+                  inArray(heartbeatRuns.status, ["queued", "running"]),
+                ),
+              )
+              .then((rows) => rows[0] ?? null)
+          : null;
+        if (liveExecutionRun) continue;
+
+        try {
+          const recoveredRun = await enqueueWakeup(agent.id, {
+            source: (readNonEmptyString(pendingWakeup.source) as WakeupOptions["source"]) ?? "on_demand",
+            triggerDetail:
+              (readNonEmptyString(pendingWakeup.triggerDetail) as WakeupOptions["triggerDetail"]) ?? undefined,
+            reason: readNonEmptyString(pendingWakeup.reason) ?? null,
+            payload: pendingPayload,
+            idempotencyKey: pendingWakeup.idempotencyKey,
+            requestedByActorType:
+              (pendingWakeup.requestedByActorType as WakeupOptions["requestedByActorType"]) ?? undefined,
+            requestedByActorId: pendingWakeup.requestedByActorId,
+            contextSnapshot: pendingContext,
+            existingWakeupRequestId: pendingWakeup.id,
+          });
+          if (recoveredRun) return recoveredRun;
+        } catch (error) {
+          const current = await db
+            .select({ status: agentWakeupRequests.status })
+            .from(agentWakeupRequests)
+            .where(eq(agentWakeupRequests.id, pendingWakeup.id))
+            .then((rows) => rows[0] ?? null);
+          if (current?.status === pendingWakeup.status) {
+            await setWakeupStatus(pendingWakeup.id, "failed", {
+              finishedAt: new Date(),
+              error: error instanceof Error ? error.message : String(error),
+              runId: null,
+              claimedAt: null,
+            });
+          }
+        }
+        continue;
+      }
+
+      const source = (readNonEmptyString(pendingWakeup.source) as WakeupOptions["source"]) ?? "on_demand";
+      const triggerDetail =
+        (readNonEmptyString(pendingWakeup.triggerDetail) as WakeupOptions["triggerDetail"]) ?? null;
+      const reason = readNonEmptyString(pendingWakeup.reason) ?? null;
+      const { contextSnapshot: recoveredContext, taskKey } = enrichWakeContextSnapshot({
+        contextSnapshot: pendingContext,
+        reason,
+        source,
+        triggerDetail,
+        payload: pendingPayload,
+      });
+      await hydrateWakeContextSnapshot(db, agent.orgId, recoveredContext);
+      const sessionBefore =
+        readNonEmptyString(recoveredContext.resumeSessionDisplayId) ??
+        await resolveSessionBeforeForWakeup(agent, taskKey);
+      const now = new Date();
+      const recoveredRun = await db.transaction(async (tx) => {
+        const wakeupRequest = await updateWakeupRequestRecord(tx, pendingWakeup.id, {
+          status: "queued",
+          payload: pendingPayload,
+          runId: null,
+          claimedAt: null,
+          finishedAt: null,
+          error: null,
+        });
+        if (!wakeupRequest || wakeupRequest.runId) return null;
+
+        const newRun = await tx
+          .insert(heartbeatRuns)
+          .values({
+            orgId: agent.orgId,
+            agentId: agent.id,
+            invocationSource: source,
+            triggerDetail,
+            status: "queued",
+            wakeupRequestId: pendingWakeup.id,
+            contextSnapshot: recoveredContext,
+            sessionIdBefore: sessionBefore,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning()
+          .then((rows) => rows[0]);
+
+        await updateWakeupRequestRecord(tx, pendingWakeup.id, {
+          status: "queued",
+          runId: newRun.id,
+          claimedAt: null,
+          finishedAt: null,
+          error: null,
+        });
+        return newRun;
+      });
+
+      if (recoveredRun) {
+        publishLiveEvent({
+          orgId: recoveredRun.orgId,
+          type: "heartbeat.run.queued",
+          payload: {
+            runId: recoveredRun.id,
+            agentId: recoveredRun.agentId,
+            invocationSource: recoveredRun.invocationSource,
+            triggerDetail: recoveredRun.triggerDetail,
+            wakeupRequestId: recoveredRun.wakeupRequestId,
+          },
+        });
+        await startNextQueuedRunForAgent(agent.id);
+        return recoveredRun;
+      }
+    }
+
+    return null;
   }
 
   return { enqueueWakeup };

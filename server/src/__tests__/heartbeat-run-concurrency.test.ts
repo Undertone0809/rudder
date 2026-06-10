@@ -121,6 +121,16 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_HEARTBEAT_CONCURRENCY_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    const parsed = new URL(externalConnectionString);
+    const dbName = parsed.pathname.replace(/^\//, "");
+    parsed.pathname = "/postgres";
+    await ensurePostgresDatabase(parsed.toString(), dbName);
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, instance: null, dataDir: "" };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-heartbeat-concurrency-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -311,12 +321,76 @@ describe("heartbeat run concurrency", () => {
       .select({
         id: agentWakeupRequests.id,
         status: agentWakeupRequests.status,
+        source: agentWakeupRequests.source,
         reason: agentWakeupRequests.reason,
+        payload: agentWakeupRequests.payload,
         runId: agentWakeupRequests.runId,
         finishedAt: agentWakeupRequests.finishedAt,
       })
       .from(agentWakeupRequests)
       .where(eq(agentWakeupRequests.agentId, agentId));
+  }
+
+  async function seedLiveIssueExecution(input: {
+    orgId: string;
+    agentId: string;
+    issueId: string;
+  }) {
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: input.orgId,
+      agentId: input.agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "running",
+      contextSnapshot: {
+        issueId: input.issueId,
+        taskKey: `issue:${input.issueId}`,
+      },
+    });
+    await db
+      .update(issues)
+      .set({
+        executionRunId: runId,
+        executionAgentNameKey: "builder",
+        executionLockedAt: new Date(),
+      })
+      .where(eq(issues.id, input.issueId));
+    return runId;
+  }
+
+  async function seedRunlessWakeup(input: {
+    orgId: string;
+    agentId: string;
+    status: "queued" | "deferred_issue_execution";
+    source?: string;
+    reason?: string;
+    issueId?: string;
+    requestedAt?: Date;
+  }) {
+    const wakeupId = randomUUID();
+    const context = input.issueId
+      ? { issueId: input.issueId, wakeReason: input.reason ?? "issue_assigned" }
+      : {};
+    await db.insert(agentWakeupRequests).values({
+      id: wakeupId,
+      orgId: input.orgId,
+      agentId: input.agentId,
+      source: input.source ?? "assignment",
+      triggerDetail: "system",
+      reason: input.reason ?? "issue_assigned",
+      payload: input.issueId
+        ? {
+            issueId: input.issueId,
+            _paperclipWakeContext: context,
+          }
+        : {},
+      status: input.status,
+      requestedAt: input.requestedAt ?? new Date("2026-04-27T06:00:00.000Z"),
+      updatedAt: input.requestedAt ?? new Date("2026-04-27T06:00:00.000Z"),
+    });
+    return wakeupId;
   }
 
   it("promotes queued runs up to the configured concurrency limit", async () => {
@@ -555,6 +629,119 @@ describe("heartbeat run concurrency", () => {
     expect(result).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
     await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
     expect(await listRunStatuses(agentId)).toHaveLength(1);
+  });
+
+  it("allows timer heartbeats when assigned work exists alongside an unrelated deferred wakeup", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T06:10:00.000Z");
+    const tickAt = new Date("2026-04-27T06:15:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    const blockedIssueId = await seedIssueFixture({ orgId });
+    await seedLiveIssueExecution({ orgId, agentId, issueId: blockedIssueId });
+    const deferredWakeupId = await seedRunlessWakeup({
+      orgId,
+      agentId,
+      status: "deferred_issue_execution",
+      issueId: blockedIssueId,
+      requestedAt: new Date("2026-04-27T06:11:00.000Z"),
+    });
+    await seedIssueFixture({ orgId, agentId });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups.find((wakeup) => wakeup.id === deferredWakeupId)).toMatchObject({
+      status: "deferred_issue_execution",
+      runId: null,
+    });
+    expect(wakeups.some((wakeup) => wakeup.source === "timer" && wakeup.runId)).toBe(true);
+  });
+
+  it("recovers a runnable deferred issue wakeup before creating a generic timer run", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T06:20:00.000Z");
+    const tickAt = new Date("2026-04-27T06:25:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    const issueId = await seedIssueFixture({ orgId, agentId });
+    const deferredWakeupId = await seedRunlessWakeup({
+      orgId,
+      agentId,
+      status: "deferred_issue_execution",
+      source: "assignment",
+      reason: "issue_assigned",
+      issueId,
+      requestedAt: new Date("2026-04-27T06:21:00.000Z"),
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups.find((wakeup) => wakeup.id === deferredWakeupId)).toMatchObject({
+      status: "claimed",
+      source: "assignment",
+    });
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      wakeupRequestId: deferredWakeupId,
+      invocationSource: "assignment",
+    });
+  });
+
+  it("skips timer heartbeats without actionable work and records pending wakeup diagnostics", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T06:40:00.000Z");
+    const tickAt = new Date("2026-04-27T06:45:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    const blockedIssueId = await seedIssueFixture({ orgId });
+    await seedLiveIssueExecution({ orgId, agentId, issueId: blockedIssueId });
+    await seedRunlessWakeup({
+      orgId,
+      agentId,
+      status: "deferred_issue_execution",
+      issueId: blockedIssueId,
+      requestedAt: new Date("2026-04-27T06:41:00.000Z"),
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    expect(await listRunStatuses(agentId)).toHaveLength(1);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    const skipped = wakeups.find((wakeup) => wakeup.status === "skipped");
+    expect(skipped).toMatchObject({
+      reason: "heartbeat.preflight.pending_wakeup_request",
+      runId: null,
+    });
+    expect(skipped?.payload).toMatchObject({
+      preflight: {
+        pendingWakeupCount: 1,
+        pendingWakeupStatuses: { deferred_issue_execution: 1 },
+      },
+    });
   });
 
   it("allows timer heartbeats when visible reviewer work exists", async () => {
