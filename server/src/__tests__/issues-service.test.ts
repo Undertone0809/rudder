@@ -1084,7 +1084,7 @@ describe("issueService.list participantAgentId", () => {
         parentId: parent.id,
         executionWorkspaceId: otherExecutionWorkspaceId,
       }),
-    ).rejects.toThrow("Execution workspace must belong to the selected project");
+    ).rejects.toThrow("Run workspace must belong to the selected project");
   });
 
   it("rejects parent issue relationships outside the organization or through descendants", async () => {
