@@ -769,6 +769,98 @@ export function summarizeRecord(record: Record<string, unknown>, keys: string[])
   return null;
 }
 
+function normalizeCodexToolName(name: string): string {
+  return name.trim().toLowerCase().split(".").pop()?.replace(/-/g, "_") ?? "";
+}
+
+function summarizeCodexAgentItems(input: Record<string, unknown>): string | null {
+  const items = input.items;
+  if (!Array.isArray(items) || items.length === 0) return null;
+
+  const firstText = items
+    .map((item) => asRecord(item))
+    .find((item): item is Record<string, unknown> => Boolean(item && typeof item.text === "string" && item.text.trim()));
+  if (firstText && typeof firstText.text === "string") {
+    return truncate(compactWhitespace(firstText.text), 120);
+  }
+
+  return items.length === 1 ? "1 attached item" : `${items.length} attached items`;
+}
+
+function describeCodexAgentToolSemanticInfo(name: string, input: unknown): TranscriptToolSemanticInfo | null {
+  const toolName = normalizeCodexToolName(name);
+  const record = asRecord(input);
+  if (!record) return null;
+
+  if (toolName === "spawn_agent") {
+    const agentType = readStringField(record, ["agent_type", "agentType", "type"]) ?? "default";
+    const task =
+      summarizeRecord(record, ["message", "task", "prompt", "instructions"])
+      ?? summarizeCodexAgentItems(record);
+    const model = readStringField(record, ["model"]);
+    const reasoningEffort = readStringField(record, ["reasoning_effort", "reasoningEffort"]);
+    const context = record.fork_context === true || record.forkContext === true ? "forked context" : null;
+    const details = [model, reasoningEffort ? `${reasoningEffort} reasoning` : null, context].filter(Boolean);
+    const summary = task
+      ? `Spawned ${agentType} agent: ${task}`
+      : `Spawned ${agentType} agent`;
+
+    return {
+      category: "tool",
+      label: "Spawn agent",
+      summary: details.length > 0 ? `${summary} (${details.join(", ")})` : summary,
+      bucket: "tool",
+      quantity: 1,
+      noun: "tool",
+    };
+  }
+
+  if (toolName === "wait_agent") {
+    const targets = Array.isArray(record.targets)
+      ? record.targets.filter((target): target is string => typeof target === "string" && target.trim().length > 0)
+      : [];
+    return {
+      category: "tool",
+      label: "Wait for agent",
+      summary: targets.length > 0
+        ? `Waited for ${targets.length === 1 ? `agent ${truncate(targets[0]!, 16)}` : `${targets.length} agents`}`
+        : "Waited for agents",
+      bucket: "tool",
+      quantity: Math.max(targets.length, 1),
+      noun: "tool",
+    };
+  }
+
+  if (toolName === "send_input") {
+    const target = readStringField(record, ["target"]);
+    const message = summarizeRecord(record, ["message"]) ?? summarizeCodexAgentItems(record);
+    return {
+      category: "tool",
+      label: "Message agent",
+      summary: message
+        ? `Messaged ${target ? `agent ${truncate(target, 16)}` : "agent"}: ${message}`
+        : `Messaged ${target ? `agent ${truncate(target, 16)}` : "agent"}`,
+      bucket: "tool",
+      quantity: 1,
+      noun: "tool",
+    };
+  }
+
+  if (toolName === "close_agent") {
+    const target = readStringField(record, ["target"]);
+    return {
+      category: "tool",
+      label: "Close agent",
+      summary: target ? `Closed agent ${truncate(target, 16)}` : "Closed agent",
+      bucket: "tool",
+      quantity: 1,
+      noun: "tool",
+    };
+  }
+
+  return null;
+}
+
 export function summarizeToolInput(name: string, input: unknown, density: TranscriptDensity): string {
   const compactMax = density === "compact" ? 72 : 120;
   if (typeof input === "string") {
@@ -856,6 +948,11 @@ export function isCommandTool(name: string, input: unknown): boolean {
 export function describeToolSemanticInfo(name: string, input: unknown): TranscriptToolSemanticInfo {
   const normalizedName = name.trim().toLowerCase();
   const record = asRecord(input);
+
+  const codexAgentToolInfo = describeCodexAgentToolSemanticInfo(name, input);
+  if (codexAgentToolInfo) {
+    return codexAgentToolInfo;
+  }
 
   if (normalizedName === "skill") {
     const skill = readStringField(record, ["skill", "name"]);
