@@ -1005,6 +1005,14 @@ describe("MarkdownEditor", () => {
     expect(scrollIntoView).toHaveBeenCalled();
 
     await act(async () => {
+      window.dispatchEvent(new Event("scroll"));
+    });
+    await flushAnimationFrames(1);
+
+    expect(secondOption?.getAttribute("aria-selected")).toBe("true");
+    expect(menu?.getAttribute("aria-activedescendant")).toBe("markdown-mention-option-agent:agent-2");
+
+    await act(async () => {
       editable!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     });
 

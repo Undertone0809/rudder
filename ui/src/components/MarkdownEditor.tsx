@@ -743,6 +743,18 @@ function detectMention(container: HTMLElement): MentionState | null {
   };
 }
 
+function isSameMentionRange(a: MentionState | null, b: MentionState | null) {
+  return Boolean(
+    a
+    && b
+    && a.trigger === b.trigger
+    && a.query === b.query
+    && a.textNode === b.textNode
+    && a.atPos === b.atPos
+    && a.endPos === b.endPos,
+  );
+}
+
 function getPreviewImageName(image: HTMLImageElement) {
   const alt = image.getAttribute("alt")?.trim();
   if (alt) return alt;
@@ -1048,6 +1060,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   } | null>(null);
   const pendingMentionInputClearTimerRef = useRef<number | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionIndexRef = useRef(0);
   const mentionMenuElementRef = useRef<HTMLDivElement | null>(null);
   const mentionMenuScrollbarRef = useScrollbarActivityRef();
   const setMentionMenuElement = useCallback((element: HTMLDivElement | null) => {
@@ -1055,6 +1068,13 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     mentionMenuScrollbarRef(element);
   }, [mentionMenuScrollbarRef]);
   const mentionActive = mentionState !== null && mentions && mentions.length > 0;
+  const setActiveMentionIndex = useCallback((next: number | ((current: number) => number)) => {
+    setMentionIndex((current) => {
+      const resolved = typeof next === "function" ? next(current) : next;
+      mentionIndexRef.current = resolved;
+      return resolved;
+    });
+  }, []);
   const mentionOptionByKey = useMemo(() => {
     const map = new Map<string, MentionOption>();
     for (const mention of mentions ?? []) {
@@ -1135,6 +1155,19 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     }
     return groups;
   }, [filteredMentions]);
+
+  useEffect(() => {
+    if (!mentionActive || filteredMentions.length === 0) {
+      if (mentionIndexRef.current !== 0) {
+        mentionIndexRef.current = 0;
+        setMentionIndex(0);
+      }
+      return;
+    }
+    if (mentionIndexRef.current >= filteredMentions.length) {
+      setActiveMentionIndex(filteredMentions.length - 1);
+    }
+  }, [filteredMentions.length, mentionActive, setActiveMentionIndex]);
 
   useEffect(() => {
     if (!mentionActive || filteredMentions.length === 0) return;
@@ -1448,17 +1481,28 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     if (!mentions || mentions.length === 0 || !containerRef.current) {
       mentionStateRef.current = null;
       setMentionState(null);
+      if (mentionIndexRef.current !== 0) {
+        mentionIndexRef.current = 0;
+        setMentionIndex(0);
+      }
       return;
     }
     const result = detectMention(containerRef.current);
+    const previous = mentionStateRef.current;
     mentionStateRef.current = result;
     if (result) {
       setMentionState(result);
-      setMentionIndex(0);
+      if (!isSameMentionRange(previous, result)) {
+        setActiveMentionIndex(0);
+      }
     } else {
       setMentionState(null);
+      if (mentionIndexRef.current !== 0) {
+        mentionIndexRef.current = 0;
+        setMentionIndex(0);
+      }
     }
-  }, [mentions]);
+  }, [mentions, setActiveMentionIndex]);
 
   useEffect(() => {
     if (!mentions || mentions.length === 0) return;
@@ -1812,13 +1856,13 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
             if (e.key === "ArrowDown") {
               e.preventDefault();
               e.stopPropagation();
-              setMentionIndex((prev) => Math.min(prev + 1, filteredMentions.length - 1));
+              setActiveMentionIndex((prev) => Math.min(prev + 1, filteredMentions.length - 1));
               return;
             }
             if (e.key === "ArrowUp") {
               e.preventDefault();
               e.stopPropagation();
-              setMentionIndex((prev) => Math.max(prev - 1, 0));
+              setActiveMentionIndex((prev) => Math.max(prev - 1, 0));
               return;
             }
             if (e.key === "Enter" || e.key === "Tab") {
@@ -1830,7 +1874,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                 mentionStateRef.current = freshState;
                 setMentionState(freshState);
               }
-              selectMention(filteredMentions[mentionIndex]);
+              selectMention(filteredMentions[Math.min(mentionIndexRef.current, filteredMentions.length - 1)]!);
               return;
             }
           }
@@ -2018,7 +2062,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                             e.preventDefault(); // prevent blur
                             selectMention(option);
                           }}
-                          onMouseEnter={() => setMentionIndex(i)}
+                          onMouseEnter={() => setActiveMentionIndex(i)}
                         >
                           {option.kind === "skill" && isContainerMenu ? (
                             <>
