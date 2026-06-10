@@ -29,6 +29,14 @@ test("Library command-f searches the current editor tab content", async ({ page 
   await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText("current.md", { timeout: 15_000 });
   await expect(page.getByText(needle)).toBeVisible();
 
+  const editor = page.getByTestId("org-workspaces-markdown-editor").locator("[contenteditable='true']");
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await expect.poll(async () => page.evaluate(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLElement && Boolean(active.closest("[data-testid='org-workspaces-markdown-editor']"));
+  })).toBe(true);
+
   await page.keyboard.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
 
   const findUi = page.getByRole("search", { name: "Find in Library" });

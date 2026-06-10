@@ -87,16 +87,35 @@ export function clearIssueFindHighlights(root: HTMLElement) {
   }
 }
 
-function shouldSearchTextNode(node: Text, skipElement?: HTMLElement | null) {
+type ShouldSearchTextNodeOptions = {
+  canUseCssHighlights: boolean;
+  mode: "mark" | "css";
+  skipElement?: HTMLElement | null;
+};
+
+function isContentEditableElement(element: HTMLElement) {
+  return element.isContentEditable || element.matches("[contenteditable='true']");
+}
+
+function shouldSearchTextNode(node: Text, options: ShouldSearchTextNodeOptions) {
   const parent = node.parentElement;
   if (!parent) return false;
   if (parent.closest(ISSUE_FIND_SKIP_SELECTOR)) return false;
-  if (skipElement?.contains(parent)) return false;
 
   const activeElement = parent.ownerDocument.activeElement;
   const editableParent = parent.closest("[contenteditable='true']");
-  if (editableParent && activeElement instanceof Node && editableParent.contains(activeElement)) {
+
+  if (editableParent && options.mode === "css" && !options.canUseCssHighlights) {
     return false;
+  }
+
+  if (options.skipElement?.contains(parent)) {
+    const skipIsEditableRoot = isContentEditableElement(options.skipElement);
+    if (!skipIsEditableRoot || !options.canUseCssHighlights) return false;
+  }
+
+  if (editableParent && activeElement instanceof Node && editableParent.contains(activeElement)) {
+    return options.canUseCssHighlights;
   }
 
   return Boolean(node.nodeValue?.trim());
@@ -113,12 +132,18 @@ export function highlightIssueFindMatches(
   if (!query) return [];
 
   const doc = root.ownerDocument;
+  const cssHighlightApi = options.mode === "css" ? getCssHighlightApi(doc) : null;
+  const canUseCssHighlights = Boolean(cssHighlightApi);
   const textNodes: Text[] = [];
   const walker = doc.createTreeWalker(
     root,
     nodeFilterValue(root, "SHOW_TEXT"),
     {
-      acceptNode: (node) => shouldSearchTextNode(node as Text, options.skipElement)
+      acceptNode: (node) => shouldSearchTextNode(node as Text, {
+        canUseCssHighlights,
+        mode: options.mode ?? "mark",
+        skipElement: options.skipElement,
+      })
         ? nodeFilterValue(root, "FILTER_ACCEPT")
         : nodeFilterValue(root, "FILTER_REJECT"),
     },
@@ -133,7 +158,6 @@ export function highlightIssueFindMatches(
   const marks: IssueFindMatch[] = [];
   const lowerQuery = query.toLocaleLowerCase();
   const queryLength = query.length;
-  const cssHighlightApi = options.mode === "css" ? getCssHighlightApi(doc) : null;
 
   for (const textNode of textNodes) {
     const text = textNode.nodeValue ?? "";

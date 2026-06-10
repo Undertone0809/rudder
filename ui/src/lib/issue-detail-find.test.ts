@@ -56,6 +56,104 @@ describe("issue detail find helpers", () => {
     expect(matches).toHaveLength(1);
   });
 
+  it("keeps active editable text out of mark mode search", () => {
+    const root = document.createElement("div");
+    root.innerHTML = `<div contenteditable="true" tabindex="0">issue active editor</div>`;
+    document.body.appendChild(root);
+    const editable = root.querySelector<HTMLElement>("[contenteditable='true']");
+    editable?.focus();
+
+    const matches = highlightIssueFindMatches(root, "issue", { skipElement: editable });
+
+    expect(document.activeElement).toBe(editable);
+    expect(matches).toHaveLength(0);
+    expect(root.querySelector("mark[data-issue-find-highlight='true']")).toBeNull();
+    root.remove();
+  });
+
+  it("searches active editable text with CSS highlights without mutating editor DOM", () => {
+    const win = window as typeof window & {
+      CSS?: unknown;
+      Highlight?: unknown;
+    };
+    const hadCss = Object.prototype.hasOwnProperty.call(win, "CSS");
+    const hadHighlight = Object.prototype.hasOwnProperty.call(win, "Highlight");
+    const originalCss = win.CSS;
+    const originalHighlight = win.Highlight;
+    const highlights = new Map<string, { size: number }>();
+
+    class TestHighlight {
+      size: number;
+
+      constructor(...ranges: Range[]) {
+        this.size = ranges.length;
+      }
+    }
+
+    Object.defineProperty(win, "CSS", {
+      configurable: true,
+      value: {
+        highlights: {
+          delete: (name: string) => {
+            highlights.delete(name);
+          },
+          set: (name: string, highlight: { size: number }) => {
+            highlights.set(name, highlight);
+          },
+        },
+      },
+    });
+    Object.defineProperty(win, "Highlight", {
+      configurable: true,
+      value: TestHighlight,
+    });
+
+    try {
+      const root = document.createElement("div");
+      root.innerHTML = `<div contenteditable="true" tabindex="0">issue active editor</div>`;
+      document.body.appendChild(root);
+      const editable = root.querySelector<HTMLElement>("[contenteditable='true']");
+      editable?.focus();
+
+      const matches = highlightIssueFindMatches(root, "issue", {
+        mode: "css",
+        skipElement: editable,
+      });
+
+      expect(document.activeElement).toBe(editable);
+      expect(matches).toHaveLength(1);
+      expect(highlights.get("rudder-issue-find-highlight")?.size).toBe(1);
+      expect(root.querySelector("mark[data-issue-find-highlight='true']")).toBeNull();
+      expect(root.textContent).toBe("issue active editor");
+      root.remove();
+    } finally {
+      if (hadCss) {
+        Object.defineProperty(win, "CSS", { configurable: true, value: originalCss });
+      } else {
+        Reflect.deleteProperty(win, "CSS");
+      }
+      if (hadHighlight) {
+        Object.defineProperty(win, "Highlight", { configurable: true, value: originalHighlight });
+      } else {
+        Reflect.deleteProperty(win, "Highlight");
+      }
+    }
+  });
+
+  it("does not fall back to mark wrapping editable text when CSS highlights are unavailable", () => {
+    const root = document.createElement("div");
+    root.innerHTML = `
+      <p>issue normal text</p>
+      <div contenteditable="true" tabindex="0">issue editable text</div>
+    `;
+
+    const matches = highlightIssueFindMatches(root, "issue", { mode: "css" });
+
+    expect(matches).toHaveLength(1);
+    expect(root.querySelectorAll("mark[data-issue-find-highlight='true']")).toHaveLength(1);
+    expect(root.querySelector("[contenteditable='true']")?.textContent).toBe("issue editable text");
+  });
+
   it("recognizes platform find shortcuts without accepting modified variants", () => {
     expect(isIssueFindShortcut(new KeyboardEvent("keydown", { key: "f", metaKey: true }))).toBe(true);
     expect(isIssueFindShortcut(new KeyboardEvent("keydown", { key: "F", ctrlKey: true }))).toBe(true);
