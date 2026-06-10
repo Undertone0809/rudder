@@ -818,6 +818,18 @@ function detectMention(container: HTMLElement): MentionState | null {
   };
 }
 
+function isSameMentionRange(a: MentionState | null, b: MentionState | null) {
+  return Boolean(
+    a
+    && b
+    && a.trigger === b.trigger
+    && a.query === b.query
+    && a.textNode === b.textNode
+    && a.atPos === b.atPos
+    && a.endPos === b.endPos,
+  );
+}
+
 function hasFilePayload(evt: DragEvent<HTMLDivElement> | ClipboardEvent<HTMLDivElement>) {
   if ("dataTransfer" in evt) return Array.from(evt.dataTransfer?.types ?? []).includes("Files");
   return Array.from(evt.clipboardData?.types ?? []).includes("Files");
@@ -897,6 +909,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   const [mentionState, setMentionState] = useState<MentionState | null>(null);
   const mentionStateRef = useRef<MentionState | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionIndexRef = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const mentionMenuRef = useScrollbarActivityRef();
@@ -1064,6 +1077,14 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     return filterMentionOptions(mentions, mentionState.trigger, mentionState.query);
   }, [mentionState, mentions]);
 
+  const setActiveMentionIndex = useCallback((next: number | ((current: number) => number)) => {
+    setMentionIndex((current) => {
+      const resolved = typeof next === "function" ? next(current) : next;
+      mentionIndexRef.current = resolved;
+      return resolved;
+    });
+  }, []);
+
   const mentionMenuPosition = useMemo(() => {
     if (!mentionState) return null;
     if (mentionMenuPlacement === "container") {
@@ -1117,18 +1138,43 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     onMentionQueryChange?.(mentionState?.trigger === "@" ? mentionState.query : null);
   }, [mentionState?.query, mentionState?.trigger, onMentionQueryChange]);
 
+  useEffect(() => {
+    if (!mentionState || filteredMentions.length === 0) {
+      if (mentionIndexRef.current !== 0) {
+        mentionIndexRef.current = 0;
+        setMentionIndex(0);
+      }
+      return;
+    }
+    if (mentionIndexRef.current >= filteredMentions.length) {
+      setActiveMentionIndex(filteredMentions.length - 1);
+    }
+  }, [filteredMentions.length, mentionState, setActiveMentionIndex]);
+
   const checkMention = useCallback(() => {
     if (!mentions || mentions.length === 0) {
       mentionStateRef.current = null;
       setMentionState(null);
+      if (mentionIndexRef.current !== 0) {
+        mentionIndexRef.current = 0;
+        setMentionIndex(0);
+      }
       return;
     }
     const editable = containerRef.current?.querySelector('[contenteditable="true"]');
     const next = editable instanceof HTMLElement ? detectMention(editable) : null;
+    const previous = mentionStateRef.current;
     mentionStateRef.current = next;
     setMentionState(next);
-    if (next) setMentionIndex(0);
-  }, [mentions]);
+    if (next) {
+      if (!isSameMentionRange(previous, next)) {
+        setActiveMentionIndex(0);
+      }
+    } else if (mentionIndexRef.current !== 0) {
+      mentionIndexRef.current = 0;
+      setMentionIndex(0);
+    }
+  }, [mentions, setActiveMentionIndex]);
 
   const selectMention = useCallback((option: MentionOption) => {
     const state = mentionStateRef.current;
@@ -1265,17 +1311,17 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         if (mentionState && filteredMentions.length > 0) {
           if (event.key === "ArrowDown") {
             event.preventDefault();
-            setMentionIndex((index) => Math.min(index + 1, filteredMentions.length - 1));
+            setActiveMentionIndex((index) => Math.min(index + 1, filteredMentions.length - 1));
             return;
           }
           if (event.key === "ArrowUp") {
             event.preventDefault();
-            setMentionIndex((index) => Math.max(index - 1, 0));
+            setActiveMentionIndex((index) => Math.max(index - 1, 0));
             return;
           }
           if (event.key === "Enter" || event.key === "Tab") {
             event.preventDefault();
-            selectMention(filteredMentions[mentionIndex]!);
+            selectMention(filteredMentions[Math.min(mentionIndexRef.current, filteredMentions.length - 1)]!);
             return;
           }
         }
@@ -1493,7 +1539,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                         event.preventDefault();
                         selectMention(option);
                       }}
-                      onMouseEnter={() => setMentionIndex(index)}
+                      onMouseEnter={() => setActiveMentionIndex(index)}
                     >
                       {option.kind === "skill" && isContainerMenu ? (
                         <>
