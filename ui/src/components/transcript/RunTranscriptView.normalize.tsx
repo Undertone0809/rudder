@@ -217,6 +217,12 @@ export function shouldHideNiceModeStderr(text: string): boolean {
   return normalized.startsWith("[rudder] skipping saved session resume");
 }
 
+export function getSystemEventTone(text: string): Extract<TranscriptBlock, { type: "event" }>["tone"] {
+  const normalized = compactWhitespace(text).toLowerCase();
+  if (/^file(?: changes|_change):\s*/.test(normalized)) return "neutral";
+  return "warn";
+}
+
 export function groupCommandBlocks(blocks: TranscriptBlock[]): TranscriptBlock[] {
   const grouped: TranscriptBlock[] = [];
   let pending: Array<Extract<TranscriptBlock, { type: "command_group" }>["items"][number]> = [];
@@ -512,7 +518,7 @@ export function normalizeTranscript(
         type: "event",
         ts: entry.ts,
         label: "system",
-        tone: "warn",
+        tone: getSystemEventTone(entry.text),
         text: entry.text,
       });
       continue;
