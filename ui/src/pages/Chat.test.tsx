@@ -755,6 +755,8 @@ describe("ProposalCard", () => {
     }));
 
     expect(html).toContain("Requested changes");
+    expect(html).toContain("chat-review-note--revision");
+    expect(html).toContain("chat-review-note-icon");
     expect(html).toContain("Assign the issue to the creating agent.");
     expect(html).not.toContain("Feedback for agent");
     expect(html).not.toContain(">Approve</button>");
@@ -784,6 +786,8 @@ describe("ProposalCard", () => {
     }));
 
     expect(html).toContain("Requested changes");
+    expect(html).toContain("chat-review-note--revision");
+    expect(html).toContain("chat-review-note-icon");
     expect(html).toContain("Use a role-specific title.");
     expect(html).not.toContain("Feedback for agent");
     expect(html).not.toContain(">Approve</button>");

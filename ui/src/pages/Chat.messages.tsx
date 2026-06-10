@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Clipb
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowUp,
   Boxes,
   CheckCircle2,
@@ -630,8 +631,8 @@ export function ProposalCard({
           <div className="min-w-0">
             {issueProposal ? (
               <>
-                <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(15rem,22rem)]">
-                  <div className="flex min-w-0 items-center border-b border-[color:var(--border-soft)] pb-5 md:border-b-0 md:pb-0">
+                <div className="chat-review-summary-grid grid gap-5">
+                  <div className="chat-review-summary-title flex min-w-0 items-center border-b border-[color:var(--border-soft)] pb-5">
                     <div className="text-[26px] font-semibold leading-tight text-foreground">{String(issueProposal.title)}</div>
                   </div>
                   <div className="chat-review-fact-ledger">
@@ -813,11 +814,27 @@ export function ProposalCard({
             ) : null}
 
             {!showDecisionNote && resolvedDecisionNote ? (
-              <div className="chat-review-note mt-1 rounded-[var(--radius-lg)] px-4 py-3">
-                <div className="chat-review-note-header text-[11px] font-medium text-muted-foreground">
-                  {resolvedDecisionNoteLabel}
+              <div
+                className={cn(
+                  "chat-review-note mt-1 rounded-[var(--radius-lg)] px-4 py-3",
+                  reviewStatus === "revision_requested" && "chat-review-note--revision",
+                )}
+              >
+                <div className="flex min-w-0 items-start gap-3">
+                  {reviewStatus === "revision_requested" ? (
+                    <span className="chat-review-note-icon mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-sm)]" aria-hidden="true">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                    </span>
+                  ) : null}
+                  <div className="min-w-0 flex-1">
+                    <div className="chat-review-note-header text-[11px] font-medium">
+                      {resolvedDecisionNoteLabel}
+                    </div>
+                    <p className="chat-review-note-body mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-foreground/90">
+                      {resolvedDecisionNote}
+                    </p>
+                  </div>
                 </div>
-                <p className="chat-review-note-body mt-2 text-sm leading-6 text-foreground/90">{resolvedDecisionNote}</p>
               </div>
             ) : null}
 

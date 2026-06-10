@@ -891,6 +891,9 @@ const fixtureChatAssistantMessage = fixtureChatMessage({
   replyingAgentId: fixtureAgent.id,
 });
 
+const fixtureChatProposalCreatedAt = new Date(Date.now() - 1000 * 60 * 5);
+const fixtureChatProposalDecidedAt = new Date(fixtureChatProposalCreatedAt.getTime() + 1000 * 60);
+
 const fixtureChatProposalMessage = fixtureChatMessage({
   id: "chat-proposal-message",
   role: "assistant",
@@ -905,7 +908,24 @@ const fixtureChatProposalMessage = fixtureChatMessage({
       reviewerUserId: "local-board",
     },
   },
+  approvalId: "approval-ui-lab-chat-proposal",
+  approval: {
+    id: "approval-ui-lab-chat-proposal",
+    orgId: "org-ui-lab",
+    type: "chat_issue_creation",
+    requestedByAgentId: fixtureAgent.id,
+    requestedByUserId: null,
+    status: "revision_requested",
+    payload: {},
+    decisionNote: "Tighten the acceptance criteria and show how this avoids duplicating the existing Messenger states.",
+    decidedByUserId: "local-board",
+    decidedAt: fixtureChatProposalDecidedAt,
+    createdAt: fixtureChatProposalCreatedAt,
+    updatedAt: fixtureChatProposalDecidedAt,
+  },
   replyingAgentId: fixtureAgent.id,
+  createdAt: fixtureChatProposalCreatedAt,
+  updatedAt: fixtureChatProposalDecidedAt,
 });
 
 const fixtureChatSystemMessage = fixtureChatMessage({
