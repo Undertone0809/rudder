@@ -776,12 +776,110 @@ describe("MarkdownEditor", () => {
       editable!.dispatchEvent(new InputEvent("beforeinput", {
         bubbles: true,
         cancelable: true,
-        inputType: "insertText",
+        inputType: "insertCompositionText",
         data: "可以这么说",
       }));
     });
 
     expect(onChange).toHaveBeenLastCalledWith("[Wesley (Engineer)](agent://agent-1) 可以这么说");
+  });
+
+  it("keeps pasted text after an existing plain-text issue token in the markdown source", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="[ZST-357](issue://issue-1?r=ZST-357) "
+          onChange={onChange}
+          plainText
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    const token = container.querySelector("[data-mention-kind='issue']");
+    expect(editable).toBeTruthy();
+    expect(token).toBeTruthy();
+
+    await act(async () => {
+      token!.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+      }));
+    });
+
+    const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      value: {
+        getData: (type: string) => (type === "text/plain" ? "可以这样" : ""),
+      },
+    });
+
+    await act(async () => {
+      editable!.dispatchEvent(pasteEvent);
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith("[ZST-357](issue://issue-1?r=ZST-357) 可以这样");
+  });
+
+  it("keeps composition text after an existing plain-text issue token in the markdown source", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="[ZST-357](issue://issue-1?r=ZST-357) "
+          onChange={onChange}
+          plainText
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    const token = container.querySelector("[data-mention-kind='issue']");
+    expect(editable).toBeTruthy();
+    expect(token).toBeTruthy();
+
+    await act(async () => {
+      token!.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+      }));
+    });
+
+    await act(async () => {
+      editable!.dispatchEvent(new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "insertCompositionText",
+        data: "可以这样",
+      }));
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith("[ZST-357](issue://issue-1?r=ZST-357) 可以这样");
   });
 
   it("keeps the caret after a mention selected with Tab in a plain text composer", async () => {

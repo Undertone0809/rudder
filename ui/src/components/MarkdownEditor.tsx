@@ -357,6 +357,71 @@ function canonicalMarkdownFromFragment(fragment: DocumentFragment) {
   return Array.from(fragment.childNodes).map(read).join("");
 }
 
+function tokenMarkdownIdentity(token: Pick<AtomicInlineTokenElement, "href" | "kind" | "label">) {
+  if (token.kind === "skill") {
+    const skillReference = parseSkillReference(token.href, token.label);
+    return skillReference
+      ? { href: skillReference.href, kind: token.kind, label: skillReference.label }
+      : { href: token.href, kind: token.kind, label: token.label.trim() };
+  }
+
+  return {
+    href: token.href,
+    kind: token.kind,
+    label: stripMentionChipLabelPrefix(token.label.trim()),
+  };
+}
+
+function tokenIdentitiesMatch(
+  left: Pick<AtomicInlineTokenElement, "href" | "kind" | "label">,
+  right: Pick<AtomicInlineTokenElement, "href" | "kind" | "label">,
+) {
+  const normalizedLeft = tokenMarkdownIdentity(left);
+  const normalizedRight = tokenMarkdownIdentity(right);
+  return normalizedLeft.kind === normalizedRight.kind
+    && normalizedLeft.href === normalizedRight.href
+    && normalizedLeft.label === normalizedRight.label;
+}
+
+function findAtomicTokenDomOrdinal(editable: HTMLElement, token: AtomicInlineTokenElement) {
+  const tokenElements = Array.from(editable.querySelectorAll("[data-skill-token='true'], [data-mention-kind], a"))
+    .filter((element): element is HTMLElement => element instanceof HTMLElement)
+    .filter((element) => {
+      const candidate = readAtomicInlineTokenElement(element);
+      return Boolean(candidate && tokenIdentitiesMatch(candidate, token));
+    });
+
+  const index = tokenElements.findIndex((element) => element === token.element || element.contains(token.element));
+  return Math.max(0, index);
+}
+
+function findAtomicTokenMarkdownOffset(markdown: string, token: AtomicInlineTokenElement, ordinal: number) {
+  const matches = findCanonicalReferenceCandidates(markdown).filter((match) => {
+    const label = match[1]?.trim() ?? "";
+    const href = match[2]?.trim() ?? "";
+    const parsedSkill = parseSkillReference(href, label);
+    const candidate = parsedSkill
+      ? { href: parsedSkill.href, kind: "skill" as const, label: parsedSkill.label }
+      : { href, kind: "mention" as const, label };
+    return tokenIdentitiesMatch(candidate, token);
+  });
+  const match = matches[Math.min(ordinal, Math.max(0, matches.length - 1))];
+  if (!match || typeof match.index !== "number") return null;
+
+  let offset = match.index + match[0].length;
+  while (offset < markdown.length && /[ \t\u00A0]/u.test(markdown[offset] ?? "")) {
+    offset += 1;
+  }
+  return offset;
+}
+
+function isMarkdownOffsetImmediatelyAfterCanonicalReference(markdown: string, offset: number) {
+  return findCanonicalReferenceCandidates(markdown).some((match) => {
+    const start = match.index ?? -1;
+    return start >= 0 && start + match[0].length === offset;
+  });
+}
+
 function getLastCaretTarget(node: Node): CaretTarget {
   if (node.nodeType === Node.TEXT_NODE) {
     const textNode = node as Text;
@@ -1184,16 +1249,49 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     pendingMentionInputRef.current = null;
   }, []);
 
+  const armPendingMentionInputFromToken = useCallback((token: AtomicInlineTokenElement) => {
+    if (!plainText) return false;
+    const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+    if (!(editable instanceof HTMLElement) || !editable.contains(token.element)) return false;
+
+    const markdownOffset = findAtomicTokenMarkdownOffset(
+      latestValueRef.current,
+      token,
+      findAtomicTokenDomOrdinal(editable, token),
+    );
+    if (markdownOffset === null) return false;
+
+    pendingMentionInputRef.current = {
+      markdownOffset,
+      visibleOffset: getVisibleTextOffsetBeforeNode(editable, token.element) + token.label.length + 1,
+    };
+    clearPendingMentionInputSoon();
+    return true;
+  }, [clearPendingMentionInputSoon, plainText]);
+
+  const armPendingMentionInputFromSelection = useCallback(() => {
+    if (!plainText) return false;
+    const selection = window.getSelection();
+    const token = findAdjacentAtomicInlineTokenElement(selection, "backward")
+      ?? readAtomicInlineTokenElement(selection?.anchorNode);
+    if (!token) return false;
+    return armPendingMentionInputFromToken(token);
+  }, [armPendingMentionInputFromToken, plainText]);
+
   const insertPendingMentionText = useCallback((text: string) => {
     const pendingMentionInput = pendingMentionInputRef.current;
     if (!pendingMentionInput) return false;
 
     const current = latestValueRef.current;
+    const needsBoundarySpace = pendingMentionInput.markdownOffset > 0
+      && isMarkdownOffsetImmediatelyAfterCanonicalReference(current, pendingMentionInput.markdownOffset)
+      && !/^[\s\p{P}\p{S}]/u.test(text);
+    const textToInsert = needsBoundarySpace ? ` ${text}` : text;
     const next = current.slice(0, pendingMentionInput.markdownOffset)
-      + text
+      + textToInsert
       + current.slice(pendingMentionInput.markdownOffset);
-    pendingMentionInput.markdownOffset += text.length;
-    pendingMentionInput.visibleOffset += text.length;
+    pendingMentionInput.markdownOffset += textToInsert.length;
+    pendingMentionInput.visibleOffset += textToInsert.length;
     latestValueRef.current = next;
     ref.current?.setMarkdown(next);
     onChange(next);
@@ -1214,6 +1312,12 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     });
     return true;
   }, [clearPendingMentionInputSoon, onChange]);
+
+  const insertTextAtAtomicBoundary = useCallback((text: string) => {
+    if (!text) return false;
+    if (!pendingMentionInputRef.current && !armPendingMentionInputFromSelection()) return false;
+    return insertPendingMentionText(text);
+  }, [armPendingMentionInputFromSelection, insertPendingMentionText]);
 
   const removeAtomicToken = useCallback((token: AtomicInlineTokenElement) => {
     const current = latestValueRef.current;
@@ -1516,14 +1620,13 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       if (event.defaultPrevented) return;
 
       if (
-        pendingMentionInputRef.current
-        && event.inputType === "insertText"
+        /^insert(?:Text|CompositionText|FromComposition)$/u.test(event.inputType)
         && typeof event.data === "string"
         && event.data.length > 0
+        && insertTextAtAtomicBoundary(event.data)
       ) {
         event.preventDefault();
         event.stopPropagation();
-        insertPendingMentionText(event.data);
         return;
       }
 
@@ -1542,7 +1645,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       editable.removeEventListener("keydown", handleNativeKeyDown, true);
       editable.removeEventListener("beforeinput", handleNativeBeforeInput, true);
     };
-  }, [insertPendingMentionText, removeAdjacentAtomicToken, value]);
+  }, [insertTextAtAtomicBoundary, removeAdjacentAtomicToken, value]);
 
   const selectMention = useCallback(
     (option: MentionOption) => {
@@ -1704,10 +1807,23 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   const activateInlineToken = useCallback((event: AtomicInlineTokenEvent) => {
     const token = readAtomicInlineTokenElement(event.target instanceof Node ? event.target : null);
     if (!token) return false;
+    if (plainText && !event.ctrlKey && !event.metaKey) {
+      stopAtomicInlineTokenEvent(event, { placeCaret: true });
+      armPendingMentionInputFromToken(token);
+      return true;
+    }
     stopAtomicInlineTokenEvent(event);
     (onInlineTokenClick ?? handleDefaultInlineTokenClick)(token, event);
     return true;
-  }, [handleDefaultInlineTokenClick, onInlineTokenClick]);
+  }, [armPendingMentionInputFromToken, handleDefaultInlineTokenClick, onInlineTokenClick, plainText]);
+
+  const placeAtomicInlineTokenCaret = useCallback((event: AtomicInlineTokenEvent) => {
+    const token = readAtomicInlineTokenElement(event.target instanceof Node ? event.target : null);
+    if (!token) return false;
+    stopAtomicInlineTokenEvent(event, { placeCaret: true });
+    armPendingMentionInputFromToken(token);
+    return true;
+  }, [armPendingMentionInputFromToken]);
 
   return (
     <div
@@ -1750,7 +1866,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         if (pendingMentionInputRef.current && hasPlainTextKey) {
           e.preventDefault();
           e.stopPropagation();
-          insertPendingMentionText(e.key);
+          insertTextAtAtomicBoundary(e.key);
           return;
         }
         if (pendingMentionInputRef.current && !hasPlainTextKey) {
@@ -1833,14 +1949,13 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         if (!(nativeEvent instanceof InputEvent)) return;
 
         if (
-          pendingMentionInputRef.current
-          && nativeEvent.inputType === "insertText"
+          /^insert(?:Text|CompositionText|FromComposition)$/u.test(nativeEvent.inputType)
           && typeof nativeEvent.data === "string"
           && nativeEvent.data.length > 0
+          && insertTextAtAtomicBoundary(nativeEvent.data)
         ) {
           event.preventDefault();
           event.stopPropagation();
-          insertPendingMentionText(nativeEvent.data);
           return;
         }
 
@@ -1865,10 +1980,10 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         setIsDragOver(true);
       }}
       onPointerDownCapture={(event) => {
-        stopAtomicInlineTokenEvent(event, { placeCaret: true });
+        placeAtomicInlineTokenCaret(event);
       }}
       onMouseDownCapture={(event) => {
-        stopAtomicInlineTokenEvent(event, { placeCaret: true });
+        placeAtomicInlineTokenCaret(event);
       }}
       onPointerUpCapture={(event) => {
         stopAtomicInlineTokenEvent(event);
@@ -1892,6 +2007,13 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         if (!canonicalText) return;
         event.clipboardData.setData("text/plain", canonicalText);
         event.preventDefault();
+      }}
+      onPasteCapture={(event) => {
+        if (!plainText) return;
+        const text = event.clipboardData.getData("text/plain");
+        if (!text || !insertTextAtAtomicBoundary(text)) return;
+        event.preventDefault();
+        event.stopPropagation();
       }}
       onDoubleClickCapture={(event) => {
         const target = event.target;
