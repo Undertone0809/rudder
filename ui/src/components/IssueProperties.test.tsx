@@ -503,6 +503,55 @@ describe("IssueProperties", () => {
     expect(container.querySelector('a[href="/issues/RUD-2"]')).toBeTruthy();
   });
 
+  it("opens parent issues by full id when the parent has no identifier", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const parentedIssue: Issue = {
+      ...baseIssue,
+      parentId: "legacy-parent-full-id",
+      ancestors: [
+        {
+          id: "legacy-parent-full-id",
+          identifier: null,
+          title: "Legacy parent task",
+          description: null,
+          status: "todo",
+          priority: "medium",
+          assigneeAgentId: null,
+          assigneeUserId: null,
+          reviewerAgentId: null,
+          reviewerUserId: null,
+          projectId: null,
+          goalId: null,
+          project: null,
+          goal: null,
+        },
+      ],
+    };
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={parentedIssue}
+          onUpdate={vi.fn()}
+          childIssues={[]}
+        />,
+      );
+    });
+
+    expect(container.querySelector('a[href="/issues/legacy-parent-full-id"]')).toBeTruthy();
+    expect(container.textContent).toContain("legacy-");
+    expect(container.textContent).toContain("Legacy parent task");
+  });
+
   it("opens the shared new issue dialog with parent defaults from the properties row", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

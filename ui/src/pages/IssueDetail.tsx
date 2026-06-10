@@ -32,6 +32,7 @@ import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils"
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
 import { IssueDetailFind } from "../components/IssueDetailFind";
+import { IssueParentContext } from "../components/IssueParentContext";
 import { IssueProperties } from "../components/IssueProperties";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
@@ -124,7 +125,7 @@ type IssueHeaderBreadcrumbSource = {
 
 type IssueHeaderBreadcrumbTarget = Pick<Issue, "id" | "identifier" | "title" | "ancestors">;
 
-const EMPTY_ISSUE_ANCESTORS: Issue["ancestors"] = [];
+const EMPTY_ISSUE_ANCESTORS: NonNullable<Issue["ancestors"]> = [];
 
 export function buildIssueHeaderBreadcrumbs(input: {
   sourceBreadcrumb: IssueHeaderBreadcrumbSource;
@@ -1183,6 +1184,7 @@ export function IssueDetail() {
     [issueRouteBasePath, location.state],
   );
   const ancestors = issue?.ancestors ?? EMPTY_ISSUE_ANCESTORS;
+  const parentIssue = issue?.parentId ? ancestors[0] ?? null : null;
   const issueHeaderBreadcrumbs = useMemo(() => {
     return buildIssueHeaderBreadcrumbs({
       sourceBreadcrumb,
@@ -2098,6 +2100,8 @@ export function IssueDetail() {
           className="text-xl font-bold"
         />
 
+        <IssueParentContext parentIssue={parentIssue} />
+
         <InlineEditor
           value={issue.description ?? ""}
           onSave={(description) => updateIssue.mutateAsync({ description })}
@@ -2379,7 +2383,7 @@ export function IssueDetail() {
                     className="flex min-w-0 flex-1 items-center justify-between gap-3"
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      <span className="max-w-28 shrink truncate font-mono text-xs text-muted-foreground">
                         {childPathId}
                       </span>
                       <span className="truncate">{child.title}</span>

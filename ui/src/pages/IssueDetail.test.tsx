@@ -590,6 +590,35 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("Comments &amp; Runs");
   });
 
+  it("shows parent issue context directly under the title for sub-issues", () => {
+    queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), {
+      ...childIssue,
+      title: "Child issue with title context",
+      ancestors: [parentIssue],
+    });
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Parent issue context");
+    expect(html).toContain("Sub-issue of");
+    expect(html).toContain('href="/issues/ORG2-1"');
+    expect(html).toContain("ORG2-1");
+    expect(html).toContain("Parent issue");
+  });
+
+  it("routes parent issue context with the full id when no identifier exists", () => {
+    queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), {
+      ...childIssue,
+      title: "Legacy child issue",
+      ancestors: [{ ...parentIssue, identifier: null }],
+    });
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('href="/issues/issue-parent"');
+    expect(html).toContain("issue-pa");
+  });
+
   it("renders linked Library files with a stable icon affordance", () => {
     queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), {
       ...parentIssue,
