@@ -70,7 +70,6 @@ import {
   Check,
   ChevronRight,
   Copy,
-  EyeOff,
   ExternalLink,
   FileCode2,
   FileText,
@@ -196,6 +195,12 @@ const ACTION_LABELS: Record<string, string> = {
   "approval.rejected": "rejected",
 };
 
+const HIDDEN_ISSUE_DETAIL_ACTIVITY_ACTIONS = new Set([
+  "issue.comment_updated",
+  "issue.comment_deleted",
+  "issue.deleted",
+]);
+
 function humanizeValue(value: unknown): string {
   if (typeof value !== "string") return String(value ?? "none");
   return value.replace(/_/g, " ");
@@ -300,6 +305,7 @@ function isLowSignalContentOnlyIssueUpdate(evt: ActivityEvent): boolean {
 
 function shouldShowIssueActivityEvent(evt: ActivityEvent): boolean {
   if (evt.action === "issue.comment_added") return false;
+  if (HIDDEN_ISSUE_DETAIL_ACTIVITY_ACTIONS.has(evt.action)) return false;
   if (evt.action === "issue.document_updated") return false;
   if (isLowSignalContentOnlyIssueUpdate(evt)) return false;
   return true;
@@ -1595,6 +1601,27 @@ export function IssueDetail() {
     },
   });
 
+  const deleteIssue = useMutation({
+    mutationFn: () => issuesApi.remove(issueId!),
+    onSuccess: (deleted) => {
+      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(issueId!) });
+      queryClient.removeQueries({ queryKey: queryKeys.issues.detail(deleted.id) });
+      if (deleted.identifier) {
+        queryClient.removeQueries({ queryKey: queryKeys.issues.detail(deleted.identifier) });
+      }
+      invalidateIssue();
+      pushToast({ title: "Issue deleted", tone: "success" });
+      navigate("/issues/all");
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Failed to delete issue",
+        body: err instanceof Error ? err.message : "Try again.",
+        tone: "error",
+      });
+    },
+  });
+
   const updateSubIssueStatus = useMutation({
     mutationFn: ({
       childIssueId,
@@ -2003,17 +2030,16 @@ export function IssueDetail() {
           </button>
           <div className="my-1 h-px bg-border" aria-hidden="true" />
           <button
-            className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
+            className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive disabled:cursor-not-allowed disabled:opacity-60"
             onClick={() => {
-              updateIssue.mutate(
-                { hiddenAt: new Date().toISOString() },
-                { onSuccess: () => navigate("/issues/all") },
-              );
+              if (!window.confirm(`Delete ${issueDisplayId}? This removes the issue from Rudder.`)) return;
+              deleteIssue.mutate();
               onMoreOpenChange(false);
             }}
+            disabled={deleteIssue.isPending}
           >
-            <EyeOff className="h-3 w-3" />
-            Hide this Issue
+            {deleteIssue.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+            Delete Issue
           </button>
         </PopoverContent>
       </Popover>
@@ -2027,28 +2053,21 @@ export function IssueDetail() {
     >
       <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
       <div className="min-w-0 space-y-6">
-        {issue.hiddenAt && (
-          <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            <EyeOff className="h-4 w-4 shrink-0" />
-            This issue is hidden
-          </div>
-        )}
-
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0 flex-wrap">
-          {hasLiveRuns && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-medium text-cyan-600 dark:text-cyan-400 shrink-0">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-400" />
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+            {hasLiveRuns && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-medium text-cyan-600 dark:text-cyan-400 shrink-0">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-400" />
+                </span>
+                Live
               </span>
-              Live
-            </span>
-          )}
+            )}
 
-          {issue.originKind === "automation_execution" && issue.originId && (
-            <Link
+            {issue.originKind === "automation_execution" && issue.originId && (
+              <Link
               to={`/automations/${issue.originId}`}
               className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400 shrink-0 hover:bg-violet-500/20 transition-colors"
             >

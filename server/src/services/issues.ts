@@ -1104,6 +1104,9 @@ export function issueService(db: Db) {
           .from(issueDocuments)
           .where(eq(issueDocuments.issueId, id));
 
+        await tx.delete(issueReadStates).where(eq(issueReadStates.issueId, id));
+        await tx.delete(issueComments).where(eq(issueComments.issueId, id));
+
         const removedIssue = await tx
           .delete(issues)
           .where(eq(issues.id, id))

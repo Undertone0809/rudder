@@ -242,6 +242,7 @@ vi.mock("../api/issues", () => ({
     listAttachments: vi.fn(),
     markRead: vi.fn(),
     update: vi.fn(),
+    remove: vi.fn(),
     addComment: vi.fn(),
     updateComment: vi.fn(),
     deleteComment: vi.fn(),
@@ -653,6 +654,8 @@ describe("IssueDetail", () => {
     let html = renderToStaticMarkup(<IssueDetail />);
 
     expect(html).toContain("Pin Issue");
+    expect(html).toContain("Delete Issue");
+    expect(html).not.toContain("Hide this Issue");
     expect(html).not.toContain("Unpin Issue");
 
     queryData.set(JSON.stringify(["issues", "org-2", "follows"]), [{
@@ -838,6 +841,45 @@ describe("IssueDetail", () => {
         createdAt: new Date("2026-04-20T01:15:00.000Z"),
       },
       {
+        id: "activity-comment-updated",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.comment_updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: { commentId: "comment-1" },
+        createdAt: new Date("2026-04-20T01:16:00.000Z"),
+      },
+      {
+        id: "activity-comment-deleted",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.comment_deleted",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: { commentId: "comment-1" },
+        createdAt: new Date("2026-04-20T01:17:00.000Z"),
+      },
+      {
+        id: "activity-issue-deleted",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.deleted",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {},
+        createdAt: new Date("2026-04-20T01:18:00.000Z"),
+      },
+      {
         id: "activity-review-handoff",
         orgId: "org-2",
         actorType: "agent",
@@ -902,6 +944,9 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("updated the title");
     expect(html).not.toContain("updated the description");
     expect(html).not.toContain("Hidden document update unique");
+    expect(html).not.toContain("edited a comment");
+    expect(html).not.toContain("deleted a comment");
+    expect(html).not.toContain("deleted the issue");
   });
 
   it("renders approval link events as ordinary activity rows", () => {

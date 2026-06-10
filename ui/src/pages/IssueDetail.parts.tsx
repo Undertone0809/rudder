@@ -183,6 +183,12 @@ export const ACTION_LABELS: Record<string, string> = {
   "approval.rejected": "rejected",
 };
 
+export const HIDDEN_ISSUE_DETAIL_ACTIVITY_ACTIONS = new Set([
+  "issue.comment_updated",
+  "issue.comment_deleted",
+  "issue.deleted",
+]);
+
 export function humanizeValue(value: unknown): string {
   if (typeof value !== "string") return String(value ?? "none");
   return value.replace(/_/g, " ");
@@ -287,6 +293,7 @@ export function isLowSignalContentOnlyIssueUpdate(evt: ActivityEvent): boolean {
 
 export function shouldShowIssueActivityEvent(evt: ActivityEvent): boolean {
   if (evt.action === "issue.comment_added") return false;
+  if (HIDDEN_ISSUE_DETAIL_ACTIVITY_ACTIONS.has(evt.action)) return false;
   if (evt.action === "issue.document_updated") return false;
   if (isLowSignalContentOnlyIssueUpdate(evt)) return false;
   return true;
