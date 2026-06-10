@@ -55,7 +55,7 @@ function previewEntries(surface: SurfaceId) {
     return runTranscriptFixtureEntries.slice(17, 24);
   }
   if (surface === "live") {
-    return runTranscriptFixtureEntries.slice(9, 24);
+    return runTranscriptFixtureEntries.slice(9, 28);
   }
   return runTranscriptFixtureEntries;
 }
@@ -153,7 +153,7 @@ function LiveWidgetPreview({
             entries={previewEntries("live")}
             mode={mode}
             density={density}
-            limit={density === "compact" ? 10 : 12}
+            limit={density === "compact" ? 12 : 14}
             streaming={streaming}
             presentation="chat"
           />

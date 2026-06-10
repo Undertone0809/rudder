@@ -1567,6 +1567,45 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("pr_number 123");
   });
 
+  it("renders Codex spawn agent tool payloads as readable transcript summaries", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "spawn_agent",
+              toolUseId: "agent-1",
+              input: {
+                agent_type: "explorer",
+                message: "Inspect the transcript renderer for Codex tool rows.",
+                model: "gpt-5.3-codex",
+                reasoning_effort: "high",
+                fork_context: true,
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "agent-1",
+              content: JSON.stringify({ id: "agent_123", nickname: "Explorer" }),
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Spawned explorer agent: Inspect the transcript renderer for Codex tool rows.");
+    expect(html).toContain("gpt-5.3-codex");
+    expect(html).toContain("high reasoning");
+    expect(html).toContain("forked context");
+    expect(html).not.toContain("spawn_agent");
+  });
+
   it("uses semantic action icons for representative transcript categories", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

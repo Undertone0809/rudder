@@ -88,6 +88,8 @@ test.describe("UI Lab", () => {
     await page.locator("button").filter({ hasText: /^compact$/i }).click();
     await page.locator("button").filter({ hasText: "Issue Widget" }).click();
     await expect(page.getByText("I’m validating the generic tool row", { exact: false })).toBeVisible();
+    await expect(page.getByText("Spawned explorer agent: Inspect the transcript renderer for Codex sub-agent rows.", { exact: false })).toBeVisible();
+    await expect(page.getByText("gpt-5.3-codex, high reasoning, forked context", { exact: false })).toBeVisible();
 
     const genericToolRow = page.locator("button").filter({ hasText: /^Tool/ });
     await expect(genericToolRow).toBeVisible();
@@ -104,7 +106,7 @@ test.describe("UI Lab", () => {
       const label = Array.from(button.querySelectorAll("span"))
         .find((element) => element.textContent?.trim() === "Tool");
       const next = Array.from(document.querySelectorAll("body *"))
-        .filter((element) => element.textContent?.includes("I’m checking the remaining transcript action shapes"))
+        .filter((element) => element.textContent?.includes("I’m delegating a focused transcript check"))
         .sort((left, right) => (left.textContent?.length ?? 0) - (right.textContent?.length ?? 0))[0];
       const wrapper = button.parentElement;
       if (!icon || !label || !next || !wrapper) {

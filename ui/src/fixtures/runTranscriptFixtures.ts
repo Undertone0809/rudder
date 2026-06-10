@@ -195,6 +195,31 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
   },
   {
     kind: "assistant",
+    ts: "2026-03-11T15:22:26.880Z",
+    text: "I’m delegating a focused transcript check to a parallel Codex agent.",
+  },
+  {
+    kind: "tool_call",
+    ts: "2026-03-11T15:22:26.885Z",
+    name: "spawn_agent",
+    toolUseId: "spawn_agent_fixture",
+    input: {
+      agent_type: "explorer",
+      message: "Inspect the transcript renderer for Codex sub-agent rows.",
+      model: "gpt-5.3-codex",
+      reasoning_effort: "high",
+      fork_context: true,
+    },
+  },
+  {
+    kind: "tool_result",
+    ts: "2026-03-11T15:22:26.890Z",
+    toolUseId: "spawn_agent_fixture",
+    content: "{\"id\":\"agent_fixture\",\"nickname\":\"Explorer\"}",
+    isError: false,
+  },
+  {
+    kind: "assistant",
     ts: "2026-03-11T15:22:26.900Z",
     text: "I’m checking the remaining transcript action shapes so the fixture covers exploration, inspection, and edits in the same visual pass.",
   },
