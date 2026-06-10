@@ -9,6 +9,7 @@ import {
   parseSkillImportSourceInput,
   readLocalSkillImportFromDirectory,
 } from "../services/organization-skills.js";
+import { createOrganizationSkillScanHandlers } from "../services/knowledge-portability/organization-skills.scans.js";
 
 const cleanupDirs = new Set<string>();
 
@@ -212,6 +213,61 @@ describe("project workspace skill discovery", () => {
     );
 
     expect(imported.description).toBe("First line of the summary.\nSecond line of the summary.");
+  });
+});
+
+describe("organization skill local scans", () => {
+  it("defaults to the organization skill workspace instead of the user home .agents directory", async () => {
+    const previousHome = process.env.HOME;
+    const previousRudderHome = process.env.RUDDER_HOME;
+    const home = await makeTempDir("rudder-user-home-skills-");
+    const rudderHome = await makeTempDir("rudder-org-scan-home-");
+    process.env.HOME = home;
+    process.env.RUDDER_HOME = rudderHome;
+
+    try {
+      const orgId = "33333333-3333-4333-8333-333333333333";
+      await writeSkillDir(
+        path.join(home, ".agents", "skills", "global-only"),
+        "Global Only",
+      );
+      await writeSkillDir(
+        path.join(rudderHome, "instances", "default", "organizations", orgId, "workspaces", "skills", "org-only"),
+        "Org Only",
+      );
+
+      const persistedSlugs: string[] = [];
+      const handlers = createOrganizationSkillScanHandlers({
+        ensureSkillInventoryCurrent: async () => {},
+        listFull: async () => [],
+        projects: {
+          list: async () => [],
+          listByIds: async () => [],
+        },
+        upsertImportedSkills: async (nextOrgId, imported) => imported.map((skill, index) => {
+          persistedSlugs.push(skill.slug);
+          return {
+            ...skill,
+            id: `skill-${index}`,
+            orgId: nextOrgId,
+            usedByAgents: [],
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+        }) as any,
+      });
+
+      const result = await handlers.scanLocalSkillRoots(orgId);
+
+      expect(result.imported.map((skill) => skill.slug)).toEqual(["org-only"]);
+      expect(persistedSlugs).toEqual(["org-only"]);
+      expect(result.discovered).toBe(1);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
+    }
   });
 });
 

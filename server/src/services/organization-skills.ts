@@ -5,6 +5,7 @@ export {
 
 export {
   findMissingLocalSkillIds,
+  listLegacyUserHomeLocalScanSkillIds,
   listStaleBundledSkillIds,
   listStaleCommunityPresetSkillIds,
   normalizeGitHubSkillDirectory,

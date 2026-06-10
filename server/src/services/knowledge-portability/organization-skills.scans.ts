@@ -1,4 +1,3 @@
-import os from "node:os";
 import path from "node:path";
 import type {
   OrganizationSkill,
@@ -17,6 +16,7 @@ import {
   normalizeSkillDirectory,
   normalizeSkillSlug,
   normalizeSourceLocatorDirectory,
+  resolveManagedSkillsRoot,
   statPath,
 } from "./organization-skills.catalog.js";
 import type { ImportedSkill, ProjectSkillScanTarget } from "./organization-skills.catalog.js";
@@ -223,7 +223,7 @@ export function createOrganizationSkillScanHandlers(context: OrganizationSkillSc
 
     const requestedRoots = input.roots?.length
       ? input.roots
-      : [path.join(os.homedir(), ".agents")];
+      : [resolveManagedSkillsRoot(orgId)];
     const roots = Array.from(
       new Set(
         requestedRoots

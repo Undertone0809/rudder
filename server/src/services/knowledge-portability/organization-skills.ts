@@ -69,6 +69,7 @@ import {
   isBundledRudderSourceKind,
   isMarkdownPath,
   isPlainRecord,
+  listLegacyUserHomeLocalScanSkillIds,
   listStaleBundledSkillIds,
   listStaleCommunityPresetSkillIds,
   normalizeGitHubSkillDirectory,
@@ -317,6 +318,29 @@ export function organizationSkillService(db: Db) {
     }
   }
 
+  async function pruneLegacyUserHomeLocalScanSkills(orgId: string) {
+    const rows = await db
+      .select()
+      .from(organizationSkills)
+      .where(eq(organizationSkills.orgId, orgId));
+    const staleIds = new Set(listLegacyUserHomeLocalScanSkillIds(rows));
+    if (staleIds.size === 0) return;
+
+    const skills = rows.map((row) => toCompanySkill(row));
+    const staleKeys = skills
+      .filter((skill) => staleIds.has(skill.id))
+      .map((skill) => skill.key);
+    await enabledSkills.removeSkillKeys(orgId, staleKeys);
+
+    for (const skill of skills) {
+      if (!staleIds.has(skill.id)) continue;
+      await db
+        .delete(organizationSkills)
+        .where(eq(organizationSkills.id, skill.id));
+      await fs.rm(resolveRuntimeSkillMaterializedPath(orgId, skill), { recursive: true, force: true });
+    }
+  }
+
   async function backfillMissingSkillDescriptions(orgId: string) {
     const rows = await db
       .select()
@@ -358,6 +382,7 @@ export function organizationSkillService(db: Db) {
     const refreshPromise = (async () => {
       await ensureBundledSkills(orgId);
       await ensureCommunityPresetSkills(orgId);
+      await pruneLegacyUserHomeLocalScanSkills(orgId);
       await pruneMissingLocalPathSkills(orgId);
       await backfillMissingSkillDescriptions(orgId);
     })();
