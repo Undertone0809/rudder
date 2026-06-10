@@ -355,6 +355,48 @@ test.describe("Chat proposal review block", () => {
     expect(issues.find((issue: { title: string }) => issue.title === "Default todo proposal status test")?.status).toBe("todo");
   });
 
+  test("lets operators edit proposal status before approval", async ({ page }) => {
+    const command = await writeProposalStub("proposal-review-edit-status", {
+      kind: "issue_proposal",
+      body: "Create a runnable issue with an operator-selected status.",
+      structuredPayload: {
+        issueProposal: {
+          title: "Editable proposal status test",
+          description: "Verify status edits are used when approving a chat issue proposal.",
+          priority: "medium",
+          assigneeUnassignedReason: "The operator will choose an owner after the issue is created.",
+        },
+      },
+    });
+    const organization = await createProposalOrg(page, `EditableStatus-${Date.now()}`, command);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("please draft an issue whose status I can tune");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const reviewBlock = page.getByTestId("proposal-review-block").last();
+    await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
+    await expect(reviewBlock).toHaveAttribute("data-status", "pending");
+    await expect(reviewBlock).toContainText("todo");
+
+    await reviewBlock.getByRole("button", { name: "Edit status" }).click();
+    await page.getByRole("menuitem", { name: /in review/i }).click();
+    await expect(reviewBlock).toContainText("in review");
+
+    await reviewBlock.getByRole("button", { name: "Approve" }).click();
+
+    await expect(reviewBlock).toHaveAttribute("data-status", "approved", { timeout: 15_000 });
+    const createdIssueLink = page.locator(".chat-system-issue-link").last();
+    await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
+
+    const issuesRes = await page.request.get(`/api/orgs/${organization.id}/issues`);
+    expect(issuesRes.ok()).toBe(true);
+    const issues = await issuesRes.json();
+    expect(issues.find((issue: { title: string }) => issue.title === "Editable proposal status test")?.status).toBe("in_review");
+  });
+
   test("shows reviewer metadata on chat issue proposals and preserves it after approval", async ({ page }) => {
     const command = await writeProposalStub("proposal-reviewer-metadata", {
       kind: "issue_proposal",

@@ -620,6 +620,48 @@ describe("Chat attachment previews", () => {
 
     expect(document.body.querySelector("[data-testid='chat-image-preview-dialog']")).toBeNull();
   });
+
+  it("approves issue proposals with the operator-selected issue status", async () => {
+    const { container } = renderChat();
+
+    const statusTrigger = container.querySelector<HTMLButtonElement>('button[aria-label="Edit status"]');
+    expect(statusTrigger).not.toBeNull();
+
+    await act(async () => {
+      statusTrigger?.dispatchEvent(new MouseEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      }));
+      await Promise.resolve();
+    });
+
+    const inReviewOption = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (candidate) => candidate.textContent?.includes("in review"),
+    );
+    expect(inReviewOption).not.toBeUndefined();
+
+    await act(async () => {
+      inReviewOption?.click();
+      await Promise.resolve();
+    });
+
+    await clickEnabledButton(container, "Approve");
+
+    expect(mockState.mutations.at(-1)).toMatchObject({
+      approvalId: "approval-1",
+      action: "approve",
+      messageId: "proposal-1",
+      payloadOverride: {
+        proposedIssue: {
+          title: "Fix attachment preview",
+          description: "Move the preview dialog outside the composer.",
+          priority: "medium",
+          status: "in_review",
+        },
+      },
+    });
+  });
 });
 
 describe("Chat ask_user panel", () => {

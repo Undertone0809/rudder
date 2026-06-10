@@ -33,6 +33,7 @@ import {
   type ChatOperationProposalDecisionStatus,
   type ChatPrimaryIssueSummary,
   type Issue,
+  ISSUE_STATUSES,
   formatMessengerPreview,
   type MessengerThreadSummary,
   type Project,
@@ -197,6 +198,19 @@ const proposalPrincipalFieldKeys = {
     user: "reviewerUserId",
   },
 } as const;
+
+export function issueProposalWithStatus(
+  proposal: Record<string, unknown>,
+  status: string,
+) {
+  const nextStatus = ISSUE_STATUSES.includes(status as (typeof ISSUE_STATUSES)[number])
+    ? status
+    : "todo";
+  return {
+    ...proposal,
+    status: nextStatus,
+  };
+}
 
 export function issueProposalPrincipalSelectionValue(
   proposal: Record<string, unknown>,
@@ -410,6 +424,44 @@ function ProposalPrincipalSelector({
   );
 }
 
+function ProposalStatusSelector({
+  proposal,
+  status,
+  onChange,
+}: {
+  proposal: Record<string, unknown>;
+  status: string;
+  onChange: (nextProposal: Record<string, unknown>) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Edit status"
+          className="rounded-[var(--radius-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <StatusBadge status={status} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        {ISSUE_STATUSES.map((option) => (
+          <DropdownMenuItem
+            key={option}
+            className="justify-between gap-2"
+            onClick={() => onChange(issueProposalWithStatus(proposal, option))}
+          >
+            <StatusBadge status={option} />
+            {option === status ? (
+              <span className="text-xs text-muted-foreground">Selected</span>
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function ProposalCard({
   conversation,
   message,
@@ -474,7 +526,7 @@ export function ProposalCard({
       ? issueProposal.assigneeUnassignedReason.trim() || null
       : null;
   const proposalDescription = issueProposal ? String(issueProposal.description) : "";
-  const canEditIssueProposalPrincipals = Boolean(issueProposal && (showApprovalActions || canConvertDirectly) && onIssueProposalChange);
+  const canEditIssueProposal = Boolean(issueProposal && (showApprovalActions || canConvertDirectly) && onIssueProposalChange);
   const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
   const [proposalDetailsCanExpand, setProposalDetailsCanExpand] = useState(false);
   const proposalDetailsRef = useRef<HTMLDivElement | null>(null);
@@ -569,18 +621,26 @@ export function ProposalCard({
                       <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
                     </ProposalFactRow>
                     <ProposalFactRow label="Status">
-                      <span
-                        className={cn(
-                          "inline-flex shrink-0 items-center rounded-[calc(var(--radius-sm)-1px)] border px-2.5 py-1 text-xs font-medium whitespace-nowrap",
-                          statusBadge[proposalIssueStatus] ?? statusBadgeDefault,
-                        )}
-                      >
-                        {proposalIssueStatus.replace("_", " ")}
-                      </span>
+                      {canEditIssueProposal ? (
+                        <ProposalStatusSelector
+                          proposal={issueProposal}
+                          status={proposalIssueStatus}
+                          onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
+                        />
+                      ) : (
+                        <span
+                          className={cn(
+                            "inline-flex shrink-0 items-center rounded-[calc(var(--radius-sm)-1px)] border px-2.5 py-1 text-xs font-medium whitespace-nowrap",
+                            statusBadge[proposalIssueStatus] ?? statusBadgeDefault,
+                          )}
+                        >
+                          {proposalIssueStatus.replace("_", " ")}
+                        </span>
+                      )}
                     </ProposalFactRow>
                     <ProposalFactRow label="Owner">
                       <div className="flex min-w-0 flex-col items-end gap-1 text-right">
-                        {canEditIssueProposalPrincipals ? (
+                        {canEditIssueProposal ? (
                           <ProposalPrincipalSelector
                             proposal={issueProposal}
                             role="assignee"
@@ -604,7 +664,7 @@ export function ProposalCard({
                       </div>
                     </ProposalFactRow>
                     <ProposalFactRow label="Reviewer">
-                      {canEditIssueProposalPrincipals ? (
+                      {canEditIssueProposal ? (
                         <ProposalPrincipalSelector
                           proposal={issueProposal}
                           role="reviewer"
