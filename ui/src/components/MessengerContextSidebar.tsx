@@ -767,6 +767,8 @@ function ChatThreadRow({
   const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt, { compactDate: true });
   const [actionsOpen, setActionsOpen] = useState(false);
   const compact = density === "compact";
+  const rightActionClass = compact ? "right-1.5" : "right-2";
+  const secondaryActionClass = compact ? "right-7" : "right-8";
 
   useEffect(() => {
     if (generating) setActionsOpen(false);
@@ -828,9 +830,6 @@ function ChatThreadRow({
                   )}
                 >
                   <span className="truncate">{conversationDisplayTitle(conversation)}</span>
-                  {conversation.isPinned ? (
-                    <Pin className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  ) : null}
                 </div>
                 {!compact ? (
                   <div
@@ -870,13 +869,30 @@ function ChatThreadRow({
             </span>
           ) : null}
 
+          {conversation.isPinned ? (
+            <button
+              type="button"
+              data-testid={`messenger-pin-toggle-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
+              className={cn(
+                "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-[color:var(--accent-strong)] opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-[color:var(--accent-strong)] focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+                rightActionClass,
+                (actionsOpen || generating) && "pointer-events-none opacity-0",
+              )}
+              aria-label="Unpin chat"
+              title="Unpin chat"
+              onClick={onTogglePin}
+            >
+              <Pin className="h-3.5 w-3.5" strokeWidth={2.25} />
+            </button>
+          ) : null}
+
           <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 className={cn(
                   "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-                  compact ? "right-1.5" : "right-2",
+                  conversation.isPinned ? secondaryActionClass : rightActionClass,
                   actionsOpen ? "opacity-100" : "opacity-0",
                 )}
                 aria-label="Chat actions"
@@ -958,6 +974,8 @@ function ThreadRow({
   const preview = formatMessengerPreview(thread.preview) || formatMessengerPreview(thread.subtitle) || messengerThreadKindLabel(thread.kind);
   const compact = density === "compact";
   const [actionsOpen, setActionsOpen] = useState(false);
+  const rightActionClass = compact ? "right-1.5" : "right-2";
+  const secondaryActionClass = compact ? "right-7" : "right-8";
   const canTogglePin = thread.metadata?.splitIssue === true;
   const canHideIssue = thread.metadata?.splitIssue === true && Boolean(onHideIssue);
   const issueStatus =
@@ -1015,9 +1033,6 @@ function ThreadRow({
               )}
             >
               <span className="truncate">{threadDisplayTitle(thread.title)}</span>
-              {canTogglePin && thread.isPinned ? (
-                <Pin className="h-3 w-3 shrink-0 text-muted-foreground" />
-              ) : null}
             </span>
             <span
               data-testid={`messenger-time-${sanitizeThreadKey(thread.threadKey)}`}
@@ -1058,6 +1073,23 @@ function ThreadRow({
         </span>
       ) : null}
 
+      {canTogglePin && thread.isPinned ? (
+        <button
+          type="button"
+          data-testid={`messenger-pin-toggle-${sanitizeThreadKey(thread.threadKey)}`}
+          className={cn(
+            "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-[color:var(--accent-strong)] opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-[color:var(--accent-strong)] focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+            rightActionClass,
+            (actionsOpen || activeExecutionRunId) && "pointer-events-none opacity-0",
+          )}
+          aria-label="Unpin thread"
+          title="Unpin thread"
+          onClick={onTogglePin}
+        >
+          <Pin className="h-3.5 w-3.5" strokeWidth={2.25} />
+        </button>
+      ) : null}
+
       {canTogglePin || canHideIssue ? (
         <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
           <DropdownMenuTrigger asChild>
@@ -1065,7 +1097,7 @@ function ThreadRow({
               type="button"
               className={cn(
                 "absolute top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-                compact ? "right-1.5" : "right-2",
+                canTogglePin && thread.isPinned ? secondaryActionClass : rightActionClass,
                 actionsOpen ? "opacity-100" : "opacity-0",
               )}
               aria-label="Thread actions"

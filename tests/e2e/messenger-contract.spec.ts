@@ -839,6 +839,75 @@ test.describe("Messenger unified threads contract", () => {
     ]);
   });
 
+  test("shows pinned Messenger hover pins in the aligned time column", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Pin-Hover-${Date.now()}`);
+
+    async function createPinnedChat(title: string, summary: string) {
+      const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title,
+          summary,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+        },
+      });
+      expect(chatRes.ok()).toBe(true);
+      const chat = await chatRes.json();
+      const pinRes = await page.request.post(`/api/chats/${chat.id}/user-state`, {
+        data: { pinned: true },
+      });
+      expect(pinRes.ok()).toBe(true);
+      return chat;
+    }
+
+    const shortChat = await createPinnedChat("Short pin", "Pinned short title.");
+    const longChat = await createPinnedChat(
+      "A much longer pinned Messenger conversation title",
+      "Pinned long title.",
+    );
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+
+    const shortRow = page.getByTestId(threadTestId(`chat:${shortChat.id}`));
+    const longRow = page.getByTestId(threadTestId(`chat:${longChat.id}`));
+    const shortPin = page.getByTestId(`messenger-pin-toggle-chat-${shortChat.id}`);
+    const longPin = page.getByTestId(`messenger-pin-toggle-chat-${longChat.id}`);
+
+    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(shortRow).toBeVisible({ timeout: 15_000 });
+    await expect(longRow).toBeVisible({ timeout: 15_000 });
+    await expect(shortPin).toHaveCSS("opacity", "0");
+    await expect(longPin).toHaveCSS("opacity", "0");
+
+    await shortRow.hover();
+    await expect(shortPin).toHaveCSS("opacity", "1");
+    const shortTimeBox = await page.getByTestId(`messenger-time-chat-${shortChat.id}`).boundingBox();
+    const shortPinBox = await shortPin.boundingBox();
+
+    await longRow.hover();
+    await expect(longPin).toHaveCSS("opacity", "1");
+    const longTimeBox = await page.getByTestId(`messenger-time-chat-${longChat.id}`).boundingBox();
+    const longPinBox = await longPin.boundingBox();
+
+    expect(shortTimeBox).not.toBeNull();
+    expect(longTimeBox).not.toBeNull();
+    expect(shortPinBox).not.toBeNull();
+    expect(longPinBox).not.toBeNull();
+
+    const shortPinCenter = shortPinBox!.x + shortPinBox!.width / 2;
+    const longPinCenter = longPinBox!.x + longPinBox!.width / 2;
+    expect(Math.abs(shortPinCenter - longPinCenter)).toBeLessThanOrEqual(1);
+    expect(shortPinBox!.x).toBeGreaterThanOrEqual(shortTimeBox!.x - 3);
+    expect(shortPinBox!.x + shortPinBox!.width).toBeLessThanOrEqual(shortTimeBox!.x + shortTimeBox!.width + 3);
+    expect(longPinBox!.x).toBeGreaterThanOrEqual(longTimeBox!.x - 3);
+    expect(longPinBox!.x + longPinBox!.width).toBeLessThanOrEqual(longTimeBox!.x + longTimeBox!.width + 3);
+  });
+
   test("renders pinned Messenger chats from thread summaries before the full chat list responds", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Pin-Cold-${Date.now()}`);
 

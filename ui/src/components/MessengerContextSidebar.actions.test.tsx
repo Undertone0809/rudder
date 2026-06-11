@@ -332,6 +332,33 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockUpdateUserState).toHaveBeenCalledWith("chat-1", { pinned: true, unread: undefined });
   });
 
+  it("unpins a pinned chat from the aligned hover pin control", async () => {
+    chatList = [baseConversation({ isPinned: true })];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          ...baseModel().threadSummaries[0],
+          isPinned: true,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const pin = document.querySelector<HTMLButtonElement>('[data-testid="messenger-pin-toggle-chat-chat-1"]');
+
+    expect(pin).toBeTruthy();
+    expect(pin?.className).toContain("right-1.5");
+    expect(pin?.className).toContain("text-[color:var(--accent-strong)]");
+    await act(async () => {
+      pin?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateUserState).toHaveBeenCalledWith("chat-1", { pinned: false, unread: undefined });
+  });
+
   it("optimistically removes an archived chat from active Messenger caches before the update request resolves", async () => {
     renderSidebar();
 
@@ -896,6 +923,42 @@ describe("MessengerContextSidebar chat actions", () => {
     });
 
     expect(mockUpdateThreadUserState).toHaveBeenCalledWith("org-1", "issue:issue-1", { pinned: true });
+  });
+
+  it("unpins split issue rows from the aligned hover pin control", async () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Split issue",
+          preview: "Followed issue update",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: true,
+          metadata: { splitIssue: true, issueId: "issue-1", issueIdentifier: "ISS-1", status: "todo" },
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const pinButton = document.querySelector<HTMLButtonElement>('[data-testid="messenger-pin-toggle-issue-issue-1"]');
+
+    expect(pinButton).toBeTruthy();
+    expect(pinButton?.className).toContain("right-1.5");
+    expect(pinButton?.className).toContain("text-[color:var(--accent-strong)]");
+    await act(async () => {
+      pinButton?.click();
+    });
+
+    expect(mockUpdateThreadUserState).toHaveBeenCalledWith("org-1", "issue:issue-1", { pinned: false });
   });
 
   it("hides split issue rows until the issue update watermark changes", async () => {

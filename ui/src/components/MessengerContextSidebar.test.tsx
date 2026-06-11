@@ -277,6 +277,37 @@ describe("MessengerContextSidebar", () => {
     expect(messengerModelOptions).toContainEqual({ splitIssues: true });
   });
 
+  it("renders pinned row icons as fixed right-side hover controls", () => {
+    chatList = [
+      {
+        ...chatList[0],
+        isPinned: true,
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          ...baseModel().threadSummaries[0],
+          isPinned: true,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+    const pinButtonMatch = html.match(/data-testid="messenger-pin-toggle-chat-chat-1"[^>]*class="([^"]+)"/);
+    const titleEnd = html.indexOf("hi</span>");
+    const pinButtonStart = html.indexOf('data-testid="messenger-pin-toggle-chat-chat-1"');
+
+    expect(pinButtonMatch?.[1]).toContain("absolute");
+    expect(pinButtonMatch?.[1]).toContain("right-1.5");
+    expect(pinButtonMatch?.[1]).toContain("opacity-0");
+    expect(pinButtonMatch?.[1]).toContain("group-hover:opacity-100");
+    expect(pinButtonMatch?.[1]).toContain("text-[color:var(--accent-strong)]");
+    expect(titleEnd).toBeGreaterThan(-1);
+    expect(pinButtonStart).toBeGreaterThan(titleEnd);
+  });
+
   it("respects stored comfortable density and aggregate issue notification preferences", () => {
     localStorageValues["rudder.messengerThreadDensityByOrg"] = JSON.stringify({ "org-1": "comfortable" });
     localStorageValues["rudder.messengerSplitIssueNotificationsByOrg"] = JSON.stringify({ "org-1": false });
