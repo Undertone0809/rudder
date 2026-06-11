@@ -81,7 +81,14 @@ import { issuesApi } from "@/api/issues";
 import { projectsApi } from "@/api/projects";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { prefetchChatConversation } from "@/lib/chat-prefetch";
-import { readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
+import {
+  clearChatAskUserDraft,
+  readChatAskUserDraft,
+  readChatDraft,
+  saveChatAskUserDraft,
+  saveChatDraft,
+  type ChatAskUserDraft,
+} from "@/lib/chat-draft-storage";
 import {
   readChatPendingAttachmentsForScope,
   resolveChatPendingAttachmentScopeKey,
@@ -1166,6 +1173,66 @@ export function AskUserAnswerBubble({
   );
 }
 
+type AskUserPanelDraftState = ChatAskUserDraft & {
+  scopeKey: string;
+};
+
+function emptyAskUserPanelDraft(scopeKey: string): AskUserPanelDraftState {
+  return {
+    scopeKey,
+    selectedByQuestionId: {},
+    freeformByQuestionId: {},
+    currentQuestionIndex: 0,
+    reviewingAnswers: false,
+  };
+}
+
+function normalizeAskUserPanelDraft(
+  draft: ChatAskUserDraft | null,
+  request: ChatAskUserRequest,
+  scopeKey: string,
+): AskUserPanelDraftState {
+  if (!draft) return emptyAskUserPanelDraft(scopeKey);
+
+  const questionIds = new Set(request.questions.map((question) => question.id));
+  const optionIdsByQuestionId = new Map(
+    request.questions.map((question) => [
+      question.id,
+      new Set([...question.options.map((option) => option.id), "__other"]),
+    ]),
+  );
+  const selectedByQuestionId: Record<string, string[]> = {};
+  for (const [questionId, selected] of Object.entries(draft.selectedByQuestionId)) {
+    if (!questionIds.has(questionId)) continue;
+    const optionIds = optionIdsByQuestionId.get(questionId);
+    const normalized = selected.filter((optionId) => optionIds?.has(optionId));
+    if (normalized.length > 0) selectedByQuestionId[questionId] = normalized;
+  }
+
+  const freeformByQuestionId: Record<string, string> = {};
+  for (const [questionId, text] of Object.entries(draft.freeformByQuestionId)) {
+    if (questionIds.has(questionId) && text.length > 0) freeformByQuestionId[questionId] = text;
+  }
+
+  const maxQuestionIndex = Math.max(request.questions.length - 1, 0);
+  return {
+    scopeKey,
+    selectedByQuestionId,
+    freeformByQuestionId,
+    currentQuestionIndex: Math.min(Math.max(draft.currentQuestionIndex, 0), maxQuestionIndex),
+    reviewingAnswers: request.questions.length > 1 && draft.reviewingAnswers,
+  };
+}
+
+function askUserRequestDraftShapeKey(request: ChatAskUserRequest) {
+  return request.questions.map((question) => [
+    question.id,
+    question.selectionMode ?? "single",
+    question.allowFreeform === false ? "locked" : "freeform",
+    question.options.map((option) => option.id).join(","),
+  ].join(":")).join("|");
+}
+
 export function AskUserPanel({
   message,
   request,
@@ -1187,17 +1254,45 @@ export function AskUserPanel({
   onPasteAttachment: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   onSubmit: (body: string) => void;
 }) {
-  const [selectedByQuestionId, setSelectedByQuestionId] = useState<Record<string, string[]>>({});
-  const [freeformByQuestionId, setFreeformByQuestionId] = useState<Record<string, string>>({});
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [reviewingAnswers, setReviewingAnswers] = useState(false);
+  const draftScopeKey = `${message.orgId}:${message.id}`;
+  const requestDraftShapeKey = askUserRequestDraftShapeKey(request);
+  const [draftState, setDraftState] = useState(() =>
+    normalizeAskUserPanelDraft(readChatAskUserDraft(message.orgId, message.id), request, draftScopeKey)
+  );
+  const activeDraftState = draftState.scopeKey === draftScopeKey
+    ? draftState
+    : emptyAskUserPanelDraft(draftScopeKey);
+  const selectedByQuestionId = activeDraftState.selectedByQuestionId;
+  const freeformByQuestionId = activeDraftState.freeformByQuestionId;
+  const currentQuestionIndex = activeDraftState.currentQuestionIndex;
+  const reviewingAnswers = activeDraftState.reviewingAnswers;
 
   useEffect(() => {
-    setSelectedByQuestionId({});
-    setFreeformByQuestionId({});
-    setCurrentQuestionIndex(0);
-    setReviewingAnswers(false);
-  }, [message.id]);
+    setDraftState(normalizeAskUserPanelDraft(
+      readChatAskUserDraft(message.orgId, message.id),
+      request,
+      draftScopeKey,
+    ));
+  }, [draftScopeKey, message.id, message.orgId, requestDraftShapeKey]);
+
+  useEffect(() => {
+    if (draftState.scopeKey !== draftScopeKey) return;
+    saveChatAskUserDraft(message.orgId, message.id, {
+      selectedByQuestionId: draftState.selectedByQuestionId,
+      freeformByQuestionId: draftState.freeformByQuestionId,
+      currentQuestionIndex: draftState.currentQuestionIndex,
+      reviewingAnswers: draftState.reviewingAnswers,
+    });
+  }, [
+    draftScopeKey,
+    draftState.currentQuestionIndex,
+    draftState.freeformByQuestionId,
+    draftState.reviewingAnswers,
+    draftState.scopeKey,
+    draftState.selectedByQuestionId,
+    message.id,
+    message.orgId,
+  ]);
 
   const answers = useMemo(() => {
     const next: Record<string, AskUserAnswerValue> = {};
@@ -1250,11 +1345,14 @@ export function AskUserPanel({
   const moveToNextQuestion = (fromIndex: number) => {
     if (!hasMultipleQuestions) return;
     if (fromIndex < questionCount - 1) {
-      setCurrentQuestionIndex(fromIndex + 1);
-      setReviewingAnswers(false);
+      setDraftState((current) => ({
+        ...current,
+        currentQuestionIndex: fromIndex + 1,
+        reviewingAnswers: false,
+      }));
       return;
     }
-    setReviewingAnswers(true);
+    setDraftState((current) => ({ ...current, reviewingAnswers: true }));
   };
 
   const answerText = (answer: AskUserAnswerValue | undefined) =>
@@ -1262,13 +1360,27 @@ export function AskUserPanel({
 
   const selectOption = (question: ChatAskUserQuestion, index: number, optionId: string) => {
     const isMultiple = question.selectionMode === "multiple";
-    setSelectedByQuestionId((current) => {
-      const existing = current[question.id] ?? [];
-      if (!isMultiple) return { ...current, [question.id]: [optionId] };
+    setDraftState((current) => {
+      const existing = current.selectedByQuestionId[question.id] ?? [];
+      if (!isMultiple) {
+        return {
+          ...current,
+          selectedByQuestionId: {
+            ...current.selectedByQuestionId,
+            [question.id]: [optionId],
+          },
+        };
+      }
       const nextSelection = existing.includes(optionId)
         ? existing.filter((entry) => entry !== optionId)
         : [...existing, optionId];
-      return { ...current, [question.id]: nextSelection };
+      return {
+        ...current,
+        selectedByQuestionId: {
+          ...current.selectedByQuestionId,
+          [question.id]: nextSelection,
+        },
+      };
     });
     if (!isMultiple && optionId !== "__other") {
       moveToNextQuestion(index);
@@ -1300,8 +1412,11 @@ export function AskUserPanel({
                   type="button"
                   className="flex w-full min-w-0 items-start justify-between gap-3 rounded-[var(--radius-md)] px-2 py-1.5 text-left text-sm hover:bg-[color:var(--surface-active)]"
                   onClick={() => {
-                    setCurrentQuestionIndex(index);
-                    setReviewingAnswers(false);
+                    setDraftState((current) => ({
+                      ...current,
+                      currentQuestionIndex: index,
+                      reviewingAnswers: false,
+                    }));
                   }}
                 >
                   <span className="min-w-0">
@@ -1403,9 +1518,12 @@ export function AskUserPanel({
             <div className="mt-2 space-y-2">
               <Textarea
                 value={freeformByQuestionId[currentQuestion.id] ?? ""}
-                onChange={(event) => setFreeformByQuestionId((current) => ({
+                onChange={(event) => setDraftState((current) => ({
                   ...current,
-                  [currentQuestion.id]: event.target.value,
+                  freeformByQuestionId: {
+                    ...current.freeformByQuestionId,
+                    [currentQuestion.id]: event.target.value,
+                  },
                 }))}
                 placeholder="Type your answer..."
                 className="min-h-20 resize-y rounded-[var(--radius-md)] bg-background text-sm"
@@ -1470,11 +1588,17 @@ export function AskUserPanel({
             disabled={disabled || (!reviewingAnswers && boundedQuestionIndex === 0)}
             onClick={() => {
               if (reviewingAnswers) {
-                setCurrentQuestionIndex(questionCount - 1);
-                setReviewingAnswers(false);
+                setDraftState((current) => ({
+                  ...current,
+                  currentQuestionIndex: questionCount - 1,
+                  reviewingAnswers: false,
+                }));
                 return;
               }
-              setCurrentQuestionIndex((index) => Math.max(index - 1, 0));
+              setDraftState((current) => ({
+                ...current,
+                currentQuestionIndex: Math.max(current.currentQuestionIndex - 1, 0),
+              }));
             }}
           >
             Back
@@ -1496,7 +1620,10 @@ export function AskUserPanel({
             type="button"
             size="sm"
             disabled={disabled || !canSubmit}
-            onClick={() => onSubmit(formatAskUserAnswerMessage(request, answersWithAttachmentFallback))}
+            onClick={() => {
+              clearChatAskUserDraft(message.orgId, message.id);
+              onSubmit(formatAskUserAnswerMessage(request, answersWithAttachmentFallback));
+            }}
           >
             Submit answer
           </Button>

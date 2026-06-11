@@ -13,6 +13,7 @@ import {
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
 } from "@/lib/chat-pending-attachments";
+import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -1082,6 +1083,52 @@ describe("Chat ask_user panel", () => {
     expect(panel?.textContent).toContain("Missing tests");
     expect(panel?.textContent).toContain("Include screenshot evidence");
     expect(panel?.textContent).not.toContain("Question 3 of 3");
+  });
+
+  it("restores unfinished ask_user selections after switching conversations and clears them on submit", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingMultiAskUser(),
+      ],
+      "chat-2": [message({ id: "other-message-1", conversationId: "chat-2", body: "Other chat" })],
+    };
+
+    const { container, rerender } = renderChat();
+    let panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    await clickEnabledButton(container, "Broad path");
+    await clickEnabledButton(container, "Missing tests");
+    await clickEnabledButton(container, "Other");
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    act(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Include screenshot evidence");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickEnabledButton(container, "Review answers");
+    expect(panel?.textContent).toContain("Review answers");
+
+    mockState.conversationId = "chat-2";
+    rerender();
+    expect(container.querySelector("[data-testid='chat-ask-user-panel']")).toBeNull();
+
+    mockState.conversationId = "chat-1";
+    rerender();
+    panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+    expect(panel?.textContent).toContain("Review answers");
+    expect(panel?.textContent).toContain("Broad path");
+    expect(panel?.textContent).toContain("Missing tests");
+    expect(panel?.textContent).toContain("Include screenshot evidence");
+
+    await clickEnabledButton(container, "Submit answer");
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Broad path");
+    expect(readChatAskUserDraft("org-1", "ask-user-multi-1")).toBeNull();
   });
 
   it("lets one ask_user question collect multiple selected options", async () => {
