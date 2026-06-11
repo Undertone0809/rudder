@@ -876,24 +876,59 @@ export function heartbeatService(db: Db) {
         return null;
       }
     }
-    const agent = await getAgent(run.agentId);
-    if (!agent) {
-      await cancelRunInternal(run.id, "Cancelled because the agent no longer exists");
-      return null;
-    }
-    if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") {
-      await cancelRunInternal(run.id, "Cancelled because the agent is not invokable");
+
+    async function cancelQueuedRunDuringClaim(reason: string) {
+      const cancelled = await setRunStatus(run.id, "cancelled", {
+        finishedAt: new Date(),
+        error: reason,
+        errorCode: "cancelled",
+      });
+      await setWakeupStatus(run.wakeupRequestId, "cancelled", {
+        finishedAt: new Date(),
+        error: reason,
+      });
+      if (cancelled) {
+        await appendRunEvent(cancelled, 1, {
+          eventType: "lifecycle",
+          stream: "system",
+          level: "warn",
+          message: "run cancelled",
+        });
+        await releaseIssueExecutionAndPromote(cancelled);
+      }
+      await finalizeAgentStatus(run.agentId, "cancelled");
       return null;
     }
 
+    const agent = await getAgent(run.agentId);
+    if (!agent) {
+      return await cancelQueuedRunDuringClaim("Cancelled because the agent no longer exists");
+    }
+    if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") {
+      return await cancelQueuedRunDuringClaim("Cancelled because the agent is not invokable");
+    }
+
     const context = parseObject(run.contextSnapshot);
+    const issueId = readNonEmptyString(context.issueId);
+    if (issueId) {
+      const issue = await db
+        .select({ id: issues.id, status: issues.status })
+        .from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.orgId, run.orgId)))
+        .then((rows) => rows[0] ?? null);
+      if (!issue) {
+        return await cancelQueuedRunDuringClaim("Cancelled because the linked issue no longer exists");
+      }
+      if (issue.status === "done" || issue.status === "cancelled") {
+        return await cancelQueuedRunDuringClaim("Cancelled because the linked issue is no longer actionable");
+      }
+    }
     const budgetBlock = await budgets.getInvocationBlock(run.orgId, run.agentId, {
-      issueId: readNonEmptyString(context.issueId),
+      issueId,
       projectId: readNonEmptyString(context.projectId),
     });
     if (budgetBlock) {
-      await cancelRunInternal(run.id, budgetBlock.reason);
-      return null;
+      return await cancelQueuedRunDuringClaim(budgetBlock.reason);
     }
 
     const claimedAt = new Date();

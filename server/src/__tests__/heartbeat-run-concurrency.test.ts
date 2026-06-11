@@ -259,6 +259,7 @@ describe("heartbeat run concurrency", () => {
     orgId: string;
     agentId: string;
     taskKey: string;
+    issueId?: string;
     createdAt: Date;
   }) {
     const wakeupRequestId = randomUUID();
@@ -285,8 +286,9 @@ describe("heartbeat run concurrency", () => {
       status: "queued",
       wakeupRequestId,
       contextSnapshot: {
-        taskId: input.taskKey,
+        taskId: input.issueId ?? input.taskKey,
         taskKey: input.taskKey,
+        ...(input.issueId ? { issueId: input.issueId } : {}),
       },
       createdAt: input.createdAt,
       updatedAt: input.createdAt,
@@ -705,6 +707,41 @@ describe("heartbeat run concurrency", () => {
     });
   });
 
+  it("skips deferred issue recovery when the linked issue is already done", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T06:26:00.000Z");
+    const tickAt = new Date("2026-04-27T06:31:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "done" });
+    const deferredWakeupId = await seedRunlessWakeup({
+      orgId,
+      agentId,
+      status: "deferred_issue_execution",
+      source: "review",
+      reason: "issue_execution_deferred",
+      issueId,
+      requestedAt: new Date("2026-04-27T06:27:00.000Z"),
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    expect(await listRunStatuses(agentId)).toHaveLength(0);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups.find((wakeup) => wakeup.id === deferredWakeupId)).toMatchObject({
+      status: "skipped",
+      reason: "issue_execution_issue_not_actionable",
+      runId: null,
+    });
+    expect(wakeups.some((wakeup) => wakeup.reason === "heartbeat.preflight.no_actionable_work")).toBe(true);
+  });
+
   it("skips timer heartbeats without actionable work and records pending wakeup diagnostics", async () => {
     await disableExistingTimerAgents();
     const createdAt = new Date("2026-04-27T06:40:00.000Z");
@@ -865,6 +902,33 @@ describe("heartbeat run concurrency", () => {
     expect(wakeups[0]).toMatchObject({
       status: "skipped",
       reason: "heartbeat.preflight.no_actionable_work",
+      runId: null,
+    });
+  });
+
+  it("cancels queued runs whose linked issue is already done before runtime start", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "done" });
+    await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: `issue:${issueId}`,
+      issueId,
+      createdAt: new Date("2026-04-27T09:30:00.000Z"),
+    });
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    const statuses = await listRunStatuses(agentId);
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]).toMatchObject({ status: "cancelled" });
+    expect(await listLiveRunsForAgent(agentId)).toHaveLength(0);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups[0]).toMatchObject({
+      status: "cancelled",
       runId: null,
     });
   });

@@ -819,6 +819,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           .select({
             id: issues.id,
             orgId: issues.orgId,
+            status: issues.status,
             executionRunId: issues.executionRunId,
           })
           .from(issues)
@@ -828,6 +829,17 @@ export function createHeartbeatWakeupHandlers(context: any) {
         if (!issue) {
           await setWakeupStatus(pendingWakeup.id, "skipped", {
             reason: "issue_execution_issue_not_found",
+            finishedAt: new Date(),
+            runId: null,
+            claimedAt: null,
+            error: null,
+          });
+          continue;
+        }
+
+        if (issue.status === "done" || issue.status === "cancelled") {
+          await setWakeupStatus(pendingWakeup.id, "skipped", {
+            reason: "issue_execution_issue_not_actionable",
             finishedAt: new Date(),
             runId: null,
             claimedAt: null,
