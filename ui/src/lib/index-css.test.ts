@@ -210,6 +210,7 @@ describe("index.css motion rules", () => {
     expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-inactive-height)]");
     expect(organizationWorkspacesSource).toContain("rounded-t-[var(--rudder-doc-editor-tab-radius)]");
     expect(organizationWorkspacesSource).toContain("rounded-[var(--rudder-doc-editor-tab-radius)]");
+    expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-path-breadcrumb"[\s\S]{0,260}className="[^"]*\bh-8\b/);
     expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-path-breadcrumb"[\s\S]{0,260}className="[^"]*\bborder-x\b[^"]*\bborder-b\b[^"]*border-\[color:var\(--border-base\)\]/);
     expect(organizationWorkspacesSource).not.toContain("showWorkspaceFileTabs && \"rounded-tr-[var(--desktop-workspace-radius)] border-t\"");
     expect(organizationWorkspacesSource).toContain("const showWorkspaceFileTabs = openFilePaths.length > 0");
