@@ -200,6 +200,65 @@ Project commands are part of the agent-facing CLI contract. Agent-authenticated
 mutating calls attach `RUDDER_AGENT_ID` and `RUDDER_RUN_ID` when available and
 remain scoped to the authenticated organization.
 
+## Automation Commands
+
+```sh
+pnpm rudder automation list --org-id <org-id> [--status active] [--assignee-agent-id <agent-id>] [--project-id <project-id>] [--output-mode track_issue]
+pnpm rudder automation get <automation-id>
+pnpm rudder automation runs <automation-id> [--limit 50]
+pnpm rudder automation triggers list <automation-id>
+pnpm rudder automation create --org-id <org-id> --title "..." --assignee-agent-id <agent-id> [--payload '{"outputMode":"chat_output"}']
+pnpm rudder automation update <automation-id> [--title "..."] [--payload '{"status":"paused"}']
+pnpm rudder automation enable <automation-id>
+pnpm rudder automation disable <automation-id>
+pnpm rudder automation run <automation-id> [--trigger-id <id>] [--payload '{"manual":true}']
+```
+
+Automation read commands use the stable automation REST APIs and do not create
+activity rows. Mutations use the governed automation routes, so agent-authenticated
+calls attach `RUDDER_AGENT_ID` and `RUDDER_RUN_ID` when available and keep the
+same permission/attribution behavior as the UI.
+
+## Chat Commands
+
+```sh
+pnpm rudder chat list --org-id <org-id> [--status active|resolved|archived|all] [--query text]
+pnpm rudder chat search "keyword" --org-id <org-id> [--scope all|title|summary|messages] [--snippet-chars 220]
+pnpm rudder chat get <chat-id>
+pnpm rudder chat messages <chat-id> [--include-transcript] [--limit 20]
+pnpm rudder chat transcript <chat-id> [--limit 20] [--max-chars 1200]
+pnpm rudder chat read <chat-id> [--limit 20] [--include-transcript]
+pnpm rudder chat create --org-id <org-id> [--title "..."] [--preferred-agent-id <agent-id>]
+pnpm rudder chat send <chat-id> --body "..."
+pnpm rudder chat archive <chat-id>
+```
+
+Chat search calls the server-side chat query and prints bounded snippets by
+default. Long conversations are not dumped by `list` or `search`; use
+`messages` or `transcript` explicitly, and prefer `--json` when another tool
+needs the complete structured payload.
+
+## Run Debugging Commands
+
+```sh
+pnpm rudder runs list --org-id <org-id> [--status failed] [--agent-id <id>] [--issue-id <id>] [--runtime codex_local] [--limit 200]
+pnpm rudder runs get <run-id>
+pnpm rudder runs events <run-id>
+pnpm rudder runs log <run-id> [--max-chars 12000]
+pnpm rudder runs transcript <run-id> [--errors-only] [--around-error step-12] [--context-turns 1] [--chronological] [--narrative]
+pnpm rudder runs errors <run-id> [--max-chars 1200]
+pnpm rudder runs cancel <run-id>
+pnpm rudder runs retry <run-id>
+```
+
+`runs transcript` is normalized server-side from persisted run detail and log
+content. Human output is compact, clipped, and newest-first by default; pass
+`--chronological` or `--narrative` for explicit reading modes. `--json` returns
+the stable payload with rows, trace counts, and clipped-output metadata.
+`runs errors` provides the error-first path for failed tool calls, stderr/result
+failures, and runtime failures, including a stable `step-N` context command such
+as `rudder runs transcript <run-id> --around-error step-12`.
+
 ## Agent Commands
 
 ```sh

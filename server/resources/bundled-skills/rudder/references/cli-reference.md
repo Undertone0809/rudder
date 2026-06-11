@@ -60,6 +60,32 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder skill import --org-id <id> --source <source>` | Import a skill package into the organization skill library. | yes | required | no | attached when available |
 | `rudder skill scan-local --org-id <id> [--roots <csv>]` | Scan local roots for skill packages and import new ones. | yes | required | no | attached when available |
 | `rudder skill scan-projects --org-id <id> [--project-ids <csv>] [--workspace-ids <csv>]` | Scan the org workspace and any legacy project workspace records for skill packages and import new ones. | yes | required | no | attached when available |
+| `rudder automation list --org-id <id>` | List automations for an organization with compact local filters. | no | required | no | no |
+| `rudder automation get <automation-id>` | Read one automation detail including triggers and recent runs. | no | no | no | no |
+| `rudder automation runs <automation-id>` | List recent runs for one automation. | no | no | no | no |
+| `rudder automation triggers list <automation-id>` | List triggers configured for one automation. | no | no | no | no |
+| `rudder automation create --org-id <id> --title <title> --assignee-agent-id <id>` | Create an automation through the governed automation API. | yes | required | no | attached when available |
+| `rudder automation update <automation-id>` | Update automation fields through the governed automation API. | yes | no | no | attached when available |
+| `rudder automation enable <automation-id>` | Enable an automation by setting status to active. | yes | no | no | attached when available |
+| `rudder automation disable <automation-id>` | Disable an automation by setting status to paused. | yes | no | no | attached when available |
+| `rudder automation run <automation-id>` | Trigger a manual automation run. | yes | no | no | attached when available |
+| `rudder chat list --org-id <id>` | List chat conversations without dumping full message history. | no | required | no | no |
+| `rudder chat search <query> --org-id <id>` | Search chats with bounded snippets and optional scope filtering. | no | required | no | no |
+| `rudder chat get <chat-id>` | Read one chat conversation record. | no | no | no | no |
+| `rudder chat messages <chat-id>` | Read bounded chat messages, with transcript omitted unless requested. | no | no | no | no |
+| `rudder chat transcript <chat-id>` | Read chat messages with assistant transcript entries clipped in human output. | no | no | no | no |
+| `rudder chat read <chat-id>` | Read a bounded recent-message snapshot for one chat. | no | no | no | no |
+| `rudder chat create --org-id <id>` | Create a chat conversation. | yes | required | no | attached when available |
+| `rudder chat send <chat-id> --body <text>` | Send a chat message and persist the assistant reply through the server. | yes | no | no | attached when available |
+| `rudder chat archive <chat-id>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
+| `rudder runs list --org-id <id>` | List observed agent runs with filters for status, agent, issue, runtime, and time. | no | required | no | no |
+| `rudder runs get <run-id>` | Read one observed run detail. | no | no | no | no |
+| `rudder runs events <run-id>` | List persisted run events. | no | no | no | no |
+| `rudder runs log <run-id>` | Read stored run log content with clipped human output. | no | no | no | no |
+| `rudder runs transcript <run-id>` | Read the server-normalized run transcript, newest-first by default. | no | no | no | no |
+| `rudder runs errors <run-id>` | List failed tool calls, stderr, runtime failures, and jump-to-context commands. | no | no | no | no |
+| `rudder runs cancel <run-id>` | Cancel a heartbeat run through the governed server route. | yes | no | no | attached when available |
+| `rudder runs retry <run-id>` | Retry a failed, timed out, or cancelled run through the governed server route. | yes | no | no | attached when available |
 
 ## Issue Close-Out Signals
 
