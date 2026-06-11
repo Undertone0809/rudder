@@ -733,6 +733,7 @@ export function TranscriptEventRow({
   const compact = density === "compact";
   const detail = presentation === "detail";
   const collapsible = block.collapseByDefault === true;
+  const isFileChange = block.label === "file change";
   const preview = truncate(compactWhitespace(block.text), compact ? 96 : 140);
   const toneClasses =
     block.tone === "error"
@@ -742,6 +743,49 @@ export function TranscriptEventRow({
         : block.tone === "info"
           ? "text-sky-700 dark:text-sky-300"
           : "text-foreground/75";
+
+  if (isFileChange) {
+    const isWarn = block.tone === "warn" || block.tone === "error";
+    return (
+      <div
+        data-transcript-file-change="true"
+        className={cn("max-w-full", detail ? "py-0.5" : undefined)}
+        title={getTranscriptTimestampTitle(block.ts)}
+      >
+        <button
+          type="button"
+          className={cn(
+            "inline-flex max-w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors",
+            compact ? "text-xs leading-5" : "text-sm leading-6",
+            isWarn
+              ? "border-amber-500/25 bg-amber-500/[0.06] text-amber-800 hover:bg-amber-500/[0.10] dark:text-amber-200"
+              : "border-border/45 bg-muted/10 text-foreground/72 hover:bg-muted/20",
+          )}
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
+          <FileDiff className={cn("h-3.5 w-3.5 shrink-0", isWarn ? "text-amber-600 dark:text-amber-300" : "text-muted-foreground")} />
+          <span className="shrink-0 font-medium text-muted-foreground">
+            File Change
+          </span>
+          <span className="min-w-0 truncate">
+            {preview || "Updated files"}
+          </span>
+          {block.detail ? (
+            <DisclosureChevron open={open} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          ) : null}
+        </button>
+        {block.detail && open ? (
+          <pre className={cn(
+            "motion-disclosure-enter mt-1.5 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-border/35 bg-muted/10 p-2 font-mono text-[11px] text-foreground/75",
+            detail ? "ml-0" : "ml-5",
+          )}>
+            {block.detail}
+          </pre>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className={toneClasses} title={getTranscriptTimestampTitle(block.ts)}>

@@ -124,5 +124,13 @@ test.describe("UI Lab", () => {
     expect(metrics.wrapperClass).toContain("py-0.5");
     expect(metrics.iconLabelCenterDelta).toBeLessThanOrEqual(1);
     expect(metrics.rowToNextGap).toBeLessThanOrEqual(6);
+
+    await page.locator("button").filter({ hasText: "Chat Transcript" }).click();
+    await expect(page.locator('[data-transcript-file-change="true"]').first()).toBeVisible();
+    await expect(page.getByText("File Change", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Updated rudder/proposals/2026-06-10-rudder-cli-capability-parity.md", { exact: false })).toBeVisible();
+    await expect(page.getByText("/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/projects/rudder/proposals", { exact: false })).toHaveCount(0);
+    await page.locator('[data-transcript-file-change="true"] button').first().click();
+    await expect(page.getByText("/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/projects/rudder/proposals", { exact: false })).toBeVisible();
   });
 });

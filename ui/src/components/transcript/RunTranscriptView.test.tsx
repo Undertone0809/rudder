@@ -853,6 +853,11 @@ describe("RunTranscriptView", () => {
         ts: "2026-03-12T00:00:03.000Z",
         text: "file changes failed: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx permission denied",
       },
+      {
+        kind: "system",
+        ts: "2026-03-12T00:00:04.000Z",
+        text: "file changes: update /tmp/AgentDetail.tsx",
+      },
     ];
 
     const blocks = normalizeTranscript(entries, false);
@@ -867,30 +872,44 @@ describe("RunTranscriptView", () => {
     });
     expect(blocks[1]).toMatchObject({
       type: "event",
-      label: "system",
+      label: "file change",
       tone: "neutral",
-      text: "file changes: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+      text: "Updated src/pages/AgentDetail.tsx",
+      detail: "file changes: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+      collapseByDefault: true,
     });
     expect(blocks[2]).toMatchObject({
       type: "event",
-      label: "system",
+      label: "file change",
       tone: "neutral",
-      text: "file_change: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+      text: "Updated src/pages/AgentDetail.tsx",
+      detail: "file_change: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+      collapseByDefault: true,
     });
     expect(blocks[3]).toMatchObject({
       type: "event",
-      label: "system",
+      label: "file change",
       tone: "warn",
-      text: "file changes failed: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx permission denied",
+      text: "Failed src/pages/AgentDetail.tsx permission denied",
+      detail: "file changes failed: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx permission denied",
+      collapseByDefault: true,
+    });
+    expect(blocks[4]).toMatchObject({
+      type: "event",
+      label: "file change",
+      tone: "neutral",
+      text: "Updated AgentDetail.tsx",
+      detail: "file changes: update /tmp/AgentDetail.tsx",
+      collapseByDefault: true,
     });
   });
 
-  it("renders non-memory file changes as a normal system event", () => {
+  it("renders non-memory file changes as compact toast-like events", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
           density="compact"
-          presentation="detail"
+          presentation="chat"
           entries={[
             {
               kind: "system",
@@ -902,7 +921,12 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("file changes: add /Users/zeeland/projects/rudder-oss/doc/plans/2026-06-10-unified-agent-run-architecture.md");
+    expect(html).toContain('data-transcript-file-change="true"');
+    expect(html).toContain("File Change");
+    expect(html).toContain("Created doc/plans/2026-06-10-unified-agent-run-architecture.md");
+    expect(html).not.toContain("aria-label=");
+    expect(html).not.toContain("file changes: add /Users/zeeland/projects/rudder-oss/doc/plans/2026-06-10-unified-agent-run-architecture.md");
+    expect(html).not.toContain("/Users/zeeland/projects/rudder-oss");
     expect(html).not.toContain("text-amber-700");
     expect(html).not.toContain("dark:text-amber-300");
   });

@@ -404,6 +404,65 @@ export function splitFileChangeEntries(value: string): string[] {
     .filter(Boolean);
 }
 
+export function formatFileChangeOperation(value: string, status: "completed" | "error"): string {
+  if (status === "error") return "Failed";
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "add" || normalized === "create" || normalized === "created") return "Created";
+  if (normalized === "delete" || normalized === "remove" || normalized === "removed") return "Removed";
+  return "Updated";
+}
+
+export function formatFileChangeTarget(path: string): string {
+  const normalized = normalizeTranscriptPathToken(path);
+  const withoutWorkspaceRoot = normalized.includes("/workspaces/")
+    ? normalized.slice(normalized.lastIndexOf("/workspaces/") + "/workspaces/".length)
+    : normalized;
+  const parts = withoutWorkspaceRoot.split("/").filter(Boolean);
+  if (parts.length === 0) return normalized;
+  if (withoutWorkspaceRoot.startsWith("/") && parts.length <= 3) return parts[parts.length - 1] ?? normalized;
+  if (parts.length <= 3) return withoutWorkspaceRoot;
+  return parts.slice(-3).join("/");
+}
+
+export function parseFileChangeSystemText(text: string, ts: string): Extract<TranscriptBlock, { type: "event" }> | null {
+  const trimmed = compactWhitespace(text);
+  const match =
+    trimmed.match(/^file changes:\s*(.+)$/i)
+    ?? trimmed.match(/^file_change:\s*(.+)$/i)
+    ?? trimmed.match(/^file changes failed:\s*(.+)$/i);
+  if (!match) return null;
+
+  const status: "completed" | "error" = /\b(?:failed|error|errored)\b/i.test(trimmed) ? "error" : "completed";
+  const changes = splitFileChangeEntries(match[1] ?? "")
+    .map((entry) => {
+      const changeMatch = entry.match(/^(add|create|created|update|updated|modify|modified|delete|remove|removed)\s+(.+)$/i);
+      if (!changeMatch) return null;
+      return {
+        operation: changeMatch[1] ?? "update",
+        target: formatFileChangeTarget(changeMatch[2] ?? ""),
+      };
+    })
+    .filter((change): change is { operation: string; target: string } => Boolean(change));
+
+  if (changes.length === 0) return null;
+
+  const primaryChange = changes[0]!;
+  const operation = formatFileChangeOperation(primaryChange.operation, status);
+  const textSummary = changes.length === 1
+    ? `${operation} ${primaryChange.target}`
+    : `${operation} ${changes.length} files`;
+
+  return {
+    type: "event",
+    ts,
+    label: "file change",
+    tone: status === "error" ? "warn" : "neutral",
+    text: textSummary,
+    detail: text,
+    collapseByDefault: true,
+  };
+}
+
 export function extractMemoryUpdateFailureReason(text: string, body: string): string | undefined {
   if (!/\b(?:failed|error|errored)\b/i.test(text)) return undefined;
   const withoutChanges = body.replace(/^(?:add|create|created|update|updated|modify|modified|delete|remove|removed)\s+\S+\s*/i, "").trim();

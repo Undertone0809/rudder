@@ -276,6 +276,11 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
   },
   {
     kind: "system",
+    ts: "2026-03-11T15:22:28.520Z",
+    text: "file changes: update /Users/zeeland/.rudder/instances/default/organizations/org/workspaces/projects/rudder/proposals/2026-06-10-rudder-cli-capability-parity.md",
+  },
+  {
+    kind: "system",
     ts: "2026-03-11T15:22:28.612Z",
     text: "file changes: update /Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/gabriel--fixture/instructions/MEMORY.md",
   },

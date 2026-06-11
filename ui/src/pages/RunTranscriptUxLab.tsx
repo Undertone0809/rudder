@@ -49,7 +49,7 @@ const surfaceOptions: Array<{
 
 function previewEntries(surface: SurfaceId) {
   if (surface === "chat") {
-    return runTranscriptFixtureEntries.slice(3, 24);
+    return runTranscriptFixtureEntries.slice(16, 36);
   }
   if (surface === "dashboard") {
     return runTranscriptFixtureEntries.slice(17, 24);
