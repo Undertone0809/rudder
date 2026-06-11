@@ -13,7 +13,6 @@ import {
   Folder,
   ListChecks,
   Loader2,
-  MessageSquare,
   Paperclip,
   Pencil,
   Plus,
@@ -616,11 +615,7 @@ export function ChatEmptyStateRecentConversations({
       aria-label="Recent project conversations"
       aria-hidden={!visible}
     >
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
-          <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate">Recent conversations</span>
-        </div>
+      <div className="mb-1 flex min-h-5 items-center justify-end gap-3">
         {projectName ? (
           <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{projectName}</span>
         ) : null}

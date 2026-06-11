@@ -230,7 +230,7 @@ describe("ChatEmptyStateRecentConversations", () => {
     expect(openSection?.dataset.state).toBe("open");
     expect(openSection?.getAttribute("aria-hidden")).toBe("false");
     expect(openLink?.getAttribute("tabindex")).toBeNull();
-    expect(openSection?.textContent).toContain("Recent conversations");
+    expect(openSection?.textContent).not.toContain("Recent conversations");
     expect(openSection?.textContent).toContain("Recent planning chat");
 
     cleanupFn?.();

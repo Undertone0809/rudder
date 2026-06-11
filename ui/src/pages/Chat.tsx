@@ -1281,13 +1281,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 <div className="w-full max-w-3xl">
                   {renderComposer(true)} </div>
                 {hasRecentProjectConversations ? (
-                  <Tabs value={emptyStateActiveTab} onValueChange={(value) => setEmptyStateActiveTab(value as "recent" | "use-cases")} className="mt-4 w-full max-w-3xl gap-3" data-testid="chat-empty-state-tabs">
-                    <TabsList variant="line" aria-label="New chat empty state" className="border-b border-[color:var(--border-soft)] px-1">
-                      <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="gap-2">
+                  <Tabs value={emptyStateActiveTab} onValueChange={(value) => setEmptyStateActiveTab(value as "recent" | "use-cases")} className="mt-4 w-full max-w-3xl gap-4" data-testid="chat-empty-state-tabs">
+                    <TabsList variant="line" aria-label="New chat empty state" className="h-auto gap-2 border-transparent bg-transparent px-0">
+                      <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="h-9 flex-none gap-2 rounded-full border border-transparent px-4 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
                         <MessageSquare className="h-4 w-4" />
-                        <span>Recent conversations</span>
+                        <span>Chats</span>
                       </TabsTrigger>
-                      <TabsTrigger value="use-cases" id="chat-empty-state-tab-use-cases" data-testid="chat-empty-state-tab-use-cases" className="gap-2">
+                      <TabsTrigger value="use-cases" id="chat-empty-state-tab-use-cases" data-testid="chat-empty-state-tab-use-cases" className="h-9 flex-none gap-2 rounded-full border border-transparent px-4 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
                         <Sparkles className="h-4 w-4" />
                         <span>Use cases</span>
                       </TabsTrigger>
