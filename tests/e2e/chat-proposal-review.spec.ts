@@ -235,7 +235,7 @@ test.describe("Chat proposal review block", () => {
     await expect(reviewBlock.locator("ul li")).toHaveCount(2);
     await expect(reviewBlock.locator("code")).toContainText("pnpm test:e2e");
 
-    await reviewBlock.getByRole("button", { name: "Approve" }).click();
+    await reviewBlock.getByTestId("proposal-review-approve").click();
 
     await expect(reviewBlock).toHaveAttribute("data-status", "approved", { timeout: 15_000 });
     await expect(reviewBlock.getByTestId("proposal-review-status")).toContainText("approved");
@@ -243,10 +243,33 @@ test.describe("Chat proposal review block", () => {
     const createdIssueLink = page.locator(".chat-system-issue-link").last();
     await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
     await expect(createdIssueLink).toHaveAttribute("href", /\/issues\//);
+    await expect(page.locator(".chat-composer").last()).toBeVisible();
+    const composerGap = await page.evaluate(() => {
+      const scrollRegion = document.querySelector('[data-testid="chat-messages-scroll-region"]');
+      const messagesLayout = scrollRegion?.parentElement;
+      const messagesContent = document.querySelector('[data-testid="chat-messages-content"]');
+      const composers = Array.from(document.querySelectorAll(".chat-composer"));
+      const composer = composers.at(-1);
+      if (!scrollRegion || !messagesLayout || !messagesContent || !composer) return null;
+
+      const scrollBox = scrollRegion.getBoundingClientRect();
+      const composerBox = composer.getBoundingClientRect();
+      return {
+        outerGap: Math.round(composerBox.top - scrollBox.bottom),
+        layoutRowGap: window.getComputedStyle(messagesLayout).rowGap,
+        contentPaddingBottom: window.getComputedStyle(messagesContent).paddingBottom,
+      };
+    });
+    expect(composerGap).not.toBeNull();
+    expect(composerGap!.outerGap).toBeGreaterThanOrEqual(-1);
+    expect(composerGap!.outerGap).toBeLessThanOrEqual(1);
+    expect(["normal", "0px"]).toContain(composerGap!.layoutRowGap);
+    expect(composerGap!.contentPaddingBottom).toBe("0px");
     await createdIssueLink.click();
     await expect(page.getByRole("heading", { name: "Review block approval test" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("proposal-review-gate")).toHaveCount(0);
-    await expect(page.locator(".rudder-mdxeditor-content").last()).toBeVisible();
+    await expect(page.locator(".chat-composer").last()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Comment" })).toBeVisible();
   });
 
   test("preserves explicit assignees on approved chat-created issues", async ({ page }) => {

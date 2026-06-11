@@ -850,6 +850,7 @@ export function ProposalCard({
                   <Button
                     size="sm"
                     className="bg-green-700 text-white hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-500"
+                    data-testid="proposal-review-approve"
                     disabled={actionPending}
                     onClick={() => onApprovalAction(message.approval!.id, "approve", message.id)}
                   >
@@ -860,6 +861,7 @@ export function ProposalCard({
                       size="sm"
                       variant="outline"
                       className="text-foreground"
+                      data-testid="proposal-review-request-revision"
                       disabled={actionPending}
                       onClick={() => onApprovalAction(message.approval!.id, "requestRevision", message.id)}
                     >
@@ -870,6 +872,7 @@ export function ProposalCard({
                     size="sm"
                     variant="outline"
                     className="border-destructive/30 text-destructive hover:bg-destructive/10"
+                    data-testid="proposal-review-reject"
                     disabled={actionPending}
                     onClick={() => onApprovalAction(message.approval!.id, "reject", message.id)}
                   >

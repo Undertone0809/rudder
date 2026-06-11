@@ -1160,9 +1160,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           }} >
                           <Plus className="mr-2 h-4 w-4" />
                           New chat </DropdownMenuItem> </DropdownMenuContent> </DropdownMenu> </div> </div> ) : null}
-              <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden px-4 py-4 md:px-5">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-5">
                 <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto" >
-                  <div data-testid="chat-messages-content" className="mx-auto flex w-full max-w-4xl flex-col gap-5 pb-2 pr-1" >
+                  <div data-testid="chat-messages-content" className="mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1" >
                       {showMessagesLoading ? (
                         <ChatMessagesLoadingState /> ) : visibleMessages.length === 0 && !activeStream ? (
                         <div className="surface-inset rounded-[var(--radius-xl)] border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
