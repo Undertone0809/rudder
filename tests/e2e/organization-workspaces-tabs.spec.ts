@@ -146,6 +146,52 @@ test("Library markdown file links open as retained editor tabs", async ({ page }
   await expect(tabStrip.locator("[role='tab'][aria-selected='true']")).toContainText("linked.md");
 });
 
+test("Library legacy document links open without restoring retained editor tabs", async ({ page }) => {
+  const suffix = Date.now();
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Library-Legacy-Doc-${suffix}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const retainedPath = `projects/legacy-doc-${suffix}/retained.md`;
+  const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+    data: {
+      filePath: retainedPath,
+      content: "# Retained tab\n\nThis file should not reopen over a legacy document link.\n",
+    },
+  });
+  expect(fileRes.ok()).toBe(true);
+
+  const documentRes = await page.request.post(`/api/orgs/${organization.id}/library/documents`, {
+    data: {
+      title: "Legacy linked plan",
+      format: "markdown",
+      body: "# Legacy linked plan\n\nOpened from Chat or E-SCO without workspace tab restoration.",
+    },
+  });
+  expect(documentRes.ok()).toBe(true);
+  const document = await documentRes.json() as { id: string };
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(retainedPath)}`);
+  const tabStrip = page.getByTestId("org-workspaces-editor-tabs");
+  await expect(tabStrip).toContainText("retained.md", { timeout: 15_000 });
+
+  await page.goto(`/${organization.issuePrefix}/library?doc=${encodeURIComponent(document.id)}`);
+
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?doc=${document.id}$`));
+  await expect(page.getByTestId("org-workspaces-legacy-document")).toContainText("Legacy linked plan");
+  await expect(page.getByTestId("org-workspaces-legacy-document")).toContainText(
+    "Opened from Chat or E-SCO without workspace tab restoration.",
+  );
+  await expect(page.getByTestId("org-workspaces-editor-tabs")).toHaveCount(0);
+});
+
 test("Library command-w closes the current editor tab instead of the Rudder page", async ({ page }) => {
   const suffix = Date.now();
   const orgRes = await page.request.post("/api/orgs", {

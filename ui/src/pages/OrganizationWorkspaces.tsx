@@ -47,6 +47,7 @@ import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
 import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
+import { MarkdownBody } from "../components/MarkdownBody";
 import { IssueDetailFind } from "../components/IssueDetailFind";
 import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
@@ -905,6 +906,7 @@ function updateSelectedPath(
   if (filePath) next.set("path", filePath);
   else next.delete("path");
   next.delete("entry");
+  next.delete("doc");
   if (filePath) next.delete("directory");
   if (filePath) next.delete("resource");
   else next.delete("resource");
@@ -918,6 +920,7 @@ function updateSelectedResource(
 ) {
   const next = new URLSearchParams(searchParams);
   next.set("resource", attachmentId);
+  next.delete("doc");
   next.delete("path");
   next.delete("directory");
   setSearchParams(next, { replace: true });
@@ -2930,15 +2933,16 @@ export function OrganizationWorkspaceBrowser({
   const navigate = useNavigate();
   const { viewedOrganization, viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
+  const requestedDocumentId = normalizeRequestedPath(searchParams.get("doc"));
   const requestedEntryId = normalizeRequestedPath(searchParams.get("entry"));
-  const requestedFilePath = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("path"));
-  const requestedResourceAttachmentId = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("resource"));
-  const requestedDirectoryPath = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("directory"));
+  const requestedFilePath = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("path"));
+  const requestedResourceAttachmentId = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("resource"));
+  const requestedDirectoryPath = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("directory"));
   const initialOpenFileTabState = useMemo(
     () => readStoredWorkspaceOpenFileTabState(viewedOrganizationId),
     [viewedOrganizationId],
   );
-  const initialSelectedFilePath = requestedResourceAttachmentId || requestedDirectoryPath
+  const initialSelectedFilePath = requestedDocumentId || requestedResourceAttachmentId || requestedDirectoryPath
     ? null
     : requestedFilePath ?? initialOpenFileTabState.selectedFilePath;
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialSelectedFilePath);
@@ -3109,13 +3113,19 @@ export function OrganizationWorkspaceBrowser({
   const rootQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", ""),
     queryFn: () => organizationsApi.listWorkspaceFiles(viewedOrganizationId!, ""),
-    enabled: !!viewedOrganizationId,
+    enabled: !!viewedOrganizationId && !requestedDocumentId,
+    refetchOnWindowFocus: false,
+  });
+  const legacyDocumentQuery = useQuery({
+    queryKey: queryKeys.organizations.libraryDocument(viewedOrganizationId ?? "__none__", requestedDocumentId ?? ""),
+    queryFn: () => organizationsApi.getLibraryDocument(viewedOrganizationId!, requestedDocumentId!),
+    enabled: !!viewedOrganizationId && !!requestedDocumentId,
     refetchOnWindowFocus: false,
   });
   const libraryEntryQuery = useQuery({
     queryKey: queryKeys.organizations.libraryEntry(viewedOrganizationId ?? "__none__", requestedEntryId ?? ""),
     queryFn: () => organizationsApi.getLibraryEntry(viewedOrganizationId!, requestedEntryId!),
-    enabled: !!viewedOrganizationId && !!requestedEntryId,
+    enabled: !!viewedOrganizationId && !!requestedEntryId && !requestedDocumentId,
     refetchOnWindowFocus: false,
   });
   const projectResourceTree = useProjectResourceTreeGroups(viewedOrganizationId);
@@ -3126,6 +3136,10 @@ export function OrganizationWorkspaceBrowser({
   const selectedResourcePath = selectedProjectResource?.path ?? null;
 
   useEffect(() => {
+    if (requestedDocumentId) {
+      setActiveEntryPath(null);
+      return;
+    }
     if (requestedEntryId) {
       if (libraryEntryQuery.data?.status === "active" && libraryEntryQuery.data.currentPath) {
         updateSelectedPath(searchParams, setSearchParams, libraryEntryQuery.data.currentPath);
@@ -3137,7 +3151,7 @@ export function OrganizationWorkspaceBrowser({
     if (selectedFilePath) setActiveEntryPath(selectedFilePath);
     else if (selectedResourcePath) setActiveEntryPath(selectedResourcePath);
     else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
-  }, [libraryEntryQuery.data?.currentPath, requestedDirectoryPath, requestedEntryId, searchParams, selectedFilePath, selectedResourcePath, setSearchParams]);
+  }, [libraryEntryQuery.data?.currentPath, requestedDirectoryPath, requestedDocumentId, requestedEntryId, searchParams, selectedFilePath, selectedResourcePath, setSearchParams]);
   const agentWorkspaceEntriesQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", "agents"),
     queryFn: () => organizationsApi.listWorkspaceFiles(viewedOrganizationId!, "agents"),
@@ -3176,6 +3190,11 @@ export function OrganizationWorkspaceBrowser({
 
   useEffect(() => {
     flushCurrentDraft();
+    if (requestedDocumentId) {
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      return;
+    }
     if (requestedEntryId) {
       setSelectedFilePath(null);
       setDraftFilePath(null);
@@ -3200,6 +3219,7 @@ export function OrganizationWorkspaceBrowser({
     flushCurrentDraft,
     openWorkspaceFileTab,
     requestedDirectoryPath,
+    requestedDocumentId,
     requestedEntryId,
     requestedFilePath,
     requestedResourceAttachmentId,
@@ -3209,9 +3229,9 @@ export function OrganizationWorkspaceBrowser({
   useEffect(() => {
     if (!viewedOrganizationId) return;
     if (restoredOpenTabsOrgRef.current !== viewedOrganizationId) return;
-    if (requestedEntryId || requestedResourceAttachmentId || requestedDirectoryPath) return;
+    if (requestedDocumentId || requestedEntryId || requestedResourceAttachmentId || requestedDirectoryPath) return;
     writeStoredWorkspaceOpenFileTabState(viewedOrganizationId, openFilePaths, selectedFilePath);
-  }, [openFilePaths, requestedDirectoryPath, requestedEntryId, requestedResourceAttachmentId, selectedFilePath, viewedOrganizationId]);
+  }, [openFilePaths, requestedDirectoryPath, requestedDocumentId, requestedEntryId, requestedResourceAttachmentId, selectedFilePath, viewedOrganizationId]);
 
   useEffect(() => {
     if (!viewedOrganizationId || restoredOpenTabsOrgRef.current === viewedOrganizationId) return;
@@ -3219,7 +3239,7 @@ export function OrganizationWorkspaceBrowser({
     allowDefaultFileOpenRef.current = true;
     const storedTabState = readStoredWorkspaceOpenFileTabState(viewedOrganizationId);
 
-    if (requestedEntryId) {
+    if (requestedDocumentId || requestedEntryId) {
       setOpenFilePaths([]);
       setSelectedFilePath(null);
       setDraftFilePath(null);
@@ -3260,6 +3280,7 @@ export function OrganizationWorkspaceBrowser({
     }
   }, [
     requestedDirectoryPath,
+    requestedDocumentId,
     requestedEntryId,
     requestedFilePath,
     requestedResourceAttachmentId,
@@ -3269,6 +3290,7 @@ export function OrganizationWorkspaceBrowser({
   ]);
 
   useEffect(() => {
+    if (requestedDocumentId) return;
     if (requestedEntryId) return;
     if (selectedFilePath) return;
     if (requestedResourceAttachmentId) return;
@@ -3284,6 +3306,8 @@ export function OrganizationWorkspaceBrowser({
   }, [
     openWorkspaceFileTab,
     requestedDirectoryPath,
+    requestedDocumentId,
+    requestedEntryId,
     requestedResourceAttachmentId,
     openFilePaths.length,
     rootQuery.data?.entries,
@@ -3771,7 +3795,7 @@ export function OrganizationWorkspaceBrowser({
   }, []);
 
   useEffect(() => {
-    if (!isMobileViewport) {
+    if (!isMobileViewport || requestedDocumentId) {
       setHeaderActions(null);
       return () => setHeaderActions(null);
     }
@@ -3822,6 +3846,7 @@ export function OrganizationWorkspaceBrowser({
     handleStartCreateRootEntry,
     isMobileViewport,
     openingWorkspaceTargetId,
+    requestedDocumentId,
     selectedProjectResource,
     setHeaderActions,
     workspaceLaunchTargets,
@@ -3830,6 +3855,58 @@ export function OrganizationWorkspaceBrowser({
 
   if (!viewedOrganizationId || !viewedOrganization) {
     return <EmptyState icon={HardDrive} message={emptyMessage} />;
+  }
+
+  if (requestedDocumentId) {
+    if (legacyDocumentQuery.isLoading) {
+      return <PageSkeleton variant="detail" />;
+    }
+    if (legacyDocumentQuery.error) {
+      return <EmptyState icon={FileText} message="This Library document could not be found or is not available in this organization." />;
+    }
+    const document = legacyDocumentQuery.data;
+    if (!document) return null;
+    const title = document.title?.trim() || `Document ${document.id.slice(0, 8)}`;
+    const documentWordCount = countWorkspaceDocumentWords(document.body);
+    const issueLink = document.issueLinks?.[0] ?? null;
+
+    return (
+      <div className="flex h-full min-h-0 flex-col" data-testid="org-workspaces-legacy-document">
+        <div className="shrink-0 border-b border-[color:var(--border-soft)] px-4 py-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <h1 className="truncate text-sm font-semibold text-foreground">{title}</h1>
+              </div>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                <span>Legacy Library document</span>
+                {issueLink ? (
+                  <>
+                    <span aria-hidden="true">/</span>
+                    <span className="truncate">
+                      migrated from {issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)}:{issueLink.key}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+              <span>r{document.latestRevisionNumber}</span>
+              <span aria-hidden="true">/</span>
+              <span>{formatWorkspaceWordCount(documentWordCount)}</span>
+            </div>
+          </div>
+        </div>
+        <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto bg-[color:var(--surface-elevated)]">
+          <article className="mx-auto w-full max-w-[880px] px-8 py-8">
+            <MarkdownBody className="rudder-library-document-editor text-[15px] leading-7 text-foreground">
+              {document.body}
+            </MarkdownBody>
+          </article>
+        </div>
+      </div>
+    );
   }
 
   if (rootQuery.isLoading) {

@@ -144,6 +144,35 @@ vi.mock("@tanstack/react-query", () => ({
         error: null,
       };
     }
+    if (key[2] === "library-document") {
+      return {
+        data: {
+          id: key[3] ?? "doc-1",
+          orgId: "org-1",
+          title: "Migrated plan",
+          format: "markdown",
+          body: "# Migrated plan\n\nOpen from Chat without mounting workspace tabs.",
+          latestRevisionId: "revision-1",
+          latestRevisionNumber: 3,
+          createdByAgentId: null,
+          createdByUserId: "user-1",
+          updatedByAgentId: null,
+          updatedByUserId: "user-1",
+          createdAt: new Date("2026-06-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+          issueLinks: [
+            {
+              issueId: "issue-1",
+              issueIdentifier: "RUD-1",
+              issueTitle: "Example issue",
+              key: "plan",
+            },
+          ],
+        },
+        isLoading: false,
+        error: null,
+      };
+    }
     if (key[0] === "projects" && key.length === 2) {
       return {
         data: [
@@ -316,6 +345,14 @@ vi.mock("../components/MarkdownEditor", () => ({
       </div>
     );
   },
+}));
+
+vi.mock("../components/MarkdownBody", () => ({
+  MarkdownBody: ({ children, className }: { children: string; className?: string }) => (
+    <div className={className} data-testid="mock-markdown-body">
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
@@ -878,6 +915,30 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(mockState.markdownEditorValues[0]).toContain(
       "[README.md](library-file://file?p=artifacts%2Fchat-ui-review%2FREADME.md&t=README.md)",
     );
+  });
+
+  it("opens legacy Library document deep links without restoring workspace file tabs", () => {
+    mockState.searchParams = "doc=doc-1";
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => JSON.stringify({
+          openFilePaths: ["artifacts/chat-ui-review/notes.md"],
+          selectedFilePath: "artifacts/chat-ui-review/notes.md",
+        })),
+        setItem: vi.fn(),
+      },
+    });
+
+    renderWorkspacesPage();
+
+    expect(document.querySelector("[data-testid='org-workspaces-legacy-document']")).not.toBeNull();
+    expect(document.body.textContent).toContain("Migrated plan");
+    expect(document.body.textContent).toContain("Open from Chat without mounting workspace tabs.");
+    expect(document.body.textContent).toContain("migrated from RUD-1:plan");
+    expect(document.querySelector("[data-testid='org-workspaces-editor-tabs']")).toBeNull();
+    expect(mockState.markdownEditorValues).toEqual([]);
+    expect(mockState.setSearchParams).not.toHaveBeenCalled();
   });
 
   it("replaces retained Library tabs when switching organizations without unmounting", () => {
