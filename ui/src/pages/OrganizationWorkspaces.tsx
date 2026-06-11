@@ -2117,6 +2117,9 @@ export function OrganizationWorkspaceFilesSidebar() {
     [projectResourceTree.projects, selectedResourceAttachmentId],
   );
   const selectedResourcePath = selectedProjectResource?.path ?? null;
+  const storedOpenFileTabState = readStoredWorkspaceOpenFileTabState(viewedOrganizationId);
+  const sidebarHasTabStrip = Boolean(selectedFilePath || storedOpenFileTabState.openFilePaths.length > 0);
+  const sidebarHasBreadcrumb = Boolean(selectedFilePath || requestedDirectoryPath);
 
   const workspaceRootPath = rootQuery.data?.rootExists ? rootQuery.data.rootPath : null;
   const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
@@ -2609,7 +2612,12 @@ export function OrganizationWorkspaceFilesSidebar() {
       >
         <header
           data-testid="workspace-context-header"
-          className="workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4"
+          className={cn(
+            "workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4",
+            sidebarHasTabStrip && !sidebarHasBreadcrumb && "rudder-doc-editor-sidebar-header--tabs-only",
+            !sidebarHasTabStrip && sidebarHasBreadcrumb && "rudder-doc-editor-sidebar-header--breadcrumb-only",
+            sidebarHasTabStrip && sidebarHasBreadcrumb && "rudder-doc-editor-sidebar-header--tabs-and-breadcrumb",
+          )}
         >
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold">Library</h2>
@@ -4458,7 +4466,7 @@ export function OrganizationWorkspaceBrowser({
 
           <section
             data-testid="org-workspaces-editor-card"
-            className="flex min-h-[420px] min-w-0 flex-col bg-transparent lg:min-h-0 lg:flex-1"
+            className="rudder-doc-editor-surface flex min-h-[420px] min-w-0 flex-col bg-transparent lg:min-h-0 lg:flex-1"
           >
             {showWorkspaceFileTabs ? (
               <div
@@ -4542,7 +4550,7 @@ export function OrganizationWorkspaceBrowser({
             {visibleWorkspaceBreadcrumbPath !== null ? (
               <div
                 data-testid="org-workspaces-path-breadcrumb"
-                className="flex h-8 shrink-0 items-center gap-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
+                className="flex h-[var(--rudder-doc-editor-breadcrumb-height)] shrink-0 items-center gap-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
                 aria-label="File path"
               >
                 {workspacePathBreadcrumb(

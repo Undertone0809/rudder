@@ -2012,10 +2012,14 @@ button[draggable="false"] {
   border-color: var(--code-border);
 }
 
+.rudder-doc-editor-surface {
+  --rudder-doc-editor-tab-strip-height: 53px;
+  --rudder-doc-editor-breadcrumb-height: 32px;
+}
+
 .rudder-doc-editor-tab-strip {
   position: relative;
   isolation: isolate;
-  --rudder-doc-editor-tab-strip-height: 53px;
   --rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px);
   --rudder-doc-editor-tab-inactive-height: 40px;
   --rudder-doc-editor-tab-radius: var(--desktop-workspace-radius);
@@ -2024,7 +2028,32 @@ button[draggable="false"] {
 
 .rudder-doc-editor-sidebar-header {
   --rudder-doc-editor-tab-strip-height: 53px;
-  height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px);
+  --rudder-doc-editor-breadcrumb-height: 32px;
+  --rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px);
+  --rudder-doc-editor-sidebar-header-content-height: var(--rudder-doc-editor-tab-strip-height);
+  height: var(--rudder-doc-editor-sidebar-header-height);
+}
+
+.rudder-doc-editor-sidebar-header--breadcrumb-only {
+  --rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-breadcrumb-height);
+  --rudder-doc-editor-sidebar-header-content-height: var(--rudder-doc-editor-breadcrumb-height);
+}
+
+.rudder-doc-editor-sidebar-header--tabs-only {
+  --rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height);
+  --rudder-doc-editor-sidebar-header-content-height: var(--rudder-doc-editor-tab-strip-height);
+}
+
+.rudder-doc-editor-sidebar-header--tabs-and-breadcrumb {
+  --rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) + var(--rudder-doc-editor-breadcrumb-height));
+  --rudder-doc-editor-sidebar-header-content-height: var(--rudder-doc-editor-tab-strip-height);
+}
+
+.rudder-doc-editor-sidebar-header--breadcrumb-only,
+.rudder-doc-editor-sidebar-header--tabs-only,
+.rudder-doc-editor-sidebar-header--tabs-and-breadcrumb {
+  align-items: flex-start;
+  padding-top: calc((var(--rudder-doc-editor-sidebar-header-content-height) - 28px) / 2);
 }
 
 .rudder-doc-editor-tab-strip::after {
