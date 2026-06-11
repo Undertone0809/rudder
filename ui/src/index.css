@@ -53,6 +53,7 @@
   --desktop-content-surface-light-alt: #f8f4ee;
   --desktop-content-border-light: rgb(214 209 202 / 0.82);
   --desktop-workspace-radius: calc(var(--radius-sm) - 1px);
+  --desktop-window-radius: 0.625rem;
   --desktop-titlebar-top-gap: 0.625rem;
   --desktop-sidebar-top-clearance: 2.125rem;
   --desktop-content-top-gap: 0.375rem;
@@ -233,6 +234,23 @@
   html.desktop-shell-glass #root {
     background: transparent;
   }
+  html.desktop-shell-windows,
+  html.desktop-shell-windows body,
+  html.desktop-shell-windows #root {
+    border-radius: var(--desktop-window-radius);
+    overflow: hidden;
+  }
+  html.desktop-shell-windows #root {
+    clip-path: inset(0 round var(--desktop-window-radius));
+  }
+  html.desktop-shell-windows.desktop-shell-window-maximized,
+  html.desktop-shell-windows.desktop-shell-window-maximized body,
+  html.desktop-shell-windows.desktop-shell-window-maximized #root {
+    border-radius: 0;
+  }
+  html.desktop-shell-windows.desktop-shell-window-maximized #root {
+    clip-path: none;
+  }
   h1,
   h2,
   h3 {
@@ -289,6 +307,66 @@
 
   .desktop-chrome :is(a, button, input, select, textarea, [role="button"], [data-slot="input"], [data-slot="button"], [data-slot="select-trigger"]) {
     -webkit-app-region: no-drag;
+  }
+
+  .desktop-caption-controls {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 2147483000;
+    display: flex;
+    height: 2.375rem;
+    overflow: hidden;
+    border-top-right-radius: var(--desktop-window-radius);
+    border-bottom-left-radius: 0.5rem;
+    background: color-mix(in oklab, var(--surface-shell) 56%, transparent);
+    color: color-mix(in oklab, var(--foreground) 76%, transparent);
+    pointer-events: auto;
+    backdrop-filter: blur(18px) saturate(1.2);
+  }
+
+  .desktop-caption-control {
+    display: inline-flex;
+    width: 2.875rem;
+    height: 2.375rem;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    transition:
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+
+  .desktop-caption-control:hover {
+    background: color-mix(in oklab, var(--surface-elevated) 82%, transparent);
+    color: var(--foreground);
+  }
+
+  .desktop-caption-control:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--ring) 72%, transparent);
+    outline-offset: -2px;
+  }
+
+  .desktop-caption-control--close:hover {
+    background: #c42b1c;
+    color: #fff;
+  }
+
+  .dark .desktop-caption-controls {
+    background: rgb(24 24 23 / 0.72);
+    color: rgb(232 229 222 / 0.72);
+  }
+
+  .dark .desktop-caption-control:hover {
+    background: rgb(255 255 255 / 0.1);
+    color: #fff;
+  }
+
+  .dark .desktop-caption-control--close:hover {
+    background: #c42b1c;
   }
 
   html.desktop-shell-macos .rudder-doc-editor-tab-drag-spacer {
@@ -381,6 +459,13 @@
       );
     -webkit-backdrop-filter: blur(38px) saturate(122%);
     backdrop-filter: blur(38px) saturate(122%);
+  }
+  html.desktop-shell-windows .app-shell-backdrop {
+    border-radius: var(--desktop-window-radius);
+    overflow: hidden;
+  }
+  html.desktop-shell-windows.desktop-shell-window-maximized .app-shell-backdrop {
+    border-radius: 0;
   }
 
   html.dark.desktop-shell-glass .app-shell-backdrop {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeDesktopWindowEffectMode,
   resolveDesktopWindowBackgroundColorForEffect,
+  resolveDesktopWindowChromeOptions,
   resolveDesktopWindowEffectMode,
   resolveDesktopWindowEffects,
 } from "./desktop-window-effects.js";
@@ -35,6 +36,12 @@ describe("desktop window effect mode", () => {
 });
 
 describe("desktop window effects", () => {
+  it("uses a frameless host window only on Windows so the renderer can clip rounded corners", () => {
+    expect(resolveDesktopWindowChromeOptions("win32")).toEqual({ frame: false });
+    expect(resolveDesktopWindowChromeOptions("darwin")).toEqual({});
+    expect(resolveDesktopWindowChromeOptions("linux")).toEqual({});
+  });
+
   it("uses native macOS vibrancy while keeping the hidden inset titlebar", () => {
     expect(resolveDesktopWindowEffects({
       platform: "darwin",

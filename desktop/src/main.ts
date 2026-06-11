@@ -26,6 +26,7 @@ import {
 } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import {
+  resolveDesktopWindowChromeOptions,
   resolveDesktopWindowBackgroundColorForEffect,
   resolveDesktopWindowEffectMode,
   resolveDesktopWindowEffects,
@@ -685,6 +686,7 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
     title: APP_NAME,
     show: false,
     autoHideMenuBar: process.platform !== "darwin",
+    ...resolveDesktopWindowChromeOptions(process.platform),
     ...desktopWindowEffects,
     ...(desktopWindowIcon ? { icon: desktopWindowIcon } : {}),
     webPreferences: createDesktopWebPreferences(preloadPath),
@@ -1241,6 +1243,25 @@ function registerIpc(): void {
   });
   ipcMain.handle("desktop:restart", async () => {
     await restartFromResidentControls();
+  });
+  ipcMain.handle("desktop:minimize-window", async (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.handle("desktop:toggle-maximize-window", async (event): Promise<boolean> => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return false;
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window.maximize();
+    }
+    return window.isMaximized();
+  });
+  ipcMain.handle("desktop:close-window", async (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+  ipcMain.handle("desktop:is-window-maximized", async (event): Promise<boolean> => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
   });
   ipcMain.handle("desktop:check-for-updates", async () => checkForUpdates());
   ipcMain.handle("desktop:install-update", async (_event, version: string) => installUpdate(version));

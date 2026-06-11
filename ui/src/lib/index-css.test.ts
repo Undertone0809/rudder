@@ -127,6 +127,23 @@ describe("index.css motion rules", () => {
     expect(workspaceCards).toContain("border-radius: var(--desktop-workspace-radius)");
   });
 
+  it("clips the Windows desktop shell to small outer corners", () => {
+    const rootTokens = cssBlock(":root");
+    const windowsRootClip = cssBlock("html.desktop-shell-windows,\n  html.desktop-shell-windows body,\n  html.desktop-shell-windows #root");
+    const windowsBackdropClip = cssBlock("html.desktop-shell-windows .app-shell-backdrop");
+    const maximizedBackdropClip = cssBlock("html.desktop-shell-windows.desktop-shell-window-maximized .app-shell-backdrop");
+    const captionControls = cssBlock(".desktop-caption-controls");
+
+    expect(rootTokens).toContain("--desktop-window-radius: 0.625rem");
+    expect(windowsRootClip).toContain("border-radius: var(--desktop-window-radius)");
+    expect(windowsRootClip).toContain("overflow: hidden");
+    expect(indexCss).toContain("html.desktop-shell-windows #root {\n    clip-path: inset(0 round var(--desktop-window-radius));");
+    expect(windowsBackdropClip).toContain("border-radius: var(--desktop-window-radius)");
+    expect(windowsBackdropClip).toContain("overflow: hidden");
+    expect(maximizedBackdropClip).toContain("border-radius: 0");
+    expect(captionControls).toContain("border-top-right-radius: var(--desktop-window-radius)");
+  });
+
   it("keeps dashboard run previews compact even when transcripts contain markdown headings", () => {
     const previewMarkdown = cssBlock(".dashboard-run-preview .rudder-markdown");
     const previewHeadings = cssBlock(".dashboard-run-preview .rudder-markdown :where(h1, h2, h3, h4, h5, h6)");

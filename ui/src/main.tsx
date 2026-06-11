@@ -18,6 +18,8 @@ import { I18nProvider } from "./context/I18nContext";
 import { ChatGenerationProvider } from "./context/ChatGenerationContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
+import { DesktopWindowControls } from "@/components/DesktopWindowControls";
+import { readDesktopShell } from "@/lib/desktop-shell";
 import { initPluginBridge } from "./plugins/bridge-init";
 import { PluginLauncherProvider } from "./plugins/launchers";
 import { ConsoleRingBuffer } from "@/lib/console-ring-buffer";
@@ -44,22 +46,26 @@ ConsoleRingBuffer.install();
 initPluginBridge(React, ReactDOM);
 
 function isDesktopShellWindow() {
-  return typeof window !== "undefined"
-    && "desktopShell" in window
-    && Boolean((window as typeof window & { desktopShell?: unknown }).desktopShell);
+  return readDesktopShell() !== null;
 }
 
 function syncDesktopShellClass() {
   const isDesktopShell = isDesktopShellWindow();
+  const desktopPlatform = readDesktopShell()?.platform;
   const isMacDesktopShell =
     isDesktopShell
-    && /Mac/i.test(window.navigator.userAgent);
+    && desktopPlatform === "darwin";
+  const isWindowsDesktopShell =
+    isDesktopShell
+    && desktopPlatform === "win32";
 
   document.documentElement.classList.toggle("desktop-shell-glass", isDesktopShell);
   document.documentElement.classList.toggle("desktop-shell-macos", isMacDesktopShell);
+  document.documentElement.classList.toggle("desktop-shell-windows", isWindowsDesktopShell);
   if (document.body) {
     document.body.classList.toggle("desktop-shell-glass", isDesktopShell);
     document.body.classList.toggle("desktop-shell-macos", isMacDesktopShell);
+    document.body.classList.toggle("desktop-shell-windows", isWindowsDesktopShell);
   }
 }
 
@@ -121,6 +127,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AppErrorBoundary>
+        <DesktopWindowControls />
         <I18nProvider>
           <ThemeProvider>
             <BrowserRouter>

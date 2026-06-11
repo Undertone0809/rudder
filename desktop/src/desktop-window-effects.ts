@@ -11,6 +11,10 @@ export type DesktopWindowEffectOptions = {
   backgroundMaterial?: "mica";
 };
 
+export type DesktopWindowChromeOptions = {
+  frame?: boolean;
+};
+
 type DesktopWindowEffectInput = {
   platform: NodeJS.Platform;
   mode: DesktopWindowEffectMode;
@@ -32,6 +36,10 @@ export function resolveDesktopWindowEffectMode(env: NodeJS.ProcessEnv): DesktopW
   const override = normalizeDesktopWindowEffectMode(value);
   if (override) return override;
   return "transparent_vibrant";
+}
+
+export function resolveDesktopWindowChromeOptions(platform: NodeJS.Platform): DesktopWindowChromeOptions {
+  return platform === "win32" ? { frame: false } : {};
 }
 
 export function resolveDesktopWindowBackgroundColorForEffect({

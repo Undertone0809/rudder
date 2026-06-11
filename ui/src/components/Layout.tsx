@@ -45,6 +45,7 @@ import { findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/org
 import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
+import { readDesktopShell } from "../lib/desktop-shell";
 import { NotFoundPage } from "../pages/NotFound";
 import { MobileWorkspaceDrawer } from "@/components/MobileWorkspaceDrawer";
 import { Button } from "@/components/ui/button";
@@ -187,9 +188,12 @@ export function DesktopSettingsModalFrame({
 }
 
 function isMacDesktopShell(): boolean {
-  if (typeof window === "undefined") return false;
-  if (!("desktopShell" in window) || !window.desktopShell) return false;
-  return /Mac/i.test(window.navigator.userAgent);
+  return readDesktopShell()?.platform === "darwin";
+}
+
+function isDesktopChromeShell(): boolean {
+  const platform = readDesktopShell()?.platform;
+  return platform === "darwin" || platform === "win32";
 }
 
 function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily | null {
@@ -248,6 +252,7 @@ export function Layout() {
   const navigationType = useNavigationType();
   const inAppBackStackRef = useRef<string[]>([]);
   const macDesktopShell = useMemo(() => isMacDesktopShell(), []);
+  const desktopChromeShell = useMemo(() => isDesktopChromeShell(), []);
   const isInstanceSettingsRoute = location.pathname.startsWith("/instance/");
   const relativeBoardPath = useMemo(
     () => toOrganizationRelativePath(location.pathname),
@@ -809,7 +814,7 @@ export function Layout() {
             isMobile ? "w-full" : desktopContentShellInsetClass,
           )}
         >
-          {!isMobile && macDesktopShell ? <div className="desktop-window-drag h-[var(--desktop-content-top-gap)] shrink-0" /> : null}
+          {!isMobile && desktopChromeShell ? <div className="desktop-window-drag h-[var(--desktop-content-top-gap)] shrink-0" /> : null}
           {showDesktopSettingsModal ? (
             <DesktopSettingsModalFrame onClose={closeSettingsModal}>
               {hasUnknownOrganizationPrefix ? (
@@ -836,7 +841,7 @@ export function Layout() {
                     isMobile && "sticky top-0 z-20 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/65",
                   )}
                 >
-                  <BreadcrumbBar desktopChrome={macDesktopShell} />
+                  <BreadcrumbBar desktopChrome={desktopChromeShell} />
                 </div>
               ) : null}
               <div className={cn(isMobile ? "block" : "flex min-h-0 min-w-0 flex-1")}>
@@ -897,7 +902,7 @@ export function Layout() {
                     >
                       {!isLibraryRoute ? (
                         <div data-testid="workspace-main-header" className="shrink-0">
-                          <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
+                          <BreadcrumbBar desktopChrome={desktopChromeShell} variant="card" />
                         </div>
                       ) : null}
                       <main
