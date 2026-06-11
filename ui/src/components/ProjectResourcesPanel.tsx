@@ -8,8 +8,10 @@ import type {
 } from "@rudderhq/shared";
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
+import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
+import { libraryCopy } from "@/lib/library-copy";
 import {
   organizationResourceKindLabel,
   organizationResourceSourceTypeLabel,
@@ -94,6 +96,7 @@ function createResourceEditDraft(attachment: ProjectResourceAttachment): Project
 
 export function ProjectResourcesPanel({ project }: { project: Project }) {
   const { pushToast } = useToast();
+  const { locale } = useI18n();
   const queryClient = useQueryClient();
   const [attachPopoverOpen, setAttachPopoverOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -398,7 +401,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
               </PopoverTrigger>
               <PopoverContent align="end" className="max-h-[460px] w-[22rem] overflow-y-auto p-2">
                 <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  Add from Library
+                  {libraryCopy("addFromLibrary", locale)}
                 </div>
                 <div className="px-2 pb-2">
                   <Input
@@ -411,12 +414,12 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                       }
                     }}
                     className="h-8 text-xs"
-                    placeholder="Search Library or paste relative path"
+                    placeholder={libraryCopy("searchLibraryPlaceholder", locale)}
                   />
                 </div>
                 {availableLibraryFiles.length === 0 ? (
                   <div className="px-2 py-3 text-sm text-muted-foreground">
-                    {librarySearch.trim() ? "No matching Library files." : "No Library files available."}
+                    {librarySearch.trim() ? libraryCopy("noMatchingLibraryFiles", locale) : libraryCopy("noLibraryFiles", locale)}
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -452,7 +455,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                       <FileText className="h-3.5 w-3.5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-foreground">Use this Library path</div>
+                      <div className="truncate text-sm font-medium text-foreground">{libraryCopy("useThisLibraryPath", locale)}</div>
                       <div className="truncate font-mono text-[11px] text-muted-foreground">
                         {normalizedLibrarySearch}
                       </div>

@@ -39,6 +39,7 @@ import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEd
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { useDialog } from "../context/DialogContext";
+import { useI18n } from "../context/I18nContext";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
@@ -54,7 +55,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Badge } from "@/components/ui/badge";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
-import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, SidebarSection, SidebarRow, SidebarPropertyRow, SidebarSelectValue, TriggerEditor } from "./AutomationDetail.parts";
+import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, automationPolicyDescription, automationPolicyLabel, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, SidebarSection, SidebarRow, SidebarPropertyRow, SidebarSelectValue, TriggerEditor } from "./AutomationDetail.parts";
 
 export function AutomationDetail() {
   const { automationId } = useParams<{ automationId: string }>();
@@ -64,6 +65,7 @@ export function AutomationDetail() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { pushToast } = useToast();
+  const { locale } = useI18n();
   const hydratedAutomationIdRef = useRef<string | null>(null);
   const lastSubmittedEditKeyRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -657,36 +659,49 @@ export function AutomationDetail() {
       const trigger = triggerId ? triggerById.get(triggerId) : null;
       const source = trigger ?? fallback;
       if (!source) return null;
-      const summary = summarizeTrigger(source);
-      const kind = triggerKindLabel(source.kind);
+      const summary = summarizeTrigger(source, locale);
+      const kind = triggerKindLabel(source.kind, locale);
       return summary && summary !== kind ? `${kind}: ${summary}` : kind;
     };
 
+    const triggerActionLabel = (action: "added" | "updated" | "removed", label: string) => {
+      if (locale !== "zh-CN") {
+        const verb = action === "added" ? "Added" : action === "updated" ? "Updated" : "Removed";
+        return `${verb} ${label.toLowerCase()}`;
+      }
+      const verb = action === "added" ? "添加了" : action === "updated" ? "更新了" : "移除了";
+      return `${verb}${label}`;
+    };
     const formatRunActivityTitle = (source: string, status: string, outputMode?: string | null) => {
-      const sourceLabel = runSourceLabel(source);
+      const sourceLabel = runSourceLabel(source, locale);
       switch (status) {
         case "issue_created":
-          return `${sourceLabel} opened an execution issue`;
+          return locale === "zh-CN" ? `${sourceLabel}创建了执行任务` : `${sourceLabel} opened an execution issue`;
         case "running":
+          if (locale === "zh-CN") return outputMode === "chat_output" ? `${sourceLabel}已启动聊天运行` : `${sourceLabel}正在执行`;
           return outputMode === "chat_output" ? `${sourceLabel} started a chat run` : `${sourceLabel} is in progress`;
         case "failed":
-          return `${sourceLabel} failed`;
+          return locale === "zh-CN" ? `${sourceLabel}失败` : `${sourceLabel} failed`;
         case "coalesced":
-          return `${sourceLabel} joined an active run`;
+          return locale === "zh-CN" ? `${sourceLabel}已合并到活跃运行` : `${sourceLabel} joined an active run`;
         case "skipped":
-          return `${sourceLabel} skipped`;
+          return locale === "zh-CN" ? `${sourceLabel}已跳过` : `${sourceLabel} skipped`;
         case "completed":
-          return `${sourceLabel} completed`;
+          return locale === "zh-CN" ? `${sourceLabel}已完成` : `${sourceLabel} completed`;
         default:
-          return `${sourceLabel} ${humanizeToken(status)}`;
+          return `${sourceLabel} ${humanizeToken(status, locale)}`;
       }
     };
 
     const formatTriggerContext = (triggerDescription: string | null) => {
       if (!triggerDescription) return null;
-      return triggerDescription.startsWith("Schedule trigger: ")
-        ? `for ${triggerDescription.replace("Schedule trigger: ", "")}`
-        : triggerDescription;
+      if (triggerDescription.startsWith("Schedule trigger: ")) {
+        return `for ${triggerDescription.replace("Schedule trigger: ", "")}`;
+      }
+      if (locale === "zh-CN" && triggerDescription.startsWith("日程触发器: ")) {
+        return `用于${triggerDescription.replace("日程触发器: ", "")}`;
+      }
+      return triggerDescription;
     };
 
     const pushEventItem = (event: ActivityEvent) => {
@@ -698,23 +713,25 @@ export function AutomationDetail() {
       if (event.action === "automation.created") {
         const createdTitle = getActivityDetailString(details, "title");
         title = createdTitle
-          ? `Created "${createdTitle}"`
-          : "Created automation";
-        eventDetails.push(detailText(`Assigned to ${describeAgent(getActivityDetailString(details, "assigneeAgentId")) ?? "agent"}`, "assignee"));
+          ? (locale === "zh-CN" ? `创建了“${createdTitle}”` : `Created "${createdTitle}"`)
+          : (locale === "zh-CN" ? "创建了自动化" : "Created automation");
+        eventDetails.push(detailText(locale === "zh-CN"
+          ? `分配给 ${describeAgent(getActivityDetailString(details, "assigneeAgentId")) ?? "智能体"}`
+          : `Assigned to ${describeAgent(getActivityDetailString(details, "assigneeAgentId")) ?? "agent"}`, "assignee"));
       } else if (event.action === "automation.updated") {
         const updatedTitle = getActivityDetailString(details, "title");
         title = updatedTitle
-          ? `Updated automation settings for "${updatedTitle}"`
-          : "Updated automation settings";
+          ? (locale === "zh-CN" ? `更新了“${updatedTitle}”的自动化设置` : `Updated automation settings for "${updatedTitle}"`)
+          : (locale === "zh-CN" ? "更新了自动化设置" : "Updated automation settings");
       } else if (event.action === "automation.deleted") {
         const deletedTitle = getActivityDetailString(details, "title");
         title = deletedTitle
-          ? `Deleted "${deletedTitle}"`
-          : "Deleted automation";
+          ? (locale === "zh-CN" ? `删除了“${deletedTitle}”` : `Deleted "${deletedTitle}"`)
+          : (locale === "zh-CN" ? "删除了自动化" : "Deleted automation");
       } else if (event.action === "automation.trigger_created") {
         const trigger = triggerById.get(event.entityId);
         const triggerKind = trigger?.kind ?? getActivityDetailString(details, "kind");
-        title = `Added ${triggerKindLabel(triggerKind).toLowerCase()}`;
+        title = triggerActionLabel("added", triggerKindLabel(triggerKind, locale));
         eventDetails.push(detailText(
           formatTriggerContext(describeTrigger(event.entityId, {
             kind: getActivityDetailString(details, "kind") ?? "trigger",
@@ -726,7 +743,7 @@ export function AutomationDetail() {
       } else if (event.action === "automation.trigger_updated") {
         const trigger = triggerById.get(event.entityId);
         const triggerKind = trigger?.kind ?? getActivityDetailString(details, "kind");
-        title = `Updated ${triggerKindLabel(triggerKind).toLowerCase()}`;
+        title = triggerActionLabel("updated", triggerKindLabel(triggerKind, locale));
         eventDetails.push(detailText(
           formatTriggerContext(describeTrigger(event.entityId, {
             kind: getActivityDetailString(details, "kind") ?? "trigger",
@@ -736,9 +753,9 @@ export function AutomationDetail() {
           "trigger",
         ));
       } else if (event.action === "automation.trigger_deleted") {
-        title = `Removed ${triggerKindLabel(getActivityDetailString(details, "kind")).toLowerCase()}`;
+        title = triggerActionLabel("removed", triggerKindLabel(getActivityDetailString(details, "kind"), locale));
       } else if (event.action === "automation.trigger_secret_rotated") {
-        title = "Webhook secret rotated";
+        title = locale === "zh-CN" ? "已轮换 Webhook 密钥" : "Webhook secret rotated";
       } else if (event.action === "automation.run_triggered") {
         const source = getActivityDetailString(details, "source") ?? "run";
         const status = getActivityDetailString(details, "status") ?? "started";
@@ -816,7 +833,7 @@ export function AutomationDetail() {
     }
 
     return items.sort((a, b) => b.sortAt - a.sortAt).slice(0, 10);
-  }, [activity, agentById, automation, automationRuns, projectById, triggerById]);
+  }, [activity, agentById, automation, automationRuns, locale, projectById, triggerById]);
 
   if (!selectedOrganizationId) {
     return <EmptyState icon={Repeat} message="Select an organization to view automations." />;
@@ -957,7 +974,7 @@ export function AutomationDetail() {
                 ) : null}
                 <span className="min-w-0">
                   <span className="text-muted-foreground">Repeats</span>{" "}
-                  <span className="text-foreground">{summarizeTrigger(nextTrigger)}</span>
+                  <span className="text-foreground">{summarizeTrigger(nextTrigger, locale)}</span>
                 </span>
                 <span className="min-w-0">
                   <span className="text-muted-foreground">Next</span>{" "}
@@ -1127,8 +1144,8 @@ export function AutomationDetail() {
                 </SidebarPropertyRow>
               ) : null}
               <SidebarPropertyRow label="Repeats">
-                <span className="min-w-0 truncate text-sm text-foreground" title={summarizeTrigger(nextTrigger)}>
-                  {summarizeTrigger(nextTrigger)}
+                <span className="min-w-0 truncate text-sm text-foreground" title={summarizeTrigger(nextTrigger, locale)}>
+                  {summarizeTrigger(nextTrigger, locale)}
                 </span>
               </SidebarPropertyRow>
 
@@ -1201,11 +1218,11 @@ export function AutomationDetail() {
                       </SelectTrigger>
                       <SelectContent>
                         {concurrencyPolicies.map((value) => (
-                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                          <SelectItem key={value} value={value}>{automationPolicyLabel(value, locale)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs leading-4 text-muted-foreground">{concurrencyPolicyDescriptions[editDraft.concurrencyPolicy]}</p>
+                    <p className="text-xs leading-4 text-muted-foreground">{automationPolicyDescription(concurrencyPolicyDescriptions, editDraft.concurrencyPolicy, locale)}</p>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs">Catch-up</Label>
@@ -1218,11 +1235,11 @@ export function AutomationDetail() {
                       </SelectTrigger>
                       <SelectContent>
                         {catchUpPolicies.map((value) => (
-                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                          <SelectItem key={value} value={value}>{automationPolicyLabel(value, locale)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs leading-4 text-muted-foreground">{catchUpPolicyDescriptions[editDraft.catchUpPolicy]}</p>
+                    <p className="text-xs leading-4 text-muted-foreground">{automationPolicyDescription(catchUpPolicyDescriptions, editDraft.catchUpPolicy, locale)}</p>
                   </div>
                 </div>
               </CollapsibleContent>

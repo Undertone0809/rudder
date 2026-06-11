@@ -38,6 +38,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useI18n } from "../context/I18nContext";
 import { retryHeartbeatRun } from "../lib/heartbeat-retry";
 import { queryKeys } from "../lib/queryKeys";
 import { findOrganizationByPrefix } from "../lib/organization-routes";
@@ -365,6 +366,7 @@ export function CostsSection({
   runs: HeartbeatRun[];
   agentRouteId: string;
 }) {
+  const { locale } = useI18n();
   const visibleRuns = runs
     .map((run) => ({ run, metrics: runMetrics(run) }))
     .filter(({ metrics }) => {
@@ -501,7 +503,9 @@ export function CostsSection({
                         <span className="min-w-[8.75rem] text-right tabular-nums">
                           <span className="block font-medium text-foreground">{formatCompactTokenLabel(totalTokens)}</span>
                           <span className="block font-mono text-[10px] text-muted-foreground">
-                            in {formatTokens(metrics.promptTokens)} · cache {formatTokens(metrics.cached)} · out {formatTokens(metrics.output)}
+                            {locale === "zh-CN"
+                              ? `输入 ${formatTokens(metrics.promptTokens)} · 缓存 ${formatTokens(metrics.cached)} · 输出 ${formatTokens(metrics.output)}`
+                              : `in ${formatTokens(metrics.promptTokens)} · cache ${formatTokens(metrics.cached)} · out ${formatTokens(metrics.output)}`}
                           </span>
                           {metrics.cost > 0 ? (
                             <span className="block font-mono text-[11px] text-muted-foreground">{costLabel}</span>

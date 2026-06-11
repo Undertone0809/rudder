@@ -3,6 +3,7 @@
 import { act, forwardRef, type RefObject } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { I18nProvider } from "../context/I18nContext";
 import { Automations } from "./Automations";
 
 (
@@ -85,6 +86,13 @@ const automation = {
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
+    if (queryKey[0] === "health") {
+      return {
+        data: { uiLocale: document.documentElement.lang === "zh-CN" ? "zh-CN" : "en" },
+        isLoading: false,
+        error: null,
+      };
+    }
     if (queryKey[0] === "automations") {
       return { data: automationListState.items, isLoading: false, error: null };
     }
@@ -347,7 +355,11 @@ function renderPage() {
   };
 
   act(() => {
-    root.render(<Automations />);
+    root.render(
+      <I18nProvider>
+        <Automations />
+      </I18nProvider>,
+    );
   });
 
   return container;
@@ -366,7 +378,11 @@ function renderHeaderActions() {
   })(cleanupFn);
 
   act(() => {
-    headerRoot.render(mockSetHeaderActions.mock.calls.at(-1)?.[0]);
+    headerRoot.render(
+      <I18nProvider>
+        {mockSetHeaderActions.mock.calls.at(-1)?.[0]}
+      </I18nProvider>,
+    );
   });
 
   return headerContainer;

@@ -1,4 +1,5 @@
 import type { AutomationRunSummary } from "@rudderhq/shared";
+import type { InstanceLocale } from "@rudderhq/shared";
 
 type AutomationRunDisplayInput = Pick<
   AutomationRunSummary,
@@ -22,14 +23,14 @@ export type AutomationRunDisplay = {
   title: string;
 };
 
-const statusLabels: Record<string, string> = {
-  received: "Queued",
-  running: "Running",
-  issue_created: "Opened issue",
-  completed: "Completed",
-  failed: "Failed",
-  coalesced: "Coalesced",
-  skipped: "Skipped",
+const statusLabels: Record<string, { en: string; "zh-CN": string }> = {
+  received: { en: "Queued", "zh-CN": "已排队" },
+  running: { en: "Running", "zh-CN": "运行中" },
+  issue_created: { en: "Opened issue", "zh-CN": "已创建任务" },
+  completed: { en: "Completed", "zh-CN": "已完成" },
+  failed: { en: "Failed", "zh-CN": "失败" },
+  coalesced: { en: "Coalesced", "zh-CN": "已合并" },
+  skipped: { en: "Skipped", "zh-CN": "已跳过" },
 };
 
 const statusClassNames: Record<string, string> = {
@@ -154,27 +155,27 @@ export function summarizeAutomationCiPayload(payload: Record<string, unknown> | 
   ]).slice(0, 5);
 }
 
-function sourceLabel(run: AutomationRunDisplayInput, contextParts: string[]): string {
+function sourceLabel(run: AutomationRunDisplayInput, contextParts: string[], locale: InstanceLocale): string {
   const triggerLabel = run.trigger?.label?.trim() ?? null;
-  if (run.source === "manual") return "Manual run";
-  if (run.source === "api") return "API run";
-  if (run.source === "schedule") return triggerLabel ? `Schedule: ${triggerLabel}` : "Scheduled run";
+  if (run.source === "manual") return locale === "zh-CN" ? "手动运行" : "Manual run";
+  if (run.source === "api") return locale === "zh-CN" ? "API 运行" : "API run";
+  if (run.source === "schedule") return triggerLabel ? (locale === "zh-CN" ? `日程：${triggerLabel}` : `Schedule: ${triggerLabel}`) : (locale === "zh-CN" ? "计划运行" : "Scheduled run");
   if (run.source === "webhook") {
-    if (isCiTriggerHint(triggerLabel) || contextParts.length > 0) return "CI webhook";
-    return triggerLabel ? `Webhook: ${triggerLabel}` : "Webhook run";
+    if (isCiTriggerHint(triggerLabel) || contextParts.length > 0) return locale === "zh-CN" ? "CI webhook" : "CI webhook";
+    return triggerLabel ? (locale === "zh-CN" ? `Webhook：${triggerLabel}` : `Webhook: ${triggerLabel}`) : (locale === "zh-CN" ? "Webhook 运行" : "Webhook run");
   }
   return humanizeToken(run.source);
 }
 
-function destinationLabel(run: AutomationRunDisplayInput): string | null {
+function destinationLabel(run: AutomationRunDisplayInput, locale: InstanceLocale): string | null {
   if (run.linkedIssue) {
-    return `Issue ${run.linkedIssue.identifier ?? run.linkedIssue.title}`;
+    return `${locale === "zh-CN" ? "任务" : "Issue"} ${run.linkedIssue.identifier ?? run.linkedIssue.title}`;
   }
   if (run.linkedChatConversation) {
-    return `Chat ${run.linkedChatConversation.title}`;
+    return `${locale === "zh-CN" ? "聊天" : "Chat"} ${run.linkedChatConversation.title}`;
   }
   if (run.coalescedIntoRunId) {
-    return `Existing run ${run.coalescedIntoRunId.slice(0, 8)}`;
+    return `${locale === "zh-CN" ? "已有运行" : "Existing run"} ${run.coalescedIntoRunId.slice(0, 8)}`;
   }
   if (run.failureReason) {
     return truncate(run.failureReason, 96);
@@ -182,16 +183,16 @@ function destinationLabel(run: AutomationRunDisplayInput): string | null {
   return null;
 }
 
-export function getAutomationRunDisplay(run: AutomationRunDisplayInput): AutomationRunDisplay {
+export function getAutomationRunDisplay(run: AutomationRunDisplayInput, locale: InstanceLocale = "en"): AutomationRunDisplay {
   const payloadContext = summarizeAutomationCiPayload(run.triggerPayload);
   const triggerLabel = run.trigger?.label?.trim() ?? null;
   const context = uniqueNonEmpty([
     ...payloadContext,
-    run.triggerId && !run.trigger ? "Trigger removed" : null,
+    run.triggerId && !run.trigger ? (locale === "zh-CN" ? "触发器已移除" : "Trigger removed") : null,
   ]).join(" · ");
-  const resolvedStatusLabel = statusLabels[run.status] ?? humanizeToken(run.status);
-  const resolvedSourceLabel = sourceLabel(run, payloadContext);
-  const resolvedDestination = destinationLabel(run);
+  const resolvedStatusLabel = statusLabels[run.status]?.[locale] ?? humanizeToken(run.status);
+  const resolvedSourceLabel = sourceLabel(run, payloadContext, locale);
+  const resolvedDestination = destinationLabel(run, locale);
   const title = uniqueNonEmpty([
     resolvedStatusLabel,
     resolvedSourceLabel,

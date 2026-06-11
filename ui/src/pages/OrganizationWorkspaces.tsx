@@ -43,6 +43,7 @@ import { projectsApi } from "../api/projects";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { ProjectIcon } from "../components/ProjectIdentity";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
@@ -54,6 +55,7 @@ import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/documen
 import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { parseMentionChipHref } from "../lib/mention-chips";
 import { queryKeys } from "../lib/queryKeys";
+import { libraryCopy } from "../lib/library-copy";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { ResourceLocatorField } from "../components/ResourceLocatorField";
@@ -825,10 +827,11 @@ function workspacePathBreadcrumb(
   entryPath: string,
   agentWorkspaceEntryByName: Map<string, OrganizationWorkspaceFileEntry>,
   entryKind: "file" | "directory",
+  rootLabel: string,
 ): WorkspacePathBreadcrumbPart[] {
   const segments = entryPath.split("/").filter(Boolean);
   const rootPart: WorkspacePathBreadcrumbPart = {
-    label: "Library",
+    label: rootLabel,
     path: "",
     isFile: false,
     kind: "folder",
@@ -2083,6 +2086,7 @@ export function OrganizationWorkspaceFilesSidebar() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { pushToast } = useToast();
+  const { locale } = useI18n();
   const { viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedEntryId = normalizeRequestedPath(searchParams.get("entry"));
@@ -2126,8 +2130,8 @@ export function OrganizationWorkspaceFilesSidebar() {
 
   const workspaceRootPath = rootQuery.data?.rootExists ? rootQuery.data.rootPath : null;
   const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
-    () => ({ name: "", path: "", isDirectory: true, displayLabel: "Library" }),
-    [],
+    () => ({ name: "", path: "", isDirectory: true, displayLabel: libraryCopy("library", locale) }),
+    [locale],
   );
   const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
@@ -2623,7 +2627,7 @@ export function OrganizationWorkspaceFilesSidebar() {
           )}
         >
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">Library</h2>
+            <h2 className="truncate text-sm font-semibold">{libraryCopy("library", locale)}</h2>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {workspaceRootPath ? (
@@ -2928,6 +2932,7 @@ export function OrganizationWorkspaceBrowser({
   noSelectionMessage?: ReactNode;
 }) {
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
+  const { locale } = useI18n();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -3718,8 +3723,8 @@ export function OrganizationWorkspaceBrowser({
       : null
   ) ?? workspaceLaunchTargets[0] ?? null;
   const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
-    () => ({ name: "", path: "", isDirectory: true, displayLabel: "Library" }),
-    [],
+    () => ({ name: "", path: "", isDirectory: true, displayLabel: libraryCopy("library", locale) }),
+    [locale],
   );
   const handleStartCreateRootEntry = useCallback((kind: "file" | "folder") => {
     flushCurrentDraft();
@@ -3862,7 +3867,7 @@ export function OrganizationWorkspaceBrowser({
       return <PageSkeleton variant="detail" />;
     }
     if (legacyDocumentQuery.error) {
-      return <EmptyState icon={FileText} message="This Library document could not be found or is not available in this organization." />;
+      return <EmptyState icon={FileText} message={libraryCopy("libraryDocumentUnavailable", locale)} />;
     }
     const document = legacyDocumentQuery.data;
     if (!document) return null;
@@ -3880,7 +3885,7 @@ export function OrganizationWorkspaceBrowser({
                 <h1 className="truncate text-sm font-semibold text-foreground">{title}</h1>
               </div>
               <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                <span>Legacy Library document</span>
+                <span>{libraryCopy("legacyLibraryDocument", locale)}</span>
                 {issueLink ? (
                   <>
                     <span aria-hidden="true">/</span>
@@ -4032,7 +4037,7 @@ export function OrganizationWorkspaceBrowser({
     name: selectedDirectoryPath?.split("/").filter(Boolean).at(-1) ?? "",
     path: selectedDirectoryPath ?? "",
     isDirectory: true,
-    displayLabel: selectedDirectoryPath ? displayWorkspaceFileTabLabel(selectedDirectoryPath) : "Library",
+    displayLabel: selectedDirectoryPath ? displayWorkspaceFileTabLabel(selectedDirectoryPath) : libraryCopy("library", locale),
   };
   const emptyStateOpenFolderPath = joinWorkspacePath(workspaceRootPath, selectedDirectoryPath ?? "");
   const selectedDocumentWordCount = countWorkspaceDocumentWords(
@@ -4435,7 +4440,7 @@ export function OrganizationWorkspaceBrowser({
             >
               <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">Library</div>
+                  <div className="truncate text-sm font-medium">{libraryCopy("library", locale)}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   {workspaceRootPath && !selectedProjectResource ? (
@@ -4634,6 +4639,7 @@ export function OrganizationWorkspaceBrowser({
                   visibleWorkspaceBreadcrumbPath,
                   agentWorkspaceEntryByName,
                   visibleWorkspaceBreadcrumbKind,
+                  libraryCopy("library", locale),
                 ).map((part, index, parts) => {
                   const isLast = index === parts.length - 1;
                   return (
@@ -4676,7 +4682,7 @@ export function OrganizationWorkspaceBrowser({
                 highlightMode="css"
                 rootRef={libraryFindRootRef}
                 refreshKey={libraryFindRefreshKey}
-                searchLabel="Find in Library"
+                searchLabel={libraryCopy("findInLibrary", locale)}
               />
               {selectedProjectResource ? (
                 <ProjectResourceDetailPanel
@@ -4694,7 +4700,7 @@ export function OrganizationWorkspaceBrowser({
               ) : requestedResourceAttachmentId && projectResourceTree.isLoading ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">Loading resource...</div>
               ) : requestedResourceAttachmentId ? (
-                <div className="px-4 py-6 text-sm text-muted-foreground">Resource not found in this project Library.</div>
+                <div className="px-4 py-6 text-sm text-muted-foreground">{libraryCopy("resourceNotFoundInProjectLibrary", locale)}</div>
               ) : !selectedFilePath ? (
                 <div className="flex h-full min-h-[360px] items-center justify-center px-6 py-10">
                   <div className="flex max-w-md flex-col items-center text-center">
@@ -4890,7 +4896,7 @@ export function OrganizationWorkspaceBrowser({
                   className="scrollbar-auto-hide h-full min-h-0 overflow-auto"
                 >
                   <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
-                    {selectedFileDetail.message ?? "This file is rendered read-only in Library."}
+                    {selectedFileDetail.message ?? libraryCopy("readOnlyInLibrary", locale)}
                   </div>
                   <pre className="overflow-x-auto px-4 py-4 text-xs leading-6 text-foreground">
                     <code>{selectedFileDetail.content}</code>
@@ -4898,7 +4904,7 @@ export function OrganizationWorkspaceBrowser({
                 </div>
               ) : (
                 <div className="px-4 py-6 text-sm text-muted-foreground">
-                  {selectedFileDetail?.message ?? "This file cannot be rendered in Library."}
+                  {selectedFileDetail?.message ?? libraryCopy("cannotRenderInLibrary", locale)}
                 </div>
               )}
             </div>

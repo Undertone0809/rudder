@@ -37,6 +37,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useI18n } from "../context/I18nContext";
 import { useNavigationBack } from "../context/NavigationBackContext";
 import { retryHeartbeatRun } from "../lib/heartbeat-retry";
 import { agentSupportingLabel } from "../lib/agent-labels";
@@ -164,6 +165,7 @@ import {
   sortUnique,
   toggleSkillSelection,
 } from "../lib/agent-skills-state";
+import { libraryCopy } from "../lib/library-copy";
 
 const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   succeeded: { icon: CheckCircle2, color: "text-green-600 dark:text-green-400" },
@@ -2065,6 +2067,7 @@ function CostsSection({
   runs: HeartbeatRun[];
   agentRouteId: string;
 }) {
+  const { locale } = useI18n();
   const visibleRuns = runs
     .map((run) => ({ run, metrics: runMetrics(run) }))
     .filter(({ metrics }) => {
@@ -2201,7 +2204,9 @@ function CostsSection({
                         <span className="min-w-[8.75rem] text-right tabular-nums">
                           <span className="block font-medium text-foreground">{formatCompactTokenLabel(totalTokens)}</span>
                           <span className="block font-mono text-[10px] text-muted-foreground">
-                            in {formatTokens(metrics.promptTokens)} · cache {formatTokens(metrics.cached)} · out {formatTokens(metrics.output)}
+                            {locale === "zh-CN"
+                              ? `输入 ${formatTokens(metrics.promptTokens)} · 缓存 ${formatTokens(metrics.cached)} · 输出 ${formatTokens(metrics.output)}`
+                              : `in ${formatTokens(metrics.promptTokens)} · cache ${formatTokens(metrics.cached)} · out ${formatTokens(metrics.output)}`}
                           </span>
                           {metrics.cost > 0 ? (
                             <span className="block font-mono text-[11px] text-muted-foreground">{costLabel}</span>
@@ -3262,6 +3267,7 @@ function AgentSkillsTab({
   agent: Agent;
   orgId?: string;
 }) {
+  const { locale } = useI18n();
   type SkillRow = {
     id: string;
     selectionKey: string;
@@ -3625,9 +3631,11 @@ function AgentSkillsTab({
   const saveStatusLabel = syncSkills.isPending ? "Saving..." : null;
 
   const controlsHelperText = "Rudder always loads the bundled Rudder skills. Agent, organization, global, and adapter skills load only when enabled on this page.";
-  const agentSectionHelperText = "Agent-private skills belong to this agent only. Edit them in Library, then enable them here when you want Rudder to load them.";
-  const organizationSectionHelperText = "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Library.";
+  const agentSectionHelperText = libraryCopy("agentPrivateSkillsHelp", locale);
+  const organizationSectionHelperText = libraryCopy("organizationSkillsHelp", locale);
   const externalSectionHelperText = "Global and adapter skills are discovered from ~/.agents/skills and the current runtime adapter home. Discovery does not enable them; only the selections on this page determine runtime loading.";
+  const editInLibraryLabel = libraryCopy("editInLibrary", locale);
+  const importSkillsIntoLibraryFirst = libraryCopy("importSkillsIntoLibraryFirst", locale);
 
   const updateSkillDraft = useCallback((updater: (current: string[]) => string[]) => {
     const current = skillDraftRef.current;
@@ -3783,7 +3791,7 @@ function AgentSkillsTab({
                 <Button asChild variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs">
                   <Link to={workspaceEditHref}>
                     <FolderOpen className="h-3.5 w-3.5" />
-                    <span>Edit in Library</span>
+                    <span>{editInLibraryLabel}</span>
                   </Link>
                 </Button>
               </div>
@@ -3792,7 +3800,7 @@ function AgentSkillsTab({
         ) : null}
       </div>
     );
-  }, [setSkillRowEnabledState, skillDraft, unsupportedSkillMessage]);
+  }, [editInLibraryLabel, setSkillRowEnabledState, skillDraft, unsupportedSkillMessage]);
 
   return (
     <div className="max-w-6xl space-y-3">
@@ -3881,7 +3889,7 @@ function AgentSkillsTab({
           {organizationSkillRows.length === 0 && agentSkillRows.length === 0 && externalSkillRows.length === 0 ? (
             <section className="rounded-xl border border-border bg-[color:var(--surface-elevated)]">
               <div className="px-4 py-6 text-sm text-muted-foreground">
-                Import or scan skills into Library first, then enable them here.
+                {importSkillsIntoLibraryFirst}
               </div>
             </section>
           ) : (

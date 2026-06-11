@@ -16,6 +16,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
+import { useI18n } from "../context/I18nContext";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
@@ -30,6 +31,7 @@ import { useIssueFollows } from "../hooks/useIssueFollows";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
+import { libraryCopy } from "../lib/library-copy";
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
 import { IssueDetailFind } from "../components/IssueDetailFind";
@@ -454,21 +456,22 @@ function WorkspaceAttachDialog({
 
   const entries = filesQuery.data?.entries ?? [];
   const canGoUp = directoryPath.length > 0;
+  const { locale } = useI18n();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="text-base">Attach from Library</DialogTitle>
+          <DialogTitle className="text-base">{libraryCopy("attachFromLibrary", locale)}</DialogTitle>
           <DialogDescription>
-            Choose a file to copy into this issue's attachments.
+            {libraryCopy("attachFromLibraryDescription", locale)}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
           <div className="flex min-h-8 items-center gap-2 rounded-md border border-border bg-muted/20 px-2 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">/</span>
-            <span className="truncate">{directoryPath || "Library files"}</span>
+            <span className="truncate">{directoryPath || libraryCopy("libraryFiles", locale)}</span>
           </div>
 
           <div className="h-[320px] overflow-hidden rounded-md border border-border">
@@ -479,11 +482,11 @@ function WorkspaceAttachDialog({
               </div>
             ) : filesQuery.error ? (
               <div className="p-3 text-sm text-destructive">
-                {filesQuery.error instanceof Error ? filesQuery.error.message : "Could not load Library files"}
+                {filesQuery.error instanceof Error ? filesQuery.error.message : libraryCopy("couldNotLoadLibraryFiles", locale)}
               </div>
             ) : entries.length === 0 && !canGoUp ? (
               <div className="p-3 text-sm text-muted-foreground">
-                No Library files available.
+                {libraryCopy("noLibraryFiles", locale)}
               </div>
             ) : (
               <ScrollArea className="h-full">
@@ -929,6 +932,7 @@ function LinkedLibraryDocsSection({
   libraryDocuments?: LibraryDocumentSummary[] | null;
   libraryFiles?: OrganizationWorkspaceFileEntry[] | null;
 }) {
+  const { locale } = useI18n();
   const mentionedDocIds = new Set(extractLibraryDocMentionIds(issue.description ?? ""));
   const mentionedFilePaths = new Set(extractLibraryFileMentionPaths(issue.description ?? ""));
   const mentionedDirectoryPaths = new Set(extractLibraryDirectoryMentionPaths(issue.description ?? ""));
@@ -988,10 +992,10 @@ function LinkedLibraryDocsSection({
   if (docs.length === 0 && files.length === 0) return null;
 
   return (
-    <section className="space-y-3" aria-label="Linked Library">
+    <section className="space-y-3" aria-label={libraryCopy("linkedLibrary", locale)}>
       <div className="flex items-center gap-2">
         <FileText className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-        <h3 className="text-sm font-medium text-muted-foreground">Library</h3>
+        <h3 className="text-sm font-medium text-muted-foreground">{libraryCopy("library", locale)}</h3>
         <span className="rounded-sm border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
           {docs.length + files.length}
         </span>
@@ -1008,7 +1012,7 @@ function LinkedLibraryDocsSection({
               <div className="min-w-0">
                 <div className="truncate font-medium text-foreground">{file.name}</div>
                 <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                  live Library {file.isDirectory ? "folder" : "file"} / {file.path}
+                  {file.isDirectory ? libraryCopy("liveLibraryFolder", locale) : libraryCopy("liveLibraryFile", locale)} / {file.path}
                 </div>
               </div>
             </div>
@@ -1031,7 +1035,7 @@ function LinkedLibraryDocsSection({
                 <div className="min-w-0">
                   <div className="truncate font-medium text-foreground">{title}</div>
                   <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span>live Library link</span>
+                    <span>{libraryCopy("liveLibraryLink", locale)}</span>
                     {issueLink ? (
                       <>
                         <span aria-hidden="true">/</span>
@@ -1106,6 +1110,7 @@ export function IssueDetail() {
   const navigateBack = useNavigationBack();
   const { pushToast } = useToast();
   const { confirm } = useDialog();
+  const { locale } = useI18n();
   const operatorDisplayName = useOperatorDisplayName();
   const relativePath = toOrganizationRelativePath(location.pathname);
   const issueRouteBasePath = relativePath.startsWith("/messenger/issues") ? "/messenger/issues" : "/issues";
@@ -1969,7 +1974,7 @@ export function IssueDetail() {
             }}
           >
             <Folder className="h-4 w-4" />
-            Attach from Library
+            {libraryCopy("attachFromLibrary", locale)}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

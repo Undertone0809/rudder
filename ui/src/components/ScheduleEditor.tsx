@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { InstanceLocale } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { useI18n } from "@/context/I18nContext";
 
 type SchedulePreset = "every_minute" | "every_hour" | "every_day" | "weekdays" | "weekly" | "monthly" | "custom";
 
@@ -39,6 +41,38 @@ const DAYS_OF_MONTH = Array.from({ length: 31 }, (_, i) => ({
   value: String(i + 1),
   label: String(i + 1),
 }));
+
+const ZH_PRESET_LABELS: Record<SchedulePreset, string> = {
+  every_minute: "每分钟",
+  every_hour: "每小时",
+  every_day: "每天",
+  weekdays: "工作日",
+  weekly: "每周",
+  monthly: "每月",
+  custom: "自定义 cron",
+};
+
+const ZH_DAYS_OF_WEEK: Record<string, string> = {
+  "1": "周一",
+  "2": "周二",
+  "3": "周三",
+  "4": "周四",
+  "5": "周五",
+  "6": "周六",
+  "0": "周日",
+};
+
+function schedulePresetLabel(preset: SchedulePreset, locale: InstanceLocale) {
+  return locale === "zh-CN"
+    ? ZH_PRESET_LABELS[preset]
+    : PRESETS.find((item) => item.value === preset)?.label ?? preset;
+}
+
+function dayOfWeekLabel(day: string, locale: InstanceLocale) {
+  return locale === "zh-CN"
+    ? ZH_DAYS_OF_WEEK[day] ?? day
+    : DAYS_OF_WEEK.find((item) => item.value === day)?.label ?? day;
+}
 
 function parseCronToPreset(cron: string): {
   preset: SchedulePreset;
@@ -112,28 +146,37 @@ function buildCron(preset: SchedulePreset, hour: string, minute: string, dayOfWe
   }
 }
 
-function describeSchedule(cron: string): string {
+export function describeSchedule(cron: string, locale: InstanceLocale): string {
   const { preset, hour, minute, dayOfWeek, dayOfMonth } = parseCronToPreset(cron);
   const hourLabel = HOURS.find((h) => h.value === hour)?.label ?? `${hour}`;
   const timeStr = `${hourLabel.padStart(2, "0")}:${minute.padStart(2, "0")}`;
 
   switch (preset) {
     case "every_minute":
-      return "Every minute";
+      return locale === "zh-CN" ? "每分钟" : "Every minute";
     case "every_hour":
-      return `Every hour at :${minute.padStart(2, "0")}`;
+      return locale === "zh-CN" ? `每小时 ${Number(minute)} 分` : `Every hour at :${minute.padStart(2, "0")}`;
     case "every_day":
-      return `Every day at ${timeStr}`;
+      return locale === "zh-CN" ? `每天 ${timeStr}` : `Every day at ${timeStr}`;
     case "weekdays":
-      return `Weekdays at ${timeStr}`;
+      return locale === "zh-CN" ? `工作日 ${timeStr}` : `Weekdays at ${timeStr}`;
     case "weekly": {
-      const day = DAYS_OF_WEEK.find((d) => d.value === dayOfWeek)?.label ?? dayOfWeek;
-      return `Every ${day} at ${timeStr}`;
+      const zhDays: Record<string, string> = {
+        "1": "一",
+        "2": "二",
+        "3": "三",
+        "4": "四",
+        "5": "五",
+        "6": "六",
+        "0": "日",
+      };
+      const day = locale === "zh-CN" ? zhDays[dayOfWeek] ?? dayOfWeek : DAYS_OF_WEEK.find((d) => d.value === dayOfWeek)?.label ?? dayOfWeek;
+      return locale === "zh-CN" ? `每周${day} ${timeStr}` : `Every ${day} at ${timeStr}`;
     }
     case "monthly":
-      return `Monthly on the ${dayOfMonth}${ordinalSuffix(Number(dayOfMonth))} at ${timeStr}`;
+      return locale === "zh-CN" ? `每月 ${dayOfMonth} 日 ${timeStr}` : `Monthly on the ${dayOfMonth}${ordinalSuffix(Number(dayOfMonth))} at ${timeStr}`;
     case "custom":
-      return cron || "No schedule set";
+      return cron || (locale === "zh-CN" ? "未设置日程" : "No schedule set");
   }
 }
 
@@ -142,8 +185,6 @@ function ordinalSuffix(n: number): string {
   const v = n % 100;
   return s[(v - 20) % 10] || s[v] || s[0];
 }
-
-export { describeSchedule };
 
 export function ScheduleEditor({
   value,
@@ -161,6 +202,7 @@ export function ScheduleEditor({
   const [dayOfWeek, setDayOfWeek] = useState(parsed.dayOfWeek);
   const [dayOfMonth, setDayOfMonth] = useState(parsed.dayOfMonth);
   const [customCron, setCustomCron] = useState(preset === "custom" ? value : "");
+  const { locale } = useI18n();
 
   // Sync from external value changes
   useEffect(() => {
@@ -210,12 +252,12 @@ export function ScheduleEditor({
       <div className="space-y-2">
         <Select value={preset} onValueChange={(v) => handlePresetChange(v as SchedulePreset)}>
           <SelectTrigger className="h-12 w-full rounded-md border-border/75 bg-background/60 px-3 text-base shadow-none md:text-sm">
-            <SelectValue placeholder="Choose frequency..." />
+            <SelectValue placeholder={locale === "zh-CN" ? "选择频率..." : "Choose frequency..."} />
           </SelectTrigger>
           <SelectContent>
             {PRESETS.map((p) => (
               <SelectItem key={p.value} value={p.value}>
-                {p.label}
+                {schedulePresetLabel(p.value, locale)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -266,7 +308,7 @@ export function ScheduleEditor({
             <SelectContent>
               {DAYS_OF_WEEK.map((d) => (
                 <SelectItem key={d.value} value={d.value}>
-                  {d.label}
+                  {dayOfWeekLabel(d.value, locale)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -313,12 +355,12 @@ export function ScheduleEditor({
     <div className="space-y-3">
       <Select value={preset} onValueChange={(v) => handlePresetChange(v as SchedulePreset)}>
         <SelectTrigger className="w-full">
-          <SelectValue placeholder="Choose frequency..." />
+          <SelectValue placeholder={locale === "zh-CN" ? "选择频率..." : "Choose frequency..."} />
         </SelectTrigger>
         <SelectContent>
           {PRESETS.map((p) => (
             <SelectItem key={p.value} value={p.value}>
-              {p.label}
+              {schedulePresetLabel(p.value, locale)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -336,14 +378,14 @@ export function ScheduleEditor({
             className="font-mono text-sm"
           />
           <p className="text-xs text-muted-foreground">
-            Five fields: minute hour day-of-month month day-of-week
+            {locale === "zh-CN" ? "五个字段：分钟 小时 日期 月份 星期" : "Five fields: minute hour day-of-month month day-of-week"}
           </p>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           {preset !== "every_minute" && preset !== "every_hour" && (
             <>
-              <span className="text-sm text-muted-foreground">at</span>
+              <span className="text-sm text-muted-foreground">{locale === "zh-CN" ? "时间" : "at"}</span>
               <Select
                 value={hour}
                 onValueChange={(h) => {
@@ -386,7 +428,7 @@ export function ScheduleEditor({
 
           {preset === "every_hour" && (
             <>
-              <span className="text-sm text-muted-foreground">at minute</span>
+              <span className="text-sm text-muted-foreground">{locale === "zh-CN" ? "第几分钟" : "at minute"}</span>
               <Select
                 value={minute}
                 onValueChange={(m) => {
@@ -410,7 +452,7 @@ export function ScheduleEditor({
 
           {preset === "weekly" && (
             <>
-              <span className="text-sm text-muted-foreground">on</span>
+              <span className="text-sm text-muted-foreground">{locale === "zh-CN" ? "在" : "on"}</span>
               <div className="flex gap-1">
                 {DAYS_OF_WEEK.map((d) => (
                   <Button
@@ -424,7 +466,7 @@ export function ScheduleEditor({
                       emitChange(preset, hour, minute, d.value, dayOfMonth, customCron);
                     }}
                   >
-                    {d.label}
+                    {dayOfWeekLabel(d.value, locale)}
                   </Button>
                 ))}
               </div>
@@ -433,7 +475,7 @@ export function ScheduleEditor({
 
           {preset === "monthly" && (
             <>
-              <span className="text-sm text-muted-foreground">on day</span>
+              <span className="text-sm text-muted-foreground">{locale === "zh-CN" ? "日期" : "on day"}</span>
               <Select
                 value={dayOfMonth}
                 onValueChange={(dom) => {

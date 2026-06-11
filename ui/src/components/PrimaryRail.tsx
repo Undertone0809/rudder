@@ -156,7 +156,7 @@ export function PrimaryRail({
   onOpenSettings: () => void;
   onWarmSettings: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { openNewIssue, openNewAgent, openNewProject } = useDialog();
   const { setSidebarOpen } = useSidebar();
   const { selectedOrganizationId } = useOrganization();
@@ -212,7 +212,7 @@ export function PrimaryRail({
     {
       key: "library",
       to: "/library",
-      label: "Library",
+      label: locale === "zh-CN" ? "文档" : "Library",
       icon: LibraryBig,
       active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
     },

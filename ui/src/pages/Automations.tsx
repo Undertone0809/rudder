@@ -25,14 +25,21 @@ import { projectsApi } from "../api/projects";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
+import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { getAutomationRunDisplay } from "../lib/automation-run-display";
+import {
+  automationPolicyDescription,
+  automationPolicyLabel,
+  catchUpPolicyDescriptions,
+  concurrencyPolicyDescriptions,
+} from "../lib/automation-localization";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
-import { cn, formatDateTimeSeconds, getUiLocale } from "../lib/utils";
+import { cn, formatDateTimeSeconds } from "../lib/utils";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -60,18 +67,10 @@ import {
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
+import type { InstanceLocale } from "@rudderhq/shared";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
-const concurrencyPolicyDescriptions: Record<string, string> = {
-  coalesce_if_active: "If a run is already active, keep just one follow-up run queued.",
-  always_enqueue: "Queue every trigger occurrence, even if the automation is already running.",
-  skip_if_active: "Drop new trigger occurrences while a run is still active.",
-};
-const catchUpPolicyDescriptions: Record<string, string> = {
-  skip_missed: "Ignore windows that were missed while the scheduler or automation was paused.",
-  enqueue_missed_with_cap: "Catch up missed schedule windows in capped batches after recovery.",
-};
 const automationComposerChipClass =
   "h-8 items-center rounded-md px-2.5 text-xs font-medium leading-none";
 const automationComposerChipIconClass =
@@ -259,17 +258,17 @@ const blankAutomationTemplate: AutomationTemplate = {
   outputMode: "track_issue",
 };
 
-function localizeText(text: LocalizedText, locale = getUiLocale()) {
+function localizeText(text: LocalizedText, locale: InstanceLocale) {
   return text[locale] ?? text.en;
 }
 
-function outputInstruction(locale = getUiLocale()) {
+function outputInstruction(locale: InstanceLocale) {
   return locale === "zh-CN"
     ? "输出：创建或更新 board 可跟踪任务，确保结果可以被 review。"
     : "Output: create or update board-tracked work so the result can be reviewed.";
 }
 
-function withOutputInstruction(description: string, locale = getUiLocale()) {
+function withOutputInstruction(description: string, locale: InstanceLocale) {
   const trimmedDescription = description.trim();
   if (!trimmedDescription) return "";
   const instruction = outputInstruction(locale);
@@ -305,6 +304,7 @@ export function Automations() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { confirm } = useDialog();
+  const { locale } = useI18n();
   const { pushToast } = useToast();
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -346,7 +346,6 @@ export function Automations() {
   }, []);
 
   const openComposer = useCallback((template: AutomationTemplate = blankAutomationTemplate) => {
-    const locale = getUiLocale();
     setDraft((current) => ({
       ...current,
       title: localizeText(template.title, locale),
@@ -357,7 +356,7 @@ export function Automations() {
     }));
     setAdvancedOpen(false);
     setComposerOpen(true);
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Automations" }]);
@@ -773,7 +772,7 @@ export function Automations() {
                     )}
                   >
                     <CalendarClock className={automationComposerChipIconClass} />
-                    <span className="truncate">{draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron) : "No schedule set"}</span>
+                    <span className="truncate">{draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron, locale) : (locale === "zh-CN" ? "未设置日程" : "No schedule set")}</span>
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/80" />
                   </button>
                 </PopoverTrigger>
@@ -785,7 +784,7 @@ export function Automations() {
                   />
                   <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <CalendarClock className="h-3.5 w-3.5" />
-                    {draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron) : "No schedule set"}
+                    {draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron, locale) : (locale === "zh-CN" ? "未设置日程" : "No schedule set")}
                   </p>
                 </PopoverContent>
               </Popover>
@@ -826,11 +825,11 @@ export function Automations() {
                       </SelectTrigger>
                       <SelectContent>
                         {concurrencyPolicies.map((value) => (
-                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                          <SelectItem key={value} value={value}>{automationPolicyLabel(value, locale)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs leading-5 text-muted-foreground">{concurrencyPolicyDescriptions[draft.concurrencyPolicy]}</p>
+                    <p className="text-xs leading-5 text-muted-foreground">{automationPolicyDescription(concurrencyPolicyDescriptions, draft.concurrencyPolicy, locale)}</p>
                   </div>
 
                   <div className="space-y-2">
@@ -844,11 +843,11 @@ export function Automations() {
                       </SelectTrigger>
                       <SelectContent>
                         {catchUpPolicies.map((value) => (
-                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                          <SelectItem key={value} value={value}>{automationPolicyLabel(value, locale)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs leading-5 text-muted-foreground">{catchUpPolicyDescriptions[draft.catchUpPolicy]}</p>
+                    <p className="text-xs leading-5 text-muted-foreground">{automationPolicyDescription(catchUpPolicyDescriptions, draft.catchUpPolicy, locale)}</p>
                   </div>
                 </PopoverContent>
               </Popover>
@@ -909,8 +908,8 @@ export function Automations() {
               className="mt-8 grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-3"
             >
               {automationTemplates.map((template) => {
-                const title = localizeText(template.title);
-                const summary = localizeText(template.summary);
+                const title = localizeText(template.title, locale);
+                const summary = localizeText(template.summary, locale);
                 return (
                   <button
                     key={template.id}
@@ -944,7 +943,7 @@ export function Automations() {
                 {(automations ?? []).map((automation) => {
                   const enabled = automation.status === "active";
                   const isStatusPending = statusMutationAutomationId === automation.id;
-                  const lastRunDisplay = automation.lastRun ? getAutomationRunDisplay(automation.lastRun) : null;
+                  const lastRunDisplay = automation.lastRun ? getAutomationRunDisplay(automation.lastRun, locale) : null;
                   return (
                     <tr
                       key={automation.id}

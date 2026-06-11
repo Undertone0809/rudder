@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { forwardRef, useImperativeHandle } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { I18nProvider } from "../context/I18nContext";
 import { AutomationDetail } from "./AutomationDetail";
 
 (
@@ -417,7 +418,11 @@ function renderPage() {
   };
 
   act(() => {
-    root.render(<AutomationDetail />);
+    root.render(
+      <I18nProvider>
+        <AutomationDetail />
+      </I18nProvider>,
+    );
   });
 
   return container;
@@ -598,9 +603,13 @@ describe("AutomationDetail", () => {
     document.body.appendChild(headerContainer);
     const headerRoot = createRoot(headerContainer);
 
-    act(() => {
-      headerRoot.render(<>{headerActions}</>);
-    });
+  act(() => {
+      headerRoot.render(
+        <I18nProvider>
+          <>{headerActions}</>
+        </I18nProvider>,
+      );
+  });
 
     const statusSwitch = headerContainer.querySelector('button[role="switch"][aria-label="Disable automation"]');
     expect(statusSwitch).toBeTruthy();

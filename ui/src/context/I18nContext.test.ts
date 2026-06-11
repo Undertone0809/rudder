@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { translateMessage } from "./I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
+import { libraryCopy } from "@/lib/library-copy";
 
 describe("translateMessage", () => {
   it("returns localized copy for zh-CN", () => {
@@ -78,6 +79,42 @@ describe("translateMessage", () => {
     expect(translateLegacyString("zh-CN", "Display")).toBe("显示");
     expect(translateLegacyString("zh-CN", "in review · medium · created by me · assigned to me")).toBe(
       "评审中 · 中 · 我创建的 · 指派给我",
+    );
+    expect(translateLegacyString("zh-CN", "Library UI Proof")).toBe("Library UI Proof");
+    expect(translateLegacyString("zh-CN", "Attach from Library")).toBe("Attach from Library");
+    expect(translateLegacyString("zh-CN", "No Library files available.")).toBe("No Library files available.");
+    expect(translateLegacyString("zh-CN", "Edit in Library")).toBe("Edit in Library");
+    expect(translateLegacyString("zh-CN", "Import or scan skills into Library first, then enable them here.")).toBe(
+      "Import or scan skills into Library first, then enable them here.",
+    );
+    expect(translateLegacyString("zh-CN", "Agent-private skills belong to this agent only. Edit them in Library, then enable them here when you want Rudder to load them.")).toBe(
+      "Agent-private skills belong to this agent only. Edit them in Library, then enable them here when you want Rudder to load them.",
+    );
+    expect(translateLegacyString("zh-CN", "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Library.")).toBe(
+      "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Library.",
+    );
+    expect(libraryCopy("attachFromLibrary", "zh-CN")).toBe("从文档添加");
+    expect(libraryCopy("noLibraryFiles", "zh-CN")).toBe("暂无文档文件。");
+    expect(libraryCopy("editInLibrary", "zh-CN")).toBe("在文档中编辑");
+    expect(libraryCopy("importSkillsIntoLibraryFirst", "zh-CN")).toBe("请先将技能导入或扫描到文档中，然后在这里启用。");
+    expect(libraryCopy("agentPrivateSkillsHelp", "zh-CN")).toBe(
+      "智能体私有技能只属于当前智能体。先在文档中编辑，需要 Rudder 加载时再在这里启用。",
+    );
+    expect(libraryCopy("organizationSkillsHelp", "zh-CN")).toBe(
+      "内置 Rudder 技能固定开启。社区预设和其他组织技能保持可选；由工作区支持的技能可在文档中编辑。",
+    );
+    expect(translateLegacyString("zh-CN", "Choose file")).toBe("选择文件");
+    expect(translateLegacyString("zh-CN", "No file chosen")).toBe("未选择文件");
+    expect(translateLegacyString("zh-CN", "Heartbeat on interval")).toBe("按间隔心跳");
+    expect(translateLegacyString("zh-CN", "Run heartbeat every 3600 sec")).toBe("每隔 3600 秒运行心跳");
+    expect(translateLegacyString("zh-CN", "Monthly UTC budget")).toBe("UTC 月度预算");
+    expect(translateLegacyString("zh-CN", "0% of limit")).toBe("已用上限的 0%");
+    expect(translateLegacyString("zh-CN", "Soft alert at 80%")).toBe("80% 时软提醒");
+    expect(translateLegacyString("zh-CN", "Design tokens")).toBe("Design tokens");
+    expect(translateLegacyString("zh-CN", "Next: Library migration")).toBe("Next: Library migration");
+    expect(translateLegacyString("zh-CN", "Codex (local)")).toBe("Codex (local)");
+    expect(translateLegacyString("zh-CN", "Replacing existing Rudder Desktop if needed...")).toBe(
+      "如有需要，正在替换现有 Rudder Desktop...",
     );
   });
 });

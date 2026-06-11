@@ -143,6 +143,8 @@ export const en = {
   "organizationSettings.appearance.logo.label": "Logo",
   "organizationSettings.appearance.logo.hint": "Upload a PNG, JPEG, WEBP, GIF, or SVG logo image.",
   "organizationSettings.appearance.logo.remove": "Remove logo",
+  "organizationSettings.appearance.logo.chooseFile": "Choose file",
+  "organizationSettings.appearance.logo.noFileChosen": "No file chosen",
   "organizationSettings.appearance.logo.removing": "Removing...",
   "organizationSettings.appearance.logo.uploadFailed": "Logo upload failed",
   "organizationSettings.appearance.logo.uploading": "Uploading logo...",

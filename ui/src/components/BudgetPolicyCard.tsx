@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { BudgetPolicySummary } from "@rudderhq/shared";
 import { AlertTriangle, PauseCircle, ShieldAlert, Wallet } from "lucide-react";
 import { cn, formatCents } from "../lib/utils";
+import { useI18n } from "../context/I18nContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -59,6 +60,18 @@ export function BudgetPolicyCard({
   const StatusIcon = summary.status === "hard_stop" ? ShieldAlert : summary.status === "warning" ? AlertTriangle : Wallet;
   const isPlain = variant === "plain";
   const summaryTone = statusTone(summary.status);
+  const { locale } = useI18n();
+  const pauseReasonText = summary.pauseReason === "budget"
+    ? locale === "zh-CN" ? "因预算暂停" : "budget pause"
+    : summary.pauseReason === "manual"
+      ? locale === "zh-CN" ? "手动暂停" : "manual pause"
+      : summary.pauseReason
+        ? locale === "zh-CN" ? `${summary.pauseReason.replaceAll("_", " ")} 暂停` : `${summary.pauseReason.replaceAll("_", " ")} pause`
+        : "";
+  const pauseReasonLabel = summary.paused && summary.pauseReason
+    ? ` · ${pauseReasonText}`
+    : "";
+  const softAlertLabel = `${locale === "zh-CN" ? `${summary.warnPercent}% 时软提醒` : `Soft alert at ${summary.warnPercent}%`}${pauseReasonLabel}`;
 
   const observedBudgetGrid = isPlain ? (
     <div className="grid gap-6 sm:grid-cols-2">
@@ -75,7 +88,7 @@ export function BudgetPolicyCard({
           {summary.amount > 0 ? formatCents(summary.amount) : "Disabled"}
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          Soft alert at {summary.warnPercent}%{summary.paused && summary.pauseReason ? ` · ${summary.pauseReason} pause` : ""}
+          {softAlertLabel}
         </div>
       </div>
     </div>
@@ -94,7 +107,7 @@ export function BudgetPolicyCard({
           {summary.amount > 0 ? formatCents(summary.amount) : "Disabled"}
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          Soft alert at {summary.warnPercent}%{summary.paused && summary.pauseReason ? ` · ${summary.pauseReason} pause` : ""}
+          {softAlertLabel}
         </div>
       </div>
     </div>

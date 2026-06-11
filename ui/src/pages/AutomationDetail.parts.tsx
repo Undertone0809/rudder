@@ -4,10 +4,19 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
+import type { InstanceLocale } from "@rudderhq/shared";
 import { buildAutomationTriggerPatch } from "../lib/automation-trigger-patch";
+import { translateLegacyString } from "../i18n/legacyPhrases";
 import { cn, formatDateTime } from "../lib/utils";
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
+import {
+  automationPolicyDescription,
+  automationPolicyLabel,
+  catchUpPolicyDescriptions,
+  concurrencyPolicyDescriptions,
+} from "../lib/automation-localization";
 import { useDialog } from "../context/DialogContext";
+import { useI18n } from "../context/I18nContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,15 +34,7 @@ import type { AutomationTrigger } from "@rudderhq/shared";
 export const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 export const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
 export const signingModes = ["bearer", "hmac_sha256"];
-export const concurrencyPolicyDescriptions: Record<string, string> = {
-  coalesce_if_active: "Keep one follow-up run queued while an active run is still working.",
-  always_enqueue: "Queue every trigger occurrence, even if several runs stack up.",
-  skip_if_active: "Drop overlapping trigger occurrences while the automation is already active.",
-};
-export const catchUpPolicyDescriptions: Record<string, string> = {
-  skip_missed: "Ignore schedule windows that were missed while the automation or scheduler was paused.",
-  enqueue_missed_with_cap: "Catch up missed schedule windows in capped batches after recovery.",
-};
+export { concurrencyPolicyDescriptions, catchUpPolicyDescriptions, automationPolicyDescription, automationPolicyLabel };
 export type SecretMessage = {
   title: string;
   webhookUrl: string;
@@ -71,56 +72,57 @@ export function getActivityDetailString(details: Record<string, unknown> | null 
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-export function humanizeToken(value: string): string {
-  return value.replaceAll("_", " ");
+export function humanizeToken(value: string, locale: InstanceLocale = "en"): string {
+  return translateLegacyString(locale, value.replaceAll("_", " "));
 }
 
-export function triggerKindLabel(kind: string | null | undefined): string {
-  if (kind === "schedule") return "Schedule trigger";
-  if (kind === "webhook") return "Webhook trigger";
-  return kind ? `${humanizeToken(kind)} trigger` : "Trigger";
+export function triggerKindLabel(kind: string | null | undefined, locale: InstanceLocale = "en"): string {
+  if (kind === "schedule") return locale === "zh-CN" ? "日程触发器" : "Schedule trigger";
+  if (kind === "webhook") return locale === "zh-CN" ? "Webhook 触发器" : "Webhook trigger";
+  if (!kind) return locale === "zh-CN" ? "触发器" : "Trigger";
+  return locale === "zh-CN" ? `${humanizeToken(kind, locale)}触发器` : `${humanizeToken(kind, locale)} trigger`;
 }
 
-export function runSourceLabel(source: string): string {
-  if (source === "manual") return "Manual run";
-  if (source === "schedule") return "Scheduled run";
-  if (source === "webhook") return "Webhook run";
-  return humanizeToken(source);
+export function runSourceLabel(source: string, locale: InstanceLocale = "en"): string {
+  if (source === "manual") return locale === "zh-CN" ? "手动运行" : "Manual run";
+  if (source === "schedule") return locale === "zh-CN" ? "计划运行" : "Scheduled run";
+  if (source === "webhook") return locale === "zh-CN" ? "Webhook 运行" : "Webhook run";
+  return humanizeToken(source, locale);
 }
 
-export function runStatusTitle(status: string): string {
+export function runStatusTitle(status: string, locale: InstanceLocale = "en"): string {
   switch (status) {
     case "issue_created":
-      return "Run created an issue";
+      return locale === "zh-CN" ? "运行创建了任务" : "Run created an issue";
     case "running":
-      return "Run in progress";
+      return locale === "zh-CN" ? "运行正在执行" : "Run in progress";
     case "failed":
-      return "Run failed";
+      return locale === "zh-CN" ? "运行失败" : "Run failed";
     case "coalesced":
-      return "Run joined an existing run";
+      return locale === "zh-CN" ? "运行已合并到已有运行" : "Run joined an existing run";
     case "skipped":
-      return "Run skipped";
+      return locale === "zh-CN" ? "运行已跳过" : "Run skipped";
     case "completed":
-      return "Run completed";
+      return locale === "zh-CN" ? "运行已完成" : "Run completed";
     default:
-      return `Run ${humanizeToken(status)}`;
+      return locale === "zh-CN" ? `运行 ${humanizeToken(status, locale)}` : `Run ${humanizeToken(status, locale)}`;
   }
 }
 
-export function runStatusDetail(status: string): string | null {
+export function runStatusDetail(status: string, locale: InstanceLocale = "en"): string | null {
   switch (status) {
     case "issue_created":
-      return "Execution issue was opened";
+      return locale === "zh-CN" ? "已创建执行任务" : "Execution issue was opened";
     case "running":
-      return "Run is active";
+      return locale === "zh-CN" ? "运行处于活跃状态" : "Run is active";
     case "failed":
-      return "Execution failed";
+      return locale === "zh-CN" ? "执行失败" : "Execution failed";
     case "coalesced":
-      return "A live run already exists";
+      return locale === "zh-CN" ? "已有实时运行" : "A live run already exists";
     case "skipped":
-      return "Skipped because a run is already active";
+      return locale === "zh-CN" ? "已有运行处于活跃状态，因此已跳过" : "Skipped because a run is already active";
     case "completed":
-      return "Run completed";
+      return locale === "zh-CN" ? "运行已完成" : "Run completed";
     default:
       return null;
   }
@@ -139,15 +141,15 @@ export function formatAutomationTimestamp(value: Date | string | null | undefine
   return formatDateTime(value);
 }
 
-export function summarizeTrigger(trigger: Pick<AutomationTrigger, "kind" | "cronExpression" | "label"> | null): string {
+export function summarizeTrigger(trigger: Pick<AutomationTrigger, "kind" | "cronExpression" | "label"> | null, locale: InstanceLocale = "en"): string {
   if (!trigger) return "No triggers configured";
   if (trigger.kind === "schedule" && trigger.cronExpression) {
-    return describeSchedule(trigger.cronExpression);
+    return describeSchedule(trigger.cronExpression, locale);
   }
   if (trigger.kind === "webhook") {
-    return "Webhook trigger";
+    return locale === "zh-CN" ? "Webhook 触发器" : "Webhook trigger";
   }
-  return trigger.kind;
+  return triggerKindLabel(trigger.kind, locale);
 }
 
 export function automationRiskLabel(input: {
@@ -272,6 +274,7 @@ export function TriggerEditor({
   saveError?: string | null;
 }) {
   const { confirm } = useDialog();
+  const { locale } = useI18n();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState({
     cronExpression: trigger.cronExpression ?? "",
@@ -305,30 +308,30 @@ export function TriggerEditor({
   const canAutosaveTrigger =
     trigger.kind !== "schedule" || draft.cronExpression.trim().length > 0;
   const triggerSummary = trigger.kind === "schedule"
-    ? (trigger.cronExpression ? describeSchedule(trigger.cronExpression) : "No schedule")
+    ? (trigger.cronExpression ? describeSchedule(trigger.cronExpression, locale) : (locale === "zh-CN" ? "未设置日程" : "No schedule"))
     : trigger.kind === "webhook"
-      ? "Webhook trigger"
-      : "API trigger";
+      ? (locale === "zh-CN" ? "Webhook 触发器" : "Webhook trigger")
+      : (locale === "zh-CN" ? "API 触发器" : "API trigger");
   const triggerTimingLabel = trigger.kind === "schedule" && trigger.nextRunAt
-    ? `Next: ${formatDateTime(trigger.nextRunAt)}`
+    ? `${locale === "zh-CN" ? "下次：" : "Next: "}${formatDateTime(trigger.nextRunAt)}`
     : trigger.kind === "webhook"
       ? "Webhook"
       : "API";
   const primaryTriggerLabel = triggerSummary;
   const secondaryTriggerLabel = triggerTimingLabel;
   const syncLabel = isDeleting
-    ? "Deleting..."
+    ? (locale === "zh-CN" ? "删除中..." : "Deleting...")
     : isRotating
-      ? "Rotating..."
+      ? (locale === "zh-CN" ? "轮换中..." : "Rotating...")
       : isSaving
-        ? "Saving..."
+        ? (locale === "zh-CN" ? "保存中..." : "Saving...")
         : saveError
-          ? "Save failed"
+          ? (locale === "zh-CN" ? "保存失败" : "Save failed")
           : !canAutosaveTrigger
-            ? "Needs schedule"
+            ? (locale === "zh-CN" ? "需要日程" : "Needs schedule")
             : isTriggerDirty
-              ? "Autosaving..."
-              : "In sync";
+              ? (locale === "zh-CN" ? "自动保存中..." : "Autosaving...")
+              : (locale === "zh-CN" ? "已同步" : "In sync");
   const syncClassName = isDeleting || isRotating || isSaving || isTriggerDirty
     ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
     : saveError
@@ -336,7 +339,7 @@ export function TriggerEditor({
       : !canAutosaveTrigger
         ? "border-border/70 bg-muted/20 text-muted-foreground"
         : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  const showSyncBadge = syncLabel !== "In sync";
+  const showSyncBadge = syncLabel !== (locale === "zh-CN" ? "已同步" : "In sync");
 
   useEffect(() => {
     if (skipNextAutosaveRef.current) {
@@ -405,12 +408,12 @@ export function TriggerEditor({
         className="automation-trigger-menu-content glass-popover w-[min(320px,calc(100vw-2rem))] space-y-3 rounded-md p-3 text-foreground"
       >
         <div className="px-1 text-sm font-medium text-muted-foreground">
-          {trigger.kind === "schedule" ? "Schedule" : triggerKindLabel(trigger.kind)}
+          {trigger.kind === "schedule" ? (locale === "zh-CN" ? "日程" : "Schedule") : triggerKindLabel(trigger.kind, locale)}
         </div>
         <div className="grid gap-2">
           {trigger.kind === "schedule" && (
             <div className="grid gap-1.5">
-              <Label className="px-1 text-xs text-muted-foreground">Schedule</Label>
+              <Label className="px-1 text-xs text-muted-foreground">{locale === "zh-CN" ? "日程" : "Schedule"}</Label>
               <ScheduleEditor
                 variant="compact"
                 value={draft.cronExpression}
@@ -421,7 +424,7 @@ export function TriggerEditor({
           {trigger.kind === "webhook" && (
             <>
               <div className="grid gap-1.5">
-                <Label className="px-1 text-xs text-muted-foreground">Signing mode</Label>
+                <Label className="px-1 text-xs text-muted-foreground">{locale === "zh-CN" ? "签名模式" : "Signing mode"}</Label>
                 <Select
                   value={draft.signingMode}
                   onValueChange={(signingMode) => setDraft((current) => ({ ...current, signingMode }))}
@@ -437,7 +440,7 @@ export function TriggerEditor({
                 </Select>
               </div>
               <div className="grid gap-1.5">
-                <Label className="px-1 text-xs text-muted-foreground">Replay window</Label>
+                <Label className="px-1 text-xs text-muted-foreground">{locale === "zh-CN" ? "重放窗口" : "Replay window"}</Label>
                 <Input
                   value={draft.replayWindowSec}
                   className="h-8"
@@ -450,7 +453,7 @@ export function TriggerEditor({
 
         {(trigger.lastResult || trigger.kind === "webhook" || saveError) ? (
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {trigger.lastResult && <span className="text-xs text-muted-foreground">Last: {trigger.lastResult}</span>}
+            {trigger.lastResult && <span className="text-xs text-muted-foreground">{locale === "zh-CN" ? "最近：" : "Last: "}{trigger.lastResult}</span>}
             {saveError ? (
               <div className="flex flex-wrap items-center gap-2 text-xs text-destructive">
                 <span>{saveError}</span>
@@ -461,7 +464,7 @@ export function TriggerEditor({
                     className="h-6 px-2 text-destructive hover:text-destructive"
                     onClick={() => onSave(trigger.id, buildAutomationTriggerPatch(trigger, draft, getLocalTimezone()))}
                   >
-                    Retry save
+                    {locale === "zh-CN" ? "重试保存" : "Retry save"}
                   </Button>
                 ) : null}
               </div>
@@ -470,7 +473,7 @@ export function TriggerEditor({
               {trigger.kind === "webhook" && (
                 <Button variant="outline" size="sm" disabled={isRotating} onClick={() => onRotate(trigger.id)}>
                   <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                  {isRotating ? "Rotating..." : "Rotate secret"}
+                  {isRotating ? (locale === "zh-CN" ? "轮换中..." : "Rotating...") : (locale === "zh-CN" ? "轮换密钥" : "Rotate secret")}
                 </Button>
               )}
             </div>

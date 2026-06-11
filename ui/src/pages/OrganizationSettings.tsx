@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOrganization } from "../context/OrganizationContext";
 import { useDialog } from "../context/DialogContext";
@@ -67,6 +67,8 @@ export function OrganizationSettings() {
   const [description, setDescription] = useState("");
   const [brandColor, setBrandColor] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
+  const logoFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [logoFileName, setLogoFileName] = useState("");
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
   const [defaultChatIssueCreationMode, setDefaultChatIssueCreationMode] = useState<"manual_approval" | "auto_create">("manual_approval");
   const [archivedChatSearch, setArchivedChatSearch] = useState("");
@@ -295,7 +297,11 @@ export function OrganizationSettings() {
         .then((asset) => organizationsApi.update(viewedOrganizationId!, { logoAssetId: asset.assetId })),
     onSuccess: (organization) => {
       syncLogoState(organization.logoUrl);
+      setLogoFileName("");
       setLogoUploadError(null);
+    },
+    onError: () => {
+      setLogoFileName("");
     },
   });
 
@@ -311,6 +317,7 @@ export function OrganizationSettings() {
     const file = event.target.files?.[0] ?? null;
     event.currentTarget.value = "";
     if (!file) return;
+    setLogoFileName(file.name);
     setLogoUploadError(null);
     logoUploadMutation.mutate(file);
   }
@@ -516,11 +523,28 @@ export function OrganizationSettings() {
               >
                 <div className="space-y-2">
                   <input
+                    ref={logoFileInputRef}
                     type="file"
                     accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
                     onChange={handleLogoFileChange}
-                    className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none file:mr-4 file:rounded-md file:border-0 file:bg-muted file:px-2.5 file:py-1 file:text-xs"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    className="hidden"
                   />
+                  <div className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="h-7 px-2.5 text-xs"
+                      onClick={() => logoFileInputRef.current?.click()}
+                    >
+                      {t("organizationSettings.appearance.logo.chooseFile")}
+                    </Button>
+                    <span className="truncate text-muted-foreground">
+                      {logoFileName || t("organizationSettings.appearance.logo.noFileChosen")}
+                    </span>
+                  </div>
                   {logoUrl && (
                     <div className="flex items-center gap-2">
                       <Button
