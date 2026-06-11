@@ -21,6 +21,7 @@ const mockState = vi.hoisted(() => ({
   },
   inboxBadge: {
     inbox: 4,
+    isReady: true,
     approvals: 0,
     failedRuns: 0,
     joinRequests: 0,
@@ -159,6 +160,7 @@ beforeEach(() => {
   };
   mockState.inboxBadge = {
     inbox: 4,
+    isReady: true,
     approvals: 0,
     failedRuns: 0,
     joinRequests: 0,
@@ -284,6 +286,50 @@ describe("PrimaryRail desktop inbox signals", () => {
     expect(mockState.desktopShell.showNotification).toHaveBeenLastCalledWith({
       title: "New inbox activity",
       body: "You have 33 inbox items needing attention: 10 chat threads, 23 issue updates.",
+    });
+  });
+
+  it("does not announce the first server-ready inbox count after reload", async () => {
+    mockState.inboxBadge = {
+      ...mockState.inboxBadge,
+      inbox: 0,
+      isReady: false,
+      notificationContent: {
+        title: "New inbox activity",
+        body: "You have 0 unread inbox items.",
+      },
+    };
+    const view = await renderPrimaryRail();
+
+    mockState.inboxBadge = {
+      ...mockState.inboxBadge,
+      inbox: 4,
+      isReady: true,
+      chatAttention: 4,
+      notificationContent: {
+        title: "Unread inbox",
+        body: "4 unread items",
+      },
+    };
+    await view.rerender();
+
+    expect(mockState.desktopShell.setBadgeCount).toHaveBeenLastCalledWith(4);
+    expect(mockState.desktopShell.showNotification).not.toHaveBeenCalled();
+
+    mockState.inboxBadge = {
+      ...mockState.inboxBadge,
+      inbox: 5,
+      chatAttention: 5,
+      notificationContent: {
+        title: "Unread inbox",
+        body: "5 unread items",
+      },
+    };
+    await view.rerender();
+
+    expect(mockState.desktopShell.showNotification).toHaveBeenCalledWith({
+      title: "Unread inbox",
+      body: "5 unread items",
     });
   });
 });

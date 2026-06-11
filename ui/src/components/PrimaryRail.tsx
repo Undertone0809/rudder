@@ -173,6 +173,7 @@ export function PrimaryRail({
   const isDesktopShell = readDesktopShell() !== null;
   const desktopRailPlatform = resolveDesktopRailPlatform(isDesktopShell);
   const previousInboxCountRef = useRef<number | null>(null);
+  const previousInboxOrgRef = useRef<string | null | undefined>(selectedOrganizationId);
   const requestedNotificationPermissionRef = useRef(false);
   const orgGroupActive = /^\/(?:org|projects|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
@@ -242,6 +243,10 @@ export function PrimaryRail({
 
   useEffect(() => {
     if (notificationsSettingsQuery.isLoading) return;
+    if (previousInboxOrgRef.current !== selectedOrganizationId) {
+      previousInboxOrgRef.current = selectedOrganizationId;
+      previousInboxCountRef.current = null;
+    }
 
     const desktopShell = readDesktopShell();
     let cancelled = false;
@@ -259,6 +264,7 @@ export function PrimaryRail({
       let browserPermission = readDesktopNotificationPermission();
       const shouldRequestBrowserPermission =
         desktopShellApi === null
+        && inboxBadge.isReady
         && nextCount > 0
         && browserPermission === "default"
         && !requestedNotificationPermissionRef.current
@@ -275,6 +281,7 @@ export function PrimaryRail({
       const previousCount = previousInboxCountRef.current;
       if (
         previousCount != null
+        && inboxBadge.isReady
         && nextCount > previousCount
         && notificationSettings.desktopInboxNotifications
         && !suppressInboxPopups
@@ -300,7 +307,9 @@ export function PrimaryRail({
           }
         }
       }
-      previousInboxCountRef.current = nextCount;
+      if (inboxBadge.isReady) {
+        previousInboxCountRef.current = nextCount;
+      }
     }
 
     void syncDesktopInboxSignals();
@@ -309,9 +318,11 @@ export function PrimaryRail({
     };
   }, [
     inboxBadge.inbox,
+    inboxBadge.isReady,
     inboxBadge.notificationContent,
     notificationsSettingsQuery.data,
     notificationsSettingsQuery.isLoading,
+    selectedOrganizationId,
     suppressInboxPopups,
   ]);
 
