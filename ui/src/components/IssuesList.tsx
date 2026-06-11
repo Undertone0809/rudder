@@ -334,6 +334,7 @@ export function IssuesList({
   const [debouncedIssueSearch, setDebouncedIssueSearch] = useState(issueSearch);
   const [issueSearchFields, setIssueSearchFields] = useState<IssueSearchField[]>(searchFields ?? ["title"]);
   const [searchOptionsOpen, setSearchOptionsOpen] = useState(false);
+  const [showWorkingOnly, setShowWorkingOnly] = useState(false);
   const filterAssigneeScrollRef = useScrollbarActivityRef();
   const filterLabelsScrollRef = useScrollbarActivityRef();
   const filterProjectsScrollRef = useScrollbarActivityRef();
@@ -397,16 +398,22 @@ export function IssuesList({
     return agent ? formatChatAgentLabel(agent) : null;
   }, [agentById]);
 
-  const filtered = useMemo(() => {
+  const filteredByControls = useMemo(() => {
     const sourceIssues = normalizedIssueSearch.length > 0 ? searchedIssues : issues;
     const filteredByControls = applyFilters(sourceIssues, viewState, currentUserId);
     return sortIssues(filteredByControls, viewState);
   }, [issues, searchedIssues, viewState, normalizedIssueSearch, currentUserId]);
   const workingIssueCount = useMemo(
-    () => filtered.filter((issue) => liveIssueIds?.has(issue.id)).length,
-    [filtered, liveIssueIds],
+    () => filteredByControls.filter((issue) => liveIssueIds?.has(issue.id)).length,
+    [filteredByControls, liveIssueIds],
   );
-  const workingIssueLabel = `${workingIssueCount} ${workingIssueCount === 1 ? "issue" : "issues"} working in current view`;
+  const filtered = useMemo(() => {
+    if (!showWorkingOnly) return filteredByControls;
+    return filteredByControls.filter((issue) => liveIssueIds?.has(issue.id));
+  }, [filteredByControls, liveIssueIds, showWorkingOnly]);
+  const workingIssueLabel = showWorkingOnly
+    ? `Showing ${workingIssueCount} working ${workingIssueCount === 1 ? "issue" : "issues"} in current view`
+    : `${workingIssueCount} ${workingIssueCount === 1 ? "issue" : "issues"} working in current view`;
 
   const { data: labels } = useQuery({
     queryKey: queryKeys.issues.labels(selectedOrganizationId!),
@@ -420,30 +427,31 @@ export function IssuesList({
     [projectId, projects],
   );
   const isGettingStartedProject = selectedProjectName === ONBOARDING_PROJECT_NAME;
+  const activeViewFilterCount = activeFilterCount + (showWorkingOnly ? 1 : 0);
   const emptyStateMessage = useMemo(() => {
     if (normalizedIssueSearch.length > 0) {
       return `No issues match “${normalizedIssueSearch}”. Try a different search or clear some filters.`;
     }
-    if (activeFilterCount > 0) {
+    if (activeViewFilterCount > 0) {
       return "No issues match the current filters. Adjust the filters or clear them to see more work.";
     }
     if (selectedProjectName) {
       return `${selectedProjectName} does not have any issues yet. Create the first issue for this project.`;
     }
     return "There are no issues yet. Create one to start tracking work here.";
-  }, [activeFilterCount, normalizedIssueSearch, selectedProjectName]);
-  const emptyStateAction = normalizedIssueSearch.length === 0 && activeFilterCount === 0
+  }, [activeViewFilterCount, normalizedIssueSearch, selectedProjectName]);
+  const emptyStateAction = normalizedIssueSearch.length === 0 && activeViewFilterCount === 0
     ? "New Issue"
     : undefined;
   const boardEmptyMessage = useMemo(() => {
-    if (selectedProjectName && normalizedIssueSearch.length === 0 && activeFilterCount === 0) {
+    if (selectedProjectName && normalizedIssueSearch.length === 0 && activeViewFilterCount === 0) {
       return `${selectedProjectName} does not have any issues yet. Use a lane + button to create the first one in the right status.`;
     }
-    if (normalizedIssueSearch.length > 0 || activeFilterCount > 0) {
+    if (normalizedIssueSearch.length > 0 || activeViewFilterCount > 0) {
       return "No issues match the current board. Use a lane + button to create a new issue in the right status. Clear search or filters if it does not appear.";
     }
     return "No issues match the current board. Use a lane + button to create a new issue in the right status.";
-  }, [activeFilterCount, normalizedIssueSearch, selectedProjectName]);
+  }, [activeViewFilterCount, normalizedIssueSearch, selectedProjectName]);
 
   const groupedContent = useMemo<GroupedIssueContent[]>(() => {
     if (isGettingStartedProject && viewState.groupBy === "none") {
@@ -652,14 +660,24 @@ export function IssuesList({
         </div>
 
         <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-          <div
+          <button
+            type="button"
             data-testid="issues-working-count"
-            className="mr-1 inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)] px-3 text-sm font-medium text-muted-foreground"
+            className={cn(
+              "mr-1 inline-flex h-8 items-center rounded-[var(--radius-sm)] border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              showWorkingOnly
+                ? "border-[color:var(--accent-base)] bg-[color:color-mix(in_oklab,var(--surface-active)_88%,transparent)] text-[color:var(--accent-strong)]"
+                : "border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)] text-muted-foreground hover:border-[color:var(--border-strong)] hover:text-foreground",
+              workingIssueCount === 0 && !showWorkingOnly && "cursor-default opacity-60 hover:border-[color:var(--border-base)] hover:text-muted-foreground",
+            )}
+            aria-pressed={showWorkingOnly}
             aria-label={workingIssueLabel}
             title={workingIssueLabel}
+            disabled={workingIssueCount === 0 && !showWorkingOnly}
+            onClick={() => setShowWorkingOnly((value) => !value)}
           >
             {workingIssueCount} working
-          </div>
+          </button>
           <div className="mr-1 flex items-center overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)]">
             <button
               className={`p-1.5 transition-colors ${viewState.viewMode === "list" ? "bg-[color:var(--surface-active)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}
