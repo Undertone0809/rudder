@@ -1671,7 +1671,9 @@ describe("messengerService and issue follows", () => {
 
     const thread = await messengerSvc.getIssuesThread(orgId, userId);
     const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const splitSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
     const issuesSummary = summaries.find((entry) => entry.threadKey === "issues");
+    const splitIssueSummary = splitSummaries.find((entry) => entry.threadKey === `issue:${issueId}`);
     const item = thread.detail.items.find((entry) => entry.issueId === issueId);
 
     expect(item?.sourceCommentId).toBe(agentComment.id);
@@ -1681,6 +1683,7 @@ describe("messengerService and issue follows", () => {
     expect(item?.body).not.toContain("My later note should stay out of Messenger");
     expect(thread.summary.preview).toBe("Created issue with comments — Agent-visible update");
     expect(issuesSummary?.preview).toBe("Created issue with comments — Agent-visible update");
+    expect(splitIssueSummary?.href).toBe(`/messenger/issues/${item?.issueIdentifier ?? issueId}#comment-${agentComment.id}`);
   });
 
   it("includes the issue title in completion previews for unread Messenger issue notifications", async () => {

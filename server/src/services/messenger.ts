@@ -425,6 +425,11 @@ function messengerIssueHref(issue: IssueUniverseRow) {
   return `/messenger/issues/${issue.identifier ?? issue.id}`;
 }
 
+function messengerIssueCommentHref(issue: IssueUniverseRow, commentId: string | null | undefined) {
+  const href = messengerIssueHref(issue);
+  return commentId ? `${href}#comment-${commentId}` : href;
+}
+
 function issueDisplayLabel(issue: IssueUniverseRow) {
   return issue.identifier ? `${issue.identifier} · ${issue.title}` : issue.title;
 }
@@ -703,7 +708,7 @@ function splitIssueSummary(
     unreadCount,
     needsAttention: unreadCount > 0,
     isPinned: Boolean(threadState?.pinnedAt),
-    href: messengerIssueHref(entry.issue),
+    href: messengerIssueCommentHref(entry.issue, item.sourceCommentId),
     metadata: {
       ...item.metadata,
       splitIssue: true,

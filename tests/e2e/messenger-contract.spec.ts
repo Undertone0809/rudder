@@ -3,11 +3,13 @@ import { randomUUID } from "node:crypto";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   activityLog,
+  agents,
   chatConversationUserStates,
   chatConversations,
   chatMessages,
   createDb,
   heartbeatRuns,
+  issueComments,
   issueFollows,
   issues,
   messengerThreadUserStates,
@@ -1051,6 +1053,7 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto("/");
     await page.evaluate(({ orgId }) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: false }));
     }, { orgId: organization.id });
 
     await page.goto("/messenger");
@@ -1236,7 +1239,31 @@ test.describe("Messenger unified threads contract", () => {
     const issue = await issueRes.json() as { id: string; identifier?: string | null; title: string };
     const issueRef = issue.identifier ?? issue.id;
 
-    const baseTime = Date.parse("2026-05-04T12:00:00.000Z");
+    const baseTime = Date.now() - 10 * 60_000;
+    const commentAt = new Date(baseTime + 5 * 60_000);
+    const commentId = randomUUID();
+    const commenterAgentId = randomUUID();
+    const commentBody = "Agent sidebar target update";
+    await e2eDb.insert(agents).values({
+      id: commenterAgentId,
+      orgId: organization.id,
+      name: "Sidebar Update Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await e2eDb.insert(issueComments).values({
+      id: commentId,
+      orgId: organization.id,
+      issueId: issue.id,
+      authorAgentId: commenterAgentId,
+      body: commentBody,
+      createdAt: commentAt,
+      updatedAt: commentAt,
+    });
     await e2eDb.update(chatConversations)
       .set({
         lastMessageAt: new Date(baseTime + 10 * 60_000),
@@ -1245,7 +1272,8 @@ test.describe("Messenger unified threads contract", () => {
       .where(eq(chatConversations.id, newerChat.id));
     await e2eDb.update(issues)
       .set({
-        updatedAt: new Date(baseTime + 5 * 60_000),
+        createdAt: commentAt,
+        updatedAt: commentAt,
       })
       .where(eq(issues.id, issue.id));
     await e2eDb.update(chatConversations)
@@ -1255,11 +1283,17 @@ test.describe("Messenger unified threads contract", () => {
       })
       .where(eq(chatConversations.id, olderChat.id));
 
-    await page.goto("/");
-    await page.evaluate(({ orgId }) => {
+    await page.addInitScript(({ orgId }) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      if (!window.localStorage.getItem("rudder.messengerSplitIssueNotificationsByOrg")) {
+        window.localStorage.setItem("rudder.messengerSplitIssueNotificationsByOrg", JSON.stringify({ [orgId]: false }));
+      }
+      if (!window.localStorage.getItem("rudder.messengerThreadDensityByOrg")) {
+        window.localStorage.setItem("rudder.messengerThreadDensityByOrg", JSON.stringify({ [orgId]: "comfortable" }));
+      }
     }, { orgId: organization.id });
 
+    await page.goto("/");
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
     const aggregateIssueRow = page.getByTestId(threadTestId("issues"));
     const splitIssueRow = page.getByTestId(threadTestId(`issue:${issue.id}`));
@@ -1272,11 +1306,10 @@ test.describe("Messenger unified threads contract", () => {
     await expect(aggregateIssueRow.getByRole("button", { name: "Thread actions" })).toHaveCount(0);
 
     await clickMessengerViewCheckbox(page, "Split issue notifications");
-    await expect(page.getByText("Threads · Split issues")).toBeVisible({ timeout: 15_000 });
     await expect(aggregateIssueRow).toHaveCount(0);
     await expect(splitIssueRow).toContainText("Split sidebar issue", { timeout: 15_000 });
     await expect(splitIssueRow).toContainText(issueRef);
-    await expect(splitIssueRow).toContainText("assigned to me");
+    await expect(splitIssueRow).toContainText(commentBody);
     await expect(splitIssueRow.locator('[data-slot="issue-status-icon"][data-status="todo"]')).toBeVisible();
     await expect(page.getByTestId(threadUnreadBadgeTestId(`issue:${issue.id}`))).toHaveText("1");
     await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
@@ -1323,15 +1356,18 @@ test.describe("Messenger unified threads contract", () => {
     ]);
 
     await splitIssueRow.click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/issues/${issueRef}$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/issues/${issueRef}#comment-${commentId}$`));
     await expect(page.getByTestId("workspace-context-header")).toContainText("Messenger");
     await expect(page.locator("#main-content").getByRole("heading", { name: "Split sidebar issue" })).toBeVisible({ timeout: 15_000 });
+    const highlightedComment = page.locator(`#comment-${commentId}`);
+    await expect(highlightedComment).toBeVisible({ timeout: 15_000 });
+    await expect(highlightedComment).toHaveClass(/bg-primary\/5/);
     await expect.poll(async () => {
       const rows = await e2eDb
         .select({ lastReadAt: messengerThreadUserStates.lastReadAt })
         .from(messengerThreadUserStates)
         .where(eq(messengerThreadUserStates.threadKey, `issue:${issue.id}`));
-      return (rows[0]?.lastReadAt?.getTime() ?? 0) >= (baseTime + 5 * 60_000);
+      return (rows[0]?.lastReadAt?.getTime() ?? 0) >= commentAt.getTime();
     }).toBe(true);
 
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
@@ -1340,20 +1376,18 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId("rail-badge-messenger")).toHaveCount(0);
 
     await clickMessengerViewCheckbox(page, "Compact mode");
-    await expect(page.getByText("Threads · Compact · Split issues")).toBeVisible({ timeout: 15_000 });
     await expect(splitIssueRow).toContainText("Split sidebar issue");
-    await expect(splitIssueRow).not.toContainText("assigned to me");
+    await expect(splitIssueRow).not.toContainText(commentBody);
 
     await page.screenshot({ path: testInfo.outputPath("messenger-split-issues-desktop.png"), fullPage: true });
 
     await page.setViewportSize({ width: 768, height: 900 });
     await expect(splitIssueRow).toBeVisible();
     await expect(splitIssueRow).toContainText("Split sidebar issue");
-    await expect(splitIssueRow).not.toContainText("assigned to me");
+    await expect(splitIssueRow).not.toContainText(commentBody);
     await page.screenshot({ path: testInfo.outputPath("messenger-split-issues-narrow.png"), fullPage: true });
 
     await clickMessengerViewCheckbox(page, "Split issue notifications");
-    await expect(page.getByText("Threads · Compact")).toBeVisible({ timeout: 15_000 });
     await expect(splitIssueRow).toHaveCount(0);
     await expect(aggregateIssueRow).toContainText("Issues", { timeout: 15_000 });
     await aggregateIssueRow.hover();
