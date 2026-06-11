@@ -77,6 +77,27 @@ function runPrintVersion(repo, env = {}) {
   });
 }
 
+function runWaitForNpmPackageVersions(repo, packageInfo, env = {}) {
+  return spawnSync("bash", [
+    "-c",
+    [
+      ". ./scripts/release-lib.sh",
+      'wait_for_npm_package_versions "$PACKAGE_INFO" 4 0',
+      "status=$?",
+      'printf "missing=%s\\n" "$WAIT_FOR_NPM_PACKAGE_VERSIONS_MISSING"',
+      'exit "$status"',
+    ].join("\n"),
+  ], {
+    cwd: repo,
+    env: {
+      ...process.env,
+      PACKAGE_INFO: packageInfo,
+      ...env,
+    },
+    encoding: "utf8",
+  });
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
@@ -126,4 +147,57 @@ describe("release canary base guard", () => {
     expect(result.stderr).toContain("npm package @rudderhq/cli@0.2.2 exists");
     expect(result.stderr).toContain("0.2.2 -> 0.2.3");
   }, 15000);
+});
+
+describe("npm publish verification", () => {
+  it("keeps polling all packages until npm exposes delayed versions", () => {
+    const { repo } = createReleaseRepo();
+    const mockBin = resolve(repo, "..", "bin");
+    const stateDir = resolve(repo, "..", "npm-state");
+    mkdirSync(mockBin, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+    const npmPath = join(mockBin, "npm");
+    writeFileSync(npmPath, [
+      "#!/usr/bin/env bash",
+      "if [ \"$1\" != \"view\" ]; then exit 1; fi",
+      "spec=\"$2\"",
+      "version_arg=\"$3\"",
+      "safe_spec=\"$(printf '%s' \"$spec\" | tr -c 'A-Za-z0-9_.-' '_')\"",
+      "count_file=\"$NPM_MOCK_STATE_DIR/$safe_spec\"",
+      "count=0",
+      "if [ -f \"$count_file\" ]; then count=\"$(cat \"$count_file\")\"; fi",
+      "count=$((count + 1))",
+      "printf '%s' \"$count\" > \"$count_file\"",
+      "case \"$spec:$version_arg\" in",
+      "  '@rudderhq/cli@0.2.2:version')",
+      "    echo '0.2.2'",
+      "    exit 0",
+      "    ;;",
+      "  '@rudderhq/server@0.2.2:version')",
+      "    if [ \"$count\" -ge 3 ]; then",
+      "      echo '0.2.2'",
+      "      exit 0",
+      "    fi",
+      "    exit 1",
+      "    ;;",
+      "esac",
+      "exit 1",
+      "",
+    ].join("\n"));
+    chmodSync(npmPath, 0o755);
+
+    const packageInfo = [
+      "cli\t@rudderhq/cli\t0.2.2",
+      "server\t@rudderhq/server\t0.2.2",
+    ].join("\n");
+    const result = runWaitForNpmPackageVersions(repo, packageInfo, {
+      NPM_MOCK_STATE_DIR: stateDir,
+      PATH: `${mockBin}:${process.env.PATH}`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Waiting for npm to expose: @rudderhq/server@0.2.2");
+    expect(result.stdout).toContain("missing=");
+    expect(result.stderr).toBe("");
+  });
 });

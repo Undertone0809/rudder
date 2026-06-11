@@ -293,25 +293,16 @@ if [ "$dry_run" = true ]; then
   release_info "==> Step 6/7: Skipping npm verification in dry-run mode..."
 else
   release_info "==> Step 6/7: Confirming npm package availability..."
-  VERIFY_ATTEMPTS="${NPM_PUBLISH_VERIFY_ATTEMPTS:-12}"
+  VERIFY_ATTEMPTS="${NPM_PUBLISH_VERIFY_ATTEMPTS:-60}"
   VERIFY_DELAY_SECONDS="${NPM_PUBLISH_VERIFY_DELAY_SECONDS:-5}"
-  MISSING_PUBLISHED_PACKAGES=""
-
   while IFS=$'\t' read -r _pkg_dir pkg_name pkg_version; do
     [ -z "$pkg_name" ] && continue
     release_info "  Checking $pkg_name@$pkg_version"
-    if wait_for_npm_package_version "$pkg_name" "$pkg_version" "$VERIFY_ATTEMPTS" "$VERIFY_DELAY_SECONDS"; then
-      release_info "    ✓ Found on npm"
-      continue
-    fi
-
-    if [ -n "$MISSING_PUBLISHED_PACKAGES" ]; then
-      MISSING_PUBLISHED_PACKAGES="${MISSING_PUBLISHED_PACKAGES}, "
-    fi
-    MISSING_PUBLISHED_PACKAGES="${MISSING_PUBLISHED_PACKAGES}${pkg_name}@${pkg_version}"
   done <<< "$VERSIONED_PACKAGE_INFO"
 
-  [ -z "$MISSING_PUBLISHED_PACKAGES" ] || release_fail "publish completed but npm never exposed: $MISSING_PUBLISHED_PACKAGES"
+  if ! wait_for_npm_package_versions "$VERSIONED_PACKAGE_INFO" "$VERIFY_ATTEMPTS" "$VERIFY_DELAY_SECONDS"; then
+    release_fail "publish completed but npm never exposed: $WAIT_FOR_NPM_PACKAGE_VERSIONS_MISSING"
+  fi
 
   release_info "  ✓ Verified all versioned packages are available on npm"
 fi

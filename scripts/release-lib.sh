@@ -310,6 +310,45 @@ wait_for_npm_package_version() {
   return 1
 }
 
+wait_for_npm_package_versions() {
+  local package_info="$1"
+  local attempts="${2:-60}"
+  local delay_seconds="${3:-5}"
+  local attempt=1
+
+  WAIT_FOR_NPM_PACKAGE_VERSIONS_MISSING=""
+
+  while [ "$attempt" -le "$attempts" ]; do
+    local missing_packages=""
+
+    while IFS=$'\t' read -r _pkg_dir pkg_name pkg_version; do
+      [ -n "$pkg_name" ] || continue
+      if npm_package_version_exists "$pkg_name" "$pkg_version"; then
+        continue
+      fi
+
+      if [ -n "$missing_packages" ]; then
+        missing_packages="${missing_packages}, "
+      fi
+      missing_packages="${missing_packages}${pkg_name}@${pkg_version}"
+    done <<< "$package_info"
+
+    WAIT_FOR_NPM_PACKAGE_VERSIONS_MISSING="$missing_packages"
+    if [ -z "$missing_packages" ]; then
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$attempts" ]; then
+      release_info "  Waiting for npm to expose: $missing_packages (attempt $attempt/$attempts)"
+      sleep "$delay_seconds"
+    fi
+
+    attempt=$((attempt + 1))
+  done
+
+  return 1
+}
+
 require_clean_worktree() {
   if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
     release_fail "working tree is not clean. Commit, stash, or remove changes before releasing."
