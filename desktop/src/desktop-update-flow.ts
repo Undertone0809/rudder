@@ -427,6 +427,7 @@ export function createDesktopUpdateFlow(context: {
       let stdoutBuffer = "";
       let diagnosticStdout = "";
       let diagnosticStderr = "";
+      let updateChildFinalized = false;
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
         stdoutBuffer += chunk;
@@ -448,6 +449,7 @@ export function createDesktopUpdateFlow(context: {
         diagnosticStderr = appendBoundedDesktopUpdateOutput(diagnosticStderr, chunk);
       });
       child.on("error", (error) => {
+        updateChildFinalized = true;
         activeDesktopUpdates.delete(updateId);
         updateDesktopUpdateProgress(updateId, normalizedVersion, {
           phase: "failed",
@@ -455,7 +457,9 @@ export function createDesktopUpdateFlow(context: {
           error: error.message,
         });
       });
-      child.on("exit", (code) => {
+      child.on("close", (code) => {
+        if (updateChildFinalized) return;
+        updateChildFinalized = true;
         activeDesktopUpdates.delete(updateId);
         if (stdoutBuffer.trim()) {
           diagnosticStdout = appendBoundedDesktopUpdateOutput(diagnosticStdout, `${stdoutBuffer}\n`);

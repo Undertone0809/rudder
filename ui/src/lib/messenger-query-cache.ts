@@ -82,6 +82,14 @@ function markThreadRead(summary: MessengerThreadSummary, threadKey: string, read
   };
 }
 
+function markThreadPinned(summary: MessengerThreadSummary, threadKey: string, pinned: boolean) {
+  if (summary.threadKey !== threadKey) return summary;
+  return {
+    ...summary,
+    isPinned: pinned,
+  };
+}
+
 function markThreadPageDataRead(
   current: MessengerThreadPageData | undefined,
   threadKey: string,
@@ -97,6 +105,31 @@ function markThreadPageDataRead(
   };
 }
 
+function updateThreadPageData(
+  current: MessengerThreadPageData | undefined,
+  updater: (summary: MessengerThreadSummary) => MessengerThreadSummary | null,
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    pages: current.pages.map((page) => ({
+      ...page,
+      items: page.items.map(updater).filter((item): item is MessengerThreadSummary => Boolean(item)),
+    })),
+  };
+}
+
+function updateThreadPreviewData(
+  current: MessengerThreadPreviewData | undefined,
+  updater: (summary: MessengerThreadSummary) => MessengerThreadSummary | null,
+) {
+  if (!current) return current;
+  return {
+    ...current,
+    items: current.items.map(updater).filter((item): item is MessengerThreadSummary => Boolean(item)),
+  };
+}
+
 function markThreadPreviewDataRead(
   current: MessengerThreadPreviewData | undefined,
   threadKey: string,
@@ -106,6 +139,20 @@ function markThreadPreviewDataRead(
   return {
     ...current,
     items: current.items.map((item) => markThreadRead(item, threadKey, readAt)),
+  };
+}
+
+function markChatConversationPinned(conversation: ChatConversation, pinned: boolean): ChatConversation {
+  return {
+    ...conversation,
+    isPinned: pinned,
+  };
+}
+
+function archiveChatConversation(conversation: ChatConversation): ChatConversation {
+  return {
+    ...conversation,
+    status: "archived",
   };
 }
 
@@ -134,6 +181,81 @@ export function invalidateMessengerThreadSummaryQueries(queryClient: QueryClient
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(orgId) }),
   ]);
+}
+
+export function markMessengerThreadPinnedInCache(
+  queryClient: QueryClient,
+  orgId: string,
+  threadKey: string,
+  pinned: boolean,
+) {
+  queryClient.setQueryData<MessengerThreadSummary[]>(
+    queryKeys.messenger.threads(orgId),
+    (current) => current?.map((summary) => markThreadPinned(summary, threadKey, pinned)) ?? current,
+  );
+  queryClient.setQueriesData<MessengerThreadPageData>(
+    { queryKey: queryKeys.messenger.threadPages(orgId) },
+    (current) => updateThreadPageData(current, (summary) => markThreadPinned(summary, threadKey, pinned)),
+  );
+  queryClient.setQueryData<MessengerThreadPreviewData>(
+    queryKeys.messenger.threadPreview(orgId),
+    (current) => updateThreadPreviewData(current, (summary) => markThreadPinned(summary, threadKey, pinned)),
+  );
+}
+
+export function markMessengerChatPinnedInCache(
+  queryClient: QueryClient,
+  orgId: string,
+  conversationId: string,
+  pinned: boolean,
+) {
+  queryClient.setQueryData<ChatConversation>(
+    queryKeys.chats.detail(conversationId),
+    (current) => current ? markChatConversationPinned(current, pinned) : current,
+  );
+  for (const status of ["active", "all"] as const) {
+    queryClient.setQueryData<ChatConversation[]>(
+      queryKeys.chats.list(orgId, status),
+      (current) => current?.map((item) =>
+        item.id === conversationId ? markChatConversationPinned(item, pinned) : item,
+      ) ?? current,
+    );
+  }
+
+  markMessengerThreadPinnedInCache(queryClient, orgId, `chat:${conversationId}`, pinned);
+}
+
+export function archiveMessengerChatInCache(
+  queryClient: QueryClient,
+  orgId: string,
+  conversationId: string,
+) {
+  queryClient.setQueryData<ChatConversation>(
+    queryKeys.chats.detail(conversationId),
+    (current) => current ? archiveChatConversation(current) : current,
+  );
+  queryClient.setQueryData<ChatConversation[]>(
+    queryKeys.chats.list(orgId, "active"),
+    (current) => current?.filter((item) => item.id !== conversationId) ?? current,
+  );
+  queryClient.setQueryData<ChatConversation[]>(
+    queryKeys.chats.list(orgId, "all"),
+    (current) => current?.map((item) =>
+      item.id === conversationId ? archiveChatConversation(item) : item,
+    ) ?? current,
+  );
+  queryClient.setQueryData<MessengerThreadSummary[]>(
+    queryKeys.messenger.threads(orgId),
+    (current) => current?.filter((summary) => summary.threadKey !== `chat:${conversationId}`) ?? current,
+  );
+  queryClient.setQueriesData<MessengerThreadPageData>(
+    { queryKey: queryKeys.messenger.threadPages(orgId) },
+    (current) => updateThreadPageData(current, (summary) => summary.threadKey === `chat:${conversationId}` ? null : summary),
+  );
+  queryClient.setQueryData<MessengerThreadPreviewData>(
+    queryKeys.messenger.threadPreview(orgId),
+    (current) => updateThreadPreviewData(current, (summary) => summary.threadKey === `chat:${conversationId}` ? null : summary),
+  );
 }
 
 export function markMessengerThreadReadInCache(

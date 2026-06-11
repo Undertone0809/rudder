@@ -4,7 +4,14 @@ import { QueryClient } from "@tanstack/react-query";
 import type { ChatConversation, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import { queryKeys } from "@/lib/queryKeys";
-import { markMessengerChatReadInCache, markMessengerThreadReadInCache, upsertMessengerThreadSummaryQueries } from "./messenger-query-cache";
+import {
+  archiveMessengerChatInCache,
+  markMessengerChatPinnedInCache,
+  markMessengerChatReadInCache,
+  markMessengerThreadPinnedInCache,
+  markMessengerThreadReadInCache,
+  upsertMessengerThreadSummaryQueries,
+} from "./messenger-query-cache";
 
 function thread(overrides: Partial<MessengerThreadSummary> & Pick<MessengerThreadSummary, "threadKey" | "title">): MessengerThreadSummary {
   return {
@@ -17,6 +24,35 @@ function thread(overrides: Partial<MessengerThreadSummary> & Pick<MessengerThrea
     needsAttention: false,
     isPinned: false,
     href: `/messenger/${overrides.threadKey}`,
+    ...overrides,
+  };
+}
+
+function conversation(overrides: Partial<ChatConversation> & Pick<ChatConversation, "id" | "orgId" | "title">): ChatConversation {
+  return {
+    status: "active",
+    summary: null,
+    latestReplyPreview: null,
+    latestUserMessagePreview: null,
+    userMessageCount: 0,
+    preferredAgentId: null,
+    routedAgentId: null,
+    primaryIssueId: null,
+    primaryIssue: null,
+    issueCreationMode: "manual_approval",
+    planMode: false,
+    createdByUserId: null,
+    lastMessageAt: new Date("2026-05-03T08:00:00.000Z"),
+    lastReadAt: null,
+    isPinned: false,
+    isUnread: false,
+    unreadCount: 0,
+    needsAttention: false,
+    resolvedAt: null,
+    contextLinks: [],
+    chatRuntime: { sourceType: "unconfigured", sourceLabel: "", runtimeAgentId: null, agentRuntimeType: null, model: null, available: false, error: null },
+    createdAt: new Date("2026-05-01T08:00:00.000Z"),
+    updatedAt: new Date("2026-05-03T08:00:00.000Z"),
     ...overrides,
   };
 }
@@ -83,6 +119,94 @@ describe("upsertMessengerThreadSummaryQueries", () => {
     }>(queryKeys.messenger.threadPages(orgId, true))?.pages;
     expect(pages?.[0]?.items.map((item) => item.threadKey)).toEqual(["chat:incoming", "chat:older"]);
     expect(pages?.[1]?.items.map((item) => item.threadKey)).toEqual([]);
+  });
+});
+
+describe("Messenger optimistic action cache helpers", () => {
+  it("pins a chat across conversation and Messenger thread caches immediately", () => {
+    const queryClient = new QueryClient();
+    const orgId = "org-1";
+    const chat = conversation({ id: "chat-1", orgId, title: "Planning" });
+    const chatThread = thread({ threadKey: "chat:chat-1", title: "Planning" });
+
+    queryClient.setQueryData(queryKeys.chats.detail("chat-1"), chat);
+    queryClient.setQueryData(queryKeys.chats.list(orgId, "active"), [chat]);
+    queryClient.setQueryData(queryKeys.chats.list(orgId, "all"), [chat]);
+    queryClient.setQueryData(queryKeys.messenger.threads(orgId), [chatThread]);
+    queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, true), {
+      pages: [{ items: [chatThread], pageInfo: { limit: 40, nextCursor: null, hasMore: false } }],
+      pageParams: [null],
+    });
+    queryClient.setQueryData(queryKeys.messenger.threadPreview(orgId), {
+      items: [chatThread],
+      pageInfo: { limit: 10, nextCursor: null, hasMore: false },
+    });
+
+    markMessengerChatPinnedInCache(queryClient, orgId, "chat-1", true);
+
+    expect(queryClient.getQueryData<ChatConversation>(queryKeys.chats.detail("chat-1"))?.isPinned).toBe(true);
+    expect(queryClient.getQueryData<ChatConversation[]>(queryKeys.chats.list(orgId, "active"))?.[0]?.isPinned).toBe(true);
+    expect(queryClient.getQueryData<MessengerThreadSummary[]>(queryKeys.messenger.threads(orgId))?.[0]?.isPinned).toBe(true);
+    expect(queryClient.getQueryData<{
+      pages: Array<{ items: MessengerThreadSummary[] }>;
+    }>(queryKeys.messenger.threadPages(orgId, true))?.pages[0]?.items[0]?.isPinned).toBe(true);
+    expect(queryClient.getQueryData<{
+      items: MessengerThreadSummary[];
+    }>(queryKeys.messenger.threadPreview(orgId))?.items[0]?.isPinned).toBe(true);
+  });
+
+  it("pins a non-chat Messenger thread across summary caches immediately", () => {
+    const queryClient = new QueryClient();
+    const orgId = "org-1";
+    const issueThread = thread({ threadKey: "issue:issue-1", kind: "issues", title: "ISS-1" });
+
+    queryClient.setQueryData(queryKeys.messenger.threads(orgId), [issueThread]);
+    queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, false), {
+      pages: [{ items: [issueThread], pageInfo: { limit: 40, nextCursor: null, hasMore: false } }],
+      pageParams: [null],
+    });
+
+    markMessengerThreadPinnedInCache(queryClient, orgId, "issue:issue-1", true);
+
+    expect(queryClient.getQueryData<MessengerThreadSummary[]>(queryKeys.messenger.threads(orgId))?.[0]?.isPinned).toBe(true);
+    expect(queryClient.getQueryData<{
+      pages: Array<{ items: MessengerThreadSummary[] }>;
+    }>(queryKeys.messenger.threadPages(orgId, false))?.pages[0]?.items[0]?.isPinned).toBe(true);
+  });
+
+  it("archives a chat by removing it from active Messenger caches while preserving all-chat history", () => {
+    const queryClient = new QueryClient();
+    const orgId = "org-1";
+    const chat = conversation({ id: "chat-1", orgId, title: "Planning" });
+    const other = conversation({ id: "chat-2", orgId, title: "Other" });
+    const chatThread = thread({ threadKey: "chat:chat-1", title: "Planning" });
+    const otherThread = thread({ threadKey: "chat:chat-2", title: "Other" });
+
+    queryClient.setQueryData(queryKeys.chats.detail("chat-1"), chat);
+    queryClient.setQueryData(queryKeys.chats.list(orgId, "active"), [chat, other]);
+    queryClient.setQueryData(queryKeys.chats.list(orgId, "all"), [chat, other]);
+    queryClient.setQueryData(queryKeys.messenger.threads(orgId), [chatThread, otherThread]);
+    queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, true), {
+      pages: [{ items: [chatThread, otherThread], pageInfo: { limit: 40, nextCursor: null, hasMore: false } }],
+      pageParams: [null],
+    });
+    queryClient.setQueryData(queryKeys.messenger.threadPreview(orgId), {
+      items: [chatThread, otherThread],
+      pageInfo: { limit: 10, nextCursor: null, hasMore: false },
+    });
+
+    archiveMessengerChatInCache(queryClient, orgId, "chat-1");
+
+    expect(queryClient.getQueryData<ChatConversation>(queryKeys.chats.detail("chat-1"))?.status).toBe("archived");
+    expect(queryClient.getQueryData<ChatConversation[]>(queryKeys.chats.list(orgId, "active"))?.map((item) => item.id)).toEqual(["chat-2"]);
+    expect(queryClient.getQueryData<ChatConversation[]>(queryKeys.chats.list(orgId, "all"))?.find((item) => item.id === "chat-1")?.status).toBe("archived");
+    expect(queryClient.getQueryData<MessengerThreadSummary[]>(queryKeys.messenger.threads(orgId))?.map((item) => item.threadKey)).toEqual(["chat:chat-2"]);
+    expect(queryClient.getQueryData<{
+      pages: Array<{ items: MessengerThreadSummary[] }>;
+    }>(queryKeys.messenger.threadPages(orgId, true))?.pages[0]?.items.map((item) => item.threadKey)).toEqual(["chat:chat-2"]);
+    expect(queryClient.getQueryData<{
+      items: MessengerThreadSummary[];
+    }>(queryKeys.messenger.threadPreview(orgId))?.items.map((item) => item.threadKey)).toEqual(["chat:chat-2"]);
   });
 });
 
@@ -154,34 +278,15 @@ describe("markMessengerThreadReadInCache", () => {
       needsAttention: true,
       latestActivityAt: new Date("2026-05-03T08:00:00.000Z"),
     });
-    const conversation: ChatConversation = {
+    const unreadConversation = conversation({
       id: "chat-1",
       orgId,
-      status: "active",
       title: "Unread chat",
-      summary: null,
-      latestReplyPreview: null,
-      latestUserMessagePreview: null,
-      userMessageCount: 0,
-      preferredAgentId: null,
-      routedAgentId: null,
-      primaryIssueId: null,
-      primaryIssue: null,
-      issueCreationMode: "manual_approval",
-      planMode: false,
-      createdByUserId: null,
       lastMessageAt: new Date("2026-05-03T08:00:00.000Z"),
-      lastReadAt: null,
-      isPinned: false,
       isUnread: true,
       unreadCount: 3,
       needsAttention: true,
-      resolvedAt: null,
-      contextLinks: [],
-      chatRuntime: { sourceType: "unconfigured", sourceLabel: "", runtimeAgentId: null, agentRuntimeType: null, model: null, available: false, error: null },
-      createdAt: new Date("2026-05-01T08:00:00.000Z"),
-      updatedAt: new Date("2026-05-03T08:00:00.000Z"),
-    };
+    });
     const badges: SidebarBadges = {
       inbox: 4,
       approvals: 1,
@@ -192,17 +297,17 @@ describe("markMessengerThreadReadInCache", () => {
       alerts: 0,
     };
 
-    queryClient.setQueryData(queryKeys.chats.detail("chat-1"), conversation);
-    queryClient.setQueryData(queryKeys.chats.list(orgId, "active"), [conversation]);
+    queryClient.setQueryData(queryKeys.chats.detail("chat-1"), unreadConversation);
+    queryClient.setQueryData(queryKeys.chats.list(orgId, "active"), [unreadConversation]);
     queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, true), {
       pages: [{ items: [unreadChat], pageInfo: { limit: 40, nextCursor: null, hasMore: false } }],
       pageParams: [null],
     });
     queryClient.setQueryData(queryKeys.sidebarBadges(orgId), badges);
 
-    markMessengerChatReadInCache(queryClient, orgId, conversation, { decrementSidebarBadge: true });
+    markMessengerChatReadInCache(queryClient, orgId, unreadConversation, { decrementSidebarBadge: true });
 
-    expect(queryClient.getQueryData<typeof conversation>(queryKeys.chats.detail("chat-1"))).toMatchObject({
+    expect(queryClient.getQueryData<typeof unreadConversation>(queryKeys.chats.detail("chat-1"))).toMatchObject({
       isUnread: false,
       unreadCount: 0,
       needsAttention: false,

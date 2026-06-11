@@ -11,6 +11,7 @@ import { MessengerContextSidebar } from "./MessengerContextSidebar";
 
 const mockUpdateUserState = vi.hoisted(() => vi.fn());
 const mockUpdateThreadUserState = vi.hoisted(() => vi.fn());
+const mockUpdateConversation = vi.hoisted(() => vi.fn());
 const mockRemove = vi.hoisted(() => vi.fn());
 const mockStopMessageStream = vi.hoisted(() => vi.fn());
 const mockAbortChatStream = vi.hoisted(() => vi.fn());
@@ -34,10 +35,15 @@ vi.mock("@tanstack/react-query", () => ({
   useMutation: (options: {
     mutationFn: (variables: any) => Promise<any>;
     onSuccess?: (data: any) => Promise<void> | void;
+    onError?: (error: unknown, variables: any) => Promise<void> | void;
   }) => ({
     mutate: vi.fn(async (variables: any) => {
-      const result = await options.mutationFn(variables);
-      await options.onSuccess?.(result);
+      try {
+        const result = await options.mutationFn(variables);
+        await options.onSuccess?.(result);
+      } catch (error) {
+        await options.onError?.(error, variables);
+      }
     }),
     isPending: false,
   }),
@@ -52,7 +58,7 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@/api/chats", () => ({
   chatsApi: {
-    update: vi.fn(),
+    update: mockUpdateConversation,
     remove: mockRemove,
     stopMessageStream: mockStopMessageStream,
     updateUserState: mockUpdateUserState,
@@ -263,6 +269,12 @@ describe("MessengerContextSidebar chat actions", () => {
       id: chatId,
       isUnread: Boolean(data.unread),
       unreadCount: data.unread ? 1 : 0,
+      isPinned: Boolean(data.pinned),
+    }));
+    mockUpdateConversation.mockImplementation(async (chatId: string, data: Record<string, unknown>) => ({
+      ...baseConversation(),
+      id: chatId,
+      ...data,
     }));
     mockRemove.mockImplementation(async (chatId: string) => ({
       ...baseConversation(),
@@ -295,9 +307,92 @@ describe("MessengerContextSidebar chat actions", () => {
     mockConfirm.mockClear();
     mockMarkThreadRead.mockClear();
     mockUpdateThreadUserState.mockClear();
+    mockUpdateConversation.mockClear();
     invalidateQueries.mockClear();
     setQueryData.mockClear();
     setQueriesData.mockClear();
+  });
+
+  it("optimistically pins a chat thread before the user-state request resolves", async () => {
+    renderSidebar();
+
+    const pin = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Pin") as HTMLButtonElement | undefined;
+
+    expect(pin).toBeTruthy();
+    await act(async () => {
+      pin?.click();
+      await Promise.resolve();
+    });
+
+    expect(setQueryData).toHaveBeenCalledWith(["chats", "detail", "chat-1"], expect.any(Function));
+    expect(setQueryData).toHaveBeenCalledWith(["chats", "org-1", "active"], expect.any(Function));
+    expect(setQueriesData).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "threads", "pages"] }, expect.any(Function));
+    expect(setQueryData.mock.invocationCallOrder[0]).toBeLessThan(mockUpdateUserState.mock.invocationCallOrder[0]);
+    expect(mockUpdateUserState).toHaveBeenCalledWith("chat-1", { pinned: true, unread: undefined });
+  });
+
+  it("optimistically removes an archived chat from active Messenger caches before the update request resolves", async () => {
+    renderSidebar();
+
+    const archive = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Archive")) as HTMLButtonElement | undefined;
+
+    expect(archive).toBeTruthy();
+    await act(async () => {
+      archive?.click();
+      await Promise.resolve();
+    });
+
+    expect(setQueryData).toHaveBeenCalledWith(["chats", "org-1", "active"], expect.any(Function));
+    expect(setQueryData).toHaveBeenCalledWith(["messenger", "org-1", "threads"], expect.any(Function));
+    expect(setQueriesData).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "threads", "pages"] }, expect.any(Function));
+    expect(setQueryData.mock.invocationCallOrder[0]).toBeLessThan(mockUpdateConversation.mock.invocationCallOrder[0]);
+    expect(mockUpdateConversation).toHaveBeenCalledWith("chat-1", { status: "archived" });
+  });
+
+  it("optimistically pins a split issue thread before the Messenger user-state request resolves", async () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "issue:issue-1",
+          kind: "issues",
+          title: "ISS-1 · Split issue",
+          preview: "Project issue update",
+          subtitle: null,
+          href: "/messenger/issues/ISS-1",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+          metadata: {
+            splitIssue: true,
+            issueId: "issue-1",
+            issueIdentifier: "ISS-1",
+            status: "todo",
+          },
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const pin = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Pin") as HTMLButtonElement | undefined;
+
+    expect(pin).toBeTruthy();
+    await act(async () => {
+      pin?.click();
+      await Promise.resolve();
+    });
+
+    expect(setQueryData).toHaveBeenCalledWith(["messenger", "org-1", "threads"], expect.any(Function));
+    expect(setQueriesData).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "threads", "pages"] }, expect.any(Function));
+    expect(setQueryData.mock.invocationCallOrder[0]).toBeLessThan(mockUpdateThreadUserState.mock.invocationCallOrder[0]);
+    expect(mockUpdateThreadUserState).toHaveBeenCalledWith("org-1", "issue:issue-1", { pinned: true });
   });
 
   it("marks a read chat thread unread from the actions menu", () => {

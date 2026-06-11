@@ -51,7 +51,13 @@ import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
-import { invalidateMessengerThreadSummaryQueries, markMessengerThreadReadInCache } from "@/lib/messenger-query-cache";
+import {
+  archiveMessengerChatInCache,
+  invalidateMessengerThreadSummaryQueries,
+  markMessengerChatPinnedInCache,
+  markMessengerThreadPinnedInCache,
+  markMessengerThreadReadInCache,
+} from "@/lib/messenger-query-cache";
 import {
   getUnhandledMessengerUnreadScrollRequestId,
   markMessengerUnreadScrollRequestHandled,
@@ -1776,6 +1782,9 @@ export function MessengerContextSidebar() {
             setRenameDraft(conversation.title);
           }}
           onArchive={() => {
+            if (model.selectedOrganizationId) {
+              archiveMessengerChatInCache(queryClient, model.selectedOrganizationId, conversation.id);
+            }
             updateConversationMutation.mutate({
               chatId: conversation.id,
               data: { status: "archived" },
@@ -1795,6 +1804,9 @@ export function MessengerContextSidebar() {
             });
           }}
           onTogglePin={() => {
+            if (model.selectedOrganizationId) {
+              markMessengerChatPinnedInCache(queryClient, model.selectedOrganizationId, conversation.id, !conversation.isPinned);
+            }
             updateConversationUserStateMutation.mutate({
               chatId: conversation.id,
               pinned: !conversation.isPinned,
@@ -1819,6 +1831,9 @@ export function MessengerContextSidebar() {
         active={active}
         density={threadDensity}
         onTogglePin={() => {
+          if (model.selectedOrganizationId) {
+            markMessengerThreadPinnedInCache(queryClient, model.selectedOrganizationId, thread.threadKey, !thread.isPinned);
+          }
           updateThreadUserStateMutation.mutate({
             threadKey: thread.threadKey,
             pinned: !thread.isPinned,
@@ -1962,6 +1977,9 @@ export function MessengerContextSidebar() {
       setRenamingConversationId((current) => (current === conversation.id ? null : current));
       await refreshChatViews(conversation.id);
     },
+    onError: async (_error, variables) => {
+      await refreshChatViews(variables.chatId);
+    },
   });
 
   const deleteConversationMutation = useMutation({
@@ -2013,6 +2031,9 @@ export function MessengerContextSidebar() {
     onSuccess: async (conversation) => {
       await refreshChatViews(conversation.id);
     },
+    onError: async (_error, variables) => {
+      await refreshChatViews(variables.chatId);
+    },
   });
 
   const updateThreadUserStateMutation = useMutation({
@@ -2027,6 +2048,9 @@ export function MessengerContextSidebar() {
       return messengerApi.updateThreadUserState(model.selectedOrganizationId, threadKey, { pinned });
     },
     onSuccess: async () => {
+      await refreshChatViews();
+    },
+    onError: async () => {
       await refreshChatViews();
     },
   });
