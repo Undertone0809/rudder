@@ -72,9 +72,9 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder chat list --org-id <id>` | List chat conversations without dumping full message history. | no | required | no | no |
 | `rudder chat search <query> --org-id <id>` | Search chats with bounded snippets and optional scope filtering. | no | required | no | no |
 | `rudder chat get <chat-id>` | Read one chat conversation record. | no | no | no | no |
-| `rudder chat messages <chat-id>` | Read bounded chat messages, with transcript omitted unless requested. | no | no | no | no |
-| `rudder chat transcript <chat-id>` | Read chat messages with assistant transcript entries clipped in human output. | no | no | no | no |
-| `rudder chat read <chat-id>` | Read a bounded recent-message snapshot for one chat. | no | no | no | no |
+| `rudder chat messages <chat-id> [--limit <n>] [--cursor <cursor>] [--include-transcript]` | Read bounded chat messages with page cursors; transcript output is omitted unless requested. | no | no | no | no |
+| `rudder chat transcript <chat-id> [--limit <n>] [--cursor <cursor>] [--max-output-chars <n>]` | Read paginated chat messages with assistant transcript entries clipped in human output. | no | no | no | no |
+| `rudder chat read <chat-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read a bounded recent-message snapshot for one chat with page cursors. | no | no | no | no |
 | `rudder chat create --org-id <id>` | Create a chat conversation. | yes | required | no | attached when available |
 | `rudder chat send <chat-id> --body <text>` | Send a chat message and persist the assistant reply through the server. | yes | no | no | attached when available |
 | `rudder chat archive <chat-id>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
@@ -82,7 +82,7 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder runs get <run-id>` | Read one observed run detail. | no | no | no | no |
 | `rudder runs events <run-id>` | List persisted run events. | no | no | no | no |
 | `rudder runs log <run-id>` | Read stored run log content with clipped human output. | no | no | no | no |
-| `rudder runs transcript <run-id>` | Read the server-normalized run transcript, newest-first by default. | no | no | no | no |
+| `rudder runs transcript <run-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read the server-normalized run transcript; human output is compact and JSON includes full entries. | no | no | no | no |
 | `rudder runs errors <run-id>` | List failed tool calls, stderr, runtime failures, and jump-to-context commands. | no | no | no | no |
 | `rudder runs cancel <run-id>` | Cancel a heartbeat run through the governed server route. | yes | no | no | attached when available |
 | `rudder runs retry <run-id>` | Retry a failed, timed out, or cancelled run through the governed server route. | yes | no | no | attached when available |

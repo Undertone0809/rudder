@@ -28,9 +28,14 @@ interface RunTranscriptOptions extends BaseClientOptions {
   errorsOnly?: boolean;
   aroundError?: string;
   contextTurns?: string;
+  cursor?: string;
+  turnLimit?: string;
   chronological?: boolean;
   narrative?: boolean;
   maxChars?: string;
+  maxOutputChars?: string;
+  includeOutput?: boolean;
+  includeOutputs?: boolean;
 }
 
 interface RunErrorsOptions extends BaseClientOptions {
@@ -60,6 +65,18 @@ interface RunTranscriptRow {
     text: string;
     clipped: boolean;
     originalLength: number;
+  } | null;
+}
+
+interface RunTranscriptEntry {
+  id: string;
+  index: number;
+  turnIndex: number | null;
+  entry: unknown;
+  output: {
+    text: string;
+    clipped: false;
+    originalLength: number;
   };
 }
 
@@ -69,11 +86,24 @@ interface RunTranscriptResponse {
   orgName: string | null;
   issue: RunExportRow["issue"];
   order: "newest" | "oldest";
+  output: "compact" | "full";
+  page: {
+    cursor: string | null;
+    nextCursor: string | null;
+    hasMore: boolean;
+    order: "newest" | "oldest";
+    turnLimit: number | null;
+    returnedSteps: number;
+    totalFilteredSteps: number;
+  };
   rows: RunTranscriptRow[];
+  entries?: RunTranscriptEntry[];
+  transcript?: unknown[];
   trace: {
     turnCount: number;
     stepCount: number;
     payloadStepCount: number;
+    filteredStepCount?: number;
   };
 }
 
@@ -192,14 +222,19 @@ export function registerRunsCommands(program: Command): void {
       .option("--errors-only", "Show only error transcript rows")
       .option("--around-error <id>", "Show context around a run error id such as step-12")
       .option("--context-turns <n>", "Turns around --around-error", "1")
+      .option("--cursor <cursor>", "Stable transcript cursor returned in page.nextCursor")
+      .option("--turn-limit <n>", "Maximum turns to return", "20")
       .option("--chronological", "Show oldest-first instead of default newest-first")
       .option("--narrative", "Use a narrative human layout")
       .option("--max-chars <n>", "Maximum output characters per row", "1200")
+      .option("--max-output-chars <n>", "Alias for --max-chars")
+      .option("--include-output", "Include row output in compact human transcript rows")
+      .option("--include-outputs", "Alias for --include-output")
       .action(async (runId: string, opts: RunTranscriptOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
           const payload = await ctx.api.get<RunTranscriptResponse>(
-            `/api/run-intelligence/runs/${encodeURIComponent(runId)}/transcript?${buildTranscriptQuery(opts)}`,
+            `/api/run-intelligence/runs/${encodeURIComponent(runId)}/transcript?${buildTranscriptQuery(opts, { json: ctx.json })}`,
           );
           if (ctx.json) {
             printOutput(payload, { json: true });
@@ -281,13 +316,18 @@ function buildRunsListQuery(opts: RunsListOptions) {
   return params.toString();
 }
 
-function buildTranscriptQuery(opts: RunTranscriptOptions) {
+function buildTranscriptQuery(opts: RunTranscriptOptions, output: { json: boolean }) {
   const params = new URLSearchParams();
   if (opts.errorsOnly) params.set("errorsOnly", "true");
   if (opts.aroundError) params.set("aroundError", opts.aroundError);
+  if (opts.cursor) params.set("cursor", opts.cursor);
+  if (opts.turnLimit) params.set("turnLimit", String(parseLimit(opts.turnLimit, 20)));
   params.set("contextTurns", String(parseLimit(opts.contextTurns, 1)));
   params.set("order", opts.chronological || opts.narrative ? "oldest" : "newest");
-  params.set("maxChars", String(parseLimit(opts.maxChars, 1200)));
+  params.set("output", output.json ? "full" : "compact");
+  const includeOutputs = output.json || Boolean(opts.includeOutput || opts.includeOutputs || opts.narrative);
+  params.set("includeOutputs", includeOutputs ? "true" : "false");
+  params.set("maxChars", String(parseLimit(opts.maxOutputChars ?? opts.maxChars, 1200)));
   return params.toString();
 }
 
@@ -320,13 +360,13 @@ function formatRunTranscriptRow(row: RunTranscriptRow) {
     ts: row.ts,
     error: row.isError ? "yes" : "no",
     preview: row.preview || row.detailPreview,
-    output: row.output.text,
+    ...(row.output ? { output: row.output.text } : {}),
   };
 }
 
 function formatRunTranscriptNarrative(row: RunTranscriptRow) {
   const marker = row.isError ? "ERROR " : "";
-  return `${row.id} ${row.ts} ${marker}${row.kind}: ${row.preview || row.detailPreview}\n${row.output.text}`;
+  return `${row.id} ${row.ts} ${marker}${row.kind}: ${row.preview || row.detailPreview}${row.output ? `\n${row.output.text}` : ""}`;
 }
 
 function formatRunError(row: RunErrorRow) {

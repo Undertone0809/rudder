@@ -40,22 +40,46 @@ interface ChatCreateOptions extends BaseClientOptions {
 
 interface ChatMessagesOptions extends BaseClientOptions {
   includeTranscript?: boolean;
+  includeOutput?: boolean;
+  includeOutputs?: boolean;
   limit?: string;
+  cursor?: string;
+  maxOutputChars?: string;
 }
 
 interface ChatTranscriptOptions extends BaseClientOptions {
   limit?: string;
+  cursor?: string;
   maxChars?: string;
+  maxOutputChars?: string;
 }
 
 interface ChatReadOptions extends BaseClientOptions {
   includeTranscript?: boolean;
+  includeOutput?: boolean;
+  includeOutputs?: boolean;
   limit?: string;
+  turnLimit?: string;
+  cursor?: string;
+  maxOutputChars?: string;
 }
 
 interface ChatSendOptions extends BaseClientOptions {
   body?: string;
   editUserMessageId?: string;
+}
+
+interface ChatMessagesPage {
+  messages: ChatMessage[];
+  page: {
+    cursor: string | null;
+    nextCursor: string | null;
+    hasMore: boolean;
+    limit: number;
+    order: "newest" | "oldest";
+    returnedMessages: number;
+    totalMessages: number;
+  };
 }
 
 export function registerChatCommands(program: Command): void {
@@ -131,13 +155,23 @@ export function registerChatCommands(program: Command): void {
       .description(getAgentCliCapabilityById("chat.messages").description)
       .argument("<chatId>", "Chat conversation ID")
       .option("--include-transcript", "Include assistant transcript entries")
+      .option("--include-output", "Alias for --include-transcript")
+      .option("--include-outputs", "Alias for --include-transcript")
       .option("--limit <n>", "Maximum messages to print")
+      .option("--cursor <cursor>", "Stable message cursor returned in page.nextCursor")
+      .option("--max-output-chars <n>", "Maximum transcript output chars for human output", "1200")
       .action(async (chatId: string, opts: ChatMessagesOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const messages = await getChatMessages(ctx, chatId, Boolean(opts.includeTranscript));
-          const limited = limitNewest(messages, opts.limit);
-          printOutput(ctx.json ? limited : limited.map(formatChatMessage), { json: ctx.json });
+          const page = await getChatMessagesPage(ctx, chatId, {
+            includeTranscript: includesChatTranscript(opts),
+            limit: opts.limit,
+            cursor: opts.cursor,
+          });
+          printOutput(
+            ctx.json ? page : page.messages.map((message) => formatChatMessage(message, parseLimit(opts.maxOutputChars, 1200))),
+            { json: ctx.json },
+          );
         } catch (err) {
           handleCommandError(err);
         }
@@ -150,14 +184,20 @@ export function registerChatCommands(program: Command): void {
       .description(getAgentCliCapabilityById("chat.transcript").description)
       .argument("<chatId>", "Chat conversation ID")
       .option("--limit <n>", "Maximum messages to print")
+      .option("--cursor <cursor>", "Stable message cursor returned in page.nextCursor")
       .option("--max-chars <n>", "Maximum transcript chars per message", "1200")
+      .option("--max-output-chars <n>", "Alias for --max-chars")
       .action(async (chatId: string, opts: ChatTranscriptOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const messages = await getChatMessages(ctx, chatId, true);
-          const limited = limitNewest(messages, opts.limit);
+          const page = await getChatMessagesPage(ctx, chatId, {
+            includeTranscript: true,
+            limit: opts.limit,
+            cursor: opts.cursor,
+          });
+          const maxChars = parseLimit(opts.maxOutputChars ?? opts.maxChars, 1200);
           printOutput(
-            ctx.json ? limited : limited.flatMap((message) => formatChatTranscriptMessage(message, parseLimit(opts.maxChars, 1200))),
+            ctx.json ? page : page.messages.flatMap((message) => formatChatTranscriptMessage(message, maxChars)),
             { json: ctx.json },
           );
         } catch (err) {
@@ -172,20 +212,32 @@ export function registerChatCommands(program: Command): void {
       .description(getAgentCliCapabilityById("chat.read").description)
       .argument("<chatId>", "Chat conversation ID")
       .option("--include-transcript", "Include assistant transcript entries")
+      .option("--include-output", "Alias for --include-transcript")
+      .option("--include-outputs", "Alias for --include-transcript")
       .option("--limit <n>", "Maximum recent messages", "20")
+      .option("--turn-limit <n>", "Alias for --limit for chat turn snapshots")
+      .option("--cursor <cursor>", "Stable message cursor returned in page.nextCursor")
+      .option("--max-output-chars <n>", "Maximum transcript output chars for human output", "1200")
       .action(async (chatId: string, opts: ChatReadOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const [conversation, messages] = await Promise.all([
+          const [conversation, page] = await Promise.all([
             ctx.api.get<ChatConversation>(`/api/chats/${encodeURIComponent(chatId)}`),
-            getChatMessages(ctx, chatId, Boolean(opts.includeTranscript)),
+            getChatMessagesPage(ctx, chatId, {
+              includeTranscript: includesChatTranscript(opts),
+              limit: opts.turnLimit ?? opts.limit,
+              cursor: opts.cursor,
+            }),
           ]);
-          const recentMessages = limitNewest(messages, opts.limit);
           const payload = {
             conversation,
-            messages: recentMessages,
+            messages: page.messages,
+            page: page.page,
           };
-          printOutput(ctx.json ? payload : recentMessages.map(formatChatMessage), { json: ctx.json });
+          printOutput(
+            ctx.json ? payload : page.messages.map((message) => formatChatMessage(message, parseLimit(opts.maxOutputChars, 1200))),
+            { json: ctx.json },
+          );
         } catch (err) {
           handleCommandError(err);
         }
@@ -274,10 +326,22 @@ async function listChats(ctx: ReturnType<typeof resolveCommandContext>, opts: Ch
   return rows.slice(0, parseLimit(opts.limit, rows.length));
 }
 
-async function getChatMessages(ctx: ReturnType<typeof resolveCommandContext>, chatId: string, includeTranscript: boolean) {
+async function getChatMessagesPage(
+  ctx: ReturnType<typeof resolveCommandContext>,
+  chatId: string,
+  opts: { includeTranscript: boolean; limit?: string; cursor?: string },
+) {
   const params = new URLSearchParams();
-  if (includeTranscript) params.set("includeTranscript", "true");
-  return (await ctx.api.get<ChatMessage[]>(`/api/chats/${encodeURIComponent(chatId)}/messages?${params.toString()}`)) ?? [];
+  params.set("envelope", "true");
+  params.set("order", "newest");
+  params.set("limit", String(parseLimit(opts.limit, 50)));
+  if (opts.cursor) params.set("cursor", opts.cursor);
+  if (opts.includeTranscript) params.set("includeTranscript", "true");
+  const page = await ctx.api.get<ChatMessagesPage>(`/api/chats/${encodeURIComponent(chatId)}/messages?${params.toString()}`);
+  if (!page) {
+    throw new Error("Chat messages response was empty");
+  }
+  return page;
 }
 
 function filterChatSearchRows(rows: ChatConversation[], query: string, scope: string) {
@@ -313,7 +377,7 @@ function formatChatSearchResult(row: ChatConversation, maxChars: number) {
   };
 }
 
-function formatChatMessage(row: ChatMessage) {
+function formatChatMessage(row: ChatMessage, maxOutputChars = 1200) {
   return {
     id: row.id,
     role: row.role,
@@ -322,6 +386,9 @@ function formatChatMessage(row: ChatMessage) {
     createdAt: row.createdAt,
     body: clip(row.body, 220),
     transcriptEntries: row.transcriptSummary?.entryCount ?? row.transcript?.length ?? 0,
+    ...(row.transcript?.length
+      ? { transcriptPreview: clip(row.transcript.map((entry) => formatTranscriptEntry(entry, maxOutputChars)).join(" "), maxOutputChars) }
+      : {}),
   };
 }
 
@@ -357,9 +424,8 @@ function parseLimit(value: string | undefined, fallback: number) {
   return Math.floor(parsed);
 }
 
-function limitNewest<T>(rows: T[], limit: string | undefined) {
-  if (!limit) return rows;
-  return rows.slice(-parseLimit(limit, rows.length));
+function includesChatTranscript(opts: { includeTranscript?: boolean; includeOutput?: boolean; includeOutputs?: boolean }) {
+  return Boolean(opts.includeTranscript || opts.includeOutput || opts.includeOutputs);
 }
 
 function clip(value: string, maxChars: number) {

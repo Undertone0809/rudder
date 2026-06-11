@@ -165,6 +165,50 @@ describe("run intelligence routes", () => {
     });
   });
 
+  it("returns full transcript entries and page metadata when requested", async () => {
+    const res = await request(createApp())
+      .get("/api/run-intelligence/runs/run-1/transcript")
+      .query({ output: "full", order: "oldest", turnLimit: "1", maxChars: "20" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.output).toBe("full");
+    expect(res.body.page).toMatchObject({
+      order: "oldest",
+      turnLimit: 1,
+      hasMore: false,
+      nextCursor: null,
+    });
+    expect(res.body.entries).toHaveLength(4);
+    expect(res.body.entries[2]).toMatchObject({
+      id: "step-3",
+      entry: {
+        kind: "tool_result",
+        content: "ERR".repeat(1000),
+      },
+      output: {
+        clipped: false,
+        originalLength: 3000,
+      },
+    });
+    expect(res.body.transcript[2]).toMatchObject({
+      kind: "tool_result",
+      content: "ERR".repeat(1000),
+    });
+  });
+
+  it("applies stable transcript cursors before rendering rows", async () => {
+    const res = await request(createApp())
+      .get("/api/run-intelligence/runs/run-1/transcript")
+      .query({ cursor: "step-2", order: "oldest" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.page).toMatchObject({
+      cursor: "step-2",
+      order: "oldest",
+    });
+    expect(res.body.rows.map((row: { id: string }) => row.id)).toEqual(["step-3", "step-4"]);
+  });
+
   it("filters transcript around a stable error id", async () => {
     const res = await request(createApp())
       .get("/api/run-intelligence/runs/run-1/transcript")

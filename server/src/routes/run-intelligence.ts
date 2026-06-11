@@ -35,6 +35,13 @@ function asPositiveInteger(value: unknown, fallback: number, max: number) {
   return Math.max(1, Math.min(max, Math.floor(parsed)));
 }
 
+function asOptionalPositiveInteger(value: unknown, max: number) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.min(max, Math.floor(parsed));
+}
+
 function clipText(value: string, maxChars: number) {
   if (value.length <= maxChars) {
     return { text: value, clipped: false, originalLength: value.length };
@@ -56,7 +63,11 @@ function parseStepStableId(value: string | null) {
   return match ? Number(match[1]) : null;
 }
 
-function compactTranscriptRow(step: ObservedRunStep, maxChars: number) {
+function fullText(value: string) {
+  return { text: value, clipped: false, originalLength: value.length };
+}
+
+function compactTranscriptRow(step: ObservedRunStep, maxChars: number, includeOutput: boolean) {
   return {
     id: stepStableId(step),
     index: step.index,
@@ -69,7 +80,7 @@ function compactTranscriptRow(step: ObservedRunStep, maxChars: number) {
     isError: step.isError,
     isPayloadEntry: step.isPayloadEntry,
     isModelEntry: step.isModelEntry,
-    output: clipText(step.detailText, maxChars),
+    output: includeOutput ? clipText(step.detailText, maxChars) : null,
   };
 }
 
@@ -99,6 +110,52 @@ function filterTranscriptSteps(
   }
 
   return rows.filter((step) => Math.abs(step.index - target.index) <= input.contextTurns);
+}
+
+function paginateTranscriptSteps(
+  orderedSteps: ObservedRunStep[],
+  input: { cursor: string | null; turnLimit: number | null },
+) {
+  const cursorStepIndex = parseStepStableId(input.cursor);
+  const startIndex = cursorStepIndex
+    ? orderedSteps.findIndex((step) => step.index === cursorStepIndex) + 1
+    : 0;
+  const available = orderedSteps.slice(Math.max(0, startIndex));
+
+  if (!input.turnLimit) {
+    return {
+      rows: available,
+      page: {
+        cursor: input.cursor,
+        nextCursor: null,
+        hasMore: false,
+        turnLimit: null,
+        returnedSteps: available.length,
+        totalFilteredSteps: orderedSteps.length,
+      },
+    };
+  }
+
+  const rows: ObservedRunStep[] = [];
+  const seenTurnKeys = new Set<string>();
+  for (const step of available) {
+    const turnKey = step.turnIndex === null ? `step-${step.index}` : `turn-${step.turnIndex}`;
+    if (!seenTurnKeys.has(turnKey) && seenTurnKeys.size >= input.turnLimit) break;
+    seenTurnKeys.add(turnKey);
+    rows.push(step);
+  }
+  const hasMore = rows.length < available.length;
+  return {
+    rows,
+    page: {
+      cursor: input.cursor,
+      nextCursor: hasMore && rows.length > 0 ? stepStableId(rows[rows.length - 1]) : null,
+      hasMore,
+      turnLimit: input.turnLimit,
+      returnedSteps: rows.length,
+      totalFilteredSteps: orderedSteps.length,
+    },
+  };
 }
 
 function buildRunErrors(detail: ObservedRunDetail, maxChars: number) {
@@ -188,8 +245,15 @@ export function runIntelligenceRoutes(db: Db) {
     if (!detail) throw notFound("Heartbeat run not found");
     assertCompanyAccess(req, detail.run.orgId);
 
-    const maxChars = asPositiveInteger(req.query.maxChars, 1200, 20000);
+    const maxChars = asPositiveInteger(req.query.maxChars ?? req.query.maxOutputChars, 1200, 20000);
     const contextTurns = asPositiveInteger(req.query.contextTurns, 1, 20);
+    const turnLimit = asOptionalPositiveInteger(req.query.turnLimit ?? req.query.limit, 1000);
+    const cursor = asString(req.query.cursor);
+    const outputMode = req.query.output === "full" ? "full" : "compact";
+    const includeOutputQuery = req.query.includeOutputs ?? req.query.includeOutput;
+    const includeOutputs = outputMode === "full" || includeOutputQuery === undefined
+      ? true
+      : asBoolean(includeOutputQuery);
     const order = req.query.order === "oldest" || req.query.order === "chronological"
       ? "oldest"
       : "newest";
@@ -199,8 +263,9 @@ export function runIntelligenceRoutes(db: Db) {
       aroundError: asString(req.query.aroundError),
       contextTurns,
     });
-    const rows = (order === "newest" ? [...filtered].reverse() : filtered)
-      .map((step) => compactTranscriptRow(step, maxChars));
+    const orderedSteps = order === "newest" ? [...filtered].reverse() : filtered;
+    const paged = paginateTranscriptSteps(orderedSteps, { cursor, turnLimit });
+    const rows = paged.rows.map((step) => compactTranscriptRow(step, maxChars, includeOutputs));
 
     res.json({
       run: detail.run,
@@ -208,11 +273,29 @@ export function runIntelligenceRoutes(db: Db) {
       orgName: detail.orgName,
       issue: detail.issue,
       order,
+      output: outputMode,
+      page: {
+        ...paged.page,
+        order,
+      },
       rows,
+      ...(outputMode === "full"
+        ? {
+          entries: paged.rows.map((step) => ({
+            id: stepStableId(step),
+            index: step.index,
+            turnIndex: step.turnIndex,
+            entry: detail.transcript[step.index - 1] ?? null,
+            output: fullText(step.detailText),
+          })),
+          transcript: detail.transcript,
+        }
+        : {}),
       trace: {
         turnCount: trace.turnCount,
         stepCount: trace.steps.length,
         payloadStepCount: trace.payloadStepCount,
+        filteredStepCount: filtered.length,
       },
     });
   });

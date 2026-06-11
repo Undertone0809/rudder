@@ -575,6 +575,32 @@ describe("chat routes", () => {
     expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1", { includeTranscript: true });
   });
 
+  it("can return paginated chat message envelopes for CLI readers", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValueOnce([
+      createMessage("message-1", "user", "message", "first"),
+      createMessage("message-2", "assistant", "message", "second"),
+      createMessage("message-3", "user", "message", "third"),
+    ]);
+
+    const res = await request(createApp())
+      .get("/api/chats/chat-1/messages?envelope=true&order=newest&limit=1&cursor=message-3&includeTranscript=true");
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1", { includeTranscript: true });
+    expect(res.body.messages.map((message: { id: string }) => message.id)).toEqual(["message-2"]);
+    expect(res.body.page).toMatchObject({
+      cursor: "message-3",
+      nextCursor: "message-2",
+      hasMore: true,
+      limit: 1,
+      order: "newest",
+      returnedMessages: 1,
+      totalMessages: 3,
+    });
+  });
+
   it("returns a single chat message transcript for lazy loading", async () => {
     const conversation = createConversation();
     mockChatService.getById.mockResolvedValue(conversation);

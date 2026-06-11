@@ -154,6 +154,41 @@ export function chatRoutes(db: Db, storage: StorageService) {
     return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
   }
 
+  function stringQuery(value: unknown) {
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  }
+
+  function positiveIntegerQuery(value: unknown, fallback: number, max: number) {
+    const parsed = Number(value ?? fallback);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(max, Math.floor(parsed));
+  }
+
+  function paginateChatMessages<T extends { id: string }>(messages: T[], query: Request["query"]) {
+    const order = query.order === "newest" ? "newest" : "oldest";
+    const limit = positiveIntegerQuery(query.limit, 50, 500);
+    const cursor = stringQuery(query.cursor);
+    const ordered = order === "newest" ? [...messages].reverse() : messages;
+    const startIndex = cursor
+      ? Math.max(0, ordered.findIndex((message) => message.id === cursor) + 1)
+      : 0;
+    const pageMessages = ordered.slice(startIndex, startIndex + limit);
+    const hasMore = startIndex + pageMessages.length < ordered.length;
+
+    return {
+      messages: pageMessages,
+      page: {
+        cursor,
+        nextCursor: hasMore && pageMessages.length > 0 ? pageMessages[pageMessages.length - 1].id : null,
+        hasMore,
+        limit,
+        order,
+        returnedMessages: pageMessages.length,
+        totalMessages: messages.length,
+      },
+    };
+  }
+
   async function assertCanAssignTasks(req: Request, orgId: string) {
     assertCompanyAccess(req, orgId);
     if (req.actor.type === "board") {
@@ -1205,6 +1240,10 @@ export function chatRoutes(db: Db, storage: StorageService) {
     }
     const includeTranscript = req.query.includeTranscript === "true";
     const messages = await svc.listMessages(conversation.id, { includeTranscript });
+    if (req.query.envelope === "true") {
+      res.json(paginateChatMessages(messages, req.query));
+      return;
+    }
     res.json(messages);
   });
 

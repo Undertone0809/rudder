@@ -225,9 +225,9 @@ same permission/attribution behavior as the UI.
 pnpm rudder chat list --org-id <org-id> [--status active|resolved|archived|all] [--query text]
 pnpm rudder chat search "keyword" --org-id <org-id> [--scope all|title|summary|messages] [--snippet-chars 220]
 pnpm rudder chat get <chat-id>
-pnpm rudder chat messages <chat-id> [--include-transcript] [--limit 20]
-pnpm rudder chat transcript <chat-id> [--limit 20] [--max-chars 1200]
-pnpm rudder chat read <chat-id> [--limit 20] [--include-transcript]
+pnpm rudder chat messages <chat-id> [--limit 20] [--cursor <cursor>] [--include-transcript|--include-output] [--max-output-chars 1200]
+pnpm rudder chat transcript <chat-id> [--limit 20] [--cursor <cursor>] [--max-chars 1200]
+pnpm rudder chat read <chat-id> [--limit 20|--turn-limit 20] [--cursor <cursor>] [--include-output] [--max-output-chars 1200]
 pnpm rudder chat create --org-id <org-id> [--title "..."] [--preferred-agent-id <agent-id>]
 pnpm rudder chat send <chat-id> --body "..."
 pnpm rudder chat archive <chat-id>
@@ -235,8 +235,9 @@ pnpm rudder chat archive <chat-id>
 
 Chat search calls the server-side chat query and prints bounded snippets by
 default. Long conversations are not dumped by `list` or `search`; use
-`messages` or `transcript` explicitly, and prefer `--json` when another tool
-needs the complete structured payload.
+`messages`, `read`, or `transcript` explicitly. These commands return
+`page.nextCursor` in `--json` output for bounded follow-up reads; transcript
+entries are omitted unless `--include-transcript` / `--include-output` is set.
 
 ## Run Debugging Commands
 
@@ -245,7 +246,7 @@ pnpm rudder runs list --org-id <org-id> [--status failed] [--agent-id <id>] [--i
 pnpm rudder runs get <run-id>
 pnpm rudder runs events <run-id>
 pnpm rudder runs log <run-id> [--max-chars 12000]
-pnpm rudder runs transcript <run-id> [--errors-only] [--around-error step-12] [--context-turns 1] [--chronological] [--narrative]
+pnpm rudder runs transcript <run-id> [--turn-limit 20] [--cursor <cursor>] [--include-output] [--max-output-chars 1200] [--errors-only] [--around-error step-12] [--context-turns 1] [--chronological] [--narrative]
 pnpm rudder runs errors <run-id> [--max-chars 1200]
 pnpm rudder runs cancel <run-id>
 pnpm rudder runs retry <run-id>
@@ -253,8 +254,10 @@ pnpm rudder runs retry <run-id>
 
 `runs transcript` is normalized server-side from persisted run detail and log
 content. Human output is compact, clipped, and newest-first by default; pass
-`--chronological` or `--narrative` for explicit reading modes. `--json` returns
-the stable payload with rows, trace counts, and clipped-output metadata.
+`--chronological` or `--narrative` for explicit reading modes. Human compact
+rows omit detailed output unless `--include-output` is set. `--json` requests
+the full stable payload with raw transcript entries, page metadata, trace
+counts, and unclipped entry output for scripts and agents.
 `runs errors` provides the error-first path for failed tool calls, stderr/result
 failures, and runtime failures, including a stable `step-N` context command such
 as `rudder runs transcript <run-id> --around-error step-12`.
