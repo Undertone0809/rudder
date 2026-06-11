@@ -596,6 +596,7 @@ type ChatEmptyStateRecentConversationsProps = {
   visible: boolean;
   conversationPath: (id: string) => string;
   onPrefetchConversation: (id: string) => void;
+  className?: string;
 };
 
 export function ChatEmptyStateRecentConversations({
@@ -604,6 +605,7 @@ export function ChatEmptyStateRecentConversations({
   visible,
   conversationPath,
   onPrefetchConversation,
+  className,
 }: ChatEmptyStateRecentConversationsProps) {
   if (conversations.length === 0) return null;
 
@@ -611,11 +613,11 @@ export function ChatEmptyStateRecentConversations({
     <section
       data-testid="chat-empty-state-recent-project-conversations"
       data-state={visible ? "open" : "closed"}
-      className="motion-chat-empty-recent-conversations w-full max-w-3xl px-1 text-left"
+      className={cn("motion-chat-empty-recent-conversations w-full max-w-3xl px-1 text-left", className)}
       aria-label="Recent project conversations"
       aria-hidden={!visible}
     >
-      <div className="mb-1 flex min-h-5 items-center justify-end gap-3">
+      <div className="flex h-4 items-center justify-end gap-3">
         {projectName ? (
           <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{projectName}</span>
         ) : null}
