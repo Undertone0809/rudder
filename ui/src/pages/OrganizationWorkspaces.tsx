@@ -3050,7 +3050,7 @@ export function OrganizationWorkspaceBrowser({
         const nextSelectedPath = next[Math.max(0, closedIndex - 1)] ?? next[0] ?? null;
         if (!nextSelectedPath) allowDefaultFileOpenRef.current = false;
         setSelectedFilePath(nextSelectedPath);
-        setDraftFilePath(nextSelectedPath);
+        setDraftFilePath(null);
         updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
       }
       return next;
@@ -3245,7 +3245,7 @@ export function OrganizationWorkspaceBrowser({
 
     const restoredFilePath = storedTabState.selectedFilePath ?? storedTabState.openFilePaths[0] ?? null;
     setSelectedFilePath(restoredFilePath);
-    setDraftFilePath(restoredFilePath);
+    setDraftFilePath(null);
     setActiveEntryPath(restoredFilePath);
     if (restoredFilePath) {
       updateSelectedPath(searchParams, setSearchParams, restoredFilePath);

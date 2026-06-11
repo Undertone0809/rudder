@@ -19,6 +19,8 @@ const mockState = vi.hoisted(() => ({
   viewedOrganizationId: "org-1",
   viewedOrganizationIssuePrefix: "RUD",
   desktopShell: null as unknown,
+  loadingWorkspaceFilePaths: new Set<string>(),
+  markdownEditorValues: [] as string[],
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -107,6 +109,13 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (key[2] === "workspace-file") {
       const filePath = key[3] ?? "artifacts/chat-ui-review/image.png";
+      if (mockState.loadingWorkspaceFilePaths.has(String(filePath))) {
+        return {
+          data: null,
+          isLoading: true,
+          error: null,
+        };
+      }
       if (String(filePath).endsWith(".md")) {
         return {
           data: {
@@ -270,40 +279,43 @@ vi.mock("../components/MarkdownEditor", () => ({
       },
       event: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean },
     ) => void;
-  }) => (
-    <div>
-      <div contentEditable suppressContentEditableWarning data-testid="mock-markdown-editor-content">
-        {value ?? ""}
+  }) => {
+    mockState.markdownEditorValues.push(value ?? "");
+    return (
+      <div>
+        <div contentEditable suppressContentEditableWarning data-testid="mock-markdown-editor-content">
+          {value ?? ""}
+        </div>
+        <textarea aria-label="Markdown editor" readOnly value={value ?? ""} />
+        <button
+          type="button"
+          data-testid="mock-library-file-token"
+          onClick={(event) => onInlineTokenClick?.(
+            {
+              element: event.currentTarget,
+              href: "library-file://file?p=artifacts%2Fchat-ui-review%2FREADME.md&t=README.md",
+              kind: "mention",
+              label: "README.md",
+            },
+            event,
+          )}
+        >
+          README.md
+        </button>
+        <button
+          type="button"
+          data-testid="mock-library-upload-image"
+          onClick={() => {
+            void imageUploadHandler?.(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "screenshot.png", {
+              type: "image/png",
+            }));
+          }}
+        >
+          Upload image
+        </button>
       </div>
-      <textarea aria-label="Markdown editor" readOnly value={value ?? ""} />
-      <button
-        type="button"
-        data-testid="mock-library-file-token"
-        onClick={(event) => onInlineTokenClick?.(
-          {
-            element: event.currentTarget,
-            href: "library-file://file?p=artifacts%2Fchat-ui-review%2FREADME.md&t=README.md",
-            kind: "mention",
-            label: "README.md",
-          },
-          event,
-        )}
-      >
-        README.md
-      </button>
-      <button
-        type="button"
-        data-testid="mock-library-upload-image"
-        onClick={() => {
-          void imageUploadHandler?.(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "screenshot.png", {
-            type: "image/png",
-          }));
-        }}
-      >
-        Upload image
-      </button>
-    </div>
-  ),
+    );
+  },
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
@@ -326,6 +338,8 @@ beforeEach(() => {
   mockState.searchParams = "path=artifacts/chat-ui-review/image.png";
   mockState.viewedOrganizationId = "org-1";
   mockState.viewedOrganizationIssuePrefix = "RUD";
+  mockState.loadingWorkspaceFilePaths.clear();
+  mockState.markdownEditorValues = [];
   Object.defineProperty(window, "localStorage", {
     configurable: true,
     value: {
@@ -837,6 +851,33 @@ describe("OrganizationWorkspaces scroll regions", () => {
       "true",
       "false",
     ]);
+  });
+
+  it("does not mount restored Library markdown tabs with an empty draft before the file read finishes", () => {
+    mockState.searchParams = "";
+    mockState.loadingWorkspaceFilePaths.add("artifacts/chat-ui-review/notes.md");
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => JSON.stringify({
+          openFilePaths: ["artifacts/chat-ui-review/notes.md"],
+          selectedFilePath: "artifacts/chat-ui-review/notes.md",
+        })),
+        setItem: vi.fn(),
+      },
+    });
+
+    renderWorkspacesPage();
+
+    expect(document.body.textContent).toContain("Loading file");
+    expect(mockState.markdownEditorValues).toEqual([]);
+
+    mockState.loadingWorkspaceFilePaths.clear();
+    renderWorkspacesPage();
+
+    expect(mockState.markdownEditorValues[0]).toContain(
+      "[README.md](library-file://file?p=artifacts%2Fchat-ui-review%2FREADME.md&t=README.md)",
+    );
   });
 
   it("replaces retained Library tabs when switching organizations without unmounting", () => {
