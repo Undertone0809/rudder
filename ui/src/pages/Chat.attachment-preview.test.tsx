@@ -692,6 +692,51 @@ describe("Chat attachment previews", () => {
     expect(document.body.querySelector("[data-testid='chat-image-preview-dialog']")).toBeNull();
   });
 
+  it("opens sent image previews on double-click", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [imageMessage()],
+    };
+
+    const { container } = renderChat();
+    const imageButton = container.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-image-attachment'] button",
+    );
+    expect(imageButton).not.toBeNull();
+
+    act(() => {
+      imageButton?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    });
+
+    const preview = document.body.querySelector("[data-testid='chat-image-preview-dialog']");
+    expect(preview).not.toBeNull();
+    expect(preview?.querySelector("img")?.getAttribute("alt")).toBe("proposal-screenshot.png");
+  });
+
+  it("opens pending composer image previews on double-click", () => {
+    const attachment = new File(["draft image"], "draft-screenshot.png", { type: "image/png" });
+    updateChatPendingAttachmentsForScope(
+      resolveChatPendingAttachmentScopeKey("org-1", "chat-1"),
+      () => [attachment],
+    );
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "plain-user-message", body: "Please inspect this." })],
+    };
+
+    const { container } = renderChat();
+    const imageButton = container.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-pending-image-attachment'] button",
+    );
+    expect(imageButton).not.toBeNull();
+
+    act(() => {
+      imageButton?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    });
+
+    const preview = document.body.querySelector("[data-testid='chat-image-preview-dialog']");
+    expect(preview).not.toBeNull();
+    expect(preview?.querySelector("img")?.getAttribute("alt")).toBe("draft-screenshot.png");
+  });
+
   it("approves issue proposals with the operator-selected issue status", async () => {
     const { container } = renderChat();
 
@@ -818,6 +863,39 @@ describe("Chat ask_user panel", () => {
       files: [attachment],
     });
     expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).toBeNull();
+  });
+
+  it("opens Other answer pending image previews on double-click", async () => {
+    const attachment = new File(["image bytes"], "answer-screenshot.png", { type: "image/png" });
+    updateChatPendingAttachmentsForScope(
+      resolveChatPendingAttachmentScopeKey("org-1", "chat-1"),
+      () => [attachment],
+    );
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    await clickEnabledButton(container, "Other");
+
+    const imageButton = panel?.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-pending-image-attachment'] button",
+    );
+    expect(imageButton).not.toBeNull();
+
+    act(() => {
+      imageButton?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    });
+
+    const preview = document.body.querySelector("[data-testid='chat-image-preview-dialog']");
+    expect(preview).not.toBeNull();
+    expect(preview?.querySelector("img")?.getAttribute("alt")).toBe("answer-screenshot.png");
   });
 
   it("lets Other answers paste attachments directly into the input panel", async () => {
