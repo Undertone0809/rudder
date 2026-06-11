@@ -82,7 +82,6 @@ import { projectsApi } from "@/api/projects";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { prefetchChatConversation } from "@/lib/chat-prefetch";
 import {
-  clearChatAskUserDraft,
   readChatAskUserDraft,
   readChatDraft,
   saveChatAskUserDraft,
@@ -1621,7 +1620,6 @@ export function AskUserPanel({
             size="sm"
             disabled={disabled || !canSubmit}
             onClick={() => {
-              clearChatAskUserDraft(message.orgId, message.id);
               onSubmit(formatAskUserAnswerMessage(request, answersWithAttachmentFallback));
             }}
           >

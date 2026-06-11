@@ -44,7 +44,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger, } from "@/components/ui/dropdown-menu"; import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody"; import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences"; import { TextDots } from "@/components/TextDots"; import { formatPriorityLabel } from "@/lib/priorities"; import { ImagePreviewDialog } from "@/components/ImagePreviewDialog"; import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken"; import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor"; import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker"; import { HoverTimestampLabel } from "@/components/HoverTimestamp"; import { StatusBadge } from "@/components/StatusBadge"; import { RunTranscriptView } from "@/components/transcript/RunTranscriptView"; import { Skeleton } from "@/components/ui/skeleton"; import { useOrganization } from "@/context/OrganizationContext"; import { useBreadcrumbs } from "@/context/BreadcrumbContext"; import { useSidebar } from "@/context/SidebarContext"; import { useToast } from "@/context/ToastContext"; import { useDialog } from "@/context/DialogContext"; import { useChatGenerations, type ChatStreamDraft, type ChatStreamDraftState } from "@/context/ChatGenerationContext"; import { agentsApi } from "@/api/agents"; import { approvalsApi } from "@/api/approvals"; import { authApi } from "@/api/auth"; import { ApiError } from "@/api/client"; import { chatsApi } from "@/api/chats"; import { instanceSettingsApi } from "@/api/instanceSettings"; import { issuesApi } from "@/api/issues"; import { organizationsApi } from "@/api/orgs"; import { projectsApi } from "@/api/projects"; import { organizationSkillsApi } from "@/api/organizationSkills"; import { prefetchChatConversation } from "@/lib/chat-prefetch"; import { readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
+  DropdownMenuTrigger, } from "@/components/ui/dropdown-menu"; import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody"; import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences"; import { TextDots } from "@/components/TextDots"; import { formatPriorityLabel } from "@/lib/priorities"; import { ImagePreviewDialog } from "@/components/ImagePreviewDialog"; import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken"; import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor"; import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker"; import { HoverTimestampLabel } from "@/components/HoverTimestamp"; import { StatusBadge } from "@/components/StatusBadge"; import { RunTranscriptView } from "@/components/transcript/RunTranscriptView"; import { Skeleton } from "@/components/ui/skeleton"; import { useOrganization } from "@/context/OrganizationContext"; import { useBreadcrumbs } from "@/context/BreadcrumbContext"; import { useSidebar } from "@/context/SidebarContext"; import { useToast } from "@/context/ToastContext"; import { useDialog } from "@/context/DialogContext"; import { useChatGenerations, type ChatStreamDraft, type ChatStreamDraftState } from "@/context/ChatGenerationContext"; import { agentsApi } from "@/api/agents"; import { approvalsApi } from "@/api/approvals"; import { authApi } from "@/api/auth"; import { ApiError } from "@/api/client"; import { chatsApi } from "@/api/chats"; import { instanceSettingsApi } from "@/api/instanceSettings"; import { issuesApi } from "@/api/issues"; import { organizationsApi } from "@/api/orgs"; import { projectsApi } from "@/api/projects"; import { organizationSkillsApi } from "@/api/organizationSkills"; import { prefetchChatConversation } from "@/lib/chat-prefetch"; import { clearChatAskUserDraft, readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
 import {
   readChatPendingAttachmentsForScope,
   resolveChatPendingAttachmentScopeKey,
@@ -450,7 +450,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     [draft],
   ); const sendMessage = async (
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
-      editUserMessageIdOverride?: string | null; clearPendingFilesOnSuccess?: boolean; },
+      editUserMessageIdOverride?: string | null; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; },
   ) => {
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined; const body = (options?.bodyOverride ?? readComposerDraft()).trim();
@@ -505,6 +505,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 setRecentAskUserAnswerMessageId((current) => current === event.userMessage.id ? null : current);
               }, 1600);
             }
+            options?.onUserMessageAcknowledged?.();
             if (options?.clearPendingFilesOnSuccess && !pendingFilesClearedAfterAck) { clearPendingFilesForCurrentScope(); pendingFilesClearedAfterAck = true; }
             setStreamDraftForChat(
               chatId,
@@ -1266,7 +1267,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           void sendMessage({
                             bodyOverride: body,
                             filesOverride: [...pendingFiles], conversationOverride: selectedConversation,
-                            clearPendingFilesOnSuccess: true, });
+                            clearPendingFilesOnSuccess: true,
+                            onUserMessageAcknowledged: () => clearChatAskUserDraft(pendingAskUserMessage.orgId, pendingAskUserMessage.id), });
                         }} /> ) : (
                       renderComposer(false)
                     )} </div>

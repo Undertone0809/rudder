@@ -252,6 +252,70 @@ test("ask_user steps multi-question requests through one question at a time", as
   await expect(answer).toContainText("Full report");
 });
 
+test("ask_user restores unfinished answers after leaving and returning to the chat", async ({ page }) => {
+  const command = await writeAskUserStub(`ask-user-draft-${Date.now()}`, {
+    questions: [
+      {
+        id: "scope",
+        header: "Scope",
+        question: "Which scope should the agent implement?",
+        options: [
+          { id: "narrow", label: "Narrow path", recommended: true },
+          { id: "broad", label: "Broad path" },
+        ],
+        allowFreeform: true,
+      },
+      {
+        id: "risk",
+        header: "Risk",
+        question: "Which risk matters most?",
+        options: [
+          { id: "tests", label: "Missing tests" },
+          { id: "copy", label: "Copy clarity" },
+        ],
+        allowFreeform: true,
+      },
+    ],
+  });
+  const organization = await createAskUserOrg(page, `AskUserDraft-${Date.now()}`, command);
+
+  await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.fill("Help me choose scope");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const panel = page.getByTestId("chat-ask-user-panel");
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  const chatUrl = page.url();
+  await panel.getByRole("button", { name: /Broad path/ }).click();
+  await expect(panel).toContainText("Question 2 of 2");
+  await panel.getByRole("button", { name: "Other" }).click();
+  await panel.getByPlaceholder("Type your answer...").fill("Keep the browser regression small");
+  await panel.getByRole("button", { name: "Review answers" }).click();
+  await expect(panel).toContainText("Review answers");
+  await expect(panel).toContainText("Broad path");
+  await expect(panel).toContainText("Keep the browser regression small");
+
+  await page.goto("/");
+  await expect(page.getByTestId("chat-ask-user-panel")).toHaveCount(0);
+
+  await page.goto(chatUrl);
+  const restoredPanel = page.getByTestId("chat-ask-user-panel");
+  await expect(restoredPanel).toBeVisible({ timeout: 15_000 });
+  await expect(restoredPanel).toContainText("Review answers");
+  await expect(restoredPanel).toContainText("Broad path");
+  await expect(restoredPanel).toContainText("Keep the browser regression small");
+
+  await restoredPanel.getByRole("button", { name: "Submit answer" }).click();
+  await expect(page.getByTestId("chat-ask-user-panel")).toHaveCount(0, { timeout: 15_000 });
+  const answer = page.getByTestId("chat-ask-user-answer").last();
+  await expect(answer).toContainText("Scope");
+  await expect(answer).toContainText("Broad path");
+  await expect(answer).toContainText("Risk");
+  await expect(answer).toContainText("Keep the browser regression small");
+});
+
 test("ask_user supports multi-select questions", async ({ page }) => {
   const command = await writeAskUserStub(`ask-user-multi-select-${Date.now()}`, {
     questions: [

@@ -1131,6 +1131,57 @@ describe("Chat ask_user panel", () => {
     expect(readChatAskUserDraft("org-1", "ask-user-multi-1")).toBeNull();
   });
 
+  it("keeps ask_user draft when answer submission fails before ack", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingMultiAskUser(),
+      ],
+    };
+    mockState.sendMessageStream.mockImplementationOnce(async () => {
+      throw new Error("Network failed before ack");
+    });
+
+    const { container } = renderChat();
+    let panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    await clickEnabledButton(container, "Broad path");
+    await clickEnabledButton(container, "Missing tests");
+    await clickEnabledButton(container, "Other");
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    act(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Keep the draft through failure");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickEnabledButton(container, "Review answers");
+
+    await clickEnabledButton(container, "Submit answer");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Network failed before ack",
+      tone: "error",
+    }));
+    const draft = readChatAskUserDraft("org-1", "ask-user-multi-1");
+    expect(draft).not.toBeNull();
+    expect(draft?.reviewingAnswers).toBe(true);
+    expect(draft?.selectedByQuestionId.scope).toEqual(["broad"]);
+    expect(draft?.selectedByQuestionId.risk).toEqual(["tests"]);
+    expect(draft?.freeformByQuestionId.handoff).toBe("Keep the draft through failure");
+
+    panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel?.textContent).toContain("Review answers");
+    expect(panel?.textContent).toContain("Broad path");
+    expect(panel?.textContent).toContain("Missing tests");
+    expect(panel?.textContent).toContain("Keep the draft through failure");
+  });
+
   it("lets one ask_user question collect multiple selected options", async () => {
     mockState.messagesByChatId = {
       "chat-1": [
