@@ -216,6 +216,11 @@ export function ChatImageAttachmentTile({
         aria-label={`Open image preview: ${name}`}
         className="flex h-12 w-12 min-w-0 items-center justify-center overflow-hidden rounded-[calc(var(--radius-sm)+4px)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_42%,transparent)] text-left transition-[border-color,box-shadow] hover:border-[color:var(--border-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         onClick={onOpen}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onOpen();
+        }}
         onContextMenu={openImageContextMenu}
       >
         <img
