@@ -43,5 +43,10 @@ test.describe("Markdown patch rendering", () => {
     await expect(patchBlock.locator(".rudder-markdown-patch-line--remove")).toContainText("-old value");
     await expect(patchBlock.locator(".rudder-markdown-patch-line--add")).toContainText("+new value");
     await expect(patchBlock.locator(".rudder-markdown-patch-line--context")).toContainText(" context");
+
+    await patchBlock.click();
+    await expect(
+      page.locator(".rudder-inline-markdown-surface .rudder-milkdown-content [contenteditable='true']").first(),
+    ).toBeVisible();
   });
 });

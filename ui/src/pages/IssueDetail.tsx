@@ -2146,7 +2146,6 @@ export function IssueDetail() {
           placeholder="Add a description..."
           multiline
           editorEngine="milkdown"
-          alwaysEdit
           mentions={mentionOptions}
           onMentionQueryChange={setLibraryFileMentionQuery}
           imageUploadHandler={async (file) => {
