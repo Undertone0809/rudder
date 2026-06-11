@@ -698,6 +698,174 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(noAgentSection?.textContent).toContain("Unassigned thread");
   });
 
+  it("collapses agent thread groups from the agent header", async () => {
+    const { setItem } = installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "agent" }),
+    });
+    chatList = [
+      baseConversation({
+        id: "chat-1",
+        title: "Holden thread",
+        preferredAgentId: "agent-1",
+      }),
+    ];
+    messengerModel = {
+      ...baseModel(1),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-1",
+          kind: "chat",
+          title: "Holden thread",
+          preview: "Agent-selected chat",
+          subtitle: null,
+          href: "/messenger/chat/chat-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 1,
+          needsAttention: true,
+          isPinned: false,
+          metadata: { preferredAgentId: "agent-1" },
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const agentHeader = document.querySelector<HTMLButtonElement>(
+      '[data-testid="messenger-thread-section-agent-agent-1"]',
+    );
+    expect(agentHeader?.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('[data-testid="messenger-thread-section-agent-agent-1-attention-count"]')?.textContent).toBe("1");
+
+    await act(async () => {
+      agentHeader?.click();
+    });
+
+    expect(agentHeader?.getAttribute("aria-expanded")).toBe("false");
+    const agentContent = document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-agent-agent-1-content"]');
+    expect(agentContent?.getAttribute("aria-hidden")).toBe("true");
+    expect(agentContent?.hasAttribute("inert")).toBe(true);
+    expect(agentContent?.className).toContain("grid-rows-[0fr]");
+    expect(setItem).toHaveBeenCalledWith(
+      "rudder.messengerCollapsedThreadGroupsByOrg",
+      JSON.stringify({ "org-1": { agent: ["agent:agent-1"] } }),
+    );
+  });
+
+  it("progressively shows and collapses large agent thread groups", async () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "agent" }),
+    });
+    chatList = Array.from({ length: 8 }, (_, index) =>
+      baseConversation({
+        id: `chat-${index + 1}`,
+        title: `Agent thread ${index + 1}`,
+        preferredAgentId: "agent-1",
+      }),
+    );
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: chatList.map((conversation, index) => ({
+        threadKey: `chat:${conversation.id}`,
+        kind: "chat",
+        title: conversation.title,
+        preview: "Agent conversation",
+        subtitle: null,
+        href: `/messenger/chat/${conversation.id}`,
+        latestActivityAt: `2026-04-11T09:${String(59 - index).padStart(2, "0")}:00.000Z`,
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: false,
+        metadata: { preferredAgentId: "agent-1" },
+      })),
+    };
+
+    renderSidebar();
+
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-6"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeNull();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(
+        '[data-testid="messenger-thread-section-agent-agent-1-show-more"]',
+      )?.click();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-8"]')).toBeTruthy();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(
+        '[data-testid="messenger-thread-section-agent-agent-1-collapse"]',
+      )?.click();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-6"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeNull();
+  });
+
+  it("applies stored thread-type order and collapses thread-type groups", async () => {
+    const { setItem } = installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "kind" }),
+      "rudder.messengerThreadGroupOrder:kind:org-1:anonymous": JSON.stringify([
+        "kind:approvals",
+        "kind:chat",
+      ]),
+    });
+    chatList = [baseConversation()];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-1",
+          kind: "chat",
+          title: "Chat thread",
+          preview: "Chat conversation",
+          subtitle: null,
+          href: "/messenger/chat/chat-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "approvals",
+          kind: "approvals",
+          title: "Approvals",
+          preview: "Approval update",
+          subtitle: null,
+          href: "/messenger/approvals",
+          latestActivityAt: "2026-04-11T09:41:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const approvalsHeader = document.querySelector<HTMLButtonElement>('[data-testid="messenger-thread-section-kind-approvals"]');
+    const chatHeader = document.querySelector<HTMLButtonElement>('[data-testid="messenger-thread-section-kind-chat"]');
+    expect(approvalsHeader).toBeTruthy();
+    expect(chatHeader).toBeTruthy();
+    expect(approvalsHeader?.compareDocumentPosition(chatHeader!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    await act(async () => {
+      approvalsHeader?.click();
+    });
+
+    expect(approvalsHeader?.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-kind-approvals-content"]')?.hasAttribute("inert")).toBe(true);
+    expect(setItem).toHaveBeenCalledWith(
+      "rudder.messengerCollapsedThreadGroupsByOrg",
+      JSON.stringify({ "org-1": { kind: ["kind:approvals"] } }),
+    );
+  });
+
   it("collapses project thread groups from the project header", async () => {
     const { setItem } = installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),

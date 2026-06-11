@@ -92,13 +92,15 @@ const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg
 const THREAD_DENSITY_STORAGE_KEY = "rudder.messengerThreadDensityByOrg";
 const SPLIT_ISSUE_NOTIFICATIONS_STORAGE_KEY = "rudder.messengerSplitIssueNotificationsByOrg";
 const COLLAPSED_PROJECT_GROUPS_STORAGE_KEY = "rudder.messengerCollapsedProjectGroupsByOrg";
+const COLLAPSED_THREAD_GROUPS_STORAGE_KEY = "rudder.messengerCollapsedThreadGroupsByOrg";
 const MESSENGER_PROJECT_GROUP_ORDER_STORAGE_PREFIX = "rudder.messengerProjectGroupOrder";
+const MESSENGER_THREAD_GROUP_ORDER_STORAGE_PREFIX = "rudder.messengerThreadGroupOrder";
 const HIDDEN_ISSUE_THREADS_STORAGE_PREFIX = "rudder.messengerHiddenIssueThreads";
 const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
 const DEFAULT_THREAD_DENSITY: MessengerThreadDensity = "compact";
 const DEFAULT_SPLIT_ISSUE_NOTIFICATIONS = true;
-const PROJECT_GROUP_INITIAL_VISIBLE_COUNT = 6;
-const PROJECT_GROUP_VISIBLE_INCREMENT = 10;
+const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
+const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
   { value: "latest", label: "Latest activity" },
@@ -107,6 +109,10 @@ const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label:
   { value: "kind", label: "Thread type" },
   { value: "attention", label: "Needs attention" },
 ];
+
+function isManagedThreadGroupRule(rule: ThreadOrganizationRule): rule is "project" | "agent" | "kind" {
+  return rule === "project" || rule === "agent" || rule === "kind";
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => {
@@ -237,6 +243,26 @@ function readCollapsedProjectGroups(orgId: string | null | undefined): Set<strin
   return new Set();
 }
 
+function readCollapsedThreadGroups(orgId: string | null | undefined, rule: ThreadOrganizationRule): Set<string> {
+  if (!isManagedThreadGroupRule(rule)) return new Set();
+  if (rule === "project") return readCollapsedProjectGroups(orgId);
+  if (!orgId || typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_THREAD_GROUPS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    const orgValue = parsed[orgId];
+    const values = orgValue && typeof orgValue === "object" && !Array.isArray(orgValue)
+      ? (orgValue as Record<string, unknown>)[rule]
+      : undefined;
+    if (Array.isArray(values)) {
+      return new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0));
+    }
+  } catch {
+    // Ignore storage failures; managed sections stay expanded.
+  }
+  return new Set();
+}
+
 function normalizeStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && item.length > 0);
@@ -249,6 +275,11 @@ function messengerUserStorageId(userId: string | null | undefined) {
 
 function getMessengerProjectGroupOrderStorageKey(orgId: string, userId: string | null | undefined) {
   return `${MESSENGER_PROJECT_GROUP_ORDER_STORAGE_PREFIX}:${orgId}:${messengerUserStorageId(userId)}`;
+}
+
+function getMessengerThreadGroupOrderStorageKey(orgId: string, userId: string | null | undefined, rule: ThreadOrganizationRule) {
+  if (rule === "project") return getMessengerProjectGroupOrderStorageKey(orgId, userId);
+  return `${MESSENGER_THREAD_GROUP_ORDER_STORAGE_PREFIX}:${rule}:${orgId}:${messengerUserStorageId(userId)}`;
 }
 
 function getHiddenIssueThreadsStorageKey(orgId: string, userId: string | null | undefined) {
@@ -346,6 +377,32 @@ function writeCollapsedProjectGroups(orgId: string, groups: Set<string>) {
   }
 }
 
+function writeCollapsedThreadGroups(orgId: string, rule: ThreadOrganizationRule, groups: Set<string>) {
+  if (!isManagedThreadGroupRule(rule)) return;
+  if (rule === "project") {
+    writeCollapsedProjectGroups(orgId, groups);
+    return;
+  }
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_THREAD_GROUPS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    const orgValue = parsed[orgId];
+    const orgGroups = orgValue && typeof orgValue === "object" && !Array.isArray(orgValue)
+      ? orgValue as Record<string, unknown>
+      : {};
+    window.localStorage.setItem(COLLAPSED_THREAD_GROUPS_STORAGE_KEY, JSON.stringify({
+      ...parsed,
+      [orgId]: {
+        ...orgGroups,
+        [rule]: Array.from(groups),
+      },
+    }));
+  } catch {
+    // Ignore storage failures; the in-memory section state still applies.
+  }
+}
+
 function threadOrganizationLabel(rule: ThreadOrganizationRule) {
   return THREAD_ORGANIZATION_OPTIONS.find((option) => option.value === rule)?.label ?? "Latest activity";
 }
@@ -390,8 +447,8 @@ interface ThreadGroup {
 
 interface UnreadThreadTarget {
   threadKey: string;
-  projectGroupKey: string | null;
-  projectEntryIndex: number | null;
+  groupKey: string | null;
+  entryIndex: number | null;
 }
 
 type ProjectOrderUpdatedDetail = {
@@ -417,6 +474,14 @@ function storedProjectSectionIdToKey(storedId: string) {
   if (storedId.startsWith("messenger-section:")) return storedId.slice("messenger-section:".length);
   if (storedId.startsWith("project:")) return storedId;
   return `project:${storedId}`;
+}
+
+function threadSectionKeyToStoredId(rule: ThreadOrganizationRule, sectionKey: string) {
+  return rule === "project" ? projectSectionKeyToStoredId(sectionKey) : sectionKey;
+}
+
+function storedThreadSectionIdToKey(rule: ThreadOrganizationRule, storedId: string) {
+  return rule === "project" ? storedProjectSectionIdToKey(storedId) : storedId;
 }
 
 function sortProjectThreadSections(
@@ -456,6 +521,30 @@ function sortProjectThreadSections(
   );
   const baseIndex = new Map(projectSortedSections.map((section, index) => [section.key, index]));
   return [...projectSortedSections].sort((a, b) => {
+    const aIndex = sectionOrderIndex.get(a.key);
+    const bIndex = sectionOrderIndex.get(b.key);
+    if (aIndex !== undefined || bIndex !== undefined) {
+      return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
+    }
+    return (baseIndex.get(a.key) ?? 0) - (baseIndex.get(b.key) ?? 0);
+  });
+}
+
+function sortManagedThreadSections(
+  sections: OrganizedThreadSection[],
+  rule: ThreadOrganizationRule,
+  orderedProjectIds: string[],
+  orderedSectionIds: string[] = [],
+) {
+  if (!isManagedThreadGroupRule(rule)) return sections;
+  if (rule === "project") return sortProjectThreadSections(sections, orderedProjectIds, orderedSectionIds);
+  if (orderedSectionIds.length === 0) return sections;
+
+  const sectionOrderIndex = new Map(
+    orderedSectionIds.map((id, index) => [storedThreadSectionIdToKey(rule, id), index]),
+  );
+  const baseIndex = new Map(sections.map((section, index) => [section.key, index]));
+  return [...sections].sort((a, b) => {
     const aIndex = sectionOrderIndex.get(a.key);
     const bIndex = sectionOrderIndex.get(b.key);
     if (aIndex !== undefined || bIndex !== undefined) {
@@ -1134,12 +1223,12 @@ function ThreadRow({
   );
 }
 
-function SortableProjectThreadSection({
+function SortableThreadSection({
   id,
   children,
 }: {
   id: string;
-  children: ReactNode;
+  children: (dragHandleProps: Pick<ReturnType<typeof useSortable>, "attributes" | "listeners">) => ReactNode;
 }) {
   const {
     attributes,
@@ -1159,13 +1248,11 @@ function SortableProjectThreadSection({
         zIndex: isDragging ? 10 : undefined,
       }}
       className={cn(
-        "flex min-h-9 touch-none flex-col gap-1 rounded-[calc(var(--radius-md)-2px)]",
+        "flex min-h-9 shrink-0 touch-none flex-col gap-1 rounded-[calc(var(--radius-md)-2px)]",
         isDragging && "bg-[color:color-mix(in_oklab,var(--surface-active)_56%,transparent)] opacity-90 shadow-sm ring-1 ring-border/70",
       )}
-      {...attributes}
-      {...listeners}
     >
-      {children}
+      {children({ attributes, listeners })}
     </div>
   );
 }
@@ -1424,10 +1511,10 @@ export function MessengerContextSidebar() {
   const [threadDensity, setThreadDensity] = useState<MessengerThreadDensity>(() =>
     readThreadDensity(model.selectedOrganizationId),
   );
-  const [collapsedProjectGroupKeys, setCollapsedProjectGroupKeys] = useState<Set<string>>(() =>
-    readCollapsedProjectGroups(model.selectedOrganizationId),
+  const [collapsedThreadGroupKeys, setCollapsedThreadGroupKeys] = useState<Set<string>>(() =>
+    readCollapsedThreadGroups(model.selectedOrganizationId, threadOrganizationRule),
   );
-  const [visibleProjectEntryLimits, setVisibleProjectEntryLimits] = useState<Record<string, number>>({});
+  const [visibleThreadGroupEntryLimits, setVisibleThreadGroupEntryLimits] = useState<Record<string, number>>({});
   const sessionQuery = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -1437,10 +1524,10 @@ export function MessengerContextSidebar() {
     if (!model.selectedOrganizationId) return null;
     return getProjectOrderStorageKey(model.selectedOrganizationId, currentUserId);
   }, [currentUserId, model.selectedOrganizationId]);
-  const messengerProjectGroupOrderStorageKey = useMemo(() => {
-    if (!model.selectedOrganizationId) return null;
-    return getMessengerProjectGroupOrderStorageKey(model.selectedOrganizationId, currentUserId);
-  }, [currentUserId, model.selectedOrganizationId]);
+  const messengerThreadGroupOrderStorageKey = useMemo(() => {
+    if (!model.selectedOrganizationId || !isManagedThreadGroupRule(threadOrganizationRule)) return null;
+    return getMessengerThreadGroupOrderStorageKey(model.selectedOrganizationId, currentUserId, threadOrganizationRule);
+  }, [currentUserId, model.selectedOrganizationId, threadOrganizationRule]);
   const hiddenIssueThreadsStorageKey = useMemo(() => {
     if (!model.selectedOrganizationId) return null;
     return getHiddenIssueThreadsStorageKey(model.selectedOrganizationId, currentUserId);
@@ -1448,8 +1535,8 @@ export function MessengerContextSidebar() {
   const [projectOrderIds, setProjectOrderIds] = useState<string[]>(() =>
     projectOrderStorageKey ? readProjectOrder(projectOrderStorageKey) : [],
   );
-  const [projectSectionOrderIds, setProjectSectionOrderIds] = useState<string[]>(() =>
-    messengerProjectGroupOrderStorageKey ? readStringList(messengerProjectGroupOrderStorageKey) : [],
+  const [threadSectionOrderIds, setThreadSectionOrderIds] = useState<string[]>(() =>
+    messengerThreadGroupOrderStorageKey ? readStringList(messengerThreadGroupOrderStorageKey) : [],
   );
   const [hiddenIssueThreadWatermarks, setHiddenIssueThreadWatermarks] = useState<Record<string, string>>(() =>
     hiddenIssueThreadsStorageKey ? readHiddenIssueThreadWatermarks(hiddenIssueThreadsStorageKey) : {},
@@ -1464,9 +1551,15 @@ export function MessengerContextSidebar() {
     setThreadOrganizationRule(readThreadOrganizationRule(model.selectedOrganizationId));
     setThreadDensity(readThreadDensity(model.selectedOrganizationId));
     setSplitIssueNotifications(readSplitIssueNotifications(model.selectedOrganizationId));
-    setCollapsedProjectGroupKeys(readCollapsedProjectGroups(model.selectedOrganizationId));
-    setVisibleProjectEntryLimits({});
+    const rule = readThreadOrganizationRule(model.selectedOrganizationId);
+    setCollapsedThreadGroupKeys(readCollapsedThreadGroups(model.selectedOrganizationId, rule));
+    setVisibleThreadGroupEntryLimits({});
   }, [model.selectedOrganizationId]);
+
+  useEffect(() => {
+    setCollapsedThreadGroupKeys(readCollapsedThreadGroups(model.selectedOrganizationId, threadOrganizationRule));
+    setVisibleThreadGroupEntryLimits({});
+  }, [model.selectedOrganizationId, threadOrganizationRule]);
 
   useEffect(() => {
     if (!projectOrderStorageKey) {
@@ -1494,19 +1587,19 @@ export function MessengerContextSidebar() {
   }, [projectOrderStorageKey]);
 
   useEffect(() => {
-    if (!messengerProjectGroupOrderStorageKey) {
-      setProjectSectionOrderIds([]);
+    if (!messengerThreadGroupOrderStorageKey) {
+      setThreadSectionOrderIds([]);
       return;
     }
-    setProjectSectionOrderIds(readStringList(messengerProjectGroupOrderStorageKey));
+    setThreadSectionOrderIds(readStringList(messengerThreadGroupOrderStorageKey));
 
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== messengerProjectGroupOrderStorageKey) return;
-      setProjectSectionOrderIds(readStringList(messengerProjectGroupOrderStorageKey));
+      if (event.key !== messengerThreadGroupOrderStorageKey) return;
+      setThreadSectionOrderIds(readStringList(messengerThreadGroupOrderStorageKey));
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [messengerProjectGroupOrderStorageKey]);
+  }, [messengerThreadGroupOrderStorageKey]);
 
   useEffect(() => {
     if (!hiddenIssueThreadsStorageKey) {
@@ -1581,10 +1674,10 @@ export function MessengerContextSidebar() {
       };
     });
     const sections = organizeThreadEntries(entries, threadOrganizationRule, agentsById);
-    return threadOrganizationRule === "project"
-      ? sortProjectThreadSections(sections, projectOrderIds, projectSectionOrderIds)
+    return isManagedThreadGroupRule(threadOrganizationRule)
+      ? sortManagedThreadSections(sections, threadOrganizationRule, projectOrderIds, threadSectionOrderIds)
       : sections;
-  }, [agentsById, conversationsById, model.selectedOrganizationId, projectOrderIds, projectSectionOrderIds, splitIssueNotifications, threadOrganizationRule, visibleThreadSummaries]);
+  }, [agentsById, conversationsById, model.selectedOrganizationId, projectOrderIds, threadSectionOrderIds, splitIssueNotifications, threadOrganizationRule, visibleThreadSummaries]);
   const unreadThreadTargets = useMemo<UnreadThreadTarget[]>(() => {
     const targets: UnreadThreadTarget[] = [];
     for (const section of organizedThreadSections) {
@@ -1592,8 +1685,8 @@ export function MessengerContextSidebar() {
         if (entry.thread.unreadCount > 0) {
           targets.push({
             threadKey: entry.thread.threadKey,
-            projectGroupKey: threadOrganizationRule === "project" ? section.key : null,
-            projectEntryIndex: threadOrganizationRule === "project" ? index : null,
+            groupKey: isManagedThreadGroupRule(threadOrganizationRule) ? section.key : null,
+            entryIndex: isManagedThreadGroupRule(threadOrganizationRule) ? index : null,
           });
         }
       }
@@ -1639,8 +1732,8 @@ export function MessengerContextSidebar() {
     if (route.kind === "system") return route.threadKind;
     return null;
   }, [route, visibleThreadSummaries]);
-  const projectSectionRequiredVisibleCounts = useMemo(() => {
-    if (threadOrganizationRule !== "project" || !activeThreadKey) return new Map<string, number>();
+  const threadSectionRequiredVisibleCounts = useMemo(() => {
+    if (!isManagedThreadGroupRule(threadOrganizationRule) || !activeThreadKey) return new Map<string, number>();
     const required = new Map<string, number>();
     for (const section of organizedThreadSections) {
       const index = section.entries.findIndex((entry) => entry.thread.threadKey === activeThreadKey);
@@ -1705,8 +1798,9 @@ export function MessengerContextSidebar() {
     }
   };
 
-  const handleProjectGroupToggle = (groupKey: string) => {
-    setCollapsedProjectGroupKeys((current) => {
+  const handleThreadGroupToggle = (groupKey: string) => {
+    if (!isManagedThreadGroupRule(threadOrganizationRule)) return;
+    setCollapsedThreadGroupKeys((current) => {
       const next = new Set(current);
       if (next.has(groupKey)) {
         next.delete(groupKey);
@@ -1714,30 +1808,31 @@ export function MessengerContextSidebar() {
         next.add(groupKey);
       }
       if (model.selectedOrganizationId) {
-        writeCollapsedProjectGroups(model.selectedOrganizationId, next);
+        writeCollapsedThreadGroups(model.selectedOrganizationId, threadOrganizationRule, next);
       }
       return next;
     });
   };
 
-  const handleProjectSectionDragEnd = useCallback((event: DragEndEvent) => {
+  const handleThreadSectionDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    if (!messengerProjectGroupOrderStorageKey) return;
+    if (!messengerThreadGroupOrderStorageKey || !isManagedThreadGroupRule(threadOrganizationRule)) return;
 
-    const projectSectionKeys = organizedThreadSections
+    const sectionKeys = organizedThreadSections
       .map((section) => section.key);
-    const oldIndex = projectSectionKeys.indexOf(active.id as string);
-    const newIndex = projectSectionKeys.indexOf(over.id as string);
+    const oldIndex = sectionKeys.indexOf(active.id as string);
+    const newIndex = sectionKeys.indexOf(over.id as string);
     if (oldIndex === -1 || newIndex === -1) return;
 
-    const movedProjectSectionIds = arrayMove(projectSectionKeys, oldIndex, newIndex)
-      .map(projectSectionKeyToStoredId);
-    setProjectSectionOrderIds(movedProjectSectionIds);
-    writeStringList(messengerProjectGroupOrderStorageKey, movedProjectSectionIds);
+    const movedSectionIds = arrayMove(sectionKeys, oldIndex, newIndex)
+      .map((sectionKey) => threadSectionKeyToStoredId(threadOrganizationRule, sectionKey));
+    setThreadSectionOrderIds(movedSectionIds);
+    writeStringList(messengerThreadGroupOrderStorageKey, movedSectionIds);
 
-    const movedProjectIds = movedProjectSectionIds
-      .map(storedProjectSectionIdToKey)
+    if (threadOrganizationRule !== "project") return;
+    const movedProjectIds = movedSectionIds
+      .map((id) => storedThreadSectionIdToKey(threadOrganizationRule, id))
       .map((key) => projectIdFromSectionKey(key))
       .filter((id): id is string => Boolean(id));
     const movedProjectIdSet = new Set(movedProjectIds);
@@ -1749,13 +1844,13 @@ export function MessengerContextSidebar() {
     if (projectOrderStorageKey) {
       writeProjectOrder(projectOrderStorageKey, nextProjectOrderIds);
     }
-  }, [messengerProjectGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey]);
+  }, [messengerThreadGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey, threadOrganizationRule]);
 
-  const handleShowMoreProjectSection = (section: OrganizedThreadSection, visibleCount: number) => {
+  const handleShowMoreThreadSection = (section: OrganizedThreadSection, visibleCount: number) => {
     if (visibleCount < section.entries.length) {
-      setVisibleProjectEntryLimits((current) => ({
+      setVisibleThreadGroupEntryLimits((current) => ({
         ...current,
-        [section.key]: Math.min(section.entries.length, visibleCount + PROJECT_GROUP_VISIBLE_INCREMENT),
+        [section.key]: Math.min(section.entries.length, visibleCount + MANAGED_GROUP_VISIBLE_INCREMENT),
       }));
       return;
     }
@@ -1764,19 +1859,12 @@ export function MessengerContextSidebar() {
     }
   };
 
-  const handleCollapseProjectSectionEntries = (sectionKey: string) => {
-    setVisibleProjectEntryLimits((current) => ({
+  const handleCollapseThreadSectionEntries = (sectionKey: string) => {
+    setVisibleThreadGroupEntryLimits((current) => ({
       ...current,
-      [sectionKey]: PROJECT_GROUP_INITIAL_VISIBLE_COUNT,
+      [sectionKey]: MANAGED_GROUP_INITIAL_VISIBLE_COUNT,
     }));
   };
-
-  const projectThreadSections = useMemo(
-    () => threadOrganizationRule === "project"
-      ? organizedThreadSections
-      : [],
-    [organizedThreadSections, threadOrganizationRule],
-  );
 
   const handleHideIssueThread = (thread: MessengerThreadSummaryItem) => {
     const watermark = splitIssueThreadWatermark(thread);
@@ -1877,36 +1965,81 @@ export function MessengerContextSidebar() {
     );
   };
 
-  const renderThreadSection = (section: OrganizedThreadSection) => {
-    const isProjectSection = threadOrganizationRule === "project";
-    const collapsed = isProjectSection && collapsedProjectGroupKeys.has(section.key);
-    const visibleCount = isProjectSection
+  const renderThreadSection = (
+    section: OrganizedThreadSection,
+    dragHandleProps?: Pick<ReturnType<typeof useSortable>, "attributes" | "listeners">,
+  ) => {
+    const isManagedSection = isManagedThreadGroupRule(threadOrganizationRule);
+    const collapsed = isManagedSection && collapsedThreadGroupKeys.has(section.key);
+    const visibleCount = isManagedSection
       ? Math.max(
-        visibleProjectEntryLimits[section.key] ?? PROJECT_GROUP_INITIAL_VISIBLE_COUNT,
-        projectSectionRequiredVisibleCounts.get(section.key) ?? PROJECT_GROUP_INITIAL_VISIBLE_COUNT,
+        visibleThreadGroupEntryLimits[section.key] ?? MANAGED_GROUP_INITIAL_VISIBLE_COUNT,
+        threadSectionRequiredVisibleCounts.get(section.key) ?? MANAGED_GROUP_INITIAL_VISIBLE_COUNT,
       )
       : section.entries.length;
-    const visibleEntries = isProjectSection ? section.entries.slice(0, visibleCount) : section.entries;
-    const hasHiddenLoadedEntries = isProjectSection && visibleCount < section.entries.length;
-    const canFetchMoreForSection = isProjectSection
+    const visibleEntries = isManagedSection ? section.entries.slice(0, visibleCount) : section.entries;
+    const hasHiddenLoadedEntries = isManagedSection && visibleCount < section.entries.length;
+    const canFetchMoreForSection = isManagedSection
       && Boolean(model.hasMoreThreadSummaries)
       && visibleCount >= section.entries.length
-      && section.entries.length >= PROJECT_GROUP_INITIAL_VISIBLE_COUNT;
+      && section.entries.length >= MANAGED_GROUP_INITIAL_VISIBLE_COUNT;
     const showMoreControl = !collapsed && (hasHiddenLoadedEntries || canFetchMoreForSection || Boolean(model.isFetchingMoreThreadSummaries && canFetchMoreForSection));
-    const showCollapseControl = !collapsed && isProjectSection && visibleCount > PROJECT_GROUP_INITIAL_VISIBLE_COUNT;
+    const showCollapseControl = !collapsed && isManagedSection && visibleCount > MANAGED_GROUP_INITIAL_VISIBLE_COUNT;
+    const sectionContentTestId = isManagedSection ? `messenger-thread-section-${sanitizeThreadKey(section.key)}-content` : undefined;
+    const sectionBody = (
+      <>
+        <div className="flex flex-col gap-1">
+          {visibleEntries.map(renderThreadEntry)}
+        </div>
+        {showMoreControl || showCollapseControl ? (
+          <div className="mx-1.5 flex items-center gap-1.5 px-2 py-1">
+            {showMoreControl ? (
+              <button
+                type="button"
+                data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-show-more`}
+                className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={model.isFetchingMoreThreadSummaries}
+                onClick={() => handleShowMoreThreadSection(section, visibleCount)}
+              >
+                {model.isFetchingMoreThreadSummaries && canFetchMoreForSection ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    Loading
+                  </span>
+                ) : (
+                  "Show more"
+                )}
+              </button>
+            ) : null}
+            {showCollapseControl ? (
+              <button
+                type="button"
+                data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-collapse`}
+                className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
+                onClick={() => handleCollapseThreadSectionEntries(section.key)}
+              >
+                Collapse
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </>
+    );
 
     return (
       <>
         {section.label ? (
-          isProjectSection ? (() => {
+          isManagedSection ? (() => {
             const attentionCount = sectionAttentionCount(section);
             return (
               <button
                 type="button"
+                {...dragHandleProps?.attributes}
+                {...dragHandleProps?.listeners}
                 data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
                 aria-expanded={!collapsed}
                 className="mx-1.5 flex min-h-8 items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-1.5 py-1.5 text-left text-[11px] font-semibold text-muted-foreground/72 transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
-                onClick={() => handleProjectGroupToggle(section.key)}
+                onClick={() => handleThreadGroupToggle(section.key)}
               >
                 {collapsed ? (
                   <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
@@ -1933,53 +2066,25 @@ export function MessengerContextSidebar() {
             </div>
           )
         ) : null}
-        <div
-          data-testid={isProjectSection ? `messenger-thread-section-${sanitizeThreadKey(section.key)}-content` : undefined}
-          className={cn(
-            "grid transition-[grid-template-rows,opacity] duration-150 ease-out",
-            collapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100",
-          )}
-          aria-hidden={collapsed || undefined}
-          inert={collapsed || undefined}
-        >
-          <div className="min-h-0 overflow-hidden">
-            <div className="flex flex-col gap-1">
-              {visibleEntries.map(renderThreadEntry)}
+        {collapsed ? (
+          <div
+            data-testid={sectionContentTestId}
+            className="grid grid-rows-[0fr] opacity-0 transition-[grid-template-rows,opacity] duration-150 ease-out"
+            aria-hidden="true"
+            inert
+          >
+            <div className="min-h-0 overflow-hidden">
+              {sectionBody}
             </div>
-            {showMoreControl || showCollapseControl ? (
-              <div className="mx-1.5 flex items-center gap-1.5 px-2 py-1">
-                {showMoreControl ? (
-                  <button
-                    type="button"
-                    data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-show-more`}
-                    className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={model.isFetchingMoreThreadSummaries}
-                    onClick={() => handleShowMoreProjectSection(section, visibleCount)}
-                  >
-                    {model.isFetchingMoreThreadSummaries && canFetchMoreForSection ? (
-                      <span className="inline-flex items-center gap-1.5">
-                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                        Loading
-                      </span>
-                    ) : (
-                      "Show more"
-                    )}
-                  </button>
-                ) : null}
-                {showCollapseControl ? (
-                  <button
-                    type="button"
-                    data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-collapse`}
-                    className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
-                    onClick={() => handleCollapseProjectSectionEntries(section.key)}
-                  >
-                    Collapse
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
           </div>
-        </div>
+        ) : (
+          <div
+            data-testid={sectionContentTestId}
+            className="block opacity-100 transition-opacity duration-150 ease-out"
+          >
+            {sectionBody}
+          </div>
+        )}
       </>
     );
   };
@@ -2226,16 +2331,16 @@ export function MessengerContextSidebar() {
     if (handledUnreadScrollRequestIdRef.current === unreadScrollRequestId) return;
 
     if (
-      unreadScrollTarget.projectGroupKey
-      && collapsedProjectGroupKeys.has(unreadScrollTarget.projectGroupKey)
+      unreadScrollTarget.groupKey
+      && collapsedThreadGroupKeys.has(unreadScrollTarget.groupKey)
     ) {
-      setCollapsedProjectGroupKeys((current) => {
-        const projectGroupKey = unreadScrollTarget.projectGroupKey;
-        if (!projectGroupKey || !current.has(projectGroupKey)) return current;
+      setCollapsedThreadGroupKeys((current) => {
+        const groupKey = unreadScrollTarget.groupKey;
+        if (!groupKey || !current.has(groupKey)) return current;
         const next = new Set(current);
-        next.delete(projectGroupKey);
-        if (model.selectedOrganizationId) {
-          writeCollapsedProjectGroups(model.selectedOrganizationId, next);
+        next.delete(groupKey);
+        if (model.selectedOrganizationId && isManagedThreadGroupRule(threadOrganizationRule)) {
+          writeCollapsedThreadGroups(model.selectedOrganizationId, threadOrganizationRule, next);
         }
         return next;
       });
@@ -2243,16 +2348,16 @@ export function MessengerContextSidebar() {
     }
 
     if (
-      unreadScrollTarget.projectGroupKey
-      && unreadScrollTarget.projectEntryIndex !== null
+      unreadScrollTarget.groupKey
+      && unreadScrollTarget.entryIndex !== null
     ) {
-      const requiredVisibleCount = unreadScrollTarget.projectEntryIndex + 1;
-      const currentVisibleCount = visibleProjectEntryLimits[unreadScrollTarget.projectGroupKey]
-        ?? PROJECT_GROUP_INITIAL_VISIBLE_COUNT;
+      const requiredVisibleCount = unreadScrollTarget.entryIndex + 1;
+      const currentVisibleCount = visibleThreadGroupEntryLimits[unreadScrollTarget.groupKey]
+        ?? MANAGED_GROUP_INITIAL_VISIBLE_COUNT;
       if (requiredVisibleCount > currentVisibleCount) {
-        setVisibleProjectEntryLimits((current) => ({
+        setVisibleThreadGroupEntryLimits((current) => ({
           ...current,
-          [unreadScrollTarget.projectGroupKey!]: requiredVisibleCount,
+          [unreadScrollTarget.groupKey!]: requiredVisibleCount,
         }));
         return;
       }
@@ -2278,7 +2383,7 @@ export function MessengerContextSidebar() {
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [collapsedProjectGroupKeys, model.selectedOrganizationId, unreadScrollRequestId, unreadScrollTarget, visibleProjectEntryLimits]);
+  }, [collapsedThreadGroupKeys, model.selectedOrganizationId, threadOrganizationRule, unreadScrollRequestId, unreadScrollTarget, visibleThreadGroupEntryLimits]);
 
   useEffect(() => {
     const sentinel = loadMoreThreadSummariesRef.current;
@@ -2360,28 +2465,28 @@ export function MessengerContextSidebar() {
             ))}
           </div>
         ) : null}
-        {threadOrganizationRule === "project" ? (
+        {isManagedThreadGroupRule(threadOrganizationRule) ? (
           <>
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
-              onDragEnd={handleProjectSectionDragEnd}
+              onDragEnd={handleThreadSectionDragEnd}
             >
               <SortableContext
-                items={projectThreadSections.map((section) => section.key)}
+                items={organizedThreadSections.map((section) => section.key)}
                 strategy={verticalListSortingStrategy}
               >
-                {projectThreadSections.map((section) => (
-                  <SortableProjectThreadSection key={section.key} id={section.key}>
-                    {renderThreadSection(section)}
-                  </SortableProjectThreadSection>
+                {organizedThreadSections.map((section) => (
+                  <SortableThreadSection key={section.key} id={section.key}>
+                    {(dragHandleProps) => renderThreadSection(section, dragHandleProps)}
+                  </SortableThreadSection>
                 ))}
               </SortableContext>
             </DndContext>
           </>
         ) : (
           organizedThreadSections.map((section) => (
-            <div key={section.key} className="flex flex-col gap-1">
+            <div key={section.key} className="flex shrink-0 flex-col gap-1">
               {renderThreadSection(section)}
             </div>
           ))
