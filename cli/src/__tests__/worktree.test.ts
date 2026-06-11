@@ -399,21 +399,24 @@ describe("worktree helpers", () => {
   });
 
   it("rebinds same-repo workspace paths onto the current worktree root", () => {
-    expect(
-      rebindWorkspaceCwd({
-        sourceRepoRoot: "/Users/example/rudder",
-        targetRepoRoot: "/Users/example/rudder-pr-432",
-        workspaceCwd: "/Users/example/rudder",
-      }),
-    ).toBe("/Users/example/rudder-pr-432");
+    const sourceRepoRoot = path.join(os.tmpdir(), "rudder");
+    const targetRepoRoot = path.join(os.tmpdir(), "rudder-pr-432");
 
     expect(
       rebindWorkspaceCwd({
-        sourceRepoRoot: "/Users/example/rudder",
-        targetRepoRoot: "/Users/example/rudder-pr-432",
-        workspaceCwd: "/Users/example/rudder/packages/db",
+        sourceRepoRoot,
+        targetRepoRoot,
+        workspaceCwd: sourceRepoRoot,
       }),
-    ).toBe("/Users/example/rudder-pr-432/packages/db");
+    ).toBe(targetRepoRoot);
+
+    expect(
+      rebindWorkspaceCwd({
+        sourceRepoRoot,
+        targetRepoRoot,
+        workspaceCwd: path.join(sourceRepoRoot, "packages", "db"),
+      }),
+    ).toBe(path.join(targetRepoRoot, "packages", "db"));
   });
 
   it("does not rebind paths outside the source repo root", () => {
@@ -466,7 +469,9 @@ describe("worktree helpers", () => {
         copied: true,
       });
       expect(fs.readFileSync(targetHookPath, "utf8")).toBe("#!/usr/bin/env bash\nexit 0\n");
-      expect(fs.statSync(targetHookPath).mode & 0o111).not.toBe(0);
+      if (process.platform !== "win32") {
+        expect(fs.statSync(targetHookPath).mode & 0o111).not.toBe(0);
+      }
       expect(fs.readFileSync(targetTokensPath, "utf8")).toBe("secret-token\n");
     } finally {
       execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: repoRoot, stdio: "ignore" });

@@ -29,9 +29,10 @@ describe("runtime cache helpers", () => {
   });
 
   it("resolves RUDDER_HOME with shell-style home aliases", () => {
-    expect(resolveSharedRudderHomeDir({ RUDDER_HOME: "~" }, "/Users/test")).toBe("/Users/test");
-    expect(resolveSharedRudderHomeDir({ RUDDER_HOME: "~/rudder-data" }, "/Users/test")).toBe(
-      "/Users/test/rudder-data",
+    const homeDir = path.resolve("/Users/test");
+    expect(resolveSharedRudderHomeDir({ RUDDER_HOME: "~" }, homeDir)).toBe(homeDir);
+    expect(resolveSharedRudderHomeDir({ RUDDER_HOME: "~/rudder-data" }, homeDir)).toBe(
+      path.resolve(homeDir, "rudder-data"),
     );
   });
 

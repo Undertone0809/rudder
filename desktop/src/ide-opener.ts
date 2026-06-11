@@ -182,10 +182,10 @@ async function defaultCommandExists(command: string, platform: NodeJS.Platform) 
 
 function macAppCandidates(appName: string, homeDir: string) {
   return [
-    path.join("/Applications", `${appName}.app`),
-    path.join("/System/Applications", `${appName}.app`),
-    path.join("/System/Applications/Utilities", `${appName}.app`),
-    path.join(homeDir, "Applications", `${appName}.app`),
+    path.posix.join("/Applications", `${appName}.app`),
+    path.posix.join("/System/Applications", `${appName}.app`),
+    path.posix.join("/System/Applications/Utilities", `${appName}.app`),
+    path.posix.join(homeDir, "Applications", `${appName}.app`),
   ];
 }
 

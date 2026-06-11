@@ -87,10 +87,22 @@ async function ensureParentDir(target: string): Promise<void> {
 }
 
 async function ensureSymlink(target: string, source: string): Promise<void> {
+  async function symlinkOrCopySource(): Promise<void> {
+    try {
+      await fs.symlink(source, target);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== "win32" || (code !== "EPERM" && code !== "EACCES")) {
+        throw error;
+      }
+      await fs.copyFile(source, target);
+    }
+  }
+
   const existing = await fs.lstat(target).catch(() => null);
   if (!existing) {
     await ensureParentDir(target);
-    await fs.symlink(source, target);
+    await symlinkOrCopySource();
     return;
   }
 
@@ -105,7 +117,7 @@ async function ensureSymlink(target: string, source: string): Promise<void> {
   if (resolvedLinkedPath === source) return;
 
   await fs.unlink(target);
-  await fs.symlink(source, target);
+  await symlinkOrCopySource();
 }
 
 async function ensureCopiedFile(target: string, source: string): Promise<void> {
@@ -537,7 +549,15 @@ async function ensureManagedCodexSkillLink(target: string, source: string): Prom
   }
 
   await ensureParentDir(target);
-  await fs.symlink(source, target);
+  try {
+    await fs.symlink(source, target, process.platform === "win32" ? "junction" : "dir");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (process.platform !== "win32" || (code !== "EPERM" && code !== "EACCES")) {
+      throw error;
+    }
+    await fs.cp(source, target, { recursive: true });
+  }
 }
 
 async function syncManagedCodexSkillsHome(

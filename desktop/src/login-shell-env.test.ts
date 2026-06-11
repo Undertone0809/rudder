@@ -22,8 +22,14 @@ describe("login shell PATH sync", () => {
 
   it("merges current PATH with login-shell PATH without duplicating entries", () => {
     expect(
-      mergePathValues("/usr/bin:/bin", "/Users/test/.nvm/bin:/usr/bin:/bin"),
+      mergePathValues("/usr/bin:/bin", "/Users/test/.nvm/bin:/usr/bin:/bin", ":"),
     ).toBe("/usr/bin:/bin:/Users/test/.nvm/bin");
+  });
+
+  it.runIf(process.platform === "win32")("merges Windows PATH values with semicolon delimiters", () => {
+    expect(
+      mergePathValues("C:\\Windows\\System32;C:\\Tools", "c:\\windows\\system32;C:\\Node", ";"),
+    ).toBe("C:\\Windows\\System32;C:\\Tools;C:\\Node");
   });
 
   it("prefers an absolute SHELL and falls back to common login shells", () => {

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import net from "node:net";
 import { createHash, randomUUID } from "node:crypto";
@@ -229,17 +229,37 @@ export function formatCommandForDisplay(command: string, args: string[]) {
     .join(" ");
 }
 
+export function buildPlatformShellCommand(command: string, platform: NodeJS.Platform = process.platform): {
+  command: string;
+  args: string[];
+  windowsVerbatimArguments?: boolean;
+} {
+  if (platform === "win32") {
+    return {
+      command: process.env.ComSpec?.trim() || "cmd.exe",
+      args: ["/d", "/s", "/c", `"${command}"`],
+      windowsVerbatimArguments: true,
+    };
+  }
+  return {
+    command: process.env.SHELL?.trim() || "/bin/sh",
+    args: ["-c", command],
+  };
+}
+
 export async function executeProcess(input: {
   command: string;
   args: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  windowsVerbatimArguments?: boolean;
 }): Promise<{ stdout: string; stderr: string; code: number | null }> {
   const proc = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
     const child = spawn(input.command, input.args, {
       cwd: input.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: input.env ?? process.env,
+      windowsVerbatimArguments: input.windowsVerbatimArguments,
     });
     let stdout = "";
     let stderr = "";
@@ -286,6 +306,13 @@ export function terminateChildProcess(child: ChildProcess) {
       // Fall through to the direct child kill.
     }
   }
+  if (process.platform === "win32") {
+    const result = spawnSync("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    if (result.status === 0) return;
+  }
   if (!child.killed) {
     child.kill("SIGTERM");
   }
@@ -328,12 +355,13 @@ export async function runWorkspaceCommand(input: {
   env: NodeJS.ProcessEnv;
   label: string;
 }) {
-  const shell = process.env.SHELL?.trim() || "/bin/sh";
+  const shell = buildPlatformShellCommand(input.command);
   const proc = await executeProcess({
-    command: shell,
-    args: ["-c", input.command],
+    command: shell.command,
+    args: shell.args,
     cwd: input.cwd,
     env: input.env,
+    windowsVerbatimArguments: shell.windowsVerbatimArguments,
   });
   if (proc.code === 0) return;
 
@@ -424,12 +452,13 @@ export async function recordWorkspaceCommandOperation(
     cwd: input.cwd,
     metadata: input.metadata ?? null,
     run: async () => {
-      const shell = process.env.SHELL?.trim() || "/bin/sh";
+      const shell = buildPlatformShellCommand(input.command);
       const result = await executeProcess({
-        command: shell,
-        args: ["-c", input.command],
+        command: shell.command,
+        args: shell.args,
         cwd: input.cwd,
         env: input.env,
+        windowsVerbatimArguments: shell.windowsVerbatimArguments,
       });
       stdout = result.stdout;
       stderr = result.stderr;

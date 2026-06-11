@@ -12,7 +12,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { asNumber, asString, parseObject, renderTemplate } from "../agent-runtimes/utils.js";
 import { resolveHomeAwarePath } from "../home-paths.js";
 import type { WorkspaceOperationRecorder } from "./workspace-operations.js";
-import { ExecutionWorkspaceInput, ExecutionWorkspaceIssueRef, ExecutionWorkspaceAgentRef, RealizedExecutionWorkspace, RuntimeServiceRef, RuntimeServiceRecord, runtimeServicesById, runtimeServicesByReuseKey, runtimeServiceLeasesByRun, stableStringify, sanitizeRuntimeServiceBaseEnv, stableRuntimeServiceId, toRuntimeServiceRef, sanitizeSlugPart, renderWorkspaceTemplate, sanitizeBranchName, isAbsolutePath, resolveConfiguredPath, formatCommandForDisplay, executeProcess, runGit, gitErrorIncludes, directoryExists, terminateChildProcess, buildWorkspaceCommandEnv, runWorkspaceCommand, recordGitOperation, recordWorkspaceCommandOperation, provisionExecutionWorktree, buildExecutionWorkspaceCleanupEnv, resolveGitRepoRootForWorkspaceCleanup } from "./workspace-runtime.helpers.js";
+import { ExecutionWorkspaceInput, ExecutionWorkspaceIssueRef, ExecutionWorkspaceAgentRef, RealizedExecutionWorkspace, RuntimeServiceRef, RuntimeServiceRecord, runtimeServicesById, runtimeServicesByReuseKey, runtimeServiceLeasesByRun, stableStringify, sanitizeRuntimeServiceBaseEnv, stableRuntimeServiceId, toRuntimeServiceRef, sanitizeSlugPart, renderWorkspaceTemplate, sanitizeBranchName, isAbsolutePath, resolveConfiguredPath, formatCommandForDisplay, executeProcess, runGit, gitErrorIncludes, directoryExists, terminateChildProcess, buildWorkspaceCommandEnv, runWorkspaceCommand, recordGitOperation, recordWorkspaceCommandOperation, provisionExecutionWorktree, buildExecutionWorkspaceCleanupEnv, resolveGitRepoRootForWorkspaceCleanup, buildPlatformShellCommand } from "./workspace-runtime.helpers.js";
 import { realizeExecutionWorkspace, cleanupExecutionWorkspaceArtifacts } from "./workspace-runtime.lifecycle.js";
 
 export async function allocatePort(): Promise<number> {
@@ -301,12 +301,13 @@ export async function startLocalRuntimeService(input: {
     const portEnvKey = asString(portConfig.envKey, "PORT");
     env[portEnvKey] = String(port);
   }
-  const shell = process.env.SHELL?.trim() || "/bin/sh";
-  const child = spawn(shell, ["-lc", command], {
+  const shell = buildPlatformShellCommand(command);
+  const child = spawn(shell.command, shell.args, {
     cwd: serviceCwd,
     env,
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
+    windowsVerbatimArguments: shell.windowsVerbatimArguments,
   });
   let stderrExcerpt = "";
   let stdoutExcerpt = "";

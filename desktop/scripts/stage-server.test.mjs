@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -18,6 +18,19 @@ const tempRoots = [];
 
 function writeJson(filePath, value) {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function embeddedPostgresPlatformPackageName() {
+  if (process.platform === "win32") return "@embedded-postgres/windows-x64";
+  if (process.platform === "darwin") return process.arch === "arm64" ? "@embedded-postgres/darwin-arm64" : "@embedded-postgres/darwin-x64";
+  if (process.platform === "linux") {
+    if (process.arch === "arm64") return "@embedded-postgres/linux-arm64";
+    if (process.arch === "arm") return "@embedded-postgres/linux-arm";
+    if (process.arch === "ia32") return "@embedded-postgres/linux-ia32";
+    if (process.arch === "ppc64") return "@embedded-postgres/linux-ppc64";
+    return "@embedded-postgres/linux-x64";
+  }
+  return null;
 }
 
 function createStageServerRepo() {
@@ -70,11 +83,28 @@ function createStageServerRepo() {
     },
   });
 
+  const embeddedPostgresPackage = embeddedPostgresPlatformPackageName();
+  if (embeddedPostgresPackage) {
+    const embeddedPostgresStoreDir = join(
+      repo,
+      "node_modules",
+      ".pnpm",
+      `${embeddedPostgresPackage.replace("/", "+")}@0.0.0`,
+      "node_modules",
+      ...embeddedPostgresPackage.split("/"),
+    );
+    mkdirSync(embeddedPostgresStoreDir, { recursive: true });
+    writeJson(join(embeddedPostgresStoreDir, "package.json"), {
+      name: embeddedPostgresPackage,
+      version: "0.0.0",
+    });
+  }
+
   const binDir = join(repo, "bin");
   mkdirSync(binDir, { recursive: true });
+  const pnpmScriptPath = join(binDir, "pnpm.cjs");
   const pnpmPath = join(binDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
-  writeFileSync(pnpmPath, [
-    "#!/usr/bin/env node",
+  writeFileSync(pnpmScriptPath, [
     "const fs = require('node:fs');",
     "const path = require('node:path');",
     "const repo = process.cwd();",
@@ -97,9 +127,19 @@ function createStageServerRepo() {
     "fs.linkSync(path.join(repo, 'packages/shared/package.json'), path.join(sharedStore, 'package.json'));",
     "const sharedTarget = path.join(target, 'node_modules/@rudderhq');",
     "fs.mkdirSync(sharedTarget, { recursive: true });",
-    "fs.symlinkSync('../.pnpm/@rudderhq+shared@file+packages+shared/node_modules/@rudderhq/shared', path.join(sharedTarget, 'shared'));",
+    "if (process.platform === 'win32') {",
+    "  fs.symlinkSync(sharedStore, path.join(sharedTarget, 'shared'), 'junction');",
+    "} else {",
+    "  fs.symlinkSync('../.pnpm/@rudderhq+shared@file+packages+shared/node_modules/@rudderhq/shared', path.join(sharedTarget, 'shared'));",
+    "}",
     "",
   ].join("\n"));
+  writeFileSync(
+    pnpmPath,
+    process.platform === "win32"
+      ? "@echo off\r\nnode \"%~dp0\\pnpm.cjs\" %*\r\n"
+      : `#!/usr/bin/env node\nrequire('./pnpm.cjs');\n`,
+  );
   chmodSync(pnpmPath, 0o755);
 
   return { repo, binDir, sharedManifestPath };
@@ -120,12 +160,12 @@ describe("desktop stage-server", () => {
       cwd: repo,
       env: {
         ...process.env,
-        PATH: `${binDir}:${process.env.PATH}`,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
       },
       encoding: "utf8",
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr || result.stdout).toBe(0);
     expect(readFileSync(sharedManifestPath, "utf8")).toBe(before);
     expect(readFileSync(join(repo, "desktop/.packaged/server-package/package.json"), "utf8")).toContain(
       '"default": "./dist/index.js"',

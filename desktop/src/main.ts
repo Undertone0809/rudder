@@ -30,6 +30,7 @@ import {
   resolveDesktopWindowBackgroundColorForEffect,
   resolveDesktopWindowEffectMode,
   resolveDesktopWindowEffects,
+  resolveRoundedWindowShapeRects,
 } from "./desktop-window-effects.js";
 import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
 import {
@@ -668,6 +669,29 @@ function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: stri
   });
 }
 
+function syncWindowsRoundedWindowShape(window: BrowserWindow): void {
+  if (process.platform !== "win32" || window.isDestroyed()) return;
+  if (window.isMaximized() || window.isFullScreen()) {
+    window.setShape([]);
+    return;
+  }
+
+  const { width, height } = window.getContentBounds();
+  window.setShape(resolveRoundedWindowShapeRects(width, height));
+}
+
+function installWindowsRoundedWindowShape(window: BrowserWindow): void {
+  if (process.platform !== "win32") return;
+
+  const sync = () => syncWindowsRoundedWindowShape(window);
+  window.once("ready-to-show", sync);
+  window.on("resize", sync);
+  window.on("maximize", sync);
+  window.on("unmaximize", sync);
+  window.on("enter-full-screen", sync);
+  window.on("leave-full-screen", sync);
+}
+
 async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, "preload.js");
   const desktopWindowEffects: Pick<BrowserWindowConstructorOptions,
@@ -695,6 +719,7 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   if (process.platform !== "darwin") {
     window.setMenuBarVisibility(false);
   }
+  installWindowsRoundedWindowShape(window);
 
   window.once("ready-to-show", () => {
     window.show();

@@ -18,6 +18,7 @@ import type { WorkspaceOperationRecorder } from "../services/workspace-operation
 
 const execFileAsync = promisify(execFile);
 const leasedRunIds = new Set<string>();
+const nodeCommand = `"${process.execPath}"`;
 
 const GIT_IDENTITY_TEST_ENV_KEYS = [
   "GIT_AUTHOR_NAME",
@@ -50,6 +51,7 @@ async function runGit(cwd: string, args: string[]) {
 async function createTempRepo() {
   const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-worktree-repo-"));
   await runGit(repoRoot, ["init"]);
+  await runGit(repoRoot, ["config", "core.autocrlf", "false"]);
   await runGit(repoRoot, ["config", "user.email", "rudder@example.com"]);
   await runGit(repoRoot, ["config", "user.name", "Rudder Test"]);
   await fs.writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
@@ -305,17 +307,16 @@ describe("realizeExecutionWorkspace", () => {
     const repoRoot = await createTempRepo();
     await fs.mkdir(path.join(repoRoot, "scripts"), { recursive: true });
     await fs.writeFile(
-      path.join(repoRoot, "scripts", "provision.sh"),
+      path.join(repoRoot, "scripts", "provision.mjs"),
       [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        "printf '%s\\n' \"$RUDDER_WORKSPACE_BRANCH\" > .rudder-provision-branch",
-        "printf '%s\\n' \"$RUDDER_WORKSPACE_BASE_CWD\" > .rudder-provision-base",
-        "printf '%s\\n' \"$RUDDER_WORKSPACE_CREATED\" > .rudder-provision-created",
+        "import fs from 'node:fs';",
+        "fs.writeFileSync('.rudder-provision-branch', `${process.env.RUDDER_WORKSPACE_BRANCH}\\n`);",
+        "fs.writeFileSync('.rudder-provision-base', `${process.env.RUDDER_WORKSPACE_BASE_CWD}\\n`);",
+        "fs.writeFileSync('.rudder-provision-created', `${process.env.RUDDER_WORKSPACE_CREATED}\\n`);",
       ].join("\n"),
       "utf8",
     );
-    await runGit(repoRoot, ["add", "scripts/provision.sh"]);
+    await runGit(repoRoot, ["add", "scripts/provision.mjs"]);
     await runGit(repoRoot, ["commit", "-m", "Add worktree provision script"]);
 
     const workspace = await realizeExecutionWorkspace({
@@ -331,7 +332,7 @@ describe("realizeExecutionWorkspace", () => {
         workspaceStrategy: {
           type: "git_worktree",
           branchTemplate: "{{issue.identifier}}-{{slug}}",
-          provisionCommand: "bash ./scripts/provision.sh",
+          provisionCommand: `${nodeCommand} ./scripts/provision.mjs`,
         },
       },
       issue: {
@@ -369,7 +370,7 @@ describe("realizeExecutionWorkspace", () => {
         workspaceStrategy: {
           type: "git_worktree",
           branchTemplate: "{{issue.identifier}}-{{slug}}",
-          provisionCommand: "bash ./scripts/provision.sh",
+          provisionCommand: `${nodeCommand} ./scripts/provision.mjs`,
         },
       },
       issue: {
@@ -393,15 +394,13 @@ describe("realizeExecutionWorkspace", () => {
 
     await fs.mkdir(path.join(repoRoot, "scripts"), { recursive: true });
     await fs.writeFile(
-      path.join(repoRoot, "scripts", "provision.sh"),
+      path.join(repoRoot, "scripts", "provision.mjs"),
       [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        "printf 'provisioned\\n'",
+        "process.stdout.write('provisioned\\n');",
       ].join("\n"),
       "utf8",
     );
-    await runGit(repoRoot, ["add", "scripts/provision.sh"]);
+    await runGit(repoRoot, ["add", "scripts/provision.mjs"]);
     await runGit(repoRoot, ["commit", "-m", "Add recorder provision script"]);
 
     await realizeExecutionWorkspace({
@@ -417,7 +416,7 @@ describe("realizeExecutionWorkspace", () => {
         workspaceStrategy: {
           type: "git_worktree",
           branchTemplate: "{{issue.identifier}}-{{slug}}",
-          provisionCommand: "bash ./scripts/provision.sh",
+          provisionCommand: `${nodeCommand} ./scripts/provision.mjs`,
         },
       },
       issue: {
@@ -442,7 +441,7 @@ describe("realizeExecutionWorkspace", () => {
       branchName: "PAP-540-record-workspace-operations",
       created: true,
     });
-    expect(operations[1]?.command).toBe("bash ./scripts/provision.sh");
+    expect(operations[1]?.command).toBe(`${nodeCommand} ./scripts/provision.mjs`);
   });
 
   it("reuses an existing branch without resetting it when recreating a missing worktree", async () => {

@@ -50,6 +50,10 @@ function shellArgSetsForPathRead(shellPath: string): string[][] {
   return argSets;
 }
 
+function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
+  return platform === "win32" ? ";" : ":";
+}
+
 export function mergePathValues(
   currentPath: string | null | undefined,
   loginPath: string | null | undefined,
@@ -176,7 +180,8 @@ export async function readLoginShellPath(options: {
     }
 
     if (pathValues.length > 0) {
-      return { shellPath, pathValue: mergePathValues(null, pathValues.join(path.delimiter)) };
+      const delimiter = pathDelimiterForPlatform(platform);
+      return { shellPath, pathValue: mergePathValues(null, pathValues.join(delimiter), delimiter) };
     }
   }
 
@@ -192,7 +197,7 @@ export async function syncProcessPathFromLoginShell(options: {
   const env = options.env ?? process.env;
   const currentPath = env.PATH ?? env.Path ?? null;
   const { shellPath, pathValue } = await readLoginShellPath(options);
-  const mergedPath = mergePathValues(currentPath, pathValue);
+  const mergedPath = mergePathValues(currentPath, pathValue, pathDelimiterForPlatform(options.platform ?? process.platform));
   const changed = Boolean(mergedPath && mergedPath !== currentPath);
 
   if (changed && mergedPath) {

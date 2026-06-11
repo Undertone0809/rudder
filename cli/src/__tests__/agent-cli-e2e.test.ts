@@ -410,14 +410,15 @@ describe("agent CLI e2e", () => {
     latestServerOutput = { stdout: [], stderr: [] };
     const instanceId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     serverProcess = spawn(
-      "pnpm",
-      ["--silent", "rudder", "run", "--config", configPath],
+      process.execPath,
+      ["cli/node_modules/tsx/dist/cli.mjs", "cli/src/index.ts", "run", "--config", configPath],
       {
         cwd: repoRoot,
         env: createServerEnv(configPath, port, started.connectionString, instanceId),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
+    serverProcess.on("error", (error) => latestServerOutput.stderr.push(String(error)));
     serverProcess.stdout?.on("data", (chunk) => latestServerOutput.stdout.push(String(chunk)));
     serverProcess.stderr?.on("data", (chunk) => latestServerOutput.stderr.push(String(chunk)));
     await waitForServer(apiBase, serverProcess, latestServerOutput);
@@ -1533,7 +1534,7 @@ describe("agent CLI e2e", () => {
           (
             entry.key === importedSkill!.key
             || entry.selectionKey === importedSkill!.key
-            || entry.sourcePath?.includes("/cli-e2e-skill") === true
+            || entry.sourcePath?.replaceAll("\\", "/").includes("/cli-e2e-skill") === true
           )
           && entry.desired,
       ),

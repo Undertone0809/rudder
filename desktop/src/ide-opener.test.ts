@@ -242,6 +242,7 @@ describe("openWorkspace", () => {
 describe("openWorkspaceFileInIde", () => {
   it("opens the selected file with the preferred detected IDE", async () => {
     const openDarwinApp = vi.fn(async () => {});
+    const absolutePath = path.resolve("/Users/tester/workspaces/org-1", "plans/next-step.md");
 
     const result = await openWorkspaceFileInIde(
       "/Users/tester/workspaces/org-1",
@@ -258,17 +259,18 @@ describe("openWorkspaceFileInIde", () => {
 
     expect(openDarwinApp).toHaveBeenCalledWith(
       "/Applications/Cursor.app",
-      "/Users/tester/workspaces/org-1/plans/next-step.md",
+      absolutePath,
     );
     expect(result).toEqual({
       id: "cursor",
       label: "Cursor",
-      absolutePath: "/Users/tester/workspaces/org-1/plans/next-step.md",
+      absolutePath,
     });
   });
 
   it("opens a workspace file with an installed Windows IDE executable", async () => {
     const runExecutable = vi.fn(async () => {});
+    const absolutePath = path.resolve("/Users/tester/workspaces/org-1", "plans/next-step.md");
 
     const result = await openWorkspaceFileInIde(
       "/Users/tester/workspaces/org-1",
@@ -289,13 +291,13 @@ describe("openWorkspaceFileInIde", () => {
 
     expect(runExecutable).toHaveBeenCalledWith(
       "C:\\Users\\tester\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
-      "/Users/tester/workspaces/org-1/plans/next-step.md",
+      absolutePath,
       "win32",
     );
     expect(result).toEqual({
       id: "cursor",
       label: "Cursor",
-      absolutePath: "/Users/tester/workspaces/org-1/plans/next-step.md",
+      absolutePath,
     });
   });
 
@@ -338,7 +340,9 @@ describe("resolveWorkspaceRootDirectory", () => {
 
 describe("resolveWorkspaceFileAbsolutePath", () => {
   it("joins workspace root and relative file paths with native resolution", () => {
-    expect(resolveWorkspaceFileAbsolutePath("/tmp/org", "skills/test/SKILL.md")).toBe("/tmp/org/skills/test/SKILL.md");
+    expect(resolveWorkspaceFileAbsolutePath("/tmp/org", "skills/test/SKILL.md")).toBe(
+      path.resolve("/tmp/org", "skills/test/SKILL.md"),
+    );
   });
 
   it("rejects paths outside the workspace root", () => {

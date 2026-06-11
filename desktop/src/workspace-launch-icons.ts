@@ -127,8 +127,9 @@ export async function resolveDarwinAppBundleIconPath(
 
   const pathExists = options.pathExists ?? fs.existsSync;
   const readInfoPlistValue = options.readPlistRawValue ?? readPlistRawValue;
-  const infoPlistPath = path.join(appPath, "Contents", "Info.plist");
-  const resourcesPath = path.join(appPath, "Contents", "Resources");
+  const joinBundlePath = platform === "darwin" ? path.posix.join : path.join;
+  const infoPlistPath = joinBundlePath(appPath, "Contents", "Info.plist");
+  const resourcesPath = joinBundlePath(appPath, "Contents", "Resources");
   const iconName = await readInfoPlistValue(infoPlistPath, "CFBundleIconFile")
     ?? await readInfoPlistValue(infoPlistPath, "CFBundleIconName");
   if (!iconName) return null;
@@ -137,7 +138,7 @@ export async function resolveDarwinAppBundleIconPath(
     ? [iconName]
     : [iconName, `${iconName}.icns`, `${iconName}.png`];
   for (const candidate of candidates) {
-    const iconPath = path.join(resourcesPath, candidate);
+    const iconPath = joinBundlePath(resourcesPath, candidate);
     if (pathExists(iconPath)) return iconPath;
   }
   return null;

@@ -137,7 +137,10 @@ describe("index.css motion rules", () => {
     expect(rootTokens).toContain("--desktop-window-radius: 0.625rem");
     expect(windowsRootClip).toContain("border-radius: var(--desktop-window-radius)");
     expect(windowsRootClip).toContain("overflow: hidden");
-    expect(indexCss).toContain("html.desktop-shell-windows #root {\n    clip-path: inset(0 round var(--desktop-window-radius));");
+    expect(indexCss).toContain("html.desktop-shell-windows #root {\n    position: fixed;\n    inset: 0;\n    width: 100%;\n    height: 100%;\n    contain: paint;");
+    expect(indexCss).toContain("html.desktop-shell-windows body {\n    clip-path: inset(0 round var(--desktop-window-radius));");
+    expect(indexCss).toContain("html.desktop-shell-windows #root {\n    position: fixed;");
+    expect(indexCss).toContain("html.desktop-shell-windows.desktop-shell-window-maximized body,\n  html.desktop-shell-windows.desktop-shell-window-maximized #root {\n    clip-path: none;");
     expect(windowsBackdropClip).toContain("border-radius: var(--desktop-window-radius)");
     expect(windowsBackdropClip).toContain("overflow: hidden");
     expect(maximizedBackdropClip).toContain("border-radius: 0");

@@ -5,6 +5,7 @@ import {
   resolveDesktopWindowChromeOptions,
   resolveDesktopWindowEffectMode,
   resolveDesktopWindowEffects,
+  resolveRoundedWindowShapeRects,
 } from "./desktop-window-effects.js";
 import type { DesktopAppearance } from "./theme-preference.js";
 
@@ -37,9 +38,19 @@ describe("desktop window effect mode", () => {
 
 describe("desktop window effects", () => {
   it("uses a frameless host window only on Windows so the renderer can clip rounded corners", () => {
-    expect(resolveDesktopWindowChromeOptions("win32")).toEqual({ frame: false });
+    expect(resolveDesktopWindowChromeOptions("win32")).toEqual({ frame: false, roundedCorners: true });
     expect(resolveDesktopWindowChromeOptions("darwin")).toEqual({});
     expect(resolveDesktopWindowChromeOptions("linux")).toEqual({});
+  });
+
+  it("builds a rounded restored-window shape for Windows", () => {
+    const rects = resolveRoundedWindowShapeRects(100, 80, 10);
+
+    expect(rects).toHaveLength(13);
+    expect(rects[0]).toEqual({ x: 7, y: 0, width: 86, height: 1 });
+    expect(rects[5]).toEqual({ x: 1, y: 6, width: 98, height: 4 });
+    expect(rects[6]).toEqual({ x: 0, y: 10, width: 100, height: 60 });
+    expect(rects[12]).toEqual({ x: 7, y: 79, width: 86, height: 1 });
   });
 
   it("uses native macOS vibrancy while keeping the hidden inset titlebar", () => {
@@ -58,7 +69,7 @@ describe("desktop window effects", () => {
     });
   });
 
-  it("uses Windows background material for the default vibrant mode", () => {
+  it("keeps the Windows host window fully transparent for rounded outer corners", () => {
     expect(resolveDesktopWindowEffects({
       platform: "win32",
       mode: "transparent_vibrant",
@@ -67,8 +78,20 @@ describe("desktop window effects", () => {
       transparentWindowBackground,
     })).toEqual({
       transparent: true,
-      backgroundColor: transparentWindowBackground.dark,
-      backgroundMaterial: "mica",
+      backgroundColor: "#00000000",
+    });
+  });
+
+  it("keeps the Windows transparent mode fully transparent for rounded outer corners", () => {
+    expect(resolveDesktopWindowEffects({
+      platform: "win32",
+      mode: "transparent",
+      appearance: "light",
+      desktopWindowBackground,
+      transparentWindowBackground,
+    })).toEqual({
+      transparent: true,
+      backgroundColor: "#00000000",
     });
   });
 

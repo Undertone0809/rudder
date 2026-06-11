@@ -71,6 +71,6 @@ describe("agent-v1 registry", () => {
 
   it("keeps the CLI reference doc in sync with the registry", () => {
     const reference = fs.readFileSync(CLI_REFERENCE_PATH, "utf8");
-    expect(reference).toBe(renderAgentCliReferenceMarkdown());
+    expect(reference.replace(/\r\n/g, "\n")).toBe(renderAgentCliReferenceMarkdown());
   });
 });
