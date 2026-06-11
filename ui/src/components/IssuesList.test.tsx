@@ -833,9 +833,28 @@ describe("IssuesList", () => {
       );
     });
 
-    expect(container.querySelector('[data-testid="issues-working-count"]')?.textContent).toBe("1 working");
+    const workingButton = container.querySelector<HTMLButtonElement>('[data-testid="issues-working-count"]');
+    expect(workingButton?.textContent).toBe("1 working");
+    expect(workingButton?.getAttribute("aria-pressed")).toBe("false");
     expect(container.textContent).toContain("Live visible");
+    expect(container.textContent).toContain("Idle visible");
     expect(container.textContent).not.toContain("Live filtered");
+
+    act(() => {
+      workingButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(workingButton?.getAttribute("aria-pressed")).toBe("true");
+    expect(container.textContent).toContain("Live visible");
+    expect(container.textContent).not.toContain("Idle visible");
+    expect(container.textContent).not.toContain("Live filtered");
+
+    act(() => {
+      workingButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(workingButton?.getAttribute("aria-pressed")).toBe("false");
+    expect(container.textContent).toContain("Idle visible");
   });
 
   it("sorts each board status lane using the saved sort order", () => {
