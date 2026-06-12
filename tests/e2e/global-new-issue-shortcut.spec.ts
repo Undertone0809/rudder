@@ -1,11 +1,20 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import type { KeyboardShortcutSettings } from "@rudderhq/shared";
 
 async function resetShortcutSettings(page: Page) {
   const resetRes = await page.request.patch("/api/instance/settings/shortcuts", {
     data: { shortcuts: [] },
   });
   expect(resetRes.ok()).toBe(true);
+  const readback = await getShortcutSettings(page);
+  expect(readback.shortcuts).toEqual([]);
+}
+
+async function getShortcutSettings(page: Page): Promise<KeyboardShortcutSettings> {
+  const res = await page.request.get("/api/instance/settings/shortcuts");
+  expect(res.ok()).toBe(true);
+  return await res.json() as KeyboardShortcutSettings;
 }
 
 async function gotoDashboardReady(page: Page, issuePrefix: string) {
@@ -20,9 +29,12 @@ async function gotoDashboardReady(page: Page, issuePrefix: string) {
   await shortcutsReady;
   await expect(page.getByRole("button", { name: "Create", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "System settings" })).toBeVisible();
+  await expect(page.locator('[data-shortcut-settings-ready="true"]')).toBeVisible();
 }
 
 test.describe("Global new issue shortcut", () => {
+  test.describe.configure({ mode: "serial" });
+
   test("opens the new issue dialog with Command+N", async ({ page }) => {
     await resetShortcutSettings(page);
     const orgRes = await page.request.post("/api/orgs", {
@@ -64,7 +76,14 @@ test.describe("Global new issue shortcut", () => {
       && response.ok(),
     );
     await modal.getByRole("button", { name: "Save shortcuts" }).click();
-    await saveResponse;
+    const saved = await (await saveResponse).json() as KeyboardShortcutSettings;
+    expect(saved.shortcuts).toEqual([
+      {
+        actionId: "issue.create",
+        bindings: [{ key: "n", metaKey: true }],
+      },
+    ]);
+    expect(await getShortcutSettings(page)).toEqual(saved);
 
     await page.reload();
     await gotoDashboardReady(page, organization.issuePrefix);

@@ -662,6 +662,7 @@ export function Layout() {
   const shortcutSettings = shortcutSettingsQuery.data === undefined
     ? (shortcutSettingsQuery.isError ? null : undefined)
     : shortcutSettingsQuery.data;
+  const shortcutSettingsReady = shortcutSettings !== undefined;
 
   useKeyboardShortcuts({
     onNewIssue: () => openNewIssue(),
@@ -715,6 +716,7 @@ export function Layout() {
   return (
     <NavigationBackProvider navigateBack={navigateBack}>
     <div
+      data-shortcut-settings-ready={shortcutSettingsReady ? "true" : "false"}
       className={cn(
         "app-shell-backdrop text-foreground pt-[env(safe-area-inset-top)]",
         isMobile ? "min-h-dvh" : "flex h-dvh flex-col overflow-hidden",
