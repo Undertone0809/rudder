@@ -1272,15 +1272,21 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.post("/heartbeat-runs/:runId/cancel", async (req, res) => {
-    assertBoard(req);
     const runId = req.params.runId as string;
+    const originalRun = await heartbeat.getRun(runId);
+    if (!originalRun) {
+      throw notFound("Heartbeat run not found");
+    }
+    assertCompanyAccess(req, originalRun.orgId);
+
+    const actor = getActorInfo(req);
     const run = await heartbeat.cancelRun(runId);
 
     if (run) {
       await logActivity(db, {
         orgId: run.orgId,
-        actorType: "user",
-        actorId: req.actor.userId ?? "board",
+        actorType: actor.actorType,
+        actorId: actor.actorId,
         action: "heartbeat.cancelled",
         entityType: "heartbeat_run",
         entityId: run.id,
@@ -1292,7 +1298,6 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.post("/heartbeat-runs/:runId/retry", async (req, res) => {
-    assertBoard(req);
     const runId = req.params.runId as string;
     const originalRun = await heartbeat.getRun(runId);
     if (!originalRun) {

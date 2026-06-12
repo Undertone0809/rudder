@@ -5,6 +5,7 @@ import { agentRoutes } from "../routes/agents.js";
 import { errorHandler } from "../middleware/index.js";
 
 const mockHeartbeatService = vi.hoisted(() => ({
+  cancelRun: vi.fn(),
   getRun: vi.fn(),
   retryRun: vi.fn(),
 }));
@@ -57,17 +58,19 @@ vi.mock("../agent-runtimes/index.js", () => ({
   listAgentRuntimeModels: vi.fn(),
 }));
 
-function createApp() {
+function createApp(
+  actor: Record<string, unknown> = {
+    type: "board",
+    userId: "local-board",
+    orgIds: ["organization-1"],
+    source: "local_implicit",
+    isInstanceAdmin: false,
+  },
+) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "board",
-      userId: "local-board",
-      orgIds: ["organization-1"],
-      source: "local_implicit",
-      isInstanceAdmin: false,
-    };
+    (req as any).actor = actor;
     next();
   });
   app.use("/api", agentRoutes({} as any));
@@ -120,6 +123,89 @@ describe("heartbeat run retry route", () => {
           originalRunId: "run-1",
           recoveryTrigger: "manual",
         }),
+      }),
+    );
+  });
+
+  it("retries a failed run with agent attribution for same-organization agent callers", async () => {
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-1",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "failed",
+    });
+    mockHeartbeatService.retryRun.mockResolvedValue({
+      id: "run-2",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "queued",
+      contextSnapshot: {
+        recovery: {
+          originalRunId: "run-1",
+          recoveryTrigger: "manual",
+        },
+      },
+    });
+
+    const res = await request(
+      createApp({
+        type: "agent",
+        orgId: "organization-1",
+        agentId: "agent-1",
+        runId: "caller-run",
+      }),
+    ).post("/api/heartbeat-runs/run-1/retry").send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith("run-1", {
+      requestedByActorType: "agent",
+      requestedByActorId: "agent-1",
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        orgId: "organization-1",
+        actorType: "agent",
+        actorId: "agent-1",
+        action: "heartbeat.retried",
+        entityId: "run-2",
+      }),
+    );
+  });
+
+  it("cancels a run with agent attribution for same-organization agent callers", async () => {
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-1",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "running",
+    });
+    mockHeartbeatService.cancelRun.mockResolvedValue({
+      id: "run-1",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "cancelled",
+    });
+
+    const res = await request(
+      createApp({
+        type: "agent",
+        orgId: "organization-1",
+        agentId: "agent-1",
+        runId: "caller-run",
+      }),
+    ).post("/api/heartbeat-runs/run-1/cancel").send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-1");
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        orgId: "organization-1",
+        actorType: "agent",
+        actorId: "agent-1",
+        action: "heartbeat.cancelled",
+        entityId: "run-1",
       }),
     );
   });
