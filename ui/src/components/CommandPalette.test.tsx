@@ -12,6 +12,7 @@ import { CommandPalette } from "./CommandPalette";
 
 const navigateMock = vi.fn();
 const observedQueryKeys = vi.hoisted(() => [] as Array<readonly unknown[]>);
+const queryDataByKey = vi.hoisted(() => new Map<string, unknown>());
 const shortcutSettingsMock = vi.hoisted(() => ({
   value: null as null | { shortcuts: Array<{ actionId: "commandPalette.open"; bindings?: Array<{ key: string; metaKey?: boolean }>; disabled?: boolean }> },
 }));
@@ -19,6 +20,8 @@ const shortcutSettingsMock = vi.hoisted(() => ({
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
     observedQueryKeys.push(queryKey);
+    const queryData = queryDataByKey.get(JSON.stringify(queryKey));
+    if (queryData !== undefined) return { data: queryData };
     if (enabled === false) return { data: [] };
     if (
       queryKey[0] === "issues" &&
@@ -172,6 +175,7 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   observedQueryKeys.length = 0;
+  queryDataByKey.clear();
   shortcutSettingsMock.value = null;
   navigateMock.mockClear();
   document.body.innerHTML = "";
@@ -426,6 +430,37 @@ describe("CommandPalette", () => {
     });
 
     expect(navigateMock).toHaveBeenCalledWith("/library?path=docs%2Fonboarding.md");
+  });
+
+  it("does not render cached empty-query Library entries while waiting for scoped query text", () => {
+    queryDataByKey.set(JSON.stringify([
+      "organizations",
+      "org-1",
+      "workspace-mention-files",
+      "",
+    ]), {
+      entries: [
+        {
+          name: "review-scoped-file.md",
+          path: "docs/review-scoped-file.md",
+          isDirectory: false,
+        },
+        {
+          name: "review-scoped-dir",
+          path: "docs/review-scoped-dir",
+          isDirectory: true,
+        },
+      ],
+    });
+    const container = renderCommandPalette();
+    const input = openCommandPalette(container);
+
+    changeInput(input, "library ");
+
+    expect(container.querySelector("input")?.getAttribute("placeholder")).toBe("Search Library...");
+    expect(container.textContent).toContain("Type to search Library");
+    expect(container.textContent).not.toContain("review-scoped-file.md");
+    expect(container.textContent).not.toContain("review-scoped-dir");
   });
 
   it("exits scoped mode from Backspace or the chip clear button", () => {

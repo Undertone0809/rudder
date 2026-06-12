@@ -228,7 +228,7 @@ export function CommandPalette() {
     [issues, searchedIssues, searchQuery, scope],
   );
   const visibleChats = scope === null || scope === "chat" ? searchedChats : [];
-  const libraryEntries = scope === "library" ? librarySearch.entries : [];
+  const libraryEntries = scope === "library" && searchQuery.length > 0 ? librarySearch.entries : [];
   const filteredAgents = useMemo(
     () => agents.filter((agent: Agent) => searchTokensMatch(searchQuery, [
       agent.name,
