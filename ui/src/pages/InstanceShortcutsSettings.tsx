@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { KeyboardShortcutActionId, KeyboardShortcutSettings } from "@rudderhq/shared";
-import { Keyboard, Pencil, RotateCcw, Save, X } from "lucide-react";
+import { Keyboard, Pencil, RotateCcw, Save, Search, Trash2, X } from "lucide-react";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import {
   SettingsDivider,
   SettingsPageHeader,
   SettingsSection,
-  SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/context/ToastContext";
@@ -38,21 +39,54 @@ function shortcutSettingsEqual(a: KeyboardShortcutSettings, b: KeyboardShortcutS
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function IconTooltipButton({
+  label,
+  children,
+  className,
+  ...props
+}: Omit<ComponentProps<typeof Button>, "children"> & {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className={cn("size-8 text-muted-foreground", className)}
+          aria-label={label}
+          title={label}
+          {...props}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function ShortcutChips({ bindings, muted = false }: { bindings: readonly { key: string }[]; muted?: boolean }) {
   if (bindings.length === 0) {
-    return <span className="text-[12px] text-muted-foreground">Disabled</span>;
+    return (
+      <span className="inline-flex min-h-7 items-center rounded-full bg-[color:color-mix(in_oklab,var(--surface-inset)_80%,transparent)] px-3 text-[13px] text-muted-foreground">
+        Unassigned
+      </span>
+    );
   }
 
   return (
-    <div className="flex flex-wrap justify-end gap-1.5">
+    <div className="flex min-h-7 flex-wrap items-center gap-1.5">
       {bindings.map((binding) => (
         <kbd
           key={formatShortcutBinding(binding)}
           className={cn(
-            "rounded-[calc(var(--radius-md)-4px)] border px-2 py-1 font-mono text-[11px] leading-none",
+            "inline-flex min-h-7 items-center rounded-full border px-2.5 font-mono text-[12px] leading-none",
             muted
               ? "border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] bg-transparent text-muted-foreground"
-              : "border-[color:color-mix(in_oklab,var(--border-soft)_92%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_92%,transparent)] text-foreground",
+              : "border-transparent bg-[color:color-mix(in_oklab,var(--surface-active)_82%,transparent)] text-foreground",
           )}
         >
           {formatShortcutBinding(binding)}
@@ -71,6 +105,7 @@ export function InstanceShortcutsSettings() {
   const [editingActionId, setEditingActionId] = useState<KeyboardShortcutActionId | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     setBreadcrumbs([
@@ -155,6 +190,13 @@ export function InstanceShortcutsSettings() {
   const resolvedBindings = useMemo(() => resolveKeyboardShortcutBindings(draft), [draft]);
   const persisted = shortcutsQuery.data ?? EMPTY_SHORTCUT_SETTINGS;
   const hasChanges = !shortcutSettingsEqual(draft, persisted);
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const visibleShortcutEntries = useMemo(() => {
+    if (!normalizedSearchQuery) return KEYBOARD_SHORTCUT_REGISTRY;
+    return KEYBOARD_SHORTCUT_REGISTRY.filter((entry) => {
+      return `${entry.label} ${entry.description} ${entry.scope}`.toLowerCase().includes(normalizedSearchQuery);
+    });
+  }, [normalizedSearchQuery]);
 
   if (shortcutsQuery.isLoading) {
     return <SettingsPageSkeleton />;
@@ -188,123 +230,174 @@ export function InstanceShortcutsSettings() {
         title="Global"
         description="These shortcuts work outside text inputs, editors, menus, and dialogs."
       >
-        <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)]">
-          {KEYBOARD_SHORTCUT_REGISTRY.map((entry) => {
-            const actionId = entry.configurable && isConfigurableActionId(entry.actionId) ? entry.actionId : null;
-            const configurable = actionId !== null;
-            const preference = actionId
-              ? draft.shortcuts.find((shortcut) => shortcut.actionId === actionId)
-              : null;
-            const disabled = preference?.disabled === true;
-            const bindings = actionId ? resolvedBindings[actionId] ?? [] : entry.defaultBindings;
-            const editing = actionId !== null && editingActionId === actionId;
-            const hasSingleKeyCreateIssueBinding = actionId === "issue.create"
-              && bindings.some((binding) => {
-                const normalized = normalizeShortcutBinding(binding);
-                return normalized.key === "c" &&
-                  !normalized.metaKey &&
-                  !normalized.ctrlKey &&
-                  !normalized.altKey &&
-                  !normalized.shiftKey;
-              });
+        <div className="overflow-hidden rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,transparent)]">
+          <label className="flex min-h-12 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] px-3.5">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="sr-only">Search shortcuts</span>
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search shortcuts"
+              className="h-11 min-w-0 flex-1 bg-transparent text-[14px] text-foreground outline-none placeholder:text-muted-foreground"
+            />
+          </label>
 
-            return (
-              <div key={entry.actionId} className="flex flex-col gap-3 py-3.5 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-[14px] font-medium text-foreground">{entry.label}</h3>
-                    <span className="rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_74%,transparent)] px-2 py-0.5 text-[11px] text-muted-foreground">
-                      {entry.scope}
-                    </span>
-                    {!configurable ? (
-                      <span className="rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_74%,transparent)] px-2 py-0.5 text-[11px] text-muted-foreground">
-                        Read-only
+          <div className="hidden min-h-10 grid-cols-[minmax(0,1fr)_minmax(14rem,0.58fr)_6.5rem] items-center border-b border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] px-4 text-[12px] font-medium text-muted-foreground sm:grid">
+            <div>Command</div>
+            <div>Keybinding</div>
+            <div className="sr-only">Actions</div>
+          </div>
+
+          <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)]">
+            {visibleShortcutEntries.length === 0 ? (
+              <div className="px-4 py-8 text-center text-[13px] text-muted-foreground">
+                No shortcuts match your search.
+              </div>
+            ) : null}
+
+            {visibleShortcutEntries.map((entry) => {
+              const actionId = entry.configurable && isConfigurableActionId(entry.actionId) ? entry.actionId : null;
+              const configurable = actionId !== null;
+              const preference = actionId
+                ? draft.shortcuts.find((shortcut) => shortcut.actionId === actionId)
+                : null;
+              const disabled = preference?.disabled === true;
+              const customized = preference !== null && preference !== undefined;
+              const bindings = actionId ? resolvedBindings[actionId] ?? [] : entry.defaultBindings;
+              const editing = actionId !== null && editingActionId === actionId;
+              const hasSingleKeyCreateIssueBinding = actionId === "issue.create"
+                && bindings.some((binding) => {
+                  const normalized = normalizeShortcutBinding(binding);
+                  return normalized.key === "c" &&
+                    !normalized.metaKey &&
+                    !normalized.ctrlKey &&
+                    !normalized.altKey &&
+                    !normalized.shiftKey;
+                });
+
+              return (
+                <div
+                  key={entry.actionId}
+                  className="grid gap-3 px-4 py-3.5 transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_42%,transparent)] sm:min-h-[5.25rem] sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.58fr)_6.5rem] sm:items-center"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-[14px] font-medium text-foreground">{entry.label}</h3>
+                      <span className="rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] px-2 py-0.5 text-[11px] text-muted-foreground">
+                        {entry.scope}
                       </span>
-                    ) : null}
-                  </div>
-                  <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">{entry.description}</p>
-                  {editing ? (
-                    <p className={cn("text-[12px] leading-5", captureError ? "text-destructive" : "text-muted-foreground")}>
-                      {captureError ?? "Press a shortcut. Escape cancels capture."}
+                      {!configurable ? (
+                        <span className="rounded-full border border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] px-2 py-0.5 text-[11px] text-muted-foreground">
+                          Read-only
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="max-w-2xl truncate text-[13px] leading-5 text-muted-foreground sm:whitespace-normal">
+                      {entry.description}
                     </p>
-                  ) : null}
-                </div>
+                  </div>
 
-                <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-                  <ShortcutChips bindings={bindings} muted={disabled || !configurable} />
-                  {actionId ? (
-                    <>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => {
-                          setEditingActionId(editing ? null : actionId);
-                          setCaptureError(null);
-                        }}
-                        aria-label={editing ? "Cancel shortcut capture" : `Edit ${entry.label}`}
-                        title={editing ? "Cancel capture" : "Edit shortcut"}
-                      >
-                        {editing ? <X className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => {
-                          setDraft((current) => setShortcutPreference(current, actionId, null));
-                          if (editingActionId === actionId) setEditingActionId(null);
-                          setCaptureError(null);
-                        }}
-                        aria-label={`Reset ${entry.label}`}
-                        title="Restore default"
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                      </Button>
-                      {hasSingleKeyCreateIssueBinding ? (
+                  <div className="min-w-0">
+                    {editing ? (
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span
+                          className={cn(
+                            "inline-flex min-h-9 items-center rounded-[var(--radius-md)] border px-4 text-[13px]",
+                            captureError
+                              ? "border-destructive/42 bg-destructive/8 text-destructive"
+                              : "border-[color:var(--border-base)] bg-[color:var(--surface-active)] text-foreground",
+                          )}
+                        >
+                          {captureError ?? "Press shortcut"}
+                        </span>
                         <Button
                           type="button"
-                          variant="outline"
+                          variant="ghost"
                           size="sm"
+                          className="h-8 px-2 text-muted-foreground"
                           onClick={() => {
-                            const nextBindings = bindings.filter((binding) => {
-                              const normalized = normalizeShortcutBinding(binding);
-                              return !(
-                                normalized.key === "c" &&
-                                !normalized.metaKey &&
-                                !normalized.ctrlKey &&
-                                !normalized.altKey &&
-                                !normalized.shiftKey
-                              );
-                            });
-                            setDraft((current) => setShortcutPreference(current, actionId, { bindings: nextBindings }));
+                            setEditingActionId(null);
+                            setCaptureError(null);
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <ShortcutChips bindings={bindings} muted={disabled || !configurable} />
+                    )}
+                  </div>
+
+                  <div className="flex min-w-0 items-center gap-1 sm:justify-end">
+                    {actionId ? (
+                      <>
+                        {hasSingleKeyCreateIssueBinding ? (
+                          <IconTooltipButton
+                            label="Disable C"
+                            onClick={() => {
+                              const nextBindings = bindings.filter((binding) => {
+                                const normalized = normalizeShortcutBinding(binding);
+                                return !(
+                                  normalized.key === "c" &&
+                                  !normalized.metaKey &&
+                                  !normalized.ctrlKey &&
+                                  !normalized.altKey &&
+                                  !normalized.shiftKey
+                                );
+                              });
+                              setDraft((current) => setShortcutPreference(current, actionId, { bindings: nextBindings }));
+                              if (editingActionId === actionId) setEditingActionId(null);
+                              setCaptureError(null);
+                            }}
+                          >
+                            <X className="h-4 w-4" />
+                          </IconTooltipButton>
+                        ) : null}
+                        <IconTooltipButton
+                          label={editing ? "Cancel shortcut capture" : `Edit ${entry.label}`}
+                          onClick={() => {
+                            setEditingActionId(editing ? null : actionId);
+                            setCaptureError(null);
+                          }}
+                        >
+                          {editing ? <X className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
+                        </IconTooltipButton>
+                        {customized && !disabled ? (
+                          <IconTooltipButton
+                            label={`Restore default for ${entry.label}`}
+                            onClick={() => {
+                              setDraft((current) => setShortcutPreference(current, actionId, null));
+                              if (editingActionId === actionId) setEditingActionId(null);
+                              setCaptureError(null);
+                            }}
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                          </IconTooltipButton>
+                        ) : null}
+                        <IconTooltipButton
+                          label={disabled ? `Enable shortcut for ${entry.label}` : `Disable shortcut for ${entry.label}`}
+                          className={disabled ? "text-[color:var(--accent-strong)]" : undefined}
+                          onClick={() => {
+                            setDraft((current) =>
+                              disabled
+                                ? setShortcutPreference(current, actionId, null)
+                                : setShortcutPreference(current, actionId, { disabled: true }),
+                            );
                             if (editingActionId === actionId) setEditingActionId(null);
                             setCaptureError(null);
                           }}
                         >
-                          Disable C
-                        </Button>
-                      ) : null}
-                      <SettingsToggle
-                        checked={!disabled}
-                        aria-label={disabled ? `Enable ${entry.label}` : `Disable ${entry.label}`}
-                        title={disabled ? "Enable shortcut" : "Disable shortcut"}
-                        onClick={() => {
-                          setDraft((current) =>
-                            disabled
-                              ? setShortcutPreference(current, actionId, null)
-                              : setShortcutPreference(current, actionId, { disabled: true }),
-                          );
-                          if (editingActionId === actionId) setEditingActionId(null);
-                          setCaptureError(null);
-                        }}
-                      />
-                    </>
-                  ) : null}
+                          {disabled ? <RotateCcw className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+                        </IconTooltipButton>
+                      </>
+                    ) : (
+                      <span className="text-[12px] text-muted-foreground sm:sr-only">Read-only</span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </SettingsSection>
 
