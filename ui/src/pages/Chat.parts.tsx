@@ -596,6 +596,9 @@ type ChatEmptyStateRecentConversationsProps = {
   visible: boolean;
   conversationPath: (id: string) => string;
   onPrefetchConversation: (id: string) => void;
+  hasMoreConversations?: boolean;
+  loadingMoreConversations?: boolean;
+  onLoadMoreConversations?: () => void;
   className?: string;
 };
 
@@ -605,8 +608,35 @@ export function ChatEmptyStateRecentConversations({
   visible,
   conversationPath,
   onPrefetchConversation,
+  hasMoreConversations = false,
+  loadingMoreConversations = false,
+  onLoadMoreConversations,
   className,
 }: ChatEmptyStateRecentConversationsProps) {
+  const scrollbarActivityRef = useScrollbarActivityRef("rudder:chat-empty-state-recent-conversations");
+  const scrollElementRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const setScrollRef = useCallback((element: HTMLDivElement | null) => {
+    scrollElementRef.current = element;
+    scrollbarActivityRef(element);
+  }, [scrollbarActivityRef]);
+
+  useEffect(() => {
+    if (!visible || !hasMoreConversations || loadingMoreConversations || !onLoadMoreConversations) return;
+    const root = scrollElementRef.current;
+    const sentinel = loadMoreSentinelRef.current;
+    if (!root || !sentinel) return;
+    if (typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      onLoadMoreConversations();
+    }, { root, rootMargin: "96px 0px" });
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [conversations.length, hasMoreConversations, loadingMoreConversations, onLoadMoreConversations, visible]);
+
   if (conversations.length === 0) return null;
 
   return (
@@ -622,28 +652,47 @@ export function ChatEmptyStateRecentConversations({
           <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{projectName}</span>
         ) : null}
       </div>
-      <div className="divide-y divide-[color:var(--border-soft)] border-y border-[color:var(--border-soft)]">
-        {conversations.map((conversation) => (
-          <Link
-            key={conversation.id}
-            to={conversationPath(conversation.id)}
-            data-testid={`chat-empty-state-recent-conversation-${conversation.id}`}
-            tabIndex={visible ? undefined : -1}
-            className="group flex min-w-0 items-center gap-3 px-1 py-2.5 text-sm transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-            onPointerDown={() => {
-              if (visible) onPrefetchConversation(conversation.id);
-            }}
-            onMouseEnter={() => {
-              if (visible) onPrefetchConversation(conversation.id);
-            }}
+      <div
+        ref={setScrollRef}
+        className="scrollbar-auto-hide max-h-[min(34vh,360px)] overflow-y-auto border-y border-[color:var(--border-soft)]"
+      >
+        <div className="divide-y divide-[color:var(--border-soft)]">
+          {conversations.map((conversation) => (
+            <Link
+              key={conversation.id}
+              to={conversationPath(conversation.id)}
+              data-testid={`chat-empty-state-recent-conversation-${conversation.id}`}
+              tabIndex={visible ? undefined : -1}
+              className="group flex min-w-0 items-center gap-3 px-1 py-2.5 text-sm transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              onPointerDown={() => {
+                if (visible) onPrefetchConversation(conversation.id);
+              }}
+              onMouseEnter={() => {
+                if (visible) onPrefetchConversation(conversation.id);
+              }}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-foreground">{recentConversationDisplayTitle(conversation)}</span>
+                <span className="mt-0.5 block truncate text-xs text-muted-foreground">{recentConversationPreview(conversation)}</span>
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(conversation.lastMessageAt ?? conversation.updatedAt)}</span>
+            </Link>
+          ))}
+        </div>
+        {hasMoreConversations || loadingMoreConversations ? (
+          <div
+            ref={loadMoreSentinelRef}
+            data-testid="chat-empty-state-recent-conversations-load-more"
+            className="flex min-h-9 items-center justify-center px-2 py-2 text-[11px] text-muted-foreground"
           >
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium text-foreground">{recentConversationDisplayTitle(conversation)}</span>
-              <span className="mt-0.5 block truncate text-xs text-muted-foreground">{recentConversationPreview(conversation)}</span>
-            </span>
-            <span className="shrink-0 text-xs text-muted-foreground">{relativeTime(conversation.lastMessageAt ?? conversation.updatedAt)}</span>
-          </Link>
-        ))}
+            {loadingMoreConversations ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                Loading
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );

@@ -253,6 +253,65 @@ describe("ChatEmptyStateRecentConversations", () => {
     expect(closedSection?.getAttribute("aria-hidden")).toBe("true");
     expect(closedLink?.getAttribute("tabindex")).toBe("-1");
   });
+
+  it("loads more recent conversations when the scroll sentinel becomes visible", () => {
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    let triggerIntersect: ((entries: IntersectionObserverEntry[]) => void) | null = null;
+
+    class MockIntersectionObserver {
+      readonly root: Element | Document | null = null;
+      readonly rootMargin = "";
+      readonly thresholds: ReadonlyArray<number> = [];
+
+      constructor(callback: IntersectionObserverCallback) {
+        triggerIntersect = (entries) => callback(entries, this as unknown as IntersectionObserver);
+      }
+
+      observe = observe;
+      unobserve = vi.fn();
+      disconnect = disconnect;
+      takeRecords = () => [];
+    }
+
+    Object.defineProperty(globalThis, "IntersectionObserver", {
+      configurable: true,
+      writable: true,
+      value: MockIntersectionObserver,
+    });
+
+    try {
+      const onLoadMoreConversations = vi.fn();
+      const container = render(
+        <ChatEmptyStateRecentConversations
+          conversations={[chatConversation()]}
+          projectName="Rudder dev"
+          visible
+          conversationPath={(id) => `/chat/${id}`}
+          onPrefetchConversation={vi.fn()}
+          hasMoreConversations
+          onLoadMoreConversations={onLoadMoreConversations}
+        />,
+      );
+
+      const loadMore = container.querySelector<HTMLElement>("[data-testid='chat-empty-state-recent-conversations-load-more']");
+      expect(loadMore).toBeTruthy();
+      expect(observe).toHaveBeenCalledWith(loadMore);
+
+      act(() => {
+        triggerIntersect?.([{ isIntersecting: true } as IntersectionObserverEntry]);
+      });
+
+      expect(onLoadMoreConversations).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(globalThis, "IntersectionObserver", {
+        configurable: true,
+        writable: true,
+        value: originalIntersectionObserver,
+      });
+    }
+  });
 });
 
 describe("ChatLongMessageBody", () => {

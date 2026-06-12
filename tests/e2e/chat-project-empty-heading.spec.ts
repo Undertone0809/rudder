@@ -244,6 +244,55 @@ test.describe("Chat project empty heading", () => {
     await expect(recentConversations).toHaveCSS("opacity", "1");
   });
 
+  test("loads more recent project conversations when scrolled down", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 360 });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Recent-Load-More-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Rudder dev",
+        description: "Recent chat load more test project.",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Wesley" });
+
+    for (let index = 1; index <= 12; index += 1) {
+      const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title: `Recent overflow thread ${index}`,
+          preferredAgentId: agent.id,
+          contextLinks: [{ entityType: "project", entityId: project.id }],
+        },
+      });
+      expect(chatRes.ok()).toBe(true);
+    }
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?projectId=${project.id}&agentId=${agent.id}`);
+
+    const recentConversations = page.getByTestId("chat-empty-state-recent-project-conversations");
+    await expect(recentConversations).toHaveAttribute("data-state", "open", { timeout: 15_000 });
+    await expect(recentConversations).toContainText("Recent overflow thread 12");
+    await expect(recentConversations).not.toContainText("Recent overflow thread 7");
+
+    await page.getByTestId("chat-empty-state-recent-conversations-load-more").scrollIntoViewIfNeeded();
+
+    await expect(recentConversations).toContainText("Recent overflow thread 7");
+  });
+
   test("wraps long project names on mobile", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
 

@@ -235,14 +235,48 @@ test.describe("Chat options menu", () => {
     const project = await projectRes.json() as { id: string; name: string };
     const otherProject = await otherProjectRes.json() as { id: string; name: string };
 
-    const olderProjectChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-      data: {
+    const projectChatSpecs = [
+      {
         title: "Launch kickoff decisions",
         summary: "Review launch blockers and decide the first follow-up.",
-        preferredAgentId: chatAgent.id,
-        contextLinks: [{ entityType: "project", entityId: project.id }],
       },
-    });
+      {
+        title: "Launch risk review",
+        summary: "Capture the riskiest launch assumptions.",
+      },
+      {
+        title: "Launch budget notes",
+        summary: "Compare launch scope against remaining budget.",
+      },
+      {
+        title: "Launch QA sync",
+        summary: "Triage remaining release validation work.",
+      },
+      {
+        title: "Launch release plan",
+        summary: "Plan the release sequence.",
+      },
+      {
+        title: "Launch scope check",
+        summary: "Check the current launch scope.",
+      },
+      {
+        title: "Launch scope review",
+        summary: "Confirm the current launch scope before creating issues.",
+      },
+    ];
+    const projectChats: Array<{ id: string }> = [];
+    for (const spec of projectChatSpecs) {
+      const response = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          ...spec,
+          preferredAgentId: chatAgent.id,
+          contextLinks: [{ entityType: "project", entityId: project.id }],
+        },
+      });
+      expect(response.ok()).toBe(true);
+      projectChats.push(await response.json());
+    }
     const otherProjectChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Ops billing cleanup",
@@ -251,19 +285,9 @@ test.describe("Chat options menu", () => {
         contextLinks: [{ entityType: "project", entityId: otherProject.id }],
       },
     });
-    const newerProjectChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-      data: {
-        title: "Launch scope review",
-        summary: "Confirm the current launch scope before creating issues.",
-        preferredAgentId: chatAgent.id,
-        contextLinks: [{ entityType: "project", entityId: project.id }],
-      },
-    });
-    expect(olderProjectChatRes.ok()).toBe(true);
     expect(otherProjectChatRes.ok()).toBe(true);
-    expect(newerProjectChatRes.ok()).toBe(true);
-    const olderProjectChat = await olderProjectChatRes.json();
-    const newerProjectChat = await newerProjectChatRes.json();
+    const olderProjectChat = projectChats[0];
+    const newerProjectChat = projectChats[projectChats.length - 1];
 
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -274,22 +298,32 @@ test.describe("Chat options menu", () => {
 
     const recentSection = page.getByTestId("chat-empty-state-recent-project-conversations");
     await expect(recentSection).toBeVisible();
-    await expect(recentSection).toContainText("Recent conversations");
     await expect(recentSection).toContainText("Launch scope review");
-    await expect(recentSection).toContainText("Launch kickoff decisions");
     await expect(recentSection).not.toContainText("Ops billing cleanup");
 
     const recentRows = recentSection.locator("a");
-    await expect(recentRows).toHaveCount(2);
     await expect(recentRows.first()).toContainText("Launch scope review");
     await expect(page.getByTestId(`chat-empty-state-recent-conversation-${newerProjectChat.id}`)).toContainText("Launch scope review");
+    const loadMoreRecentConversations = page.getByTestId("chat-empty-state-recent-conversations-load-more");
+    if (await loadMoreRecentConversations.count()) {
+      await loadMoreRecentConversations.scrollIntoViewIfNeeded();
+    }
+    await expect(recentRows).toHaveCount(projectChats.length);
+    const olderProjectChatRow = page.getByTestId(`chat-empty-state-recent-conversation-${olderProjectChat.id}`);
+    await expect(olderProjectChatRow).toContainText("Launch kickoff decisions");
+
+    const notificationDismissButtons = page.getByRole("button", { name: "Dismiss notification" });
+    while (await notificationDismissButtons.count() > 0) {
+      await notificationDismissButtons.first().click();
+    }
+    await olderProjectChatRow.scrollIntoViewIfNeeded();
 
     await page.screenshot({
       path: testInfo.outputPath("project-new-chat-recent-conversations.png"),
       fullPage: true,
     });
 
-    await page.getByTestId(`chat-empty-state-recent-conversation-${olderProjectChat.id}`).click();
+    await olderProjectChatRow.click();
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${olderProjectChat.id}$`));
     await expect(page.getByTestId("chat-actions-trigger")).toBeVisible();
   });
