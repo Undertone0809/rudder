@@ -52,7 +52,7 @@ import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
 import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
-import type { MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
+import type { InlineTokenClickEvent, MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
 import {
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
@@ -183,6 +183,13 @@ export function isRudderTokenHref(href: string, label: string) {
     || parseSkillReference(href, label)
     || (href.trim().startsWith("skill://") && label.trim().startsWith("$")),
   );
+}
+
+export function shouldActivateMilkdownInlineTokenClick(
+  event: Pick<InlineTokenClickEvent, "ctrlKey" | "metaKey">,
+  activateInlineTokensOnPlainClick?: boolean,
+) {
+  return Boolean(activateInlineTokensOnPlainClick || event.metaKey || event.ctrlKey);
 }
 
 const MARKDOWN_LINK_FRAGMENT_RE = /\[([^\]\n]+)]\(([^)\n]+)\)/g;
@@ -906,6 +913,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   submitShortcut = "mod-enter",
   agentMentionIntent = "reference",
   onInlineTokenClick,
+  activateInlineTokensOnPlainClick,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1407,7 +1415,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         if (!href || !isRudderTokenHref(href, label)) return;
         event.preventDefault();
         event.stopPropagation();
-        if (!event.metaKey && !event.ctrlKey) {
+        if (!shouldActivateMilkdownInlineTokenClick(event, activateInlineTokensOnPlainClick)) {
           const editor = loading ? get() : getInstance();
           editor?.action((ctx) => {
             placeSelectionAfterRudderTokenAnchor(ctx.get(editorViewCtx) as unknown as ProseMirrorView, anchor);

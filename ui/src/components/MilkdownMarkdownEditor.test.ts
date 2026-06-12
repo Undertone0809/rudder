@@ -21,6 +21,7 @@ import {
   moveSelectionAfterRudderTokenBoundary,
   readCanonicalFragmentMarkdown,
   rudderTokenNavigationPath,
+  shouldActivateMilkdownInlineTokenClick,
   shouldParsePastedMarkdown,
 } from "./MilkdownMarkdownEditor";
 import type { MentionOption } from "./MarkdownEditor";
@@ -627,5 +628,12 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
       "/library?path=docs%2Fspec.md",
     );
     expect(rudderTokenNavigationPath("skill://writer")).toBeNull();
+  });
+
+  it("keeps Milkdown token plain-click activation opt-in", () => {
+    expect(shouldActivateMilkdownInlineTokenClick({ ctrlKey: false, metaKey: false })).toBe(false);
+    expect(shouldActivateMilkdownInlineTokenClick({ ctrlKey: false, metaKey: true })).toBe(true);
+    expect(shouldActivateMilkdownInlineTokenClick({ ctrlKey: true, metaKey: false })).toBe(true);
+    expect(shouldActivateMilkdownInlineTokenClick({ ctrlKey: false, metaKey: false }, true)).toBe(true);
   });
 });

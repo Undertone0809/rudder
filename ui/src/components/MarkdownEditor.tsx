@@ -170,6 +170,8 @@ export interface MarkdownEditorProps {
   plainText?: boolean;
   /** Optional handler for activating decorated inline reference tokens. */
   onInlineTokenClick?: (token: AtomicInlineTokenElement, event: InlineTokenClickEvent) => void;
+  /** Opt into activating inline tokens on plain click for document surfaces where tokens behave like links. */
+  activateInlineTokensOnPlainClick?: boolean;
   /** Experimental editor engine for true Markdown surfaces. */
   engine?: "legacy" | "milkdown";
 }

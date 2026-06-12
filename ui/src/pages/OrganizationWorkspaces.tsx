@@ -4804,6 +4804,7 @@ export function OrganizationWorkspaceBrowser({
                             onChange={(nextContent) => handleMarkdownBodyDraftChange(selectedFilePath, nextContent)}
                             mentions={agentWorkspaceMentionOptions}
                             onInlineTokenClick={handleLibraryInlineTokenClick}
+                            activateInlineTokensOnPlainClick
                             imageUploadHandler={async (file) => {
                               const asset = await uploadWorkspaceImage.mutateAsync({
                                 file,
