@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
+import type { KeyboardShortcutSettings } from "@rudderhq/shared";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -15,17 +16,20 @@ let container: HTMLDivElement | null = null;
 function ShortcutHarness({
   onNavigateBack,
   onNewIssue,
+  shortcutSettings,
 }: {
   onNavigateBack?: () => boolean;
   onNewIssue?: () => void;
+  shortcutSettings?: KeyboardShortcutSettings | null;
 }) {
-  useKeyboardShortcuts({ onNavigateBack, onNewIssue });
+  useKeyboardShortcuts({ onNavigateBack, onNewIssue, shortcutSettings });
   return <div />;
 }
 
 async function renderShortcutHarness(handlers: {
   onNavigateBack?: () => boolean;
   onNewIssue?: () => void;
+  shortcutSettings?: KeyboardShortcutSettings | null;
 }) {
   container = document.createElement("div");
   document.body.append(container);
@@ -140,5 +144,36 @@ describe("useKeyboardShortcuts", () => {
 
     expect(onNewIssue).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("uses configured shortcut bindings and respects disabled actions", async () => {
+    const onNewIssue = vi.fn();
+    await renderShortcutHarness({
+      onNewIssue,
+      shortcutSettings: {
+        shortcuts: [
+          {
+            actionId: "issue.create",
+            bindings: [{ key: "i", metaKey: true }],
+          },
+        ],
+      },
+    });
+
+    expect(dispatchKey("c").defaultPrevented).toBe(false);
+    expect(dispatchKey("i", { metaKey: true }).defaultPrevented).toBe(true);
+    expect(onNewIssue).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root?.render(
+        <ShortcutHarness
+          onNewIssue={onNewIssue}
+          shortcutSettings={{ shortcuts: [{ actionId: "issue.create", disabled: true }] }}
+        />,
+      );
+    });
+
+    expect(dispatchKey("i", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(onNewIssue).toHaveBeenCalledTimes(1);
   });
 });

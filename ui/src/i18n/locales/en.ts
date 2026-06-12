@@ -13,6 +13,7 @@ export const en = {
   "common.runtime": "Runtime",
   "common.integrations": "Integrations",
   "common.profile": "Profile",
+  "common.shortcuts": "Shortcuts",
   "common.general": "General",
   "common.systemPermissions": "Permissions",
   "common.notifications": "Notifications",

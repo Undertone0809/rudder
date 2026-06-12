@@ -1,4 +1,5 @@
 export const INSTANCE_SETTINGS_PROFILE_PATH = "/instance/settings/profile";
+export const INSTANCE_SETTINGS_SHORTCUTS_PATH = "/instance/settings/shortcuts";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
 export const INSTANCE_SETTINGS_NOTIFICATIONS_PATH = "/instance/settings/notifications";
 export const INSTANCE_SETTINGS_LANGFUSE_PATH = "/instance/settings/langfuse";
@@ -28,6 +29,10 @@ export function normalizeRememberedInstanceSettingsPath(
   const hash = match?.[3] ?? "";
 
   if (pathname === INSTANCE_SETTINGS_PROFILE_PATH) {
+    return `${pathname}${search}${hash}`;
+  }
+
+  if (pathname === INSTANCE_SETTINGS_SHORTCUTS_PATH) {
     return `${pathname}${search}${hash}`;
   }
 
@@ -75,6 +80,10 @@ export function normalizeRememberedSettingsPath(
   }
 
   if (pathname === INSTANCE_SETTINGS_PROFILE_PATH) {
+    return `${pathname}${search}${hash}`;
+  }
+
+  if (pathname === INSTANCE_SETTINGS_SHORTCUTS_PATH) {
     return `${pathname}${search}${hash}`;
   }
 

@@ -610,6 +610,13 @@
       "when": 1781089894226,
       "tag": "0086_supreme_nekra",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1781268744845,
+      "tag": "0087_fixed_white_tiger",
+      "breakpoints": true
     }
   ]
 }

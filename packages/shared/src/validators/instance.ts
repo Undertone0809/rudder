@@ -46,6 +46,50 @@ export const operatorProfileSettingsSchema = z.object({
 
 export const patchOperatorProfileSettingsSchema = operatorProfileSettingsSchema.partial();
 
+export const KEYBOARD_SHORTCUT_ACTION_IDS = [
+  "commandPalette.open",
+  "settings.open",
+  "issue.create",
+  "sidebar.toggle",
+  "panel.toggle",
+] as const;
+
+export const keyboardShortcutActionIdSchema = z.enum(KEYBOARD_SHORTCUT_ACTION_IDS);
+
+export const keyboardShortcutBindingSchema = z.object({
+  key: z.string().trim().min(1).max(64),
+  code: z.string().trim().min(1).max(80).optional(),
+  metaKey: z.boolean().optional(),
+  ctrlKey: z.boolean().optional(),
+  altKey: z.boolean().optional(),
+  shiftKey: z.boolean().optional(),
+}).strict();
+
+export const keyboardShortcutPreferenceSchema = z.object({
+  actionId: keyboardShortcutActionIdSchema,
+  bindings: z.array(keyboardShortcutBindingSchema).max(4).optional(),
+  disabled: z.boolean().optional(),
+}).strict();
+
+export const keyboardShortcutSettingsSchema = z.object({
+  shortcuts: z.array(keyboardShortcutPreferenceSchema).max(KEYBOARD_SHORTCUT_ACTION_IDS.length).default([]),
+}).strict().superRefine((value, ctx) => {
+  const seen = new Set<string>();
+  value.shortcuts.forEach((shortcut, index) => {
+    if (seen.has(shortcut.actionId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate shortcut action id: ${shortcut.actionId}`,
+        path: ["shortcuts", index, "actionId"],
+      });
+      return;
+    }
+    seen.add(shortcut.actionId);
+  });
+});
+
+export const patchKeyboardShortcutSettingsSchema = keyboardShortcutSettingsSchema;
+
 export const instancePathPickerSelectionTypeSchema = z.enum(["file", "directory"]);
 
 export const instancePathPickerRequestSchema = z.object({
@@ -64,6 +108,11 @@ export type PatchInstanceLangfuseSettings = z.infer<typeof patchInstanceLangfuse
 export type InstanceLocale = z.infer<typeof instanceLocaleSchema>;
 export type OperatorProfileSettings = z.infer<typeof operatorProfileSettingsSchema>;
 export type PatchOperatorProfileSettings = z.infer<typeof patchOperatorProfileSettingsSchema>;
+export type KeyboardShortcutActionId = z.infer<typeof keyboardShortcutActionIdSchema>;
+export type KeyboardShortcutBinding = z.infer<typeof keyboardShortcutBindingSchema>;
+export type KeyboardShortcutPreference = z.infer<typeof keyboardShortcutPreferenceSchema>;
+export type KeyboardShortcutSettings = z.infer<typeof keyboardShortcutSettingsSchema>;
+export type PatchKeyboardShortcutSettings = z.infer<typeof patchKeyboardShortcutSettingsSchema>;
 export type InstanceNotificationSettings = z.infer<typeof instanceNotificationSettingsSchema>;
 export type PatchInstanceNotificationSettings = z.infer<typeof patchInstanceNotificationSettingsSchema>;
 export type InstancePathPickerSelectionType = z.infer<typeof instancePathPickerSelectionTypeSchema>;

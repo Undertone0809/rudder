@@ -12,6 +12,8 @@ const mockInstanceSettingsService = vi.hoisted(() => ({
 const mockOperatorProfileService = vi.hoisted(() => ({
   get: vi.fn(),
   update: vi.fn(),
+  getShortcuts: vi.fn(),
+  updateShortcuts: vi.fn(),
 }));
 const mockBoardAuthService = vi.hoisted(() => ({
   resolveBoardActivityCompanyIds: vi.fn(),
@@ -109,6 +111,8 @@ describe("instance settings routes", () => {
       nickname: "Zee",
       moreAboutYou: "Builds agent workflows",
     });
+    mockOperatorProfileService.getShortcuts.mockResolvedValue({ shortcuts: [] });
+    mockOperatorProfileService.updateShortcuts.mockImplementation(async (_userId, patch) => patch);
     mockBoardAuthService.resolveBoardActivityCompanyIds.mockResolvedValue(["organization-1"]);
     mockPathPicker.pick.mockResolvedValue("/Users/test/project");
     mockLoadConfig.mockReturnValue({
@@ -391,6 +395,71 @@ describe("instance settings routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
+  it("allows board users to read and update shortcut settings without instance admin access", async () => {
+    mockOperatorProfileService.getShortcuts.mockResolvedValue({
+      shortcuts: [{ actionId: "issue.create", disabled: true }],
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: ["organization-1"],
+    });
+
+    const getRes = await request(app).get("/api/instance/settings/shortcuts");
+    expect(getRes.status).toBe(200);
+    expect(getRes.body).toEqual({
+      shortcuts: [{ actionId: "issue.create", disabled: true }],
+    });
+    expect(mockOperatorProfileService.getShortcuts).toHaveBeenCalledWith("user-1");
+
+    const patch = {
+      shortcuts: [
+        {
+          actionId: "commandPalette.open",
+          bindings: [{ key: "p", metaKey: true }],
+        },
+      ],
+    };
+    const patchRes = await request(app)
+      .patch("/api/instance/settings/shortcuts")
+      .send(patch);
+
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body).toEqual(patch);
+    expect(mockOperatorProfileService.updateShortcuts).toHaveBeenCalledWith("user-1", patch);
+    expect(mockBoardAuthService.resolveBoardActivityCompanyIds).toHaveBeenCalledWith({
+      userId: "user-1",
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "instance.settings.shortcuts_updated",
+      entityType: "operator_profile",
+      entityId: "user-1",
+      details: {
+        shortcutActionIds: ["commandPalette.open"],
+        disabledActionIds: [],
+      },
+    }));
+  });
+
+  it("rejects unknown shortcut action ids before service update", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: ["organization-1"],
+    });
+
+    const res = await request(app)
+      .patch("/api/instance/settings/shortcuts")
+      .send({ shortcuts: [{ actionId: "system.escapeBack", disabled: true }] });
+
+    expect(res.status).toBe(400);
+    expect(mockOperatorProfileService.updateShortcuts).not.toHaveBeenCalled();
+  });
+
   it("rejects non-admin board users", async () => {
     const app = await createApp({
       type: "board",
@@ -418,6 +487,20 @@ describe("instance settings routes", () => {
 
     expect(res.status).toBe(403);
     expect(mockOperatorProfileService.get).not.toHaveBeenCalled();
+  });
+
+  it("rejects agent callers from shortcut settings", async () => {
+    const app = await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      source: "agent_key",
+    });
+
+    const res = await request(app).get("/api/instance/settings/shortcuts");
+
+    expect(res.status).toBe(403);
+    expect(mockOperatorProfileService.getShortcuts).not.toHaveBeenCalled();
   });
 
   it("rejects anonymous callers from operator profile settings", async () => {

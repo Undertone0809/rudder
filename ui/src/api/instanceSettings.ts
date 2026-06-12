@@ -4,8 +4,10 @@ import type {
   InstanceNotificationSettings,
   InstancePathPickerRequest,
   InstancePathPickerResult,
+  KeyboardShortcutSettings,
   OperatorProfileSettings,
   PatchInstanceGeneralSettings,
+  PatchKeyboardShortcutSettings,
   PatchInstanceLangfuseSettings,
   PatchInstanceNotificationSettings,
   PatchOperatorProfileSettings,
@@ -17,6 +19,10 @@ export const instanceSettingsApi = {
     api.get<OperatorProfileSettings>("/instance/settings/profile"),
   updateProfile: (patch: PatchOperatorProfileSettings) =>
     api.patch<OperatorProfileSettings>("/instance/settings/profile", patch),
+  getShortcuts: () =>
+    api.get<KeyboardShortcutSettings>("/instance/settings/shortcuts"),
+  updateShortcuts: (patch: PatchKeyboardShortcutSettings) =>
+    api.patch<KeyboardShortcutSettings>("/instance/settings/shortcuts", patch),
   getGeneral: () =>
     api.get<InstanceGeneralSettings>("/instance/settings/general"),
   updateGeneral: (patch: PatchInstanceGeneralSettings) =>

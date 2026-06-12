@@ -154,6 +154,56 @@ describe("operatorProfileService", () => {
     });
   });
 
+  it("stores shortcut preferences separately from prompt profile fields", async () => {
+    await svc.update("user-1", {
+      nickname: "Alpha",
+      moreAboutYou: "First operator",
+    });
+
+    await expect(svc.getShortcuts("user-1")).resolves.toEqual({ shortcuts: [] });
+    await expect(
+      svc.updateShortcuts("user-1", {
+        shortcuts: [
+          {
+            actionId: "issue.create",
+            disabled: true,
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      shortcuts: [
+        {
+          actionId: "issue.create",
+          disabled: true,
+        },
+      ],
+    });
+
+    await expect(svc.get("user-1")).resolves.toEqual({
+      nickname: "Alpha",
+      moreAboutYou: "First operator",
+    });
+    await expect(svc.getShortcuts("user-1")).resolves.toEqual({
+      shortcuts: [
+        {
+          actionId: "issue.create",
+          disabled: true,
+        },
+      ],
+    });
+  });
+
+  it("keeps shortcut preferences isolated by user", async () => {
+    await svc.updateShortcuts("user-1", {
+      shortcuts: [{ actionId: "issue.create", disabled: true }],
+    });
+
+    await expect(svc.getShortcuts("user-1")).resolves.toEqual({
+      shortcuts: [{ actionId: "issue.create", disabled: true }],
+    });
+    await expect(svc.getShortcuts("user-2")).resolves.toEqual({ shortcuts: [] });
+  });
+
   it("normalizes blank input to null at rest and empty strings in responses", async () => {
     await expect(
       svc.update("user-blank", {

@@ -7,7 +7,9 @@ import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { chatsApi } from "../api/chats";
+import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
+import { eventMatchesShortcutAction, isEditableShortcutTarget } from "../lib/keyboard-shortcuts";
 import {
   CommandDialog,
   CommandEmpty,
@@ -45,10 +47,16 @@ export function CommandPalette() {
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
   const searchQuery = query.trim();
+  const { data: shortcutSettings = null } = useQuery({
+    queryKey: queryKeys.instance.shortcutSettings,
+    queryFn: () => instanceSettingsApi.getShortcuts(),
+    retry: false,
+  });
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+      if (e.defaultPrevented || e.isComposing || isEditableShortcutTarget(e.target)) return;
+      if (eventMatchesShortcutAction(e, "commandPalette.open", shortcutSettings)) {
         e.preventDefault();
         setLaunchSource("shortcut");
         setOpen(true);
@@ -57,7 +65,7 @@ export function CommandPalette() {
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isMobile, setSidebarOpen]);
+  }, [isMobile, setSidebarOpen, shortcutSettings]);
 
   useEffect(() => {
     function handleOpenCommandPalette(event: Event) {

@@ -79,6 +79,7 @@ test.describe("Settings sidebar", () => {
     await expect(modalSidebar.locator('a[href$="/costs"]')).toHaveCount(0);
     await expect(modalSidebar.locator('a[href$="/activity"]')).toHaveCount(0);
     await expect(modalSidebar.locator('a[href$="/instance/settings/profile"]')).toBeVisible();
+    await expect(modalSidebar.locator('a[href$="/instance/settings/shortcuts"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/general"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/notifications"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/organizations"]')).toHaveCount(0);

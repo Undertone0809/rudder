@@ -1,4 +1,9 @@
 import { useEffect } from "react";
+import type { KeyboardShortcutSettings } from "@rudderhq/shared";
+import {
+  eventMatchesShortcutAction,
+  isEditableShortcutTarget,
+} from "@/lib/keyboard-shortcuts";
 
 interface ShortcutHandlers {
   onNewIssue?: () => void;
@@ -6,17 +11,7 @@ interface ShortcutHandlers {
   onTogglePanel?: () => void;
   onOpenSettings?: () => void;
   onNavigateBack?: () => boolean;
-}
-
-function isEditableShortcutTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-
-  const tagName = target.tagName;
-  return tagName === "INPUT"
-    || tagName === "TEXTAREA"
-    || tagName === "SELECT"
-    || target.isContentEditable
-    || Boolean(target.closest('[contenteditable="true"], [contenteditable="plaintext-only"]'));
+  shortcutSettings?: KeyboardShortcutSettings | null;
 }
 
 function hasOpenEscapeLayer(): boolean {
@@ -43,6 +38,7 @@ export function useKeyboardShortcuts({
   onTogglePanel,
   onOpenSettings,
   onNavigateBack,
+  shortcutSettings,
 }: ShortcutHandlers) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -62,33 +58,25 @@ export function useKeyboardShortcuts({
         return;
       }
 
-      // Cmd+N → New Issue
-      if (e.key.toLowerCase() === "n" && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      if (eventMatchesShortcutAction(e, "issue.create", shortcutSettings)) {
         e.preventDefault();
         onNewIssue?.();
         return;
       }
 
-      // C → New Issue
-      if (e.key === "c" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault();
-        onNewIssue?.();
-      }
-
-      // [ → Toggle Sidebar
-      if (e.key === "[" && !e.metaKey && !e.ctrlKey) {
+      if (eventMatchesShortcutAction(e, "sidebar.toggle", shortcutSettings)) {
         e.preventDefault();
         onToggleSidebar?.();
+        return;
       }
 
-      // ] → Toggle Panel
-      if (e.key === "]" && !e.metaKey && !e.ctrlKey) {
+      if (eventMatchesShortcutAction(e, "panel.toggle", shortcutSettings)) {
         e.preventDefault();
         onTogglePanel?.();
+        return;
       }
 
-      // Cmd+, / Ctrl+, → Open Settings
-      if (e.key === "," && (e.metaKey || e.ctrlKey) && !e.altKey) {
+      if (eventMatchesShortcutAction(e, "settings.open", shortcutSettings)) {
         e.preventDefault();
         onOpenSettings?.();
       }
@@ -96,5 +84,5 @@ export function useKeyboardShortcuts({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onNewIssue, onToggleSidebar, onTogglePanel, onOpenSettings, onNavigateBack]);
+  }, [onNewIssue, onToggleSidebar, onTogglePanel, onOpenSettings, onNavigateBack, shortcutSettings]);
 }

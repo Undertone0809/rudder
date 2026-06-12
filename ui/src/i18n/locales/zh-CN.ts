@@ -15,6 +15,7 @@ export const zhCN: Messages = {
   "common.runtime": "运行时",
   "common.integrations": "集成",
   "common.profile": "个人资料",
+  "common.shortcuts": "快捷键",
   "common.general": "通用",
   "common.systemPermissions": "系统权限",
   "common.notifications": "通知",

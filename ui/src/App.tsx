@@ -42,6 +42,7 @@ import { InstanceNotificationsSettings } from "./pages/InstanceNotificationsSett
 import { InstanceLangfuseSettings } from "./pages/InstanceLangfuseSettings";
 import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
 import { InstanceProfileSettings } from "./pages/InstanceProfileSettings";
+import { InstanceShortcutsSettings } from "./pages/InstanceShortcutsSettings";
 import { InstanceSettings } from "./pages/InstanceSettings";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
@@ -539,6 +540,7 @@ export function App() {
           <Route path="instance/settings" element={<Layout />}>
             <Route index element={<InstanceSettingsRedirect requestedPath="/instance/settings" />} />
             <Route path="profile" element={<InstanceProfileSettings />} />
+            <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="notifications" element={<InstanceNotificationsSettings />} />
             <Route path="langfuse" element={<InstanceLangfuseSettings />} />
@@ -599,6 +601,7 @@ export function App() {
             <Route path="instance/settings" element={<DesktopSettingsOverlayLayout />}>
               <Route index element={<InstanceSettingsRedirect requestedPath="/instance/settings" />} />
               <Route path="profile" element={<InstanceProfileSettings />} />
+              <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
               <Route path="general" element={<InstanceGeneralSettings />} />
               <Route path="notifications" element={<InstanceNotificationsSettings />} />
               <Route path="langfuse" element={<InstanceLangfuseSettings />} />

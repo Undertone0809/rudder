@@ -12,11 +12,14 @@ import { CommandPalette } from "./CommandPalette";
 
 const navigateMock = vi.fn();
 const observedQueryKeys = vi.hoisted(() => [] as Array<readonly unknown[]>);
+const shortcutSettingsMock = vi.hoisted(() => ({
+  value: null as null | { shortcuts: Array<{ actionId: "commandPalette.open"; bindings?: Array<{ key: string; metaKey?: boolean }>; disabled?: boolean }> },
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
     observedQueryKeys.push(queryKey);
-    if (!enabled) return { data: [] };
+    if (enabled === false) return { data: [] };
     if (
       queryKey[0] === "issues" &&
       queryKey[2] === "search" &&
@@ -54,6 +57,9 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "agents") return { data: [] };
     if (queryKey[0] === "projects") return { data: [] };
     if (queryKey[0] === "issues") return { data: [] };
+    if (queryKey[0] === "instance" && queryKey[1] === "shortcut-settings") {
+      return { data: shortcutSettingsMock.value };
+    }
     return { data: [] };
   },
 }));
@@ -138,6 +144,7 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   observedQueryKeys.length = 0;
+  shortcutSettingsMock.value = null;
   navigateMock.mockClear();
   document.body.innerHTML = "";
 });
@@ -238,5 +245,58 @@ describe("CommandPalette", () => {
     expect(container.textContent).toContain("Issues");
     expect(container.textContent).toContain("RUD-498");
     expect(container.textContent).toContain("Global search regression");
+  });
+
+  it("opens from the configured command palette shortcut", () => {
+    shortcutSettingsMock.value = {
+      shortcuts: [
+        {
+          actionId: "commandPalette.open",
+          bindings: [{ key: "p", metaKey: true }],
+        },
+      ],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<CommandPalette />);
+    });
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+    expect(container.querySelector("input")).toBeNull();
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "p", metaKey: true, bubbles: true }));
+    });
+    expect(container.querySelector("input")?.getAttribute("placeholder")).toBe("Search issues, chats, agents, projects...");
+  });
+
+  it("does not open from editable targets", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+      input.remove();
+    };
+
+    act(() => {
+      root.render(<CommandPalette />);
+    });
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    expect(container.querySelector("input")).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import {
   Clock3,
   IdCard,
   Info,
+  Keyboard,
   Puzzle,
   Settings,
   ShieldCheck,
@@ -125,6 +126,14 @@ export function SettingsSidebar({
             state={overlayState}
             label={t("common.profile")}
             icon={IdCard}
+            end
+            variant={modalVariant ? "compact" : "default"}
+          />
+          <SidebarNavItem
+            to="/instance/settings/shortcuts"
+            state={overlayState}
+            label={t("common.shortcuts")}
+            icon={Keyboard}
             end
             variant={modalVariant ? "compact" : "default"}
           />

@@ -27,6 +27,32 @@ export interface OperatorProfileSettings {
   moreAboutYou: string;
 }
 
+export type KeyboardShortcutActionId =
+  | "commandPalette.open"
+  | "settings.open"
+  | "issue.create"
+  | "sidebar.toggle"
+  | "panel.toggle";
+
+export interface KeyboardShortcutBinding {
+  key: string;
+  code?: string;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+  shiftKey?: boolean;
+}
+
+export interface KeyboardShortcutPreference {
+  actionId: KeyboardShortcutActionId;
+  bindings?: KeyboardShortcutBinding[];
+  disabled?: boolean;
+}
+
+export interface KeyboardShortcutSettings {
+  shortcuts: KeyboardShortcutPreference[];
+}
+
 export type InstancePathPickerSelectionType = "file" | "directory";
 
 export interface InstancePathPickerRequest {

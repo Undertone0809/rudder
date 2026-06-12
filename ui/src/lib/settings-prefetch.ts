@@ -32,6 +32,11 @@ export function listSettingsPrefetchQueryKeys(target: string, organizationId: st
     return keys;
   }
 
+  if (target.startsWith("/instance/settings/shortcuts")) {
+    keys.push([...queryKeys.instance.shortcutSettings]);
+    return keys;
+  }
+
   if (target.startsWith("/instance/settings/general")) {
     keys.push([...queryKeys.instance.generalSettings]);
     return keys;
@@ -111,6 +116,17 @@ export function prefetchSettingsQueries(
       queryClient.prefetchQuery({
         queryKey: queryKeys.instance.profileSettings,
         queryFn: () => instanceSettingsApi.getProfile(),
+        staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
+      }),
+    );
+    return Promise.allSettled(jobs);
+  }
+
+  if (target.startsWith("/instance/settings/shortcuts")) {
+    jobs.push(
+      queryClient.prefetchQuery({
+        queryKey: queryKeys.instance.shortcutSettings,
+        queryFn: () => instanceSettingsApi.getShortcuts(),
         staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
       }),
     );

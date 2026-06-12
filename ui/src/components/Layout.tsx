@@ -28,6 +28,7 @@ import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
 import { healthApi } from "../api/health";
+import { instanceSettingsApi } from "../api/instanceSettings";
 import { projectsApi } from "../api/projects";
 import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
 import {
@@ -653,12 +654,19 @@ export function Layout() {
     return true;
   }, [navigate]);
 
+  const shortcutSettingsQuery = useQuery({
+    queryKey: queryKeys.instance.shortcutSettings,
+    queryFn: () => instanceSettingsApi.getShortcuts(),
+    retry: false,
+  });
+
   useKeyboardShortcuts({
     onNewIssue: () => openNewIssue(),
     onToggleSidebar: toggleSidebar,
     onTogglePanel: togglePanel,
     onOpenSettings: () => openSettings(),
     onNavigateBack: navigateBack,
+    shortcutSettings: shortcutSettingsQuery.data ?? null,
   });
 
   const desktopContentShellInsetClass = macDesktopShell

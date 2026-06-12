@@ -2,6 +2,7 @@ import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import {
   patchInstanceGeneralSettingsSchema,
+  patchKeyboardShortcutSettingsSchema,
   patchInstanceLangfuseSettingsSchema,
   patchInstanceNotificationSettingsSchema,
   patchOperatorProfileSettingsSchema,
@@ -271,6 +272,55 @@ export function instanceSettingsRoutes(
             details: {
               profile: updated,
               changedKeys: Object.keys(req.body).sort(),
+            },
+          }),
+        ),
+      );
+
+      res.json(updated);
+    },
+  );
+
+  router.get("/instance/settings/shortcuts", async (req, res) => {
+    assertBoard(req);
+    if (!req.actor.userId) {
+      throw forbidden("Board user identity required");
+    }
+    res.json(await operatorProfiles.getShortcuts(req.actor.userId));
+  });
+
+  router.patch(
+    "/instance/settings/shortcuts",
+    validate(patchKeyboardShortcutSettingsSchema),
+    async (req, res) => {
+      assertBoard(req);
+      if (!req.actor.userId) {
+        throw forbidden("Board user identity required");
+      }
+
+      const updated = await operatorProfiles.updateShortcuts(req.actor.userId, req.body);
+      const actor = getActorInfo(req);
+      const orgIds = await boardAuth.resolveBoardActivityCompanyIds({
+        userId: req.actor.userId,
+      });
+
+      await Promise.all(
+        orgIds.map((orgId) =>
+          logActivity(db, {
+            orgId,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+            agentId: actor.agentId,
+            runId: actor.runId,
+            action: "instance.settings.shortcuts_updated",
+            entityType: "operator_profile",
+            entityId: req.actor.userId ?? "unknown-user",
+            details: {
+              shortcutActionIds: updated.shortcuts.map((shortcut) => shortcut.actionId).sort(),
+              disabledActionIds: updated.shortcuts
+                .filter((shortcut) => shortcut.disabled === true)
+                .map((shortcut) => shortcut.actionId)
+                .sort(),
             },
           }),
         ),

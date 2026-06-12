@@ -6,6 +6,7 @@ import {
   INSTANCE_SETTINGS_LANGFUSE_PATH,
   INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
   INSTANCE_SETTINGS_PROFILE_PATH,
+  INSTANCE_SETTINGS_SHORTCUTS_PATH,
   normalizeRememberedSettingsPath,
   normalizeRememberedInstanceSettingsPath,
   resolveDefaultSettingsPath,
@@ -16,6 +17,9 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
   it("keeps known instance settings pages", () => {
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/profile", false)).toBe(
       "/instance/settings/profile",
+    );
+    expect(normalizeRememberedInstanceSettingsPath("/instance/settings/shortcuts", false)).toBe(
+      INSTANCE_SETTINGS_SHORTCUTS_PATH,
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/general")).toBe(
       "/instance/settings/general",
@@ -71,6 +75,9 @@ describe("normalizeRememberedSettingsPath", () => {
     );
     expect(normalizeRememberedSettingsPath("/instance/settings/langfuse")).toBe(INSTANCE_SETTINGS_LANGFUSE_PATH);
     expect(normalizeRememberedSettingsPath("/instance/settings/about")).toBe(INSTANCE_SETTINGS_ABOUT_PATH);
+    expect(normalizeRememberedSettingsPath("/instance/settings/shortcuts", false)).toBe(
+      INSTANCE_SETTINGS_SHORTCUTS_PATH,
+    );
     expect(normalizeRememberedSettingsPath("/instance/settings/plugins/example?tab=config#logs")).toBe(
       "/instance/settings/plugins/example?tab=config#logs",
     );
