@@ -1280,7 +1280,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     {emptyStateHeading} </h1> </div>
                 <div className="w-full max-w-3xl">
                   {renderComposer(true)} </div>
-                {hasRecentProjectConversations ? (
+                {hasRecentProjectConversations && showEmptyStateRecentConversations ? (
                   <Tabs value={emptyStateActiveTab} onValueChange={(value) => setEmptyStateActiveTab(value as "recent" | "use-cases")} className="mt-4 w-full max-w-3xl gap-2" data-testid="chat-empty-state-tabs">
                     <TabsList variant="line" aria-label="New chat empty state" className="h-auto gap-2 border-transparent bg-transparent px-0">
                       <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="h-9 flex-none gap-2 rounded-full border border-transparent px-4 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
@@ -1307,8 +1307,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       {renderEmptyStateUseCases()}
                     </TabsContent>
                   </Tabs>
-                ) : (
+                ) : !hasRecentProjectConversations && showEmptyStateRecentConversations ? (
                   <div className="mt-4 flex w-full flex-col items-center">
                     {renderEmptyStateUseCases()}
                   </div>
-                )} </div> </div> )} </main> </div> ); }
+                ) : null} </div> </div> )} </main> </div> ); }
