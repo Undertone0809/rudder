@@ -587,6 +587,10 @@ export function IssuesList({
     });
   };
 
+  const clearIssueFilters = useCallback(() => {
+    updateView({ statuses: [], priorities: [], assignees: [], labels: [], projects: [] });
+  }, [updateView]);
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       {toolbarMode !== "hidden" && (
@@ -697,24 +701,37 @@ export function IssuesList({
 
           {/* Filter */}
           <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="sm" className={`text-xs ${activeFilterCount > 0 ? "text-[color:var(--accent-strong)]" : ""}`}>
-                <Filter className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
-                <span className="hidden sm:inline">{activeFilterCount > 0 ? `Filters: ${activeFilterCount}` : "Filter"}</span>
-                {activeFilterCount > 0 && (
-                  <span className="sm:hidden text-[10px] font-medium ml-0.5">{activeFilterCount}</span>
-                )}
-                {activeFilterCount > 0 && (
-                  <X
-                    className="h-3 w-3 ml-1 hidden sm:block"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      updateView({ statuses: [], priorities: [], assignees: [], labels: [], projects: [] });
-                    }}
-                  />
-                )}
-              </Button>
-            </PopoverTrigger>
+            <div className="inline-flex items-center">
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    "text-xs",
+                    activeFilterCount > 0 && "text-[color:var(--accent-strong)]",
+                    activeFilterCount > 0 && "sm:rounded-r-none sm:pr-2",
+                  )}
+                >
+                  <Filter className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+                  <span className="hidden sm:inline">{activeFilterCount > 0 ? `Filters: ${activeFilterCount}` : "Filter"}</span>
+                  {activeFilterCount > 0 && (
+                    <span className="ml-0.5 text-[10px] font-medium sm:hidden">{activeFilterCount}</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              {activeFilterCount > 0 && (
+                <button
+                  type="button"
+                  data-testid="issues-clear-filters"
+                  className="hidden h-9 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] rounded-l-none text-[color:var(--accent-strong)] transition-colors hover:border-[color:var(--border-soft)] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 sm:inline-flex"
+                  onClick={clearIssueFilters}
+                  aria-label="Clear issue filters"
+                  title="Clear filters"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
             <PopoverContent align="end" className="w-[min(480px,calc(100vw-2rem))] p-0">
               <div className="p-3 space-y-3">
                 <div className="flex items-center justify-between">
@@ -722,7 +739,7 @@ export function IssuesList({
                   {activeFilterCount > 0 && (
                     <button
                       className="text-xs text-muted-foreground hover:text-foreground"
-                      onClick={() => updateView({ statuses: [], priorities: [], assignees: [], labels: [], projects: [] })}
+                      onClick={clearIssueFilters}
                     >
                       Clear
                     </button>

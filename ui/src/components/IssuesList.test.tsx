@@ -298,6 +298,62 @@ describe("IssuesList", () => {
     expect(document.body.querySelector('[data-testid="issue-row-assignee-picker-scroll"]')?.classList.contains("scrollbar-auto-hide")).toBe(true);
   });
 
+  it("clears issue filters from the toolbar clear button without opening the filter popover", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({
+        viewMode: "list",
+        statuses: ["todo"],
+        priorities: ["medium"],
+        assignees: ["agent-1"],
+      }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[{ ...baseIssue, assigneeAgentId: "agent-1" }]}
+          agents={[{ id: "agent-1", name: "Alice", role: "engineer", title: null }]}
+          viewStateKey="test:issues"
+          toolbarMode="controls-only"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Filters: 3");
+    expect(document.body.textContent).not.toContain("Quick filters");
+
+    const clearButton = container.querySelector<HTMLButtonElement>('[data-testid="issues-clear-filters"]');
+    expect(clearButton).toBeTruthy();
+
+    act(() => {
+      clearButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain("Filter");
+    expect(container.textContent).not.toContain("Filters: 3");
+    expect(document.body.textContent).not.toContain("Quick filters");
+    expect(JSON.parse(window.localStorage.getItem("test:issues:org-1") ?? "{}")).toMatchObject({
+      statuses: [],
+      priorities: [],
+      assignees: [],
+      labels: [],
+      projects: [],
+    });
+  });
+
   it("opens issue search scope options from the search input and keeps one scope selected", () => {
     window.localStorage.setItem(
       "test:issues:org-1",
