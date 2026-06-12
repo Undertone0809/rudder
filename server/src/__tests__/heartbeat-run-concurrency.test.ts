@@ -1024,7 +1024,11 @@ describe("heartbeat run concurrency", () => {
     const heartbeat = heartbeatService(db);
     await heartbeat.resumeQueuedRuns();
 
-    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+    await waitForCondition(async () => {
+      const statuses = await listRunStatuses(agentId);
+      const wakeups = await listWakeupRequestsForAgent(agentId);
+      return statuses[0]?.status === "running" && wakeups[0]?.status === "claimed";
+    });
     const statuses = await listRunStatuses(agentId);
     expect(statuses).toHaveLength(1);
     expect(statuses[0]).toMatchObject({ status: "running" });
