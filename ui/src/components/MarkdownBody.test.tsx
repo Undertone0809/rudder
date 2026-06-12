@@ -584,6 +584,21 @@ describe("MarkdownBody", () => {
     expect(html).toContain('target="_blank"');
   });
 
+  it("wraps markdown tables in a horizontal scroll boundary", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"| Source | Reliability | Support |\n|---|---|---|\n| OpenClaw official docs | Official | Phase model and defaults |\n"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const tableScroll = container.querySelector(".rudder-markdown-table-scroll");
+    expect(tableScroll).toBeTruthy();
+    expect(tableScroll?.querySelector("table")).toBeTruthy();
+    expect(tableScroll?.textContent).toContain("OpenClaw official docs");
+  });
+
   it("keeps app-relative markdown links in the current window", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

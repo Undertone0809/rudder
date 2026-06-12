@@ -603,6 +603,11 @@ export function MarkdownBody({
     li: ({ node, children: itemChildren, ...itemProps }) => (
       <li {...itemProps} {...markdownSourceAttributes(node)}>{itemChildren}</li>
     ),
+    table: ({ node, children: tableChildren, ...tableProps }) => (
+      <div className="rudder-markdown-table-scroll">
+        <table {...tableProps} {...markdownSourceAttributes(node)}>{tableChildren}</table>
+      </div>
+    ),
     pre: ({ node, children: preChildren, ...preProps }) => {
       const mermaidSource = extractMermaidSource(preChildren);
       if (mermaidSource) {

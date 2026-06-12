@@ -1952,16 +1952,28 @@ button[draggable="false"] {
 
 .rudder-milkdown-content table {
   margin: 1em 0;
-  width: 100%;
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
   border-collapse: collapse;
   font-size: 0.94em;
+  overflow-x: auto;
 }
 
 .rudder-milkdown-content th,
 .rudder-milkdown-content td {
+  min-width: 9rem;
   border: 1px solid var(--border);
   padding: 0.4rem 0.55rem;
   vertical-align: top;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.rudder-milkdown-content :where(th, td) :where(a, code) {
+  overflow-wrap: anywhere;
 }
 
 .rudder-milkdown-content th {
@@ -2911,7 +2923,7 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   margin-bottom: 0;
 }
 
-.rudder-markdown :where(p, ul, ol, blockquote, pre, table) {
+.rudder-markdown :where(p, ul, ol, blockquote, pre, .rudder-markdown-table-scroll) {
   margin-top: 0.7rem;
   margin-bottom: 0.7rem;
 }
@@ -3395,12 +3407,33 @@ a.rudder-skill-token[href] {
 }
 
 .rudder-markdown table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  margin: 0;
 }
 
 .rudder-markdown th {
   font-weight: 600;
   text-align: left;
+}
+
+.rudder-markdown-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.rudder-markdown-table-scroll th,
+.rudder-markdown-table-scroll td {
+  min-width: 9rem;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  vertical-align: top;
+}
+
+.rudder-markdown-table-scroll :where(a, code) {
+  overflow-wrap: anywhere;
 }
 
 .rudder-mermaid {

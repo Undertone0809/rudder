@@ -285,6 +285,67 @@ test("Library markdown files reject embedded image data URLs", async ({ page }) 
   });
 });
 
+test("Library markdown tables keep readable columns inside the document pane", async ({ page }) => {
+  const organization = await createOrg(page, "Library-Markdown-Table-Layout");
+  const filePath = "projects/research/openclaw-dreaming-mechanism.md";
+  await writeWorkspaceFile(
+    page,
+    organization.id,
+    filePath,
+    [
+      "# OpenClaw Dreaming 机制解析",
+      "",
+      "## 摘要",
+      "",
+      "OpenClaw 的 Dreaming 不是让模型在当前对话里自由“做梦”。",
+      "",
+      "## 资料来源与可靠性",
+      "",
+      "| 来源 | 可靠性 | 支撑内容 |",
+      "|---|---|---|",
+      "| OpenClaw 官方 Dreaming 概念文档: https://docs.openclaw.ai/concepts/dreaming | 官方文档 | Dreaming 的阶段模型、写入位置、默认启用方式、CLI/UI 入口、Deep ranking signal。 |",
+      "| OpenClaw 源码, `openclaw/openclaw` commit 301213a05f2fefff88797d43c0c2cae7008c7699: https://github.com/openclaw/openclaw/tree/301213a05f2fefff88797d43c0c2cae7008c7699 | 开源实现 | 配置默认值、phase 执行顺序、candidate scoring 和 promotion 阈值。 |",
+      "",
+      "## 继续分析",
+      "",
+      "Done.",
+    ].join("\n"),
+  );
+  await selectOrg(page, organization.id);
+  await page.setViewportSize({ width: 1491, height: 926 });
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+
+  const editor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+  const table = editor.locator("table").first();
+  await expect(table).toBeVisible();
+  await expect(page.getByTestId("org-workspaces-document-outline")).toBeVisible();
+
+  const metrics = await table.evaluate((element) => {
+    const reliabilityHeader = element.querySelector("th:nth-child(2)");
+    const supportHeader = element.querySelector("th:nth-child(3)");
+    const supportCell = element.querySelector("tbody tr:first-child td:nth-child(3), tr:nth-child(2) td:nth-child(3)");
+    const outline = document.querySelector('[data-testid="org-workspaces-document-outline"]');
+    const tableRect = element.getBoundingClientRect();
+    const outlineRect = outline?.getBoundingClientRect();
+    const reliabilityRect = reliabilityHeader?.getBoundingClientRect();
+    const supportRect = supportCell?.getBoundingClientRect();
+    return {
+      tableRight: tableRect.right,
+      outlineLeft: outlineRect?.left ?? Number.POSITIVE_INFINITY,
+      reliabilityHeaderWidth: reliabilityRect?.width ?? 0,
+      reliabilityHeaderHeight: reliabilityRect?.height ?? 0,
+      supportHeaderText: supportHeader?.textContent ?? "",
+      supportCellWidth: supportRect?.width ?? 0,
+    };
+  });
+
+  expect(metrics.tableRight).toBeLessThan(metrics.outlineLeft);
+  expect(metrics.reliabilityHeaderWidth).toBeGreaterThan(120);
+  expect(metrics.reliabilityHeaderHeight).toBeLessThan(60);
+  expect(metrics.supportHeaderText).toBe("支撑内容");
+  expect(metrics.supportCellWidth).toBeGreaterThan(120);
+});
+
 test("Library markdown section jumps align headings to the top of the editor viewport", async ({ page }) => {
   const organization = await createOrg(page, "Library-Markdown-Outline");
   const filePath = "docs/outline.md";
