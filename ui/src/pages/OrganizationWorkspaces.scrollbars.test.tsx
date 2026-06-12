@@ -263,6 +263,10 @@ vi.mock("@/lib/router", () => ({
   ],
 }));
 
+vi.mock("../context/I18nContext", () => ({
+  useI18n: () => ({ locale: "en", t: (key: string) => key }),
+}));
+
 vi.mock("../context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({
     setBreadcrumbs: mockState.setBreadcrumbs,

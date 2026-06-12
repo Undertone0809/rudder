@@ -186,6 +186,10 @@ vi.mock("@/lib/router", () => ({
   ],
 }));
 
+vi.mock("../context/I18nContext", () => ({
+  useI18n: () => ({ locale: "en", t: (key: string) => key }),
+}));
+
 vi.mock("../context/ToastContext", () => ({
   useToast: () => ({
     pushToast: mockState.pushToast,

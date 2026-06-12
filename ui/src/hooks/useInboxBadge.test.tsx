@@ -90,6 +90,15 @@ async function renderWithQueryClient(children: ReactNode) {
   };
 }
 
+async function waitForRender(predicate: () => boolean) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) return;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockApis.listThreadPage.mockResolvedValue({
@@ -121,6 +130,7 @@ describe("useInboxBadge", () => {
       sidebarBadges.resolve(createBadges({ inbox: 7, unreadTouchedIssues: 5, chatAttention: 2 }));
       await sidebarBadges.promise;
     });
+    await waitForRender(() => renders.at(-1)?.isReady === true);
 
     expect(renders.at(-1)).toMatchObject({
       inbox: 7,

@@ -142,15 +142,6 @@ describe("git identity guard", () => {
       });
       await expect(runGit(repo, [
         "config",
-        "--get-all",
-        "credential.helper",
-      ], {
-        HOME: isolatedHome,
-        GIT_CONFIG_GLOBAL: path.join(isolatedHome, ".gitconfig"),
-        GIT_CONFIG_NOSYSTEM: "1",
-      })).rejects.toMatchObject({ stdout: "" });
-      await expect(runGit(repo, [
-        "config",
         "--get",
         "user.email",
       ], {
@@ -161,6 +152,7 @@ describe("git identity guard", () => {
       const managedConfig = await fs.readFile(path.join(isolatedHome, ".gitconfig"), "utf8");
       expect(managedConfig).not.toContain("[include]");
       expect(managedConfig).not.toContain("helper = store");
+      expect(managedConfig).not.toContain("[credential]");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

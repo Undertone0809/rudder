@@ -204,6 +204,10 @@ vi.mock("../context/OrganizationContext", () => ({
   }),
 }));
 
+vi.mock("../context/I18nContext", () => ({
+  useI18n: () => ({ locale: "en", t: (key: string) => key }),
+}));
+
 vi.mock("../context/ToastContext", () => ({
   useToast: () => ({ pushToast: vi.fn() }),
 }));
