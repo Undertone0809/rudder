@@ -129,13 +129,15 @@ export const MAX_RECOVERY_CHAIN_DEPTH = 8;
 export const ISSUE_PASSIVE_FOLLOWUP_REASON = "issue_passive_followup";
 export const ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE = "passive_issue_followup";
 export const ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON = "missing_closure";
-export const ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS = 2;
+export const ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS = 3;
+export const ISSUE_COMMENT_MENTION_REASON = "issue_comment_mentioned";
 export const ISSUE_REVIEW_CLOSEOUT_REASON = "issue_review_closeout_missing";
 export const ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON = "missing_review_decision";
-export const ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS = 2;
+export const ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS = 3;
 export const ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT = new Map<number, number>([
   [1, 2 * 60 * 1000],
   [2, 5 * 60 * 1000],
+  [3, 5 * 60 * 1000],
 ]);
 export const ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS = 15 * 60 * 1000;
 export const SESSIONED_LOCAL_ADAPTERS = new Set([
@@ -188,6 +190,35 @@ export const heartbeatRunListColumns = {
 
 export function appendExcerpt(prev: string, chunk: string) {
   return appendWithCap(prev, chunk, MAX_EXCERPT_BYTES);
+}
+
+export function isIssueCommentMentionWake(input: {
+  reason?: string | null;
+  contextSnapshot?: unknown;
+  payload?: unknown;
+}) {
+  const context = parseObject(input.contextSnapshot);
+  const payload = parseObject(input.payload);
+  const deferredContext = parseObject(payload[DEFERRED_WAKE_CONTEXT_KEY]);
+  const wakeReasons = [
+    readNonEmptyString(input.reason),
+    readNonEmptyString(context.wakeReason),
+    readNonEmptyString(deferredContext.wakeReason),
+    readNonEmptyString(payload.wakeReason),
+  ];
+  if (wakeReasons.includes(ISSUE_COMMENT_MENTION_REASON)) return true;
+
+  const wakeSource =
+    readNonEmptyString(context.wakeSource) ??
+    readNonEmptyString(deferredContext.wakeSource) ??
+    readNonEmptyString(payload.wakeSource);
+  const wakeCommentId =
+    readNonEmptyString(context.wakeCommentId) ??
+    readNonEmptyString(deferredContext.wakeCommentId) ??
+    readNonEmptyString(context.commentId) ??
+    readNonEmptyString(deferredContext.commentId) ??
+    readNonEmptyString(payload.commentId);
+  return wakeSource === "comment.mention" && Boolean(wakeCommentId);
 }
 
 export function appendTranscriptEntriesFromChunk(input: {

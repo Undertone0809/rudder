@@ -647,8 +647,17 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
             )}
             {failureDisplay && (
               <div className="text-xs">
-                <div className="font-medium text-red-600 dark:text-red-400">{failureDisplay.title}</div>
-                <span className="text-red-600 dark:text-red-400">{failureDisplay.body}</span>
+                <div className={cn(
+                  "font-medium",
+                  failureDisplay.tone === "neutral"
+                    ? "text-muted-foreground"
+                    : "text-red-600 dark:text-red-400",
+                )}>
+                  {failureDisplay.title}
+                </div>
+                <span className={failureDisplay.tone === "neutral" ? "text-muted-foreground" : "text-red-600 dark:text-red-400"}>
+                  {failureDisplay.body}
+                </span>
                 {failureDisplay.code && <span className="text-muted-foreground ml-1">({failureDisplay.code})</span>}
                 {failureDisplay.actionPath && failureDisplay.actionLabel && (
                   <div className="mt-1">

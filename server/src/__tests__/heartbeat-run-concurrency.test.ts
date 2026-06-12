@@ -260,6 +260,10 @@ describe("heartbeat run concurrency", () => {
     agentId: string;
     taskKey: string;
     issueId?: string;
+    reason?: string;
+    wakeReason?: string;
+    wakeSource?: string;
+    wakeCommentId?: string;
     createdAt: Date;
   }) {
     const wakeupRequestId = randomUUID();
@@ -270,8 +274,12 @@ describe("heartbeat run concurrency", () => {
       agentId: input.agentId,
       source: "on_demand",
       triggerDetail: "manual",
-      reason: "test_queue",
-      payload: { taskKey: input.taskKey },
+      reason: input.reason ?? "test_queue",
+      payload: {
+        taskKey: input.taskKey,
+        ...(input.issueId ? { issueId: input.issueId } : {}),
+        ...(input.wakeCommentId ? { commentId: input.wakeCommentId } : {}),
+      },
       status: "queued",
       requestedAt: input.createdAt,
       updatedAt: input.createdAt,
@@ -289,6 +297,9 @@ describe("heartbeat run concurrency", () => {
         taskId: input.issueId ?? input.taskKey,
         taskKey: input.taskKey,
         ...(input.issueId ? { issueId: input.issueId } : {}),
+        ...(input.wakeReason ? { wakeReason: input.wakeReason } : {}),
+        ...(input.wakeSource ? { wakeSource: input.wakeSource } : {}),
+        ...(input.wakeCommentId ? { wakeCommentId: input.wakeCommentId } : {}),
       },
       createdAt: input.createdAt,
       updatedAt: input.createdAt,
@@ -369,11 +380,18 @@ describe("heartbeat run concurrency", () => {
     source?: string;
     reason?: string;
     issueId?: string;
+    wakeSource?: string;
+    wakeCommentId?: string;
     requestedAt?: Date;
   }) {
     const wakeupId = randomUUID();
     const context = input.issueId
-      ? { issueId: input.issueId, wakeReason: input.reason ?? "issue_assigned" }
+      ? {
+          issueId: input.issueId,
+          wakeReason: input.reason ?? "issue_assigned",
+          ...(input.wakeSource ? { wakeSource: input.wakeSource } : {}),
+          ...(input.wakeCommentId ? { wakeCommentId: input.wakeCommentId } : {}),
+        }
       : {};
     await db.insert(agentWakeupRequests).values({
       id: wakeupId,
@@ -385,6 +403,7 @@ describe("heartbeat run concurrency", () => {
       payload: input.issueId
         ? {
             issueId: input.issueId,
+            ...(input.wakeCommentId ? { commentId: input.wakeCommentId } : {}),
             _paperclipWakeContext: context,
           }
         : {},
@@ -742,6 +761,59 @@ describe("heartbeat run concurrency", () => {
     expect(wakeups.some((wakeup) => wakeup.reason === "heartbeat.preflight.no_actionable_work")).toBe(true);
   });
 
+  it("recovers deferred mention wakes even when the linked issue is already done", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T06:32:00.000Z");
+    const tickAt = new Date("2026-04-27T06:37:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "done" });
+    const wakeCommentId = randomUUID();
+    const deferredWakeupId = await seedRunlessWakeup({
+      orgId,
+      agentId,
+      status: "deferred_issue_execution",
+      source: "automation",
+      reason: "issue_comment_mentioned",
+      issueId,
+      wakeSource: "comment.mention",
+      wakeCommentId,
+      requestedAt: new Date("2026-04-27T06:33:00.000Z"),
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups.find((wakeup) => wakeup.id === deferredWakeupId)).toMatchObject({
+      status: "claimed",
+      reason: "issue_comment_mentioned",
+      source: "automation",
+    });
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      wakeupRequestId: deferredWakeupId,
+      status: "running",
+      invocationSource: "automation",
+    });
+    expect(runs[0]?.contextSnapshot).toMatchObject({
+      issueId,
+      wakeReason: "issue_comment_mentioned",
+      wakeSource: "comment.mention",
+      wakeCommentId,
+    });
+  });
+
   it("skips timer heartbeats without actionable work and records pending wakeup diagnostics", async () => {
     await disableExistingTimerAgents();
     const createdAt = new Date("2026-04-27T06:40:00.000Z");
@@ -930,6 +1002,37 @@ describe("heartbeat run concurrency", () => {
     expect(wakeups[0]).toMatchObject({
       status: "cancelled",
       runId: null,
+    });
+  });
+
+  it("claims queued mention runs whose linked issue is already done", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "done" });
+    const wakeCommentId = randomUUID();
+    await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: `issue:${issueId}`,
+      issueId,
+      reason: "issue_comment_mentioned",
+      wakeReason: "issue_comment_mentioned",
+      wakeSource: "comment.mention",
+      wakeCommentId,
+      createdAt: new Date("2026-04-27T09:35:00.000Z"),
+    });
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+
+    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+    const statuses = await listRunStatuses(agentId);
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]).toMatchObject({ status: "running" });
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups[0]).toMatchObject({
+      status: "claimed",
+      reason: "issue_comment_mentioned",
     });
   });
 });

@@ -59,6 +59,7 @@ describe("getRunFailureDisplay", () => {
       title: "Workspace permission repair needed",
       body: "Rudder could not verify write access to its managed agent workspace before starting the run.",
       code: "workspace_permission_repair_needed",
+      tone: "destructive",
       actionLabel: "Open instance details",
       actionPath: "/instance/settings/about",
     });
@@ -72,6 +73,20 @@ describe("getRunFailureDisplay", () => {
       title: "Run failed",
       body: "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.",
       code: "adapter_failed",
+      tone: "destructive",
+    });
+  });
+
+  it("labels cancelled runs separately from system failures", () => {
+    expect(getRunFailureDisplay({
+      status: "cancelled",
+      error: "Cancelled because the linked issue is no longer actionable",
+      errorCode: "cancelled",
+    })).toEqual({
+      title: "Run cancelled",
+      body: "The run was cancelled before it could continue. Rudder kept the cancellation reason for context.",
+      code: "cancelled",
+      tone: "neutral",
     });
   });
 });

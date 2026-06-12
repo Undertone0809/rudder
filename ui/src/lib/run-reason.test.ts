@@ -59,14 +59,14 @@ describe("describeRunReason", () => {
           originRunId: "run-0",
           previousRunId: "run-1",
           attempt: 1,
-          maxAttempts: 2,
+          maxAttempts: 3,
           reason: "missing_closure",
           queuedAt: "2026-04-27T00:00:00.000Z",
         },
       },
     }));
 
-    expect(reason.label).toBe("Follow-up 1/2");
+    expect(reason.label).toBe("Follow-up 1/3");
     expect(reason.description).toContain("clear close-out");
   });
 

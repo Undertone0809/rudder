@@ -55,4 +55,12 @@ describe("getRunListSummary", () => {
       resultJson: { summary: "Updated the implementation plan" },
     }))).toBe("Updated the implementation plan");
   });
+
+  it("describes cancelled runs as cancelled instead of failed", () => {
+    expect(getRunListSummary(run({
+      status: "cancelled",
+      error: "Cancelled because the linked issue is no longer actionable",
+      errorCode: "cancelled",
+    }))).toBe("The run was cancelled before it could continue. Rudder kept the cancellation reason for context.");
+  });
 });

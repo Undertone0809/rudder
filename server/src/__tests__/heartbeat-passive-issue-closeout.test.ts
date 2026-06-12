@@ -333,7 +333,7 @@ describe("heartbeat passive issue closeout", () => {
         originRunId: run.id,
         previousRunId: run.id,
         attempt: 1,
-        maxAttempts: 2,
+        maxAttempts: 3,
       },
     });
 
@@ -360,7 +360,7 @@ describe("heartbeat passive issue closeout", () => {
       originRunId: run.id,
       previousRunId: run.id,
       attempts: 1,
-      maxAttempts: 2,
+      maxAttempts: 3,
       reason: "missing_review_decision",
     });
   });
@@ -395,7 +395,7 @@ describe("heartbeat passive issue closeout", () => {
         originRunId: run.id,
         previousRunId: run.id,
         attempt: 1,
-        maxAttempts: 2,
+        maxAttempts: 3,
       },
     });
   });
@@ -503,8 +503,8 @@ describe("heartbeat passive issue closeout", () => {
       reviewCloseout: {
         originRunId,
         previousRunId: randomUUID(),
-        attempt: 2,
-        maxAttempts: 2,
+        attempt: 3,
+        maxAttempts: 3,
         reason: "missing_review_decision",
       },
     });
@@ -522,8 +522,8 @@ describe("heartbeat passive issue closeout", () => {
       reviewerAgentId: agentId,
       originRunId,
       previousRunId: run.id,
-      attempts: 2,
-      maxAttempts: 2,
+      attempts: 3,
+      maxAttempts: 3,
       reason: "missing_review_decision",
     });
 
@@ -565,7 +565,7 @@ describe("heartbeat passive issue closeout", () => {
         originRunId: run.id,
         previousRunId: run.id,
         attempt: 1,
-        maxAttempts: 2,
+        maxAttempts: 3,
         reason: "missing_closure",
       },
     });
@@ -726,8 +726,8 @@ describe("heartbeat passive issue closeout", () => {
       passiveFollowup: {
         originRunId,
         previousRunId: randomUUID(),
-        attempt: 2,
-        maxAttempts: 2,
+        attempt: 3,
+        maxAttempts: 3,
         reason: "missing_closure",
         queuedAt: new Date().toISOString(),
       },
@@ -750,8 +750,8 @@ describe("heartbeat passive issue closeout", () => {
       convergenceReview: {
         originRunId,
         previousRunId: run.id,
-        attempts: 2,
-        maxAttempts: 2,
+        attempts: 3,
+        maxAttempts: 3,
       },
     });
 
@@ -777,8 +777,8 @@ describe("heartbeat passive issue closeout", () => {
       reviewerAgentId: agentId,
       originRunId,
       previousRunId: run.id,
-      attempts: 2,
-      maxAttempts: 2,
+      attempts: 3,
+      maxAttempts: 3,
       reason: "missing_closure",
     });
   });
@@ -794,8 +794,8 @@ describe("heartbeat passive issue closeout", () => {
       passiveFollowup: {
         originRunId,
         previousRunId: randomUUID(),
-        attempt: 2,
-        maxAttempts: 2,
+        attempt: 3,
+        maxAttempts: 3,
         reason: "missing_closure",
         queuedAt: new Date().toISOString(),
       },
@@ -811,8 +811,8 @@ describe("heartbeat passive issue closeout", () => {
     expect(convergenceActivity?.details).toMatchObject({
       issueId,
       reviewerUserId,
-      attempts: 2,
-      maxAttempts: 2,
+      attempts: 3,
+      maxAttempts: 3,
       reason: "missing_closure",
     });
 
@@ -939,8 +939,8 @@ describe("heartbeat passive issue closeout", () => {
       passiveFollowup: {
         originRunId,
         previousRunId: randomUUID(),
-        attempt: 2,
-        maxAttempts: 2,
+        attempt: 3,
+        maxAttempts: 3,
         reason: "missing_closure",
         queuedAt: new Date().toISOString(),
       },
@@ -970,8 +970,8 @@ describe("heartbeat passive issue closeout", () => {
     expect(reviewEvent?.details).toMatchObject({
       originRunId,
       previousRunId: run.id,
-      attempts: 2,
-      maxAttempts: 2,
+      attempts: 3,
+      maxAttempts: 3,
       reason: "missing_closure",
     });
   });
