@@ -110,6 +110,33 @@ describe("useKeyboardShortcuts", () => {
     expect(onNavigateBack).not.toHaveBeenCalled();
   });
 
+  it("ignores hidden or closed overlay remnants when handling Escape navigation", async () => {
+    const onNavigateBack = vi.fn(() => true);
+    await renderShortcutHarness({ onNavigateBack });
+
+    const hiddenDialog = document.createElement("div");
+    hiddenDialog.setAttribute("role", "dialog");
+    hiddenDialog.style.display = "none";
+    document.body.append(hiddenDialog);
+
+    const closedMenu = document.createElement("div");
+    closedMenu.setAttribute("role", "menu");
+    closedMenu.setAttribute("data-state", "closed");
+    document.body.append(closedMenu);
+
+    const closedPopperWrapper = document.createElement("div");
+    closedPopperWrapper.setAttribute("data-radix-popper-content-wrapper", "");
+    const closedPopperContent = document.createElement("div");
+    closedPopperContent.setAttribute("data-state", "closed");
+    closedPopperWrapper.append(closedPopperContent);
+    document.body.append(closedPopperWrapper);
+
+    const event = dispatchEscape();
+
+    expect(onNavigateBack).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("navigates back on Escape from editable content when no inner layer handled it", async () => {
     const onNavigateBack = vi.fn(() => true);
     await renderShortcutHarness({ onNavigateBack });

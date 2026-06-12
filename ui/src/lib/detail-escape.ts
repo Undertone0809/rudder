@@ -7,19 +7,40 @@ function isPlainUnhandledEscape(event: KeyboardEvent) {
     !event.shiftKey;
 }
 
-function hasBlockingEscapeLayer(extraSelectors: string[] = []) {
+function isHiddenEscapeLayer(element: Element) {
+  let current: Element | null = element;
+  while (current && current instanceof HTMLElement) {
+    if (current.hidden || current.getAttribute("aria-hidden") === "true") return true;
+    const style = window.getComputedStyle(current);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return true;
+    current = current.parentElement;
+  }
+
+  const statefulElements = [
+    element,
+    ...Array.from(element.querySelectorAll("[data-state]")),
+  ];
+  const hasOpenState = statefulElements.some((candidate) => candidate.getAttribute("data-state") === "open");
+  const hasClosedState = statefulElements.some((candidate) => candidate.getAttribute("data-state") === "closed");
+  return hasClosedState && !hasOpenState;
+}
+
+export function hasBlockingEscapeLayer(extraSelectors: string[] = []) {
   if (typeof document === "undefined") return false;
-  return Boolean(
-    document.querySelector(
-      [
-        "[role='dialog']",
-        "[role='menu']",
-        "[role='listbox']",
-        "[data-radix-popper-content-wrapper]",
-        ...extraSelectors,
-      ].join(", "),
-    ),
-  );
+  const candidates = Array.from(document.querySelectorAll(
+    [
+      "[role='dialog']",
+      "[role='alertdialog']",
+      "[role='menu']",
+      "[role='listbox']",
+      "[data-radix-popper-content-wrapper]",
+      "[data-slot='popover-content']",
+      "[data-slot='dropdown-menu-content']",
+      "[data-slot='command-dialog']",
+      ...extraSelectors,
+    ].join(", "),
+  ));
+  return candidates.some((candidate) => !isHiddenEscapeLayer(candidate));
 }
 
 export function shouldHandleDetailEscape(event: KeyboardEvent) {

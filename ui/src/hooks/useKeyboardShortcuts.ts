@@ -4,6 +4,7 @@ import {
   eventMatchesShortcutAction,
   isEditableShortcutTarget,
 } from "@/lib/keyboard-shortcuts";
+import { hasBlockingEscapeLayer } from "@/lib/detail-escape";
 
 interface ShortcutHandlers {
   onNewIssue?: () => void;
@@ -12,24 +13,6 @@ interface ShortcutHandlers {
   onOpenSettings?: () => void;
   onNavigateBack?: () => boolean;
   shortcutSettings?: KeyboardShortcutSettings | null;
-}
-
-function hasOpenEscapeLayer(): boolean {
-  if (typeof document === "undefined") return false;
-  return Boolean(
-    document.querySelector(
-      [
-        '[role="dialog"]',
-        '[role="alertdialog"]',
-        '[data-radix-popper-content-wrapper]',
-        '[data-slot="popover-content"]',
-        '[data-slot="dropdown-menu-content"]',
-        '[data-slot="command-dialog"]',
-        '[role="menu"]',
-        '[role="listbox"]',
-      ].join(", "),
-    ),
-  );
 }
 
 export function useKeyboardShortcuts({
@@ -47,7 +30,7 @@ export function useKeyboardShortcuts({
       // Escape is a navigation command once overlays/menus had a chance to
       // claim it. Do not suppress it just because focus is inside an editor.
       if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && onNavigateBack) {
-        if (hasOpenEscapeLayer()) return;
+        if (hasBlockingEscapeLayer()) return;
         if (!onNavigateBack()) return;
         e.preventDefault();
         return;

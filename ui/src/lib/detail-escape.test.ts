@@ -64,6 +64,27 @@ describe("shouldHandleDetailEscape", () => {
     document.body.append(listbox);
     expect(shouldHandleDetailEscape(keyboardEvent("Escape", document.body))).toBe(false);
   });
+
+  it("ignores hidden or closed overlay remnants", () => {
+    const hiddenDialog = document.createElement("div");
+    hiddenDialog.setAttribute("role", "dialog");
+    hiddenDialog.style.display = "none";
+    document.body.append(hiddenDialog);
+
+    const closedMenu = document.createElement("div");
+    closedMenu.setAttribute("role", "menu");
+    closedMenu.setAttribute("data-state", "closed");
+    document.body.append(closedMenu);
+
+    const closedPopperWrapper = document.createElement("div");
+    closedPopperWrapper.setAttribute("data-radix-popper-content-wrapper", "");
+    const closedPopperContent = document.createElement("div");
+    closedPopperContent.setAttribute("data-state", "closed");
+    closedPopperWrapper.append(closedPopperContent);
+    document.body.append(closedPopperWrapper);
+
+    expect(shouldHandleDetailEscape(keyboardEvent("Escape", document.body))).toBe(true);
+  });
 });
 
 describe("shouldHandleIssueDetailEscape", () => {
