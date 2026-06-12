@@ -77,7 +77,6 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "../workspace-runtime.js";
 import { issueService } from "../issues.js";
-import { documentService } from "../documents.js";
 import {
   buildIssueConvergenceReviewWakeupOptions,
   buildIssueReviewCloseoutWakeupOptions,
@@ -105,7 +104,6 @@ import {
   resolveSessionCompactionPolicy,
   type SessionCompactionPolicy,
 } from "@rudderhq/agent-runtime-utils";
-import { buildIssueDocumentsPrompt } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   buildCreateAgentBenchmarkTags,
   coerceCreateAgentBenchmarkMetadata,

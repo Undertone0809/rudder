@@ -1,7 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import type { Db } from "@rudderhq/db";
-import { buildIssueDocumentsPrompt } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   addIssueCommentSchema,
   createIssueAttachmentMetadataSchema,
@@ -12,11 +11,9 @@ import {
   createIssueSchema,
   linkIssueApprovalSchema,
   reportIssueCommitSchema,
-  issueDocumentKeySchema,
   reorderIssueSchema,
   updateIssueLabelSchema,
   updateIssueWorkProductSchema,
-  upsertIssueDocumentSchema,
   updateIssueSchema,
   isUuidLike,
   type IssueSearchField,
@@ -32,7 +29,6 @@ import {
   issueApprovalService,
   issueService,
   messengerService,
-  documentService,
   logActivity,
   projectService,
   automationService,
@@ -64,7 +60,6 @@ export function issueRoutes(db: Db, storage: StorageService) {
   const issueApprovalsSvc = issueApprovalService(db);
   const executionWorkspacesSvc = runWorkspaceService(db);
   const workProductsSvc = workProductService(db);
-  const documentsSvc = documentService(db);
   const automationsSvc = automationService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
   const upload = multer({
@@ -585,12 +580,11 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const [ancestors, project, goal, mentionedProjectIds, documentPayload] = await Promise.all([
+    const [ancestors, project, goal, mentionedProjectIds] = await Promise.all([
       svc.getAncestors(issue.id),
       issue.projectId ? projectsSvc.getById(issue.projectId) : null,
       issue.goalId ? goalsSvc.getById(issue.goalId) : null,
       svc.findMentionedProjectIds(issue.id),
-      documentsSvc.getIssueDocumentPayload(issue),
     ]);
     const mentionedProjects = mentionedProjectIds.length > 0
       ? await projectsSvc.listByIds(issue.orgId, mentionedProjectIds)
@@ -603,7 +597,6 @@ export function issueRoutes(db: Db, storage: StorageService) {
       ...issue,
       goalId: issue.goalId,
       ancestors,
-      ...documentPayload,
       project: project ?? null,
       goal: goal ?? null,
       mentionedProjects,
@@ -627,13 +620,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
         ? req.query.wakeCommentId.trim()
         : null;
 
-    const [ancestors, project, goal, commentCursor, wakeComment, documentPayload] = await Promise.all([
+    const [ancestors, project, goal, commentCursor, wakeComment] = await Promise.all([
       svc.getAncestors(issue.id),
       issue.projectId ? projectsSvc.getById(issue.projectId) : null,
       issue.goalId ? goalsSvc.getById(issue.goalId) : null,
       svc.getCommentCursor(issue.id),
       wakeCommentId ? svc.getComment(wakeCommentId) : null,
-      documentsSvc.getIssueDocumentPayload(issue),
     ]);
 
     res.json({
@@ -676,8 +668,6 @@ export function issueRoutes(db: Db, storage: StorageService) {
           }
         : null,
       commentCursor,
-      ...documentPayload,
-      issueDocumentsPrompt: buildIssueDocumentsPrompt(documentPayload),
       wakeComment:
         wakeComment && wakeComment.issueId === issue.id
           ? wakeComment
@@ -697,149 +687,30 @@ export function issueRoutes(db: Db, storage: StorageService) {
     res.json(workProducts);
   });
 
-  router.get("/issues/:id/documents", async (req, res) => {
-    const id = req.params.id as string;
-    const issue = await svc.getById(id);
-    if (!issue) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    assertCompanyAccess(req, issue.orgId);
-    const docs = await documentsSvc.listIssueDocuments(issue.id);
-    res.json(docs);
-  });
-
-  router.get("/issues/:id/documents/:key", async (req, res) => {
-    const id = req.params.id as string;
-    const issue = await svc.getById(id);
-    if (!issue) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    assertCompanyAccess(req, issue.orgId);
-    const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
-    if (!keyParsed.success) {
-      res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
-      return;
-    }
-    const doc = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data);
-    if (!doc) {
-      res.status(404).json({ error: "Document not found" });
-      return;
-    }
-    res.json(doc);
-  });
-
-  router.put("/issues/:id/documents/:key", validate(upsertIssueDocumentSchema), async (req, res) => {
-    const id = req.params.id as string;
-    const issue = await svc.getById(id);
-    if (!issue) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    assertCompanyAccess(req, issue.orgId);
-    if (req.actor.type === "agent") {
-      throw forbidden("Agents must write new durable work files under `library:projects/<project-key>/...`");
-    }
-    const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
-    if (!keyParsed.success) {
-      res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    const result = await documentsSvc.upsertIssueDocument({
-      issueId: issue.id,
-      key: keyParsed.data,
-      title: req.body.title ?? null,
-      format: req.body.format,
-      body: req.body.body,
-      changeSummary: req.body.changeSummary ?? null,
-      baseRevisionId: req.body.baseRevisionId ?? null,
-      createdByAgentId: actor.agentId ?? null,
-      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+  function sendRetiredIssueDocumentsResponse(res: Response) {
+    res.status(410).json({
+      error: "Issue documents have been retired. Use Project Library files and cite them from issue descriptions or comments.",
     });
-    const doc = result.document;
+  }
 
-    if (!result.unchanged) {
-      await logActivity(db, {
-        orgId: issue.orgId,
-        actorType: actor.actorType,
-        actorId: actor.actorId,
-        agentId: actor.agentId,
-        runId: actor.runId,
-        action: result.created ? "issue.document_created" : "issue.document_updated",
-        entityType: "issue",
-        entityId: issue.id,
-        details: {
-          key: doc.key,
-          documentId: doc.id,
-          title: doc.title,
-          format: doc.format,
-          revisionNumber: doc.latestRevisionNumber,
-        },
-      });
-    }
-
-    res.status(result.created ? 201 : 200).json(doc);
+  router.get("/issues/:id/documents", async (_req, res) => {
+    sendRetiredIssueDocumentsResponse(res);
   });
 
-  router.get("/issues/:id/documents/:key/revisions", async (req, res) => {
-    const id = req.params.id as string;
-    const issue = await svc.getById(id);
-    if (!issue) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    assertCompanyAccess(req, issue.orgId);
-    const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
-    if (!keyParsed.success) {
-      res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
-      return;
-    }
-    const revisions = await documentsSvc.listIssueDocumentRevisions(issue.id, keyParsed.data);
-    res.json(revisions);
+  router.get("/issues/:id/documents/:key", async (_req, res) => {
+    sendRetiredIssueDocumentsResponse(res);
   });
 
-  router.delete("/issues/:id/documents/:key", async (req, res) => {
-    const id = req.params.id as string;
-    const issue = await svc.getById(id);
-    if (!issue) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    assertCompanyAccess(req, issue.orgId);
-    if (req.actor.type !== "board") {
-      res.status(403).json({ error: "Board authentication required" });
-      return;
-    }
-    const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
-    if (!keyParsed.success) {
-      res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
-      return;
-    }
-    const removed = await documentsSvc.deleteIssueDocument(issue.id, keyParsed.data);
-    if (!removed) {
-      res.status(404).json({ error: "Document not found" });
-      return;
-    }
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: issue.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "issue.document_deleted",
-      entityType: "issue",
-      entityId: issue.id,
-      details: {
-        key: removed.key,
-        documentId: removed.id,
-        title: removed.title,
-      },
-    });
-    res.json({ ok: true });
+  router.put("/issues/:id/documents/:key", async (_req, res) => {
+    sendRetiredIssueDocumentsResponse(res);
+  });
+
+  router.get("/issues/:id/documents/:key/revisions", async (_req, res) => {
+    sendRetiredIssueDocumentsResponse(res);
+  });
+
+  router.delete("/issues/:id/documents/:key", async (_req, res) => {
+    sendRetiredIssueDocumentsResponse(res);
   });
 
   router.post("/issues/:id/work-products", validate(createIssueWorkProductSchema), async (req, res) => {

@@ -430,33 +430,6 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         issueComments.set(issueId, current);
         return comment;
       },
-      documents: {
-        async list(issueId, orgId) {
-          requireCapability(manifest, capabilitySet, "issue.documents.read");
-          if (!isInOrganization(issues.get(issueId), orgId)) return [];
-          return [];
-        },
-        async get(issueId, _key, orgId) {
-          requireCapability(manifest, capabilitySet, "issue.documents.read");
-          if (!isInOrganization(issues.get(issueId), orgId)) return null;
-          return null;
-        },
-        async upsert(input) {
-          requireCapability(manifest, capabilitySet, "issue.documents.write");
-          const parentIssue = issues.get(input.issueId);
-          if (!isInOrganization(parentIssue, input.orgId)) {
-            throw new Error(`Issue not found: ${input.issueId}`);
-          }
-          throw new Error("documents.upsert is not implemented in test context");
-        },
-        async delete(issueId, _key, orgId) {
-          requireCapability(manifest, capabilitySet, "issue.documents.write");
-          const parentIssue = issues.get(issueId);
-          if (!isInOrganization(parentIssue, orgId)) {
-            throw new Error(`Issue not found: ${issueId}`);
-          }
-        },
-      },
     },
     agents: {
       async list(input) {

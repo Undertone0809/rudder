@@ -353,19 +353,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     };
   }
 
-  function proposedPlanDocumentPayload(structuredPayload: Record<string, unknown> | null | undefined) {
-    if (!structuredPayload) return null;
-    const rawDocument =
-      structuredPayload.planDocument
-      && typeof structuredPayload.planDocument === "object"
-      && !Array.isArray(structuredPayload.planDocument)
-        ? structuredPayload.planDocument
-        : structuredPayload.plan && typeof structuredPayload.plan === "object" && !Array.isArray(structuredPayload.plan)
-          ? structuredPayload.plan
-          : null;
-    return rawDocument ? rawDocument as Record<string, unknown> : null;
-  }
-
   async function attachGeneratedFiles(input: {
     conversation: ChatConversation;
     message: ChatMessage | null;
@@ -420,7 +407,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
   }) {
     if (input.reply.kind === "issue_proposal") {
       const proposal = chatIssueProposalFromStructuredPayload(input.reply.structuredPayload);
-      const planDocument = proposedPlanDocumentPayload(input.reply.structuredPayload);
       const approval = await chatSvc.createProposalApproval(input.conversation.orgId, {
         type: "chat_issue_creation",
         requestedByUserId: null,
@@ -428,7 +414,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           chatConversationId: input.conversation.id,
           proposedByAgentId: input.reply.replyingAgentId ?? input.conversation.preferredAgentId ?? null,
           proposedIssue: proposal,
-          ...(planDocument ? { planDocument } : {}),
         },
       });
       return {

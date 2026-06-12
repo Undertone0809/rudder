@@ -67,7 +67,7 @@ It includes:
 - heartbeat runs for active agents
 - persisted run logs and run events so Agent Detail and Dashboard output panes are not empty
 - Calendar work-history blocks derived from heartbeat runs plus a few human checkpoints
-- issue comments and issue documents
+- issue comments and explicit Project Library file links
 - cost events and finance events across multiple providers
 - activity log timestamps distributed across one launch-week timeline
 

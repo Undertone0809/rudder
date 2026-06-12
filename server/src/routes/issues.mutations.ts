@@ -1,7 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import type { Db } from "@rudderhq/db";
-import { buildIssueDocumentsPrompt } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   addIssueCommentSchema,
   createIssueAttachmentMetadataSchema,
@@ -12,11 +11,9 @@ import {
   createIssueSchema,
   linkIssueApprovalSchema,
   reportIssueCommitSchema,
-  issueDocumentKeySchema,
   reorderIssueSchema,
   updateIssueLabelSchema,
   updateIssueWorkProductSchema,
-  upsertIssueDocumentSchema,
   updateIssueSchema,
   isUuidLike,
   hasMaterialIssueUpdateFields,

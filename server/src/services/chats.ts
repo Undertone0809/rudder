@@ -19,7 +19,6 @@ import { notFound, unprocessable } from "../errors.js";
 import { agentService } from "./agents.js";
 import { logActivity } from "./activity-log.js";
 import { approvalService } from "./approvals.js";
-import { documentService } from "./documents.js";
 import { organizationService } from "./orgs.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
@@ -61,7 +60,6 @@ import {
   stripChatMetadataFromPayload,
   withPersistedTranscript,
   issueProposalFromPayload,
-  planDocumentFromPayload,
   operationProposalFromPayload,
   operationProposalDecisionStatusFromPayload,
   withOperationProposalDecisionState,
@@ -73,7 +71,6 @@ export function chatService(db: Db) {
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
-  const documentsSvc = documentService(db);
 
   async function ensureConversationUserStates(rows: ConversationRow[], userId: string) {
     if (rows.length === 0) return;
@@ -1433,11 +1430,6 @@ export function chatService(db: Db) {
         createdByAgentId: input.createdByAgentId ?? sourceMessage?.replyingAgentId ?? null,
         createdByUserId: input.actorUserId,
       });
-      const planDocument = planDocumentFromPayload(
-        sourceMessage?.structuredPayload ?? input.proposal ?? null,
-        sourceMessage?.body ?? null,
-      );
-
       await db.transaction(async (tx) => {
         await tx
           .update(chatConversations)
@@ -1458,18 +1450,6 @@ export function chatService(db: Db) {
           })
           .onConflictDoNothing();
       });
-
-      if (planDocument) {
-        await documentsSvc.upsertIssueDocument({
-          issueId: issue.id,
-          key: "plan",
-          title: planDocument.title,
-          format: "markdown",
-          body: planDocument.body,
-          changeSummary: planDocument.changeSummary,
-          createdByUserId: input.actorUserId,
-        });
-      }
 
       return issue;
   }
@@ -1674,15 +1654,11 @@ export function chatService(db: Db) {
           payload.proposedIssue && typeof payload.proposedIssue === "object" && !Array.isArray(payload.proposedIssue)
             ? (payload.proposedIssue as Record<string, unknown>)
             : null;
-        const planDocument =
-          payload.planDocument && typeof payload.planDocument === "object" && !Array.isArray(payload.planDocument)
-            ? (payload.planDocument as Record<string, unknown>)
-            : null;
         const issue = await convertToIssue(conversationId, {
           actorUserId,
           createdByAgentId: safeTrim(typeof payload.proposedByAgentId === "string" ? payload.proposedByAgentId : null),
           messageId,
-          proposal: planDocument ? { issueProposal: proposedIssue, planDocument } : proposedIssue,
+          proposal: proposedIssue,
         });
         const links = await issueApprovalsSvc.linkManyForApproval(approval.id, [issue.id], {
           agentId: null,

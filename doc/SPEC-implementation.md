@@ -361,12 +361,12 @@ Operational policy:
 
 `usage` distinguishes issue-level supplemental files from inline content. Only
 `issue` attachments are rendered in the issue Attachments section. Images/files
-uploaded into issue descriptions, issue documents, or comment bodies are stored
+uploaded into issue descriptions or comment bodies are stored
 as assets for authenticated access, but remain visually attached to the content
 that references them instead of being duplicated in the issue-level attachment
 list.
 
-## 7.15 `documents` + `document_revisions` + `issue_documents`
+## 7.15 `documents` + `document_revisions`
 
 - `documents` stores editable text-first documents:
   - `id` uuid pk
@@ -387,12 +387,14 @@ list.
   - `revision_number` int not null
   - `body` text not null
   - `change_summary` text null
-- `issue_documents` links documents to issues with a stable workflow key:
+- `issue_documents` is retained for historical rows only in the legacy
+  issue-bound document model. New durable agent-authored docs belong in Project
+  Library files and should be cited from issue descriptions or comments:
   - `id` uuid pk
   - `org_id` uuid fk not null
   - `issue_id` uuid fk not null
   - `document_id` uuid fk not null
-  - `key` text not null (`plan`, `design`, `notes`, etc.)
+  - `key` text not null
 
 ## 7.16 `chat_conversations` + `chat_messages` + `chat_context_links` + `chat_attachments`
 
@@ -561,11 +563,6 @@ All endpoints are under `/api` and return JSON.
 - `POST /orgs/:orgId/issues`
 - `GET /issues/:issueId`
 - `PATCH /issues/:issueId`
-- `GET /issues/:issueId/documents`
-- `GET /issues/:issueId/documents/:key`
-- `PUT /issues/:issueId/documents/:key`
-- `GET /issues/:issueId/documents/:key/revisions`
-- `DELETE /issues/:issueId/documents/:key`
 - `POST /issues/:issueId/checkout`
 - `POST /issues/:issueId/release`
 - `POST /issues/:issueId/comments`

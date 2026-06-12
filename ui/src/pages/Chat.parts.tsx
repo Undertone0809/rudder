@@ -865,23 +865,6 @@ export function issueProposalPrincipalLabel(
   return null;
 }
 
-export function planDocumentFromMessage(message: ChatMessage) {
-  const payload = message.structuredPayload;
-  if (!payload) return null;
-  const rawDocument =
-    payload.planDocument && typeof payload.planDocument === "object" && !Array.isArray(payload.planDocument)
-      ? (payload.planDocument as Record<string, unknown>)
-      : payload.plan && typeof payload.plan === "object" && !Array.isArray(payload.plan)
-        ? (payload.plan as Record<string, unknown>)
-        : null;
-  const body = typeof rawDocument?.body === "string" ? rawDocument.body.trim() : "";
-  if (!body) return null;
-  const title = typeof rawDocument?.title === "string" && rawDocument.title.trim().length > 0
-    ? rawDocument.title.trim()
-    : "Plan";
-  return { title, body };
-}
-
 export function operationProposalFromMessage(message: ChatMessage) {
   const payload = message.structuredPayload;
   if (!payload) return null;

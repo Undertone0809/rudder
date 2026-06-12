@@ -19,8 +19,6 @@ import type {
   Project,
   Issue,
   IssueComment,
-  IssueDocument,
-  IssueDocumentSummary,
   Agent,
   Goal,
 } from "@rudderhq/shared";
@@ -63,8 +61,6 @@ export type {
   Project,
   Issue,
   IssueComment,
-  IssueDocument,
-  IssueDocumentSummary,
   Agent,
   Goal,
 } from "@rudderhq/shared";
@@ -779,73 +775,6 @@ export interface PluginOrganizationsClient {
 }
 
 /**
- * `ctx.issues.documents` — read and write issue documents.
- *
- * Requires:
- * - `issue.documents.read` for `list` and `get`
- * - `issue.documents.write` for `upsert` and `delete`
- *
- * @see PLUGIN_SPEC.md §14 — SDK Surface
- */
-export interface PluginIssueDocumentsClient {
-  /**
-   * List all documents attached to an issue.
-   *
-   * Returns summary metadata (id, key, title, format, timestamps) without
-   * the full document body. Use `get()` to fetch a specific document's body.
-   *
-   * Requires the `issue.documents.read` capability.
-   */
-  list(issueId: string, orgId: string): Promise<IssueDocumentSummary[]>;
-
-  /**
-   * Get a single document by key, including its full body content.
-   *
-   * Returns `null` if no document exists with the given key.
-   *
-   * Requires the `issue.documents.read` capability.
-   *
-   * @param issueId - UUID of the issue
-   * @param key - Document key (e.g. `"plan"`, `"design-spec"`)
-   * @param orgId - UUID of the company
-   */
-  get(issueId: string, key: string, orgId: string): Promise<IssueDocument | null>;
-
-  /**
-   * Create or update a document on an issue.
-   *
-   * If a document with the given key already exists, it is updated and a new
-   * revision is created. If it does not exist, it is created.
-   *
-   * Requires the `issue.documents.write` capability.
-   *
-   * @param input - Document data including issueId, key, body, and optional title/format/changeSummary
-   */
-  upsert(input: {
-    issueId: string;
-    key: string;
-    body: string;
-    orgId: string;
-    title?: string;
-    format?: string;
-    changeSummary?: string;
-  }): Promise<IssueDocument>;
-
-  /**
-   * Delete a document and all its revisions.
-   *
-   * No-ops silently if the document does not exist (idempotent).
-   *
-   * Requires the `issue.documents.write` capability.
-   *
-   * @param issueId - UUID of the issue
-   * @param key - Document key to delete
-   * @param orgId - UUID of the company
-   */
-  delete(issueId: string, key: string, orgId: string): Promise<void>;
-}
-
-/**
  * `ctx.issues` — read and mutate issues plus comments.
  *
  * Requires:
@@ -854,8 +783,6 @@ export interface PluginIssueDocumentsClient {
  * - `issues.update` for update
  * - `issue.comments.read` for `listComments`
  * - `issue.comments.create` for `createComment`
- * - `issue.documents.read` for `documents.list` and `documents.get`
- * - `issue.documents.write` for `documents.upsert` and `documents.delete`
  */
 export interface PluginIssuesClient {
   list(input: {
@@ -892,8 +819,6 @@ export interface PluginIssuesClient {
   ): Promise<Issue>;
   listComments(issueId: string, orgId: string): Promise<IssueComment[]>;
   createComment(issueId: string, body: string, orgId: string): Promise<IssueComment>;
-  /** Read and write issue documents. Requires `issue.documents.read` / `issue.documents.write`. */
-  documents: PluginIssueDocumentsClient;
 }
 
 /**
@@ -1136,7 +1061,7 @@ export interface PluginContext {
   /** Read company metadata. Requires `organizations.read`. */
   organizations: PluginOrganizationsClient;
 
-  /** Read and write issues, comments, and documents. Requires issue capabilities. */
+  /** Read and write issues and comments. Requires issue capabilities. */
   issues: PluginIssuesClient;
 
   /** Read and manage agents. Requires `agents.read` for reads; `agents.pause` / `agents.resume` / `agents.invoke` for write ops. */

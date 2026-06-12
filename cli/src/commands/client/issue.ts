@@ -7,11 +7,6 @@ import {
   createIssueSchema,
   reportIssueCommitSchema,
   updateIssueSchema,
-  upsertIssueDocumentSchema,
-  type DocumentRevision,
-  type IssueDocument,
-  type IssueDocumentSummary,
-  type LegacyPlanDocument,
   type Issue,
   type IssueAttachment,
   type IssueComment,
@@ -116,14 +111,6 @@ interface IssueCommentsListOptions extends BaseClientOptions {
   order?: string;
 }
 
-interface IssueDocumentPutOptions extends BaseClientOptions {
-  bodyFile: string;
-  title?: string;
-  format?: string;
-  changeSummary?: string;
-  baseRevisionId?: string;
-}
-
 interface IssueHeartbeatContext {
   issue: {
     id: string;
@@ -164,10 +151,6 @@ interface IssueHeartbeatContext {
     latestCommentCreatedAt: string | null;
     commentCount: number;
   };
-  planDocument: IssueDocument | null;
-  documentSummaries: IssueDocumentSummary[];
-  legacyPlanDocument: LegacyPlanDocument | null;
-  issueDocumentsPrompt: string;
   wakeComment: IssueComment | null;
 }
 
@@ -557,93 +540,6 @@ export function registerIssueCommands(program: Command): void {
           const ctx = resolveCommandContext(opts);
           const row = await ctx.api.get<IssueComment>(`/api/issues/${issueId}/comments/${commentId}`);
           printOutput(row, { json: ctx.json });
-        } catch (err) {
-          handleCommandError(err);
-        }
-      }),
-  );
-
-  const documents = issue.command("documents").description("Issue document operations");
-
-  addCommonClientOptions(
-    documents
-      .command("list")
-      .description(getAgentCliCapabilityById("issue.documents.list").description)
-      .argument("<issueId>", "Issue ID")
-      .action(async (issueId: string, opts: BaseClientOptions) => {
-        try {
-          const ctx = resolveCommandContext(opts);
-          const rows = (await ctx.api.get<IssueDocumentSummary[]>(`/api/issues/${issueId}/documents`)) ?? [];
-          printOutput(rows, { json: ctx.json });
-        } catch (err) {
-          handleCommandError(err);
-        }
-      }),
-  );
-
-  addCommonClientOptions(
-    documents
-      .command("get")
-      .description(getAgentCliCapabilityById("issue.documents.get").description)
-      .argument("<issueId>", "Issue ID")
-      .argument("<key>", "Document key")
-      .action(async (issueId: string, key: string, opts: BaseClientOptions) => {
-        try {
-          const ctx = resolveCommandContext(opts);
-          const row = await ctx.api.get<IssueDocument>(`/api/issues/${issueId}/documents/${key}`);
-          printOutput(row, { json: ctx.json });
-        } catch (err) {
-          handleCommandError(err);
-        }
-      }),
-  );
-
-  addCommonClientOptions(
-    documents
-      .command("put")
-      .description(getAgentCliCapabilityById("issue.documents.put").description)
-      .argument("<issueId>", "Issue ID")
-      .argument("<key>", "Document key")
-      .option("--body-file <path>", "Read document body from a file, or '-' for stdin")
-      .option("--title <text>", "Document title")
-      .option("--format <format>", "Document format", "markdown")
-      .option("--change-summary <text>", "Optional change summary")
-      .option("--base-revision-id <id>", "Latest revision id for optimistic concurrency")
-      .action(async (issueId: string, key: string, opts: IssueDocumentPutOptions) => {
-        try {
-          const ctx = resolveCommandContext(opts);
-          const body = await resolveFileTextInput({
-            file: opts.bodyFile,
-            fileOption: "--body-file",
-            removedTextOption: "--body",
-            required: true,
-          });
-          const payload = upsertIssueDocumentSchema.parse({
-            title: opts.title,
-            format: opts.format,
-            body,
-            changeSummary: opts.changeSummary,
-            baseRevisionId: opts.baseRevisionId,
-          });
-          const row = await ctx.api.put<IssueDocument>(`/api/issues/${issueId}/documents/${key}`, payload);
-          printOutput(row, { json: ctx.json });
-        } catch (err) {
-          handleCommandError(err);
-        }
-      }),
-  );
-
-  addCommonClientOptions(
-    documents
-      .command("revisions")
-      .description(getAgentCliCapabilityById("issue.documents.revisions").description)
-      .argument("<issueId>", "Issue ID")
-      .argument("<key>", "Document key")
-      .action(async (issueId: string, key: string, opts: BaseClientOptions) => {
-        try {
-          const ctx = resolveCommandContext(opts);
-          const rows = (await ctx.api.get<DocumentRevision[]>(`/api/issues/${issueId}/documents/${key}/revisions`)) ?? [];
-          printOutput(rows, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }

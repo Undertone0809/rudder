@@ -63,27 +63,6 @@ export type IssueSearchField = "title" | "description" | "comment";
 
 export type DocumentFormat = "markdown";
 
-export interface IssueDocumentSummary {
-  id: string;
-  orgId: string;
-  issueId: string;
-  key: string;
-  title: string | null;
-  format: DocumentFormat;
-  latestRevisionId: string | null;
-  latestRevisionNumber: number;
-  createdByAgentId: string | null;
-  createdByUserId: string | null;
-  updatedByAgentId: string | null;
-  updatedByUserId: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface IssueDocument extends IssueDocumentSummary {
-  body: string;
-}
-
 export interface LibraryDocumentIssueLink {
   issueId: string;
   issueIdentifier: string | null;
@@ -121,26 +100,6 @@ export interface LibraryDocumentRevision {
   createdByAgentId: string | null;
   createdByUserId: string | null;
   createdAt: Date;
-}
-
-export interface DocumentRevision {
-  id: string;
-  orgId: string;
-  documentId: string;
-  issueId: string;
-  key: string;
-  revisionNumber: number;
-  body: string;
-  changeSummary: string | null;
-  createdByAgentId: string | null;
-  createdByUserId: string | null;
-  createdAt: Date;
-}
-
-export interface LegacyPlanDocument {
-  key: "plan";
-  body: string;
-  source: "issue_description";
 }
 
 export interface Issue {
@@ -189,9 +148,6 @@ export interface Issue {
   hiddenAt: Date | null;
   labelIds?: string[];
   labels?: IssueLabel[];
-  planDocument?: IssueDocument | null;
-  documentSummaries?: IssueDocumentSummary[];
-  legacyPlanDocument?: LegacyPlanDocument | null;
   project?: Project | null;
   goal?: Goal | null;
   currentRunWorkspace?: RunWorkspace | null;

@@ -656,7 +656,6 @@ function invalidateActivityQueries(
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(ref) });
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(ref) });
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(ref) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(ref) });
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(ref) });
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.approvals(ref) });
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(ref) });

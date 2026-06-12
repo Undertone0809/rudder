@@ -43,11 +43,6 @@ const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
 
-const mockDocumentService = vi.hoisted(() => ({
-  getIssueDocumentPayload: vi.fn(),
-  upsertIssueDocument: vi.fn(),
-}));
-
 const mockGoalService = vi.hoisted(() => ({
   getById: vi.fn(),
   getDefaultCompanyGoal: vi.fn(),
@@ -79,7 +74,6 @@ const UNBOUND_RUN_ID = "77777777-7777-4777-8777-777777777777";
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
-  documentService: () => mockDocumentService,
   runWorkspaceService: () => ({}),
   executionWorkspaceService: () => ({}),
   goalService: () => mockGoalService,
@@ -212,11 +206,6 @@ describe("issue lifecycle routes", () => {
       latestCommentId: null,
       latestCommentAt: null,
     });
-    mockDocumentService.getIssueDocumentPayload.mockResolvedValue({
-      planDocument: null,
-      documentSummaries: [],
-      legacyPlanDocument: null,
-    });
     mockGoalService.getById.mockResolvedValue(null);
     mockGoalService.getDefaultCompanyGoal.mockResolvedValue(null);
     mockProjectService.getById.mockResolvedValue(null);
@@ -302,29 +291,8 @@ describe("issue lifecycle routes", () => {
     expect(mockGoalService.getDefaultCompanyGoal).not.toHaveBeenCalled();
   });
 
-  it("does not log activity for unchanged document saves", async () => {
+  it("returns 410 for retired issue document routes", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue());
-    mockDocumentService.upsertIssueDocument.mockResolvedValue({
-      created: false,
-      unchanged: true,
-      document: {
-        id: "document-1",
-        orgId: "organization-1",
-        issueId: "11111111-1111-4111-8111-111111111111",
-        key: "plan",
-        title: null,
-        format: "markdown",
-        body: "# Plan",
-        latestRevisionId: "33333333-3333-4333-8333-333333333333",
-        latestRevisionNumber: 1,
-        createdByAgentId: null,
-        createdByUserId: "local-board",
-        updatedByAgentId: null,
-        updatedByUserId: "local-board",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    });
 
     const res = await request(createApp())
       .put("/api/issues/11111111-1111-4111-8111-111111111111/documents/plan")
@@ -335,98 +303,26 @@ describe("issue lifecycle routes", () => {
         baseRevisionId: "33333333-3333-4333-8333-333333333333",
       });
 
-    expect(res.status).toBe(200);
-    expect(mockDocumentService.upsertIssueDocument).toHaveBeenCalledWith(
-      expect.objectContaining({
-        issueId: "11111111-1111-4111-8111-111111111111",
-        key: "plan",
-        body: "# Plan",
-        baseRevisionId: "33333333-3333-4333-8333-333333333333",
-      }),
-    );
+    expect(res.status).toBe(410);
+    expect(res.body.error).toContain("Issue documents have been retired");
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it("rejects agent writes to legacy issue documents", async () => {
-    mockIssueService.getById.mockResolvedValue(makeIssue());
-
-    const res = await request(createApp(createAgentActor()))
-      .put("/api/issues/11111111-1111-4111-8111-111111111111/documents/plan")
-      .send({
-        title: "Plan",
-        format: "markdown",
-        body: "# Plan\n",
-      });
-
-    expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agents must write new durable work files under `library:projects/<project-key>/...`");
-    expect(mockDocumentService.upsertIssueDocument).not.toHaveBeenCalled();
-  });
-
-  it("includes issue document references in heartbeat context without prompt body inlining", async () => {
+  it("omits legacy issue document payloads from heartbeat context", async () => {
     const issue = makeIssue({
       description: "Short issue summary",
       priority: "high",
     });
-    const documentUpdatedAt = new Date("2026-05-07T00:00:00.000Z");
     mockIssueService.getById.mockResolvedValue(issue);
-    mockDocumentService.getIssueDocumentPayload.mockResolvedValue({
-      planDocument: {
-        id: "44444444-4444-4444-8444-444444444444",
-        orgId: "organization-1",
-        issueId: issue.id,
-        key: "plan",
-        title: "Investigation Plan",
-        format: "markdown",
-        body: "# Plan\n\nConfirm whether agents can see issue docs.",
-        latestRevisionId: "55555555-5555-4555-8555-555555555555",
-        latestRevisionNumber: 1,
-        createdByAgentId: null,
-        createdByUserId: "local-board",
-        updatedByAgentId: null,
-        updatedByUserId: "local-board",
-        createdAt: documentUpdatedAt,
-        updatedAt: documentUpdatedAt,
-      },
-      documentSummaries: [
-        {
-          id: "44444444-4444-4444-8444-444444444444",
-          orgId: "organization-1",
-          issueId: issue.id,
-          key: "plan",
-          title: "Investigation Plan",
-          format: "markdown",
-          latestRevisionId: "55555555-5555-4555-8555-555555555555",
-          latestRevisionNumber: 1,
-          createdByAgentId: null,
-          createdByUserId: "local-board",
-          updatedByAgentId: null,
-          updatedByUserId: "local-board",
-          createdAt: documentUpdatedAt,
-          updatedAt: documentUpdatedAt,
-        },
-      ],
-      legacyPlanDocument: null,
-    });
 
     const res = await request(createApp())
       .get("/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context");
 
     expect(res.status).toBe(200);
-    expect(mockDocumentService.getIssueDocumentPayload).toHaveBeenCalledWith(
-      expect.objectContaining({ id: issue.id }),
-    );
-    expect(res.body.planDocument).toMatchObject({
-      key: "plan",
-      title: "Investigation Plan",
-      body: "# Plan\n\nConfirm whether agents can see issue docs.",
-    });
-    expect(res.body.documentSummaries).toHaveLength(1);
-    expect(res.body.issueDocumentsPrompt).toContain("## Legacy Issue Documents");
-    expect(res.body.issueDocumentsPrompt).toContain("$RUDDER_PROJECT_LIBRARY_ROOT");
-    expect(res.body.issueDocumentsPrompt).toContain("rudder library file ref");
-    expect(res.body.issueDocumentsPrompt).toContain(`rudder issue documents get ${issue.id} plan --json`);
-    expect(res.body.issueDocumentsPrompt).not.toContain("Confirm whether agents can see issue docs.");
+    expect(res.body).not.toHaveProperty("planDocument");
+    expect(res.body).not.toHaveProperty("documentSummaries");
+    expect(res.body).not.toHaveProperty("legacyPlanDocument");
+    expect(res.body).not.toHaveProperty("issueDocumentsPrompt");
   });
 
   it("records agent-reported commit activity with the authenticated agent and run", async () => {

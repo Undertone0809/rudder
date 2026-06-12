@@ -318,7 +318,7 @@ Planning rules:
 - reassign back to the requester if that is the expected workflow
 - when you create or update a durable Library file, always include a user-visible Markdown link to that file in your final chat reply or issue comment
 - when you reference the plan in comments, use the `markdownLink` returned by `rudder library file ref ... --json`
-- `rudder issue documents ...` is a legacy compatibility surface for older DB-backed issue documents. Read it when a prompt explicitly points to an existing legacy issue document; do not use it for new durable files.
+- `rudder issue documents ...` has been retired. Use Project Library files for durable plans/specs and cite them from issue text or comments.
 
 ## Critical Rules
 
@@ -365,7 +365,6 @@ Use concise markdown with:
 - issues: `/<prefix>/issues/<issue-identifier>`
 - issue comments: `/<prefix>/issues/<issue-identifier>#comment-<comment-id>`
 - Library files: `/<prefix>/library?path=<url-encoded-relative-path>`
-- legacy issue documents: `/<prefix>/issues/<issue-identifier>#document-<document-key>`
 - agents: `/<prefix>/agents/<agent-url-key>`
 - projects: `/<prefix>/projects/<project-url-key>`
 - approvals: `/<prefix>/messenger/approvals/<approval-id>`

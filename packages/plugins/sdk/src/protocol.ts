@@ -25,8 +25,6 @@ import type {
   Project,
   Issue,
   IssueComment,
-  IssueDocument,
-  IssueDocumentSummary,
   Agent,
   Goal,
 } from "@rudderhq/shared";
@@ -606,32 +604,6 @@ export interface WorkerToHostMethods {
   "issues.createComment": [
     params: { issueId: string; body: string; orgId: string },
     result: IssueComment,
-  ];
-
-  // Issue Documents
-  "issues.documents.list": [
-    params: { issueId: string; orgId: string },
-    result: IssueDocumentSummary[],
-  ];
-  "issues.documents.get": [
-    params: { issueId: string; key: string; orgId: string },
-    result: IssueDocument | null,
-  ];
-  "issues.documents.upsert": [
-    params: {
-      issueId: string;
-      key: string;
-      body: string;
-      orgId: string;
-      title?: string;
-      format?: string;
-      changeSummary?: string;
-    },
-    result: IssueDocument,
-  ];
-  "issues.documents.delete": [
-    params: { issueId: string; key: string; orgId: string },
-    result: void,
   ];
 
   // Agents (read)

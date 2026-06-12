@@ -696,7 +696,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("\"planMode\": true");
     expect(prompt).toContain("Plan mode is active for this conversation.");
     expect(prompt).toContain("Stay strictly in read-only investigation and planning mode.");
-    expect(prompt).toContain("required markdown plan for the issue plan document");
+    expect(prompt).toContain("Put the implementation plan in the issue proposal description or cite a Project Library file link");
     expect(runtimeConfig).toEqual(expect.objectContaining({
       dangerouslyBypassApprovalsAndSandbox: false,
       extraArgs: expect.arrayContaining(["-s", "read-only"]),
@@ -715,8 +715,8 @@ describe("chatAssistantService operator profile prompt injection", () => {
 
     const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
     expect(prompt).not.toContain("Plan mode is active for this conversation.");
-    expect(prompt).not.toContain("required markdown plan for the issue plan document");
-    expect(prompt).toContain("\"body\": \"optional markdown plan\"");
+    expect(prompt).not.toContain("issue plan document");
+    expect(prompt).not.toContain("\"body\": \"optional markdown plan\"");
   });
 
   it("marks automation-run user messages as existing execution input instead of automation creation intent", async () => {

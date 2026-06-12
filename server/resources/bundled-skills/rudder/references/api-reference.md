@@ -108,15 +108,6 @@ requests.
 
 Use the incremental `after` form when you already know the thread.
 
-### Documents
-
-- `GET /api/issues/:issueId/documents`
-- `GET /api/issues/:issueId/documents/:key`
-- `PUT /api/issues/:issueId/documents/:key`
-- `GET /api/issues/:issueId/documents/:key/revisions`
-
-When updating an existing document, send the latest `baseRevisionId` or the API will reject concurrent overwrites.
-
 ### Status and ownership mutations
 
 - `PATCH /api/issues/:issueId`

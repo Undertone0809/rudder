@@ -30,7 +30,6 @@ import type {
   Issue,
   IssueComment,
   IssueCommitReport,
-  IssueDocument,
   IssueLabel,
   Project,
   OrganizationWorkspaceFileDetail,
@@ -1180,16 +1179,13 @@ describe("agent CLI e2e", () => {
     expect(reviewed.status).toBe("done");
     expect(reviewed.comment?.body).toBe(reviewBody);
 
-    const documentBodyFile = path.join(tempRoot, "issue-plan-document.md");
-    const documentBody = "Plan document keeps `commands` and $(literal) text.";
-    writeFileSync(documentBodyFile, documentBody, "utf8");
     await expect(
-      runCliJson<IssueDocument>(["issue", "documents", "put", fileIssueId, "plan", "--body-file", documentBodyFile], {
+      runCliJson<unknown>(["issue", "documents", "put", fileIssueId, "plan"], {
         apiBase,
         configPath,
         env,
       }),
-    ).rejects.toThrow("Agents must write new durable work files under `library:projects/<project-key>/...`");
+    ).rejects.toThrow("unknown command 'documents'");
 
     const libraryBody = "# Agent Team Design\n\nThis belongs in the project Library.";
     const projectLibraryPath = "projects/agent-team";
@@ -1336,12 +1332,12 @@ describe("agent CLI e2e", () => {
       ),
     ).rejects.toThrow("unknown option '--comment'");
     await expect(
-      runCliJson<IssueDocument>(["issue", "documents", "put", fileIssueId, "plan", "--body", "inline"], {
+      runCliJson<unknown>(["issue", "documents", "put", fileIssueId, "plan", "--body", "inline"], {
         apiBase,
         configPath,
         env,
       }),
-    ).rejects.toThrow("unknown option '--body'");
+    ).rejects.toThrow("unknown command 'documents'");
   });
 
   it("uploads images for generic update comments", { timeout: 60_000 }, async () => {

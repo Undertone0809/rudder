@@ -16,7 +16,6 @@ import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
 import { issueService } from "./issues.js";
 import { goalService } from "./goals.js";
-import { documentService } from "./documents.js";
 import { heartbeatService } from "./heartbeat.js";
 import { subscribeCompanyLiveEvents } from "./live-events.js";
 import { randomUUID } from "node:crypto";
@@ -451,7 +450,6 @@ export function buildHostServices(
   const heartbeat = heartbeatService(db);
   const projects = projectService(db);
   const issues = issueService(db);
-  const documents = documentService(db);
   const goals = goalService(db);
   const activity = activityService(db);
   const costs = costService(db);
@@ -795,43 +793,6 @@ export function buildHostServices(
           params.body,
           {},
         )) as IssueComment;
-      },
-    },
-
-    issueDocuments: {
-      async list(params) {
-        const orgId = ensureCompanyId(params.orgId);
-        await ensurePluginAvailableForOrganization(orgId);
-        requireInOrganization("Issue", await issues.getById(params.issueId), orgId);
-        const rows = await documents.listIssueDocuments(params.issueId);
-        return rows as any;
-      },
-      async get(params) {
-        const orgId = ensureCompanyId(params.orgId);
-        await ensurePluginAvailableForOrganization(orgId);
-        requireInOrganization("Issue", await issues.getById(params.issueId), orgId);
-        const doc = await documents.getIssueDocumentByKey(params.issueId, params.key);
-        return (doc ?? null) as any;
-      },
-      async upsert(params) {
-        const orgId = ensureCompanyId(params.orgId);
-        await ensurePluginAvailableForOrganization(orgId);
-        requireInOrganization("Issue", await issues.getById(params.issueId), orgId);
-        const result = await documents.upsertIssueDocument({
-          issueId: params.issueId,
-          key: params.key,
-          body: params.body,
-          title: params.title ?? null,
-          format: params.format ?? "markdown",
-          changeSummary: params.changeSummary ?? null,
-        });
-        return result.document as any;
-      },
-      async delete(params) {
-        const orgId = ensureCompanyId(params.orgId);
-        await ensurePluginAvailableForOrganization(orgId);
-        requireInOrganization("Issue", await issues.getById(params.issueId), orgId);
-        await documents.deleteIssueDocument(params.issueId, params.key);
       },
     },
 

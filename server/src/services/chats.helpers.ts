@@ -19,7 +19,6 @@ import { notFound, unprocessable } from "../errors.js";
 import { agentService } from "./agents.js";
 import { logActivity } from "./activity-log.js";
 import { approvalService } from "./approvals.js";
-import { documentService } from "./documents.js";
 import { organizationService } from "./orgs.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
@@ -196,33 +195,6 @@ export function issueProposalFromPayload(payload: Record<string, unknown> | null
     labelIds: Array.isArray(proposal.labelIds)
       ? proposal.labelIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
       : undefined,
-  };
-}
-
-export function planDocumentFromPayload(
-  payload: Record<string, unknown> | null | undefined,
-  fallbackBody?: string | null,
-) {
-  const root = payload ?? {};
-  const rawDocument =
-    root.planDocument && typeof root.planDocument === "object" && !Array.isArray(root.planDocument)
-      ? (root.planDocument as Record<string, unknown>)
-      : root.plan && typeof root.plan === "object" && !Array.isArray(root.plan)
-        ? (root.plan as Record<string, unknown>)
-        : null;
-
-  const title = safeTrim(typeof rawDocument?.title === "string" ? rawDocument.title : null) ?? "Plan";
-  const body =
-    safeTrim(typeof rawDocument?.body === "string" ? rawDocument.body : null)
-    ?? safeTrim(fallbackBody);
-  if (!body) return null;
-
-  return {
-    title,
-    body,
-    changeSummary:
-      safeTrim(typeof rawDocument?.changeSummary === "string" ? rawDocument.changeSummary : null)
-      ?? "Created from chat plan mode",
   };
 }
 

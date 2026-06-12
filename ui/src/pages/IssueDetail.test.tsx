@@ -49,9 +49,6 @@ const parentIssue = {
   hiddenAt: null,
   labelIds: [],
   labels: [],
-  planDocument: null,
-  documentSummaries: [],
-  legacyPlanDocument: null,
   project: null,
   goal: null,
   currentExecutionWorkspace: null,
@@ -331,13 +328,6 @@ vi.mock("../components/CommentThread", () => ({
         ))}
       </div>
     );
-  },
-}));
-
-vi.mock("../components/IssueDocumentsSection", () => ({
-  IssueDocumentsSection: ({ mentions }: { mentions?: Array<Record<string, unknown>> }) => {
-    capturedMentions = mentions ?? [];
-    return <div>Documents</div>;
   },
 }));
 

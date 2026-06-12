@@ -32,11 +32,6 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
-import {
-  IssueDocumentFocusPage,
-  IssueDocumentsSection,
-  type IssueDocumentFocusTarget,
-} from "../components/IssueDocumentsSection";
 import { IssueDetailFind } from "../components/IssueDetailFind";
 import { IssueProperties } from "../components/IssueProperties";
 import { LiveRunWidget } from "../components/LiveRunWidget";
@@ -104,11 +99,6 @@ export {
   hasBrowserBackStackEntry,
   shouldHandleDocumentFocusEscape,
   shouldHandleIssueDetailEscape,
-};
-
-export type DocumentFocusState = {
-  target: IssueDocumentFocusTarget;
-  phase: "open" | "closing";
 };
 
 export type IssueCostSummaryData = {

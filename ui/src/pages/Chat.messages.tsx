@@ -140,7 +140,7 @@ import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
-import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, AskUserAnswerValue, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, AskUserAnswerValue, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName } from "./Chat.parts";
 
 export function ChatAssistantAttributionRow({
   replyingAgentId,
@@ -516,7 +516,6 @@ export function ProposalCard({
 }) {
   const baseIssueProposal = message.kind === "issue_proposal" ? issueProposalFromMessage(message) : null;
   const issueProposal = baseIssueProposal ? (issueProposalOverride ?? baseIssueProposal) : null;
-  const planDocument = message.kind === "issue_proposal" ? planDocumentFromMessage(message) : null;
   const operationProposal = message.kind === "operation_proposal" ? operationProposalFromMessage(message) : null;
   const operationProposalStatus = message.kind === "operation_proposal"
     ? operationProposalStatusFromMessage(message)
@@ -555,14 +554,12 @@ export function ProposalCard({
   const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
   const [proposalDetailsCanExpand, setProposalDetailsCanExpand] = useState(false);
   const proposalDetailsRef = useRef<HTMLDivElement | null>(null);
-  const proposalKind = issueProposal ? "issue" : operationProposal ? "operation" : planDocument ? "plan" : "default";
+  const proposalKind = issueProposal ? "issue" : operationProposal ? "operation" : "default";
   const proposalKindLabel = issueProposal
     ? "Issue proposal"
     : operationProposal
       ? "Operation proposal"
-      : planDocument
-        ? "Plan proposal"
-        : "Proposal";
+      : "Proposal";
 
   useEffect(() => {
     setProposalDetailsExpanded(false);
@@ -726,8 +723,6 @@ export function ProposalCard({
                   Target · {String(operationProposal.targetType)}:{String(operationProposal.targetId)}
                 </div>
               </>
-            ) : planDocument ? (
-              <div className="text-base font-medium text-foreground">{planDocument.title}</div>
             ) : null}
             {reviewBanner && (!issueProposal || reviewStatus !== "pending") ? (
               <p className="mt-3 text-sm leading-6 text-muted-foreground">
@@ -774,19 +769,6 @@ export function ProposalCard({
               </MarkdownBody>
             </div>
           </section>
-        ) : null}
-
-        {planDocument ? (
-          <div className="border-t border-[color:var(--border-soft)] px-5 py-4">
-            {issueProposal ? (
-              <div className="text-[11px] font-medium text-muted-foreground">{planDocument.title}</div>
-            ) : null}
-            <div className="mt-3 text-sm leading-6 text-foreground">
-              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
-                {planDocument.body}
-              </MarkdownBody>
-            </div>
-          </div>
         ) : null}
 
         {operationProposal?.patch && typeof operationProposal.patch === "object" ? (

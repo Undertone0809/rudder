@@ -440,7 +440,7 @@ export function buildPlanModePromptSection() {
     "Stay strictly in read-only investigation and planning mode.",
     "Do not propose or imply file edits, shell mutations, or lightweight control-plane changes.",
     "Converge on an issue-sized implementation plan, and when you are ready to conclude, emit kind 'issue_proposal'.",
-    "Include structuredPayload.planDocument.body as markdown for the issue plan document.",
+    "Put the implementation plan in the issue proposal description or cite a Project Library file link when durable documentation is needed.",
   ].join("\n");
 }
 
@@ -467,13 +467,6 @@ export function buildResponseSchemaPromptSection(planMode: boolean) {
             projectId: "optional uuid",
             goalId: "optional uuid",
             parentId: "optional uuid",
-          },
-          planDocument: {
-            title: "optional plan title",
-            body: planMode
-              ? "required markdown plan for the issue plan document"
-              : "optional markdown plan",
-            changeSummary: "optional short summary for the issue document revision",
           },
           routingSuggestion: {
             agentId: "optional uuid",

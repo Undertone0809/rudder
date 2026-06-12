@@ -1456,39 +1456,22 @@ describe("messengerService and issue follows", () => {
             priority: "high",
             assigneeUnassignedReason: "Plan mode should leave ownership to operator review.",
           },
-          planDocument: {
-            title: "Planned work rollout",
-            body: "## Scope\n- Draft first\n- Create after approval",
-            changeSummary: "Created from approved plan-mode proposal",
-          },
         },
       })
       .returning()
       .then((rows) => rows[0]!);
 
     const issue = await chatSvc.applyApprovedApproval(approval, userId);
-    const persistedPlan = await db
-      .select({
-        key: issueDocuments.key,
-        title: documents.title,
-        latestBody: documents.latestBody,
-        createdByUserId: documents.createdByUserId,
-      })
+    const persistedPlanRows = await db
+      .select({ id: issueDocuments.id })
       .from(issueDocuments)
-      .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
-      .where(eq(issueDocuments.issueId, (issue as { id: string }).id))
-      .then((rows) => rows[0]);
+      .where(eq(issueDocuments.issueId, (issue as { id: string }).id));
 
     expect(issue).toMatchObject({
       title: "Implement planned work",
       createdByUserId: userId,
     });
-    expect(persistedPlan).toMatchObject({
-      key: "plan",
-      title: "Planned work rollout",
-      latestBody: "## Scope\n- Draft first\n- Create after approval",
-      createdByUserId: userId,
-    });
+    expect(persistedPlanRows).toEqual([]);
   });
 
   it("includes reviewer issues in Messenger attention when they are in review", async () => {

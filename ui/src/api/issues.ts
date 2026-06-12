@@ -1,16 +1,13 @@
 import type {
-  DocumentRevision,
   IssueLinkedApproval,
   IssueFollowEntry,
   Issue,
   IssueAttachment,
   IssueComment,
-  IssueDocument,
   IssueLabel,
   IssueSearchField,
   IssueWorkProduct,
   ReorderIssue,
-  UpsertIssueDocument,
 } from "@rudderhq/shared";
 import { api } from "./client";
 
@@ -94,14 +91,6 @@ export const issuesApi = {
     api.patch<IssueComment>(`/issues/${id}/comments/${commentId}`, { body }),
   deleteComment: (id: string, commentId: string) =>
     api.delete<IssueComment>(`/issues/${id}/comments/${commentId}`),
-  listDocuments: (id: string) => api.get<IssueDocument[]>(`/issues/${id}/documents`),
-  getDocument: (id: string, key: string) => api.get<IssueDocument>(`/issues/${id}/documents/${encodeURIComponent(key)}`),
-  upsertDocument: (id: string, key: string, data: UpsertIssueDocument) =>
-    api.put<IssueDocument>(`/issues/${id}/documents/${encodeURIComponent(key)}`, data),
-  listDocumentRevisions: (id: string, key: string) =>
-    api.get<DocumentRevision[]>(`/issues/${id}/documents/${encodeURIComponent(key)}/revisions`),
-  deleteDocument: (id: string, key: string) =>
-    api.delete<{ ok: true }>(`/issues/${id}/documents/${encodeURIComponent(key)}`),
   listAttachments: (id: string) => api.get<IssueAttachment[]>(`/issues/${id}/attachments`),
   uploadAttachment: (
     orgId: string,

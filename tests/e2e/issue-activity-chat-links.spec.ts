@@ -57,21 +57,6 @@ test.describe("Issue activity", () => {
     });
     expect(titleDescriptionRes.ok()).toBe(true);
 
-    const createDocumentRes = await page.request.put(`/api/issues/${issue.id}/documents/note`, {
-      data: { title: "Activity note", format: "markdown", body: "# First revision" },
-    });
-    expect(createDocumentRes.ok()).toBe(true);
-    const createdDocument = await createDocumentRes.json();
-    const updateDocumentRes = await page.request.put(`/api/issues/${issue.id}/documents/note`, {
-      data: {
-        title: "Activity note",
-        format: "markdown",
-        body: "# Second revision",
-        baseRevisionId: createdDocument.latestRevisionId,
-      },
-    });
-    expect(updateDocumentRes.ok()).toBe(true);
-
     await page.goto(`/issues/${issue.identifier ?? issue.id}`);
     const activity = page.getByRole("region", { name: "Activity" });
     await expect(activity).toBeVisible();
@@ -82,7 +67,6 @@ test.describe("Issue activity", () => {
     await expect(statusActivity.locator('[data-slot="issue-status-icon"][data-status="in_progress"]')).toBeVisible();
     await expect(activity.getByText("updated the title", { exact: false })).toHaveCount(0);
     await expect(activity.getByText("updated the description", { exact: false })).toHaveCount(0);
-    await expect(activity.getByText("updated a document note", { exact: false })).toHaveCount(0);
   });
 
   test("names goal updates instead of rendering generic issue updates", async ({ page }) => {
@@ -180,6 +164,7 @@ test.describe("Issue activity", () => {
           title: "Issue converted from chat",
           description: "Track issue conversion activity.",
           priority: "medium",
+          assigneeUnassignedReason: "No owner needed for the conversion activity fixture.",
         },
       },
     });

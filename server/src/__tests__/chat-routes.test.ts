@@ -1056,7 +1056,7 @@ describe("chat routes", () => {
     expect(savedMessage.structuredPayload.issueProposal.assigneeUnassignedReason).toBe("The operator asked to confirm scope before choosing an owner.");
   });
 
-  it("keeps plan-mode issue proposals approval-backed and preserves the plan document", async () => {
+  it("keeps plan-mode issue proposals approval-backed without a plan document payload", async () => {
     const conversation = createConversation({ planMode: true });
     const userMessage = createMessage("message-user", "user", "message", "Plan the auth rollout");
     const proposalMessage = {
@@ -1067,10 +1067,6 @@ describe("chat routes", () => {
           description: "Track the auth rollout plan in an issue.",
           priority: "high",
           assigneeUnassignedReason: "Plan mode should leave the execution owner for operator review.",
-        },
-        planDocument: {
-          title: "Auth rollout plan",
-          body: "## Scope\n- Login\n- Session management",
         },
       },
     };
@@ -1121,13 +1117,10 @@ describe("chat routes", () => {
             title: "Implement auth flow",
             description: "Track the auth rollout plan in an issue.",
           }),
-          planDocument: expect.objectContaining({
-            title: "Auth rollout plan",
-            body: "## Scope\n- Login\n- Session management",
-          }),
         }),
       }),
     );
+    expect(mockChatService.createProposalApproval.mock.calls[0]?.[1].payload).not.toHaveProperty("planDocument");
     expect(mockChatService.addMessage).toHaveBeenNthCalledWith(
       1,
       "chat-1",
@@ -1135,9 +1128,7 @@ describe("chat routes", () => {
         role: "assistant",
         kind: "issue_proposal",
         approvalId: "approval-1",
-        structuredPayload: expect.objectContaining({
-          planDocument: expect.objectContaining({ title: "Auth rollout plan" }),
-        }),
+        structuredPayload: expect.not.objectContaining({ planDocument: expect.anything() }),
       }),
     );
     expect(mockLogActivity).not.toHaveBeenCalledWith(

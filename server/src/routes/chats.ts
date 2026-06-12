@@ -606,19 +606,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
     return labels.length >= 5;
   }
 
-  function proposedPlanDocumentPayload(structuredPayload: Record<string, unknown> | null | undefined) {
-    if (!structuredPayload) return null;
-    const rawDocument =
-      structuredPayload.planDocument
-      && typeof structuredPayload.planDocument === "object"
-      && !Array.isArray(structuredPayload.planDocument)
-        ? structuredPayload.planDocument
-        : structuredPayload.plan && typeof structuredPayload.plan === "object" && !Array.isArray(structuredPayload.plan)
-          ? structuredPayload.plan
-          : null;
-    return rawDocument ? rawDocument as Record<string, unknown> : null;
-  }
-
   async function persistAssistantReply(
     req: Request,
     conversation: ChatConversation,
@@ -896,7 +883,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
         return createdMessages;
       }
 
-      const planDocument = proposedPlanDocumentPayload(issueProposalStructuredPayload);
       const approval = await svc.createProposalApproval(conversation.orgId, {
         type: "chat_issue_creation",
         requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -904,7 +890,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
           chatConversationId: conversation.id,
           proposedByAgentId: replyingAgentId,
           proposedIssue: proposalPayload,
-          ...(planDocument ? { planDocument } : {}),
         },
       });
 

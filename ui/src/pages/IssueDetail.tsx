@@ -961,30 +961,6 @@ function LinkedLibraryDocsSection({
     };
     linkedFiles.set(directory.path, directory);
   }
-  for (const doc of issue.documentSummaries ?? []) {
-    const libraryDoc = docsById.get(doc.id) ?? {
-      id: doc.id,
-      orgId: doc.orgId,
-      title: doc.title,
-      format: doc.format,
-      latestRevisionId: doc.latestRevisionId,
-      latestRevisionNumber: doc.latestRevisionNumber,
-      createdByAgentId: doc.createdByAgentId,
-      createdByUserId: doc.createdByUserId,
-      updatedByAgentId: doc.updatedByAgentId,
-      updatedByUserId: doc.updatedByUserId,
-      createdAt: doc.createdAt,
-      updatedAt: doc.updatedAt,
-      issueLinks: [{
-        issueId: issue.id,
-        issueIdentifier: issue.identifier,
-        issueTitle: issue.title,
-        key: doc.key,
-      }],
-    };
-    linkedDocs.set(libraryDoc.id, libraryDoc);
-  }
-
   const docs = [...linkedDocs.values()].sort((left, right) =>
     new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
   );
@@ -1573,7 +1549,6 @@ export function IssueDetail() {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.approvals(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId!) });
     if (issue?.id && issueOrgId) {

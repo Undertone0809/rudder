@@ -27,11 +27,6 @@ async function writeProposalStub(
         reviewerAgentId?: string;
         reviewerUserId?: string;
       };
-      planDocument?: {
-        title: string;
-        body: string;
-        changeSummary?: string;
-      };
     };
   },
 ) {
@@ -558,7 +553,7 @@ test.describe("Chat proposal review block", () => {
     await expect(page.getByText(reviewer.name).first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("keeps plan-mode proposals pending until approval and writes the plan document", async ({ page }) => {
+  test("keeps plan-mode proposals pending until approval without a plan document", async ({ page }) => {
     const command = await writeProposalStub("proposal-review-plan-mode", {
       kind: "issue_proposal",
       body: "I drafted the plan and issue proposal for approval.",
@@ -568,11 +563,6 @@ test.describe("Chat proposal review block", () => {
           description: "Create the issue only after the operator approves the plan-mode proposal.",
           priority: "high",
           assigneeUnassignedReason: "Plan mode defers owner selection until the operator approves the plan.",
-        },
-        planDocument: {
-          title: "Plan-mode rollout plan",
-          body: ["## Scope", "", "- Draft first", "- Create after approval"].join("\n"),
-          changeSummary: "Created from approved plan-mode proposal",
         },
       },
     });
@@ -597,8 +587,8 @@ test.describe("Chat proposal review block", () => {
     const reviewBlock = page.getByTestId("proposal-review-block").last();
     await expect(reviewBlock).toBeVisible({ timeout: 30_000 });
     await expect(reviewBlock).toHaveAttribute("data-status", "pending");
-    await expect(reviewBlock).toContainText("Plan-mode rollout plan");
-    await expect(reviewBlock.locator("h2")).toHaveText("Scope");
+    await expect(reviewBlock).toContainText("Plan mode approval test");
+    await expect(reviewBlock).toContainText("Create the issue only after the operator approves the plan-mode proposal.");
     await expect(page.locator(".chat-system-issue-link")).toHaveCount(0);
 
     await reviewBlock.getByRole("button", { name: "Approve" }).click();
@@ -608,8 +598,9 @@ test.describe("Chat proposal review block", () => {
     await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
     await createdIssueLink.click();
     await expect(page.getByRole("heading", { name: "Plan mode approval test" })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("Plan-mode rollout plan")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("Draft first")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Create the issue only after the operator approves the plan-mode proposal.")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Plan-mode rollout plan")).toHaveCount(0);
+    await expect(page.getByText("Draft first")).toHaveCount(0);
   });
 
 });

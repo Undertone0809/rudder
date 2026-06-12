@@ -7,14 +7,13 @@ import type {
   AgentRuntimeSkillEntry,
   AgentRuntimeSkillSnapshot,
 } from "./types.js";
-import { RunProcessResult, RunningProcess, SpawnTarget, ChildProcessWithEvents, runningProcesses, isChildProcessAlive, MAX_CAPTURE_BYTES, MAX_EXCERPT_BYTES, SENSITIVE_ENV_KEY, RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES, DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES, LocalCliCredentialShimCommand, DEFAULT_LOCAL_CLI_OPERATOR_HOME_SHIM_COMMANDS, RudderSkillEntry, InstalledSkillTarget, PersistentSkillSnapshotOptions, normalizePathSlashes, isMaintainerOnlySkillTarget, skillLocationLabel, buildManagedSkillOrigin, compactSkillText, parseSkillFrontmatterMetadata, readSkillMetadataFromDirectory, readSkillMetadataFromPath, resolveInstalledEntryTarget, parseObject, asString, asNumber, asBoolean, asStringArray, parseJson, appendWithCap, resolvePathValue, renderTemplate, ISSUE_DOCUMENT_PROMPT_BODY_CHAR_LIMIT, IssueDocumentPromptInput, truncateIssueDocumentBody, formatDocumentHeading, readIssueDocumentPromptIssueId, buildIssueDocumentsPrompt } from "./server-utils.process.js";
+import { RunProcessResult, RunningProcess, SpawnTarget, ChildProcessWithEvents, runningProcesses, isChildProcessAlive, MAX_CAPTURE_BYTES, MAX_EXCERPT_BYTES, SENSITIVE_ENV_KEY, RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES, DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES, LocalCliCredentialShimCommand, DEFAULT_LOCAL_CLI_OPERATOR_HOME_SHIM_COMMANDS, RudderSkillEntry, InstalledSkillTarget, PersistentSkillSnapshotOptions, normalizePathSlashes, isMaintainerOnlySkillTarget, skillLocationLabel, buildManagedSkillOrigin, compactSkillText, parseSkillFrontmatterMetadata, readSkillMetadataFromDirectory, readSkillMetadataFromPath, resolveInstalledEntryTarget, parseObject, asString, asNumber, asBoolean, asStringArray, parseJson, appendWithCap, resolvePathValue, renderTemplate } from "./server-utils.process.js";
 
 export const DEFAULT_AGENT_PROMPT_TEMPLATE =
   `You are agent {{agent.id}} ({{agent.name}}). Continue your Rudder work.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
-
-{{context.issueDocumentsPrompt}}`;
+`;
 
 export const ISSUE_ASSIGN_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). You have been assigned to work on an issue.
 
@@ -30,7 +29,6 @@ export const ISSUE_ASSIGN_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent
 **Description:**
 {{issue.description}}
 
-{{context.issueDocumentsPrompt}}
 
 Your task is to review this issue, understand what kind of work it asks for, and take the appropriate next action.
 
@@ -48,7 +46,6 @@ export const COMMENT_MENTION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{ag
 **Issue Description:**
 {{issue.description}}
 
-{{context.issueDocumentsPrompt}}
 
 **Comment:**
 From: {{comment.authorLabel}} ({{comment.authorKind}})
@@ -71,7 +68,6 @@ export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{ag
 **Issue Description:**
 {{issue.description}}
 
-{{context.issueDocumentsPrompt}}
 
 **Latest Comment:**
 From: {{comment.authorLabel}} ({{comment.authorKind}})
@@ -93,7 +89,6 @@ export const ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE = `You are agent {{agent.id
 **Issue Description:**
 {{issue.description}}
 
-{{context.issueDocumentsPrompt}}
 
 **Reviewer Comment:**
 From: {{comment.authorLabel}} ({{comment.authorKind}})
@@ -124,7 +119,6 @@ export const ISSUE_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{age
 - Description:
 {{issue.description}}
 
-{{context.issueDocumentsPrompt}}
 
 Before doing anything else, inspect what the previous run already completed and any side effects it may have caused. Continue the remaining work from the current state. Avoid blindly re-running the whole task.`;
 
@@ -165,7 +159,6 @@ Reason: {{context.passiveFollowup.reason}}
 - Description:
 {{issue.description}}
 
-{{context.issueDocumentsPrompt}}
 
 Before changing the issue, inspect the current issue state and any side effects from the previous run. Then do exactly one close-out action: add a progress comment, mark the issue done, block it with a reason, or hand it off explicitly with explanation.`;
 

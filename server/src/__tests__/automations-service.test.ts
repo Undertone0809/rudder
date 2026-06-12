@@ -740,10 +740,6 @@ describe("automation service live-execution coalescing", () => {
           priority: "medium",
           assigneeUnassignedReason: "The operator should choose the owner after reviewing the digest.",
         },
-        planDocument: {
-          title: "Blocker follow-up plan",
-          body: "Review the blocker list and assign owners.",
-        },
       },
       generatedAttachments: [
         {
@@ -788,9 +784,6 @@ describe("automation service live-execution coalescing", () => {
       issueProposal: {
         title: "Follow up on blockers",
       },
-      planDocument: {
-        title: "Blocker follow-up plan",
-      },
       automationChatRun: {
         automationId: issueAutomation.id,
         runId: issueRun.id,
@@ -812,10 +805,8 @@ describe("automation service live-execution coalescing", () => {
       proposedIssue: {
         title: "Follow up on blockers",
       },
-      planDocument: {
-        title: "Blocker follow-up plan",
-      },
     });
+    expect(issueApproval?.payload).not.toHaveProperty("planDocument");
 
     const attachmentRows = await db
       .select()

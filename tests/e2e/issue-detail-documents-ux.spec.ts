@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("Issue detail Library UX", () => {
-  test("renders Library mentions and migrated issue docs without issue-owned document creation", async ({ page }) => {
+  test("renders explicit Library mentions without issue-owned document cards", async ({ page }) => {
     await page.goto("/");
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -31,7 +31,7 @@ test.describe("Issue detail Library UX", () => {
       data: {
         title: "Issue should link docs from Library",
         description: [
-          `Use [@Product brief](library-doc://${libraryDoc.id}?t=Product%20brief) as the legacy source.`,
+          `Use [@Product brief](library-doc://${libraryDoc.id}?t=Product%20brief) as the durable source.`,
           "Use [@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md) as the live file source.",
         ].join("\n\n"),
         status: "todo",
@@ -41,7 +41,7 @@ test.describe("Issue detail Library UX", () => {
     expect(issueRes.ok()).toBe(true);
     const issue = await issueRes.json() as { id: string; identifier?: string };
 
-    const legacyDocRes = await page.request.put(`/api/issues/${issue.id}/documents/ops-checklist`, {
+    const retiredDocRes = await page.request.put(`/api/issues/${issue.id}/documents/ops-checklist`, {
       data: {
         title: "Ops checklist",
         format: "markdown",
@@ -49,7 +49,7 @@ test.describe("Issue detail Library UX", () => {
         baseRevisionId: null,
       },
     });
-    expect(legacyDocRes.ok()).toBe(true);
+    expect(retiredDocRes.status()).toBe(410);
 
     await page.goto(`/issues/${issue.identifier ?? issue.id}`);
 
@@ -58,19 +58,20 @@ test.describe("Issue detail Library UX", () => {
     await expect(page.getByRole("button", { name: "New document" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: "Focused document editor" })).toHaveCount(0);
 
-    const productBriefMention = page.getByRole("link", { name: "@Product brief" });
-    await expect(productBriefMention.first()).toHaveAttribute("href", new RegExp(`library-doc://${libraryDoc.id}`));
-    const fileMention = page.getByRole("link", { name: "@product-brief.md" }).first();
+    const productBriefMention = page.getByRole("link", { name: "Product brief" }).first();
+    await expect(productBriefMention).toHaveAttribute("href", new RegExp(`/library\\?doc=${libraryDoc.id}$`));
+    const fileMention = page.getByRole("link", { name: "product-brief.md" }).first();
     await expect(fileMention).toBeVisible();
+    await expect(fileMention).toHaveAttribute("href", new RegExp(`/library\\?path=docs%2Fproduct-brief\\.md$`));
     await expect(fileMention).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(fileMention).toHaveCSS("border-top-style", "none");
 
     await expect(page.getByLabel("Linked Library")).toBeVisible();
     await expect(page.getByLabel("Linked Library").locator('[data-testid="linked-library-resource-icon"][data-kind="file"]')).toHaveCount(1);
-    await expect(page.getByLabel("Linked Library").locator('[data-testid="linked-library-resource-icon"][data-kind="doc"]')).toHaveCount(2);
+    await expect(page.getByLabel("Linked Library").locator('[data-testid="linked-library-resource-icon"][data-kind="doc"]')).toHaveCount(1);
     await expect(page.getByLabel("Linked Library").getByText("Product brief")).toBeVisible();
     await expect(page.getByLabel("Linked Library").getByRole("link", { name: "product-brief.md live Library" })).toBeVisible();
-    await expect(page.getByLabel("Linked Library").getByText("Ops checklist")).toBeVisible();
+    await expect(page.getByLabel("Linked Library").getByText("Ops checklist")).toHaveCount(0);
     await expect(page.getByLabel("Linked Library").getByRole("link", { name: "product-brief.md live Library" }))
       .toHaveAttribute("href", new RegExp(`/library\\?path=docs%2Fproduct-brief\\.md$`));
 

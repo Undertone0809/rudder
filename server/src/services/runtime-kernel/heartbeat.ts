@@ -77,7 +77,6 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "../workspace-runtime.js";
 import { issueService } from "../issues.js";
-import { documentService } from "../documents.js";
 import {
   buildIssueConvergenceReviewWakeupOptions,
   buildIssueReviewCloseoutWakeupOptions,
@@ -105,7 +104,6 @@ import {
   resolveSessionCompactionPolicy,
   type SessionCompactionPolicy,
 } from "@rudderhq/agent-runtime-utils";
-import { buildIssueDocumentsPrompt } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   buildCreateAgentBenchmarkTags,
   coerceCreateAgentBenchmarkMetadata,
@@ -149,7 +147,6 @@ export function heartbeatService(db: Db) {
   const runLogStore = getRunLogStore();
   const runContextSvc = agentRunContextService(db);
   const issuesSvc = issueService(db);
-  const documentsSvc = documentService(db);
   const executionWorkspacesSvc = runWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
   const activeRunExecutions = new Set<string>();
@@ -1447,7 +1444,7 @@ export function heartbeatService(db: Db) {
 
 
   const baseContext = {
-    db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, documentsSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets,
+    db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets,
     getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });

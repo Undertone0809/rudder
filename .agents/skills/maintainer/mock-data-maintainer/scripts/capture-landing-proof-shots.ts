@@ -850,11 +850,12 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
     labelIds: [labelIds.messenger, labelIds.enterprise],
   });
 
-  await apiJson(await api.put(`/api/issues/${mainIssue.id}/documents/plan`, {
+  const launchPlanPath = "launch/plan.md";
+  const launchBriefPath = "launch/brief-excerpt.md";
+  await apiJson(await api.post(`/api/orgs/${org.id}/workspace/file`, {
     data: {
-      title: "Launch plan",
-      format: "markdown",
-      body: [
+      filePath: launchPlanPath,
+      content: [
         "## Outputs",
         "- Preview deployed: pricing-v4",
         "- PR #184 opened for CTA and comparison copy",
@@ -866,11 +867,10 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
       ].join("\n"),
     },
   }));
-  await apiJson(await api.put(`/api/issues/${mainIssue.id}/documents/brief`, {
+  await apiJson(await api.post(`/api/orgs/${org.id}/workspace/file`, {
     data: {
-      title: "Launch brief excerpt",
-      format: "markdown",
-      body: [
+      filePath: launchBriefPath,
+      content: [
         "## Preview deployed",
         "pricing-v4",
         "",
@@ -878,6 +878,16 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
         "- Added competitor matrix",
         "- Added two customer proof points",
         "- Drafted desktop beta CTA",
+      ].join("\n"),
+    },
+  }));
+  await apiJson(await api.patch(`/api/issues/${mainIssue.id}`, {
+    data: {
+      description: [
+        mainIssue.description,
+        "",
+        `Launch plan: [@plan.md](library-file://file?p=${encodeURIComponent(launchPlanPath)}&t=plan.md)`,
+        `Brief excerpt: [@brief-excerpt.md](library-file://file?p=${encodeURIComponent(launchBriefPath)}&t=brief-excerpt.md)`,
       ].join("\n"),
     },
   }));

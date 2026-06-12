@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildIssueDocumentsPrompt,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
   resolveLocalOperatorHome,
@@ -242,26 +241,9 @@ describe("selectPromptTemplate", () => {
     expect(rendered).toContain("Locator: `~/projects/rudder`");
   });
 
-  it("renders issue document references in issue-aware prompts without inlining bodies", () => {
-    const issueDocumentsPrompt = buildIssueDocumentsPrompt({
-      planDocument: {
-        issueId: "issue-3",
-        key: "plan",
-        title: "Execution Plan",
-        body: "# Plan\n\nCheck the document-backed requirements.",
-      },
-      documentSummaries: [
-        {
-          issueId: "issue-3",
-          key: "design",
-          title: "Design Notes",
-          latestRevisionNumber: 2,
-        },
-      ],
-    });
+  it("renders issue-aware prompts without legacy issue document injection", () => {
     const context = {
       wakeReason: "issue_assigned",
-      issueDocumentsPrompt,
       issue: {
         id: "issue-3",
         title: "Use issue docs",
@@ -278,16 +260,9 @@ describe("selectPromptTemplate", () => {
       issue: context.issue,
     });
 
-    expect(issueDocumentsPrompt).toContain("## Legacy Issue Documents");
-    expect(issueDocumentsPrompt).toContain("These legacy issue documents are not inlined automatically.");
-    expect(issueDocumentsPrompt).toContain("$RUDDER_PROJECT_LIBRARY_ROOT");
-    expect(issueDocumentsPrompt).toContain('rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>" --json');
-    expect(issueDocumentsPrompt).toContain("rudder issue documents get issue-3 plan --json");
-    expect(issueDocumentsPrompt).toContain("rudder issue documents get issue-3 design --json");
-    expect(issueDocumentsPrompt).not.toContain("Check the document-backed requirements.");
     expect(rendered).toContain("Use issue docs");
-    expect(rendered).toContain("## Legacy Issue Documents");
-    expect(rendered).not.toContain("Check the document-backed requirements.");
+    expect(rendered).not.toContain("Legacy Issue Documents");
+    expect(rendered).not.toContain("rudder issue documents");
   });
 
   it("renders reviewer changes-requested comment context before generic assignment prompts", () => {
