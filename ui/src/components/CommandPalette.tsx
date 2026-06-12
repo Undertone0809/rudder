@@ -47,11 +47,14 @@ export function CommandPalette() {
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
   const searchQuery = query.trim();
-  const { data: shortcutSettings = null } = useQuery({
+  const shortcutSettingsQuery = useQuery({
     queryKey: queryKeys.instance.shortcutSettings,
     queryFn: () => instanceSettingsApi.getShortcuts(),
     retry: false,
   });
+  const shortcutSettings = shortcutSettingsQuery.data === undefined
+    ? (shortcutSettingsQuery.isError ? null : undefined)
+    : shortcutSettingsQuery.data;
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {

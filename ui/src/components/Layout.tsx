@@ -659,6 +659,9 @@ export function Layout() {
     queryFn: () => instanceSettingsApi.getShortcuts(),
     retry: false,
   });
+  const shortcutSettings = shortcutSettingsQuery.data === undefined
+    ? (shortcutSettingsQuery.isError ? null : undefined)
+    : shortcutSettingsQuery.data;
 
   useKeyboardShortcuts({
     onNewIssue: () => openNewIssue(),
@@ -666,7 +669,7 @@ export function Layout() {
     onTogglePanel: togglePanel,
     onOpenSettings: () => openSettings(),
     onNavigateBack: navigateBack,
-    shortcutSettings: shortcutSettingsQuery.data ?? null,
+    shortcutSettings,
   });
 
   const desktopContentShellInsetClass = macDesktopShell

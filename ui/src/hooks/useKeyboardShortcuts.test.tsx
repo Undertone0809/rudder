@@ -126,7 +126,7 @@ describe("useKeyboardShortcuts", () => {
 
   it("opens a new issue on Command+N and suppresses the browser shortcut", async () => {
     const onNewIssue = vi.fn();
-    await renderShortcutHarness({ onNewIssue });
+    await renderShortcutHarness({ onNewIssue, shortcutSettings: null });
 
     const event = dispatchKey("n", { metaKey: true });
 

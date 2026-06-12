@@ -21,7 +21,8 @@ function keydown(key: string, init: KeyboardEventInit = {}) {
 describe("keyboard shortcuts", () => {
   it("falls back to default bindings when settings are missing", () => {
     expect(eventMatchesShortcutAction(keydown("c"), "issue.create", null)).toBe(true);
-    expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", undefined)).toBe(true);
+    expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", null)).toBe(true);
+    expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", undefined)).toBe(false);
   });
 
   it("disables actions from preferences", () => {

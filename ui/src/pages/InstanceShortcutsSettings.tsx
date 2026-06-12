@@ -197,7 +197,7 @@ export function InstanceShortcutsSettings() {
               : null;
             const disabled = preference?.disabled === true;
             const bindings = actionId ? resolvedBindings[actionId] ?? [] : entry.defaultBindings;
-            const editing = editingActionId === actionId;
+            const editing = actionId !== null && editingActionId === actionId;
             const hasSingleKeyCreateIssueBinding = actionId === "issue.create"
               && bindings.some((binding) => {
                 const normalized = normalizeShortcutBinding(binding);

@@ -184,6 +184,7 @@ export function eventMatchesShortcutAction(
   actionId: KeyboardShortcutActionId,
   settings: KeyboardShortcutSettings | null | undefined,
 ) {
+  if (settings === undefined) return false;
   const bindings = resolveKeyboardShortcutBindings(settings)[actionId] ?? [];
   return bindings.some((binding) => matchesShortcutBinding(event, binding));
 }
