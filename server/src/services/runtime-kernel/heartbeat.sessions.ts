@@ -468,7 +468,7 @@ export function readDeferredWakeContext(payloadRaw: unknown) {
 }
 
 export function readDeferredWakePayload(payloadRaw: unknown) {
-  const payload = parseObject(payloadRaw);
+  const payload = { ...parseObject(payloadRaw) };
   delete payload[DEFERRED_WAKE_CONTEXT_KEY];
   return payload;
 }
@@ -1078,4 +1078,3 @@ export function resolveNextSessionState(input: {
     legacySessionId,
   };
 }
-

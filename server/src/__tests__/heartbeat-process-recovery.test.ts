@@ -169,6 +169,7 @@ describe("heartbeat orphaned process recovery", () => {
     processPid?: number | null;
     processLossRetryCount?: number;
     includeIssue?: boolean;
+    issueStatus?: "todo" | "in_progress" | "in_review" | "done" | "cancelled";
     runErrorCode?: string | null;
     runError?: string | null;
     contextSnapshot?: Record<string, unknown> | null;
@@ -261,7 +262,7 @@ describe("heartbeat orphaned process recovery", () => {
         id: issueId,
         orgId,
         title: "Recover local adapter after lost process",
-        status: "in_progress",
+        status: input?.issueStatus ?? "in_progress",
         priority: "medium",
         assigneeAgentId: agentId,
         checkoutRunId: runId,
@@ -592,6 +593,69 @@ describe("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBe(retriedRun.id);
     expect(issue?.checkoutRunId).toBe(runId);
+  });
+
+  it("preserves comment mention wake source when retrying a run linked to a closed issue", async () => {
+    const wakeCommentId = randomUUID();
+    const { agentId, runId, issueId } = await seedRunFixture({
+      runStatus: "failed",
+      runErrorCode: "network_error",
+      runError: "Model connection dropped after the mention wake started",
+      issueStatus: "done",
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        contextSnapshot: {
+          issueId,
+          taskId: issueId,
+          taskKey: issueId,
+          wakeReason: "issue_comment_mentioned",
+          wakeSource: "comment.mention",
+          wakeCommentId,
+          issue: {
+            id: issueId,
+            title: "Recover local adapter after mention",
+            status: "done",
+            priority: "medium",
+          },
+        },
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    const heartbeat = heartbeatService(db);
+    const retriedRun = await heartbeat.retryRun(runId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+      now: new Date("2026-03-19T00:05:00.000Z"),
+    });
+
+    expect(retriedRun.contextSnapshot).toMatchObject({
+      issueId,
+      wakeReason: "retry_failed_run",
+      wakeSource: "comment.mention",
+      wakeCommentId,
+      recovery: {
+        originalRunId: runId,
+        recoveryTrigger: "manual",
+      },
+    });
+
+    await heartbeat.resumeQueuedRuns();
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    const retryRun = runs.find((row) => row.id === retriedRun.id);
+    expect(retryRun?.status).toBe("running");
+
+    const retryWakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, retriedRun.wakeupRequestId!))
+      .then((rows) => rows[0] ?? null);
+    expect(retryWakeup?.status).toBe("claimed");
   });
 
   it("allows a cancelled adapter run to be retried manually", async () => {
