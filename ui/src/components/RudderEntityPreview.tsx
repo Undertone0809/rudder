@@ -39,6 +39,13 @@ type EntityPreview =
       summary: string | null;
     }
   | {
+      kind: "issue_comment";
+      eyebrow: string;
+      title: string;
+      rows: PreviewRow[];
+      summary: string | null;
+    }
+  | {
       kind: "agent";
       eyebrow: string;
       title: string;
@@ -96,6 +103,16 @@ function firstMarkdownParagraph(value: string | null | undefined) {
   return compactText(paragraph.replace(/^#{1,6}\s+/gm, ""));
 }
 
+function commentBodyPreview(value: string | null | undefined) {
+  const compacted = value
+    ?.replace(/!\[[^\]]*]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/[`*_>#~-]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim() ?? "";
+  return compactText(compacted, 260);
+}
+
 function basename(path: string | null | undefined) {
   const parts = path?.split("/").filter(Boolean) ?? [];
   return parts.at(-1) ?? path ?? "Library item";
@@ -116,7 +133,27 @@ async function readAgentName(agentId: string | null | undefined, orgId: string) 
   }
 }
 
+async function buildIssueCommentPreview(
+  mention: Extract<PreviewableMention, { kind: "issue" }>,
+): Promise<EntityPreview> {
+  const [issue, comment] = await Promise.all([
+    issuesApi.get(mention.issueId),
+    issuesApi.getComment(mention.issueId, mention.commentId!),
+  ]);
+  const issueLabel = issue.identifier ?? mention.ref ?? "Issue";
+
+  return {
+    kind: "issue_comment",
+    eyebrow: `${issueLabel} comment`,
+    title: "Comment",
+    rows: [],
+    summary: commentBodyPreview(comment.body) ?? "No comment body.",
+  };
+}
+
 async function buildIssuePreview(mention: Extract<PreviewableMention, { kind: "issue" }>, orgId: string): Promise<EntityPreview> {
+  if (mention.commentId) return buildIssueCommentPreview(mention);
+
   const issue = await issuesApi.get(mention.issueId);
   const [assigneeName, reviewerName, projectName] = await Promise.all([
     readAgentName(issue.assigneeAgentId, orgId),

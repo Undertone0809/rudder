@@ -19,6 +19,7 @@ const markdownMentionsMock = vi.hoisted(() => ({
 
 const entityPreviewApiMocks = vi.hoisted(() => ({
   getIssue: vi.fn(),
+  getComment: vi.fn(),
   getAgent: vi.fn(),
   getProject: vi.fn(),
   getLibraryDocument: vi.fn(),
@@ -113,6 +114,7 @@ vi.mock("../context/MarkdownMentionsContext", () => ({
 vi.mock("../api/issues", () => ({
   issuesApi: {
     get: entityPreviewApiMocks.getIssue,
+    getComment: entityPreviewApiMocks.getComment,
   },
 }));
 
@@ -689,6 +691,58 @@ describe("MarkdownBody", () => {
     expect(document.body.textContent).toContain("Rudder dev");
     expect(document.body.textContent).toContain("Wesley");
     expect(document.body.querySelector('[data-slot="issue-status-icon"]')).toBeTruthy();
+  });
+
+  it("loads an issue comment preview from comment-anchored issue links", async () => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", "org-1");
+    markdownMentionsMock.mentions = [{
+      id: "issue:issue-789",
+      name: "PAP-123 auth flow",
+      kind: "issue",
+      issueId: "issue-789",
+      issueIdentifier: "PAP-123",
+      issueStatus: "in_review",
+    }];
+    entityPreviewApiMocks.getIssue.mockResolvedValue({
+      id: "issue-789",
+      orgId: "org-1",
+      title: "Auth flow polish",
+      identifier: "PAP-123",
+      status: "in_review",
+      priority: "high",
+      projectId: "project-1",
+      project: { name: "Rudder dev" },
+      assigneeAgentId: "agent-1",
+      reviewerAgentId: "agent-2",
+      description: "Issue metadata should not be the comment preview.",
+    });
+    entityPreviewApiMocks.getComment.mockResolvedValue({
+      id: "comment-123",
+      orgId: "org-1",
+      issueId: "issue-789",
+      authorAgentId: "agent-1",
+      authorUserId: null,
+      body: "Reviewer said **render the comment body** instead of issue metadata.",
+      createdAt: new Date("2026-06-13T17:38:56.776Z"),
+      updatedAt: new Date("2026-06-13T17:38:56.776Z"),
+    });
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[Issue comment abc12345](${buildIssueMentionHref("issue-789", "PAP-123", "comment-123", "in_review")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await focusPreviewLink(container.querySelector("a.rudder-mention-chip"));
+
+    expect(entityPreviewApiMocks.getIssue).toHaveBeenCalledWith("issue-789");
+    expect(entityPreviewApiMocks.getComment).toHaveBeenCalledWith("issue-789", "comment-123");
+    expect(document.body.textContent).toContain("PAP-123 comment");
+    expect(document.body.textContent).toContain("Reviewer said render the comment body instead of issue metadata.");
+    expect(document.body.textContent).not.toContain("Auth flow polish");
+    expect(document.body.textContent).not.toContain("In Review");
+    expect(document.body.textContent).not.toContain("High");
   });
 
   it("loads agent, project, and Library previews from rendered mention chips", async () => {

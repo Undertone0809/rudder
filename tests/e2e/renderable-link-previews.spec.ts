@@ -74,6 +74,14 @@ test("renderable entity links show hover previews except chat links", async ({ p
   const targetIssue = await targetIssueRes.json() as { id: string; identifier: string | null; title: string };
   const targetIssueRef = targetIssue.identifier ?? targetIssue.id;
 
+  const targetCommentRes = await page.request.post(`/api/issues/${targetIssue.id}/comments`, {
+    data: {
+      body: "Comment preview body from the real comments API, not the parent issue metadata.",
+    },
+  });
+  expect(targetCommentRes.ok(), await targetCommentRes.text()).toBe(true);
+  const targetComment = await targetCommentRes.json() as { id: string };
+
   const libraryDocRes = await page.request.post(`/api/orgs/${organization.id}/library/documents`, {
     data: {
       title: "Preview library doc",
@@ -111,6 +119,7 @@ test("renderable entity links show hover previews except chat links", async ({ p
         `[${project.name}](${buildProjectMentionHref(project.id, project.color)})`,
         `[${libraryDoc.title}](${buildLibraryDocMentionHref(libraryDoc.id, libraryDoc.title)})`,
         `[${fileName}](${buildLibraryFileMentionHref(filePath, fileName)})`,
+        `[Target comment](issue://${targetIssue.id}?c=${targetComment.id})`,
         `[Preview chat](chat://${chat.id})`,
       ].join(" "),
       status: "todo",
@@ -133,6 +142,7 @@ test("renderable entity links show hover previews except chat links", async ({ p
   const projectLink = page.locator('a.rudder-mention-chip[data-mention-kind="project"]').filter({ hasText: project.name }).first();
   const libraryDocLink = page.locator('a.rudder-mention-chip[data-mention-kind="library_doc"]').filter({ hasText: libraryDoc.title }).first();
   const libraryFileLink = page.locator('a.rudder-mention-chip[data-mention-kind="library_file"]').filter({ hasText: fileName }).first();
+  const issueCommentLink = page.locator('a.rudder-mention-chip[data-mention-kind="issue"]').filter({ hasText: "Target comment" }).first();
   const chatLink = page.locator('a.rudder-mention-chip[data-mention-kind="chat"]').filter({ hasText: "Preview chat" }).first();
 
   await expectPreviewFor(issueLink, "Issue preview summary from the real issue API.");
@@ -140,6 +150,7 @@ test("renderable entity links show hover previews except chat links", async ({ p
   await expectPreviewFor(projectLink, "Project preview summary from the real project API.");
   await expectPreviewFor(libraryDocLink, "Library document preview summary from the real document API.");
   await expectPreviewFor(libraryFileLink, "Workspace file preview summary from the real workspace API.");
+  await expectPreviewFor(issueCommentLink, "Comment preview body from the real comments API");
 
   await expect(chatLink).toBeVisible();
   expect(await chatLink.evaluate((element) => Boolean(element.closest(".rudder-entity-preview-wrap")))).toBe(false);
