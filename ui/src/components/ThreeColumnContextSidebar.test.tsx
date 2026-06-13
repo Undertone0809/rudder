@@ -18,6 +18,7 @@ const mockState = vi.hoisted(() => ({
   navigate: vi.fn(),
   pushToast: vi.fn(),
   setSidebarOpen: vi.fn(),
+  toggleFollowIssue: vi.fn(),
   isMobile: true,
   pathname: "/RUD/issues",
   search: "",
@@ -169,10 +170,10 @@ vi.mock("@/context/DialogContext", () => ({
 vi.mock("@/hooks/useIssueFollows", () => ({
   useIssueFollows: () => ({
     follows: mockState.follows,
-    followedIssueIds: [],
+    followedIssueIds: new Set(mockState.follows.map((follow) => follow.issueId)),
     isLoading: false,
     error: null,
-    toggleFollowIssue: vi.fn(),
+    toggleFollowIssue: mockState.toggleFollowIssue,
   }),
 }));
 
@@ -236,6 +237,8 @@ beforeEach(() => {
   mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
   mockState.setSidebarOpen.mockReset();
+  mockState.toggleFollowIssue.mockReset();
+  mockState.toggleFollowIssue.mockResolvedValue(undefined);
   mockState.isMobile = true;
   mockState.pathname = "/RUD/issues";
   mockState.search = "";
@@ -549,7 +552,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     renderSidebar();
 
-    const secondRecent = document.querySelector("[data-testid='issue-recent-row-issue-2']") as HTMLAnchorElement | null;
+    const secondRecent = document.querySelector("[data-testid='issue-recent-row-issue-2'] a") as HTMLAnchorElement | null;
     act(() => {
       secondRecent?.click();
     });
@@ -595,6 +598,31 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(statusSlot?.className).toContain("h-5");
     expect(textGroup?.className).toContain("items-center");
     expect(textGroup?.className).not.toContain("items-baseline");
+  });
+
+  it("shows a hover pin control on recently viewed issue rows", async () => {
+    mockState.issues = [{
+      id: "issue-1",
+      identifier: "RUD-1",
+      title: "Pin this recent issue",
+      status: "todo",
+    }];
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(["issue-1"]));
+
+    renderSidebar();
+
+    const pinButton = document.querySelector("[data-testid='issue-recent-row-issue-1-pin-toggle']") as HTMLButtonElement | null;
+    expect(pinButton).not.toBeNull();
+    expect(pinButton?.getAttribute("aria-label")).toBe("Pin issue RUD-1");
+    expect(pinButton?.className).toContain("md:group-hover/issue-sidebar-row:opacity-100");
+
+    await act(async () => {
+      pinButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.toggleFollowIssue).toHaveBeenCalledWith("issue-1");
+    expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Issue pinned", tone: "success" });
   });
 
   it("renders pinned issues as bounded sidebar rows after issues are pinned", () => {
@@ -654,6 +682,34 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const activeRow = document.querySelector("[data-testid='issue-pinned-row-issue-2']") as HTMLAnchorElement | null;
     expect(activeRow?.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("shows an unpin control on pinned issue rows", async () => {
+    const pinnedIssue = { id: "issue-2", identifier: "RUD-2", title: "Pinned issue", status: "todo" };
+    mockState.issues = [pinnedIssue];
+    mockState.follows = [{
+      id: "follow-1",
+      orgId: "org-1",
+      issueId: pinnedIssue.id,
+      userId: "user-1",
+      createdAt: "2026-04-26T10:00:00.000Z",
+      issue: pinnedIssue,
+    }];
+
+    renderSidebar();
+
+    const pinButton = document.querySelector("[data-testid='issue-pinned-row-issue-2-pin-toggle']") as HTMLButtonElement | null;
+    expect(pinButton).not.toBeNull();
+    expect(pinButton?.getAttribute("aria-label")).toBe("Unpin issue RUD-2");
+    expect(pinButton?.className).toContain("text-[color:var(--accent-strong)]");
+
+    await act(async () => {
+      pinButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.toggleFollowIssue).toHaveBeenCalledWith("issue-2");
+    expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Issue unpinned", tone: "success" });
   });
 
   it("ignores previously stored custom boards in the issues sidebar", () => {

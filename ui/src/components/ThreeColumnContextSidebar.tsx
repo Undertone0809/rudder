@@ -616,6 +616,10 @@ function SidebarIssueListSection({
   rowTestIdPrefix,
   toggleTestId,
   scrollActivityKey,
+  followedIssueIds,
+  pinningIssueId,
+  issuePinDisabled,
+  onToggleIssuePin,
 }: {
   issues: SidebarIssue[];
   activeIssueRef: string | null;
@@ -630,6 +634,10 @@ function SidebarIssueListSection({
   rowTestIdPrefix: string;
   toggleTestId: string;
   scrollActivityKey: string;
+  followedIssueIds: Set<string>;
+  pinningIssueId: string | null;
+  issuePinDisabled: boolean;
+  onToggleIssuePin: (issue: SidebarIssue) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const issueListScrollRef = useScrollbarActivityRef(scrollActivityKey);
@@ -661,32 +669,63 @@ function SidebarIssueListSection({
             {visibleIssues.map((issue) => {
               const issueRef = issue.identifier ?? issue.id;
               const active = activeIssueRef === issueRef || activeIssueRef === issue.id;
+              const pinned = followedIssueIds.has(issue.id);
+              const pinLabel = pinned ? "Unpin issue" : "Pin issue";
+              const PinIcon = pinned ? PinOff : Pin;
+              const pinPending = pinningIssueId === issue.id;
               return (
-                <Link
+                <div
                   key={issue.id}
-                  to={issueUrl(issue)}
-                  onClick={() => {
-                    onOpenIssue?.(issue);
-                    closeMobileSidebar();
-                  }}
                   data-testid={`${rowTestIdPrefix}-${issue.id}`}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-2.5 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                    "group/issue-sidebar-row relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center rounded-[calc(var(--radius-sm)-1px)] border border-transparent text-sm transition-[background-color,border-color,color]",
                     active
                       ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
                       : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
                   )}
                 >
-                  <span className="flex h-5 w-4 shrink-0 items-center justify-center">
-                    <StatusIcon status={issue.status} />
-                  </span>
-                  <span className="flex min-h-5 min-w-0 flex-1 items-center gap-1.5">
-                    <span className="shrink-0 font-mono text-[11px] leading-5 text-muted-foreground/78">{issueRef}</span>
-                    <span className="shrink-0 leading-5 text-muted-foreground/55">·</span>
-                    <span className="min-w-0 truncate leading-5">{issue.title}</span>
-                  </span>
-                </Link>
+                  <Link
+                    to={issueUrl(issue)}
+                    onClick={() => {
+                      onOpenIssue?.(issue);
+                      closeMobileSidebar();
+                    }}
+                    aria-current={active ? "page" : undefined}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 self-stretch px-3 py-2 pr-9 text-inherit"
+                  >
+                    <span className="flex h-5 w-4 shrink-0 items-center justify-center">
+                      <StatusIcon status={issue.status} />
+                    </span>
+                    <span className="flex min-h-5 min-w-0 flex-1 items-center gap-1.5">
+                      <span className="max-w-[6.5rem] shrink truncate font-mono text-[11px] leading-5 text-muted-foreground/78">{issueRef}</span>
+                      <span className="shrink-0 leading-5 text-muted-foreground/55">·</span>
+                      <span className="min-w-0 truncate leading-5">{issue.title}</span>
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    data-testid={`${rowTestIdPrefix}-${issue.id}-pin-toggle`}
+                    aria-label={`${pinLabel} ${issueRef}`}
+                    title={pinLabel}
+                    disabled={issuePinDisabled || pinPending}
+                    className={cn(
+                      "absolute right-1.5 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md p-1 opacity-100 transition-[opacity,background-color,color] duration-150",
+                      "hover:bg-[color:var(--surface-page)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)] disabled:pointer-events-none disabled:opacity-35",
+                      "md:opacity-0 md:group-hover/issue-sidebar-row:opacity-100 md:group-focus-within/issue-sidebar-row:opacity-100",
+                      pinned
+                        ? "text-[color:var(--accent-strong)] hover:text-[color:var(--accent-strong)]"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onToggleIssuePin(issue);
+                    }}
+                  >
+                    <PinIcon className="h-3.5 w-3.5" strokeWidth={2.25} />
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -725,6 +764,7 @@ export function ThreeColumnContextSidebar() {
   const { openNewAgent, openNewProject } = useDialog();
   const queryClient = useQueryClient();
   const [collapsedIssueSections, setCollapsedIssueSections] = useState<Record<string, boolean>>({});
+  const [pinningIssueId, setPinningIssueId] = useState<string | null>(null);
   const isIssueSectionCollapsed = useCallback(
     (key: string) => collapsedIssueSections[key] === true,
     [collapsedIssueSections],
@@ -807,7 +847,12 @@ export function ThreeColumnContextSidebar() {
     queryFn: () => issuesApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && isIssuesRoute,
   });
-  const { follows: issueFollows } = useIssueFollows(
+  const {
+    follows: issueFollows,
+    followedIssueIds,
+    isLoading: issueFollowsLoading,
+    toggleFollowIssue,
+  } = useIssueFollows(
     selectedOrganizationId && isIssuesRoute ? selectedOrganizationId : null,
   );
   const { data: pluginContributions } = useQuery({
@@ -1031,6 +1076,24 @@ export function ThreeColumnContextSidebar() {
     if (!selectedOrganizationId) return;
     setRecentIssueIds(recordRecentIssue(selectedOrganizationId, issue.id, readRecentIssueIds(selectedOrganizationId)));
   };
+
+  const toggleSidebarIssuePin = useCallback(async (issue: SidebarIssue) => {
+    if (pinningIssueId || issueFollowsLoading) return;
+    const nextPinned = !followedIssueIds.has(issue.id);
+    setPinningIssueId(issue.id);
+    try {
+      await toggleFollowIssue(issue.id);
+      pushToast({ title: nextPinned ? "Issue pinned" : "Issue unpinned", tone: "success" });
+    } catch (error) {
+      pushToast({
+        title: nextPinned ? "Could not pin issue" : "Could not unpin issue",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    } finally {
+      setPinningIssueId(null);
+    }
+  }, [followedIssueIds, issueFollowsLoading, pinningIssueId, pushToast, toggleFollowIssue]);
 
   const refreshChatList = async (chatId?: string) => {
     if (!selectedOrganizationId) return;
@@ -1330,6 +1393,10 @@ export function ThreeColumnContextSidebar() {
             rowTestIdPrefix="issue-pinned-row"
             toggleTestId="issue-pinned-toggle"
             scrollActivityKey="rudder:sidebar-scroll:pinned-issues"
+            followedIssueIds={followedIssueIds}
+            pinningIssueId={pinningIssueId}
+            issuePinDisabled={issueFollowsLoading}
+            onToggleIssuePin={(issue) => void toggleSidebarIssuePin(issue)}
           />
           <SidebarIssueListSection
             issues={recentIssueRefs}
@@ -1345,6 +1412,10 @@ export function ThreeColumnContextSidebar() {
             rowTestIdPrefix="issue-recent-row"
             toggleTestId="issue-recent-toggle"
             scrollActivityKey="rudder:sidebar-scroll:recent-issues"
+            followedIssueIds={followedIssueIds}
+            pinningIssueId={pinningIssueId}
+            issuePinDisabled={issueFollowsLoading}
+            onToggleIssuePin={(issue) => void toggleSidebarIssuePin(issue)}
           />
           <SectionLabel
             testId="workspace-projects-section"
