@@ -7,6 +7,7 @@ import type {
 export type ShortcutRegistryActionId = KeyboardShortcutActionId | "system.escapeBack";
 
 export type ShortcutScope = "Global" | "System";
+export type KeyboardShortcutPlatform = "mac" | "nonMac";
 
 export interface KeyboardShortcutRegistryEntry {
   actionId: ShortcutRegistryActionId;
@@ -14,6 +15,7 @@ export interface KeyboardShortcutRegistryEntry {
   description: string;
   scope: ShortcutScope;
   defaultBindings: KeyboardShortcutBinding[];
+  defaultBindingsByPlatform?: Record<KeyboardShortcutPlatform, KeyboardShortcutBinding[]>;
   configurable: boolean;
   disableable: boolean;
 }
@@ -28,6 +30,10 @@ export const KEYBOARD_SHORTCUT_REGISTRY: KeyboardShortcutRegistryEntry[] = [
       { key: "k", metaKey: true },
       { key: "k", ctrlKey: true },
     ],
+    defaultBindingsByPlatform: {
+      mac: [{ key: "k", metaKey: true }],
+      nonMac: [{ key: "k", ctrlKey: true }],
+    },
     configurable: true,
     disableable: true,
   },
@@ -40,6 +46,10 @@ export const KEYBOARD_SHORTCUT_REGISTRY: KeyboardShortcutRegistryEntry[] = [
       { key: ",", metaKey: true },
       { key: ",", ctrlKey: true },
     ],
+    defaultBindingsByPlatform: {
+      mac: [{ key: ",", metaKey: true }],
+      nonMac: [{ key: ",", ctrlKey: true }],
+    },
     configurable: true,
     disableable: true,
   },
@@ -50,8 +60,19 @@ export const KEYBOARD_SHORTCUT_REGISTRY: KeyboardShortcutRegistryEntry[] = [
     scope: "Global",
     defaultBindings: [
       { key: "n", metaKey: true },
+      { key: "n", ctrlKey: true },
       { key: "c" },
     ],
+    defaultBindingsByPlatform: {
+      mac: [
+        { key: "n", metaKey: true },
+        { key: "c" },
+      ],
+      nonMac: [
+        { key: "n", ctrlKey: true },
+        { key: "c" },
+      ],
+    },
     configurable: true,
     disableable: true,
   },
@@ -92,9 +113,19 @@ const CONFIGURABLE_ACTION_IDS = new Set<ShortcutRegistryActionId>(
 
 const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
 
-function isMacPlatform() {
-  if (typeof navigator === "undefined") return false;
-  return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+export function getKeyboardShortcutPlatform(): KeyboardShortcutPlatform {
+  if (typeof navigator === "undefined") return "nonMac";
+  const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
+    ?? navigator.platform
+    ?? "";
+  return /Mac|iPhone|iPad|iPod/.test(platform) ? "mac" : "nonMac";
+}
+
+export function getDefaultShortcutBindings(
+  entry: Pick<KeyboardShortcutRegistryEntry, "defaultBindings" | "defaultBindingsByPlatform">,
+  platform: KeyboardShortcutPlatform = getKeyboardShortcutPlatform(),
+) {
+  return (entry.defaultBindingsByPlatform?.[platform] ?? entry.defaultBindings).map(normalizeShortcutBinding);
 }
 
 export function normalizeShortcutKey(key: string) {
@@ -157,11 +188,12 @@ export function matchesShortcutBinding(event: KeyboardEvent, binding: KeyboardSh
 
 export function resolveKeyboardShortcutBindings(
   settings: KeyboardShortcutSettings | null | undefined,
+  platform: KeyboardShortcutPlatform = getKeyboardShortcutPlatform(),
 ): Record<KeyboardShortcutActionId, KeyboardShortcutBinding[]> {
   const resolved = {} as Record<KeyboardShortcutActionId, KeyboardShortcutBinding[]>;
   for (const entry of KEYBOARD_SHORTCUT_REGISTRY) {
     if (!CONFIGURABLE_ACTION_IDS.has(entry.actionId)) continue;
-    resolved[entry.actionId as KeyboardShortcutActionId] = entry.defaultBindings.map(normalizeShortcutBinding);
+    resolved[entry.actionId as KeyboardShortcutActionId] = getDefaultShortcutBindings(entry, platform);
   }
 
   for (const preference of settings?.shortcuts ?? []) {
@@ -183,18 +215,22 @@ export function eventMatchesShortcutAction(
   event: KeyboardEvent,
   actionId: KeyboardShortcutActionId,
   settings: KeyboardShortcutSettings | null | undefined,
+  platform?: KeyboardShortcutPlatform,
 ) {
   if (settings === undefined) return false;
-  const bindings = resolveKeyboardShortcutBindings(settings)[actionId] ?? [];
+  const bindings = resolveKeyboardShortcutBindings(settings, platform)[actionId] ?? [];
   return bindings.some((binding) => matchesShortcutBinding(event, binding));
 }
 
-export function formatShortcutBinding(binding: KeyboardShortcutBinding) {
+export function formatShortcutBinding(
+  binding: KeyboardShortcutBinding,
+  platform: KeyboardShortcutPlatform = getKeyboardShortcutPlatform(),
+) {
   const normalized = normalizeShortcutBinding(binding);
   const parts: string[] = [];
-  if (normalized.metaKey) parts.push(isMacPlatform() ? "Cmd" : "Meta");
+  if (normalized.metaKey) parts.push(platform === "mac" ? "Cmd" : "Meta");
   if (normalized.ctrlKey) parts.push("Ctrl");
-  if (normalized.altKey) parts.push(isMacPlatform() ? "Opt" : "Alt");
+  if (normalized.altKey) parts.push(platform === "mac" ? "Opt" : "Alt");
   if (normalized.shiftKey) parts.push("Shift");
   parts.push(formatShortcutKey(normalized.key));
   return parts.join("+");
@@ -219,9 +255,10 @@ export function findShortcutConflict(
   actionId: KeyboardShortcutActionId,
   binding: KeyboardShortcutBinding,
   settings: KeyboardShortcutSettings | null | undefined,
+  platform?: KeyboardShortcutPlatform,
 ) {
   const signature = bindingSignature(binding);
-  const resolved = resolveKeyboardShortcutBindings(settings);
+  const resolved = resolveKeyboardShortcutBindings(settings, platform);
   for (const [candidateActionId, bindings] of Object.entries(resolved) as Array<[KeyboardShortcutActionId, KeyboardShortcutBinding[]]>) {
     if (candidateActionId === actionId) continue;
     if (bindings.some((candidate) => bindingSignature(candidate) === signature)) {

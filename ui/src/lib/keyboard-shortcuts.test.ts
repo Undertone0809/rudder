@@ -21,8 +21,23 @@ function keydown(key: string, init: KeyboardEventInit = {}) {
 describe("keyboard shortcuts", () => {
   it("falls back to default bindings when settings are missing", () => {
     expect(eventMatchesShortcutAction(keydown("c"), "issue.create", null)).toBe(true);
-    expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", null)).toBe(true);
+    expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", null, "mac")).toBe(true);
     expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", undefined)).toBe(false);
+  });
+
+  it("resolves platform-specific default bindings without mixing Mac and non-Mac variants", () => {
+    expect(resolveKeyboardShortcutBindings(null, "mac")["commandPalette.open"]).toEqual([
+      { key: "k", metaKey: true },
+    ]);
+    expect(resolveKeyboardShortcutBindings(null, "nonMac")["commandPalette.open"]).toEqual([
+      { key: "k", ctrlKey: true },
+    ]);
+    expect(resolveKeyboardShortcutBindings(null, "nonMac")["issue.create"]).toEqual([
+      { key: "n", ctrlKey: true },
+      { key: "c" },
+    ]);
+    expect(eventMatchesShortcutAction(keydown("n", { ctrlKey: true }), "issue.create", null, "nonMac")).toBe(true);
+    expect(eventMatchesShortcutAction(keydown("n", { metaKey: true }), "issue.create", null, "nonMac")).toBe(false);
   });
 
   it("disables actions from preferences", () => {
@@ -49,9 +64,8 @@ describe("keyboard shortcuts", () => {
   });
 
   it("detects conflicts and reserved shortcuts", () => {
-    expect(
-      findShortcutConflict("issue.create", { key: "k", metaKey: true }, { shortcuts: [] }),
-    ).toBe("commandPalette.open");
+    expect(findShortcutConflict("issue.create", { key: "k", metaKey: true }, { shortcuts: [] }, "mac"))
+      .toBe("commandPalette.open");
     expect(isReservedShortcut({ key: "l", metaKey: true })).toBe(true);
   });
 

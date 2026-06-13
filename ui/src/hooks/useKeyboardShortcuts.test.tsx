@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import type { KeyboardShortcutSettings } from "@rudderhq/shared";
+import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -151,11 +152,11 @@ describe("useKeyboardShortcuts", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it("opens a new issue on Command+N and suppresses the browser shortcut", async () => {
+  it("opens a new issue on the platform default modifier+N and suppresses the browser shortcut", async () => {
     const onNewIssue = vi.fn();
     await renderShortcutHarness({ onNewIssue, shortcutSettings: null });
 
-    const event = dispatchKey("n", { metaKey: true });
+    const event = dispatchKey("n", getKeyboardShortcutPlatform() === "mac" ? { metaKey: true } : { ctrlKey: true });
 
     expect(onNewIssue).toHaveBeenCalledTimes(1);
     expect(event.defaultPrevented).toBe(true);

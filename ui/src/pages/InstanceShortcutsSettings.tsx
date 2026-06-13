@@ -18,6 +18,7 @@ import { useToast } from "@/context/ToastContext";
 import {
   findShortcutConflict,
   formatShortcutBinding,
+  getDefaultShortcutBindings,
   isReservedShortcut,
   KEYBOARD_SHORTCUT_REGISTRY,
   normalizeShortcutBinding,
@@ -263,7 +264,7 @@ export function InstanceShortcutsSettings() {
                 : null;
               const disabled = preference?.disabled === true;
               const customized = preference !== null && preference !== undefined;
-              const bindings = actionId ? resolvedBindings[actionId] ?? [] : entry.defaultBindings;
+              const bindings = actionId ? resolvedBindings[actionId] ?? [] : getDefaultShortcutBindings(entry);
               const editing = actionId !== null && editingActionId === actionId;
               const hasSingleKeyCreateIssueBinding = actionId === "issue.create"
                 && bindings.some((binding) => {

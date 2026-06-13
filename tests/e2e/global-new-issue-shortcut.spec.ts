@@ -32,10 +32,28 @@ async function gotoDashboardReady(page: Page, issuePrefix: string) {
   await expect(page.locator('[data-shortcut-settings-ready="true"]')).toBeVisible();
 }
 
+async function getPlatformNewIssueShortcut(page: Page) {
+  const isMac = await page.evaluate(() => {
+    const platform = navigator.userAgentData?.platform ?? navigator.platform ?? "";
+    return /Mac|iPhone|iPad|iPod/.test(platform);
+  });
+  return isMac
+    ? { press: "Meta+N", binding: { key: "n", metaKey: true } }
+    : { press: "Control+N", binding: { key: "n", ctrlKey: true } };
+}
+
+declare global {
+  interface Navigator {
+    userAgentData?: {
+      platform?: string;
+    };
+  }
+}
+
 test.describe("Global new issue shortcut", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("opens the new issue dialog with Command+N", async ({ page }) => {
+  test("opens the new issue dialog with the platform default modifier+N", async ({ page }) => {
     await resetShortcutSettings(page);
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -46,14 +64,15 @@ test.describe("Global new issue shortcut", () => {
     const organization = await orgRes.json() as { issuePrefix: string };
 
     await gotoDashboardReady(page, organization.issuePrefix);
-    await page.keyboard.press("Meta+N");
+    const shortcut = await getPlatformNewIssueShortcut(page);
+    await page.keyboard.press(shortcut.press);
 
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
     await expect(dialog.getByPlaceholder("Issue title")).toBeFocused();
   });
 
-  test("persists disabling the single-key C shortcut while keeping Command+N", async ({ page }) => {
+  test("persists disabling the single-key C shortcut while keeping the platform modifier+N", async ({ page }) => {
     await resetShortcutSettings(page);
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -64,6 +83,7 @@ test.describe("Global new issue shortcut", () => {
     const organization = await orgRes.json() as { issuePrefix: string };
 
     await gotoDashboardReady(page, organization.issuePrefix);
+    const shortcut = await getPlatformNewIssueShortcut(page);
     await page.getByRole("button", { name: "System settings" }).click();
     const modal = page.getByTestId("settings-modal-shell");
     await modal.locator('a[href$="/instance/settings/shortcuts"]').click();
@@ -80,7 +100,7 @@ test.describe("Global new issue shortcut", () => {
     expect(saved.shortcuts).toEqual([
       {
         actionId: "issue.create",
-        bindings: [{ key: "n", metaKey: true }],
+        bindings: [shortcut.binding],
       },
     ]);
     expect(await getShortcutSettings(page)).toEqual(saved);
@@ -90,7 +110,7 @@ test.describe("Global new issue shortcut", () => {
     await page.keyboard.press("c");
     await expect(page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") })).toHaveCount(0);
 
-    await page.keyboard.press("Meta+N");
+    await page.keyboard.press(shortcut.press);
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
   });

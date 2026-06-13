@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import type { CSSProperties, KeyboardEventHandler, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommandPalette } from "./CommandPalette";
+import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -14,7 +15,13 @@ const navigateMock = vi.fn();
 const observedQueryKeys = vi.hoisted(() => [] as Array<readonly unknown[]>);
 const queryDataByKey = vi.hoisted(() => new Map<string, unknown>());
 const shortcutSettingsMock = vi.hoisted(() => ({
-  value: null as null | { shortcuts: Array<{ actionId: "commandPalette.open"; bindings?: Array<{ key: string; metaKey?: boolean }>; disabled?: boolean }> },
+  value: null as null | {
+    shortcuts: Array<{
+      actionId: "commandPalette.open";
+      bindings?: Array<{ key: string; metaKey?: boolean; ctrlKey?: boolean }>;
+      disabled?: boolean;
+    }>;
+  },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -198,11 +205,18 @@ function renderCommandPalette() {
 
 function openCommandPalette(container: HTMLElement) {
   act(() => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    document.dispatchEvent(createDefaultCommandPaletteShortcutEvent());
   });
   const input = container.querySelector<HTMLInputElement>("input");
   expect(input).not.toBeNull();
   return input!;
+}
+
+function createDefaultCommandPaletteShortcutEvent(targetKey = "k") {
+  const modifier = getKeyboardShortcutPlatform() === "mac"
+    ? { metaKey: true }
+    : { ctrlKey: true };
+  return new KeyboardEvent("keydown", { key: targetKey, ...modifier, bubbles: true });
 }
 
 function changeInput(input: HTMLInputElement, value: string) {
@@ -253,7 +267,7 @@ describe("CommandPalette", () => {
       root.render(<CommandPalette />);
     });
     act(() => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+      document.dispatchEvent(createDefaultCommandPaletteShortcutEvent());
     });
 
     const input = container.querySelector("input");
@@ -290,7 +304,7 @@ describe("CommandPalette", () => {
       root.render(<CommandPalette />);
     });
     act(() => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+      document.dispatchEvent(createDefaultCommandPaletteShortcutEvent());
     });
 
     const searchLaunch = container.querySelector('button[aria-label="Search launch"]');
@@ -332,7 +346,7 @@ describe("CommandPalette", () => {
       root.render(<CommandPalette />);
     });
     act(() => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+      document.dispatchEvent(createDefaultCommandPaletteShortcutEvent());
     });
     expect(container.querySelector("input")).toBeNull();
 
@@ -358,7 +372,7 @@ describe("CommandPalette", () => {
       root.render(<CommandPalette />);
     });
     act(() => {
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+      input.dispatchEvent(createDefaultCommandPaletteShortcutEvent());
     });
 
     expect(container.querySelector("input")).toBeNull();

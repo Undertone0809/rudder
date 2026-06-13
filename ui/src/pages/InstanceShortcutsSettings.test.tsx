@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { InstanceShortcutsSettings } from "./InstanceShortcutsSettings";
 
@@ -56,6 +56,10 @@ function renderPage() {
 }
 
 describe("InstanceShortcutsSettings", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("shows the Escape system shortcut as read-only without entering capture mode", () => {
     const html = renderPage();
 
@@ -71,5 +75,18 @@ describe("InstanceShortcutsSettings", () => {
     expect(html).toContain("Command");
     expect(html).toContain("Keybinding");
     expect(html).toContain("Open command palette");
+  });
+
+  it("shows only the current platform default keybinding variant", () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const macHtml = renderPage();
+    expect(macHtml).toContain("Cmd+K");
+    expect(macHtml).not.toContain("Ctrl+K");
+
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    const windowsHtml = renderPage();
+    expect(windowsHtml).toContain("Ctrl+K");
+    expect(windowsHtml).not.toContain("Cmd+K");
+    expect(windowsHtml).not.toContain("Meta+K");
   });
 });
