@@ -3,7 +3,7 @@ import { getProjectIconComponent, normalizeProjectIconName } from "@/lib/project
 import { cn } from "@/lib/utils";
 import { DEFAULT_PROJECT_ICON, PROJECT_COLORS, PROJECT_ICONS, type ProjectIconName } from "@rudderhq/shared";
 import { Check } from "lucide-react";
-import type { CSSProperties } from "react";
+import { forwardRef, type ComponentPropsWithoutRef, type CSSProperties } from "react";
 
 type ProjectIdentityShape = {
   name?: string | null;
@@ -88,6 +88,31 @@ export function ProjectIdentity({
     </span>
   );
 }
+
+type ProjectIdentityTriggerButtonProps = Omit<ComponentPropsWithoutRef<"button">, "children" | "color" | "type"> & {
+  projectColor?: string | null;
+  projectIcon?: string | null;
+  label: string;
+};
+
+export const ProjectIdentityTriggerButton = forwardRef<HTMLButtonElement, ProjectIdentityTriggerButtonProps>(
+  ({ projectColor, projectIcon, label, className, title, ...props }, ref) => (
+    <button
+      {...props}
+      ref={ref}
+      type="button"
+      className={cn(
+        "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] outline-none transition-[box-shadow,transform] hover:scale-[1.03] focus-visible:ring-2 focus-visible:ring-ring",
+        className,
+      )}
+      aria-label={label}
+      title={title ?? label}
+    >
+      <ProjectIcon color={projectColor} icon={projectIcon} size="lg" />
+    </button>
+  ),
+);
+ProjectIdentityTriggerButton.displayName = "ProjectIdentityTriggerButton";
 
 export function ProjectIdentityPicker({
   color,

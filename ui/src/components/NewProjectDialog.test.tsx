@@ -178,6 +178,18 @@ afterEach(() => {
 });
 
 describe("NewProjectDialog", () => {
+  it("keeps the identity trigger target aligned with the large project icon", () => {
+    const container = renderDialog();
+    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="new-project-identity-trigger"]');
+    const projectIcon = trigger?.querySelector<HTMLElement>('[aria-hidden="true"]');
+
+    expect(trigger).not.toBeNull();
+    expect(trigger?.classList.contains("h-9")).toBe(true);
+    expect(trigger?.classList.contains("w-9")).toBe(true);
+    expect(trigger?.className).not.toContain("h-8");
+    expect(projectIcon?.classList.contains("h-9")).toBe(true);
+  });
+
   it("uses one add resources entry point in Project Context", () => {
     const container = renderDialog();
     const buttons = [...container.querySelectorAll<HTMLButtonElement>("button")].map((button) => button.textContent ?? "");

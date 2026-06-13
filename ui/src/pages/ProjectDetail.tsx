@@ -17,7 +17,7 @@ import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { InlineEditor } from "../components/InlineEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
-import { ProjectIcon, ProjectIdentityPicker } from "../components/ProjectIdentity";
+import { ProjectIdentityPicker, ProjectIdentityTriggerButton } from "../components/ProjectIdentity";
 import { ProjectProperties, type ProjectConfigFieldKey, type ProjectFieldSaveState } from "../components/ProjectProperties";
 import { ProjectResourcesPanel } from "../components/ProjectResourcesPanel";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -381,17 +381,15 @@ export function ProjectDetail() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <div className="h-7 flex items-center">
+          <div className="flex min-h-9 items-center">
             <Popover>
               <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] outline-none transition-[box-shadow,transform] hover:scale-[1.03] focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="Change project identity"
-                  title="Change project identity"
-                >
-                  <ProjectIcon color={project.color} icon={project.icon} size="lg" />
-                </button>
+                <ProjectIdentityTriggerButton
+                  projectColor={project.color}
+                  projectIcon={project.icon}
+                  label="Change project identity"
+                  data-testid="project-detail-identity-trigger"
+                />
               </PopoverTrigger>
               <PopoverContent align="start" className="w-auto p-0">
                 <ProjectIdentityPicker

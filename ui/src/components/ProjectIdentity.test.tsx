@@ -4,7 +4,11 @@ import { PROJECT_COLORS } from "@rudderhq/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { ProjectIcon, ProjectIdentityPicker } from "./ProjectIdentity";
+import { ProjectIcon, ProjectIdentityPicker, ProjectIdentityTriggerButton } from "./ProjectIdentity";
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("ProjectIdentity", () => {
   it("renders the fallback folder icon for legacy projects", () => {
@@ -35,6 +39,29 @@ describe("ProjectIdentity", () => {
     expect(projectIcon?.classList.contains("h-9")).toBe(true);
     expect(glyph?.classList.contains("h-7")).toBe(true);
     expect(projectIcon?.style.background).toBe("");
+    act(() => root.unmount());
+  });
+
+  it("keeps identity trigger targets at least as large as large project icons", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    act(() => {
+      root.render(
+        <ProjectIdentityTriggerButton
+          projectColor={PROJECT_COLORS[0]}
+          projectIcon="brain"
+          label="Change project identity"
+        />,
+      );
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Change project identity"]');
+    const projectIcon = trigger?.querySelector<HTMLElement>('[aria-hidden="true"]');
+    expect(trigger?.classList.contains("h-9")).toBe(true);
+    expect(trigger?.classList.contains("w-9")).toBe(true);
+    expect(trigger?.className).not.toContain("h-8");
+    expect(projectIcon?.classList.contains("h-9")).toBe(true);
+    expect(projectIcon?.querySelector("svg")?.classList.contains("h-7")).toBe(true);
     act(() => root.unmount());
   });
 

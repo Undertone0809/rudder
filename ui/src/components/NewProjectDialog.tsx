@@ -51,7 +51,7 @@ import {
 } from "../lib/resource-options";
 import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
-import { ProjectIcon, ProjectIdentityPicker } from "./ProjectIdentity";
+import { ProjectIdentityPicker, ProjectIdentityTriggerButton } from "./ProjectIdentity";
 import { ResourceLocatorField, suggestResourceNameFromLocator } from "./ResourceLocatorField";
 import { StatusBadge } from "./StatusBadge";
 
@@ -443,14 +443,12 @@ export function NewProjectDialog() {
           <div className="flex items-center gap-3">
             <Popover>
               <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] outline-none transition-[box-shadow,transform] hover:scale-[1.03] focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="Choose project identity"
-                  title="Choose project identity"
-                >
-                  <ProjectIcon color={color} icon={icon} size="lg" />
-                </button>
+                <ProjectIdentityTriggerButton
+                  projectColor={color}
+                  projectIcon={icon}
+                  label="Choose project identity"
+                  data-testid="new-project-identity-trigger"
+                />
               </PopoverTrigger>
               <PopoverContent align="start" className="w-auto p-0">
                 <ProjectIdentityPicker
