@@ -2619,6 +2619,7 @@ export function OrganizationWorkspaceFilesSidebar() {
       >
         <header
           data-testid="workspace-context-header"
+          aria-label={libraryCopy("library", locale)}
           className={cn(
             "workspace-context-header rudder-doc-editor-sidebar-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4",
             sidebarHasTabStrip && !sidebarHasBreadcrumb && "rudder-doc-editor-sidebar-header--tabs-only",
@@ -2626,10 +2627,7 @@ export function OrganizationWorkspaceFilesSidebar() {
             sidebarHasTabStrip && sidebarHasBreadcrumb && "rudder-doc-editor-sidebar-header--tabs-and-breadcrumb",
           )}
         >
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">{libraryCopy("library", locale)}</h2>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
             {workspaceRootPath ? (
               <WorkspaceLaunchMenu
                 rootPath={workspaceRootPath}

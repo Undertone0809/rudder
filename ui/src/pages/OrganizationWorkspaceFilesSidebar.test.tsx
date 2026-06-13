@@ -301,7 +301,9 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
       await Promise.resolve();
     });
 
-    expect(document.querySelector("[data-testid='workspace-context-header']")?.textContent).toContain("Library");
+    const header = document.querySelector("[data-testid='workspace-context-header']");
+    expect(header?.getAttribute("aria-label")).toBe("Library");
+    expect(header?.querySelector("h2")).toBeNull();
     expect(document.querySelector("[data-testid='org-workspaces-sidebar-launcher']")).not.toBeNull();
     expect(listWorkspaceLaunchTargets).toHaveBeenCalledTimes(1);
   });
