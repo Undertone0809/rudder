@@ -23,7 +23,7 @@ const PREVIEW_IMAGE_SRC =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='320' viewBox='0 0 480 320'%3E%3Crect width='480' height='320' fill='%232f80ed'/%3E%3Ctext x='240' y='168' fill='white' font-size='34' font-family='Arial' text-anchor='middle'%3EPreview%3C/text%3E%3C/svg%3E";
 
 const mockState = vi.hoisted(() => ({
-  conversationId: "chat-1",
+  conversationId: "chat-1" as string | null,
   conversations: [] as ChatConversation[],
   messagesByChatId: {} as Record<string, ChatMessage[]>,
   projects: [] as Project[],
@@ -97,9 +97,14 @@ vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
     <a href={to} {...props}>{children}</a>
   ),
-  useLocation: () => ({ pathname: `/messenger/chat/${mockState.conversationId}`, search: "", hash: "", key: "chat" }),
+  useLocation: () => ({
+    pathname: mockState.conversationId ? `/messenger/chat/${mockState.conversationId}` : "/messenger/chat",
+    search: "",
+    hash: "",
+    key: "chat",
+  }),
   useNavigate: () => mockState.navigate,
-  useParams: () => ({ conversationId: mockState.conversationId }),
+  useParams: () => (mockState.conversationId ? { conversationId: mockState.conversationId } : {}),
   useSearchParams: () => [new URLSearchParams()],
 }));
 
@@ -736,6 +741,25 @@ describe("Chat attachment previews", () => {
     const preview = document.body.querySelector("[data-testid='chat-image-preview-dialog']");
     expect(preview).not.toBeNull();
     expect(preview?.querySelector("img")?.getAttribute("alt")).toBe("draft-screenshot.png");
+  });
+
+  it("hides new-chat use cases when pending attachments are staged", () => {
+    const attachment = new File(["draft attachment"], "scope-notes.txt", { type: "text/plain" });
+    mockState.conversationId = null;
+    mockState.conversations = [];
+    mockState.messagesByChatId = {};
+    updateChatPendingAttachmentsForScope(
+      resolveChatPendingAttachmentScopeKey("org-1", null),
+      () => [attachment],
+    );
+
+    const { container } = renderChat();
+
+    expect(container.querySelector("[data-testid='chat-pending-attachments']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='chat-pending-attachment']")).not.toBeNull();
+    expect(container.textContent).not.toContain("Scope a new feature");
+    expect(container.textContent).not.toContain("Clarify a vague request");
+    expect(container.textContent).not.toContain("Turn a chat into an issue");
   });
 
   it("approves issue proposals with the operator-selected issue status", async () => {

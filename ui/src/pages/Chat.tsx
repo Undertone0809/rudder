@@ -850,17 +850,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         onNext: () => setBranchPreview({ chatTurnId: tid, turnVariant: variants[idx + 1]! }),
       }; }, [rawMessages, branchPreview], ); const userNickname = profileQuery.data?.nickname.trim() ?? ""; const emptyStateProjectName = activeProject ? projectDisplayName(activeProject) : null; const emptyStateHeading = chatEmptyStateHeading({
     activeProjectName: emptyStateProjectName, userNickname, t, }); const emptyStateHeadingKey = emptyStateProjectName ? `project:${activeProject?.id}:${emptyStateProjectName}` : "no-project"; const composerPlaceholder = activePlanMode ? t("chat.composer.planModePlaceholder") : draftIssueContext ? t("chat.composer.issuePlaceholder", { issue: draftIssueContextLabel(draftIssueContext) }) : t("chat.composer.placeholder"); const expandedPromptGroup = EMPTY_STATE_PROMPT_GROUPS.find((group) => group.label === expandedEmptyStatePrompt) ?? null; const emptyStatePromptOptionsId = "chat-empty-state-prompt-options"; const emptyStatePromptOriginX = expandedEmptyStatePrompt === "Scope a new feature" ? "22%" : expandedEmptyStatePrompt === "Clarify a vague request" ? "50%" : expandedEmptyStatePrompt === "Turn a chat into an issue" ? "78%" : "50%";
-  const showEmptyStateRecentConversations = draft.trim().length === 0;
+  const showEmptyStateSupplementalContent = draft.trim().length === 0 && pendingFiles.length === 0;
   const hasRecentProjectConversations = allRecentProjectConversations.length > 0;
   const sendButtonMode = newConversationSendInFlight || (activeSendInFlight && (!activeStream || !activeStream.userMessageId)) ? "sending" : activeSendInFlight ? "stop" : "send";
   const sendButtonDisabled = composerUnavailable || sendButtonMode === "sending" || (sendButtonMode === "send" && draft.trim().length === 0);
   useEffect(() => {
     if (!expandedEmptyStatePrompt) { setEmptyStatePromptPanelEntered(false);
       return; } setEmptyStatePromptPanelEntered(false); const frame = requestAnimationFrame(() => { setEmptyStatePromptPanelEntered(true); }); return () => cancelAnimationFrame(frame); }, [expandedEmptyStatePrompt]); useEffect(() => {
-    if (!showEmptyStateRecentConversations) {
+    if (!showEmptyStateSupplementalContent) {
       setRecentProjectConversationLimit(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT);
     }
-  }, [showEmptyStateRecentConversations]); useEffect(() => {
+  }, [showEmptyStateSupplementalContent]); useEffect(() => {
     if (!hasRecentProjectConversations && emptyStateActiveTab !== "recent") {
       setEmptyStateActiveTab("recent");
     }
@@ -1290,7 +1290,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     {emptyStateHeading} </h1> </div>
                 <div className="w-full max-w-3xl">
                   {renderComposer(true)} </div>
-                {hasRecentProjectConversations && showEmptyStateRecentConversations ? (
+                {hasRecentProjectConversations && showEmptyStateSupplementalContent ? (
                   <Tabs value={emptyStateActiveTab} onValueChange={(value) => setEmptyStateActiveTab(value as "recent" | "use-cases")} className="mt-4 w-full max-w-3xl gap-2" data-testid="chat-empty-state-tabs">
                     <TabsList variant="line" aria-label="New chat empty state" className="h-auto gap-2 border-transparent bg-transparent px-0">
                       <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="h-9 flex-none rounded-full border border-transparent px-4 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
@@ -1306,7 +1306,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                         className="!mt-0"
                         conversations={recentProjectConversations}
                         projectName={activeProject ? projectDisplayName(activeProject) : null}
-                        visible={showEmptyStateRecentConversations}
+                        visible={showEmptyStateSupplementalContent}
                         conversationPath={chatConversationPath}
                         onPrefetchConversation={(conversationId) => void prefetchChatConversation(queryClient, conversationId)}
                         hasMoreConversations={hasMoreRecentProjectConversations}
@@ -1317,7 +1317,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       {renderEmptyStateUseCases()}
                     </TabsContent>
                   </Tabs>
-                ) : !hasRecentProjectConversations && showEmptyStateRecentConversations ? (
+                ) : !hasRecentProjectConversations && showEmptyStateSupplementalContent ? (
                   <div className="mt-4 flex w-full flex-col items-center">
                     {renderEmptyStateUseCases()}
                   </div>
