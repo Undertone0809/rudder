@@ -74,7 +74,7 @@ const zhExactPhrases: Record<string, string> = {
   "Automation created": "自动化已创建",
   "Add the first trigger to turn it into a live workflow.": "添加第一个触发器后，它就会成为真正运行中的工作流。",
   "Define the recurring work first. Trigger setup comes next on the detail page.": "先定义这项重复工作，触发器配置随后在详情页完成。",
-  "Add prompt e.g. look for crashes in Sentry": "添加提示词，例如检查 Sentry 里的崩溃问题",
+  "Add instructions e.g. look for crashes in Sentry": "添加说明，例如检查 Sentry 里的崩溃问题",
   "Available Plugins": "可用插件",
   "Back": "返回",
   "Backlog": "待办",

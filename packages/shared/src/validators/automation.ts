@@ -8,12 +8,15 @@ import {
   AUTOMATION_TRIGGER_SIGNING_MODES,
 } from "../constants.js";
 
-const automationBodySchema = z.object({
+const automationTextFieldSchema = z.string().optional().nullable();
+
+const automationBodyFieldsSchema = z.object({
   projectId: z.string().uuid().optional().nullable().default(null),
   goalId: z.string().uuid().optional().nullable(),
   parentIssueId: z.string().uuid().optional().nullable(),
   title: z.string().trim().min(1).max(200),
-  description: z.string().optional().nullable(),
+  instructions: automationTextFieldSchema,
+  description: automationTextFieldSchema,
   assigneeAgentId: z.string().uuid(),
   priority: z.enum(ISSUE_PRIORITIES).optional().default("medium"),
   status: z.enum(AUTOMATION_STATUSES).optional().default("active"),
@@ -24,12 +27,20 @@ const automationBodySchema = z.object({
   notifyOnIssueCreated: z.boolean().optional().default(false),
 });
 
+function normalizeAutomationInstructions<T extends { instructions?: string | null; description?: string | null }>(value: T) {
+  const { instructions, ...rest } = value;
+  return {
+    ...rest,
+    description: instructions === undefined ? value.description : instructions,
+  };
+}
+
 function normalizeAutomationNotifications<T extends { outputMode?: string; notifyOnIssueCreated?: boolean }>(value: T): T {
   if (value.outputMode !== "chat_output" || !value.notifyOnIssueCreated) return value;
   return { ...value, notifyOnIssueCreated: false };
 }
 
-export const createAutomationSchema = automationBodySchema.superRefine((value, ctx) => {
+export const createAutomationSchema = automationBodyFieldsSchema.superRefine((value, ctx) => {
   if (value.chatConversationId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -37,11 +48,11 @@ export const createAutomationSchema = automationBodySchema.superRefine((value, c
       message: "Chat output creates an automation-owned conversation; existing chats cannot be selected",
     });
   }
-}).transform(normalizeAutomationNotifications);
+}).transform(normalizeAutomationInstructions).transform(normalizeAutomationNotifications);
 
 export type CreateAutomation = z.infer<typeof createAutomationSchema>;
 
-export const updateAutomationSchema = automationBodySchema.partial().superRefine((value, ctx) => {
+export const updateAutomationSchema = automationBodyFieldsSchema.partial().superRefine((value, ctx) => {
   if (value.chatConversationId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -49,7 +60,7 @@ export const updateAutomationSchema = automationBodySchema.partial().superRefine
       message: "Chat output creates an automation-owned conversation; existing chats cannot be selected",
     });
   }
-}).transform(normalizeAutomationNotifications);
+}).transform(normalizeAutomationInstructions).transform(normalizeAutomationNotifications);
 export type UpdateAutomation = z.infer<typeof updateAutomationSchema>;
 
 const baseTriggerSchema = z.object({

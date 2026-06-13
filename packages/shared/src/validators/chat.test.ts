@@ -264,7 +264,7 @@ describe("chat automation creation payloads", () => {
     const payload = {
       automationCreate: {
         title: "Daily AI HOT report",
-        description: "Run aihot and send a short Chinese summary.",
+        instructions: "Run aihot and send a short Chinese summary.",
         schedule: {
           cronExpression: "0 12 * * *",
           timezone: "Asia/Shanghai",
@@ -274,7 +274,7 @@ describe("chat automation creation payloads", () => {
 
     expect(chatAutomationCreateFromStructuredPayload(payload)).toMatchObject({
       title: "Daily AI HOT report",
-      description: "Run aihot and send a short Chinese summary.",
+      instructions: "Run aihot and send a short Chinese summary.",
       priority: "medium",
       status: "active",
       concurrencyPolicy: "coalesce_if_active",
@@ -291,6 +291,22 @@ describe("chat automation creation payloads", () => {
         title: "Daily AI HOT report",
         outputMode: "track_issue",
       }),
+    });
+  });
+
+  it("keeps legacy automationCreate description as instructions", () => {
+    expect(chatAutomationCreateFromStructuredPayload({
+      automationCreate: {
+        title: "Daily AI HOT report",
+        description: "Run aihot and send a short Chinese summary.",
+        schedule: {
+          cronExpression: "0 12 * * *",
+          timezone: "Asia/Shanghai",
+        },
+      },
+    })).toMatchObject({
+      title: "Daily AI HOT report",
+      instructions: "Run aihot and send a short Chinese summary.",
     });
   });
 

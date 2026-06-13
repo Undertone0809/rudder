@@ -714,7 +714,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         goalId: automationCreate.goalId ?? null,
         parentIssueId: automationCreate.parentIssueId ?? null,
         title: automationCreate.title,
-        description: automationCreate.description ?? null,
+        description: automationCreate.instructions ?? null,
         assigneeAgentId,
         priority: automationCreate.priority,
         status: automationCreate.status,

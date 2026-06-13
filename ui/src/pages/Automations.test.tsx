@@ -459,7 +459,7 @@ describe("Automations", () => {
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
     expect(titleInput?.value).toBe("");
     expect(runbookInput?.value).toBe("");
-    expect(runbookInput?.placeholder).toBe("Add prompt e.g. look for crashes in Sentry");
+    expect(runbookInput?.placeholder).toBe("Add instructions e.g. look for crashes in Sentry");
   });
 
   it("renders localized use-case templates for Chinese UI", async () => {
@@ -532,7 +532,7 @@ describe("Automations", () => {
     expect(markdownEditorProps.at(-1)?.plainText).toBe(true);
     expect(markdownEditorProps.at(-1)?.mentionMenuPlacement).toBe("container");
     expect(markdownEditorProps.at(-1)?.mentionMenuAnchorRef?.current?.dataset.testid)
-      .toBe("automation-description-composer");
+      .toBe("automation-instructions-composer");
     expect(baseMentionIds).toEqual(expect.arrayContaining([
       "agent:agent-1",
       "project:project-1",
@@ -566,7 +566,7 @@ describe("Automations", () => {
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
     expect(titleInput).toBeTruthy();
     expect(runbookInput?.value).toBe("");
-    expect(runbookInput?.placeholder).toBe("Add prompt e.g. look for crashes in Sentry");
+    expect(runbookInput?.placeholder).toBe("Add instructions e.g. look for crashes in Sentry");
 
     await act(async () => {
       setTextareaValue(titleInput!, "帮我 flomo 打 tag");

@@ -150,6 +150,7 @@ export function chatAskUserRequestFromStructuredPayload(payload: unknown) {
 
 export const chatAutomationCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
+  instructions: z.string().trim().max(20_000).optional().nullable(),
   description: z.string().trim().max(20_000).optional().nullable(),
   projectId: z.string().uuid().optional().nullable(),
   goalId: z.string().uuid().optional().nullable(),
@@ -165,7 +166,10 @@ export const chatAutomationCreateSchema = z.object({
     label: z.string().trim().max(120).optional().nullable(),
     enabled: z.boolean().optional().default(true),
   }),
-});
+}).transform(({ description, instructions, ...value }) => ({
+  ...value,
+  instructions: instructions === undefined ? description : instructions,
+}));
 
 export function chatAutomationCreateFromStructuredPayload(payload: unknown) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;

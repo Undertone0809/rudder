@@ -261,7 +261,7 @@ export function AutomationDetail() {
       return automationsApi.update(automationId!, {
         ...draft,
         projectId: draft.projectId || null,
-        description: draft.description.trim() || null,
+        instructions: draft.description.trim() || null,
         chatConversationId: null,
       });
     },

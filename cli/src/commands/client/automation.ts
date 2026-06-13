@@ -27,6 +27,7 @@ interface AutomationListOptions extends BaseClientOptions {
 interface AutomationCreateOptions extends BaseClientOptions {
   payload?: string;
   title?: string;
+  instructions?: string;
   description?: string;
   assigneeAgentId?: string;
   projectId?: string;
@@ -146,7 +147,8 @@ export function registerAutomationCommands(program: Command): void {
       .option("-O, --org-id <id>", "Organization ID")
       .option("--payload <json>", "Raw automation create payload JSON")
       .option("--title <title>", "Automation title")
-      .option("--description <text>", "Automation description")
+      .option("--instructions <text>", "Automation run instructions")
+      .option("--description <text>", "Deprecated alias for --instructions")
       .option("--assignee-agent-id <id>", "Assignee agent ID")
       .option("--project-id <id>", "Project ID")
       .option("--goal-id <id>", "Goal ID")
@@ -177,7 +179,8 @@ export function registerAutomationCommands(program: Command): void {
       .argument("<automationId>", "Automation ID")
       .option("--payload <json>", "Raw automation update payload JSON")
       .option("--title <title>", "Automation title")
-      .option("--description <text>", "Automation description")
+      .option("--instructions <text>", "Automation run instructions")
+      .option("--description <text>", "Deprecated alias for --instructions")
       .option("--assignee-agent-id <id>", "Assignee agent ID")
       .option("--project-id <id>", "Project ID")
       .option("--goal-id <id>", "Goal ID")
@@ -268,7 +271,7 @@ function buildAutomationPayload(opts: AutomationCreateOptions | AutomationUpdate
     ...parseJsonObjectOption(opts.payload, "--payload"),
     ...definedRecord({
       title: opts.title,
-      description: opts.description,
+      instructions: opts.instructions ?? opts.description,
       assigneeAgentId: opts.assigneeAgentId,
       projectId: opts.projectId,
       goalId: opts.goalId,

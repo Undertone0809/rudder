@@ -35,6 +35,30 @@ describe("automation validators", () => {
     }
   });
 
+  it("accepts instructions as the canonical automation run text", () => {
+    const parsed = createAutomationSchema.safeParse({
+      title: "Daily inbox sweep",
+      instructions: "Review inbox items and create follow-up issues.",
+      assigneeAgentId: "11111111-1111-4111-8111-111111111111",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.description).toBe("Review inbox items and create follow-up issues.");
+    }
+  });
+
+  it("keeps description as a legacy alias for automation run text", () => {
+    const parsed = updateAutomationSchema.safeParse({
+      description: "Review inbox items and create follow-up issues.",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.description).toBe("Review inbox items and create follow-up issues.");
+    }
+  });
+
   it("normalizes notification opt-in off for chat-output automations", () => {
     const parsed = createAutomationSchema.safeParse({
       ...baseAutomationInput,

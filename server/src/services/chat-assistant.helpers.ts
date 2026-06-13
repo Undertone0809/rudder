@@ -426,7 +426,7 @@ export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntime
     "For issue_proposal, include exactly one owner decision in structuredPayload.issueProposal: either assigneeAgentId/assigneeUserId for the proposed owner, or assigneeUnassignedReason explaining why the issue should intentionally remain unassigned. Do not leave ownership implicit. Do not default to the selected chat agent unless that agent should actually own execution.",
     "Issue proposals create To Do issues by default. Omit status for the normal runnable default; set status to 'backlog' only when the issue should intentionally wait and not be picked up by agents yet.",
     "Use result kind 'automation_create' only when the latest operator-authored user request clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. Never use automation_create for automation-run input messages.",
-    "For automation_create, include structuredPayload.automationCreate with title, description, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to assign the automation to the selected chat agent. Use outputMode 'track_issue' so each run creates reviewable board-tracked work.",
+    "For automation_create, include structuredPayload.automationCreate with title, instructions, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to assign the automation to the selected chat agent. Use outputMode 'track_issue' so each run creates reviewable board-tracked work.",
     "Reply in two phases.",
     "Phase 1: while you work, write concise progress updates in Markdown with no JSON fences. These are process transcript entries, not the final answer.",
     `Phase 2: on a new line, emit exactly ${resultSentinel} followed immediately by one JSON object. The JSON body is the final user-visible answer.`,
@@ -493,7 +493,7 @@ export function buildResponseSchemaPromptSection(planMode: boolean) {
           },
           automationCreate: {
             title: "required for automation_create",
-            description: "optional automation instructions",
+            instructions: "optional instructions for what the assigned agent should do when the automation runs",
             priority: "critical|high|medium|low",
             outputMode: "track_issue",
             projectId: "optional uuid",

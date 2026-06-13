@@ -39,7 +39,7 @@ process.stdin.on("end", () => {
       structuredPayload: {
         automationCreate: {
           title: "Daily information flow",
-          description: "Send a daily information flow.",
+          instructions: "Send a daily information flow.",
           priority: "medium",
           outputMode: "chat_output",
           schedule: {

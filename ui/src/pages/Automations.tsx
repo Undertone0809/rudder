@@ -417,7 +417,7 @@ export function Automations() {
     mutationFn: async () => {
       const automation = await automationsApi.create(selectedOrganizationId!, {
         title: draft.title,
-        description: draft.description.trim() || null,
+        instructions: draft.description.trim() || null,
         projectId: draft.projectId || null,
         assigneeAgentId: draft.assigneeAgentId,
         priority: draft.priority,
@@ -654,7 +654,7 @@ export function Automations() {
                   autoFocus
                 />
 
-                <div ref={descriptionComposerRef} data-testid="automation-description-composer">
+                <div ref={descriptionComposerRef} data-testid="automation-instructions-composer">
                   <MarkdownEditor
                     ref={descriptionEditorRef}
                     value={draft.description}
@@ -663,7 +663,7 @@ export function Automations() {
                     mentionMenuAnchorRef={descriptionComposerRef}
                     mentionMenuPlacement="container"
                     plainText
-                    placeholder="Add prompt e.g. look for crashes in Sentry"
+                    placeholder="Add instructions e.g. look for crashes in Sentry"
                     bordered={false}
                     contentClassName="min-h-[320px] bg-transparent text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"
                     onSubmit={() => {

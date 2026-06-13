@@ -13,7 +13,7 @@ async function writeAutomationCreateStub(name: string) {
     structuredPayload: {
       automationCreate: {
         title: "每天中午 12 点发送 AI HOT 日报",
-        description: "每天北京时间 12:00 使用 aihot 生成中文短日报并发送到 chat。",
+        instructions: "每天北京时间 12:00 使用 aihot 生成中文短日报并发送到 chat。",
         outputMode: "chat_output",
         priority: "medium",
         schedule: {
