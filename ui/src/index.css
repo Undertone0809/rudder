@@ -3716,6 +3716,33 @@ a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before {
   display: none;
 }
 
+.rudder-milkdown-content a.rudder-mention-chip:has(> .rudder-mention-chip),
+.rudder-milkdown-content a.rudder-project-mention-chip:has(> .rudder-project-mention-chip),
+.rudder-milkdown-content a:has(> .rudder-mention-chip),
+.rudder-milkdown-content a:has(> .rudder-skill-token) {
+  display: inline;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-decoration: none;
+  vertical-align: baseline;
+  white-space: normal;
+}
+
+.rudder-milkdown-content a.rudder-mention-chip:has(> .rudder-mention-chip)::before,
+.rudder-milkdown-content a.rudder-project-mention-chip:has(> .rudder-project-mention-chip)::before,
+.rudder-milkdown-content a:has(> .rudder-mention-chip)::before,
+.rudder-milkdown-content a:has(> .rudder-skill-token)::before {
+  content: none;
+  display: none;
+}
+
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="chat"]::before,
 .rudder-milkdown-content .rudder-mention-chip[data-mention-kind="chat"]::before,
 a.rudder-mention-chip[data-mention-kind="chat"]::before {

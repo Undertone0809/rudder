@@ -37,13 +37,30 @@ async function createIssue(page: Page, organizationId: string, title: string, st
   return issueRes.json() as Promise<{ id: string; identifier: string | null; title: string; status: string }>;
 }
 
-async function expectEditorStatusChip(chip: Locator, status: string) {
-  await expect(chip).toBeVisible({ timeout: 15_000 });
-  await expect(chip).toHaveClass(/rudder-mention-chip--with-status-icon/);
-  await expect(chip).toHaveAttribute("data-mention-kind", "issue");
-  await expect(chip).toHaveAttribute("data-mention-status", status);
+async function expectEditorIssueStatusMention(root: Locator, issueId: string, status: string) {
+  const anchor = root.locator(`a[href^="issue://${issueId}"]`).first();
+  await expect(anchor).toBeVisible({ timeout: 15_000 });
 
-  const beforeStyle = await chip.evaluate((element) => {
+  const statusSummary = await anchor.evaluate((element) => {
+    const anchorElement = element as HTMLElement;
+    const statusSelector = '.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]';
+    const statusElements = [
+      ...(anchorElement.matches(statusSelector) ? [anchorElement] : []),
+      ...Array.from(anchorElement.querySelectorAll<HTMLElement>(statusSelector)),
+    ];
+    return {
+      statusCount: statusElements.length,
+      nestedStatusCount: anchorElement.querySelectorAll(`${statusSelector} ${statusSelector}`).length,
+    };
+  });
+  expect(statusSummary.statusCount).toBe(1);
+  expect(statusSummary.nestedStatusCount).toBe(0);
+
+  const visualChip = anchor.locator('.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]').first();
+  await expect(visualChip).toBeVisible();
+  await expect(visualChip).toHaveAttribute("data-mention-status", status);
+
+  const beforeStyle = await visualChip.evaluate((element) => {
     const style = window.getComputedStyle(element, "::before");
     return {
       content: style.content,
@@ -97,10 +114,10 @@ test("issue status mentions render status icons in comments and editor surfaces"
   await composer.click();
   await page.evaluate((markdown) => navigator.clipboard.writeText(markdown), `[${targetRef}](${issueMentionHref})`);
   await page.keyboard.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
-  await expectEditorStatusChip(composer.locator(`a[href^="issue://${targetIssue.id}"]`).first(), "todo");
+  await expectEditorIssueStatusMention(composer, targetIssue.id, "todo");
 
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
   const libraryEditor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
   await expect(libraryEditor).toBeVisible({ timeout: 15_000 });
-  await expectEditorStatusChip(libraryEditor.locator(`a[href^="issue://${targetIssue.id}"]`).first(), "todo");
+  await expectEditorIssueStatusMention(libraryEditor, targetIssue.id, "todo");
 });

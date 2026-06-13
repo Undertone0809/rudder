@@ -38,6 +38,7 @@ import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import {
   applyMentionChipDecoration,
+  clearMentionChipDecoration,
   mentionChipInlineStyle,
   mentionChipNavigationPath,
   parseMentionChipHref,
@@ -282,13 +283,25 @@ function applyMentionStyleProperties(element: HTMLElement, mention: ParsedMentio
   }
 }
 
-function refreshMilkdownMentionTokenStyles(root: HTMLElement | null, mentions: MentionOption[]) {
+function isMilkdownTokenWrapper(element: HTMLElement) {
+  return element instanceof HTMLAnchorElement
+    && Array.from(element.children).some((child) => (
+      child.classList.contains("rudder-mention-chip")
+      || child.classList.contains("rudder-skill-token")
+    ));
+}
+
+export function refreshMilkdownMentionTokenStyles(root: HTMLElement | null, mentions: MentionOption[]) {
   if (!root) return;
   const optionByKey = mentionOptionMap(mentions);
   for (const element of root.querySelectorAll<HTMLElement>("[data-mention-href], a[href]")) {
     const href = element.dataset.mentionHref ?? element.getAttribute("href") ?? "";
     const parsed = parseMentionChipHref(href);
     if (!parsed) continue;
+    if (isMilkdownTokenWrapper(element)) {
+      clearMentionChipDecoration(element);
+      continue;
+    }
     const mention = parsed.kind === "agent"
       ? { ...parsed, icon: optionByKey.get(`agent:${parsed.agentId}`)?.agentIcon ?? parsed.icon ?? null }
       : parsed.kind === "project"

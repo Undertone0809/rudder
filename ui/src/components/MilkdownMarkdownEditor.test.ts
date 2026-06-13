@@ -21,6 +21,7 @@ import {
   mentionMarkdown,
   moveSelectionAfterRudderTokenBoundary,
   readCanonicalFragmentMarkdown,
+  refreshMilkdownMentionTokenStyles,
   rudderTokenNavigationPath,
   shouldActivateMilkdownInlineTokenClick,
   shouldParsePastedMarkdown,
@@ -167,6 +168,30 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     expect(attrs["data-mention-kind"]).toBe("issue");
     expect(attrs["data-mention-status"]).toBe("todo");
     expect(attrs["data-mention-href"]).toBe(href);
+  });
+
+  it("keeps Milkdown link wrappers transparent when a decoration span renders the mention chip", () => {
+    const href = buildIssueMentionHref("issue-1", "R-6", null, "todo");
+    const root = document.createElement("div");
+    root.innerHTML = [
+      `<a href="${href}"`,
+      ' class="rudder-mention-chip rudder-mention-chip--issue rudder-mention-chip--with-status-icon"',
+      ' data-mention-kind="issue" data-mention-status="todo">',
+      '<span class="rudder-mention-chip rudder-mention-chip--issue rudder-mention-chip--with-status-icon"',
+      ` data-mention-kind="issue" data-mention-status="todo" data-mention-href="${href}">R-6</span>`,
+      "</a>",
+    ].join("");
+    const wrapper = root.querySelector("a") as HTMLAnchorElement;
+    const visualChip = root.querySelector("span") as HTMLSpanElement;
+
+    refreshMilkdownMentionTokenStyles(root, []);
+
+    expect(wrapper.classList.contains("rudder-mention-chip")).toBe(false);
+    expect(wrapper.classList.contains("rudder-mention-chip--with-status-icon")).toBe(false);
+    expect(wrapper.dataset.mentionKind).toBeUndefined();
+    expect(wrapper.dataset.mentionStatus).toBeUndefined();
+    expect(visualChip.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
+    expect(visualChip.dataset.mentionStatus).toBe("todo");
   });
 
   it("recognizes Rudder mention and skill links as token links", () => {
