@@ -682,6 +682,11 @@ export function MarkdownBody({
             data-mention-status={mention.kind === "issue" && mention.status ? mention.status : undefined}
             style={mentionChipInlineStyle(mention)}
             {...markdownSourceAttributes(node)}
+            onClick={(event) => {
+              if (!onLinkClick) return;
+              const handled = onLinkClick({ event, href: targetHref, label: mentionLabel });
+              if (handled) event.preventDefault();
+            }}
           >
             {mention.kind === "issue" && mention.status ? (
               <StatusIcon status={mention.status} className="h-[1.05em] w-[1.05em]" />
@@ -712,7 +717,8 @@ export function MarkdownBody({
           {...markdownSourceAttributes(node)}
           onClick={(event) => {
             if (!href || !onLinkClick) return;
-            onLinkClick({ event, href, label: linkLabel });
+            const handled = onLinkClick({ event, href, label: linkLabel });
+            if (handled) event.preventDefault();
           }}
         >
           {linkChildren}

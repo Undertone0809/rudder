@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { buildIssueMentionHref } from "@rudderhq/shared";
 import type { IssueComment, Agent } from "@rudderhq/shared";
@@ -16,6 +16,7 @@ import type { TranscriptEntry } from "../agent-runtimes";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { MarkdownBody } from "./MarkdownBody";
+import type { MarkdownLinkClickHandler } from "./MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import type { MarkdownAgentMentionPreview } from "./MarkdownBody";
 import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
@@ -154,11 +155,55 @@ function shouldSkipRunRowNavigation(target: EventTarget | null): boolean {
     : false;
 }
 
-function extractIssueRouteRef(location: ReturnType<typeof useLocation>) {
-  const segments = location.pathname.split("/").filter(Boolean);
+export function extractIssueRouteRefFromPathname(pathname: string) {
+  const segments = pathname.split("/").filter(Boolean);
   const issuesIndex = segments.lastIndexOf("issues");
   const routeRef = issuesIndex >= 0 ? segments[issuesIndex + 1] : null;
   return routeRef ? decodeURIComponent(routeRef) : null;
+}
+
+function extractIssueRouteRef(location: ReturnType<typeof useLocation>) {
+  return extractIssueRouteRefFromPathname(location.pathname);
+}
+
+export function commentIdFromIssueCommentHash(hash: string) {
+  if (!hash.startsWith("#comment-")) return null;
+  const encoded = hash.slice("#comment-".length);
+  if (!encoded) return null;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
+}
+
+export function resolveCurrentIssueCommentLink(input: {
+  href: string;
+  baseHref: string;
+  currentPathname: string;
+  currentIssueId: string | null;
+  currentIssueRef: string | null;
+}) {
+  let target: URL;
+  let base: URL;
+  try {
+    base = new URL(input.baseHref);
+    target = new URL(input.href, base);
+  } catch {
+    return null;
+  }
+
+  if (target.origin !== base.origin) return null;
+  const commentId = commentIdFromIssueCommentHash(target.hash);
+  if (!commentId) return null;
+
+  const targetIssueRef = extractIssueRouteRefFromPathname(target.pathname);
+  if (!targetIssueRef) return null;
+
+  const currentIssueRef = input.currentIssueRef ?? extractIssueRouteRefFromPathname(input.currentPathname);
+  if (currentIssueRef && targetIssueRef === currentIssueRef) return commentId;
+  if (input.currentIssueId && targetIssueRef === input.currentIssueId) return commentId;
+  return null;
 }
 
 function buildCommentMarkdownLink(comment: CommentWithRunMeta, location: ReturnType<typeof useLocation>) {
@@ -319,6 +364,7 @@ const TimelineList = memo(function TimelineList({
   onUpdate,
   onDelete,
   imageUploadHandler,
+  onMarkdownLinkClick,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
@@ -335,6 +381,7 @@ const TimelineList = memo(function TimelineList({
   onUpdate?: (commentId: string, body: string) => Promise<void>;
   onDelete?: (commentId: string) => Promise<void>;
   imageUploadHandler?: (file: File) => Promise<string>;
+  onMarkdownLinkClick?: MarkdownLinkClickHandler;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -697,7 +744,14 @@ const TimelineList = memo(function TimelineList({
                 </div>
               </>
             ) : (
-              <MarkdownBody className="text-sm" agentMentions={agentMentions} skillReferences={skillReferences}>{comment.body}</MarkdownBody>
+              <MarkdownBody
+                className="text-sm"
+                agentMentions={agentMentions}
+                skillReferences={skillReferences}
+                onLinkClick={onMarkdownLinkClick}
+              >
+                {comment.body}
+              </MarkdownBody>
             )}
             {!isEditing && orgId ? (
               <div className="mt-2 space-y-2">
@@ -775,9 +829,11 @@ export function CommentThread({
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
+  const navigate = useNavigate();
   const lastHandledCommentHashRef = useRef<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleComments = useMemo(() => comments.filter((comment) => !comment.deletedAt), [comments]);
+  const currentIssueId = visibleComments[0]?.issueId ?? null;
 
   const timeline = useMemo<TimelineItem[]>(() => {
     const commentItems: TimelineItem[] = visibleComments.map((comment) => ({
@@ -900,25 +956,65 @@ export function CommentThread({
     setReopen(canReopen);
   }, [canReopen]);
 
+  const scrollToComment = useCallback((commentId: string) => {
+    const el = document.getElementById(`comment-${commentId}`);
+    if (!el) return false;
+
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightCommentId(commentId);
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightCommentId(null);
+      highlightTimerRef.current = null;
+    }, 3000);
+    return true;
+  }, []);
+
+  const handleMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({ event, href }) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    const commentId = resolveCurrentIssueCommentLink({
+      href,
+      baseHref: window.location.href,
+      currentPathname: location.pathname,
+      currentIssueId,
+      currentIssueRef: extractIssueRouteRef(location),
+    });
+    if (!commentId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const hash = `#comment-${encodeURIComponent(commentId)}`;
+    if (location.hash === hash) {
+      scrollToComment(commentId);
+    } else {
+      navigate({ pathname: location.pathname, search: location.search, hash });
+    }
+    return true;
+  }, [currentIssueId, location, navigate, scrollToComment]);
+
   useEffect(() => {
     const hash = location.hash;
-    if (!hash.startsWith("#comment-") || visibleComments.length === 0) return;
-    const commentId = hash.slice("#comment-".length);
+    const commentId = commentIdFromIssueCommentHash(hash);
+    if (!commentId || visibleComments.length === 0) return;
     const navigationKey = `${location.key}:${hash}`;
     if (lastHandledCommentHashRef.current === navigationKey) return;
 
-    const el = document.getElementById(`comment-${commentId}`);
-    if (el) {
+    if (scrollToComment(commentId)) {
       lastHandledCommentHashRef.current = navigationKey;
-      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-      setHighlightCommentId(commentId);
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      highlightTimerRef.current = setTimeout(() => {
-        setHighlightCommentId(null);
-        highlightTimerRef.current = null;
-      }, 3000);
     }
-  }, [location.hash, location.key, visibleComments.length]);
+  }, [location.hash, location.key, scrollToComment, visibleComments.length]);
 
   async function handleSubmit() {
     const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;
@@ -987,6 +1083,7 @@ export function CommentThread({
         onUpdate={onUpdate}
         onDelete={onDelete}
         imageUploadHandler={imageUploadHandler}
+        onMarkdownLinkClick={handleMarkdownLinkClick}
       />
 
       {liveRunSlot}

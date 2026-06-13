@@ -6,7 +6,12 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CommentThread } from "./CommentThread";
+import {
+  CommentThread,
+  commentIdFromIssueCommentHash,
+  extractIssueRouteRefFromPathname,
+  resolveCurrentIssueCommentLink,
+} from "./CommentThread";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -129,6 +134,38 @@ vi.mock("./transcript/RunTranscriptView", () => ({
 
 describe("CommentThread", () => {
   let cleanupFn: (() => void) | null = null;
+
+  it("extracts issue route refs from normal and messenger issue paths", () => {
+    expect(extractIssueRouteRefFromPathname("/ZST/issues/ZST-573")).toBe("ZST-573");
+    expect(extractIssueRouteRefFromPathname("/ZST/messenger/issues/ZST-573")).toBe("ZST-573");
+    expect(extractIssueRouteRefFromPathname("/ZST/issues/issue%201")).toBe("issue 1");
+    expect(extractIssueRouteRefFromPathname("/ZST/messenger/chat")).toBeNull();
+  });
+
+  it("resolves same-issue comment links for local scroll handling", () => {
+    expect(commentIdFromIssueCommentHash("#comment-comment%20123")).toBe("comment 123");
+    expect(resolveCurrentIssueCommentLink({
+      href: "/ZST/issues/ZST-573#comment-comment-123",
+      baseHref: "http://localhost:3100/ZST/messenger/issues/ZST-573",
+      currentPathname: "/ZST/messenger/issues/ZST-573",
+      currentIssueId: "issue-573",
+      currentIssueRef: "ZST-573",
+    })).toBe("comment-123");
+    expect(resolveCurrentIssueCommentLink({
+      href: "/ZST/issues/ZST-999#comment-comment-123",
+      baseHref: "http://localhost:3100/ZST/issues/ZST-573",
+      currentPathname: "/ZST/issues/ZST-573",
+      currentIssueId: "issue-573",
+      currentIssueRef: "ZST-573",
+    })).toBeNull();
+    expect(resolveCurrentIssueCommentLink({
+      href: "https://example.com/ZST/issues/ZST-573#comment-comment-123",
+      baseHref: "http://localhost:3100/ZST/issues/ZST-573",
+      currentPathname: "/ZST/issues/ZST-573",
+      currentIssueId: "issue-573",
+      currentIssueRef: "ZST-573",
+    })).toBeNull();
+  });
 
   beforeEach(() => {
     mockConfirm.mockResolvedValue(true);
