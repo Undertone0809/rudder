@@ -3178,6 +3178,106 @@ a.rudder-skill-token::before {
   overflow: visible;
 }
 
+.rudder-entity-preview-wrap {
+  display: inline-block;
+  vertical-align: baseline;
+}
+
+.rudder-entity-preview-card {
+  display: block;
+  width: min(22rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  padding: 0.85rem;
+  border: 1px solid color-mix(in oklab, var(--border) 74%, transparent);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--popover) 96%, var(--background) 4%);
+  box-shadow: 0 18px 44px color-mix(in oklab, var(--foreground) 15%, transparent);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+}
+
+.rudder-entity-preview-card--loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted-foreground);
+}
+
+.rudder-entity-preview-eyebrow {
+  display: block;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rudder-entity-preview-title {
+  display: -webkit-box;
+  margin-top: 0.18rem;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 0.86rem;
+  font-weight: 650;
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rudder-entity-preview-subtitle,
+.rudder-entity-preview-empty,
+.rudder-entity-preview-summary {
+  display: block;
+  color: var(--muted-foreground);
+}
+
+.rudder-entity-preview-agent-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.rudder-entity-preview-rows {
+  display: grid;
+  gap: 0.28rem;
+  margin-top: 0.65rem;
+}
+
+.rudder-entity-preview-row {
+  display: grid;
+  grid-template-columns: 4.8rem minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.rudder-entity-preview-row-label {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.rudder-entity-preview-row-value {
+  overflow: hidden;
+  margin: 0;
+  color: var(--foreground);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rudder-entity-preview-summary {
+  display: -webkit-box;
+  margin: 0.65rem 0 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .rudder-skill-hover-card-action,
 .rudder-markdown .rudder-skill-hover-card-action,
 .rudder-markdown .rudder-skill-hover-card-action:hover {

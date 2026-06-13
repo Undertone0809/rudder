@@ -17,6 +17,26 @@ const markdownMentionsMock = vi.hoisted(() => ({
   mentions: [] as MentionOption[],
 }));
 
+const entityPreviewApiMocks = vi.hoisted(() => ({
+  getIssue: vi.fn(),
+  getAgent: vi.fn(),
+  getProject: vi.fn(),
+  getLibraryDocument: vi.fn(),
+  getLibraryEntry: vi.fn(),
+  readWorkspaceFile: vi.fn(),
+}));
+
+const localStorageMock = vi.hoisted(() => ({
+  values: new Map<string, string>(),
+  getItem: vi.fn((key: string) => localStorageMock.values.get(key) ?? null),
+  setItem: vi.fn((key: string, value: string) => {
+    localStorageMock.values.set(key, value);
+  }),
+  removeItem: vi.fn((key: string) => {
+    localStorageMock.values.delete(key);
+  }),
+}));
+
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: vi.fn().mockImplementation((query: string) => ({
@@ -29,6 +49,33 @@ Object.defineProperty(window, "matchMedia", {
     removeListener: vi.fn(),
     dispatchEvent: vi.fn(),
   })),
+});
+
+class MockResizeObserver {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+}
+
+Object.defineProperty(globalThis, "ResizeObserver", {
+  configurable: true,
+  writable: true,
+  value: MockResizeObserver,
+});
+
+Object.defineProperty(window, "ResizeObserver", {
+  configurable: true,
+  writable: true,
+  value: MockResizeObserver,
+});
+
+Object.defineProperty(window, "localStorage", {
+  configurable: true,
+  value: {
+    getItem: localStorageMock.getItem,
+    setItem: localStorageMock.setItem,
+    removeItem: localStorageMock.removeItem,
+  },
 });
 
 vi.mock("@/components/ui/dialog", () => ({
@@ -63,12 +110,40 @@ vi.mock("../context/MarkdownMentionsContext", () => ({
   }),
 }));
 
+vi.mock("../api/issues", () => ({
+  issuesApi: {
+    get: entityPreviewApiMocks.getIssue,
+  },
+}));
+
+vi.mock("../api/agents", () => ({
+  agentsApi: {
+    get: entityPreviewApiMocks.getAgent,
+  },
+}));
+
+vi.mock("../api/projects", () => ({
+  projectsApi: {
+    get: entityPreviewApiMocks.getProject,
+  },
+}));
+
+vi.mock("../api/orgs", () => ({
+  organizationsApi: {
+    getLibraryDocument: entityPreviewApiMocks.getLibraryDocument,
+    getLibraryEntry: entityPreviewApiMocks.getLibraryEntry,
+    readWorkspaceFile: entityPreviewApiMocks.readWorkspaceFile,
+  },
+}));
+
 let cleanupFn: (() => void) | null = null;
 
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   markdownMentionsMock.mentions = [];
+  vi.clearAllMocks();
+  localStorageMock.values.clear();
   document.body.innerHTML = "";
   window.history.pushState({}, "", "/");
 });
@@ -87,6 +162,17 @@ function render(element: ReactNode) {
     root.render(element);
   });
   return container;
+}
+
+async function focusPreviewLink(link: Element | null) {
+  expect(link).toBeTruthy();
+  await act(async () => {
+    link?.dispatchEvent(new FocusEvent("focusin", { bubbles: true, cancelable: true }));
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 }
 
 describe("MarkdownBody", () => {
@@ -268,6 +354,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/messenger/chat/chat-123"');
     expect(html).toContain('data-mention-kind="chat"');
     expect(html).toContain("Launch planning");
+    expect(html).not.toContain("rudder-entity-preview-wrap");
   });
 
   it("resolves relative image paths when a resolver is provided", () => {
@@ -471,6 +558,152 @@ describe("MarkdownBody", () => {
     expect(html).toContain("rudder-mention-chip--with-status-icon");
     expect(html).toContain('data-slot="issue-status-icon"');
     expect(html).toContain('data-status="in_review"');
+  });
+
+  it("loads an issue preview from the rendered mention chip on focus", async () => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", "org-1");
+    entityPreviewApiMocks.getIssue.mockResolvedValue({
+      id: "issue-789",
+      orgId: "org-1",
+      title: "Auth flow polish",
+      identifier: "PAP-123",
+      status: "in_review",
+      priority: "high",
+      projectId: "project-1",
+      project: { name: "Rudder dev" },
+      assigneeAgentId: "agent-1",
+      reviewerAgentId: "agent-2",
+      description: "Tighten the markdown renderable link behavior.\n\nMore detail.",
+    });
+    entityPreviewApiMocks.getAgent
+      .mockResolvedValueOnce({ name: "Wesley" })
+      .mockResolvedValueOnce({ name: "Holden" });
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[@PAP-123 auth flow](${buildIssueMentionHref("issue-789", "PAP-123", null, "in_review")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(entityPreviewApiMocks.getIssue).not.toHaveBeenCalled();
+    await focusPreviewLink(container.querySelector("a.rudder-mention-chip"));
+
+    expect(entityPreviewApiMocks.getIssue).toHaveBeenCalledWith("issue-789");
+    expect(document.body.textContent).toContain("Auth flow polish");
+    expect(document.body.textContent).toContain("In Review");
+    expect(document.body.textContent).toContain("High");
+    expect(document.body.textContent).toContain("Rudder dev");
+    expect(document.body.textContent).toContain("Wesley");
+    expect(document.body.querySelector('[data-slot="issue-status-icon"]')).toBeTruthy();
+  });
+
+  it("loads agent, project, and Library previews from rendered mention chips", async () => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", "org-1");
+    entityPreviewApiMocks.getAgent.mockResolvedValue({
+      id: "agent-1",
+      orgId: "org-1",
+      name: "Wesley",
+      role: "engineer",
+      title: "Founding engineer",
+      icon: "code",
+      status: "active",
+      capabilities: "Ships focused Rudder changes and validates them.",
+    });
+    entityPreviewApiMocks.getProject.mockResolvedValue({
+      id: "project-1",
+      orgId: "org-1",
+      name: "Rudder dev",
+      status: "in_progress",
+      description: "Primary Rudder OSS development project.",
+      goals: [{ id: "goal-1", title: "Ship reliable agent work loops" }],
+      primaryWorkspace: { cwd: "/Users/zeeland/projects/rudder-oss" },
+      codebase: {},
+    });
+    entityPreviewApiMocks.readWorkspaceFile.mockResolvedValue({
+      filePath: "projects/rudder/product-brief.md",
+      content: "# Product brief\n\nRudder coordinates agent work loops.",
+      contentType: "text/markdown",
+      previewKind: "text",
+      truncated: false,
+      message: null,
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {[
+            `[Wesley](${buildAgentMentionHref("agent-1", "code")})`,
+            `[Rudder dev](${buildProjectMentionHref("project-1", "#336699")})`,
+            `[product-brief.md](${buildLibraryFileMentionHref("projects/rudder/product-brief.md", "product-brief.md")})`,
+          ].join(" ")}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const links = container.querySelectorAll("a.rudder-mention-chip");
+    await focusPreviewLink(links[0] ?? null);
+    expect(document.body.textContent).toContain("Founding engineer");
+    expect(document.body.textContent).toContain("Ships focused Rudder changes");
+
+    await focusPreviewLink(links[1] ?? null);
+    expect(document.body.textContent).toContain("Primary Rudder OSS development project.");
+    expect(document.body.textContent).toContain("Ship reliable agent work loops");
+
+    await focusPreviewLink(links[2] ?? null);
+    expect(document.body.textContent).toContain("projects/rudder/product-brief.md");
+    expect(document.body.textContent).toContain("Rudder coordinates agent work loops.");
+  });
+
+  it("loads Library document and entry previews without giving chat links previews", async () => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", "org-1");
+    entityPreviewApiMocks.getLibraryDocument.mockResolvedValue({
+      id: "doc-1",
+      orgId: "org-1",
+      title: "Operating notes",
+      format: "markdown",
+      latestRevisionNumber: 3,
+      body: "# Operating notes\n\nUse hover previews for renderable entity links.",
+    });
+    entityPreviewApiMocks.getLibraryEntry.mockResolvedValue({
+      id: "entry-1",
+      orgId: "org-1",
+      title: "handoff.md",
+      currentPath: "projects/rudder/handoff.md",
+      status: "active",
+    });
+    entityPreviewApiMocks.readWorkspaceFile.mockResolvedValue({
+      filePath: "projects/rudder/handoff.md",
+      content: "Handoff evidence lives here.",
+      contentType: "text/markdown",
+      previewKind: "text",
+      truncated: false,
+      message: null,
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {[
+            `[Operating notes](${buildLibraryDocMentionHref("doc-1", "Operating notes")})`,
+            `[handoff.md](${buildLibraryEntryMentionHref("entry-1", "handoff.md", "projects/rudder/handoff.md")})`,
+            `[Chat](${buildChatMentionHref("chat-1", "Chat")})`,
+          ].join(" ")}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const previewWraps = container.querySelectorAll(".rudder-entity-preview-wrap");
+    expect(previewWraps).toHaveLength(2);
+    expect(container.querySelector('a[data-mention-kind="chat"]')?.closest(".rudder-entity-preview-wrap")).toBeNull();
+
+    await focusPreviewLink(container.querySelector('a[data-mention-kind="library_doc"]'));
+    expect(document.body.textContent).toContain("Use hover previews for renderable entity links.");
+
+    await focusPreviewLink(container.querySelector('a[data-mention-kind="library_entry"]'));
+    expect(entityPreviewApiMocks.getLibraryEntry).toHaveBeenCalledWith("org-1", "entry-1");
+    expect(entityPreviewApiMocks.readWorkspaceFile).toHaveBeenCalledWith("org-1", "projects/rudder/handoff.md");
+    expect(document.body.textContent).toContain("Handoff evidence lives here.");
   });
 
   it("renders issue comment mentions as chips that link to the comment anchor", () => {

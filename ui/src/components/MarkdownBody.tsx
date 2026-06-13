@@ -12,6 +12,7 @@ import { parseSkillReference } from "../lib/skill-reference";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { ImagePreviewDialog, type ImagePreviewState } from "./ImagePreviewDialog";
 import { InspectableImage } from "./InspectableImage";
+import { RudderEntityPreview } from "./RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 import { StatusIcon } from "./StatusIcon";
 
@@ -668,7 +669,7 @@ export function MarkdownBody({
           : parsed;
         const mentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren));
         const targetHref = applyOrganizationPrefix(mentionChipNavigationPath(mention), organizationPrefix);
-        return (
+        const mentionLink = (
           <a
             href={targetHref}
             title={`Open ${mentionLabel}`}
@@ -693,6 +694,12 @@ export function MarkdownBody({
             ) : null}
             {mentionLabel}
           </a>
+        );
+        if (mention.kind === "chat") return mentionLink;
+        return (
+          <RudderEntityPreview mention={mention} label={mentionLabel}>
+            {mentionLink}
+          </RudderEntityPreview>
         );
       }
       const skillReference = parseSkillReference(href, flattenText(linkChildren));
