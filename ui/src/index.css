@@ -3642,6 +3642,8 @@ a.rudder-mention-chip[data-mention-kind="issue"]::before {
 .rudder-mdxeditor-content .rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before,
 .rudder-milkdown-content .rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before,
 a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before {
+  content: "";
+  display: inline-block;
   width: 1.05em;
   height: 1.05em;
   background: var(--rudder-mention-status-color, currentColor);
@@ -3709,7 +3711,7 @@ a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before {
   --rudder-mention-status-color: #f87171;
 }
 
-a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before {
+.rudder-markdown a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before {
   content: none;
   display: none;
 }

@@ -1,5 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+test.use({ serviceWorkers: "block" });
+
 function buildIssueMentionHref(issueId: string, ref: string | null, status: string) {
   const params = new URLSearchParams();
   if (ref) params.set("r", ref);
@@ -41,11 +43,18 @@ async function expectEditorStatusChip(chip: Locator, status: string) {
   await expect(chip).toHaveAttribute("data-mention-kind", "issue");
   await expect(chip).toHaveAttribute("data-mention-status", status);
 
-  const beforeMask = await chip.evaluate((element) => {
+  const beforeStyle = await chip.evaluate((element) => {
     const style = window.getComputedStyle(element, "::before");
-    return style.getPropertyValue("-webkit-mask-image") || style.getPropertyValue("mask-image");
+    return {
+      content: style.content,
+      display: style.display,
+      maskImage: style.getPropertyValue("-webkit-mask-image") || style.getPropertyValue("mask-image"),
+    };
   });
-  expect(beforeMask).not.toContain("viewBox='0 0 24 24'");
+  expect(beforeStyle.content).not.toBe("none");
+  expect(beforeStyle.display).not.toBe("none");
+  expect(beforeStyle.maskImage).not.toBe("none");
+  expect(beforeStyle.maskImage).not.toContain("viewBox='0 0 24 24'");
 }
 
 test("issue status mentions render status icons in comments and editor surfaces", async ({ page }) => {
