@@ -38,15 +38,17 @@ describe("ProjectIdentity", () => {
     });
 
     const colorButtons = container.querySelectorAll<HTMLButtonElement>('[aria-label="Select project color"]');
-    const planeButton = container.querySelector<HTMLButtonElement>('[aria-label="Select plane project icon"]');
+    const stethoscopeButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Select stethoscope project icon"]',
+    );
 
     act(() => {
       colorButtons[1]?.click();
-      planeButton?.click();
+      stethoscopeButton?.click();
     });
 
     expect(onColorChange).toHaveBeenCalledWith(PROJECT_COLORS[1]);
-    expect(onIconChange).toHaveBeenCalledWith("plane");
+    expect(onIconChange).toHaveBeenCalledWith("stethoscope");
     act(() => root.unmount());
   });
 });

@@ -63,9 +63,9 @@ test.describe("Project identity icons", () => {
       && /\/api\/projects\/[^/]+$/.test(new URL(response.url()).pathname)
       && response.ok(),
     );
-    await page.getByRole("button", { name: "Select globe project icon" }).click();
+    await page.getByRole("button", { name: "Select brain project icon" }).click();
     const updatedProject = await (await patchResponse).json() as { icon: string };
-    expect(updatedProject.icon).toBe("globe");
+    expect(updatedProject.icon).toBe("brain");
 
     await page.screenshot({
       path: testInfo.outputPath("project-identity-icons.png"),

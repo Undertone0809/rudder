@@ -126,7 +126,7 @@ export function ProjectIdentityPicker({
           );
         })}
       </div>
-      <div className="grid grid-cols-8 gap-1.5" aria-label="Project icons">
+      <div className="grid grid-cols-6 gap-1.5" aria-label="Project icons">
         {PROJECT_ICONS.map((candidate) => {
           const Icon = getProjectIconComponent(candidate);
           const selected = candidate === currentIcon;

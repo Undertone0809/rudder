@@ -17,8 +17,8 @@ describe("project validators", () => {
   it("accepts supported project icon tokens", () => {
     expect(createProjectSchema.parse({
       name: "Icon project",
-      icon: "plane",
-    }).icon).toBe("plane");
+      icon: "stethoscope",
+    }).icon).toBe("stethoscope");
   });
 
   it("rejects arbitrary CSS color payloads", () => {
