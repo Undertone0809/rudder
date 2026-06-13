@@ -41,5 +41,7 @@ test("issue description special mention links stay inside the active organizatio
 
   await descriptionLink.click();
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${targetIssueRef}$`));
-  await expect(page.getByText("Target issue for special mention navigation").first()).toBeVisible();
+  await expect(page.locator("main").getByRole("heading", {
+    name: "Target issue for special mention navigation",
+  })).toBeVisible();
 });
