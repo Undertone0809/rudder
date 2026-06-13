@@ -41,7 +41,7 @@ import {
   rememberSettingsOverlayBackgroundPath,
   readSettingsOverlayBackgroundPath,
 } from "../lib/settings-overlay-state";
-import { prefetchSettingsQueries } from "../lib/settings-prefetch";
+import { scheduleSettingsPrefetchQueries } from "../lib/settings-prefetch";
 import { findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/organization-routes";
 import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
 import { queryKeys } from "../lib/queryKeys";
@@ -583,7 +583,7 @@ export function Layout() {
     : "px-2.5 py-1.5 md:px-3 md:py-2 lg:px-4 lg:py-2.5";
 
   const warmSettingsEntry = useCallback(() => {
-    void prefetchSettingsQueries(queryClient, {
+    scheduleSettingsPrefetchQueries(queryClient, {
       target: settingsTarget,
       organizationId: selectedOrganizationId,
     });
@@ -591,12 +591,12 @@ export function Layout() {
 
   const openSettings = useCallback(() => {
     const currentPath = `${location.pathname}${location.search}${location.hash}`;
-    warmSettingsEntry();
     rememberSettingsOverlayBackgroundPath(currentPath);
     navigate(
       settingsTarget,
       settingsOverlayState ? { state: settingsOverlayState } : undefined,
     );
+    warmSettingsEntry();
     if (isMobile) setSidebarOpen(false);
   }, [
     isMobile,
@@ -796,7 +796,6 @@ export function Layout() {
                     className="settings-entry-button shrink-0 text-muted-foreground"
                     onPointerEnter={warmSettingsEntry}
                     onFocus={warmSettingsEntry}
-                    onPointerDown={warmSettingsEntry}
                     onClick={openSettings}
                     aria-label={t("common.systemSettings")}
                     title={t("common.systemSettings")}

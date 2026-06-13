@@ -10,6 +10,49 @@ import { pluginsApi } from "@/api/plugins";
 import { queryKeys } from "@/lib/queryKeys";
 
 const SETTINGS_PREFETCH_STALE_TIME_MS = 60_000;
+const SETTINGS_PREFETCH_DEDUPE_WINDOW_MS = 750;
+
+type SettingsPrefetchTarget = {
+  target: string;
+  organizationId: string | null;
+};
+
+type ScheduledPrefetchHandle = () => void;
+
+type IdleWindow = Window & {
+  requestIdleCallback?: (
+    callback: IdleRequestCallback,
+    options?: IdleRequestOptions,
+  ) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
+const settingsPrefetchDedupe = new WeakMap<QueryClient, { key: string; startedAt: number }>();
+
+function getPrefetchDedupeKey({ target, organizationId }: SettingsPrefetchTarget) {
+  return `${target}::${organizationId ?? ""}`;
+}
+
+function shouldSkipRecentSettingsPrefetch(
+  queryClient: QueryClient,
+  target: SettingsPrefetchTarget,
+) {
+  const now = Date.now();
+  const next = {
+    key: getPrefetchDedupeKey(target),
+    startedAt: now,
+  };
+  const previous = settingsPrefetchDedupe.get(queryClient);
+  if (
+    previous?.key === next.key
+    && now - previous.startedAt < SETTINGS_PREFETCH_DEDUPE_WINDOW_MS
+  ) {
+    return true;
+  }
+
+  settingsPrefetchDedupe.set(queryClient, next);
+  return false;
+}
 
 export function listSettingsPrefetchQueryKeys(target: string, organizationId: string | null): readonly unknown[][] {
   const keys: unknown[][] = [
@@ -75,10 +118,7 @@ export function prefetchSettingsQueries(
   {
     target,
     organizationId,
-  }: {
-    target: string;
-    organizationId: string | null;
-  },
+  }: SettingsPrefetchTarget,
 ) {
   const jobs = [
     queryClient.prefetchQuery({
@@ -199,6 +239,33 @@ export function prefetchSettingsQueries(
   }
 
   return Promise.allSettled(jobs);
+}
+
+export function scheduleSettingsPrefetchQueries(
+  queryClient: QueryClient,
+  target: SettingsPrefetchTarget,
+): ScheduledPrefetchHandle {
+  if (shouldSkipRecentSettingsPrefetch(queryClient, target)) {
+    return () => {};
+  }
+
+  const run = () => {
+    void prefetchSettingsQueries(queryClient, target);
+  };
+
+  if (typeof window === "undefined") {
+    const handle = globalThis.setTimeout(run, 0);
+    return () => globalThis.clearTimeout(handle);
+  }
+
+  const idleWindow = window as IdleWindow;
+  if (idleWindow.requestIdleCallback) {
+    const handle = idleWindow.requestIdleCallback(run, { timeout: 500 });
+    return () => idleWindow.cancelIdleCallback?.(handle);
+  }
+
+  const handle = window.setTimeout(run, 0);
+  return () => window.clearTimeout(handle);
 }
 
 export { SETTINGS_PREFETCH_STALE_TIME_MS };

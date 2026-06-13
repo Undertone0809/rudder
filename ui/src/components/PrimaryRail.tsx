@@ -440,7 +440,6 @@ export function PrimaryRail({
         )}
         onPointerEnter={onWarmSettings}
         onFocus={onWarmSettings}
-        onPointerDown={onWarmSettings}
         onClick={onOpenSettings}
         aria-label={t("common.systemSettings")}
         title={t("common.systemSettings")}

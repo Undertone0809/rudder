@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ActivitySquare,
@@ -64,11 +65,25 @@ export function SettingsSidebar({
   const canManageAdminSettings = currentBoardAccess?.isInstanceAdmin === true;
   const canManageLocalLangfuse = health?.deploymentMode === "local_trusted";
   const overlayState = preserveSettingsOverlayState(location.state);
-  const sidebarOrganizations = sortOrganizationsByStoredOrder(
-    organizations.filter((organization) => organization.status !== "archived"),
-  );
-
   const modalVariant = variant === "modal";
+  const [renderOrganizationList, setRenderOrganizationList] = useState(!modalVariant);
+  const sidebarOrganizations = useMemo(() => {
+    if (modalVariant && !renderOrganizationList) return [];
+    return sortOrganizationsByStoredOrder(
+      organizations.filter((organization) => organization.status !== "archived"),
+    );
+  }, [modalVariant, organizations, renderOrganizationList]);
+
+  useEffect(() => {
+    if (!modalVariant) {
+      setRenderOrganizationList(true);
+      return;
+    }
+
+    setRenderOrganizationList(false);
+    const handle = window.setTimeout(() => setRenderOrganizationList(true), 250);
+    return () => window.clearTimeout(handle);
+  }, [modalVariant]);
 
   function handleOrganizationSelect(organization: (typeof sidebarOrganizations)[number]) {
     navigate(getOrganizationSettingsPath(organization.issuePrefix), overlayState ? { state: overlayState } : undefined);
@@ -240,7 +255,7 @@ export function SettingsSidebar({
           </>
         ) : null}
 
-        {sidebarOrganizations.length > 0 ? (
+        {renderOrganizationList && sidebarOrganizations.length > 0 ? (
           <div className={cn("space-y-1 pt-2", !modalVariant && "mt-auto")}>
             <div className={cn(
               "px-3 font-medium text-muted-foreground/78",
