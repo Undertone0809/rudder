@@ -121,7 +121,7 @@ printf '%s\n' "$result" | jq -r .markdownLink
 The relevant JSON fields are:
 
 - `libraryEntryId`: stable identity for the Library file.
-- `mentionHref`: raw `library-entry://<id>?t=<title>&p=<path>` target.
+- `mentionHref`: raw `library-entry://<id>` target.
 - `markdownLink`: complete Markdown link that the renderer turns into a Library
   chip and that continues resolving after Rudder-managed rename or move.
 

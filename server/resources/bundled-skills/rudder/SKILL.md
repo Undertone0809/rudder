@@ -290,10 +290,12 @@ If asked to make or revise durable project work files, use the Library as a loca
 
 When you need to cite a Library file in a chat reply, issue comment, review, blocker, or done comment, use the `markdownLink` returned by `rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>" --json`. Do not hand-write `library-entry://...` URLs.
 
-Strong Library links look like normal Markdown, but the target is a stable Library entry id:
+Strong Library links look like normal Markdown, but the target contains only
+the stable Library entry id. Title and path are display or lookup details
+returned by Rudder, not URL metadata agents should encode:
 
 ```md
-[Project work file](library-entry://<entry-id>?t=Project+work+file&p=projects%2Fproject-name%2FRUD-123.md)
+[Project work file](library-entry://<entry-id>)
 ```
 
 Typical flow:
@@ -307,7 +309,7 @@ rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" --json
 The `ref`, `put`, and `get` JSON responses include:
 
 - `libraryEntryId`: stable Library file identity
-- `mentionHref`: the raw `library-entry://...` target
+- `mentionHref`: the raw `library-entry://<entry-id>` target
 - `markdownLink`: the Markdown link to paste into the comment body
 
 For close-out comments, copy `markdownLink` from the JSON response into your temporary Markdown comment file and post that link as the Rudder-visible handoff checkpoint. Direct filesystem writes are not complete handoff evidence until the file is cited with the returned `markdownLink`. The `ref` argument is a Library-relative path such as `$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>`, not the absolute `$RUDDER_PROJECT_LIBRARY_ROOT/...` filesystem path. If `$RUDDER_PROJECT_LIBRARY_ROOT` is unset or inaccessible, use `rudder library file get/put "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"` as the remote or restricted runtime fallback. Use older `library-file://...` links only when you are preserving or reading legacy content that has no `libraryEntryId`.

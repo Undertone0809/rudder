@@ -169,7 +169,7 @@ describe("project-mentions", () => {
       .toBe("[Product brief](library-file://file?p=projects%2Frudder%2Fproduct-brief.md)");
   });
 
-  it("round-trips library file mentions with path metadata", () => {
+  it("round-trips library file mentions with the stable file path identity", () => {
     const href = buildLibraryFileMentionHref("docs/product-brief.md", "Product brief");
     expect(parseLibraryFileMentionHref(href)).toEqual({
       filePath: "docs/product-brief.md",
@@ -178,7 +178,7 @@ describe("project-mentions", () => {
     expect(extractLibraryFileMentionPaths(`[@Product brief](${href})`)).toEqual(["docs/product-brief.md"]);
   });
 
-  it("round-trips library directory mentions with path metadata", () => {
+  it("round-trips library directory mentions with the stable directory path identity", () => {
     const href = buildLibraryDirectoryMentionHref("projects/rudder-mkt", "Rudder marketing");
     expect(parseLibraryDirectoryMentionHref(href)).toEqual({
       directoryPath: "projects/rudder-mkt",

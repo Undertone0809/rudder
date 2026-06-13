@@ -195,8 +195,8 @@ Workspace file detail responses include renderable reference fields:
 {
   "filePath": "projects/rudder/RUD-123.md",
   "libraryEntryId": "entry-uuid",
-  "mentionHref": "library-entry://entry-uuid?t=RUD-123.md&p=projects%2Frudder%2FRUD-123.md",
-  "markdownLink": "[RUD-123.md](library-entry://entry-uuid?t=RUD-123.md&p=projects%2Frudder%2FRUD-123.md)"
+  "mentionHref": "library-entry://entry-uuid",
+  "markdownLink": "[RUD-123.md](library-entry://entry-uuid)"
 }
 ```
 
