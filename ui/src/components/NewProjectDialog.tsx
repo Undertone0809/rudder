@@ -49,6 +49,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PROJECT_COLORS } from "@rudderhq/shared";
 import { cn } from "../lib/utils";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
 import { ResourceLocatorField, suggestResourceNameFromLocator } from "./ResourceLocatorField";
 import { StatusBadge } from "./StatusBadge";
@@ -149,6 +150,7 @@ export function NewProjectDialog() {
   const [librarySearch, setLibrarySearch] = useState("");
   const [resourceSearch, setResourceSearch] = useState("");
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
+  const addResourcesScrollRef = useScrollbarActivityRef("new-project:add-resources");
 
   const { data: goals } = useQuery({
     queryKey: queryKeys.goals.list(selectedOrganizationId!),
@@ -531,7 +533,11 @@ export function NewProjectDialog() {
                     Add resources
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="max-h-[420px] w-80 overflow-y-auto p-1" align="end">
+                <PopoverContent
+                  className="flex max-h-[min(420px,var(--radix-popover-content-available-height))] w-80 flex-col overflow-hidden p-1"
+                  align="end"
+                  disablePortal
+                >
                   <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                     {libraryCopy("addFromLibrary", locale)}
                   </div>
@@ -549,88 +555,94 @@ export function NewProjectDialog() {
                       placeholder={libraryCopy("searchLibraryPlaceholder", locale)}
                     />
                   </div>
-                  {availableLibraryFiles.length === 0 ? (
-                    <div className="px-2 py-2 text-xs text-muted-foreground">
-                      {librarySearch.trim() ? libraryCopy("noMatchingLibraryFiles", locale) : libraryCopy("noLibraryFiles", locale)}
-                    </div>
-                  ) : availableLibraryFiles.map((file) => {
-                    const Icon = file.isDirectory ? Folder : FileText;
-                    return (
+                  <div
+                    ref={addResourcesScrollRef}
+                    data-testid="new-project-add-resources-popover-scroll"
+                    className="scrollbar-auto-hide min-h-0 overflow-y-auto overscroll-contain pr-1"
+                  >
+                    {availableLibraryFiles.length === 0 ? (
+                      <div className="px-2 py-2 text-xs text-muted-foreground">
+                        {librarySearch.trim() ? libraryCopy("noMatchingLibraryFiles", locale) : libraryCopy("noLibraryFiles", locale)}
+                      </div>
+                    ) : availableLibraryFiles.map((file) => {
+                      const Icon = file.isDirectory ? Folder : FileText;
+                      return (
+                        <button
+                          key={file.path}
+                          type="button"
+                          className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
+                          onClick={() => addLibraryResource(file)}
+                        >
+                          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="min-w-0">
+                            <span className="block truncate text-xs font-medium">{file.displayLabel ?? file.name}</span>
+                            <span className="block truncate font-mono text-[11px] text-muted-foreground">{file.path}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {canAddLibrarySearchPath ? (
                       <button
-                        key={file.path}
                         type="button"
-                        className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                        onClick={() => addLibraryResource(file)}
+                        className="mt-1 flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
+                        onClick={() => addLibraryResourcePath(normalizedLibrarySearch)}
                       >
-                        <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <span className="min-w-0">
-                          <span className="block truncate text-xs font-medium">{file.displayLabel ?? file.name}</span>
-                          <span className="block truncate font-mono text-[11px] text-muted-foreground">{file.path}</span>
+                          <span className="block truncate text-xs font-medium">{libraryCopy("useThisLibraryPath", locale)}</span>
+                          <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                            {normalizedLibrarySearch}
+                          </span>
                         </span>
                       </button>
-                    );
-                  })}
-                  {canAddLibrarySearchPath ? (
-                    <button
-                      type="button"
-                      className="mt-1 flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                      onClick={() => addLibraryResourcePath(normalizedLibrarySearch)}
-                    >
-                      <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0">
-                        <span className="block truncate text-xs font-medium">{libraryCopy("useThisLibraryPath", locale)}</span>
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground">
-                          {normalizedLibrarySearch}
-                        </span>
-                      </span>
-                    </button>
-                  ) : null}
+                    ) : null}
 
-                  <div className="my-1 h-px bg-border" />
-                  <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                    Existing resources
-                  </div>
-                  <div className="px-2 pb-2">
-                    <input
-                      value={resourceSearch}
-                      onChange={(event) => setResourceSearch(event.target.value)}
-                      className="h-7 w-full rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background px-2 text-xs outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                      placeholder="Search existing resources"
-                    />
-                  </div>
-                  {visibleAvailableResources.length === 0 ? (
-                    <div className="px-2 py-2 text-xs text-muted-foreground">
-                      {resourceSearch.trim() ? "No matching resources." : "No unattached resources available."}
+                    <div className="my-1 h-px bg-border" />
+                    <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      Existing resources
                     </div>
-                  ) : visibleAvailableResources.map((resource) => (
+                    <div className="px-2 pb-2">
+                      <input
+                        value={resourceSearch}
+                        onChange={(event) => setResourceSearch(event.target.value)}
+                        className="h-7 w-full rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background px-2 text-xs outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                        placeholder="Search existing resources"
+                      />
+                    </div>
+                    {visibleAvailableResources.length === 0 ? (
+                      <div className="px-2 py-2 text-xs text-muted-foreground">
+                        {resourceSearch.trim() ? "No matching resources." : "No unattached resources available."}
+                      </div>
+                    ) : visibleAvailableResources.map((resource) => (
+                      <button
+                        key={resource.id}
+                        type="button"
+                        className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
+                        onClick={() => addExistingResource(resource)}
+                      >
+                        <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-medium">{resource.name}</span>
+                          <span className="block truncate text-[11px] text-muted-foreground">
+                            {organizationResourceSourceTypeLabel(resource.sourceType)} · {organizationResourceKindLabel(resource.kind)} · {resource.locator}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+
+                    <div className="my-1 h-px bg-border" />
                     <button
-                      key={resource.id}
                       type="button"
                       className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                      onClick={() => addExistingResource(resource)}
+                      onClick={addExternalResourceDraft}
                     >
                       <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0">
-                        <span className="block truncate text-xs font-medium">{resource.name}</span>
-                        <span className="block truncate text-[11px] text-muted-foreground">
-                          {organizationResourceSourceTypeLabel(resource.sourceType)} · {organizationResourceKindLabel(resource.kind)} · {resource.locator}
-                        </span>
+                      <span>
+                        <span className="block text-xs font-medium">Create external resource</span>
+                        <span className="block text-[11px] text-muted-foreground">Add a URL, local path, repo path, or connector reference.</span>
                       </span>
                     </button>
-                  ))}
-
-                  <div className="my-1 h-px bg-border" />
-                  <button
-                    type="button"
-                    className="flex w-full items-start gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
-                    onClick={addExternalResourceDraft}
-                  >
-                    <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span>
-                      <span className="block text-xs font-medium">Create external resource</span>
-                      <span className="block text-[11px] text-muted-foreground">Add a URL, local path, repo path, or connector reference.</span>
-                    </span>
-                  </button>
+                  </div>
                 </PopoverContent>
               </Popover>
             </div>

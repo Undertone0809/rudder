@@ -101,7 +101,19 @@ vi.mock("@/components/ui/dialog", () => ({
 
 vi.mock("@/components/ui/popover", () => ({
   Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  PopoverContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PopoverContent: ({
+    children,
+    className,
+    disablePortal,
+  }: {
+    children: ReactNode;
+    className?: string;
+    disablePortal?: boolean;
+  }) => (
+    <div className={className} data-disable-portal={disablePortal ? "true" : undefined}>
+      {children}
+    </div>
+  ),
   PopoverTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -173,6 +185,19 @@ describe("NewProjectDialog", () => {
     expect(buttons.filter((text) => text.includes("Add resources"))).toHaveLength(1);
     expect(buttons.some((text) => text.includes("Attach resource"))).toBe(false);
     expect(buttons.some((text) => text.includes("New resource"))).toBe(false);
+  });
+
+  it("keeps the add resources list scrollable inside the project dialog", () => {
+    const container = renderDialog();
+    const scrollRegion = container.querySelector('[data-testid="new-project-add-resources-popover-scroll"]');
+    const popoverContent = scrollRegion?.parentElement;
+
+    expect(popoverContent?.getAttribute("data-disable-portal")).toBe("true");
+    expect(popoverContent?.className).toContain("overflow-hidden");
+    expect(popoverContent?.className).toContain("max-h-[min(420px,var(--radix-popover-content-available-height))]");
+    expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
+    expect(scrollRegion?.className).toContain("overflow-y-auto");
+    expect(scrollRegion?.className).toContain("overscroll-contain");
   });
 
   it("keeps resource draft project settings to a single note field", () => {
