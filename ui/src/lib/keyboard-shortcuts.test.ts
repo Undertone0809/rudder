@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   eventMatchesShortcutAction,
   findShortcutConflict,
   formatShortcutBinding,
+  getKeyboardShortcutPlatform,
   isReservedShortcut,
   resolveKeyboardShortcutBindings,
 } from "./keyboard-shortcuts";
@@ -19,10 +20,24 @@ function keydown(key: string, init: KeyboardEventInit = {}) {
 }
 
 describe("keyboard shortcuts", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("falls back to default bindings when settings are missing", () => {
     expect(eventMatchesShortcutAction(keydown("c"), "issue.create", null)).toBe(true);
     expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", null, "mac")).toBe(true);
     expect(eventMatchesShortcutAction(keydown("k", { metaKey: true }), "commandPalette.open", undefined)).toBe(false);
+  });
+
+  it("detects macOS from browser userAgentData platform casing", () => {
+    vi.stubGlobal("navigator", { userAgentData: { platform: "macOS" }, platform: "Win32" });
+
+    expect(getKeyboardShortcutPlatform()).toBe("mac");
+    expect(formatShortcutBinding({ key: "k", metaKey: true })).toBe("Cmd+K");
+    expect(resolveKeyboardShortcutBindings(null)["commandPalette.open"]).toEqual([
+      { key: "k", metaKey: true },
+    ]);
   });
 
   it("resolves platform-specific default bindings without mixing Mac and non-Mac variants", () => {

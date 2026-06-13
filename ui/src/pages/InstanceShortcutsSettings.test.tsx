@@ -78,7 +78,7 @@ describe("InstanceShortcutsSettings", () => {
   });
 
   it("shows only the current platform default keybinding variant", () => {
-    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    vi.stubGlobal("navigator", { userAgentData: { platform: "macOS" }, platform: "Win32" });
     const macHtml = renderPage();
     expect(macHtml).toContain("Cmd+K");
     expect(macHtml).not.toContain("Ctrl+K");

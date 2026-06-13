@@ -115,10 +115,9 @@ const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
 
 export function getKeyboardShortcutPlatform(): KeyboardShortcutPlatform {
   if (typeof navigator === "undefined") return "nonMac";
-  const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
-    ?? navigator.platform
-    ?? "";
-  return /Mac|iPhone|iPad|iPod/.test(platform) ? "mac" : "nonMac";
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platform = nav.userAgentData?.platform?.trim() || nav.platform?.trim() || "";
+  return /mac|iphone|ipad|ipod/i.test(platform) ? "mac" : "nonMac";
 }
 
 export function getDefaultShortcutBindings(
