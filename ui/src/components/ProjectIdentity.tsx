@@ -12,17 +12,17 @@ type ProjectIdentityShape = {
 };
 
 const iconSizeClass = {
-  xs: "h-3.5 w-3.5 rounded-[calc(var(--radius-sm)-3px)]",
-  sm: "h-4 w-4 rounded-[calc(var(--radius-sm)-3px)]",
-  md: "h-5 w-5 rounded-[calc(var(--radius-sm)-2px)]",
-  lg: "h-7 w-7 rounded-[calc(var(--radius-sm)-1px)]",
+  xs: "h-4 w-4 rounded-[calc(var(--radius-sm)-3px)]",
+  sm: "h-5 w-5 rounded-[calc(var(--radius-sm)-2px)]",
+  md: "h-6 w-6 rounded-[calc(var(--radius-sm)-1px)]",
+  lg: "h-9 w-9 rounded-[var(--radius-sm)]",
 } as const;
 
 const glyphSizeClass = {
-  xs: "h-2.5 w-2.5",
-  sm: "h-3 w-3",
-  md: "h-3.5 w-3.5",
-  lg: "h-4 w-4",
+  xs: "h-4 w-4",
+  sm: "h-[18px] w-[18px]",
+  md: "h-5 w-5",
+  lg: "h-7 w-7",
 } as const;
 
 export function ProjectIcon({
@@ -135,7 +135,7 @@ export function ProjectIdentityPicker({
               key={candidate}
               type="button"
               className={cn(
-                "relative inline-flex h-8 w-8 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] border text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                "relative inline-flex h-9 w-9 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] border text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
                 selected
                   ? "border-[color:color-mix(in_oklab,var(--project-accent-color)_54%,var(--border-base))] bg-muted/55 text-[color:var(--project-accent-color)]"
                   : "border-border/70 bg-transparent",
@@ -144,8 +144,8 @@ export function ProjectIdentityPicker({
               aria-pressed={selected}
               onClick={() => onIconChange(candidate)}
             >
-              <Icon className="h-4 w-4" />
-              {selected ? <Check className="absolute h-2.5 w-2.5 translate-x-2.5 translate-y-2.5 text-[color:var(--project-accent-color)]" /> : null}
+              <Icon className="h-5 w-5" strokeWidth={2.2} />
+              {selected ? <Check className="absolute h-2.5 w-2.5 translate-x-3 translate-y-3 text-[color:var(--project-accent-color)]" /> : null}
             </button>
           );
         })}

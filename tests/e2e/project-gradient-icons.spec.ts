@@ -48,6 +48,9 @@ test.describe("Project identity icons", () => {
     await expect(colorMarker).toHaveCSS("background-image", "none");
     await expect(colorMarker).toHaveCSS("color", firstColorAsRgb(project.color));
     await expect(colorMarker.locator("svg")).toHaveCount(1);
+    const sidebarGlyphBox = await colorMarker.locator("svg").boundingBox();
+    expect(sidebarGlyphBox?.width).toBeGreaterThanOrEqual(18);
+    expect(sidebarGlyphBox?.height).toBeGreaterThanOrEqual(18);
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);
     const issueProjectMarker = page.getByTestId(`issue-project-color-${project.id}`);
@@ -55,6 +58,9 @@ test.describe("Project identity icons", () => {
     await expect(issueProjectMarker).toHaveCSS("background-image", "none");
     await expect(issueProjectMarker).toHaveCSS("color", firstColorAsRgb(project.color));
     await expect(issueProjectMarker.locator("svg")).toHaveCount(1);
+    const issueGlyphBox = await issueProjectMarker.locator("svg").boundingBox();
+    expect(issueGlyphBox?.width).toBeGreaterThanOrEqual(16);
+    expect(issueGlyphBox?.height).toBeGreaterThanOrEqual(16);
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/projects/${project.urlKey ?? project.id}/configuration`);
     await page.getByRole("button", { name: "Change project identity" }).click();
