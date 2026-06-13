@@ -472,6 +472,78 @@ describe("issueService.list participantAgentId", () => {
     expect(storedDeleted.deletedAt).toBeTruthy();
   });
 
+  it("excludes soft-deleted comments from issue comment lists and cursors", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+    const visibleFirstId = randomUUID();
+    const visibleSecondId = randomUUID();
+    const deletedNewestId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Comment List Org",
+      urlKey: deriveOrganizationUrlKey("Comment List Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Comment list filtering",
+      status: "todo",
+      priority: "medium",
+      createdByUserId: "author-user",
+    });
+    await db.insert(issueComments).values([
+      {
+        id: visibleFirstId,
+        orgId,
+        issueId,
+        authorUserId: "author-user",
+        body: "Visible first",
+        createdAt: new Date("2026-05-01T00:01:00.000Z"),
+        updatedAt: new Date("2026-05-01T00:01:00.000Z"),
+      },
+      {
+        id: visibleSecondId,
+        orgId,
+        issueId,
+        authorUserId: "author-user",
+        body: "Visible second",
+        createdAt: new Date("2026-05-01T00:02:00.000Z"),
+        updatedAt: new Date("2026-05-01T00:02:00.000Z"),
+      },
+      {
+        id: deletedNewestId,
+        orgId,
+        issueId,
+        authorUserId: "author-user",
+        body: "Deleted newest body",
+        createdAt: new Date("2026-05-01T00:03:00.000Z"),
+        updatedAt: new Date("2026-05-01T00:04:00.000Z"),
+        deletedAt: new Date("2026-05-01T00:04:00.000Z"),
+        deletedByUserId: "author-user",
+      },
+    ]);
+
+    const ascending = await svc.listComments(issueId, { order: "asc" });
+    expect(ascending.map((comment) => comment.id)).toEqual([visibleFirstId, visibleSecondId]);
+    expect(ascending.map((comment) => comment.body)).not.toContain("Deleted newest body");
+
+    const afterVisibleFirst = await svc.listComments(issueId, { order: "asc", afterCommentId: visibleFirstId });
+    expect(afterVisibleFirst.map((comment) => comment.id)).toEqual([visibleSecondId]);
+
+    const afterDeletedAnchor = await svc.listComments(issueId, { order: "asc", afterCommentId: deletedNewestId });
+    expect(afterDeletedAnchor).toEqual([]);
+
+    const cursor = await svc.getCommentCursor(issueId);
+    expect(cursor).toMatchObject({
+      totalComments: 2,
+      latestCommentId: visibleSecondId,
+    });
+    expect(cursor.latestCommentAt?.toISOString()).toBe("2026-05-01T00:02:00.000Z");
+  });
+
   it("ignores invalid project mention ids when resolving mentioned projects", async () => {
     const orgId = randomUUID();
     const projectId = randomUUID();

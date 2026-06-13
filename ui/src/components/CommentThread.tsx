@@ -546,8 +546,9 @@ const TimelineList = memo(function TimelineList({
         const isHighlighted = highlightCommentId === comment.id;
         const commentTimestampTitle = formatDateTime(comment.createdAt);
         const isDeleted = !!comment.deletedAt;
-        const isEdited = !isDeleted && new Date(comment.updatedAt).getTime() > new Date(comment.createdAt).getTime() + 1000;
-        const canModify = !isDeleted && !!currentUserId && !comment.authorAgentId && comment.authorUserId === currentUserId;
+        if (isDeleted) return null;
+        const isEdited = new Date(comment.updatedAt).getTime() > new Date(comment.createdAt).getTime() + 1000;
+        const canModify = !!currentUserId && !comment.authorAgentId && comment.authorUserId === currentUserId;
         const isEditing = editingCommentId === comment.id;
         const handleStartEdit = () => {
           setEditingCommentId(comment.id);
@@ -634,23 +635,19 @@ const TimelineList = memo(function TimelineList({
                       edited
                     </span>
                   ) : null}
-                  {!isDeleted ? (
-                    <CommentActionsMenu
-                      comment={comment}
-                      orgId={orgId}
-                      projectId={projectId}
-                      location={location}
-                      canModify={canModify}
-                      onEdit={handleStartEdit}
-                      onDelete={handleDelete}
-                    />
-                  ) : null}
+                  <CommentActionsMenu
+                    comment={comment}
+                    orgId={orgId}
+                    projectId={projectId}
+                    location={location}
+                    canModify={canModify}
+                    onEdit={handleStartEdit}
+                    onDelete={handleDelete}
+                  />
                 </span>
               </div>
             )}
-            {isDeleted ? (
-              <p className="text-sm italic text-muted-foreground">Comment deleted</p>
-            ) : isEditing ? (
+            {isEditing ? (
               <>
                 <MarkdownEditor
                   ref={editEditorRef}
@@ -702,7 +699,7 @@ const TimelineList = memo(function TimelineList({
             ) : (
               <MarkdownBody className="text-sm" agentMentions={agentMentions} skillReferences={skillReferences}>{comment.body}</MarkdownBody>
             )}
-            {!isEditing && !isDeleted && orgId ? (
+            {!isEditing && orgId ? (
               <div className="mt-2 space-y-2">
                 <PluginSlotOutlet
                   slotTypes={["commentAnnotation"]}
@@ -780,9 +777,10 @@ export function CommentThread({
   const location = useLocation();
   const lastHandledCommentHashRef = useRef<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleComments = useMemo(() => comments.filter((comment) => !comment.deletedAt), [comments]);
 
   const timeline = useMemo<TimelineItem[]>(() => {
-    const commentItems: TimelineItem[] = comments.map((comment) => ({
+    const commentItems: TimelineItem[] = visibleComments.map((comment) => ({
       kind: "comment",
       id: comment.id,
       createdAtMs: new Date(comment.createdAt).getTime(),
@@ -811,7 +809,7 @@ export function CommentThread({
       if (a.kind === b.kind) return a.id.localeCompare(b.id);
       return 0;
     });
-  }, [activityItems, comments, linkedRuns]);
+  }, [activityItems, linkedRuns, visibleComments]);
 
   const transcriptRuns = useMemo<LiveRunForIssue[]>(() => {
     return linkedRuns.map((run) => {
@@ -904,7 +902,7 @@ export function CommentThread({
 
   useEffect(() => {
     const hash = location.hash;
-    if (!hash.startsWith("#comment-") || comments.length === 0) return;
+    if (!hash.startsWith("#comment-") || visibleComments.length === 0) return;
     const commentId = hash.slice("#comment-".length);
     const navigationKey = `${location.key}:${hash}`;
     if (lastHandledCommentHashRef.current === navigationKey) return;
@@ -920,7 +918,7 @@ export function CommentThread({
         highlightTimerRef.current = null;
       }, 3000);
     }
-  }, [location.hash, location.key, comments.length]);
+  }, [location.hash, location.key, visibleComments.length]);
 
   async function handleSubmit() {
     const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;

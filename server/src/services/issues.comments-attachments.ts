@@ -177,7 +177,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           ? Math.min(Math.floor(opts.limit), MAX_ISSUE_COMMENT_PAGE_LIMIT)
           : null;
 
-      const conditions = [eq(issueComments.issueId, issueId)];
+      const conditions = [eq(issueComments.issueId, issueId), isNull(issueComments.deletedAt)];
       if (afterCommentId) {
         const anchor = await db
           .select({
@@ -185,7 +185,13 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
             createdAt: issueComments.createdAt,
           })
           .from(issueComments)
-          .where(and(eq(issueComments.issueId, issueId), eq(issueComments.id, afterCommentId)))
+          .where(
+            and(
+              eq(issueComments.issueId, issueId),
+              eq(issueComments.id, afterCommentId),
+              isNull(issueComments.deletedAt),
+            ),
+          )
           .then((rows) => rows[0] ?? null);
 
         if (!anchor) return [];
@@ -227,7 +233,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
             latestCommentAt: issueComments.createdAt,
           })
           .from(issueComments)
-          .where(eq(issueComments.issueId, issueId))
+          .where(and(eq(issueComments.issueId, issueId), isNull(issueComments.deletedAt)))
           .orderBy(desc(issueComments.createdAt), desc(issueComments.id))
           .limit(1)
           .then((rows) => rows[0] ?? null),
@@ -236,7 +242,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
             totalComments: sql<number>`count(*)::int`,
           })
           .from(issueComments)
-          .where(eq(issueComments.issueId, issueId))
+          .where(and(eq(issueComments.issueId, issueId), isNull(issueComments.deletedAt)))
           .then((rows) => rows[0] ?? null),
       ]);
 

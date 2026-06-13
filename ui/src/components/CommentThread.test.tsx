@@ -316,7 +316,7 @@ describe("CommentThread", () => {
     expect(html).toContain("You");
   });
 
-  it("renders deleted comments as placeholders without exposing the original body or actions", () => {
+  it("hides deleted comments without exposing the original body or actions", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -333,6 +333,16 @@ describe("CommentThread", () => {
               createdAt: new Date("2026-05-07T00:00:00.000Z"),
               updatedAt: new Date("2026-05-07T00:10:00.000Z"),
             },
+            {
+              id: "comment-2",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Visible comment body",
+              createdAt: new Date("2026-05-07T00:11:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:11:00.000Z"),
+            },
           ]}
           onAdd={async () => undefined}
           currentUserId="user-1"
@@ -342,10 +352,10 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("Comment deleted");
+    expect(html).toContain("Visible comment body");
+    expect(html).not.toContain("Comment deleted");
     expect(html).not.toContain("Sensitive deleted body");
-    expect(html).not.toContain("Comment actions");
-    expect(html).not.toContain("Copy content");
+    expect(html).not.toContain('id="comment-comment-1"');
   });
 
   it("lets the current user edit and delete their own user-authored comment", async () => {
