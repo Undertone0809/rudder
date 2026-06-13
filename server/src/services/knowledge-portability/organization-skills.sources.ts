@@ -1,14 +1,17 @@
+import type {
+  OrganizationSkillFileInventoryEntry
+} from "@rudderhq/shared";
+import { normalizeAgentUrlKey } from "@rudderhq/shared";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type {
-  OrganizationSkillCompatibility,
-  OrganizationSkillFileInventoryEntry,
-  OrganizationSkillSourceType,
-  OrganizationSkillTrustLevel,
-} from "@rudderhq/shared";
-import { normalizeAgentUrlKey } from "@rudderhq/shared";
 import { unprocessable } from "../../errors.js";
+import type {
+  ImportedSkill,
+  LocalSkillInventoryMode,
+  ParsedSkillImportSource,
+  ProjectSkillScanTarget,
+} from "./organization-skills.catalog.js";
 import {
   PROJECT_ROOT_SKILL_SUBDIRECTORIES,
   PROJECT_SCAN_DIRECTORY_ROOTS,
@@ -16,7 +19,6 @@ import {
   classifyInventoryKind,
   deriveCanonicalSkillKey,
   deriveTrustLevel,
-  hashSkillValue,
   isPlainRecord,
   normalizeGitHubSkillDirectory,
   normalizePackageFileMap,
@@ -24,13 +26,7 @@ import {
   normalizeSkillDescription,
   normalizeSkillSlug,
   readCanonicalSkillKey,
-  statPath,
-} from "./organization-skills.catalog.js";
-import type {
-  ImportedSkill,
-  LocalSkillInventoryMode,
-  ParsedSkillImportSource,
-  ProjectSkillScanTarget,
+  statPath
 } from "./organization-skills.catalog.js";
 
 export function prepareYamlLines(raw: string) {

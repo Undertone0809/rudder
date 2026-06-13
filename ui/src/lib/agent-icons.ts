@@ -1,3 +1,4 @@
+import { AGENT_ICON_NAMES, type AgentIconName, type AgentRole } from "@rudderhq/shared";
 import {
   Atom,
   Bot,
@@ -42,7 +43,6 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { AGENT_ICON_NAMES, type AgentIconName, type AgentRole } from "@rudderhq/shared";
 
 export const AGENT_ICONS: Record<AgentIconName, LucideIcon> = {
   bot: Bot,

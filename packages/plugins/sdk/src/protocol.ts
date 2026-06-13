@@ -16,32 +16,31 @@
  */
 
 import type {
+  Agent,
+  Goal,
+  Issue,
+  IssueComment,
+  Organization,
   PaperclipPluginManifestV1,
   PluginLauncherBounds,
   PluginLauncherRenderContextSnapshot,
-  PluginLauncherRenderEnvironment,
   PluginStateScopeKind,
-  Organization,
-  Project,
-  Issue,
-  IssueComment,
-  Agent,
-  Goal,
+  Project
 } from "@rudderhq/shared";
 export type { PluginLauncherRenderContextSnapshot } from "@rudderhq/shared";
 
 import type {
+  PluginConfigValidationResult,
+  PluginHealthDiagnostics,
+  PluginWebhookInput,
+} from "./define-plugin.js";
+import type {
   PluginEvent,
   PluginJobContext,
   PluginWorkspace,
-  ToolRunContext,
   ToolResult,
+  ToolRunContext,
 } from "./types.js";
-import type {
-  PluginHealthDiagnostics,
-  PluginConfigValidationResult,
-  PluginWebhookInput,
-} from "./define-plugin.js";
 
 // ---------------------------------------------------------------------------
 // JSON-RPC 2.0 — Core Protocol Types

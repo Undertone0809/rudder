@@ -1,30 +1,26 @@
-import { asc, eq, ne, sql, and } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
-  plugins,
   pluginConfig,
   pluginEntities,
-  pluginJobs,
   pluginJobRuns,
+  pluginJobs,
+  plugins,
   pluginWebhookDeliveries,
 } from "@rudderhq/db";
 import type {
-  PaperclipPluginManifestV1,
-  PluginStatus,
   InstallPlugin,
-  UpdatePluginStatus,
-  UpsertPluginConfig,
+  PaperclipPluginManifestV1,
   PatchPluginConfig,
-  PluginEntityRecord,
   PluginEntityQuery,
-  PluginJobRecord,
-  PluginJobRunRecord,
-  PluginWebhookDeliveryRecord,
-  PluginJobStatus,
   PluginJobRunStatus,
   PluginJobRunTrigger,
+  PluginJobStatus,
+  PluginStatus,
   PluginWebhookDeliveryStatus,
+  UpdatePluginStatus,
+  UpsertPluginConfig
 } from "@rudderhq/shared";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { conflict, notFound } from "../errors.js";
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
-import { pgTable, uuid, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
+import { pgTable, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { assets } from "./assets.js";
+import { organizations } from "./organizations.js";
 
 export const organizationLogos = pgTable(
   "organization_logos",

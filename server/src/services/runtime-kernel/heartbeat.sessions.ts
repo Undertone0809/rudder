@@ -1,120 +1,39 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { and, asc, desc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
-import type { Db } from "@rudderhq/db";
-import type {
-  AgentSkillAnalytics,
-  AgentSkillTelemetryEvidence,
-  AgentSkillTelemetryEvidenceCounts,
-  BillingType,
-  ExecutionObservabilityContext,
-  ExecutionObservabilitySurface,
-  HeartbeatRecoveryTrigger,
-  HeartbeatRunRecoveryContext,
-} from "@rudderhq/shared";
 import {
-  AGENT_RUN_CONCURRENCY_DEFAULT,
-  AGENT_RUN_CONCURRENCY_MAX,
-  AGENT_RUN_CONCURRENCY_MIN,
-  summarizeTokenUsage,
-} from "@rudderhq/shared";
+  resolveSessionCompactionPolicy,
+  type SessionCompactionPolicy
+} from "@rudderhq/agent-runtime-utils";
+import type { Db } from "@rudderhq/db";
 import {
   agents,
-  agentRuntimeState,
-  agentTaskSessions,
-  agentWakeupRequests,
-  activityLog,
   authUsers,
-  heartbeatRunEvents,
   heartbeatRuns,
   issueComments,
-  issues,
-  organizations,
-  projects,
+  issues
 } from "@rudderhq/db";
-import { conflict, notFound } from "../../errors.js";
-import {
-  createExecutionScores,
-  observeExecutionEvent,
-  updateExecutionObservation,
-  updateExecutionTraceIO,
-  updateExecutionTraceName,
-  updateExecutionTraceSession,
-  withExecutionObservation,
-} from "../../langfuse.js";
-import { emitExecutionTranscriptTree } from "../../langfuse-transcript.js";
-import { logger } from "../../middleware/logger.js";
-import { publishLiveEvent } from "../live-events.js";
-import { getRunLogStore, type RunLogHandle } from "../run-log-store.js";
-import { findServerAdapter, getServerAdapter, runningProcesses } from "../../agent-runtimes/index.js";
+import type {
+  HeartbeatRecoveryTrigger,
+  HeartbeatRunRecoveryContext
+} from "@rudderhq/shared";
+import { and, eq } from "drizzle-orm";
+import path from "node:path";
 import type {
   AgentRuntimeExecutionResult,
-  AgentRuntimeInvocationMeta,
   AgentRuntimeSessionCodec,
-  UsageSummary,
+  UsageSummary
 } from "../../agent-runtimes/index.js";
-import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
-import { parseObject, asBoolean, asNumber, appendWithCap, MAX_EXCERPT_BYTES } from "../../agent-runtimes/utils.js";
-import { costService } from "../costs.js";
-import { budgetService, type BudgetEnforcementScope } from "../budgets.js";
-import {
-  agentRunContextService,
-  type ResolvedWorkspaceForRun,
-} from "../agent-run-context.js";
+import { getServerAdapter } from "../../agent-runtimes/index.js";
+import { asNumber, parseObject } from "../../agent-runtimes/utils.js";
 import {
   resolveDefaultAgentWorkspaceDir,
 } from "../../home-paths.js";
-import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
-import { summarizeRuntimeSkillsForTrace } from "../runtime-trace-metadata.js";
 import {
-  buildWorkspaceReadyComment,
-  cleanupExecutionWorkspaceArtifacts,
-  ensureRuntimeServicesForRun,
-  persistAdapterManagedRuntimeServices,
-  realizeExecutionWorkspace,
-  releaseRuntimeServicesForRun,
-  sanitizeRuntimeServiceBaseEnv,
-} from "../workspace-runtime.js";
-import { issueService } from "../issues.js";
-import {
-  buildIssueConvergenceReviewWakeupOptions,
-  buildIssueReviewCloseoutWakeupOptions,
-} from "../issue-review-wakeup.js";
-import { runWorkspaceService } from "../execution-workspaces.js";
-import { buildObservedRunLangfuseScores } from "../run-intelligence.js";
-import { workspaceOperationService } from "../workspace-operations.js";
-import {
-  isManagedWorkspaceConfigurationError,
-  isWorkspacePermissionPreflightError,
-  preflightManagedAgentWorkspace,
-} from "../managed-workspace-preflight.js";
-import {
-  buildExecutionWorkspaceAdapterConfig,
-  issueExecutionWorkspaceModeForPersistedWorkspace,
-  parseIssueExecutionWorkspaceSettings,
-  parseProjectExecutionWorkspacePolicy,
-  resolveExecutionWorkspaceMode,
-} from "../execution-workspace-policy.js";
-import { instanceSettingsService } from "../instance-settings.js";
-import { logActivity } from "../activity-log.js";
-import { redactCurrentUserText, redactCurrentUserValue } from "../../log-redaction.js";
-import {
-  hasSessionCompactionThresholds,
-  resolveSessionCompactionPolicy,
-  type SessionCompactionPolicy,
-} from "@rudderhq/agent-runtime-utils";
-import {
-  buildCreateAgentBenchmarkTags,
-  coerceCreateAgentBenchmarkMetadata,
-  extractCreateAgentBenchmarkMetadata,
-} from "@rudderhq/run-intelligence-core";
-import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
+  type ResolvedWorkspaceForRun
+} from "../agent-run-context.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
-import * as heartbeatCore from "./heartbeat.core.js";
 import type { ParsedIssueAssigneeAgentRuntimeOverrides, UsageTotals, WakeupOptions } from "./heartbeat.core.js";
+import * as heartbeatCore from "./heartbeat.core.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 export type ResumeSessionRow = {
   sessionParamsJson: Record<string, unknown> | null;

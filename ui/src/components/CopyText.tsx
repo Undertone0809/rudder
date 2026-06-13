@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { useCallback, useRef, useState } from "react";
 
 interface CopyTextProps {
   text: string;

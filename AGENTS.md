@@ -207,12 +207,15 @@ Notes:
 Run this full check before claiming done:
 
 ```sh
+pnpm lint
 pnpm -r typecheck
 pnpm test:run
 pnpm build
 ```
 
 If anything cannot be run, explicitly report what was not run and why.
+
+Use `pnpm lint:fix` to automatically organize TypeScript and JavaScript imports.
 
 Task-specific additions:
 

@@ -1,6 +1,5 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it } from "vitest";
 import type {
   Approval,
   DashboardSummary,
@@ -9,11 +8,12 @@ import type {
   JoinRequest,
   MessengerThreadSummary,
 } from "@rudderhq/shared";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   computeInboxBadgeData,
   getApprovalsForTab,
-  getInboxWorkItems,
   getInboxNotificationContent,
+  getInboxWorkItems,
   getRecentTouchedIssues,
   getUnreadTouchedIssues,
   loadLastInboxTab,

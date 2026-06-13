@@ -1,8 +1,8 @@
 import { NavLink, useNavigate } from "@/lib/router";
-import { cn } from "../lib/utils";
-import { useSidebar } from "../context/SidebarContext";
-import { sidebarItemVariants } from "./sidebarItemStyles";
 import type { LucideIcon } from "lucide-react";
+import { useSidebar } from "../context/SidebarContext";
+import { cn } from "../lib/utils";
+import { sidebarItemVariants } from "./sidebarItemStyles";
 
 interface SidebarNavItemProps {
   to: string;

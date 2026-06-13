@@ -1,7 +1,10 @@
-import { Command } from "commander";
 import {
-  organizationSkillCreateSchema,
+  removeMaintainerOnlySkillSymlinks,
+  resolveRudderSkillsDir,
+} from "@rudderhq/agent-runtime-utils/server-utils";
+import {
   createAgentHireSchema,
+  organizationSkillCreateSchema,
   updateAgentSchema,
   type Agent,
   type AgentDetail,
@@ -9,14 +12,17 @@ import {
   type AgentSkillSnapshot,
   type Approval,
 } from "@rudderhq/shared";
-import {
-  removeMaintainerOnlySkillSymlinks,
-  resolveRudderSkillsDir,
-} from "@rudderhq/agent-runtime-utils/server-utils";
+import { Command } from "commander";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  buildAgentCliCapabilitiesManifest,
+  formatAgentCliCapabilitiesHumanReadable,
+  getAgentCliCapabilities,
+  getAgentCliCapabilityById,
+} from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
   formatInlineRecord,
@@ -25,12 +31,6 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
-import {
-  buildAgentCliCapabilitiesManifest,
-  formatAgentCliCapabilitiesHumanReadable,
-  getAgentCliCapabilityById,
-  getAgentCliCapabilities,
-} from "../../agent-v1-registry.js";
 
 interface AgentListOptions extends BaseClientOptions {
   orgId?: string;

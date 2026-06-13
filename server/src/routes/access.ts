@@ -1,41 +1,34 @@
-import {
-  createHash,
-  generateKeyPairSync,
-  randomBytes,
-  timingSafeEqual
-} from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { Router } from "express";
-import type { Request } from "express";
-import { and, eq, isNull, desc } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   agentApiKeys,
-  authUsers,
   invites,
   joinRequests
 } from "@rudderhq/db";
+import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
 import {
   acceptInviteSchema,
-  createCliAuthChallengeSchema,
   claimJoinRequestApiKeySchema,
+  createCliAuthChallengeSchema,
   createCompanyInviteSchema,
   createOpenClawInvitePromptSchema,
   listJoinRequestsQuerySchema,
   resolveCliAuthChallengeSchema,
   updateMemberPermissionsSchema,
-  updateUserCompanyAccessSchema,
-  PERMISSION_KEYS
+  updateUserCompanyAccessSchema
 } from "@rudderhq/shared";
-import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import type { Request } from "express";
+import { Router } from "express";
 import {
-  forbidden,
+  claimBoardOwnership,
+  inspectBoardClaimChallenge
+} from "../board-claim.js";
+import {
+  badRequest,
   conflict,
+  forbidden,
   notFound,
-  unauthorized,
-  badRequest
+  unauthorized
 } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
@@ -47,15 +40,11 @@ import {
   logActivity,
   notifyHireApproved
 } from "../services/index.js";
+import { buildInviteOnboardingManifest, buildInviteOnboardingTextDocument, grantsFromDefaults, inviteExpired, isInviteTokenHashCollisionError, isLocalImplicit, mergeInviteDefaults, normalizeAgentDefaultsForJoin, probeInviteResolutionTarget, requestIp, resolveActorEmail, resolveJoinRequestAgentManagerId, toInviteSummaryResponse } from "./access-onboarding.helpers.js";
+import { buildCliAuthApprovalPath, buildJoinDefaultsPayloadForAccept, canReplayOpenClawGatewayInviteAccept, companyInviteExpiresAt, createClaimSecret, createInviteToken, hashToken, INVITE_TOKEN_MAX_RETRIES, isPlainObject, JoinDiagnostic, listAvailableSkills, mergeJoinDefaultsPayloadForReplay, readSkillMarkdown, requestBaseUrl, summarizeOpenClawGatewayDefaultsForLog, toJoinRequestResponse, tokenHashesMatch } from "./access.helpers.js";
 import { assertCompanyAccess } from "./authz.js";
-import {
-  claimBoardOwnership,
-  inspectBoardClaimChallenge
-} from "../board-claim.js";
-import { hashToken, INVITE_TOKEN_PREFIX, INVITE_TOKEN_ALPHABET, INVITE_TOKEN_SUFFIX_LENGTH, INVITE_TOKEN_MAX_RETRIES, COMPANY_INVITE_TTL_MS, createInviteToken, createClaimSecret, companyInviteExpiresAt, tokenHashesMatch, requestBaseUrl, buildCliAuthApprovalPath, readSkillMarkdown, resolveRudderSkillsDir, parseSkillFrontmatter, AvailableSkill, listAvailableSkills, toJoinRequestResponse, JoinDiagnostic, isPlainObject, isLoopbackHost, normalizeHostname, normalizeHeaderValue, extractHeaderEntries, normalizeHeaderMap, nonEmptyTrimmedString, headerMapHasKeyIgnoreCase, headerMapGetIgnoreCase, tokenFromAuthorizationHeader, parseBooleanLike, generateEd25519PrivateKeyPem, buildJoinDefaultsPayloadForAccept, mergeJoinDefaultsPayloadForReplay, canReplayOpenClawGatewayInviteAccept, summarizeSecretForLog, summarizeOpenClawGatewayDefaultsForLog } from "./access.helpers.js";
-import { normalizeAgentDefaultsForJoin, toInviteSummaryResponse, buildOnboardingDiscoveryDiagnostics, buildOnboardingConnectionCandidates, buildInviteOnboardingManifest, buildInviteOnboardingTextDocument, extractInviteMessage, mergeInviteDefaults, requestIp, inviteExpired, isLocalImplicit, resolveActorEmail, grantsFromDefaults, JoinRequestManagerCandidate, resolveJoinRequestAgentManagerId, isInviteTokenHashCollisionError, isAbortError, InviteResolutionProbe, probeInviteResolutionTarget } from "./access-onboarding.helpers.js";
-export { companyInviteExpiresAt, buildJoinDefaultsPayloadForAccept, mergeJoinDefaultsPayloadForReplay, canReplayOpenClawGatewayInviteAccept } from "./access.helpers.js";
-export { normalizeAgentDefaultsForJoin, buildInviteOnboardingTextDocument, resolveJoinRequestAgentManagerId } from "./access-onboarding.helpers.js";
+export { buildInviteOnboardingTextDocument, normalizeAgentDefaultsForJoin, resolveJoinRequestAgentManagerId } from "./access-onboarding.helpers.js";
+export { buildJoinDefaultsPayloadForAccept, canReplayOpenClawGatewayInviteAccept, companyInviteExpiresAt, mergeJoinDefaultsPayloadForReplay } from "./access.helpers.js";
 
 export function accessRoutes(
   db: Db,

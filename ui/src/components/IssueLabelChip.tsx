@@ -1,5 +1,5 @@
-import type { IssueLabel } from "@rudderhq/shared";
 import { cn } from "@/lib/utils";
+import type { IssueLabel } from "@rudderhq/shared";
 
 type IssueLabelChipSize = "xs" | "sm";
 

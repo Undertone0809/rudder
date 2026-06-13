@@ -49,13 +49,11 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
 };
 
 export { execute } from "./execute.js";
-export { listPiSkills, syncPiSkills } from "./skills.js";
-export { testEnvironment } from "./test.js";
 export {
-  listPiModels,
   discoverPiModels,
   discoverPiModelsCached,
-  ensurePiModelConfiguredAndAvailable,
-  resetPiModelsCacheForTests,
+  ensurePiModelConfiguredAndAvailable, listPiModels, resetPiModelsCacheForTests
 } from "./models.js";
-export { parsePiJsonl, isPiUnknownSessionError } from "./parse.js";
+export { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
+export { listPiSkills, syncPiSkills } from "./skills.js";
+export { testEnvironment } from "./test.js";

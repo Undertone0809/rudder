@@ -1,29 +1,29 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  copyGitHooksToWorktreeGitDir,
-  copySeededSecretsKey,
-  readSourceAttachmentBody,
-  rebindWorkspaceCwd,
-  resolveSourceConfigPath,
-  resolveGitWorktreeAddArgs,
-  resolveWorktreeMakeTargetPath,
-  worktreeInitCommand,
-  worktreeMakeCommand,
-} from "../commands/worktree.js";
 import {
   buildWorktreeConfig,
   buildWorktreeEnvEntries,
   formatShellExports,
   generateWorktreeColor,
-  resolveWorktreeSeedPlan,
   resolveWorktreeLocalPaths,
+  resolveWorktreeSeedPlan,
   rewriteLocalUrlPort,
   sanitizeWorktreeInstanceId,
 } from "../commands/worktree-lib.js";
+import {
+  copyGitHooksToWorktreeGitDir,
+  copySeededSecretsKey,
+  readSourceAttachmentBody,
+  rebindWorkspaceCwd,
+  resolveGitWorktreeAddArgs,
+  resolveSourceConfigPath,
+  resolveWorktreeMakeTargetPath,
+  worktreeInitCommand,
+  worktreeMakeCommand,
+} from "../commands/worktree.js";
 import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type RudderConfig } from "../config/schema.js";
 
 const ORIGINAL_CWD = process.cwd();

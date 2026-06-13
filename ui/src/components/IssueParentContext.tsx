@@ -1,7 +1,7 @@
 import { Link } from "@/lib/router";
-import { ListTree } from "lucide-react";
-import type { Issue } from "@rudderhq/shared";
 import { issueUrl } from "@/lib/utils";
+import type { Issue } from "@rudderhq/shared";
+import { ListTree } from "lucide-react";
 import { StatusIcon } from "./StatusIcon";
 
 type IssueParentContextIssue = NonNullable<NonNullable<Issue["ancestors"]>[number]>;

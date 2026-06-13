@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { createTestHarness } from "@rudderhq/plugin-sdk/testing";
+import { describe, expect, it } from "vitest";
 import manifest from "../src/manifest.js";
 import plugin from "../src/worker.js";
 

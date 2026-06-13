@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LangfuseObservation } from "@langfuse/tracing";
 import type { ExecutionObservabilityContext } from "@rudderhq/shared";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockStartExecutionChildObservation = vi.hoisted(() => vi.fn());
 const mockUpdateExecutionObservation = vi.hoisted(() => vi.fn());

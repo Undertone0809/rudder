@@ -1,32 +1,5 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import type { TranscriptEntry } from "../../agent-runtimes";
-import { MarkdownBody, type MarkdownLinkClickHandler } from "../MarkdownBody";
-import { cn, formatTokens } from "../../lib/utils";
-import { readDesktopShell } from "../../lib/desktop-shell";
-import { stripBenignStderr } from "../../lib/benign-stderr";
-import { useOptionalToast } from "../../context/ToastContext";
-import {
-  Boxes,
-  Check,
-  ChevronRight,
-  CircleAlert,
-  FileDiff,
-  FileSearch,
-  FileText,
-  FolderOpen,
-  Globe,
-  ListTree,
-  Loader2,
-  Logs,
-  Plug,
-  Search,
-  TerminalSquare,
-  User,
-  Wrench,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import { TranscriptMode, TranscriptDensity, TranscriptPresentation, TranscriptToolCategory, TranscriptDigestBucket, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptActionIconTreatment, TranscriptToolSemanticInfo, TranscriptToolCardEntry, TranscriptMemoryScope, TranscriptMemoryUpdateChange, TranscriptTodoListItem, RunTranscriptViewProps, TranscriptBlock, ChatTranscriptTurn, ChatTranscriptAction, COMMON_FILENAME_TOKENS, STRONG_WRITE_COMMAND_TOKENS, LONG_EVENT_COLLAPSE_CHARS, LONG_EVENT_COLLAPSE_LINES, LOCAL_POSIX_FILE_ROOTS, TranscriptMarkdownLinkClickHandler, asRecord, decodeFileUrlPath, resolveTranscriptLocalFileTarget, shouldHandlePlainClick, compactWhitespace, isTurnStartedText, isRudderDeveloperDiagnosticLine, isRudderDeveloperDiagnosticContinuationLine, filterRoutineStdout, isWarningStderrLine, isAnalyticsForbiddenHtmlStart, filterRenderableTranscriptEntries, shouldCollapseEventText, formatTranscriptTimestamp, getTranscriptActionIconTreatment, getTranscriptActionIconTone, TranscriptActionIcon, TranscriptActionIconSlot, TranscriptActionIconStack, getTranscriptTimestampTitle, formatTranscriptDuration, truncate, pluralize, humanizeLabel } from "./RunTranscriptView.common";
-import { decodeShellEscapes, stripWrappedShell, tokenizeShellForClassification, shellTokensForCommand, isShellControlToken, commandSegmentFrom, splitShellCommandSegments, hasHelpSignal, hasStdoutWriteRedirect, extractStdoutWriteRedirectTarget, extractStdoutWriteRedirectTargetFromTokens, commandSegmentHasStdoutWriteRedirect, commandUsesInPlaceSed, commandUsesInPlacePerl, isPackageInstallCommand, commandSegmentUsesInPlaceSed, commandSegmentUsesInPlacePerl, findStrongEditSegment, hasPackageInstallSegment, getShellPositionalArgsFromTokens, classifyShellCommand, unwrapQuotedToken, cleanShellToken, normalizeTranscriptPathToken, titleCaseAgentSlug, inferAgentNameFromMemoryPath, classifyAgentMemoryPath, formatMemoryScopeLabel, formatMemoryScopeSummary, formatMemoryEffect, formatMemoryOperation, splitFileChangeEntries, extractMemoryUpdateFailureReason, parseMemoryUpdateSystemText, tokenizeShell } from "./RunTranscriptView.shell";
+import { asRecord, COMMON_FILENAME_TOKENS, compactWhitespace, humanizeLabel, pluralize, TranscriptDensity, TranscriptToolCategory, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
+import { classifyShellCommand, cleanShellToken, commandSegmentFrom, commandSegmentUsesInPlaceSed, extractStdoutWriteRedirectTarget, findStrongEditSegment, getShellPositionalArgsFromTokens, hasHelpSignal, isShellControlToken, shellTokensForCommand, stripWrappedShell, tokenizeShell } from "./RunTranscriptView.shell";
 
 export function normalizePathTarget(value: string): string | null {
   const normalized = cleanShellToken(compactWhitespace(value));

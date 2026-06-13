@@ -1,19 +1,12 @@
-import { createWriteStream } from "node:fs";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { pipeline } from "node:stream/promises";
 import type { AgentRuntimeMediaAttachment, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
-import type { Db } from "@rudderhq/db";
 import type {
   AgentRuntimeType,
-  ChatConversation,
   ChatContextLink,
-  IssueLabel,
+  ChatConversation,
   ChatMessage,
   ChatRuntimeDescriptor,
+  IssueLabel,
   OperatorProfileSettings,
 } from "@rudderhq/shared";
 import {
@@ -22,15 +15,15 @@ import {
   chatIssueProposalFromStructuredPayload,
   sanitizeChatStructuredPayload,
 } from "@rudderhq/shared";
-import { findServerAdapter } from "../agent-runtimes/index.js";
+import { createWriteStream } from "node:fs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import type { AgentRuntimeInvocationMeta, AgentRuntimeLoadedSkillMeta } from "../agent-runtimes/index.js";
 import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "../agent-runtimes/types.js";
-import { agentRunContextService, type AgentRunContextAgent } from "./agent-run-context.js";
-import { agentService } from "./agents.js";
-import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import type { StorageService } from "../storage/types.js";
-import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
-import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
+import { type AgentRunContextAgent } from "./agent-run-context.js";
 
 export const CHAT_UNSUPPORTED_ADAPTER_TYPES = new Set<AgentRuntimeType>(["process", "http"]);
 export const CHAT_RESULT_SENTINEL_PREFIX = "__RUDDER_RESULT_";

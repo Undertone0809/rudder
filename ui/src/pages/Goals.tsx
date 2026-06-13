@@ -1,15 +1,15 @@
-import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { goalsApi } from "../api/goals";
-import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "../context/DialogContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { queryKeys } from "../lib/queryKeys";
-import { GoalTree } from "../components/GoalTree";
-import { EmptyState } from "../components/EmptyState";
-import { PageSkeleton } from "../components/PageSkeleton";
 import { Button } from "@/components/ui/button";
-import { Target, Plus } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Plus, Target } from "lucide-react";
+import { useEffect } from "react";
+import { goalsApi } from "../api/goals";
+import { EmptyState } from "../components/EmptyState";
+import { GoalTree } from "../components/GoalTree";
+import { PageSkeleton } from "../components/PageSkeleton";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { queryKeys } from "../lib/queryKeys";
 
 export function Goals() {
   const { selectedOrganizationId } = useOrganization();

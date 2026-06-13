@@ -1,10 +1,10 @@
 import * as p from "@clack/prompts";
-import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type DatabaseConfig } from "../config/schema.js";
 import {
   resolveDefaultBackupDir,
   resolveDefaultEmbeddedPostgresDir,
   resolveRudderInstanceId,
 } from "../config/home.js";
+import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type DatabaseConfig } from "../config/schema.js";
 
 function readEmbeddedPortFromEnv(): number {
   return Math.max(1, Number(process.env.RUDDER_EMBEDDED_POSTGRES_PORT) || 54329);

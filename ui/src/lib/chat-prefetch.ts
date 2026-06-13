@@ -1,6 +1,6 @@
-import type { QueryClient } from "@tanstack/react-query";
 import { chatsApi } from "@/api/chats";
 import { queryKeys } from "@/lib/queryKeys";
+import type { QueryClient } from "@tanstack/react-query";
 
 export function prefetchChatConversation(queryClient: QueryClient, chatId: string) {
   return Promise.all([

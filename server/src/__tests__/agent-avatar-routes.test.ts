@@ -1,9 +1,9 @@
 import express from "express";
-import request from "supertest";
 import sharp from "sharp";
+import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { agentRoutes } from "../routes/agents.js";
 import { errorHandler } from "../middleware/index.js";
+import { agentRoutes } from "../routes/agents.js";
 import type { StorageService } from "../storage/types.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";

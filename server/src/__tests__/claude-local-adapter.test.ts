@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { isClaudeMaxTurnsResult } from "@rudderhq/agent-runtime-claude-local/server";
+import { describe, expect, it } from "vitest";
 
 describe("claude_local max-turn detection", () => {
   it("detects max-turn exhaustion by subtype", () => {

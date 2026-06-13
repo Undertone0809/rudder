@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, forwardRef, useImperativeHandle } from "react";
 import { createRoot } from "react-dom/client";
-import { forwardRef, useImperativeHandle } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../context/I18nContext";
 import { AutomationDetail } from "./AutomationDetail";

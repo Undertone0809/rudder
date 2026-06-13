@@ -6,9 +6,9 @@ import {
   normalizeLangfuseScoreValue,
   redactLangfuseValue,
   resolveLangfuseTraceIdentity,
-  updateExecutionTraceSession,
   updateExecutionTraceIO,
   updateExecutionTraceName,
+  updateExecutionTraceSession,
 } from "../langfuse.js";
 
 describe("langfuse helpers", () => {

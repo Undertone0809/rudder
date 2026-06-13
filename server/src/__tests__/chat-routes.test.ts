@@ -3,8 +3,8 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { chatRoutes } from "../routes/chats.js";
 import { errorHandler } from "../middleware/index.js";
+import { chatRoutes } from "../routes/chats.js";
 import { claimChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
 
 const mockWithExecutionObservation = vi.hoisted(() => vi.fn(async (_context, _input, fn) => fn(null)));

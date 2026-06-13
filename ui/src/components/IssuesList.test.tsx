@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
+import type { Issue } from "@rudderhq/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Issue } from "@rudderhq/shared";
 import { IssuesList } from "./IssuesList";
 
 (

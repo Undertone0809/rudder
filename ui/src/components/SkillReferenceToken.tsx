@@ -1,6 +1,6 @@
-import { Boxes, ArrowUpRight } from "lucide-react";
 import { skillTokenIconInlineStyle } from "@/lib/skill-reference";
 import { cn } from "@/lib/utils";
+import { ArrowUpRight, Boxes } from "lucide-react";
 
 export interface MarkdownSkillReferencePreview {
   href: string;

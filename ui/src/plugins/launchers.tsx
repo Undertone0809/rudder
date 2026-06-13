@@ -1,3 +1,17 @@
+import { authApi } from "@/api/auth";
+import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
+import { Button } from "@/components/ui/button";
+import { queryKeys } from "@/lib/queryKeys";
+import { useLocation, useNavigate } from "@/lib/router";
+import { cn } from "@/lib/utils";
+import type {
+  PluginLauncherBounds,
+  PluginLauncherDeclaration,
+  PluginLauncherPlacementZone,
+  PluginUiSlotEntityType,
+} from "@rudderhq/shared";
+import { PLUGIN_LAUNCHER_BOUNDS } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
 import {
   Component,
   createContext,
@@ -11,24 +25,9 @@ import {
   useState,
   type CSSProperties,
   type ErrorInfo,
-  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
-  type ReactNode,
+  type ReactNode
 } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { PLUGIN_LAUNCHER_BOUNDS } from "@rudderhq/shared";
-import type {
-  PluginLauncherBounds,
-  PluginLauncherDeclaration,
-  PluginLauncherPlacementZone,
-  PluginUiSlotEntityType,
-} from "@rudderhq/shared";
-import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
-import { authApi } from "@/api/auth";
-import { Button } from "@/components/ui/button";
-import { useNavigate, useLocation } from "@/lib/router";
-import { queryKeys } from "@/lib/queryKeys";
-import { cn } from "@/lib/utils";
 import {
   PluginBridgeContext,
   type PluginHostContext,

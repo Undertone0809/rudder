@@ -1,5 +1,15 @@
-import { useRef, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+} from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useNavigate } from "@/lib/router";
 import type {
   CreateProjectInlineResourceInput,
   OrganizationResource,
@@ -8,52 +18,42 @@ import type {
   ProjectResourceAttachmentInput,
   ProjectResourceAttachmentRole,
 } from "@rudderhq/shared";
+import { PROJECT_COLORS } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Calendar,
+  CircleHelp,
+  FileText,
+  Folder,
+  LibraryBig,
+  Link2,
+  Maximize2,
+  Minimize2,
+  Plus,
+  Target,
+  X,
+} from "lucide-react";
+import { useRef, useState } from "react";
+import { assetsApi } from "../api/assets";
+import { goalsApi } from "../api/goals";
+import { organizationsApi } from "../api/orgs";
+import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
-import { projectsApi } from "../api/projects";
-import { goalsApi } from "../api/goals";
-import { organizationsApi } from "../api/orgs";
-import { assetsApi } from "../api/assets";
-import { queryKeys } from "../lib/queryKeys";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { libraryCopy } from "../lib/library-copy";
-import { useNavigate } from "@/lib/router";
+import { queryKeys } from "../lib/queryKeys";
 import {
-  organizationResourceKindOptions,
   organizationResourceKindLabel,
+  organizationResourceKindOptions,
   organizationResourceSourceTypeLabel,
 } from "../lib/resource-options";
-import {
-  Dialog,
-  DialogContent,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Maximize2,
-  Minimize2,
-  Target,
-  Calendar,
-  Plus,
-  X,
-  Link2,
-  Folder,
-  FileText,
-  LibraryBig,
-  CircleHelp,
-} from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { PROJECT_COLORS } from "@rudderhq/shared";
 import { cn } from "../lib/utils";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
+import { ProjectIcon, ProjectIdentityPicker } from "./ProjectIdentity";
 import { ResourceLocatorField, suggestResourceNameFromLocator } from "./ResourceLocatorField";
 import { StatusBadge } from "./StatusBadge";
-import { ProjectIcon, ProjectIdentityPicker } from "./ProjectIdentity";
 
 const projectStatuses = [
   { value: "backlog", label: "Backlog" },

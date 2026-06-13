@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
 import type { OrganizationSkillListItem } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import {
   appendSkillReferencesToDraft,
   buildOrganizationSkillPickerItems,
-  filterSelectableNewAgentOrganizationSkillItems,
   filterOrganizationSkillPickerItems,
+  filterSelectableNewAgentOrganizationSkillItems,
   organizationSkillMarkdownTarget,
 } from "./organization-skill-picker.js";
 

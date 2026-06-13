@@ -2,13 +2,13 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import {
-  readLocalRuntimeDescriptor,
   gracefullyStopRuntime,
   probeLocalRuntime,
+  readLocalRuntimeDescriptor,
   withRuntimeStartLock,
 } from "../server/src/local-runtime.ts";
 import { serverVersion } from "../server/src/version.ts";

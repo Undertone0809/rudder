@@ -1,7 +1,7 @@
+import type { PluginDetailTabProps, PluginPageProps } from "@rudderhq/plugin-sdk/ui";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PluginDetailTabProps, PluginPageProps } from "@rudderhq/plugin-sdk/ui";
 import { LinearIssueTab, LinearPluginPage, LinearPluginSettingsPage } from "../src/ui/index.js";
 
 const mockedUsePluginData = vi.fn();

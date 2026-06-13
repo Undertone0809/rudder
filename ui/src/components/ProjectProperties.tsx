@@ -1,19 +1,19 @@
-import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
 import { Link } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
 import type { Project } from "@rudderhq/shared";
-import { StatusBadge } from "./StatusBadge";
-import { cn, formatDate } from "../lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { AlertCircle, Archive, ArchiveRestore, Check, Loader2, Plus, X } from "lucide-react";
+import { useState } from "react";
 import { goalsApi } from "../api/goals";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";
 import { statusBadge, statusBadgeDefault } from "../lib/status-colors";
-import { Separator } from "@/components/ui/separator";
-import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { AlertCircle, Archive, ArchiveRestore, Check, Loader2, Plus, X } from "lucide-react";
+import { cn, formatDate } from "../lib/utils";
 import { DraftInput } from "./agent-config-primitives";
 import { InlineEditor } from "./InlineEditor";
+import { StatusBadge } from "./StatusBadge";
 
 const PROJECT_STATUSES = [
   { value: "backlog", label: "Backlog" },

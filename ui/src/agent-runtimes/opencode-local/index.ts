@@ -1,7 +1,6 @@
+import { buildOpenCodeLocalConfig, parseOpenCodeStdoutLine } from "@rudderhq/agent-runtime-opencode-local/ui";
 import type { UIAgentRuntimeModule } from "../types";
-import { parseOpenCodeStdoutLine } from "@rudderhq/agent-runtime-opencode-local/ui";
 import { OpenCodeLocalConfigFields } from "./config-fields";
-import { buildOpenCodeLocalConfig } from "@rudderhq/agent-runtime-opencode-local/ui";
 
 export const openCodeLocalUIAdapter: UIAgentRuntimeModule = {
   type: "opencode_local",

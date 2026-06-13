@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
-import type { ReactNode } from "react";
-import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ChatMessage, Issue, IssueComment } from "@rudderhq/shared";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
 import { issuesApi } from "@/api/issues";
+import type { ChatMessage, Issue, IssueComment } from "@rudderhq/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatRichReferences, markdownPreview } from "./ChatRichReferences";
 
 vi.mock("@/api/issues", () => ({

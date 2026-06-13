@@ -1,4 +1,4 @@
-import { readConfig, configExists, resolveConfigPath } from "../config/store.js";
+import { configExists, readConfig, resolveConfigPath } from "../config/store.js";
 import type { CheckResult } from "./index.js";
 
 export function configCheck(configPath?: string): CheckResult {

@@ -4,8 +4,8 @@ import {
   ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES,
   ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES,
 } from "../constants.js";
-import { envConfigSchema } from "./secret.js";
 import { validateModelFallbacksConfig } from "./model-fallbacks.js";
+import { envConfigSchema } from "./secret.js";
 
 export const organizationIntelligenceProfilePurposeSchema = z.enum(
   ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES,

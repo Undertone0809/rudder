@@ -26,8 +26,8 @@ import type {
   LinearPluginConfig,
   LinearTeamMapping,
   PageBootstrapData,
-  SettingsCatalogData,
   SettingsBootstrapData,
+  SettingsCatalogData,
 } from "./types.js";
 
 function emptyConfig(): LinearPluginConfig {

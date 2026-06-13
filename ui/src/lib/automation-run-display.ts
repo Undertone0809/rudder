@@ -1,5 +1,4 @@
-import type { AutomationRunSummary } from "@rudderhq/shared";
-import type { InstanceLocale } from "@rudderhq/shared";
+import type { AutomationRunSummary, InstanceLocale } from "@rudderhq/shared";
 
 type AutomationRunDisplayInput = Pick<
   AutomationRunSummary,

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  chatAutomationCreateFromStructuredPayload,
   chatAskUserRequestFromStructuredPayload,
   chatAskUserRequestSchema,
+  chatAutomationCreateFromStructuredPayload,
   chatIssueProposalFromStructuredPayload,
-  convertChatToIssueSchema,
   chatRichReferencesFromStructuredPayload,
+  convertChatToIssueSchema,
   sanitizeChatStructuredPayload,
 } from "./chat.js";
 

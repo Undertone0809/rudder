@@ -1,35 +1,35 @@
+import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
+import {
+  asNumber,
+  asString,
+  asStringArray,
+  buildRudderEnv,
+  ensureAbsoluteDirectory,
+  ensureCommandResolvable,
+  ensureLocalCliCredentialShimsInPath,
+  ensurePathInEnv,
+  ensureRudderCliInPath,
+  ensureRudderSkillSymlink,
+  joinPromptSections,
+  loadAgentInstructionsPrefix,
+  parseObject,
+  readRudderRuntimeSkillEntries,
+  redactEnvForLogs,
+  removeMaintainerOnlySkillSymlinks,
+  renderTemplate,
+  resolveLocalOperatorHome,
+  resolveRudderDesiredSkillNames,
+  runChildProcess,
+  selectPromptTemplate,
+  syncLocalCliCredentialHomeEntries,
+} from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
-import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
-import {
-  asString,
-  asNumber,
-  asStringArray,
-  parseObject,
-  buildRudderEnv,
-  joinPromptSections,
-  redactEnvForLogs,
-  ensureAbsoluteDirectory,
-  ensureCommandResolvable,
-  ensureLocalCliCredentialShimsInPath,
-  ensureRudderSkillSymlink,
-  ensureRudderCliInPath,
-  ensurePathInEnv,
-  resolveLocalOperatorHome,
-  syncLocalCliCredentialHomeEntries,
-  renderTemplate,
-  runChildProcess,
-  readRudderRuntimeSkillEntries,
-  resolveRudderDesiredSkillNames,
-  selectPromptTemplate,
-  loadAgentInstructionsPrefix,
-} from "@rudderhq/agent-runtime-utils/server-utils";
-import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
-import { removeMaintainerOnlySkillSymlinks } from "@rudderhq/agent-runtime-utils/server-utils";
+import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUDDER_INSTANCE_ID = "default";

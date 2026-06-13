@@ -1,116 +1,22 @@
 // @ts-nocheck
-import fs from "node:fs/promises";
-import path from "node:path";
-import { and, asc, desc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
-import type { Db } from "@rudderhq/db";
+import {
+  agents,
+  agentWakeupRequests,
+  heartbeatRunEvents,
+  heartbeatRuns,
+  issues
+} from "@rudderhq/db";
 import type {
   AgentSkillAnalytics,
   AgentSkillTelemetryEvidence,
-  AgentSkillTelemetryEvidenceCounts,
-  BillingType,
-  ExecutionObservabilityContext,
-  ExecutionObservabilitySurface,
-  HeartbeatRecoveryTrigger,
-  HeartbeatRunRecoveryContext,
+  AgentSkillTelemetryEvidenceCounts
 } from "@rudderhq/shared";
-import {
-  AGENT_RUN_CONCURRENCY_DEFAULT,
-  AGENT_RUN_CONCURRENCY_MAX,
-  AGENT_RUN_CONCURRENCY_MIN,
-  summarizeTokenUsage,
-} from "@rudderhq/shared";
-import {
-  agents,
-  agentRuntimeState,
-  agentTaskSessions,
-  agentWakeupRequests,
-  activityLog,
-  authUsers,
-  heartbeatRunEvents,
-  heartbeatRuns,
-  issueComments,
-  issues,
-  organizations,
-  projects,
-} from "@rudderhq/db";
+import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { getServerAdapter, runningProcesses } from "../../agent-runtimes/index.js";
+import { parseObject } from "../../agent-runtimes/utils.js";
 import { conflict, notFound } from "../../errors.js";
-import {
-  createExecutionScores,
-  observeExecutionEvent,
-  updateExecutionObservation,
-  updateExecutionTraceIO,
-  updateExecutionTraceName,
-  updateExecutionTraceSession,
-  withExecutionObservation,
-} from "../../langfuse.js";
-import { emitExecutionTranscriptTree } from "../../langfuse-transcript.js";
-import { logger } from "../../middleware/logger.js";
-import { publishLiveEvent } from "../live-events.js";
-import { getRunLogStore, type RunLogHandle } from "../run-log-store.js";
-import { findServerAdapter, getServerAdapter, runningProcesses } from "../../agent-runtimes/index.js";
-import type {
-  AgentRuntimeExecutionResult,
-  AgentRuntimeInvocationMeta,
-  AgentRuntimeSessionCodec,
-  UsageSummary,
-} from "../../agent-runtimes/index.js";
-import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
-import { parseObject, asBoolean, asNumber, appendWithCap, MAX_EXCERPT_BYTES } from "../../agent-runtimes/utils.js";
-import { costService } from "../costs.js";
-import { budgetService, type BudgetEnforcementScope } from "../budgets.js";
-import {
-  agentRunContextService,
-  type ResolvedWorkspaceForRun,
-} from "../agent-run-context.js";
-import {
-  resolveDefaultAgentWorkspaceDir,
-} from "../../home-paths.js";
-import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
-import { summarizeRuntimeSkillsForTrace } from "../runtime-trace-metadata.js";
-import {
-  buildWorkspaceReadyComment,
-  cleanupExecutionWorkspaceArtifacts,
-  ensureRuntimeServicesForRun,
-  persistAdapterManagedRuntimeServices,
-  realizeExecutionWorkspace,
-  releaseRuntimeServicesForRun,
-  sanitizeRuntimeServiceBaseEnv,
-} from "../workspace-runtime.js";
-import { issueService } from "../issues.js";
-import {
-  buildIssueConvergenceReviewWakeupOptions,
-  buildIssueReviewCloseoutWakeupOptions,
-} from "../issue-review-wakeup.js";
-import { runWorkspaceService } from "../execution-workspaces.js";
-import { buildObservedRunLangfuseScores } from "../run-intelligence.js";
-import { workspaceOperationService } from "../workspace-operations.js";
-import {
-  isManagedWorkspaceConfigurationError,
-  isWorkspacePermissionPreflightError,
-  preflightManagedAgentWorkspace,
-} from "../managed-workspace-preflight.js";
-import {
-  buildExecutionWorkspaceAdapterConfig,
-  issueExecutionWorkspaceModeForPersistedWorkspace,
-  parseIssueExecutionWorkspaceSettings,
-  parseProjectExecutionWorkspacePolicy,
-  resolveExecutionWorkspaceMode,
-} from "../execution-workspace-policy.js";
-import { instanceSettingsService } from "../instance-settings.js";
-import { logActivity } from "../activity-log.js";
-import { redactCurrentUserText, redactCurrentUserValue } from "../../log-redaction.js";
-import {
-  hasSessionCompactionThresholds,
-  resolveSessionCompactionPolicy,
-  type SessionCompactionPolicy,
-} from "@rudderhq/agent-runtime-utils";
-import {
-  buildCreateAgentBenchmarkTags,
-  coerceCreateAgentBenchmarkMetadata,
-  extractCreateAgentBenchmarkMetadata,
-} from "@rudderhq/run-intelligence-core";
-import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
+import { type BudgetEnforcementScope } from "../budgets.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 

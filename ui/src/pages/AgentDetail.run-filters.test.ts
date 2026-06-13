@@ -1,18 +1,18 @@
 // @vitest-environment jsdom
 
+import type { HeartbeatRun } from "@rudderhq/shared";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it } from "vitest";
-import type { HeartbeatRun } from "@rudderhq/shared";
 import {
   applyRunFilters,
   applyRunSort,
   parseRunFilterState,
-  RunFiltersToolbar,
-  type RunFilterState,
   runFilterChips,
+  RunFiltersToolbar,
   runSkillOptions,
   writeRunFilterState,
+  type RunFilterState,
 } from "./AgentDetail.run-filters";
 
 (

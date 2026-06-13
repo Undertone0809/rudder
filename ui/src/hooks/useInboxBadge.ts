@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import type { SidebarBadges } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import { messengerApi } from "../api/messenger";
 import { sidebarBadgesApi } from "../api/sidebarBadges";
-import { queryKeys } from "../lib/queryKeys";
 import {
   getInboxNotificationContent,
   loadDismissedInboxItems,
   saveDismissedInboxItems,
 } from "../lib/inbox";
+import { queryKeys } from "../lib/queryKeys";
 
 const INBOX_BADGE_THREAD_PREVIEW_LIMIT = 10;
 const EMPTY_SIDEBAR_BADGES: SidebarBadges = {

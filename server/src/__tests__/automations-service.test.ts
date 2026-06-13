@@ -1,37 +1,37 @@
-import { createHmac, randomUUID } from "node:crypto";
-import fs from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { asc, eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
   agents,
   applyPendingMigrations,
   approvals,
   assets,
-  chatAttachments,
-  organizations,
-  organizationSecrets,
-  organizationSecretVersions,
-  createDb,
-  ensurePostgresDatabase,
-  heartbeatRuns,
-  issues,
-  issueFollows,
-  projects,
   automationRuns,
   automations,
   automationTriggers,
+  chatAttachments,
   chatContextLinks,
   chatConversations,
   chatMessages,
+  createDb,
+  ensurePostgresDatabase,
+  heartbeatRuns,
+  issueFollows,
+  issues,
+  organizations,
+  organizationSecrets,
+  organizationSecretVersions,
+  projects,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { issueService } from "../services/issues.ts";
+import { asc, eq } from "drizzle-orm";
+import { createHmac, randomUUID } from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { automationService } from "../services/automations.ts";
 import { claimChatGeneration } from "../services/chat-generation-locks.ts";
+import { issueService } from "../services/issues.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;

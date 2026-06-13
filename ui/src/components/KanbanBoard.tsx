@@ -1,36 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { formatChatAgentLabel } from "@/lib/agent-labels";
+import { formatAssigneeUserLabel } from "@/lib/assignees";
+import { formatIssueCardDate } from "@/lib/issue-card-date";
+import { sortIssues, type IssueSortState } from "@/lib/issue-sort";
+import { formatPriorityLabel } from "@/lib/priorities";
 import { Link } from "@/lib/router";
+import { cn } from "@/lib/utils";
 import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  useDroppable,
   useSensor,
   useSensors,
-  type DragStartEvent,
   type DragEndEvent,
   type DragOverEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
-import { useDroppable } from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
 import {
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { StatusIcon } from "./StatusIcon";
-import { PriorityIcon } from "./PriorityIcon";
-import { AgentIcon } from "./AgentAvatar";
-import { Button } from "@/components/ui/button";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { cn } from "@/lib/utils";
-import { formatChatAgentLabel } from "@/lib/agent-labels";
-import { formatAssigneeUserLabel } from "@/lib/assignees";
-import { sortIssues, type IssueSortState } from "@/lib/issue-sort";
-import { formatPriorityLabel } from "@/lib/priorities";
-import { IssueLabelChip } from "./IssueLabelChip";
-import { formatIssueCardDate } from "@/lib/issue-card-date";
-import { CalendarClock, FolderKanban, Pin, Plus, Tags, User, UserCheck } from "lucide-react";
+import { CSS } from "@dnd-kit/utilities";
 import type { AgentRole, Issue, IssueStatus, ReorderIssue } from "@rudderhq/shared";
+import { CalendarClock, FolderKanban, Pin, Plus, Tags, User, UserCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AgentIcon } from "./AgentAvatar";
+import { IssueLabelChip } from "./IssueLabelChip";
+import { PriorityIcon } from "./PriorityIcon";
+import { StatusIcon } from "./StatusIcon";
 
 const boardStatuses: IssueStatus[] = [
   "backlog",

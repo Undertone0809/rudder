@@ -1,7 +1,7 @@
-import { pgTable, uuid, timestamp, index, primaryKey } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
+import { index, pgTable, primaryKey, timestamp, uuid } from "drizzle-orm/pg-core";
 import { issues } from "./issues.js";
 import { labels } from "./labels.js";
+import { organizations } from "./organizations.js";
 
 export const issueLabels = pgTable(
   "issue_labels",

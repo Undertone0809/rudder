@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { HeartbeatRun } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import { describeRunReason } from "./run-reason";
 
 function makeRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {

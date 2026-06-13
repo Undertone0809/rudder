@@ -1,4 +1,3 @@
-import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import {
   createProjectSchema,
@@ -7,9 +6,10 @@ import {
   updateProjectResourceAttachmentSchema,
   updateProjectSchema,
 } from "@rudderhq/shared";
-import { validate } from "../middleware/validate.js";
-import { projectService, resourceCatalogService, logActivity } from "../services/index.js";
+import { Router, type Request } from "express";
 import { conflict } from "../errors.js";
+import { validate } from "../middleware/validate.js";
+import { logActivity, projectService, resourceCatalogService } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export function projectRoutes(db: Db) {

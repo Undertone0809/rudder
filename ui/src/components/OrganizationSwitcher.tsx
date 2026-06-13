@@ -1,14 +1,4 @@
-import {
-  Check,
-  ChevronsUpDown,
-  Plus,
-  Settings,
-} from "lucide-react";
-import type { CSSProperties } from "react";
-import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "../context/DialogContext";
-import { useSidebar } from "../context/SidebarContext";
-import { OrganizationPatternIcon } from "./OrganizationPatternIcon";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,15 +7,25 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { useLocation, useNavigate } from "@/lib/router";
-import { cn } from "@/lib/utils";
 import { sortOrganizationsByStoredOrder } from "@/lib/organization-order";
+import { useLocation, useNavigate } from "@/lib/router";
 import {
   buildSettingsOverlayState,
   rememberSettingsOverlayBackgroundPath,
 } from "@/lib/settings-overlay-state";
+import { cn } from "@/lib/utils";
+import {
+  Check,
+  ChevronsUpDown,
+  Plus,
+  Settings,
+} from "lucide-react";
+import type { CSSProperties } from "react";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useSidebar } from "../context/SidebarContext";
+import { OrganizationPatternIcon } from "./OrganizationPatternIcon";
 
 export function OrganizationSwitcher({ compact = false }: { compact?: boolean }) {
   const { organizations, selectedOrganization, setSelectedOrganizationId } = useOrganization();

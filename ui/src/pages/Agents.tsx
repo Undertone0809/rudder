@@ -1,24 +1,24 @@
-import { useState, useEffect, useMemo } from "react";
-import { Link, useNavigate, useLocation } from "@/lib/router";
+import { AgentActionsMenu } from "@/components/AgentActionsMenu";
+import { Tabs } from "@/components/ui/tabs";
+import { Link, useLocation, useNavigate } from "@/lib/router";
+import { AGENT_ROLE_LABELS, type Agent } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
+import { Bot, GitBranch, List, SlidersHorizontal } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { agentsApi, type OrgNode } from "../api/agents";
 import { HEARTBEAT_RUN_LIST_COMPACT_LIMIT, heartbeatsApi } from "../api/heartbeats";
-import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "../context/DialogContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useSidebar } from "../context/SidebarContext";
-import { queryKeys } from "../lib/queryKeys";
-import { agentSupportingLabel } from "../lib/agent-labels";
-import { StatusBadge } from "../components/StatusBadge";
-import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { relativeTime, cn, agentRouteRef, agentUrl } from "../lib/utils";
 import { PageTabBar } from "../components/PageTabBar";
-import { Tabs } from "@/components/ui/tabs";
-import { Bot, GitBranch, List, SlidersHorizontal } from "lucide-react";
-import { AgentActionsMenu } from "@/components/AgentActionsMenu";
-import { AGENT_ROLE_LABELS, type Agent } from "@rudderhq/shared";
+import { StatusBadge } from "../components/StatusBadge";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useSidebar } from "../context/SidebarContext";
+import { agentSupportingLabel } from "../lib/agent-labels";
+import { queryKeys } from "../lib/queryKeys";
+import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
+import { agentRouteRef, agentUrl, cn, relativeTime } from "../lib/utils";
 
 const adapterLabels: Record<string, string> = {
   claude_local: "Claude",

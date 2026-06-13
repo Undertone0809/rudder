@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import {
   useHostContext,
   usePluginAction,
@@ -14,6 +13,7 @@ import {
   type PluginSidebarProps,
   type PluginWidgetProps,
 } from "@rudderhq/plugin-sdk/ui";
+import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import {
   DEFAULT_CONFIG,
   JOB_KEYS,

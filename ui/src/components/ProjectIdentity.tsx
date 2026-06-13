@@ -1,9 +1,9 @@
-import type { CSSProperties } from "react";
-import { Check } from "lucide-react";
-import { DEFAULT_PROJECT_ICON, PROJECT_COLORS, PROJECT_ICONS, type ProjectIconName } from "@rudderhq/shared";
-import { cn } from "@/lib/utils";
 import { projectColorBackgroundStyle } from "@/lib/project-colors";
 import { getProjectIconComponent, normalizeProjectIconName } from "@/lib/project-icons";
+import { cn } from "@/lib/utils";
+import { DEFAULT_PROJECT_ICON, PROJECT_COLORS, PROJECT_ICONS, type ProjectIconName } from "@rudderhq/shared";
+import { Check } from "lucide-react";
+import type { CSSProperties } from "react";
 
 type ProjectIdentityShape = {
   name?: string | null;

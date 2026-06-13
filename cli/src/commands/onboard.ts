@@ -1,6 +1,4 @@
 import * as p from "@clack/prompts";
-import path from "node:path";
-import pc from "picocolors";
 import {
   AUTH_BASE_URL_MODES,
   DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
@@ -14,16 +12,9 @@ import {
   type SecretProvider,
   type StorageProvider,
 } from "@rudderhq/shared";
-import { configExists, readConfig, resolveConfigPath, writeConfig } from "../config/store.js";
-import type { RudderConfig } from "../config/schema.js";
+import path from "node:path";
+import pc from "picocolors";
 import { ensureAgentJwtSecret, resolveAgentJwtEnvFile } from "../config/env.js";
-import { ensureLocalSecretsKeyFile } from "../config/secrets-key.js";
-import { promptDatabase } from "../prompts/database.js";
-import { promptLlm } from "../prompts/llm.js";
-import { promptLogging } from "../prompts/logging.js";
-import { defaultSecretsConfig } from "../prompts/secrets.js";
-import { defaultStorageConfig, promptStorage } from "../prompts/storage.js";
-import { promptServer } from "../prompts/server.js";
 import {
   describeLocalInstancePaths,
   expandHomePrefix,
@@ -32,10 +23,19 @@ import {
   resolveDefaultLogsDir,
   resolveRudderInstanceId,
 } from "../config/home.js";
-import { bootstrapCeoInvite } from "./auth-bootstrap-ceo.js";
+import type { RudderConfig } from "../config/schema.js";
+import { ensureLocalSecretsKeyFile } from "../config/secrets-key.js";
+import { configExists, readConfig, resolveConfigPath, writeConfig } from "../config/store.js";
 import { detectPersistentCliState, installPersistentCli } from "../install.js";
+import { promptDatabase } from "../prompts/database.js";
+import { promptLlm } from "../prompts/llm.js";
+import { promptLogging } from "../prompts/logging.js";
+import { defaultSecretsConfig } from "../prompts/secrets.js";
+import { promptServer } from "../prompts/server.js";
+import { defaultStorageConfig, promptStorage } from "../prompts/storage.js";
 import { checkPostgresConnection } from "../runtime/database.js";
 import { printRudderCliBanner } from "../utils/banner.js";
+import { bootstrapCeoInvite } from "./auth-bootstrap-ceo.js";
 
 type SetupMode = "quickstart" | "advanced";
 

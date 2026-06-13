@@ -1,42 +1,21 @@
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
-  activityLog,
   agents,
   assets,
-  organizations,
-  organizationMemberships,
-  documents,
-  goals,
-  heartbeatRuns,
-  executionWorkspaces,
   issueAttachments,
-  issueFollows,
-  issueLabels,
   issueComments,
-  issueDocuments,
-  issueReadStates,
   issues,
-  labels,
-  projectWorkspaces,
-  projects,
+  projects
 } from "@rudderhq/db";
 import {
   extractAgentWakeMentionIds,
   extractProjectMentionIds,
-  isUuidLike,
-  type IssueSearchMatch,
-  type ReorderIssue,
+  isUuidLike
 } from "@rudderhq/shared";
-import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import {
-  defaultIssueExecutionWorkspaceSettingsForProject,
-  parseProjectExecutionWorkspacePolicy,
-} from "./execution-workspace-policy.js";
-import { instanceSettingsService } from "./instance-settings.js";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { forbidden, notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
-import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
-import { getDefaultCompanyGoal } from "./goals.js";
+import { instanceSettingsService } from "./instance-settings.js";
 
 import { MAX_ISSUE_COMMENT_PAGE_LIMIT } from "./issues.helpers.js";
 

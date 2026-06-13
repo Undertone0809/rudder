@@ -1,77 +1,107 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react"; import { createPortal } from "react-dom"; import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Archive,
-  ArrowUp,
-  Boxes,
-  Bot,
-  CheckCircle2,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Folder,
-  ListChecks,
-  Loader2,
-  MoreHorizontal,
-  Paperclip,
-  Pencil,
-  Pin,
-  PinOff,
-  Plus,
-  RotateCcw,
-  Settings2,
-  Square,
-  Trash2,
-  X, } from "lucide-react";
-import {
-  type Agent,
-  type Approval,
-  chatAskUserRequestFromStructuredPayload,
-  type ChatAskUserQuestion,
-  type ChatAskUserRequest,
-  type ChatConversation,
-  type ChatMessage,
-  type ChatOperationProposalDecisionAction,
-  type ChatOperationProposalDecisionStatus,
-  type ChatPrimaryIssueSummary,
-  type Issue,
-  formatMessengerPreview,
-  type Project, } from "@rudderhq/shared"; import type { TranscriptEntry } from "@/agent-runtimes"; import { appendTranscriptEntry } from "@/agent-runtimes/transcript"; import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router"; import { Button } from "@/components/ui/button"; import { Textarea } from "@/components/ui/textarea"; import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { TranscriptEntry } from "@/agent-runtimes";
+import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
+import { agentsApi } from "@/api/agents";
+import { approvalsApi } from "@/api/approvals";
+import { authApi } from "@/api/auth";
+import { chatsApi } from "@/api/chats";
+import { ApiError } from "@/api/client";
+import { instanceSettingsApi } from "@/api/instanceSettings";
+import { issuesApi } from "@/api/issues";
+import { organizationSkillsApi } from "@/api/organizationSkills";
+import { organizationsApi } from "@/api/orgs";
+import { projectsApi } from "@/api/projects";
+import { AgentIcon } from "@/components/AgentIconPicker";
+import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
+import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
+import { ProjectIcon } from "@/components/ProjectIdentity";
+import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger, } from "@/components/ui/dropdown-menu"; import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody"; import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences"; import { TextDots } from "@/components/TextDots"; import { formatPriorityLabel } from "@/lib/priorities"; import { ImagePreviewDialog } from "@/components/ImagePreviewDialog"; import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken"; import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor"; import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker"; import { HoverTimestampLabel } from "@/components/HoverTimestamp"; import { StatusBadge } from "@/components/StatusBadge"; import { RunTranscriptView } from "@/components/transcript/RunTranscriptView"; import { Skeleton } from "@/components/ui/skeleton"; import { useOrganization } from "@/context/OrganizationContext"; import { useBreadcrumbs } from "@/context/BreadcrumbContext"; import { useSidebar } from "@/context/SidebarContext"; import { useToast } from "@/context/ToastContext"; import { useDialog } from "@/context/DialogContext"; import { useChatGenerations, type ChatStreamDraft, type ChatStreamDraftState } from "@/context/ChatGenerationContext"; import { agentsApi } from "@/api/agents"; import { approvalsApi } from "@/api/approvals"; import { authApi } from "@/api/auth"; import { ApiError } from "@/api/client"; import { chatsApi } from "@/api/chats"; import { instanceSettingsApi } from "@/api/instanceSettings"; import { issuesApi } from "@/api/issues"; import { organizationsApi } from "@/api/orgs"; import { projectsApi } from "@/api/projects"; import { organizationSkillsApi } from "@/api/organizationSkills"; import { prefetchChatConversation } from "@/lib/chat-prefetch"; import { clearChatAskUserDraft, readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
-import {
-  readChatPendingAttachmentsForScope,
-  resolveChatPendingAttachmentScopeKey,
-  updateChatPendingAttachmentsForScope, } from "@/lib/chat-pending-attachments";
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { useChatGenerations } from "@/context/ChatGenerationContext";
+import { useDialog } from "@/context/DialogContext";
+import { useI18n } from "@/context/I18nContext";
+import { useOrganization } from "@/context/OrganizationContext";
+import { useSidebar } from "@/context/SidebarContext";
+import { useToast } from "@/context/ToastContext";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { formatChatAgentLabel } from "@/lib/agent-labels";
 import {
   NO_CHAT_AGENT_ID,
   isSelectableChatAgentId,
   rememberChatAgentId,
   resolveDefaultChatAgentId,
-  selectableChatAgents, } from "@/lib/chat-agent-selection"; import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state"; import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options"; import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options"; import { parseMentionChipHref } from "@/lib/mention-chips"; import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom"; import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title"; import { formatChatAgentLabel } from "@/lib/agent-labels"; import { rememberMessengerPath } from "@/lib/messenger-memory"; import { invalidateMessengerThreadSummaryQueries, markMessengerChatReadInCache, upsertMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache"; import { projectColorCssVars } from "@/lib/project-colors"; import { ProjectIcon } from "@/components/ProjectIdentity"; import { queryKeys } from "@/lib/queryKeys";
+  selectableChatAgents,
+} from "@/lib/chat-agent-selection";
+import { clearChatAskUserDraft, readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
 import {
-  formatChatProcessDuration,
-  lastTranscriptAtMs,
+  readChatPendingAttachmentsForScope,
+  resolveChatPendingAttachmentScopeKey,
+  updateChatPendingAttachmentsForScope,
+} from "@/lib/chat-pending-attachments";
+import { prefetchChatConversation } from "@/lib/chat-prefetch";
+import {
   resolvePersistedChatProcessEndedAt,
-  resolvePersistedChatProcessStartedAt, } from "@/lib/chat-process-duration";
+  resolvePersistedChatProcessStartedAt
+} from "@/lib/chat-process-duration";
+import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
+import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
 import {
   readChatScopedFlag,
   readChatScopedState,
-  shouldShowMessageDuringActiveStream, } from "@/lib/chat-stream-state"; import { toOrganizationRelativePath } from "@/lib/organization-routes";
+  shouldShowMessageDuringActiveStream,
+} from "@/lib/chat-stream-state";
+import { readDesktopShell } from "@/lib/desktop-shell";
+import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
+import { resolveLocalFileTarget } from "@/lib/local-file-targets";
+import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options";
+import { parseMentionChipHref } from "@/lib/mention-chips";
+import { rememberMessengerPath } from "@/lib/messenger-memory";
+import { invalidateMessengerThreadSummaryQueries, markMessengerChatReadInCache, upsertMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
+import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
-  appendSkillReferencesToDraft, } from "@/lib/organization-skill-picker"; import { formatAssigneeUserLabel } from "@/lib/assignees"; import { readDesktopShell } from "@/lib/desktop-shell";
+  appendSkillReferencesToDraft,
+} from "@/lib/organization-skill-picker";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
+import { cn } from "@/lib/utils";
 import {
-  canShowImageInFolder,
-  copyImage as copyImageAction,
-  isImageContentType,
-  showImageInFolder as showImageInFolderAction, } from "@/lib/image-actions"; import { resolveLocalFileTarget } from "@/lib/local-file-targets"; import { cn } from "@/lib/utils"; import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef"; import { useI18n } from "@/context/I18nContext"; import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, ChatEmptyStateRecentConversations, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationDisplayTitle, buildMessengerChatThreadSummary, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, buildChatProposalRevisionPrompt, chatIssueApprovalPayloadWithProposalOverride, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName, ChatAssistantAttributionRow, ProposalCard, chatMessageHoverBarClass, ChatLongMessageBody, readStructuredPayloadString, issueCreatedSystemMessageParts, ChatSystemMessageBody, AskUserHistoryRecord, AskUserAnswerBubble, AskUserPanel, ChatMessageItem, OptimisticUserDraftItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, StreamTranscriptItem, AssistantDraftItem } from "./Chat.parts";
-export * from "./Chat.parts";
+  type ChatConversation,
+  type ChatMessage,
+  type ChatOperationProposalDecisionAction
+} from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Archive,
+  ArrowUp,
+  Bot,
+  Boxes,
+  ChevronDown,
+  Folder,
+  ListChecks,
+  Loader2,
+  MoreHorizontal,
+  Paperclip,
+  Pin,
+  PinOff,
+  Plus,
+  Square,
+  Trash2,
+  X
+} from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent } from "react";
+import { createPortal } from "react-dom";
+import { ASK_USER_ANSWER_PREFIX, ApprovalAction, AskUserPanel, AssistantDraftItem, AttachmentPreviewState, ChatAttachmentPreviewDialog, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStateRecentConversations, ChatMessageItem, ChatMessagesLoadingState, EMPTY_STATE_PROMPT_GROUPS, EmptyStatePromptLabel, INTERRUPTED_CHAT_CONTINUATION_PROMPT, LazyStreamTranscriptItem, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, OptimisticUserDraftItem, PLAN_MODE_HELP_TEXT, PendingAttachmentPreview, StreamTranscriptItem, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, chatEmptyStateHeading, chatIssueApprovalPayloadWithProposalOverride, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
+export * from "./Chat.parts";
 export function Chat() { const { selectedOrganizationId } = useOrganization();
   if (!selectedOrganizationId) {
     return <div className="text-sm text-muted-foreground">Select a organization first.</div>; }

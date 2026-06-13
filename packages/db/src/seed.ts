@@ -1,6 +1,6 @@
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { createDb } from "./client.js";
-import { organizations, agents, goals, projects, issues } from "./schema/index.js";
+import { agents, goals, issues, organizations, projects } from "./schema/index.js";
 
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL is required");

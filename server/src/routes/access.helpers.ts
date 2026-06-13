@@ -1,4 +1,8 @@
 import {
+  joinRequests
+} from "@rudderhq/db";
+import type { Request } from "express";
+import {
   createHash,
   generateKeyPairSync,
   randomBytes,
@@ -7,51 +11,6 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Router } from "express";
-import type { Request } from "express";
-import { and, eq, isNull, desc } from "drizzle-orm";
-import type { Db } from "@rudderhq/db";
-import {
-  agentApiKeys,
-  authUsers,
-  invites,
-  joinRequests
-} from "@rudderhq/db";
-import {
-  acceptInviteSchema,
-  createCliAuthChallengeSchema,
-  claimJoinRequestApiKeySchema,
-  createCompanyInviteSchema,
-  createOpenClawInvitePromptSchema,
-  listJoinRequestsQuerySchema,
-  resolveCliAuthChallengeSchema,
-  updateMemberPermissionsSchema,
-  updateUserCompanyAccessSchema,
-  PERMISSION_KEYS
-} from "@rudderhq/shared";
-import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
-import {
-  forbidden,
-  conflict,
-  notFound,
-  unauthorized,
-  badRequest
-} from "../errors.js";
-import { logger } from "../middleware/logger.js";
-import { validate } from "../middleware/validate.js";
-import {
-  accessService,
-  agentService,
-  boardAuthService,
-  deduplicateAgentName,
-  logActivity,
-  notifyHireApproved
-} from "../services/index.js";
-import { assertCompanyAccess } from "./authz.js";
-import {
-  claimBoardOwnership,
-  inspectBoardClaimChallenge
-} from "../board-claim.js";
 
 export function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");

@@ -1,8 +1,8 @@
 // @vitest-environment node
 
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { InstanceShortcutsSettings } from "./InstanceShortcutsSettings";
 
 vi.mock("@tanstack/react-query", () => ({

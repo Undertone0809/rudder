@@ -1,3 +1,16 @@
+import { agentsApi } from "@/api/agents";
+import { chatsApi } from "@/api/chats";
+import { issuesApi } from "@/api/issues";
+import { organizationSkillsApi } from "@/api/organizationSkills";
+import { organizationsApi } from "@/api/orgs";
+import { projectsApi } from "@/api/projects";
+import type { MentionOption } from "@/components/MarkdownEditor";
+import { useOrganization } from "@/context/OrganizationContext";
+import { useViewedOrganization } from "@/hooks/useViewedOrganization";
+import { buildOrganizationSkillMentionOptions } from "@/lib/agent-skill-mentions";
+import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options";
+import { queryKeys } from "@/lib/queryKeys";
+import { useQuery } from "@tanstack/react-query";
 import {
   createContext,
   useCallback,
@@ -6,19 +19,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { agentsApi } from "@/api/agents";
-import { chatsApi } from "@/api/chats";
-import { issuesApi } from "@/api/issues";
-import { organizationsApi } from "@/api/orgs";
-import { organizationSkillsApi } from "@/api/organizationSkills";
-import { projectsApi } from "@/api/projects";
-import { useOrganization } from "@/context/OrganizationContext";
-import { useViewedOrganization } from "@/hooks/useViewedOrganization";
-import { buildOrganizationSkillMentionOptions } from "@/lib/agent-skill-mentions";
-import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options";
-import { queryKeys } from "@/lib/queryKeys";
-import type { MentionOption } from "@/components/MarkdownEditor";
 
 interface MarkdownMentionsContextValue {
   mentions: MentionOption[];

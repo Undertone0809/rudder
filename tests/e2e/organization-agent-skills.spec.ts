@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import path from "node:path";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { E2E_CLAUDE_STUB, E2E_CODEX_STUB, E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
 
 async function resolveSingleAgentWorkspaceRoot(orgId: string) {

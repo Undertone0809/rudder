@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH,
-  keyboardShortcutSettingsSchema,
   instanceGeneralSettingsSchema,
+  keyboardShortcutSettingsSchema,
   operatorProfileSettingsSchema,
 } from "./instance.js";
 

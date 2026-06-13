@@ -1,30 +1,14 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Accessibility,
-  Bell,
-  ClipboardList,
-  CircleAlert,
-  HardDrive,
-  MessagesSquare,
-  ShieldCheck,
-  Workflow,
-  type LucideIcon,
-} from "lucide-react";
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
   SettingsPageHeader,
   SettingsSection,
   SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
-import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import { Button } from "@/components/ui/button";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useI18n } from "@/context/I18nContext";
 import type { TranslationKey } from "@/i18n/locales/en";
-import { cn } from "@/lib/utils";
-import { queryKeys } from "@/lib/queryKeys";
-import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import {
   readDesktopNotificationPermission,
   requestDesktopNotificationPermission,
@@ -36,6 +20,22 @@ import {
   type DesktopSystemPermissionStatus,
   type DesktopSystemPermissions,
 } from "@/lib/desktop-shell";
+import { queryKeys } from "@/lib/queryKeys";
+import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
+import { cn } from "@/lib/utils";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Accessibility,
+  Bell,
+  CircleAlert,
+  ClipboardList,
+  HardDrive,
+  MessagesSquare,
+  ShieldCheck,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react";
+import { useEffect, useState } from "react";
 
 const DEFAULT_NOTIFICATION_SETTINGS = {
   desktopInboxNotifications: true,

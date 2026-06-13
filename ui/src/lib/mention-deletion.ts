@@ -1,5 +1,5 @@
-import { createRootEditorSubscription$, realmPlugin } from "@mdxeditor/editor";
 import { $isLinkNode, type LinkNode } from "@lexical/link";
+import { createRootEditorSubscription$, realmPlugin } from "@mdxeditor/editor";
 import {
   $getSelection,
   $isElementNode,

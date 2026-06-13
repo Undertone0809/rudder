@@ -1,5 +1,5 @@
-import { type ReactNode } from "react";
 import { Link } from "@/lib/router";
+import { type ReactNode } from "react";
 import { cn } from "../lib/utils";
 
 interface EntityRowProps {

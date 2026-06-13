@@ -1,8 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { agentRoutes } from "../routes/agents.js";
 import { errorHandler } from "../middleware/index.js";
+import { agentRoutes } from "../routes/agents.js";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 const orgId = "22222222-2222-4222-8222-222222222222";

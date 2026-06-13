@@ -1,8 +1,8 @@
+import { translateLegacyString } from "@/i18n/legacyPhrases";
+import type { BillingType, FinanceDirection, FinanceEventKind, InstanceLocale } from "@rudderhq/shared";
+import { deriveAgentUrlKey, deriveProjectUrlKey } from "@rudderhq/shared";
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { deriveAgentUrlKey, deriveProjectUrlKey } from "@rudderhq/shared";
-import type { BillingType, FinanceDirection, FinanceEventKind, InstanceLocale } from "@rudderhq/shared";
-import { translateLegacyString } from "@/i18n/legacyPhrases";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

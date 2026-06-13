@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { organizationsApi } from "@/api/orgs";
+import { useSidebar } from "@/context/SidebarContext";
+import { useViewedOrganization } from "@/hooks/useViewedOrganization";
+import { queryKeys } from "@/lib/queryKeys";
+import { useSearchParams } from "@/lib/router";
+import { cn } from "@/lib/utils";
 import type { OrganizationWorkspaceFileEntry, WorkspaceBackupSummary } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronRight,
@@ -8,12 +13,7 @@ import {
   Folder,
   PanelLeftClose,
 } from "lucide-react";
-import { organizationsApi } from "@/api/orgs";
-import { useSidebar } from "@/context/SidebarContext";
-import { useViewedOrganization } from "@/hooks/useViewedOrganization";
-import { queryKeys } from "@/lib/queryKeys";
-import { cn } from "@/lib/utils";
-import { useSearchParams } from "@/lib/router";
+import { useEffect, useMemo, useState } from "react";
 
 function parentDirectories(filePath: string) {
   const segments = filePath.split("/").filter(Boolean);

@@ -1,7 +1,7 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { RunTranscriptView, normalizeTranscript, resolveTranscriptLocalFileTarget } from "./RunTranscriptView";

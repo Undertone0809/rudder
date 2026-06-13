@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_ICON, PROJECT_ICONS, type ProjectIconName } from "@rudderhq/shared";
 import {
   BookOpen,
   Calendar,
@@ -17,7 +18,6 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { DEFAULT_PROJECT_ICON, PROJECT_ICONS, type ProjectIconName } from "@rudderhq/shared";
 
 const projectIconValues = new Set<string>(PROJECT_ICONS);
 

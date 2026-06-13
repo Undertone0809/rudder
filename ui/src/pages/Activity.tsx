@@ -1,18 +1,3 @@
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { activityApi, type ActivityListFilters } from "../api/activity";
-import { agentsApi } from "../api/agents";
-import { issuesApi } from "../api/issues";
-import { projectsApi } from "../api/projects";
-import { goalsApi } from "../api/goals";
-import { accessApi } from "../api/access";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
-import { queryKeys } from "../lib/queryKeys";
-import { EmptyState } from "../components/EmptyState";
-import { ActivityRow } from "../components/ActivityRow";
-import { PageSkeleton } from "../components/PageSkeleton";
 import {
   Select,
   SelectContent,
@@ -20,8 +5,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { History } from "lucide-react";
 import type { Agent } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
+import { History } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { accessApi } from "../api/access";
+import { activityApi, type ActivityListFilters } from "../api/activity";
+import { agentsApi } from "../api/agents";
+import { goalsApi } from "../api/goals";
+import { issuesApi } from "../api/issues";
+import { projectsApi } from "../api/projects";
+import { ActivityRow } from "../components/ActivityRow";
+import { EmptyState } from "../components/EmptyState";
+import { PageSkeleton } from "../components/PageSkeleton";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
+import { queryKeys } from "../lib/queryKeys";
 
 type PrincipalFilter = "all" | "system" | `agent:${string}` | `user:${string}`;
 

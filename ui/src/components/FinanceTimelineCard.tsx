@@ -1,4 +1,3 @@
-import type { FinanceEvent } from "@rudderhq/shared";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -8,6 +7,7 @@ import {
   formatDateTime,
   providerDisplayName,
 } from "@/lib/utils";
+import type { FinanceEvent } from "@rudderhq/shared";
 
 interface FinanceTimelineCardProps {
   rows: FinanceEvent[];

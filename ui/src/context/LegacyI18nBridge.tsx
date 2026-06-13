@@ -1,6 +1,6 @@
-import { useEffect } from "react";
-import type { InstanceLocale } from "@rudderhq/shared";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
+import type { InstanceLocale } from "@rudderhq/shared";
+import { useEffect } from "react";
 
 type TextRecord = {
   source: string;

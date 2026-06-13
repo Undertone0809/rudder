@@ -1,15 +1,15 @@
-import { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import type { AgentRuntimeConfigFieldsProps } from "../types";
+import { useState } from "react";
 import {
-  Field,
   DraftInput,
+  Field,
   help,
 } from "../../components/agent-config-primitives";
 import {
   PayloadTemplateJsonField,
   RuntimeServicesJsonField,
 } from "../runtime-json-fields";
+import type { AgentRuntimeConfigFieldsProps } from "../types";
 
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";

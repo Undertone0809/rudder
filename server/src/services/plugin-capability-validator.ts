@@ -20,10 +20,10 @@
  * @see host-client-factory.ts — SDK-side capability gating
  */
 import type {
-  PluginCapability,
   PaperclipPluginManifestV1,
-  PluginUiSlotType,
+  PluginCapability,
   PluginLauncherPlacementZone,
+  PluginUiSlotType,
 } from "@rudderhq/shared";
 import { forbidden } from "../errors.js";
 import { logger } from "../middleware/logger.js";

@@ -1,15 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import type { ComponentProps, ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { KeyboardShortcutActionId, KeyboardShortcutSettings } from "@rudderhq/shared";
-import { Keyboard, Pencil, RotateCcw, Save, Search, Trash2, X } from "lucide-react";
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
   SettingsDivider,
   SettingsPageHeader,
   SettingsSection,
 } from "@/components/settings/SettingsScaffold";
-import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
@@ -29,6 +24,11 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { cn } from "@/lib/utils";
+import type { KeyboardShortcutActionId, KeyboardShortcutSettings } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Keyboard, Pencil, RotateCcw, Save, Search, Trash2, X } from "lucide-react";
+import type { ComponentProps, ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const EMPTY_SHORTCUT_SETTINGS: KeyboardShortcutSettings = { shortcuts: [] };
 

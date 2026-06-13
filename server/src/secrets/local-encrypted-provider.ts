@@ -1,8 +1,8 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { SecretProviderModule, StoredSecretVersionMaterial } from "./types.js";
 import { badRequest } from "../errors.js";
+import type { SecretProviderModule, StoredSecretVersionMaterial } from "./types.js";
 
 interface LocalEncryptedMaterial extends StoredSecretVersionMaterial {
   scheme: "local_encrypted_v1";

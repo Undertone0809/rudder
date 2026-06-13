@@ -1,10 +1,11 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { Command } from "commander";
 import type {
   OrganizationWorkspaceFileDetail,
   OrganizationWorkspaceFileList,
 } from "@rudderhq/shared";
+import { Command } from "commander";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
   handleCommandError,
@@ -12,7 +13,6 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
-import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 
 interface LibraryFilePutOptions extends BaseClientOptions {
   bodyFile?: string;

@@ -1,10 +1,10 @@
-import pc from "picocolors";
 import type { Command } from "commander";
+import pc from "picocolors";
 import { getStoredBoardCredential, loginBoardCli } from "../../client/board-auth.js";
 import { buildCliCommandLabel } from "../../client/command-label.js";
-import { readConfig } from "../../config/store.js";
 import { readContext, resolveProfile, type ClientContextProfile } from "../../client/context.js";
 import { ApiRequestError, RudderApiClient } from "../../client/http.js";
+import { readConfig } from "../../config/store.js";
 
 export interface BaseClientOptions {
   config?: string;

@@ -7,9 +7,9 @@ import type {
   KeyboardShortcutSettings,
   OperatorProfileSettings,
   PatchInstanceGeneralSettings,
-  PatchKeyboardShortcutSettings,
   PatchInstanceLangfuseSettings,
   PatchInstanceNotificationSettings,
+  PatchKeyboardShortcutSettings,
   PatchOperatorProfileSettings,
 } from "@rudderhq/shared";
 import { api } from "./client";

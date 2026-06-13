@@ -1,10 +1,10 @@
-import { Router } from "express";
 import type { Db } from "@rudderhq/db";
 import {
   buildObservedRunTrace,
   type ObservedRunDetail,
   type ObservedRunStep,
 } from "@rudderhq/run-intelligence-core";
+import { Router } from "express";
 import { notFound } from "../errors.js";
 import {
   getObservedRun,

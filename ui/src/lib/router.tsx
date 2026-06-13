@@ -1,12 +1,12 @@
-import * as React from "react";
-import * as RouterDom from "react-router-dom";
-import type { NavigateOptions, To } from "react-router-dom";
 import { useOrganization } from "@/context/OrganizationContext";
 import {
   applyOrganizationPrefix,
   extractOrganizationPrefixFromPath,
   normalizeOrganizationPrefix,
 } from "@/lib/organization-routes";
+import * as React from "react";
+import type { NavigateOptions, To } from "react-router-dom";
+import * as RouterDom from "react-router-dom";
 
 function resolveTo(to: To, orgPrefix: string | null): To {
   if (typeof to === "string") {

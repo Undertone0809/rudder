@@ -15,9 +15,7 @@
  */
 
 import type {
-  PluginBridgeErrorCode,
-  PluginLauncherBounds,
-  PluginLauncherRenderEnvironment,
+  PluginBridgeErrorCode
 } from "@rudderhq/shared";
 import type {
   PluginLauncherRenderContextSnapshot,
@@ -29,12 +27,12 @@ import type {
 export type {
   PluginBridgeErrorCode,
   PluginLauncherBounds,
-  PluginLauncherRenderEnvironment,
+  PluginLauncherRenderEnvironment
 } from "@rudderhq/shared";
 export type {
   PluginLauncherRenderContextSnapshot,
   PluginModalBoundsRequest,
-  PluginRenderCloseEvent,
+  PluginRenderCloseEvent
 } from "../protocol.js";
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,3 @@
-import type { Request, RequestHandler } from "express";
-import type { IncomingHttpHeaders } from "node:http";
-import { betterAuth } from "better-auth";
-import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { toNodeHandler } from "better-auth/node";
 import type { Db } from "@rudderhq/db";
 import {
   authAccounts,
@@ -10,6 +5,11 @@ import {
   authUsers,
   authVerifications,
 } from "@rudderhq/db";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { toNodeHandler } from "better-auth/node";
+import type { Request, RequestHandler } from "express";
+import type { IncomingHttpHeaders } from "node:http";
 import type { Config } from "../config.js";
 
 export type BetterAuthSessionUser = {

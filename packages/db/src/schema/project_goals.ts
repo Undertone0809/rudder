@@ -1,7 +1,7 @@
-import { pgTable, uuid, timestamp, index, primaryKey } from "drizzle-orm/pg-core";
+import { index, pgTable, primaryKey, timestamp, uuid } from "drizzle-orm/pg-core";
+import { goals } from "./goals.js";
 import { organizations } from "./organizations.js";
 import { projects } from "./projects.js";
-import { goals } from "./goals.js";
 
 export const projectGoals = pgTable(
   "project_goals",

@@ -2,8 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runCli } from "../program.js";
 import { writeContext } from "../client/context.js";
+import { runCli } from "../program.js";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_ARGV = [...process.argv];

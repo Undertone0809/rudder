@@ -1,26 +1,26 @@
 // @ts-nocheck
+import { app, BrowserWindow, dialog, shell } from "electron";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { app, BrowserWindow, dialog, shell } from "electron";
 import { DESKTOP_CLI_FLAG } from "./cli-link.js";
+import {
+  appendBoundedDesktopUpdateOutput,
+  summarizeDesktopUpdateChildOutput,
+} from "./desktop-update-diagnostics.js";
+import {
+  clearPostUpdateReloadMarker,
+  writePostUpdateReloadMarker,
+} from "./post-update-reload.js";
 import {
   normalizeDesktopUpdateChannel,
   readDesktopUpdateChannel,
   writeDesktopUpdateChannel,
 } from "./update-channel-preference.js";
 import {
-  clearPostUpdateReloadMarker,
-  writePostUpdateReloadMarker,
-} from "./post-update-reload.js";
-import {
   checkForRudderDesktopUpdates,
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
 } from "./update-check.js";
-import {
-  appendBoundedDesktopUpdateOutput,
-  summarizeDesktopUpdateChildOutput,
-} from "./desktop-update-diagnostics.js";
 
 export const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;

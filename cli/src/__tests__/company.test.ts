@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { OrganizationPortabilityPreviewResult } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import {
   buildCompanyDashboardUrl,
   buildDefaultImportAdapterOverrides,
@@ -8,8 +8,8 @@ import {
   buildSelectedFilesFromImportSelection,
   renderCompanyImportPreview,
   renderCompanyImportResult,
-  resolveCompanyImportApplyConfirmationMode,
   resolveCompanyImportApiPath,
+  resolveCompanyImportApplyConfirmationMode,
 } from "../commands/client/company.js";
 
 describe("resolveCompanyImportApiPath", () => {

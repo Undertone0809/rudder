@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { semanticDotToneClasses, semanticTextToneClasses } from "@/components/ui/semanticTones";
 import { Link } from "@/lib/router";
 import { Download, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useToast, type ToastItem } from "../context/ToastContext";
 import { cn } from "../lib/utils";
-import { semanticDotToneClasses, semanticTextToneClasses } from "@/components/ui/semanticTones";
 
 function ToastIcon({ toast }: { toast: ToastItem }) {
   if (toast.icon === "download") {

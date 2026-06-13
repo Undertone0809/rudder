@@ -1,9 +1,9 @@
-import { QueryClient } from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { accessApi } from "@/api/access";
 import { healthApi } from "@/api/health";
-import { organizationsApi } from "@/api/orgs";
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { organizationsApi } from "@/api/orgs";
+import { QueryClient } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   listSettingsPrefetchQueryKeys,
   scheduleSettingsPrefetchQueries,

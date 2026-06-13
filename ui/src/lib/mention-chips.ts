@@ -1,6 +1,6 @@
-import type { CSSProperties } from "react";
 import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDirectoryMentionHref, parseLibraryDocMentionHref, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
 import { FileText, Folder } from "lucide-react";
+import type { CSSProperties } from "react";
 import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
 import { getAgentIcon } from "./agent-icons";
 import { getProjectIconComponent, normalizeProjectIconName } from "./project-icons";

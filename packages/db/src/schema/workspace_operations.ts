@@ -9,9 +9,9 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
 import { executionWorkspaces } from "./execution_workspaces.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
+import { organizations } from "./organizations.js";
 
 export const workspaceOperations = pgTable(
   "workspace_operations",

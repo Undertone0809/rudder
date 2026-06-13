@@ -1,10 +1,5 @@
-import { useMemo } from "react";
-import type { CostByProviderModel, CostWindowSpendRow, QuotaWindow } from "@rudderhq/shared";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { QuotaBar } from "./QuotaBar";
-import { ClaudeSubscriptionPanel } from "./ClaudeSubscriptionPanel";
-import { CodexSubscriptionPanel } from "./CodexSubscriptionPanel";
 import {
   billingTypeDisplayName,
   formatCents,
@@ -12,6 +7,11 @@ import {
   providerDisplayName,
   quotaSourceDisplayName,
 } from "@/lib/utils";
+import type { CostByProviderModel, CostWindowSpendRow, QuotaWindow } from "@rudderhq/shared";
+import { useMemo } from "react";
+import { ClaudeSubscriptionPanel } from "./ClaudeSubscriptionPanel";
+import { CodexSubscriptionPanel } from "./CodexSubscriptionPanel";
+import { QuotaBar } from "./QuotaBar";
 
 // ordered display labels for rolling-window rows
 const ROLLING_WINDOWS = ["5h", "24h", "7d"] as const;

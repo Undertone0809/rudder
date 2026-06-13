@@ -1,58 +1,58 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { MobileWorkspaceDrawer } from "@/components/MobileWorkspaceDrawer";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
+import { useI18n } from "@/context/I18nContext";
+import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
+import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, Settings, X } from "lucide-react";
-import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
-import { SettingsSidebar } from "./SettingsSidebar";
-import { PrimaryRail } from "./PrimaryRail";
-import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
-import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
-import { OrganizationWorkspaceFilesSidebar } from "../pages/OrganizationWorkspaces";
-import { BreadcrumbBar } from "./BreadcrumbBar";
-import { CommandPalette } from "./CommandPalette";
-import { hasCompletedProductTour, hasPendingProductTour } from "./ProductTourOverlay";
-import { NewIssueDialog } from "./NewIssueDialog";
-import { NewProjectDialog } from "./NewProjectDialog";
-import { NewGoalDialog } from "./NewGoalDialog";
-import { NewAgentDialog } from "./NewAgentDialog";
-import { MobileBottomNav } from "./MobileBottomNav";
-import { WorktreeBanner } from "./WorktreeBanner";
-import { DevRestartBanner } from "./DevRestartBanner";
-import { useDialog } from "../context/DialogContext";
-import { usePanel } from "../context/PanelContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { NavigationBackProvider } from "../context/NavigationBackContext";
-import { useSidebar } from "../context/SidebarContext";
-import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
-import { useOrganizationPageMemory } from "../hooks/useOrganizationPageMemory";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
 import { healthApi } from "../api/health";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { projectsApi } from "../api/projects";
-import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
+import { useDialog } from "../context/DialogContext";
+import { NavigationBackProvider } from "../context/NavigationBackContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { usePanel } from "../context/PanelContext";
+import { useSidebar } from "../context/SidebarContext";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
+import { useOrganizationPageMemory } from "../hooks/useOrganizationPageMemory";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import {
   normalizeRememberedSettingsPath,
   resolveDefaultSettingsPath,
 } from "../lib/instance-settings";
+import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
+import { findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/organization-routes";
+import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
+import { queryKeys } from "../lib/queryKeys";
 import {
   buildSettingsOverlayState,
   clearStoredSettingsOverlayBackgroundPath,
-  rememberSettingsOverlayBackgroundPath,
   readSettingsOverlayBackgroundPath,
+  rememberSettingsOverlayBackgroundPath,
 } from "../lib/settings-overlay-state";
 import { scheduleSettingsPrefetchQueries } from "../lib/settings-prefetch";
-import { findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/organization-routes";
-import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
-import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 import { NotFoundPage } from "../pages/NotFound";
-import { MobileWorkspaceDrawer } from "@/components/MobileWorkspaceDrawer";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { useI18n } from "@/context/I18nContext";
-import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
-import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
+import { OrganizationWorkspaceFilesSidebar } from "../pages/OrganizationWorkspaces";
+import { BreadcrumbBar } from "./BreadcrumbBar";
+import { CommandPalette } from "./CommandPalette";
+import { DevRestartBanner } from "./DevRestartBanner";
+import { MobileBottomNav } from "./MobileBottomNav";
+import { NewAgentDialog } from "./NewAgentDialog";
+import { NewGoalDialog } from "./NewGoalDialog";
+import { NewIssueDialog } from "./NewIssueDialog";
+import { NewProjectDialog } from "./NewProjectDialog";
+import { PrimaryRail } from "./PrimaryRail";
+import { hasCompletedProductTour, hasPendingProductTour } from "./ProductTourOverlay";
+import { SettingsSidebar } from "./SettingsSidebar";
+import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
+import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
+import { WorktreeBanner } from "./WorktreeBanner";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";

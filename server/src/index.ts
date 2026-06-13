@@ -1,72 +1,72 @@
 /// <reference path="./types/express.d.ts" />
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { createServer } from "node:http";
-import { createHash, randomBytes } from "node:crypto";
-import { resolve } from "node:path";
-import { createInterface } from "node:readline/promises";
-import { stdin, stdout } from "node:process";
-import { pathToFileURL } from "node:url";
-import type { Request as ExpressRequest, RequestHandler } from "express";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import {
+  applyPendingMigrations,
+  authUsers,
+  cleanupStaleSysvSharedMemorySegments,
+  createDb,
+  ensurePostgresDatabase,
+  ensurePostgresRolePassword,
+  getPostgresDataDirectory,
+  inspectMigrations,
+  instanceUserRoles,
+  invites,
+  isEmbeddedPostgresSharedMemoryError,
+  normalizeLegacyColumnNames,
+  organizationMemberships,
+  organizations,
+  reconcilePendingMigrationHistory,
+} from "@rudderhq/db";
 import {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
   type DeploymentExposure,
   type DeploymentMode,
 } from "@rudderhq/shared";
-import {
-  createDb,
-  cleanupStaleSysvSharedMemorySegments,
-  ensurePostgresDatabase,
-  ensurePostgresRolePassword,
-  getPostgresDataDirectory,
-  isEmbeddedPostgresSharedMemoryError,
-  normalizeLegacyColumnNames,
-  inspectMigrations,
-  applyPendingMigrations,
-  reconcilePendingMigrationHistory,
-  authUsers,
-  organizations,
-  organizationMemberships,
-  instanceUserRoles,
-  invites,
-} from "@rudderhq/db";
 import detectPort from "detect-port";
+import { and, eq, gt, isNull } from "drizzle-orm";
+import type { Request as ExpressRequest, RequestHandler } from "express";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import { resolve } from "node:path";
+import { stdin, stdout } from "node:process";
+import { createInterface } from "node:readline/promises";
+import { pathToFileURL } from "node:url";
 import { createRudderApp } from "./app.js";
+import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { loadConfig, type Config } from "./config.js";
-import { initializeLangfuse, shutdownLangfuse } from "./langfuse.js";
+import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 import {
   pruneOrphanedOrganizationStorage,
   resolveRudderHomeDir,
   resolveRudderInstanceId,
   resolveRudderInstanceRoot,
 } from "./home-paths.js";
+import { initializeLangfuse, shutdownLangfuse } from "./langfuse.js";
 import {
-  type LocalRuntimeOwnerKind,
   gracefullyStopRuntime,
   probeLocalRuntime,
+  removeLocalRuntimeDescriptorIfOwned,
   resolveEffectiveLocalEnvName,
   resolveLocalRuntimePaths,
   resolveRuntimeOwnerKind,
   withRuntimeStartLock,
   writeLocalRuntimeDescriptor,
-  removeLocalRuntimeDescriptorIfOwned,
+  type LocalRuntimeOwnerKind,
 } from "./local-runtime.js";
 import { logger } from "./middleware/logger.js";
+import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import {
-  heartbeatService,
-  reconcilePersistedRuntimeServicesOnStartup,
   automationService,
-  workspaceBackupService,
+  heartbeatService,
   logActivity,
+  reconcilePersistedRuntimeServicesOnStartup,
+  workspaceBackupService,
 } from "./services/index.js";
-import { createStorageServiceFromConfig } from "./storage/index.js";
-import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { printStartupBanner } from "./startup-banner.js";
+import { createStorageServiceFromConfig } from "./storage/index.js";
 import { serverVersion } from "./version.js";
-import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
-import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 
 type BetterAuthSessionUser = {
   id: string;

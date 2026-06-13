@@ -4,8 +4,8 @@ import type {
   MessengerIssueThreadItem,
   MessengerSystemThreadKind,
   MessengerThreadDetail,
-  MessengerThreadSummaryPage,
   MessengerThreadSummary,
+  MessengerThreadSummaryPage,
 } from "@rudderhq/shared";
 import { api } from "./client";
 

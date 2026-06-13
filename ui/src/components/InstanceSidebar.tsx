@@ -1,3 +1,11 @@
+import { accessApi } from "@/api/access";
+import { pluginsApi } from "@/api/plugins";
+import { Button } from "@/components/ui/button";
+import { useI18n } from "@/context/I18nContext";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link, NavLink } from "@/lib/router";
+import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -9,14 +17,6 @@ import {
   ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
-import { Link, NavLink } from "@/lib/router";
-import { accessApi } from "@/api/access";
-import { pluginsApi } from "@/api/plugins";
-import { queryKeys } from "@/lib/queryKeys";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { useI18n } from "@/context/I18nContext";
 
 function SettingsNavLink({
   to,

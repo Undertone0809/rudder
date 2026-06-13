@@ -1,6 +1,4 @@
-import { Router, type Request } from "express";
 import type { LangfuseObservation } from "@langfuse/tracing";
-import { and, eq, inArray, sql } from "drizzle-orm";
 import { issueLabels, issues, labels, type Db } from "@rudderhq/db";
 import {
   addApprovalCommentSchema,
@@ -10,9 +8,13 @@ import {
   resubmitApprovalSchema,
   type ExecutionObservabilityContext,
 } from "@rudderhq/shared";
-import { validate } from "../middleware/validate.js";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { Router, type Request } from "express";
+import { forbidden, unprocessable } from "../errors.js";
 import { observeExecutionEvent, withExecutionObservation } from "../langfuse.js";
 import { logger } from "../middleware/logger.js";
+import { validate } from "../middleware/validate.js";
+import { redactEventPayload } from "../redaction.js";
 import {
   accessService,
   approvalService,
@@ -24,8 +26,6 @@ import {
   secretService,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
-import { redactEventPayload } from "../redaction.js";
-import { forbidden, unprocessable } from "../errors.js";
 import {
   wakeIssueAssigneeAfterChatConversion,
   type ChatConvertedIssue,

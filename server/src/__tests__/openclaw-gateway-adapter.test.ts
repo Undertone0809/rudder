@@ -1,12 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { createServer } from "node:http";
-import { WebSocketServer } from "ws";
 import { execute, testEnvironment } from "@rudderhq/agent-runtime-openclaw-gateway/server";
 import {
   buildOpenClawGatewayConfig,
   parseOpenClawGatewayStdoutLine,
 } from "@rudderhq/agent-runtime-openclaw-gateway/ui";
 import type { AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
+import { createServer } from "node:http";
+import { afterEach, describe, expect, it } from "vitest";
+import { WebSocketServer } from "ws";
 
 function buildContext(
   config: Record<string, unknown>,

@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
-import { loadDefaultAgentInstructionsBundle } from "../services/default-agent-instructions.js";
 import { agentInstructionsService } from "../services/agent-instructions.js";
+import { loadDefaultAgentInstructionsBundle } from "../services/default-agent-instructions.js";
 
 type TestAgent = {
   id: string;

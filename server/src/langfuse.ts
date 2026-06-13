@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { LangfuseClient } from "@langfuse/client";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import {
@@ -14,6 +13,7 @@ import {
 } from "@langfuse/tracing";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import type { DeploymentMode, ExecutionLangfuseLink, ExecutionObservabilityContext } from "@rudderhq/shared";
+import { createHash } from "node:crypto";
 import { logger } from "./middleware/logger.js";
 
 export interface LangfuseRuntimeConfig {

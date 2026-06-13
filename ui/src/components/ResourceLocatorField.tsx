@@ -1,6 +1,3 @@
-import { useState } from "react";
-import type { OrganizationResourceKind } from "@rudderhq/shared";
-import { FolderOpen, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { readDesktopShell } from "@/lib/desktop-shell";
@@ -9,6 +6,9 @@ import {
   organizationResourceLocatorPlaceholder,
 } from "@/lib/resource-options";
 import { cn } from "@/lib/utils";
+import type { OrganizationResourceKind } from "@rudderhq/shared";
+import { FolderOpen, Loader2 } from "lucide-react";
+import { useState } from "react";
 
 export function suggestResourceNameFromLocator(locator: string) {
   const trimmed = locator.trim();

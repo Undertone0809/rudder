@@ -1,4 +1,3 @@
-import type { StdoutLineParser } from "@rudderhq/agent-runtime-utils";
 import { parseClaudeStdoutLine } from "@rudderhq/agent-runtime-claude-local/ui";
 import { parseCodexStdoutLine } from "@rudderhq/agent-runtime-codex-local/ui";
 import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
@@ -6,6 +5,7 @@ import { parseGeminiStdoutLine } from "@rudderhq/agent-runtime-gemini-local/ui";
 import { parseOpenClawGatewayStdoutLine } from "@rudderhq/agent-runtime-openclaw-gateway/ui";
 import { parseOpenCodeStdoutLine } from "@rudderhq/agent-runtime-opencode-local/ui";
 import { parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
+import type { StdoutLineParser } from "@rudderhq/agent-runtime-utils";
 
 const genericParser: StdoutLineParser = (line, ts) => [{ kind: "stdout", ts, text: line }];
 

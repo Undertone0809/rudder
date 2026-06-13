@@ -7,13 +7,13 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
-import { projects } from "./projects.js";
-import { projectWorkspaces } from "./project_workspaces.js";
-import { executionWorkspaces } from "./execution_workspaces.js";
-import { issues } from "./issues.js";
 import { agents } from "./agents.js";
+import { executionWorkspaces } from "./execution_workspaces.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
+import { issues } from "./issues.js";
+import { organizations } from "./organizations.js";
+import { projectWorkspaces } from "./project_workspaces.js";
+import { projects } from "./projects.js";
 
 export const workspaceRuntimeServices = pgTable(
   "workspace_runtime_services",

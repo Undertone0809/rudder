@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 async function createOrganization(page: Page, namePrefix: string) {
   const orgRes = await page.request.post("/api/orgs", {

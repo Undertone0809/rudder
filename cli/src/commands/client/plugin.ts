@@ -1,5 +1,5 @@
-import path from "node:path";
 import { Command } from "commander";
+import path from "node:path";
 import pc from "picocolors";
 import {
   addCommonClientOptions,

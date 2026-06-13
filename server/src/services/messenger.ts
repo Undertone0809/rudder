@@ -1,32 +1,28 @@
-import { and, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   activityLog,
+  agents,
   approvalComments,
   approvals,
-  agents,
   authUsers,
-  chatConversations,
   heartbeatRuns,
   issueComments,
   issueFollows,
   issues,
   joinRequests,
   messengerThreadUserStates,
-  projects,
+  projects
 } from "@rudderhq/db";
 import {
   formatMessengerPreview,
   formatMessengerTitle,
+  issueUpdatedChangedKeys,
   type Approval,
   type BudgetIncident,
-  type ChatConversation,
-  type ChatMessage,
   type HeartbeatRun,
   type JoinRequest,
   type MessengerApprovalThreadItem,
   type MessengerBudgetThreadItem,
-  type MessengerEvent,
   type MessengerHeartbeatRunThreadItem,
   type MessengerIssueThreadItem,
   type MessengerJoinRequestThreadItem,
@@ -35,13 +31,13 @@ import {
   type MessengerThreadDetail,
   type MessengerThreadPageInfo,
   type MessengerThreadSummary,
-  type MessengerThreadSummaryPage,
-  issueUpdatedChangedKeys,
+  type MessengerThreadSummaryPage
 } from "@rudderhq/shared";
-import { chatService } from "./chats.js";
-import { budgetService } from "./budgets.js";
-import { redactEventPayload } from "../redaction.js";
+import { and, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { conflict } from "../errors.js";
+import { redactEventPayload } from "../redaction.js";
+import { budgetService } from "./budgets.js";
+import { chatService } from "./chats.js";
 import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
 
 const ISSUE_ACTIVITY_ACTIONS = [

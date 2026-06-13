@@ -1,6 +1,6 @@
-import { OrganizationWorkspaceBrowser } from "./OrganizationWorkspaces";
 import { useI18n } from "../context/I18nContext";
 import { libraryCopy } from "../lib/library-copy";
+import { OrganizationWorkspaceBrowser } from "./OrganizationWorkspaces";
 
 export function OrganizationResources() {
   const { locale } = useI18n();

@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { testEnvironment } from "@rudderhq/agent-runtime-opencode-local/server";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { testEnvironment } from "@rudderhq/agent-runtime-opencode-local/server";
+import { describe, expect, it } from "vitest";
 
 describe("opencode_local environment diagnostics", () => {
   it("reports a missing working directory as an error when cwd is absolute", async () => {

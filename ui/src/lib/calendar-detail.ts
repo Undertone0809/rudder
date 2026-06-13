@@ -1,5 +1,5 @@
-import type { CalendarEvent } from "@rudderhq/shared";
 import { agentUrl } from "@/lib/utils";
+import type { CalendarEvent } from "@rudderhq/shared";
 
 function pad2(value: number) {
   return String(value).padStart(2, "0");

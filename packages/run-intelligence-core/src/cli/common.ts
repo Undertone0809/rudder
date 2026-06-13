@@ -1,6 +1,6 @@
 import path from "node:path";
-import { diagnoseObservedRun, findObservedRunByPrefix, loadObservedRunDetail } from "../loaders/rudder.js";
 import { diagnoseFilesystemRun, findRunLog, loadFilesystemRunDetail } from "../loaders/filesystem.js";
+import { diagnoseObservedRun, findObservedRunByPrefix, loadObservedRunDetail } from "../loaders/rudder.js";
 import type { ObservedRunDetail, RunDiagnosisMode } from "../types.js";
 
 export const apiBaseUrl = process.env.RUDDER_API_URL ?? "http://localhost:3100/api";

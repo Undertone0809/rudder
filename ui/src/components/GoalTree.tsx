@@ -1,9 +1,9 @@
-import type { Goal } from "@rudderhq/shared";
 import { Link } from "@/lib/router";
-import { StatusBadge } from "./StatusBadge";
+import type { Goal } from "@rudderhq/shared";
 import { ChevronRight } from "lucide-react";
-import { cn } from "../lib/utils";
 import { useState } from "react";
+import { cn } from "../lib/utils";
+import { StatusBadge } from "./StatusBadge";
 
 interface GoalTreeProps {
   goals: Goal[];

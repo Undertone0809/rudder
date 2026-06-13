@@ -1,8 +1,5 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, Check, Copy, IdCard, MessageSquareText, UserRound } from "lucide-react";
-import { OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH } from "@rudderhq/shared";
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
   SettingsDivider,
   SettingsPageHeader,
@@ -10,13 +7,16 @@ import {
 } from "@/components/settings/SettingsScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
+import { OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Brain, Check, Copy, IdCard, MessageSquareText, UserRound } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
-import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 
 const PROFILE_IMPORT_PROMPT = `Export all of my stored memories and any context you've learned about me from past conversations. Preserve my words verbatim where possible, especially for instructions and preferences.
 

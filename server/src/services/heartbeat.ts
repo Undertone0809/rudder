@@ -1,8 +1,6 @@
 export {
-  heartbeatService,
-  heartbeatService as heartbeatOrchestrator,
-  prioritizeProjectWorkspaceCandidatesForRun,
-  type ResolvedWorkspaceForRun,
+  heartbeatService as heartbeatOrchestrator, heartbeatService, prioritizeProjectWorkspaceCandidatesForRun,
+  type ResolvedWorkspaceForRun
 } from "./runtime-kernel/heartbeat.js";
 
 export {
@@ -10,7 +8,7 @@ export {
   buildHeartbeatRuntimeTraceMetadata,
   buildIssueRunTraceName,
   inferUsedSkillsFromTranscript,
-  resolveHeartbeatObservabilitySurface,
+  resolveHeartbeatObservabilitySurface
 } from "./runtime-kernel/heartbeat.core.js";
 
 export {
@@ -18,5 +16,5 @@ export {
   formatRuntimeWorkspaceWarningLog,
   parseSessionCompactionPolicy,
   resolveRuntimeSessionParamsForWorkspace,
-  shouldResetTaskSessionForWake,
+  shouldResetTaskSessionForWake
 } from "./runtime-kernel/heartbeat.sessions.js";

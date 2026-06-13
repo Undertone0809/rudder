@@ -1,8 +1,8 @@
+import type { PluginRecord } from "@rudderhq/shared";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { PluginRecord } from "@rudderhq/shared";
 import { resolvePluginUiDir } from "../routes/plugin-ui-static.js";
 import { resolveWorkerEntrypoint } from "../services/plugin-loader.worker-paths.js";
 

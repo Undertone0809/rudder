@@ -1,22 +1,22 @@
+import * as p from "@clack/prompts";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants as fsConstants, createWriteStream, mkdirSync, readFileSync } from "node:fs";
-import { access, chmod, copyFile, cp, mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { createWriteStream, constants as fsConstants, mkdirSync, readFileSync } from "node:fs";
+import { access, chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { clearTimeout, setTimeout } from "node:timers";
 import { setTimeout as delay } from "node:timers/promises";
-import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { resolveRudderHomeDir } from "../config/home.js";
 import {
   CLI_NPM_PACKAGE_NAME,
   getGlobalInstalledPackageVersion,
   installPersistentCli,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
-import { resolveRudderHomeDir } from "../config/home.js";
 import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError } from "../runtime/install.js";
 import { createByteProgress, formatBytes, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";

@@ -7,8 +7,8 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
 import { issues } from "./issues.js";
+import { organizations } from "./organizations.js";
 import { projectWorkspaces } from "./project_workspaces.js";
 import { projects } from "./projects.js";
 

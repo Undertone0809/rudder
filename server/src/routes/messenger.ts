@@ -1,12 +1,12 @@
-import { Router } from "express";
 import type { Db } from "@rudderhq/db";
 import {
   MESSENGER_SYSTEM_THREAD_KINDS,
   updateMessengerThreadUserStateSchema,
   type MessengerSystemThreadKind,
 } from "@rudderhq/shared";
-import { messengerService } from "../services/messenger.js";
+import { Router } from "express";
 import { validate } from "../middleware/validate.js";
+import { messengerService } from "../services/messenger.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 const SYSTEM_THREAD_KIND_SET = new Set<MessengerSystemThreadKind>(MESSENGER_SYSTEM_THREAD_KINDS);

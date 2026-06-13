@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { AGENT_RUN_CONCURRENCY_DEFAULT } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import { defaultCreateValues } from "./agent-config-defaults";
 import {
   filterRuntimeEnvironmentDisplayChecks,

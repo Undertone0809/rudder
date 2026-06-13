@@ -1,7 +1,7 @@
 // @ts-nocheck
+import { app, dialog, type BrowserWindow } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import { app, dialog, type BrowserWindow } from "electron";
 import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { DESKTOP_UPDATE_QUIT_ARG } from "./desktop-update-flow.js";
 

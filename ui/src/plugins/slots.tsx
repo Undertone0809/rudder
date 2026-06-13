@@ -18,6 +18,17 @@
  * @see PLUGIN_SPEC.md §19 — UI Extension Model
  * @see PLUGIN_SPEC.md §19.0.3 — Bundle Serving
  */
+import { authApi } from "@/api/auth";
+import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
+import { queryKeys } from "@/lib/queryKeys";
+import { cn } from "@/lib/utils";
+import type {
+  PluginLauncherDeclaration,
+  PluginUiSlotDeclaration,
+  PluginUiSlotEntityType,
+  PluginUiSlotType,
+} from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
 import {
   Component,
   createElement,
@@ -25,21 +36,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
   type ErrorInfo,
   type ReactNode,
-  type ComponentType,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
-import type {
-  PluginLauncherDeclaration,
-  PluginUiSlotDeclaration,
-  PluginUiSlotEntityType,
-  PluginUiSlotType,
-} from "@rudderhq/shared";
-import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
-import { authApi } from "@/api/auth";
-import { queryKeys } from "@/lib/queryKeys";
-import { cn } from "@/lib/utils";
 import {
   PluginBridgeContext,
   type PluginHostContext,

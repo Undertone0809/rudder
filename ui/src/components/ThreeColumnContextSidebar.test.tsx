@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { ISSUE_AUTOSAVE_STORAGE_KEY, ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
+import type { Agent } from "@rudderhq/shared";
 import type { MouseEventHandler, ReactNode } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Agent } from "@rudderhq/shared";
-import { ISSUE_AUTOSAVE_STORAGE_KEY, ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
 import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 
 (

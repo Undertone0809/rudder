@@ -1,8 +1,8 @@
-import { pgTable, uuid, timestamp, index, uniqueIndex, text } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
-import { issues } from "./issues.js";
+import { index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { assets } from "./assets.js";
 import { issueComments } from "./issue_comments.js";
+import { issues } from "./issues.js";
+import { organizations } from "./organizations.js";
 
 export const issueAttachments = pgTable(
   "issue_attachments",

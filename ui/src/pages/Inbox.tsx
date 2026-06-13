@@ -1,30 +1,24 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { approvalsApi } from "../api/approvals";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { accessApi } from "../api/access";
+import { agentsApi } from "../api/agents";
+import { approvalsApi } from "../api/approvals";
+import { chatsApi } from "../api/chats";
 import { ApiError } from "../api/client";
 import { dashboardApi } from "../api/dashboard";
-import { issuesApi } from "../api/issues";
-import { agentsApi } from "../api/agents";
 import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT, heartbeatsApi } from "../api/heartbeats";
-import { chatsApi } from "../api/chats";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { retryHeartbeatRun } from "../lib/heartbeat-retry";
-import { queryKeys } from "../lib/queryKeys";
-import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
-import { getRunFailureDisplay } from "../lib/run-detail-display";
+import { issuesApi } from "../api/issues";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { retryHeartbeatRun } from "../lib/heartbeat-retry";
+import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
+import { queryKeys } from "../lib/queryKeys";
+import { getRunFailureDisplay } from "../lib/run-detail-display";
 
-import { StatusIcon } from "../components/StatusIcon";
-import { StatusBadge } from "../components/StatusBadge";
-import { approvalLabel, defaultTypeIcon, typeIcon } from "../components/ApprovalPayload";
-import { timeAgo } from "../lib/timeAgo";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { Tabs } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -32,22 +26,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Tabs } from "@/components/ui/tabs";
+import type { Approval, ChatConversation, HeartbeatRun, Issue, JoinRequest } from "@rudderhq/shared";
 import {
-  Inbox as InboxIcon,
   AlertTriangle,
   CheckCircle2,
   CircleAlert,
   CircleDot,
+  Inbox as InboxIcon,
   ListFilter,
   MessageSquare,
+  RotateCcw,
   ShieldCheck,
   UserPlus,
-  XCircle,
   X,
-  RotateCcw,
+  XCircle,
 } from "lucide-react";
+import { approvalLabel, defaultTypeIcon, typeIcon } from "../components/ApprovalPayload";
 import { PageTabBar } from "../components/PageTabBar";
-import type { Approval, ChatConversation, HeartbeatRun, Issue, JoinRequest } from "@rudderhq/shared";
+import { StatusBadge } from "../components/StatusBadge";
+import { StatusIcon } from "../components/StatusIcon";
+import { useDismissedInboxItems } from "../hooks/useInboxBadge";
 import {
   ACTIONABLE_APPROVAL_STATUSES,
   getApprovalsForTab,
@@ -59,7 +59,7 @@ import {
   shouldShowInboxSection,
   type InboxTab,
 } from "../lib/inbox";
-import { useDismissedInboxItems } from "../hooks/useInboxBadge";
+import { timeAgo } from "../lib/timeAgo";
 
 type InboxCategoryFilter =
   | "everything"

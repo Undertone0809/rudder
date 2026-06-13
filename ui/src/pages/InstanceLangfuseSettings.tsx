@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ActivitySquare, AlertTriangle, KeyRound, Link2 } from "lucide-react";
 import { healthApi } from "@/api/health";
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
   SettingsDivider,
   SettingsPageHeader,
@@ -12,12 +10,14 @@ import {
 } from "@/components/settings/SettingsScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ActivitySquare, AlertTriangle, KeyRound, Link2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 type FormState = {
   enabled: boolean;

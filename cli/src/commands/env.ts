@@ -1,7 +1,5 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import type { RudderConfig } from "../config/schema.js";
-import { configExists, readConfig, resolveConfigPath } from "../config/store.js";
 import {
   readAgentJwtSecretFromEnv,
   readAgentJwtSecretFromEnvFile,
@@ -12,6 +10,8 @@ import {
   resolveDefaultStorageDir,
   resolveRudderInstanceId,
 } from "../config/home.js";
+import type { RudderConfig } from "../config/schema.js";
+import { configExists, readConfig, resolveConfigPath } from "../config/store.js";
 
 type EnvSource = "env" | "config" | "file" | "default" | "missing";
 

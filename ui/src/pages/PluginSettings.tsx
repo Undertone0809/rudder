@@ -1,15 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Puzzle, ArrowLeft, ShieldAlert, ActivitySquare, CheckCircle, XCircle, Loader2, Clock, Cpu, Webhook, CalendarClock, AlertTriangle } from "lucide-react";
-import { useOrganization } from "@/context/OrganizationContext";
-import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { Link, Navigate, useLocation, useParams } from "@/lib/router";
-import { PluginSlotMount, usePluginSlots } from "@/plugins/slots";
 import { pluginsApi } from "@/api/plugins";
-import { queryKeys } from "@/lib/queryKeys";
-import { formatDateTime, formatTime } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import {
+  getDefaultValues,
+  JsonSchemaForm,
+  validateJsonSchemaForm,
+  type JsonSchemaNode,
+} from "@/components/JsonSchemaForm";
+import { PageTabBar } from "@/components/PageTabBar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -19,14 +17,16 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { PageTabBar } from "@/components/PageTabBar";
-import {
-  JsonSchemaForm,
-  validateJsonSchemaForm,
-  getDefaultValues,
-  type JsonSchemaNode,
-} from "@/components/JsonSchemaForm";
+import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { useOrganization } from "@/context/OrganizationContext";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link, Navigate, useLocation, useParams } from "@/lib/router";
 import { preserveSettingsOverlayState } from "@/lib/settings-overlay-state";
+import { formatDateTime, formatTime } from "@/lib/utils";
+import { PluginSlotMount, usePluginSlots } from "@/plugins/slots";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ActivitySquare, AlertTriangle, ArrowLeft, CalendarClock, CheckCircle, Clock, Cpu, Loader2, Puzzle, ShieldAlert, Webhook, XCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * PluginSettings page component.

@@ -1,44 +1,14 @@
 import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-  type DragEvent,
-  type RefObject,
-} from "react";
-import { createPortal } from "react-dom";
-import {
   CodeMirrorEditor,
-  MDXEditor,
-  codeBlockPlugin,
-  codeMirrorPlugin,
-  type CodeBlockEditorDescriptor,
-  type MDXEditorMethods,
-  headingsPlugin,
-  imagePlugin,
-  linkDialogPlugin,
-  linkPlugin,
-  listsPlugin,
-  markdownShortcutPlugin,
-  quotePlugin,
-  tablePlugin,
-  thematicBreakPlugin,
-  type Translation,
-  type RealmPlugin,
-  type MdastImportVisitor,
-  realmPlugin,
   addImportVisitor$,
   createRootEditorSubscription$,
+  realmPlugin,
+  type CodeBlockEditorDescriptor,
+  type MdastImportVisitor,
+  type RealmPlugin,
+  type Translation
 } from "@mdxeditor/editor";
-import { Boxes } from "lucide-react";
 import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
-import { useI18n } from "@/context/I18nContext";
-import { translateLegacyString } from "@/i18n/legacyPhrases";
-import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
-import { AgentIcon } from "./AgentIconPicker";
 import {
   $createParagraphNode,
   $createRangeSelection,
@@ -52,29 +22,20 @@ import {
   type TextNode,
 } from "lexical";
 import {
-  applyMentionChipDecoration,
-  clearMentionChipDecoration,
-  parseMentionChipHref,
-  stripMentionChipLabelPrefix,
-} from "../lib/mention-chips";
-import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
-import { mentionDeletionPlugin } from "../lib/mention-deletion";
-import { $createMentionTokenNode, mentionTokenPlugin } from "../lib/mention-token-node";
-import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
+  type RefObject
+} from "react";
 import {
-  applySkillTokenDecoration,
-  clearSkillTokenDecoration,
-  parseSkillReference,
-} from "../lib/skill-reference";
-import {
-  findAdjacentAtomicInlineTokenElement,
   readAtomicInlineTokenElement,
-  removeAtomicInlineTokenFromMarkdown,
-  type AtomicInlineTokenElement,
+  type AtomicInlineTokenElement
 } from "../lib/inline-token-dom";
-import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
-import { cn } from "../lib/utils";
+import {
+  parseMentionChipHref
+} from "../lib/mention-chips";
+import { $createMentionTokenNode } from "../lib/mention-token-node";
+import {
+  parseSkillReference
+} from "../lib/skill-reference";
+import { $createSkillTokenNode } from "../lib/skill-token-node";
 
 export interface MentionOption {
   id: string;

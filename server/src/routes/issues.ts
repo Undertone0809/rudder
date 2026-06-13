@@ -1,47 +1,36 @@
-import { Router, type Request, type Response } from "express";
-import multer from "multer";
 import type { Db } from "@rudderhq/db";
 import {
-  addIssueCommentSchema,
-  createIssueAttachmentMetadataSchema,
-  createIssueWorkspaceAttachmentSchema,
-  createIssueWorkProductSchema,
   createIssueLabelSchema,
-  checkoutIssueSchema,
-  createIssueSchema,
+  createIssueWorkProductSchema,
+  isUuidLike,
   linkIssueApprovalSchema,
-  reportIssueCommitSchema,
   reorderIssueSchema,
   updateIssueLabelSchema,
   updateIssueWorkProductSchema,
-  updateIssueSchema,
-  isUuidLike,
-  type IssueSearchField,
+  type IssueSearchField
 } from "@rudderhq/shared";
-import type { StorageService } from "../storage/types.js";
+import { Router, type Request, type Response } from "express";
+import multer from "multer";
+import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
-  runWorkspaceService,
+  automationService,
   goalService,
   heartbeatService,
   issueApprovalService,
   issueService,
-  messengerService,
   logActivity,
+  messengerService,
   projectService,
-  automationService,
+  runWorkspaceService,
   workProductService,
 } from "../services/index.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
-import { logger } from "../middleware/logger.js";
-import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
+import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
-import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
-import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
-import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 import { registerIssueCommentAttachmentRoutes } from "./issues.comments-attachments.js";
 import { registerIssueMutationRoutes } from "./issues.mutations.js";
 

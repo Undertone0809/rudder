@@ -1,7 +1,7 @@
-import { pgTable, uuid, text, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
-import { invites } from "./invites.js";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
+import { invites } from "./invites.js";
+import { organizations } from "./organizations.js";
 
 export const joinRequests = pgTable(
   "join_requests",

@@ -1,8 +1,8 @@
 // @vitest-environment node
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { retryHeartbeatRun } from "./heartbeat-retry";
 import { heartbeatsApi } from "../api/heartbeats";
+import { retryHeartbeatRun } from "./heartbeat-retry";
 
 describe("retryHeartbeatRun", () => {
   afterEach(() => {

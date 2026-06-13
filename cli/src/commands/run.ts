@@ -1,21 +1,20 @@
-import fs from "node:fs";
 import * as p from "@clack/prompts";
+import fs from "node:fs";
 import pc from "picocolors";
-import { bootstrapCeoInvite } from "./auth-bootstrap-ceo.js";
-import { onboard } from "./onboard.js";
-import { doctor } from "./doctor.js";
 import { loadRudderEnvFile } from "../config/env.js";
-import { configExists, resolveConfigPath } from "../config/store.js";
-import type { RudderConfig } from "../config/schema.js";
-import { readConfig } from "../config/store.js";
-import { applyLocalEnvProfile, resolveActiveLocalEnvProfile } from "../config/local-env.js";
 import {
   describeLocalInstancePaths,
   resolveRudderHomeDir,
   resolveRudderInstanceId,
 } from "../config/home.js";
+import { applyLocalEnvProfile, resolveActiveLocalEnvProfile } from "../config/local-env.js";
+import type { RudderConfig } from "../config/schema.js";
+import { configExists, readConfig, resolveConfigPath } from "../config/store.js";
 import { startManagedServerFromRuntime, type StartedServer } from "../runtime/server-entry.js";
 import { resolveCliVersion } from "../version.js";
+import { bootstrapCeoInvite } from "./auth-bootstrap-ceo.js";
+import { doctor } from "./doctor.js";
+import { onboard } from "./onboard.js";
 
 interface RunOptions {
   config?: string;

@@ -1,7 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { formatMessengerPreview, formatMessengerTitle, sanitizeChatStructuredPayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import {
   agents,
   approvals,
@@ -11,17 +8,18 @@ import {
   chatConversations,
   chatConversationUserStates,
   chatMessages,
-  organizations,
-  issues,
-  projects,
+  organizations
 } from "@rudderhq/db";
+import { formatMessengerTitle, sanitizeChatStructuredPayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { notFound, unprocessable } from "../errors.js";
-import { agentService } from "./agents.js";
 import { logActivity } from "./activity-log.js";
+import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
-import { organizationService } from "./orgs.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
+import { organizationService } from "./orgs.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -42,27 +40,27 @@ type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
 
 import {
-  CHAT_TRANSCRIPT_KEY,
-  safeTrim,
-  contentPath,
-  isVisibleIncomingChatMessage,
-  visibleIncomingMessageSql,
-  incomingMessagePreviewSql,
-  truncatePreview,
-  escapeLikePattern,
-  textContains,
   buildSearchSnippet,
-  resolveContextEntities,
-  listContextLinksForConversationIds,
-  listPrimaryIssues,
+  CHAT_TRANSCRIPT_KEY,
   chatTranscriptFromPayload,
   chatTranscriptSummaryFromEntries,
-  stripChatMetadataFromPayload,
-  withPersistedTranscript,
+  contentPath,
+  escapeLikePattern,
+  incomingMessagePreviewSql,
   issueProposalFromPayload,
-  operationProposalFromPayload,
+  isVisibleIncomingChatMessage,
+  listContextLinksForConversationIds,
+  listPrimaryIssues,
   operationProposalDecisionStatusFromPayload,
+  operationProposalFromPayload,
+  resolveContextEntities,
+  safeTrim,
+  stripChatMetadataFromPayload,
+  textContains,
+  truncatePreview,
+  visibleIncomingMessageSql,
   withOperationProposalDecisionState,
+  withPersistedTranscript,
 } from "./chats.helpers.js";
 
 export function chatService(db: Db) {

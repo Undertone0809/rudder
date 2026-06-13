@@ -1,13 +1,13 @@
-import { useMemo, useState } from "react";
 import { Link } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, Square } from "lucide-react";
+import { useMemo, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
 import { formatDateTime, formatRunElapsedDuration } from "../lib/utils";
-import { ExternalLink, Square } from "lucide-react";
-import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
+import { Identity } from "./Identity";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";

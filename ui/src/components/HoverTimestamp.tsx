@@ -1,6 +1,6 @@
-import { cloneElement, type ReactElement } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { cloneElement, type ReactElement } from "react";
 
 type ExactTimestampTriggerProps = {
   title?: string;

@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { printCodexStreamEvent } from "@rudderhq/agent-runtime-codex-local/cli";
 import { isCodexUnknownSessionError, parseCodexJsonl } from "@rudderhq/agent-runtime-codex-local/server";
 import { parseCodexStdoutLine } from "@rudderhq/agent-runtime-codex-local/ui";
-import { printCodexStreamEvent } from "@rudderhq/agent-runtime-codex-local/cli";
+import { describe, expect, it, vi } from "vitest";
 
 describe("codex_local parser", () => {
   it("extracts session, summary, usage, and terminal error message", () => {

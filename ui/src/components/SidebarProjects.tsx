@@ -1,35 +1,35 @@
-import { useCallback, useMemo, useState } from "react";
-import { NavLink, useLocation } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
-import {
-  DndContext,
-  PointerSensor,
-  closestCenter,
-  type DragEndEvent,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "../context/DialogContext";
-import { useSidebar } from "../context/SidebarContext";
-import { authApi } from "../api/auth";
-import { projectsApi } from "../api/projects";
-import { queryKeys } from "../lib/queryKeys";
-import { cn, projectRouteRef } from "../lib/utils";
-import { useProjectOrder } from "../hooks/useProjectOrder";
-import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
-import { ProjectIcon } from "./ProjectIdentity";
-import { SidebarSectionActionButton, SidebarSectionHeader } from "./SidebarSectionHeader";
-import { sidebarItemVariants } from "./sidebarItemStyles";
 import {
   Collapsible,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
+import { NavLink, useLocation } from "@/lib/router";
 import { PluginSlotMount, usePluginSlots } from "@/plugins/slots";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { Project } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import { authApi } from "../api/auth";
+import { projectsApi } from "../api/projects";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useSidebar } from "../context/SidebarContext";
+import { useProjectOrder } from "../hooks/useProjectOrder";
+import { queryKeys } from "../lib/queryKeys";
+import { cn, projectRouteRef } from "../lib/utils";
+import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
+import { ProjectIcon } from "./ProjectIdentity";
+import { SidebarSectionActionButton, SidebarSectionHeader } from "./SidebarSectionHeader";
+import { sidebarItemVariants } from "./sidebarItemStyles";
 
 type ProjectSidebarSlot = ReturnType<typeof usePluginSlots>["slots"][number];
 

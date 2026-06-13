@@ -1,35 +1,24 @@
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { access, chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, utimes, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { runCli } from "../program.js";
-import {
-  CLI_NPM_PACKAGE_NAME,
-  detectPersistentCliState,
-  hasGlobalInstalledPackage,
-  hasPersistentBinaryOnPath,
-  installPersistentCli,
-  isLikelyNpxExecutionContext,
-  isTransientBinaryPath,
-  resolvePersistentCliInstallSpec,
-} from "../install.js";
 import {
   assertChecksumMatch,
-  buildGithubReleaseAssetDownloadUrl,
   buildForceQuitCommand,
+  buildGithubReleaseAssetDownloadUrl,
   buildLinuxDesktopEntry,
   buildWindowsRobocopyMirrorCommand,
   buildWindowsZipExtractCommand,
   compareStableSemver,
   copyPortableAppBundle,
   downloadAsset,
-  downloadDesktopAssetWithCache,
   downloadChecksums,
+  downloadDesktopAssetWithCache,
   getCliUpdateNotice,
   isExactRuntimePackageSpec,
   isInstalledDesktopCurrent,
@@ -41,22 +30,33 @@ import {
   resolveAssetChecksum,
   resolveCliInstallSpec,
   resolveCurrentCliVersion,
-  resolveDesktopAssetTarget,
-  resolveDesktopAssetCandidates,
   resolveDefaultDesktopInstallRoot,
-  resolveDesktopAssetName,
-  resolveDesktopShellAssetName,
   resolveDesktopAssetCacheDir,
+  resolveDesktopAssetCandidates,
+  resolveDesktopAssetName,
+  resolveDesktopAssetTarget,
   resolveDesktopInstallPaths,
-  resolveDesktopReleaseVersion,
   resolveDesktopReleaseTag,
-  selectChecksummedDesktopAssetCandidate,
+  resolveDesktopReleaseVersion,
+  resolveDesktopShellAssetName,
   selectChecksumAsset,
+  selectChecksummedDesktopAssetCandidate,
   selectDesktopAsset,
   selectDesktopShellAsset,
   startCommand,
   waitForProcessExit,
 } from "../commands/start.js";
+import {
+  CLI_NPM_PACKAGE_NAME,
+  detectPersistentCliState,
+  hasGlobalInstalledPackage,
+  hasPersistentBinaryOnPath,
+  installPersistentCli,
+  isLikelyNpxExecutionContext,
+  isTransientBinaryPath,
+  resolvePersistentCliInstallSpec,
+} from "../install.js";
+import { runCli } from "../program.js";
 import {
   ensureRuntimeInstalled,
   pruneRuntimeCache,

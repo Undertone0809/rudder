@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDesktopUpdateProgress } from "@/context/DesktopUpdateProgressContext";
 import { useI18n } from "@/context/I18nContext";
 import type { TranslationKey } from "@/i18n/locales/en";
 import { readDesktopShell, type DesktopUpdateProgressPhase } from "@/lib/desktop-shell";
 import { cn } from "@/lib/utils";
+import { AlertTriangle, CheckCircle2, Download, X } from "lucide-react";
+import { useState } from "react";
 
 const RELEASES_URL = "https://github.com/Undertone0809/rudder/releases";
 const PHASE_LABEL_KEYS: Record<DesktopUpdateProgressPhase, TranslationKey> = {

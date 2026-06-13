@@ -1,64 +1,36 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import type { CreateConfigValues, ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
+import type {
+  Agent
+} from "@rudderhq/shared";
 import {
-  AGENT_RUNTIME_TYPES,
   AGENT_RUN_CONCURRENCY_DEFAULT,
   AGENT_RUN_CONCURRENCY_MAX,
-  AGENT_RUN_CONCURRENCY_MIN,
+  AGENT_RUN_CONCURRENCY_MIN
 } from "@rudderhq/shared";
-import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
-import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
-import type {
-  Agent,
-  AgentRuntimeEnvironmentTestResult,
-  OrganizationSecret,
-  EnvBinding,
-} from "@rudderhq/shared";
-import type { AgentRuntimeModel } from "../api/agents";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Heart, Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getUIAdapter } from "../agent-runtimes";
 import { agentsApi } from "../api/agents";
-import { secretsApi } from "../api/secrets";
 import { assetsApi } from "../api/assets";
-import {
-  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL,
-  DEFAULT_CODEX_LOCAL_SEARCH,
-} from "@rudderhq/agent-runtime-codex-local";
-import { models as CLAUDE_LOCAL_MODELS } from "@rudderhq/agent-runtime-claude-local";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
-import {
-  semanticBadgeToneClasses,
-} from "@/components/ui/semanticTones";
-import { Heart, ChevronDown, Plus, Trash2, X } from "lucide-react";
-import { cn, formatTime } from "../lib/utils";
-import { extractModelName, extractProviderId } from "../lib/model-utils";
-import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
-import { resolveRuntimeModels } from "../lib/runtime-models";
-import { queryKeys } from "../lib/queryKeys";
+import { secretsApi } from "../api/secrets";
 import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "../context/DialogContext";
+import { queryKeys } from "../lib/queryKeys";
+import { resolveRuntimeModels } from "../lib/runtime-models";
+import { cn } from "../lib/utils";
 import {
-  Field,
-  ToggleField,
-  ToggleWithNumber,
   CollapsibleSection,
   DraftInput,
   DraftNumberInput,
-  help,
-  adapterLabels,
+  Field,
+  ToggleField,
+  ToggleWithNumber,
+  help
 } from "./agent-config-primitives";
-import { defaultCreateValues } from "./agent-config-defaults";
-import { getUIAdapter } from "../agent-runtimes";
-import type { AgentRuntimeConfigFieldsProps } from "../agent-runtimes/types";
-import { ClaudeLocalAdvancedFields } from "../agent-runtimes/claude-local/config-fields";
+import { AdapterEnvironmentError, AdapterEnvironmentResult, RuntimeProviderCard } from "./AgentConfigForm.environment";
+import { AgentConfigFormProps, LOCAL_MODEL_RUNTIME_TYPES, Overlay, RuntimeEnvironmentStatus, RuntimeEnvironmentTestItemResult, RuntimeEnvironmentTestTarget, createValuesForRuntime, defaultConfigForRuntime, defaultFallbackItem, defaultModelForRuntime, emptyOverlay, formatRuntimeEnvironmentLabel, hasClearedConfigValue, inputClass, isOverlayDirty, normalizeModelFallbacksForEditor, omitClearedConfigValues, primaryModelFallbackKey, runtimeProviderItemClassName, runtimeProviderRailClassName } from "./AgentConfigForm.helpers";
 import { MarkdownEditor } from "./MarkdownEditor";
-import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 import { ReportsToPicker } from "./ReportsToPicker";
 
 /* ---- Create mode values ---- */
@@ -66,17 +38,11 @@ import { ReportsToPicker } from "./ReportsToPicker";
 // Canonical type lives in @rudderhq/agent-runtime-utils; re-exported here
 // so existing imports from this file keep working.
 export type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
-import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
-import { AgentConfigFormProps, Overlay, emptyOverlay, EMPTY_ENV, isOverlayDirty, inputClass, parseCommaArgs, formatArgList, codexThinkingEffortOptions, openCodeThinkingEffortOptions, cursorModeOptions, claudeThinkingEffortOptions, LOCAL_MODEL_RUNTIME_TYPES, defaultModelForRuntime, defaultCommandForRuntime, createValuesForRuntime, defaultConfigForRuntime, defaultFallbackRuntime, defaultFallbackItem, thinkingEffortKeyForRuntime, thinkingEffortOptionsForRuntime, shouldShowThinkingEffort, hasClearedConfigValue, omitClearedConfigValues, primaryModelFallbackKey, normalizeModelFallbacksForEditor, runtimeProviderRailClassName, runtimeProviderItemClassName, RuntimeEnvironmentTestTarget, RuntimeEnvironmentTestItemResult, RuntimeEnvironmentStatus, RuntimeEnvironmentDisplayStatus, formatRuntimeEnvironmentLabel, normalizeRuntimeEnvironmentDisplayStatus, filterRuntimeEnvironmentDisplayChecks } from "./AgentConfigForm.helpers";
-import { AdapterEnvironmentResult, AdapterEnvironmentError, RuntimeEnvironmentStatusBadge, RuntimeProviderCard } from "./AgentConfigForm.environment";
-import { RuntimeAdvancedOptions, ENABLED_ADAPTER_TYPES, ADAPTER_DISPLAY_LIST, AdapterTypeDropdown } from "./AgentConfigForm.advanced";
-import { EnvVarEditor } from "./AgentConfigForm.env-editor";
-import { ModelDropdown, ThinkingEffortDropdown } from "./AgentConfigForm.model-dropdown";
 
 export {
   filterRuntimeEnvironmentDisplayChecks,
   normalizeModelFallbacksForEditor,
-  normalizeRuntimeEnvironmentDisplayStatus,
+  normalizeRuntimeEnvironmentDisplayStatus
 } from "./AgentConfigForm.helpers";
 
 /* ---- Props ---- */

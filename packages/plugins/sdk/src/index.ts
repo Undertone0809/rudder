@@ -49,39 +49,22 @@
 // Main factory
 // ---------------------------------------------------------------------------
 
-export { definePlugin } from "./define-plugin.js";
-export { createTestHarness } from "./testing.js";
 export { createPluginBundlerPresets } from "./bundlers.js";
-export { startPluginDevServer, getUiBuildSnapshot } from "./dev-server.js";
-export { startWorkerRpcHost, runWorker } from "./worker-rpc-host.js";
+export { definePlugin } from "./define-plugin.js";
+export { getUiBuildSnapshot, startPluginDevServer } from "./dev-server.js";
 export {
-  createHostClientHandlers,
-  getRequiredCapability,
-  CapabilityDeniedError,
+  CapabilityDeniedError, createHostClientHandlers,
+  getRequiredCapability
 } from "./host-client-factory.js";
+export { createTestHarness } from "./testing.js";
+export { runWorker, startWorkerRpcHost } from "./worker-rpc-host.js";
 
 // JSON-RPC protocol helpers and constants
 export {
-  JSONRPC_VERSION,
-  JSONRPC_ERROR_CODES,
-  PLUGIN_RPC_ERROR_CODES,
-  HOST_TO_WORKER_REQUIRED_METHODS,
-  HOST_TO_WORKER_OPTIONAL_METHODS,
-  MESSAGE_DELIMITER,
-  createRequest,
-  createSuccessResponse,
-  createErrorResponse,
-  createNotification,
-  isJsonRpcRequest,
-  isJsonRpcNotification,
-  isJsonRpcResponse,
-  isJsonRpcSuccessResponse,
-  isJsonRpcErrorResponse,
-  serializeMessage,
-  parseMessage,
-  JsonRpcParseError,
-  JsonRpcCallError,
-  _resetIdCounter,
+  HOST_TO_WORKER_OPTIONAL_METHODS, HOST_TO_WORKER_REQUIRED_METHODS, JSONRPC_ERROR_CODES, JSONRPC_VERSION, JsonRpcCallError, JsonRpcParseError, MESSAGE_DELIMITER, PLUGIN_RPC_ERROR_CODES, _resetIdCounter, createErrorResponse,
+  createNotification, createRequest,
+  createSuccessResponse, isJsonRpcErrorResponse, isJsonRpcNotification, isJsonRpcRequest, isJsonRpcResponse,
+  isJsonRpcSuccessResponse, parseMessage, serializeMessage
 } from "./protocol.js";
 
 // ---------------------------------------------------------------------------
@@ -90,155 +73,58 @@ export {
 
 // Plugin definition and lifecycle types
 export type {
-  PluginDefinition,
-  PaperclipPlugin,
-  PluginHealthDiagnostics,
-  PluginConfigValidationResult,
-  PluginWebhookInput,
-} from "./define-plugin.js";
-export type {
-  TestHarness,
-  TestHarnessOptions,
-  TestHarnessLogEntry,
-} from "./testing.js";
-export type {
-  PluginBundlerPresetInput,
-  PluginBundlerPresets,
-  EsbuildLikeOptions,
-  RollupLikeConfig,
+  EsbuildLikeOptions, PluginBundlerPresetInput,
+  PluginBundlerPresets, RollupLikeConfig
 } from "./bundlers.js";
+export type {
+  PaperclipPlugin, PluginConfigValidationResult, PluginDefinition, PluginHealthDiagnostics, PluginWebhookInput
+} from "./define-plugin.js";
 export type { PluginDevServer, PluginDevServerOptions } from "./dev-server.js";
 export type {
-  WorkerRpcHostOptions,
-  WorkerRpcHost,
-  RunWorkerOptions,
-} from "./worker-rpc-host.js";
-export type {
-  HostServices,
   HostClientFactoryOptions,
-  HostClientHandlers,
+  HostClientHandlers, HostServices
 } from "./host-client-factory.js";
+export type {
+  TestHarness, TestHarnessLogEntry, TestHarnessOptions
+} from "./testing.js";
+export type {
+  RunWorkerOptions, WorkerRpcHost, WorkerRpcHostOptions
+} from "./worker-rpc-host.js";
 
 // JSON-RPC protocol types
 export type {
-  JsonRpcId,
-  JsonRpcRequest,
-  JsonRpcSuccessResponse,
-  JsonRpcError,
-  JsonRpcErrorResponse,
-  JsonRpcResponse,
-  JsonRpcNotification,
-  JsonRpcMessage,
-  JsonRpcErrorCode,
-  PluginRpcErrorCode,
-  InitializeParams,
-  InitializeResult,
-  ConfigChangedParams,
-  ValidateConfigParams,
-  OnEventParams,
-  RunJobParams,
-  GetDataParams,
-  PerformActionParams,
-  ExecuteToolParams,
-  PluginModalBoundsRequest,
-  PluginRenderCloseEvent,
-  PluginLauncherRenderContextSnapshot,
-  HostToWorkerMethods,
-  HostToWorkerMethodName,
-  WorkerToHostMethods,
-  WorkerToHostMethodName,
-  HostToWorkerRequest,
-  HostToWorkerResponse,
-  WorkerToHostRequest,
-  WorkerToHostResponse,
-  WorkerToHostNotifications,
-  WorkerToHostNotificationName,
+  ConfigChangedParams, ExecuteToolParams, GetDataParams, HostToWorkerMethodName, HostToWorkerMethods, HostToWorkerRequest,
+  HostToWorkerResponse, InitializeParams,
+  InitializeResult, JsonRpcError, JsonRpcErrorCode, JsonRpcErrorResponse, JsonRpcId, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcSuccessResponse, OnEventParams, PerformActionParams, PluginLauncherRenderContextSnapshot, PluginModalBoundsRequest,
+  PluginRenderCloseEvent, PluginRpcErrorCode, RunJobParams, ValidateConfigParams, WorkerToHostMethodName, WorkerToHostMethods, WorkerToHostNotificationName, WorkerToHostNotifications, WorkerToHostRequest,
+  WorkerToHostResponse
 } from "./protocol.js";
 
 // Plugin context and all client interfaces
 export type {
-  PluginContext,
-  PluginConfigClient,
-  PluginEventsClient,
-  PluginJobsClient,
-  PluginLaunchersClient,
-  PluginHttpClient,
-  PluginSecretsClient,
-  PluginActivityClient,
-  PluginActivityLogEntry,
-  PluginStateClient,
-  PluginEntitiesClient,
-  PluginProjectsClient,
-  PluginOrganizationsClient,
-  PluginIssuesClient,
-  PluginAgentsClient,
-  PluginAgentSessionsClient,
   AgentSession,
   AgentSessionEvent,
-  AgentSessionSendResult,
-  PluginGoalsClient,
-  PluginDataClient,
-  PluginActionsClient,
-  PluginStreamsClient,
-  PluginToolsClient,
-  PluginMetricsClient,
-  PluginLogger,
+  AgentSessionSendResult, PluginActionsClient, PluginActivityClient,
+  PluginActivityLogEntry, PluginAgentSessionsClient, PluginAgentsClient, PluginConfigClient, PluginContext, PluginDataClient, PluginEntitiesClient, PluginEventsClient, PluginGoalsClient, PluginHttpClient, PluginIssuesClient, PluginJobsClient,
+  PluginLaunchersClient, PluginLogger, PluginMetricsClient, PluginOrganizationsClient, PluginProjectsClient, PluginSecretsClient, PluginStateClient, PluginStreamsClient,
+  PluginToolsClient
 } from "./types.js";
 
 // Supporting types for context clients
 export type {
-  ScopeKey,
-  EventFilter,
-  PluginEvent,
+  Agent, EventFilter, Goal, Issue,
+  IssueComment, Organization, PluginEntityQuery, PluginEntityRecord, PluginEntityUpsert, PluginEvent,
   PluginJobContext,
-  PluginLauncherRegistration,
-  ToolRunContext,
-  ToolResult,
-  PluginEntityUpsert,
-  PluginEntityRecord,
-  PluginEntityQuery,
-  PluginWorkspace,
-  Organization,
-  Project,
-  Issue,
-  IssueComment,
-  Agent,
-  Goal,
+  PluginLauncherRegistration, PluginWorkspace, Project, ScopeKey, ToolResult, ToolRunContext
 } from "./types.js";
 
 // Manifest and constant types re-exported from @rudderhq/shared
 // Plugin authors import manifest types from here so they have a single
 // dependency (@rudderhq/plugin-sdk) for all plugin authoring needs.
 export type {
-  PaperclipPluginManifestV1,
-  PluginJobDeclaration,
-  PluginWebhookDeclaration,
-  PluginToolDeclaration,
-  PluginUiSlotDeclaration,
-  PluginUiDeclaration,
-  PluginLauncherActionDeclaration,
-  PluginLauncherRenderDeclaration,
-  PluginLauncherDeclaration,
-  PluginMinimumHostVersion,
-  PluginRecord,
-  PluginConfig,
-  JsonSchema,
-  PluginStatus,
-  PluginCategory,
-  PluginCapability,
-  PluginUiSlotType,
-  PluginUiSlotEntityType,
-  PluginLauncherPlacementZone,
-  PluginLauncherAction,
-  PluginLauncherBounds,
-  PluginLauncherRenderEnvironment,
-  PluginStateScopeKind,
-  PluginJobStatus,
-  PluginJobRunStatus,
-  PluginJobRunTrigger,
-  PluginWebhookDeliveryStatus,
-  PluginEventType,
-  PluginBridgeErrorCode,
+  JsonSchema, PaperclipPluginManifestV1, PluginBridgeErrorCode, PluginCapability, PluginCategory, PluginConfig, PluginEventType, PluginJobDeclaration, PluginJobRunStatus,
+  PluginJobRunTrigger, PluginJobStatus, PluginLauncherAction, PluginLauncherActionDeclaration, PluginLauncherBounds, PluginLauncherDeclaration, PluginLauncherPlacementZone, PluginLauncherRenderDeclaration, PluginLauncherRenderEnvironment, PluginMinimumHostVersion,
+  PluginRecord, PluginStateScopeKind, PluginStatus, PluginToolDeclaration, PluginUiDeclaration, PluginUiSlotDeclaration, PluginUiSlotEntityType, PluginUiSlotType, PluginWebhookDeclaration, PluginWebhookDeliveryStatus
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -270,17 +156,6 @@ export { z } from "zod";
 // ---------------------------------------------------------------------------
 
 export {
-  PLUGIN_API_VERSION,
-  PLUGIN_STATUSES,
-  PLUGIN_CATEGORIES,
-  PLUGIN_CAPABILITIES,
-  PLUGIN_UI_SLOT_TYPES,
-  PLUGIN_UI_SLOT_ENTITY_TYPES,
-  PLUGIN_STATE_SCOPE_KINDS,
-  PLUGIN_JOB_STATUSES,
-  PLUGIN_JOB_RUN_STATUSES,
-  PLUGIN_JOB_RUN_TRIGGERS,
-  PLUGIN_WEBHOOK_DELIVERY_STATUSES,
-  PLUGIN_EVENT_TYPES,
-  PLUGIN_BRIDGE_ERROR_CODES,
+  PLUGIN_API_VERSION, PLUGIN_BRIDGE_ERROR_CODES, PLUGIN_CAPABILITIES, PLUGIN_CATEGORIES, PLUGIN_EVENT_TYPES, PLUGIN_JOB_RUN_STATUSES,
+  PLUGIN_JOB_RUN_TRIGGERS, PLUGIN_JOB_STATUSES, PLUGIN_STATE_SCOPE_KINDS, PLUGIN_STATUSES, PLUGIN_UI_SLOT_ENTITY_TYPES, PLUGIN_UI_SLOT_TYPES, PLUGIN_WEBHOOK_DELIVERY_STATUSES
 } from "@rudderhq/shared";

@@ -1,20 +1,20 @@
-import type { ReactNode } from "react";
-import { Check, ChevronDown, Tag, UserPlus, Lightbulb, MessageSquare, Settings2, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Link } from "@/lib/router";
 import type { Agent, ChatConversation, IssueLabel, Project } from "@rudderhq/shared";
+import { Check, ChevronDown, Lightbulb, MessageSquare, Settings2, ShieldAlert, ShieldCheck, Tag, UserPlus } from "lucide-react";
+import type { ReactNode } from "react";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { formatAssigneeUserLabel } from "../lib/assignees";
+import { formatPriorityLabel } from "../lib/priorities";
 import { cn, formatCents } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
-import { MarkdownBody } from "./MarkdownBody";
-import { formatPriorityLabel } from "../lib/priorities";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
-import { Link } from "@/lib/router";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   ApprovalCodeBlock,
   ApprovalField,
   ApprovalInlineCode,
   ApprovalTag,
 } from "./approval-ui";
+import { MarkdownBody } from "./MarkdownBody";
 
 export interface ApprovalPayloadContext {
   agents?: Agent[] | null;

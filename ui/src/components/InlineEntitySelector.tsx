@@ -1,6 +1,6 @@
-import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Check, ChevronDown } from "lucide-react";
+import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "../lib/utils";
 
 export interface InlineEntityOption {

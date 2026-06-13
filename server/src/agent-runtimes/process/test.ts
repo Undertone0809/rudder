@@ -5,10 +5,10 @@ import type {
 } from "../types.js";
 import {
   asString,
-  parseObject,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensurePathInEnv,
+  parseObject,
 } from "../utils.js";
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {

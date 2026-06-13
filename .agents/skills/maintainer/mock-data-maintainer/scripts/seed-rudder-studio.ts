@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";

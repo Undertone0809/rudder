@@ -1,3 +1,4 @@
+import { readDesktopShell, type DesktopUpdateProgressEvent } from "@/lib/desktop-shell";
 import {
   createContext,
   useContext,
@@ -6,7 +7,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { readDesktopShell, type DesktopUpdateProgressEvent } from "@/lib/desktop-shell";
 
 type DesktopUpdateProgressContextValue = {
   progress: DesktopUpdateProgressEvent | null;

@@ -1,12 +1,12 @@
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { cn, formatDateTime, formatRunElapsedDuration } from "../lib/utils";
+import { Button } from "@/components/ui/button";
+import { ExternalLink, FlaskConical, LayoutPanelLeft, MonitorCog, PanelsTopLeft, RadioTower } from "lucide-react";
+import { useState } from "react";
 import { Identity } from "../components/Identity";
 import { StatusBadge } from "../components/StatusBadge";
 import { RunTranscriptView, type TranscriptDensity, type TranscriptMode } from "../components/transcript/RunTranscriptView";
 import { runTranscriptFixtureEntries, runTranscriptFixtureMeta } from "../fixtures/runTranscriptFixtures";
-import { ExternalLink, FlaskConical, LayoutPanelLeft, MonitorCog, PanelsTopLeft, RadioTower } from "lucide-react";
+import { cn, formatDateTime, formatRunElapsedDuration } from "../lib/utils";
 
 type SurfaceId = "detail" | "live" | "dashboard" | "chat";
 

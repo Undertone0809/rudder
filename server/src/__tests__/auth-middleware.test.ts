@@ -1,7 +1,7 @@
+import type { Db } from "@rudderhq/db";
 import express from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import type { Db } from "@rudderhq/db";
 import { actorMiddleware } from "../middleware/auth.js";
 
 function createLocalTrustedApp() {

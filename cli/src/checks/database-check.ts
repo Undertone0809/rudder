@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import type { RudderConfig } from "../config/schema.js";
+import { checkPostgresConnection } from "../runtime/database.js";
 import type { CheckResult } from "./index.js";
 import { resolveRuntimeLikePath } from "./path-resolver.js";
-import { checkPostgresConnection } from "../runtime/database.js";
 
 export async function databaseCheck(config: RudderConfig, configPath?: string): Promise<CheckResult> {
   if (config.database.mode === "postgres") {

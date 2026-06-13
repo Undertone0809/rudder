@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "@/lib/router";
-import { authApi } from "../api/auth";
-import { queryKeys } from "../lib/queryKeys";
-import { Button } from "@/components/ui/button";
 import { AsciiArtAnimation } from "@/components/AsciiArtAnimation";
+import { Button } from "@/components/ui/button";
+import { useNavigate, useSearchParams } from "@/lib/router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { authApi } from "../api/auth";
 import { useI18n } from "../context/I18nContext";
+import { queryKeys } from "../lib/queryKeys";
 
 type AuthMode = "sign_in" | "sign_up";
 

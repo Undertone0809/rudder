@@ -2,8 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError } from "../client/http.js";
 import { writeContext } from "../client/context.js";
+import { ApiRequestError } from "../client/http.js";
 import { handleCommandError, resolveCommandContext } from "../commands/client/common.js";
 
 const ORIGINAL_ENV = { ...process.env };

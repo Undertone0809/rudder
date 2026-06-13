@@ -1,7 +1,7 @@
 import { boolean, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
-import { organizations } from "./organizations.js";
 import { issues } from "./issues.js";
+import { organizations } from "./organizations.js";
 
 export const chatConversations = pgTable(
   "chat_conversations",

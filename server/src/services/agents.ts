@@ -1,12 +1,9 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
-import path from "node:path";
-import { and, desc, eq, gte, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
-  agents,
-  agentConfigRevisions,
   agentApiKeys,
+  agentConfigRevisions,
   agentRuntimeState,
+  agents,
   agentTaskSessions,
   agentWakeupRequests,
   costEvents,
@@ -18,12 +15,15 @@ import {
   isUuidLike,
   normalizeAgentUrlKey,
 } from "@rudderhq/shared";
+import { and, desc, eq, gte, inArray, isNull, lt, ne, sql } from "drizzle-orm";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import path from "node:path";
+import { deriveUniqueAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { resolveHomeAwarePath, resolveOrganizationAgentsDir } from "../home-paths.js";
-import { normalizeAgentPermissions } from "./agent-permissions.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
-import { deriveUniqueAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { pickUniqueAgentName } from "./agent-name-pool.js";
+import { normalizeAgentPermissions } from "./agent-permissions.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");

@@ -1,25 +1,25 @@
-import fs from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
-  applyPendingMigrations,
   agents,
+  applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
   goals,
-  organizations,
   organizationResources,
+  organizations,
   projectResourceAttachments,
   projectWorkspaces,
   projects,
 } from "@rudderhq/db";
 import { DEFAULT_PROJECT_ICON, deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { projectService } from "../services/projects.js";
+import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { resolveOrganizationWorkspaceRoot, resolveProjectLibraryDir } from "../home-paths.js";
+import { projectService } from "../services/projects.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;

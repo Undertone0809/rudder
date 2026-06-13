@@ -1,22 +1,7 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  OrganizationResource,
-  OrganizationWorkspaceFileEntry,
-  Project,
-  ProjectResourceAttachmentRole,
-} from "@rudderhq/shared";
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
-import { useI18n } from "@/context/I18nContext";
-import { useToast } from "@/context/ToastContext";
-import { queryKeys } from "@/lib/queryKeys";
-import { libraryCopy } from "@/lib/library-copy";
-import {
-  organizationResourceKindLabel,
-  organizationResourceSourceTypeLabel,
-} from "@/lib/resource-options";
 import { DraftInput } from "@/components/agent-config-primitives";
+import { ResourceLocatorField, suggestResourceNameFromLocator } from "@/components/ResourceLocatorField";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,8 +14,23 @@ import {
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { ResourceLocatorField, suggestResourceNameFromLocator } from "@/components/ResourceLocatorField";
+import { useI18n } from "@/context/I18nContext";
+import { useToast } from "@/context/ToastContext";
+import { libraryCopy } from "@/lib/library-copy";
+import { queryKeys } from "@/lib/queryKeys";
+import {
+  organizationResourceKindLabel,
+  organizationResourceSourceTypeLabel,
+} from "@/lib/resource-options";
+import type {
+  OrganizationResource,
+  OrganizationWorkspaceFileEntry,
+  Project,
+  ProjectResourceAttachmentRole,
+} from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, FileText, Folder, FolderPlus, Link2, Loader2, Pencil, Trash2, X } from "lucide-react";
+import { useMemo, useState } from "react";
 
 type ProjectResourceAttachment = Project["resources"][number];
 type ProjectResourceEditDraft = {

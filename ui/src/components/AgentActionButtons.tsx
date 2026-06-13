@@ -1,5 +1,5 @@
-import { Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Pause, Play } from "lucide-react";
 
 export function RunButton({
   onClick,

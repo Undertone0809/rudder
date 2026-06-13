@@ -1,18 +1,60 @@
-import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type DragEvent } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+} from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
-import { useDialog } from "../context/DialogContext";
-import { useOrganization } from "../context/OrganizationContext";
+import { createIssueDetailLocationState } from "@/lib/issueDetailBreadcrumb";
+import { useLocation, useNavigate } from "@/lib/router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Calendar,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  CircleDot,
+  FileText,
+  ListTree,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Minus,
+  MoreHorizontal,
+  Paperclip,
+  Plus,
+  Tag,
+  Target,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { agentsApi } from "../api/agents";
+import { assetsApi } from "../api/assets";
+import { authApi } from "../api/auth";
+import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
+import { organizationSkillsApi } from "../api/organizationSkills";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
-import { goalsApi } from "../api/goals";
-import { agentsApi } from "../api/agents";
-import { organizationSkillsApi } from "../api/organizationSkills";
-import { authApi } from "../api/auth";
-import { assetsApi } from "../api/assets";
-import { queryKeys } from "../lib/queryKeys";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useToast } from "../context/ToastContext";
+import { useProjectOrder } from "../hooks/useProjectOrder";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
+import {
+  assigneeValueFromSelection,
+  currentUserAssigneeOption,
+  parseAssigneeValue,
+} from "../lib/assignees";
+import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
+import { extractProviderIdWithFallback } from "../lib/model-utils";
 import {
   buildNewIssueCreateRequest,
   clearIssueAutosave,
@@ -24,66 +66,24 @@ import {
   readSavedIssueDraft,
   resolveDefaultNewIssueProjectId,
   resolveDraftBackedNewIssueValues,
-  saveNewIssuePreferences,
   saveIssueAutosave,
-  type IssueDraft,
+  saveNewIssuePreferences,
   updateIssueDraft,
+  type IssueDraft,
 } from "../lib/new-issue-dialog";
-import { useProjectOrder } from "../hooks/useProjectOrder";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
-import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
-import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
-import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
-import { useToast } from "../context/ToastContext";
-import {
-  assigneeValueFromSelection,
-  currentUserAssigneeOption,
-  parseAssigneeValue,
-} from "../lib/assignees";
-import { useLocation, useNavigate } from "@/lib/router";
-import { createIssueDetailLocationState } from "@/lib/issueDetailBreadcrumb";
-import {
-  Dialog,
-  DialogContent,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Maximize2,
-  Minimize2,
-  MoreHorizontal,
-  ChevronRight,
-  ChevronDown,
-  CircleDot,
-  Minus,
-  CheckCircle2,
-  Tag,
-  Calendar,
-  FileText,
-  Loader2,
-  Paperclip,
-  X,
-  Plus,
-  ListTree,
-  Target,
-} from "lucide-react";
-import { cn } from "../lib/utils";
-import { extractProviderIdWithFallback } from "../lib/model-utils";
-import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
-import { resolveRuntimeModels } from "../lib/runtime-models";
-import { issueStatusText, issueStatusTextDefault } from "../lib/status-colors";
-import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
-import { AgentMenuLabel } from "./AssigneeLabel";
-import { IssueLabelChip } from "./IssueLabelChip";
-import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
-import { ProjectIcon } from "./ProjectIdentity";
-import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName } from "./PriorityIcon";
 import { priorityOptions } from "../lib/priorities";
+import { queryKeys } from "../lib/queryKeys";
+import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
+import { resolveRuntimeModels } from "../lib/runtime-models";
+import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
+import { issueStatusText, issueStatusTextDefault } from "../lib/status-colors";
+import { cn } from "../lib/utils";
+import { AgentMenuLabel } from "./AssigneeLabel";
+import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
+import { IssueLabelChip } from "./IssueLabelChip";
+import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
+import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName } from "./PriorityIcon";
+import { ProjectIcon } from "./ProjectIdentity";
 
 const DEBOUNCE_MS = 800;
 

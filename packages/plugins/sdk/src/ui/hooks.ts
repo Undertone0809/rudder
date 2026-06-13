@@ -1,11 +1,11 @@
+import { getSdkUiRuntimeValue } from "./runtime.js";
 import type {
-  PluginDataResult,
   PluginActionFn,
+  PluginDataResult,
   PluginHostContext,
   PluginStreamResult,
   PluginToastFn,
 } from "./types.js";
-import { getSdkUiRuntimeValue } from "./runtime.js";
 
 // ---------------------------------------------------------------------------
 // usePluginData

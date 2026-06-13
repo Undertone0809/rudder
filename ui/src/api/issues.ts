@@ -1,10 +1,10 @@
 import type {
-  IssueLinkedApproval,
-  IssueFollowEntry,
   Issue,
   IssueAttachment,
   IssueComment,
+  IssueFollowEntry,
   IssueLabel,
+  IssueLinkedApproval,
   IssueSearchField,
   IssueWorkProduct,
   ReorderIssue,

@@ -1,6 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useNavigate } from "@/lib/router";
+import type { InstanceLocale } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   Bot,
@@ -17,57 +36,38 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { automationsApi } from "../api/automations";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentsApi } from "../api/agents";
+import { automationsApi } from "../api/automations";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
-import { useOrganization } from "../context/OrganizationContext";
+import { AgentIcon } from "../components/AgentIconPicker";
+import { EmptyState } from "../components/EmptyState";
+import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
+import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
+import { PageSkeleton } from "../components/PageSkeleton";
+import { ProjectIcon } from "../components/ProjectIdentity";
+import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
+import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
-import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
-import { getAutomationRunDisplay } from "../lib/automation-run-display";
 import {
   automationPolicyDescription,
   automationPolicyLabel,
   catchUpPolicyDescriptions,
   concurrencyPolicyDescriptions,
 } from "../lib/automation-localization";
+import { getAutomationRunDisplay } from "../lib/automation-run-display";
+import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { cn, formatDateTimeSeconds } from "../lib/utils";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
-import { EmptyState } from "../components/EmptyState";
-import { PageSkeleton } from "../components/PageSkeleton";
-import { AgentIcon } from "../components/AgentIconPicker";
-import { ProjectIcon } from "../components/ProjectIdentity";
-import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
-import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
-import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import type { InstanceLocale } from "@rudderhq/shared";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];

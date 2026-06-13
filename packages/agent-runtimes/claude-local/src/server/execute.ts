@@ -1,39 +1,39 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
-  asString,
-  asNumber,
   asBoolean,
+  asNumber,
+  asString,
   asStringArray,
-  parseObject,
-  parseJson,
   buildRudderEnv,
-  readRudderRuntimeSkillEntries,
-  joinPromptSections,
-  redactEnvForLogs,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensureLocalCliCredentialShimsInPath,
-  ensureRudderCliInPath,
   ensurePathInEnv,
-  resolveLocalOperatorHome,
-  syncLocalCliCredentialHomeEntries,
-  renderTemplate,
+  ensureRudderCliInPath,
+  joinPromptSections,
   loadAgentInstructionsPrefix,
+  parseJson,
+  parseObject,
+  readRudderRuntimeSkillEntries,
+  redactEnvForLogs,
+  renderTemplate,
+  resolveLocalOperatorHome,
   runChildProcess,
   selectPromptTemplate,
+  syncLocalCliCredentialHomeEntries,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
-  parseClaudeStreamJson,
   describeClaudeFailure,
   detectClaudeLoginRequired,
   isClaudeMaxTurnsResult,
   isClaudeUnknownSessionError,
+  parseClaudeStreamJson,
 } from "./parse.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 

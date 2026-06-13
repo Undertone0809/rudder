@@ -1,9 +1,9 @@
 // @vitest-environment node
 
-import { QueryClient } from "@tanstack/react-query";
-import type { ChatConversation, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
-import { describe, expect, it } from "vitest";
 import { queryKeys } from "@/lib/queryKeys";
+import type { ChatConversation, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it } from "vitest";
 import {
   archiveMessengerChatInCache,
   markMessengerChatPinnedInCache,

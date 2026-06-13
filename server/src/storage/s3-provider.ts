@@ -1,13 +1,13 @@
 import {
-  S3Client,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
+  S3Client,
 } from "@aws-sdk/client-s3";
 import { Readable } from "node:stream";
-import type { StorageProvider, GetObjectResult, HeadObjectResult } from "./types.js";
 import { notFound, unprocessable } from "../errors.js";
+import type { GetObjectResult, HeadObjectResult, StorageProvider } from "./types.js";
 
 interface S3ProviderConfig {
   bucket: string;

@@ -1,6 +1,6 @@
+import type { OrganizationPortabilityExportResult } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import { organizationExportJobService } from "../services/export-jobs.js";
-import type { OrganizationPortabilityExportResult } from "@rudderhq/shared";
 
 const result: OrganizationPortabilityExportResult = {
   rootPath: "acme",

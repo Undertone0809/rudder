@@ -1,5 +1,5 @@
-import { Router } from "express";
 import type { Db } from "@rudderhq/db";
+import { Router } from "express";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { accessRoutes } from "../routes/access.js";
 import { activityRoutes } from "../routes/activity.js";
@@ -14,6 +14,7 @@ import { dashboardRoutes } from "../routes/dashboard.js";
 import { runWorkspaceRoutes } from "../routes/execution-workspaces.js";
 import { goalRoutes } from "../routes/goals.js";
 import { healthRoutes } from "../routes/health.js";
+import { instanceSettingsRoutes } from "../routes/instance-settings.js";
 import { issueRoutes } from "../routes/issues.js";
 import { messengerRoutes } from "../routes/messenger.js";
 import { onboardingRoutes } from "../routes/onboarding.js";
@@ -24,7 +25,6 @@ import { projectRoutes } from "../routes/projects.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 import { secretRoutes } from "../routes/secrets.js";
 import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
-import { instanceSettingsRoutes } from "../routes/instance-settings.js";
 import type { PluginHostRuntime } from "./plugin-host-runtime.js";
 import type { RudderAppOptions } from "./types.js";
 

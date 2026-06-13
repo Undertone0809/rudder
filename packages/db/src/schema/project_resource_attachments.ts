@@ -1,7 +1,7 @@
 import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { organizationResources } from "./organization_resources.js";
 import { organizations } from "./organizations.js";
 import { projects } from "./projects.js";
-import { organizationResources } from "./organization_resources.js";
 
 export const projectResourceAttachments = pgTable(
   "project_resource_attachments",

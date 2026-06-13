@@ -1,0 +1,11 @@
+{
+  "ignoredFiles": [
+    "packages/agent-runtime-utils/src/server-utils.prompts.ts",
+    "packages/agent-runtime-utils/src/server-utils.test.ts",
+    "ui/src/components/MarkdownBody.test.tsx",
+    "ui/src/components/MarkdownBody.tsx",
+    "ui/src/components/MarkdownEditor.tsx",
+    "ui/src/components/MilkdownMarkdownEditor.test.ts",
+    "ui/src/components/MilkdownMarkdownEditor.tsx"
+  ]
+}

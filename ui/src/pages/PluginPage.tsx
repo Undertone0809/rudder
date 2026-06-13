@@ -1,13 +1,13 @@
-import { useEffect, useMemo } from "react";
-import { Link, Navigate, useParams } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
-import { useOrganization } from "@/context/OrganizationContext";
-import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { pluginsApi } from "@/api/plugins";
-import { queryKeys } from "@/lib/queryKeys";
-import { PluginSlotMount } from "@/plugins/slots";
 import { Button } from "@/components/ui/button";
+import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { useOrganization } from "@/context/OrganizationContext";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link, Navigate, useParams } from "@/lib/router";
+import { PluginSlotMount } from "@/plugins/slots";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
+import { useEffect, useMemo } from "react";
 import { NotFoundPage } from "./NotFound";
 
 /**

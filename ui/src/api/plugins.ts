@@ -11,12 +11,12 @@
  */
 
 import type {
+  PluginConfig,
   PluginLauncherDeclaration,
   PluginLauncherRenderContextSnapshot,
-  PluginUiSlotDeclaration,
   PluginRecord,
-  PluginConfig,
   PluginStatus,
+  PluginUiSlotDeclaration,
 } from "@rudderhq/shared";
 import { api } from "./client";
 

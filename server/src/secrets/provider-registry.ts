@@ -1,12 +1,12 @@
 import type { SecretProvider, SecretProviderDescriptor } from "@rudderhq/shared";
-import { localEncryptedProvider } from "./local-encrypted-provider.js";
+import { unprocessable } from "../errors.js";
 import {
   awsSecretsManagerProvider,
   gcpSecretManagerProvider,
   vaultProvider,
 } from "./external-stub-providers.js";
+import { localEncryptedProvider } from "./local-encrypted-provider.js";
 import type { SecretProviderModule } from "./types.js";
-import { unprocessable } from "../errors.js";
 
 const providers: SecretProviderModule[] = [
   localEncryptedProvider,

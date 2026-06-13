@@ -1,11 +1,11 @@
-import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { plugins, pluginState } from "@rudderhq/db";
 import type {
+  ListPluginState,
   PluginStateScopeKind,
   SetPluginState,
-  ListPluginState,
 } from "@rudderhq/shared";
+import { and, eq, isNull } from "drizzle-orm";
 import { notFound } from "../errors.js";
 
 // ---------------------------------------------------------------------------

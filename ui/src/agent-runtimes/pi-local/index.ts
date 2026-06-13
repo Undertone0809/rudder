@@ -1,7 +1,6 @@
+import { buildPiLocalConfig, parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
 import type { UIAgentRuntimeModule } from "../types";
-import { parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
 import { PiLocalConfigFields } from "./config-fields";
-import { buildPiLocalConfig } from "@rudderhq/agent-runtime-pi-local/ui";
 
 export const piLocalUIAdapter: UIAgentRuntimeModule = {
   type: "pi_local",

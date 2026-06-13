@@ -1,10 +1,7 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { and, asc, eq } from "drizzle-orm";
+import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
+import { readRudderSkillSyncPreference, writeRudderSkillSyncPreference } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
 import { agents as agentRows, organizationSkills } from "@rudderhq/db";
-import { readRudderSkillSyncPreference, writeRudderSkillSyncPreference } from "@rudderhq/agent-runtime-utils/server-utils";
-import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
 import type {
   AgentSkillEntry,
   AgentSkillSnapshot,
@@ -23,24 +20,26 @@ import {
   getBundledRudderSkillSlug,
   toBundledRudderSkillKey,
 } from "@rudderhq/shared";
+import { and, asc, eq } from "drizzle-orm";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { conflict, notFound, unprocessable } from "../../errors.js";
 import {
   resolveAgentSkillsDir,
-  resolveOrganizationSkillsDir,
-  resolveOrganizationWorkspaceRoot,
+  resolveOrganizationWorkspaceRoot
 } from "../../home-paths.js";
-import { conflict, notFound, unprocessable } from "../../errors.js";
 import { agentEnabledSkillsService } from "../agent-enabled-skills.js";
 import { agentService } from "../agents.js";
 import { projectService } from "../projects.js";
 
 import {
   ADAPTER_SKILL_HOME_DEFINITIONS,
-  CANONICAL_BUNDLED_SKILL_KEYS,
-  COMMUNITY_PRESET_SKILLS,
-  COMMUNITY_PRESET_SKILL_SLUGS,
   AgentSkillCatalogEntry,
   AgentSkillSelectionResolution,
   AgentWorkspaceRow,
+  CANONICAL_BUNDLED_SKILL_KEYS,
+  COMMUNITY_PRESET_SKILLS,
+  COMMUNITY_PRESET_SKILL_SLUGS,
   EnabledSkillsAgentRef,
   ImportPackageSkillResult,
   ImportedSkill,
@@ -79,7 +78,6 @@ import {
   normalizeSkillDescription,
   normalizeSkillDirectory,
   normalizeSkillSlug,
-  normalizeSourceLocatorDirectory,
   parseSelectionKey,
   readDiscoveredSkillEntries,
   resolveConfiguredHomeDir,
@@ -94,8 +92,9 @@ import {
   toCompanySkill,
   toCompanySkillListItem,
   uniqueImportedSkillKey,
-  uniqueSkillSlug,
+  uniqueSkillSlug
 } from "./organization-skills.catalog.js";
+import { createOrganizationSkillScanHandlers } from "./organization-skills.scans.js";
 import {
   fetchText,
   parseFrontmatterMarkdown,
@@ -110,7 +109,6 @@ import {
   resolveGitHubCommitSha,
   resolveRawGitHubUrl,
 } from "./organization-skills.sources.js";
-import { createOrganizationSkillScanHandlers } from "./organization-skills.scans.js";
 
 export function organizationSkillService(db: Db) {
   const agents = agentService(db);

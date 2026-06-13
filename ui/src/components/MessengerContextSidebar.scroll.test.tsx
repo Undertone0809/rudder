@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
+import { requestMessengerUnreadScroll } from "@/lib/messenger-unread-scroll";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { requestMessengerUnreadScroll } from "@/lib/messenger-unread-scroll";
 import { MessengerContextSidebar } from "./MessengerContextSidebar";
 
 (

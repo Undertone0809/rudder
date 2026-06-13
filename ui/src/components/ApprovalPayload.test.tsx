@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
+import type { Agent, IssueLabel, Project } from "@rudderhq/shared";
+import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Agent, IssueLabel, Project } from "@rudderhq/shared";
 import { ThemeProvider } from "../context/ThemeContext";
 import {
   ApprovalPayloadRenderer,

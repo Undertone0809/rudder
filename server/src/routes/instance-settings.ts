@@ -1,16 +1,19 @@
-import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import {
+  instancePathPickerRequestSchema,
   patchInstanceGeneralSettingsSchema,
-  patchKeyboardShortcutSettingsSchema,
   patchInstanceLangfuseSettingsSchema,
   patchInstanceNotificationSettingsSchema,
+  patchKeyboardShortcutSettingsSchema,
   patchOperatorProfileSettingsSchema,
-  instancePathPickerRequestSchema,
-  type PatchInstanceLangfuseSettings,
   type DeploymentMode,
+  type PatchInstanceLangfuseSettings,
 } from "@rudderhq/shared";
+import { Router, type Request } from "express";
+import { updateConfigFile } from "../config-file.js";
+import { loadConfig } from "../config.js";
 import { conflict, forbidden, unprocessable } from "../errors.js";
+import { resolveEffectiveLocalEnvName, resolveLangfuseEnvironmentName } from "../local-runtime.js";
 import { validate } from "../middleware/validate.js";
 import {
   boardAuthService,
@@ -18,11 +21,8 @@ import {
   logActivity,
   operatorProfileService,
 } from "../services/index.js";
-import { assertBoard, getActorInfo } from "./authz.js";
 import { createNativePathPicker, NativePathPickerUnsupportedError } from "../services/native-path-picker.js";
-import { updateConfigFile } from "../config-file.js";
-import { loadConfig } from "../config.js";
-import { resolveEffectiveLocalEnvName, resolveLangfuseEnvironmentName } from "../local-runtime.js";
+import { assertBoard, getActorInfo } from "./authz.js";
 
 const LANGFUSE_BASE_URL_DEFAULT = "http://localhost:3000";
 const LANGFUSE_ENV_KEYS = [

@@ -1,5 +1,3 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,6 +9,8 @@ import {
   scrollIssueFindMatchIntoView,
   type IssueFindMatch,
 } from "@/lib/issue-detail-find";
+import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 type IssueDetailFindProps = {
   rootRef: RefObject<HTMLElement | null>;

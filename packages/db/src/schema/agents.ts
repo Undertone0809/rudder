@@ -1,13 +1,13 @@
 import {
   type AnyPgColumn,
-  pgTable,
-  uuid,
-  text,
-  integer,
-  timestamp,
-  jsonb,
   index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations.js";
 

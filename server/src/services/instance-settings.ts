@@ -1,14 +1,14 @@
 import type { Db } from "@rudderhq/db";
-import { organizations, instanceSettings } from "@rudderhq/db";
+import { instanceSettings, organizations } from "@rudderhq/db";
 import {
   instanceGeneralSettingsSchema,
+  instanceNotificationSettingsSchema,
   type InstanceGeneralSettings,
   type InstanceLocale,
-  instanceNotificationSettingsSchema,
   type InstanceNotificationSettings,
+  type InstanceSettings,
   type PatchInstanceGeneralSettings,
   type PatchInstanceNotificationSettings,
-  type InstanceSettings,
 } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 

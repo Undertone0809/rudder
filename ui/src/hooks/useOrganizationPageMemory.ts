@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "@/lib/router";
+import { readStoredSettingsOverlayBackgroundPath } from "@/lib/settings-overlay-state";
+import { useEffect, useMemo, useRef } from "react";
 import { useOrganization } from "../context/OrganizationContext";
-import { toOrganizationRelativePath } from "../lib/organization-routes";
 import {
   getRememberedPathOwnerOrganizationId,
   isRememberableOrganizationPath,
   sanitizeRememberedPathForOrganization,
 } from "../lib/organization-page-memory";
-import { readStoredSettingsOverlayBackgroundPath } from "@/lib/settings-overlay-state";
+import { toOrganizationRelativePath } from "../lib/organization-routes";
 
 const STORAGE_KEY = "rudder.organizationPaths";
 

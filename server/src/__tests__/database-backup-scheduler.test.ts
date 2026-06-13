@@ -1,6 +1,6 @@
+import type { RunDatabaseBackupResult } from "@rudderhq/db";
 import { describe, expect, it, vi } from "vitest";
 import { runScheduledDatabaseBackupOnce } from "../database-backup-scheduler.js";
-import type { RunDatabaseBackupResult } from "@rudderhq/db";
 
 vi.mock("@rudderhq/db", () => ({
   estimateDatabaseBackupSize: vi.fn(),

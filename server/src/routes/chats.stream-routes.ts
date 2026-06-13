@@ -1,60 +1,40 @@
-import { randomUUID } from "node:crypto";
-import { Router, type Request, type Response } from "express";
-import multer from "multer";
 import type { LangfuseObservation } from "@langfuse/tracing";
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
   addChatMessageSchema,
-  updateChatConversationUserStateSchema,
-  type ChatContextLink,
-  type ChatConversation,
-  type ChatAttachment,
-  type ChatMessage,
-  type ExecutionObservabilityContext,
-  type ExecutionObservabilitySurface,
   convertChatToIssueSchema,
   createChatAttachmentMetadataSchema,
   createChatContextLinkSchema,
-  createChatConversationSchema,
   resolveChatOperationProposalSchema,
   setChatProjectContextSchema,
-  updateChatConversationSchema,
+  updateChatConversationUserStateSchema,
+  type ChatAttachment,
+  type ChatConversation,
+  type ChatMessage,
+  type ExecutionObservabilityContext
 } from "@rudderhq/shared";
-import type { StorageService } from "../storage/types.js";
+import { Router, type Request } from "express";
+import multer from "multer";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { forbidden, HttpError, unauthorized } from "../errors.js";
-import {
-  observeExecutionEvent,
-  updateExecutionObservation,
-  updateExecutionTraceIO,
-  withExecutionObservation,
-} from "../langfuse.js";
 import { emitExecutionTranscriptTree } from "../langfuse-transcript.js";
-import { validate } from "../middleware/validate.js";
+import {
+  updateExecutionObservation,
+  updateExecutionTraceIO
+} from "../langfuse.js";
 import { logger } from "../middleware/logger.js";
+import { validate } from "../middleware/validate.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
-  ChatAssistantStreamError,
-  chatAssistantService,
-  type ChatAssistantResult,
-  type ChatGeneratedAttachment,
+  ChatAssistantStreamError
 } from "../services/chat-assistant.js";
-import { cancelActiveChatGeneration, claimChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { cancelActiveChatGeneration, claimChatGeneration } from "../services/chat-generation-locks.js";
 import {
-  accessService,
-  agentService,
-  chatService,
-  operatorProfileService,
-  organizationService,
-  goalService,
-  issueService,
-  logActivity,
-  projectService,
+  logActivity
 } from "../services/index.js";
-import { summarizeRuntimeSkillsForTrace } from "../services/runtime-trace-metadata.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import type { StorageService } from "../storage/types.js";
+import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
 
 type ChatStreamRouteContext = {

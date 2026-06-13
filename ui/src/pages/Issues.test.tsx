@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
+import { ThemeProvider } from "@/context/ThemeContext";
+import { ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
-import { ThemeProvider } from "@/context/ThemeContext";
 import { Issues } from "./Issues";
 
 (

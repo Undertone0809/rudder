@@ -1,8 +1,8 @@
-import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import { AGENT_ICON_NAMES } from "@rudderhq/shared";
-import { forbidden } from "../errors.js";
+import { Router, type Request } from "express";
 import { listServerAdapters } from "../agent-runtimes/index.js";
+import { forbidden } from "../errors.js";
 import { agentService } from "../services/agents.js";
 
 function hasCreatePermission(agent: { role: string; permissions: Record<string, unknown> | null | undefined }) {

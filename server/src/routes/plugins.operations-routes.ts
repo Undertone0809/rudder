@@ -17,38 +17,15 @@
  * @see doc/plugins/PLUGIN_SPEC.md for the full plugin specification
  */
 
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
-import { Router } from "express";
-import type { Request } from "express";
-import { and, desc, eq, gte } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { organizations, pluginLogs, pluginWebhookDeliveries } from "@rudderhq/db";
-import type {
-  PluginStatus,
-  PaperclipPluginManifestV1,
-  PluginBridgeErrorCode,
-  PluginLauncherRenderContextSnapshot,
-} from "@rudderhq/shared";
-import {
-  PLUGIN_STATUSES,
-} from "@rudderhq/shared";
-import { pluginRegistryService } from "../services/plugin-registry.js";
-import { pluginLifecycleManager } from "../services/plugin-lifecycle.js";
-import { getPluginUiContributionMetadata, pluginLoader } from "../services/plugin-loader.js";
-import { logActivity } from "../services/activity-log.js";
-import { publishGlobalLiveEvent } from "../services/live-events.js";
-import type { PluginJobScheduler } from "../services/plugin-job-scheduler.js";
-import type { PluginJobStore } from "../services/plugin-job-store.js";
-import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
-import type { PluginStreamBus } from "../services/plugin-stream-bus.js";
-import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
-import type { ToolRunContext } from "@rudderhq/plugin-sdk";
+import { pluginLogs, pluginWebhookDeliveries } from "@rudderhq/db";
 import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@rudderhq/plugin-sdk";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { and, desc, eq, gte } from "drizzle-orm";
+import { Router } from "express";
+import { randomUUID } from "node:crypto";
+import { publishGlobalLiveEvent } from "../services/live-events.js";
 import { validateInstanceConfig } from "../services/plugin-config-validator.js";
+import { assertBoard } from "./authz.js";
 
 interface PluginHealthCheckResult {
   pluginId: string;

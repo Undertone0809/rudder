@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import pc from "picocolors";
-import { buildCliCommandLabel } from "./command-label.js";
 import { resolveDefaultCliAuthPath } from "../config/home.js";
+import { buildCliCommandLabel } from "./command-label.js";
 
 type RequestedAccess = "board" | "instance_admin_required";
 

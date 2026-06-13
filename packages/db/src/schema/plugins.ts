@@ -1,14 +1,14 @@
+import type { PaperclipPluginManifestV1, PluginCategory, PluginStatus } from "@rudderhq/shared";
 import {
-  pgTable,
-  uuid,
-  text,
-  integer,
-  timestamp,
-  jsonb,
   index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
-import type { PluginCategory, PluginStatus, PaperclipPluginManifestV1 } from "@rudderhq/shared";
 
 /**
  * `plugins` table — stores one row per installed plugin.

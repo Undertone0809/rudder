@@ -1,16 +1,16 @@
-import type {
-  PluginProjectSidebarItemProps,
-  PluginDetailTabProps,
-  PluginCommentAnnotationProps,
-  PluginCommentContextMenuItemProps,
-} from "@rudderhq/plugin-sdk/ui";
-import { usePluginAction, usePluginData } from "@rudderhq/plugin-sdk/ui";
-import { useMemo, useState, useEffect, useRef, type MouseEvent, type RefObject } from "react";
-import { EditorView } from "@codemirror/view";
-import { basicSetup } from "codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import type {
+  PluginCommentAnnotationProps,
+  PluginCommentContextMenuItemProps,
+  PluginDetailTabProps,
+  PluginProjectSidebarItemProps,
+} from "@rudderhq/plugin-sdk/ui";
+import { usePluginAction, usePluginData } from "@rudderhq/plugin-sdk/ui";
+import { basicSetup } from "codemirror";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
 
 const PLUGIN_KEY = "rudder-file-browser-example";
 const FILES_TAB_SLOT_ID = "files-tab";

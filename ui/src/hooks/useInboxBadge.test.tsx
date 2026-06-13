@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
-import type { ReactNode } from "react";
-import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarBadges } from "@rudderhq/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useInboxBadge } from "./useInboxBadge";
 
 (

@@ -1,9 +1,9 @@
-import { Readable } from "node:stream";
+import type { ChatAttachment, ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatAttachment, ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
 
 const mockAdapter = vi.hoisted(() => ({
   type: "codex_local",

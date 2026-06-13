@@ -1,7 +1,3 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ChevronRight, Sparkles } from "lucide-react";
-import type { ApprovalComment } from "@rudderhq/shared";
 import { accessApi } from "@/api/access";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
@@ -19,25 +15,29 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
-import { queryKeys } from "@/lib/queryKeys";
-import { formatDateTime } from "@/lib/utils";
-import { Link, useNavigate, useSearchParams } from "@/lib/router";
-import { resolveBoardActorLabel } from "@/lib/activity-actors";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
-import { Identity } from "./Identity";
+import { resolveBoardActorLabel } from "@/lib/activity-actors";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link, useNavigate, useSearchParams } from "@/lib/router";
+import { formatDateTime } from "@/lib/utils";
+import type { ApprovalComment } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2, ChevronRight, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { AgentIdentity } from "./AgentAvatar";
-import { MarkdownBody } from "./MarkdownBody";
+import { ApprovalInset, ApprovalPanel } from "./approval-ui";
 import {
+  approvalLabel,
   ApprovalPayloadRenderer,
   approvalPayloadWithChatIssueLabelIds,
-  approvalLabel,
+  chatConversationIdFromApprovalPayload,
   chatIssueApprovalLabelIds,
   chatIssueApprovalNeedsLabelSelection,
-  chatConversationIdFromApprovalPayload,
   defaultTypeIcon,
   typeIcon,
 } from "./ApprovalPayload";
-import { ApprovalInset, ApprovalPanel } from "./approval-ui";
+import { Identity } from "./Identity";
+import { MarkdownBody } from "./MarkdownBody";
 import { StatusBadge } from "./StatusBadge";
 
 interface ApprovalDetailDialogProps {

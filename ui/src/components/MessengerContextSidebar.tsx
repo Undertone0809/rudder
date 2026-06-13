@@ -1,15 +1,63 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { agentsApi } from "@/api/agents";
+import { authApi } from "@/api/auth";
+import { chatsApi } from "@/api/chats";
+import { ApiError } from "@/api/client";
+import { messengerApi } from "@/api/messenger";
+import { AgentIcon } from "@/components/AgentAvatar";
+import { StatusIcon } from "@/components/StatusIcon";
 import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useChatGenerations } from "@/context/ChatGenerationContext";
+import { useDialog } from "@/context/DialogContext";
+import { useOrganization } from "@/context/OrganizationContext";
+import { useSidebar } from "@/context/SidebarContext";
+import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { displayChatTitle } from "@/lib/chat-title";
+import { rememberMessengerPath } from "@/lib/messenger-memory";
+import {
+  archiveMessengerChatInCache,
+  invalidateMessengerThreadSummaryQueries,
+  markMessengerChatPinnedInCache,
+  markMessengerThreadPinnedInCache,
+  markMessengerThreadReadInCache,
+} from "@/lib/messenger-query-cache";
+import {
+  getUnhandledMessengerUnreadScrollRequestId,
+  markMessengerUnreadScrollRequestHandled,
+  MESSENGER_SCROLL_TO_UNREAD_EVENT,
+} from "@/lib/messenger-unread-scroll";
+import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import {
+  getProjectOrderStorageKey,
+  PROJECT_ORDER_UPDATED_EVENT,
+  readProjectOrder,
+  writeProjectOrder,
+} from "@/lib/project-order";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link, useLocation, useNavigate } from "@/lib/router";
+import { cn, relativeTime } from "@/lib/utils";
+import {
+  closestCenter,
   DndContext,
   PointerSensor,
-  closestCenter,
-  type DragEndEvent,
   useSensor,
   useSensors,
+  type DragEndEvent,
 } from "@dnd-kit/core";
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { buildChatMentionHref, formatMessengerPreview, formatMessengerTitle, type Agent, type ChatConversation } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Archive,
@@ -35,55 +83,7 @@ import {
   UserPlus,
   XCircle,
 } from "lucide-react";
-import { buildChatMentionHref, formatMessengerPreview, formatMessengerTitle, type Agent, type ChatConversation } from "@rudderhq/shared";
-import { agentsApi } from "@/api/agents";
-import { authApi } from "@/api/auth";
-import { ApiError } from "@/api/client";
-import { chatsApi } from "@/api/chats";
-import { messengerApi } from "@/api/messenger";
-import { AgentIcon } from "@/components/AgentAvatar";
-import { Link, useLocation, useNavigate } from "@/lib/router";
-import { displayChatTitle } from "@/lib/chat-title";
-import { cn, relativeTime } from "@/lib/utils";
-import { useSidebar } from "@/context/SidebarContext";
-import { useChatGenerations } from "@/context/ChatGenerationContext";
-import { useDialog } from "@/context/DialogContext";
-import { useOrganization } from "@/context/OrganizationContext";
-import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
-import { rememberMessengerPath } from "@/lib/messenger-memory";
-import {
-  archiveMessengerChatInCache,
-  invalidateMessengerThreadSummaryQueries,
-  markMessengerChatPinnedInCache,
-  markMessengerThreadPinnedInCache,
-  markMessengerThreadReadInCache,
-} from "@/lib/messenger-query-cache";
-import {
-  getUnhandledMessengerUnreadScrollRequestId,
-  markMessengerUnreadScrollRequestHandled,
-  MESSENGER_SCROLL_TO_UNREAD_EVENT,
-} from "@/lib/messenger-unread-scroll";
-import { toOrganizationRelativePath } from "@/lib/organization-routes";
-import {
-  getProjectOrderStorageKey,
-  PROJECT_ORDER_UPDATED_EVENT,
-  readProjectOrder,
-  writeProjectOrder,
-} from "@/lib/project-order";
-import { queryKeys } from "@/lib/queryKeys";
-import { StatusIcon } from "@/components/StatusIcon";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 type ThreadOrganizationRule = "latest" | "project" | "agent" | "kind" | "attention";
 type MessengerThreadDensity = "comfortable" | "compact";

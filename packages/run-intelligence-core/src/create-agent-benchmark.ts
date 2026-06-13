@@ -1,4 +1,4 @@
-import type { Agent, Approval, AgentSkillSnapshot } from "@rudderhq/shared";
+import type { Agent, AgentSkillSnapshot, Approval } from "@rudderhq/shared";
 import { buildObservedRunTrace, previewTextForTranscriptEntry } from "./trace.js";
 import type { ObservedRunDetail } from "./types.js";
 

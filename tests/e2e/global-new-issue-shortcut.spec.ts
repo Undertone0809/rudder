@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import type { KeyboardShortcutSettings } from "@rudderhq/shared";
 
 async function resetShortcutSettings(page: Page) {

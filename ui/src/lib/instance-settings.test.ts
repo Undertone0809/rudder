@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_INSTANCE_SETTINGS_PATH,
   DEFAULT_SETTINGS_PATH,
   INSTANCE_SETTINGS_ABOUT_PATH,
-  DEFAULT_INSTANCE_SETTINGS_PATH,
   INSTANCE_SETTINGS_LANGFUSE_PATH,
   INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
   INSTANCE_SETTINGS_PROFILE_PATH,
   INSTANCE_SETTINGS_SHORTCUTS_PATH,
-  normalizeRememberedSettingsPath,
   normalizeRememberedInstanceSettingsPath,
-  resolveDefaultSettingsPath,
+  normalizeRememberedSettingsPath,
   resolveDefaultInstanceSettingsPath,
+  resolveDefaultSettingsPath,
 } from "./instance-settings";
 
 describe("normalizeRememberedInstanceSettingsPath", () => {

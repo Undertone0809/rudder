@@ -1,8 +1,7 @@
-import { type CSSProperties } from "react";
-import { type AgentRole } from "@rudderhq/shared";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
+import { type AgentRole } from "@rudderhq/shared";
+import { type CSSProperties } from "react";
 import {
   getAgentAvatarBackgroundPreset,
   getAgentAvatarBackgroundStyle,
@@ -10,6 +9,7 @@ import {
   getAgentFallbackAvatarImageSrc,
   normalizeAgentAvatarIconValue,
 } from "../lib/agent-avatar";
+import { getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
 
 type IdentitySize = "xs" | "sm" | "default" | "lg";
 

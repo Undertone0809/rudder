@@ -1,9 +1,8 @@
-import { useRef, useState, type ChangeEvent, type CSSProperties } from "react";
-import { ImageUp, Shuffle } from "lucide-react";
-import { type AgentRole } from "@rudderhq/shared";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
+import { type AgentRole } from "@rudderhq/shared";
+import { ImageUp, Shuffle } from "lucide-react";
+import { useRef, useState, type ChangeEvent, type CSSProperties } from "react";
 import {
   AGENT_AVATAR_BACKGROUND_PRESETS,
   createRandomAgentDiceBearIcon,
@@ -14,6 +13,7 @@ import {
   normalizeAgentAvatarIconValue,
   withAgentAvatarBackground,
 } from "../lib/agent-avatar";
+import { getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
 
 export { getAgentAvatarImageSrc } from "../lib/agent-avatar";
 

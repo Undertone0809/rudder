@@ -1,22 +1,22 @@
-import { useEffect, useMemo } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Agent, HeartbeatRun } from "@rudderhq/shared";
-import { Activity, ArrowUpRight, Bot, Clock3, Play } from "lucide-react";
-import { Link } from "@/lib/router";
 import { agentsApi } from "@/api/agents";
 import { HEARTBEAT_RUN_LIST_HISTORY_LIMIT, heartbeatsApi, type LiveRunForIssue } from "@/api/heartbeats";
 import { AgentIcon } from "@/components/AgentAvatar";
-import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/EmptyState";
+import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
 import { PageSkeleton } from "@/components/PageSkeleton";
+import { Button } from "@/components/ui/button";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useToast } from "@/context/ToastContext";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { buildAgentSchedulerState, humanizeUnderscore, isHeartbeatToggleOn } from "@/lib/heartbeat-scheduler";
-import { getRunFailureDisplay } from "@/lib/run-detail-display";
 import { queryKeys } from "@/lib/queryKeys";
+import { Link } from "@/lib/router";
+import { getRunFailureDisplay } from "@/lib/run-detail-display";
 import { agentRouteRef, agentUrl, cn, formatDateTime, relativeTime } from "@/lib/utils";
+import type { Agent, HeartbeatRun } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Activity, ArrowUpRight, Clock3, Play } from "lucide-react";
+import { useEffect, useMemo } from "react";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;

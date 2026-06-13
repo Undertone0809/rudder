@@ -1,8 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { resolveOperatorDisplayName } from "@/lib/operator-display";
 import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
-import { resolveOperatorDisplayName } from "@/lib/operator-display";
+import { useQuery } from "@tanstack/react-query";
 
 export function useOperatorDisplayName(): string {
   const { data } = useQuery({

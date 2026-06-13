@@ -1,7 +1,5 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import type { RudderConfig } from "../config/schema.js";
-import { readConfig, resolveConfigPath } from "../config/store.js";
 import {
   agentJwtSecretCheck,
   configCheck,
@@ -15,6 +13,8 @@ import {
   type CheckResult,
 } from "../checks/index.js";
 import { loadRudderEnvFile } from "../config/env.js";
+import type { RudderConfig } from "../config/schema.js";
+import { readConfig, resolveConfigPath } from "../config/store.js";
 import { printRudderCliBanner } from "../utils/banner.js";
 
 const STATUS_ICON = {

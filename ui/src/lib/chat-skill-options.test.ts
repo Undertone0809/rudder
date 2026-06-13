@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
 import type {
   AgentSkillSnapshot,
   OrganizationSkillListItem,
 } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import {
   buildChatSkillOptions,
   filterChatSkillOptions,

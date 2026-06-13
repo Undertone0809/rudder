@@ -8,9 +8,9 @@
  * @module server/services/plugin-config-validator
  */
 
+import type { JsonSchema } from "@rudderhq/shared";
 import Ajv, { type ErrorObject } from "ajv";
 import addFormats from "ajv-formats";
-import type { JsonSchema } from "@rudderhq/shared";
 
 export interface ConfigValidationResult {
   valid: boolean;

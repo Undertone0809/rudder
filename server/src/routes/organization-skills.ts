@@ -1,4 +1,3 @@
-import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import {
   organizationSkillCreateSchema,
@@ -7,9 +6,10 @@ import {
   organizationSkillLocalScanRequestSchema,
   organizationSkillProjectScanRequestSchema,
 } from "@rudderhq/shared";
-import { validate } from "../middleware/validate.js";
-import { accessService, agentService, organizationSkillService, logActivity } from "../services/index.js";
+import { Router, type Request } from "express";
 import { forbidden } from "../errors.js";
+import { validate } from "../middleware/validate.js";
+import { accessService, agentService, logActivity, organizationSkillService } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export function organizationSkillRoutes(db: Db) {

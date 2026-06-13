@@ -1,11 +1,11 @@
-import { pgTable, uuid, text, timestamp, integer, index, boolean, jsonb } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
-import { issues } from "./issues.js";
-import { projects } from "./projects.js";
+import { costEvents } from "./cost_events.js";
 import { goals } from "./goals.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
-import { costEvents } from "./cost_events.js";
+import { issues } from "./issues.js";
+import { organizations } from "./organizations.js";
+import { projects } from "./projects.js";
 
 export const financeEvents = pgTable(
   "finance_events",

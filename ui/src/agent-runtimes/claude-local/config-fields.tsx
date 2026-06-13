@@ -1,13 +1,13 @@
-import type { AgentRuntimeConfigFieldsProps } from "../types";
 import {
-  Field,
-  ToggleField,
   DraftInput,
   DraftNumberInput,
+  Field,
   help,
+  ToggleField,
 } from "../../components/agent-config-primitives";
 import { ChoosePathButton } from "../../components/PathInstructionsModal";
 import { LocalWorkspaceRuntimeFields } from "../local-workspace-runtime-fields";
+import type { AgentRuntimeConfigFieldsProps } from "../types";
 
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";

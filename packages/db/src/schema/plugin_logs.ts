@@ -1,10 +1,10 @@
 import {
+  index,
+  jsonb,
   pgTable,
-  uuid,
   text,
   timestamp,
-  jsonb,
-  index,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { plugins } from "./plugins.js";
 

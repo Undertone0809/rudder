@@ -1,5 +1,5 @@
-import { Command } from "commander";
 import type { DashboardSummary } from "@rudderhq/shared";
+import { Command } from "commander";
 import {
   addCommonClientOptions,
   handleCommandError,

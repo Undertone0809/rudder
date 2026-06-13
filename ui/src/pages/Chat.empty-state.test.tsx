@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
-import type { ReactNode } from "react";
-import { createRoot } from "react-dom/client";
-import type { ChatConversation } from "@rudderhq/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
+import type { ChatConversation } from "@rudderhq/shared";
+import type { ReactNode } from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ChatLongMessageBody,
   ChatEmptyStatePromptOptions,
   ChatEmptyStateRecentConversations,
+  ChatLongMessageBody,
   EMPTY_STATE_PROMPT_GROUPS,
   OPEN_TASK_PRIORITY_PROMPT,
 } from "./Chat";

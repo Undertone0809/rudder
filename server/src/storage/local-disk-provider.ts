@@ -1,7 +1,7 @@
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
-import type { StorageProvider, GetObjectResult, HeadObjectResult } from "./types.js";
-import { notFound, badRequest } from "../errors.js";
+import { badRequest, notFound } from "../errors.js";
+import type { GetObjectResult, HeadObjectResult, StorageProvider } from "./types.js";
 
 function normalizeObjectKey(objectKey: string): string {
   const normalized = objectKey.replace(/\\/g, "/").trim();

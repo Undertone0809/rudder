@@ -1,5 +1,5 @@
-import { parseSkillReference } from "./skill-reference";
 import { findAdjacentAtomicInlineTokenElement } from "./inline-token-dom";
+import { parseSkillReference } from "./skill-reference";
 
 function getSkillReferenceLabelFromElement(node: Node | null | undefined): string | null {
   if (!(node instanceof HTMLElement)) return null;

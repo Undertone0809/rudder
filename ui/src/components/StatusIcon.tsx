@@ -1,8 +1,8 @@
-import { useState } from "react";
-import { Check } from "lucide-react";
-import { cn } from "../lib/utils";
-import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Check } from "lucide-react";
+import { useState } from "react";
+import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
+import { cn } from "../lib/utils";
 
 const allStatuses = ["backlog", "todo", "in_progress", "in_review", "done", "cancelled", "blocked"];
 

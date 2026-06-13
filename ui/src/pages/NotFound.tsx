@@ -1,10 +1,10 @@
-import { useEffect } from "react";
+import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "@/lib/router";
 import { AlertTriangle, Compass } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useEffect } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useOrganization } from "../context/OrganizationContext";
 import { useI18n } from "../context/I18nContext";
+import { useOrganization } from "../context/OrganizationContext";
 
 type NotFoundScope = "board" | "invalid_organization_prefix" | "global";
 

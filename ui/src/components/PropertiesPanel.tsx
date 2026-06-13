@@ -1,7 +1,7 @@
-import { X } from "lucide-react";
-import { usePanel } from "../context/PanelContext";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { X } from "lucide-react";
+import { usePanel } from "../context/PanelContext";
 
 export function PropertiesPanel() {
   const { panelContent, panelVisible, setPanelVisible } = usePanel();

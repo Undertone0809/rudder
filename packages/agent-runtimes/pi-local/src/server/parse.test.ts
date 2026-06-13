@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePiJsonl, isPiUnknownSessionError } from "./parse.js";
+import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
 
 describe("parsePiJsonl", () => {
   it("parses agent lifecycle and messages", () => {

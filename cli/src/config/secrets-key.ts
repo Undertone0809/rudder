@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { RudderConfig } from "./schema.js";
 import { resolveRuntimeLikePath } from "../utils/path-resolver.js";
+import type { RudderConfig } from "./schema.js";
 
 export type EnsureSecretsKeyResult =
   | { status: "created"; path: string }

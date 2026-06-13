@@ -1,5 +1,5 @@
-import { loadServerRuntimeModule } from "./server-entry.js";
 import { resolveCliVersion } from "../version.js";
+import { loadServerRuntimeModule } from "./server-entry.js";
 
 type DatabaseRuntimeModule = {
   checkDatabaseConnection?: (dbUrl: string) => Promise<void>;

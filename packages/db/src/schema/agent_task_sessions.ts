@@ -1,7 +1,7 @@
-import { pgTable, uuid, text, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
+import { organizations } from "./organizations.js";
 
 export const agentTaskSessions = pgTable(
   "agent_task_sessions",

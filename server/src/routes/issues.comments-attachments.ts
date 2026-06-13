@@ -1,47 +1,20 @@
-import { Router, type Request, type Response } from "express";
-import multer from "multer";
 import type { Db } from "@rudderhq/db";
 import {
   addIssueCommentSchema,
-  updateIssueCommentSchema,
   createIssueAttachmentMetadataSchema,
   createIssueWorkspaceAttachmentSchema,
-  createIssueWorkProductSchema,
-  createIssueLabelSchema,
-  checkoutIssueSchema,
-  createIssueSchema,
-  linkIssueApprovalSchema,
-  reportIssueCommitSchema,
-  reorderIssueSchema,
-  updateIssueLabelSchema,
-  updateIssueWorkProductSchema,
-  updateIssueSchema,
-  isUuidLike,
+  updateIssueCommentSchema
 } from "@rudderhq/shared";
-import type { StorageService } from "../storage/types.js";
+import { Router, type Request } from "express";
+import multer from "multer";
+import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
-  accessService,
-  agentService,
-  runWorkspaceService,
-  goalService,
-  heartbeatService,
-  issueApprovalService,
-  issueService,
-  documentService,
-  logActivity,
-  projectService,
-  automationService,
-  workProductService,
+  logActivity
 } from "../services/index.js";
-import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
-import { logger } from "../middleware/logger.js";
-import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
+import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
-import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
-import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
-import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 
 
 type IssueCommentAttachmentRouteContext = {

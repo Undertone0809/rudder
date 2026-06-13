@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { assetRoutes } from "../routes/assets.js";
 import type { StorageService } from "../storage/types.js";

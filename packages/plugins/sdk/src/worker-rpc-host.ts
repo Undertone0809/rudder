@@ -40,57 +40,50 @@ import { fileURLToPath } from "node:url";
 
 import type { PaperclipPluginManifestV1 } from "@rudderhq/shared";
 
-import type { PaperclipPlugin } from "./define-plugin.js";
+import type { PaperclipPlugin, PluginConfigValidationResult, PluginHealthDiagnostics, PluginWebhookInput } from "./define-plugin.js";
 import type {
-  PluginHealthDiagnostics,
-  PluginConfigValidationResult,
-  PluginWebhookInput,
-} from "./define-plugin.js";
+  ConfigChangedParams,
+  ExecuteToolParams,
+  GetDataParams,
+  InitializeParams,
+  InitializeResult,
+  JsonRpcRequest,
+  JsonRpcResponse,
+  OnEventParams,
+  PerformActionParams,
+  RunJobParams,
+  ValidateConfigParams,
+  WorkerToHostMethodName,
+  WorkerToHostMethods
+} from "./protocol.js";
+import {
+  createErrorResponse,
+  createNotification,
+  createRequest,
+  createSuccessResponse,
+  isJsonRpcErrorResponse,
+  isJsonRpcNotification,
+  isJsonRpcRequest,
+  isJsonRpcResponse,
+  isJsonRpcSuccessResponse,
+  JSONRPC_ERROR_CODES,
+  JsonRpcCallError,
+  JsonRpcParseError,
+  parseMessage,
+  PLUGIN_RPC_ERROR_CODES,
+  serializeMessage
+} from "./protocol.js";
 import type {
+  AgentSessionEvent,
+  EventFilter,
   PluginContext,
   PluginEvent,
   PluginJobContext,
   PluginLauncherRegistration,
   ScopeKey,
-  ToolRunContext,
   ToolResult,
-  EventFilter,
-  AgentSessionEvent,
+  ToolRunContext,
 } from "./types.js";
-import type {
-  JsonRpcId,
-  JsonRpcRequest,
-  JsonRpcResponse,
-  InitializeParams,
-  InitializeResult,
-  ConfigChangedParams,
-  ValidateConfigParams,
-  OnEventParams,
-  RunJobParams,
-  GetDataParams,
-  PerformActionParams,
-  ExecuteToolParams,
-  WorkerToHostMethodName,
-  WorkerToHostMethods,
-} from "./protocol.js";
-import {
-  JSONRPC_VERSION,
-  JSONRPC_ERROR_CODES,
-  PLUGIN_RPC_ERROR_CODES,
-  createRequest,
-  createSuccessResponse,
-  createErrorResponse,
-  createNotification,
-  parseMessage,
-  serializeMessage,
-  isJsonRpcRequest,
-  isJsonRpcResponse,
-  isJsonRpcNotification,
-  isJsonRpcSuccessResponse,
-  isJsonRpcErrorResponse,
-  JsonRpcParseError,
-  JsonRpcCallError,
-} from "./protocol.js";
 
 // ---------------------------------------------------------------------------
 // Types

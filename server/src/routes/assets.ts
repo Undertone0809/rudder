@@ -1,12 +1,12 @@
-import { Router, type Request, type Response } from "express";
-import multer from "multer";
-import createDOMPurify from "dompurify";
-import { JSDOM } from "jsdom";
 import type { Db } from "@rudderhq/db";
 import { createAssetImageMetadataSchema } from "@rudderhq/shared";
-import type { StorageService } from "../storage/types.js";
-import { assetService, logActivity } from "../services/index.js";
+import createDOMPurify from "dompurify";
+import { Router, type Request, type Response } from "express";
+import { JSDOM } from "jsdom";
+import multer from "multer";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { assetService, logActivity } from "../services/index.js";
+import type { StorageService } from "../storage/types.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 const SVG_CONTENT_TYPE = "image/svg+xml";
 const ALLOWED_COMPANY_LOGO_CONTENT_TYPES = new Set([

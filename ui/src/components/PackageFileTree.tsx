@@ -1,5 +1,3 @@
-import type { ReactNode } from "react";
-import { cn } from "../lib/utils";
 import {
   ChevronDown,
   ChevronRight,
@@ -8,6 +6,8 @@ import {
   Folder,
   FolderOpen,
 } from "lucide-react";
+import type { ReactNode } from "react";
+import { cn } from "../lib/utils";
 
 // ── Tree types ────────────────────────────────────────────────────────
 

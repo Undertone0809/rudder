@@ -1,8 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 import { errorHandler } from "../middleware/index.js";
+import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 
 const mockListObservedRuns = vi.hoisted(() => vi.fn());
 const mockGetObservedRun = vi.hoisted(() => vi.fn());

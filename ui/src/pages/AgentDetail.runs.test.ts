@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { HeartbeatRun } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import { getRunListSummary } from "./AgentDetail.runs";
 
 function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {

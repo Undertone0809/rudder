@@ -1,6 +1,6 @@
-import type { QueryClient } from "@tanstack/react-query";
-import type { ChatConversation, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
 import { queryKeys } from "@/lib/queryKeys";
+import type { ChatConversation, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
+import type { QueryClient } from "@tanstack/react-query";
 
 interface MessengerThreadPageData {
   pages: Array<{

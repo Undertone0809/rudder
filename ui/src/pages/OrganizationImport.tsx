@@ -1,26 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 import type {
+  OrganizationPortabilityAgentRuntimeOverride,
   OrganizationPortabilityCollisionStrategy,
   OrganizationPortabilityFileEntry,
   OrganizationPortabilityPreviewResult,
   OrganizationPortabilitySource,
-  OrganizationPortabilityAgentRuntimeOverride,
 } from "@rudderhq/shared";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useToast } from "../context/ToastContext";
-import { authApi } from "../api/auth";
-import { organizationsApi } from "../api/orgs";
-import { agentsApi } from "../api/agents";
-import { queryKeys } from "../lib/queryKeys";
-import { getAgentOrderStorageKey, writeAgentOrder } from "../lib/agent-order";
-import { getProjectOrderStorageKey, writeProjectOrder } from "../lib/project-order";
-import { MarkdownBody } from "../components/MarkdownBody";
-import { Button } from "@/components/ui/button";
-import { EmptyState } from "../components/EmptyState";
-import { AgentConfigForm } from "../components/AgentConfigForm";
-import { cn } from "../lib/utils";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   Check,
@@ -30,22 +17,35 @@ import {
   Package,
   Upload,
 } from "lucide-react";
-import { Field, adapterLabels } from "../components/agent-config-primitives";
-import { defaultCreateValues } from "../components/agent-config-defaults";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { getUIAdapter, listUIAdapters } from "../agent-runtimes";
-import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import { agentsApi } from "../api/agents";
+import { authApi } from "../api/auth";
+import { organizationsApi } from "../api/orgs";
+import { defaultCreateValues } from "../components/agent-config-defaults";
+import { Field, adapterLabels } from "../components/agent-config-primitives";
+import { AgentConfigForm } from "../components/AgentConfigForm";
+import { EmptyState } from "../components/EmptyState";
+import { MarkdownBody } from "../components/MarkdownBody";
 import {
-  type FileTreeNode,
-  type FrontmatterData,
-  buildFileTree,
-  countFiles,
-  collectAllPaths,
-  parseFrontmatter,
   FRONTMATTER_FIELD_LABELS,
   PackageFileTree,
+  buildFileTree,
+  collectAllPaths,
+  countFiles,
+  parseFrontmatter,
+  type FileTreeNode,
+  type FrontmatterData,
 } from "../components/PackageFileTree";
-import { readZipArchive } from "../lib/zip";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useToast } from "../context/ToastContext";
+import { getAgentOrderStorageKey, writeAgentOrder } from "../lib/agent-order";
 import { getPortableFileDataUrl, getPortableFileText, isPortableImageFile } from "../lib/portable-files";
+import { getProjectOrderStorageKey, writeProjectOrder } from "../lib/project-order";
+import { queryKeys } from "../lib/queryKeys";
+import { cn } from "../lib/utils";
+import { readZipArchive } from "../lib/zip";
 
 // ── Import-specific helpers ───────────────────────────────────────────
 

@@ -1,6 +1,6 @@
-import type { AgentRuntimeModel } from "./types.js";
 import { models as codexFallbackModels } from "@rudderhq/agent-runtime-codex-local";
 import { readConfigFile } from "../config-file.js";
+import type { AgentRuntimeModel } from "./types.js";
 
 const OPENAI_MODELS_ENDPOINT = "https://api.openai.com/v1/models";
 const OPENAI_MODELS_TIMEOUT_MS = 5000;

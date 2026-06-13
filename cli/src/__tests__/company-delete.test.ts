@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { deriveOrganizationUrlKey, type Organization } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import { assertDeleteConfirmation, resolveCompanyForDeletion } from "../commands/client/company.js";
 
 function makeCompany(overrides: Partial<Organization>): Organization {

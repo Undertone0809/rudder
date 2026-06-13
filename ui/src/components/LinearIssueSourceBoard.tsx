@@ -1,12 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link } from "@/lib/router";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Import, List, Columns3, Check, ArrowUpDown, Filter, FolderKanban, UserRound } from "lucide-react";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
-import { queryKeys } from "@/lib/queryKeys";
-import { useToast } from "@/context/ToastContext";
-import { cn } from "@/lib/utils";
-import { timeAgo } from "@/lib/timeAgo";
+import { EmptyState } from "@/components/EmptyState";
+import { PageSkeleton } from "@/components/PageSkeleton";
+import { StatusIcon } from "@/components/StatusIcon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,10 +12,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { EmptyState } from "@/components/EmptyState";
-import { PageSkeleton } from "@/components/PageSkeleton";
-import { StatusIcon } from "@/components/StatusIcon";
+import { useToast } from "@/context/ToastContext";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link } from "@/lib/router";
+import { timeAgo } from "@/lib/timeAgo";
+import { cn } from "@/lib/utils";
 import type { Issue, Project } from "@rudderhq/shared";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUpDown, Check, Columns3, ExternalLink, Filter, FolderKanban, Import, List, UserRound } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 const LINEAR_PLUGIN_KEY = "rudder.linear";
 const DATA_KEY_PAGE_BOOTSTRAP = "page-bootstrap";

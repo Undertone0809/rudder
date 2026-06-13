@@ -1,6 +1,33 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { agentsApi } from "@/api/agents";
+import { calendarApi } from "@/api/calendar";
+import { issuesApi } from "@/api/issues";
+import { AgentIdentity } from "@/components/AgentAvatar";
+import { EmptyState } from "@/components/EmptyState";
+import { PageSkeleton } from "@/components/PageSkeleton";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
+import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
+import { useToast } from "@/context/ToastContext";
+import { useViewedOrganization } from "@/hooks/useViewedOrganization";
+import { formatSidebarAgentLabel } from "@/lib/agent-labels";
+import {
+  calendarEventRunHref,
+  calendarEventSourceLabel,
+  formatCalendarDetailTimeRange,
+  shouldShowCalendarAutomationBadge,
+} from "@/lib/calendar-detail";
+import { type CalendarDisplayItem } from "@/lib/calendar-display-items";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link } from "@/lib/router";
+import { agentUrl, cn, formatDateTime, issueUrl } from "@/lib/utils";
+import type { CalendarEvent, CalendarSource, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Agent, CalendarEvent, CalendarSource, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig, Issue } from "@rudderhq/shared";
 import {
   AlertCircle,
   ArrowLeft,
@@ -15,38 +42,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Link } from "@/lib/router";
-import { agentsApi } from "@/api/agents";
-import { calendarApi } from "@/api/calendar";
-import { issuesApi } from "@/api/issues";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
-import { AgentIcon, AgentIdentity } from "@/components/AgentAvatar";
-import { EmptyState } from "@/components/EmptyState";
-import { PageSkeleton } from "@/components/PageSkeleton";
-import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
-import { useToast } from "@/context/ToastContext";
-import { useViewedOrganization } from "@/hooks/useViewedOrganization";
-import { agentUrl, cn, formatDateTime, formatTime, issueUrl } from "@/lib/utils";
-import { queryKeys } from "@/lib/queryKeys";
-import { layoutTimedEvents } from "@/lib/calendar-event-layout";
-import { timedEventSegmentsForDay, type TimedDaySegment } from "@/lib/calendar-day-segments";
-import { compactDenseTimedSegments } from "@/lib/calendar-collision-clusters";
-import { buildCalendarDisplayItems, type CalendarDisplayCluster, type CalendarDisplayCollisionCluster, type CalendarDisplayItem } from "@/lib/calendar-display-items";
-import { formatSidebarAgentLabel } from "@/lib/agent-labels";
-import {
-  calendarEventRunHref,
-  calendarEventSourceLabel,
-  formatCalendarDetailTimeRange,
-  shouldShowCalendarAutomationBadge,
-} from "@/lib/calendar-detail";
-import { CalendarView, DraftKind, DragMode, CreatePreview, SelectedDisplayCluster, HOUR_HEIGHT, TIME_GUTTER_WIDTH, DAY_MIN_WIDTH, SNAP_MINUTES, MIN_EVENT_MINUTES, DAY_HOURS, AGENT_ACCENTS, MONTH_AGENT_DOTS, STATUS_DOTS, startOfDay, endOfDay, addDays, startOfWeek, startOfMonthGrid, dateKey, sameDay, toInputDateTime, formatDayLabel, formatWeekday, formatMonthDay, formatRangeTitle, rangeForView, moveCursor, minuteOfDay, durationMinutes, clamp, snapMinute, dateAtMinutes, statusLabel, agentAccent, eventAccent, agentById, eventAgent, displayItemAccent, primaryEvent, statusSummary, clusterActivityLabel, collisionParticipantLabel, clusterTitle, clusterParticipantText, formatShortTime, formatTimeRange, displayItemTitle, displayItemSubtitle, monthEventDot, CalendarAgentMarker, CalendarAgentStack, CalendarEventMarker, eventIntersectsDay, formatMonthEventTime, isWritableEvent, visibleEventTitle, defaultDraftStart, newDraft, CalendarDetailLink, CalendarDetailRow, buildEventPayload, EventBlock, CalendarGridView, MonthView, AgendaView } from "./Calendar.parts";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AgendaView, CalendarAgentMarker, CalendarAgentStack, CalendarDetailLink, CalendarDetailRow, CalendarEventMarker, CalendarGridView, CalendarView, CreatePreview, DraftKind, MonthView, STATUS_DOTS, SelectedDisplayCluster, addDays, agentById, buildEventPayload, clamp, clusterParticipantText, clusterTitle, defaultDraftStart, eventAgent, formatRangeTitle, formatShortTime, formatTimeRange, isWritableEvent, moveCursor, newDraft, rangeForView, startOfDay, startOfWeek, statusLabel, statusSummary, toInputDateTime, visibleEventTitle } from "./Calendar.parts";
 
 export function Calendar() {
   const { viewedOrganizationId } = useViewedOrganization();

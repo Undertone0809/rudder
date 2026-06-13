@@ -1,15 +1,16 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { Command } from "commander";
 import {
   createApprovalSchema,
   requestApprovalRevisionSchema,
   resolveApprovalSchema,
   resubmitApprovalSchema,
-  type Issue,
   type Approval,
   type ApprovalComment,
+  type Issue,
 } from "@rudderhq/shared";
+import { Command } from "commander";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
   formatInlineRecord,
@@ -18,7 +19,6 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
-import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 
 interface ApprovalListOptions extends BaseClientOptions {
   orgId?: string;

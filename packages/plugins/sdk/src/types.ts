@@ -10,17 +10,17 @@
  */
 
 import type {
-  PaperclipPluginManifestV1,
-  PluginStateScopeKind,
-  PluginEventType,
-  PluginToolDeclaration,
-  PluginLauncherDeclaration,
-  Organization,
-  Project,
-  Issue,
-  IssueComment,
   Agent,
   Goal,
+  Issue,
+  IssueComment,
+  Organization,
+  PaperclipPluginManifestV1,
+  PluginEventType,
+  PluginLauncherDeclaration,
+  PluginStateScopeKind,
+  PluginToolDeclaration,
+  Project,
 } from "@rudderhq/shared";
 
 // ---------------------------------------------------------------------------
@@ -28,41 +28,11 @@ import type {
 // ---------------------------------------------------------------------------
 
 export type {
-  PaperclipPluginManifestV1,
-  PluginJobDeclaration,
-  PluginWebhookDeclaration,
-  PluginToolDeclaration,
-  PluginUiSlotDeclaration,
-  PluginUiDeclaration,
-  PluginLauncherActionDeclaration,
-  PluginLauncherRenderDeclaration,
-  PluginLauncherDeclaration,
-  PluginMinimumHostVersion,
-  PluginRecord,
-  PluginConfig,
-  JsonSchema,
-  PluginStatus,
-  PluginCategory,
-  PluginCapability,
-  PluginUiSlotType,
-  PluginUiSlotEntityType,
-  PluginLauncherPlacementZone,
-  PluginLauncherAction,
-  PluginLauncherBounds,
-  PluginLauncherRenderEnvironment,
-  PluginStateScopeKind,
-  PluginJobStatus,
-  PluginJobRunStatus,
-  PluginJobRunTrigger,
-  PluginWebhookDeliveryStatus,
-  PluginEventType,
-  PluginBridgeErrorCode,
-  Organization,
-  Project,
-  Issue,
-  IssueComment,
   Agent,
-  Goal,
+  Goal, Issue,
+  IssueComment, JsonSchema, Organization, PaperclipPluginManifestV1, PluginBridgeErrorCode, PluginCapability, PluginCategory, PluginConfig, PluginEventType, PluginJobDeclaration, PluginJobRunStatus,
+  PluginJobRunTrigger, PluginJobStatus, PluginLauncherAction, PluginLauncherActionDeclaration, PluginLauncherBounds, PluginLauncherDeclaration, PluginLauncherPlacementZone, PluginLauncherRenderDeclaration, PluginLauncherRenderEnvironment, PluginMinimumHostVersion,
+  PluginRecord, PluginStateScopeKind, PluginStatus, PluginToolDeclaration, PluginUiDeclaration, PluginUiSlotDeclaration, PluginUiSlotEntityType, PluginUiSlotType, PluginWebhookDeclaration, PluginWebhookDeliveryStatus, Project
 } from "@rudderhq/shared";
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
-import type { FinanceByBiller } from "@rudderhq/shared";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents, providerDisplayName } from "@/lib/utils";
+import type { FinanceByBiller } from "@rudderhq/shared";
 
 interface FinanceBillerCardProps {
   row: FinanceByBiller;

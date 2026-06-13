@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
 import { Link, useParams } from "@/lib/router";
+import type { AgentRuntimeType, JoinRequest } from "@rudderhq/shared";
+import { AGENT_RUNTIME_TYPES } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { healthApi } from "../api/health";
+import { useI18n } from "../context/I18nContext";
 import { queryKeys } from "../lib/queryKeys";
 import { formatDateTime } from "../lib/utils";
-import { Button } from "@/components/ui/button";
-import { AGENT_RUNTIME_TYPES } from "@rudderhq/shared";
-import type { AgentRuntimeType, JoinRequest } from "@rudderhq/shared";
-import { useI18n } from "../context/I18nContext";
 
 type JoinType = "human" | "agent";
 const joinAdapterOptions: AgentRuntimeType[] = [...AGENT_RUNTIME_TYPES];

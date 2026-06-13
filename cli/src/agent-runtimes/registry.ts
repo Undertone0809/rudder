@@ -1,6 +1,6 @@
 import type { CLIAgentRuntimeModule } from "@rudderhq/agent-runtime-utils";
-import { processCLIAdapter } from "./process/index.js";
 import { httpCLIAdapter } from "./http/index.js";
+import { processCLIAdapter } from "./process/index.js";
 
 const localRuntimeTypes = [
   "claude_local",

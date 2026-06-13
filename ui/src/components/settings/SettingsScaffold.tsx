@@ -1,7 +1,7 @@
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
+import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
-import { cn } from "@/lib/utils";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
 
 export function SettingsPageHeader({
   eyebrow,

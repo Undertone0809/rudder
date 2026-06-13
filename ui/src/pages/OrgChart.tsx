@@ -1,17 +1,17 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { Link, useNavigate } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
-import { agentsApi, type OrgNode } from "../api/agents";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { queryKeys } from "../lib/queryKeys";
-import { agentUrl, cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
+import { Link, useNavigate } from "@/lib/router";
+import { AGENT_ROLE_LABELS, type Agent } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
+import { Download, Network, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { agentsApi, type OrgNode } from "../api/agents";
+import { AgentIcon, getAgentAvatarImageSrc } from "../components/AgentIconPicker";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { AgentIcon, getAgentAvatarImageSrc } from "../components/AgentIconPicker";
-import { Download, Network, Upload } from "lucide-react";
-import { AGENT_ROLE_LABELS, type Agent } from "@rudderhq/shared";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { queryKeys } from "../lib/queryKeys";
+import { agentUrl, cn } from "../lib/utils";
 
 // Layout constants
 const CARD_W = 200;

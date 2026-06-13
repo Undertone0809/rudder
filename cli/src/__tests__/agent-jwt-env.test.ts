@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { agentJwtSecretCheck } from "../checks/agent-jwt-secret-check.js";
 import {
   ensureAgentJwtSecret,
   mergePaperclipEnvEntries,
@@ -9,7 +10,6 @@ import {
   readPaperclipEnvEntries,
   resolveAgentJwtEnvFile,
 } from "../config/env.js";
-import { agentJwtSecretCheck } from "../checks/agent-jwt-secret-check.js";
 
 const ORIGINAL_ENV = { ...process.env };
 

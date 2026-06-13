@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
+import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
+import type { CSSProperties, KeyboardEventHandler, ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import type { CSSProperties, KeyboardEventHandler, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommandPalette } from "./CommandPalette";
-import { getKeyboardShortcutPlatform } from "@/lib/keyboard-shortcuts";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }

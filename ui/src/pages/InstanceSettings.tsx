@@ -1,26 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clock3 } from "lucide-react";
-import type { InstanceSchedulerHeartbeatAgent } from "@rudderhq/shared";
-import { Link } from "@/lib/router";
-import { heartbeatsApi } from "../api/heartbeats";
-import { agentsApi } from "../api/agents";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useDialog } from "../context/DialogContext";
-import { useI18n } from "../context/I18nContext";
-import { EmptyState } from "../components/EmptyState";
+import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
+import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
   SettingsDivider,
   SettingsPageHeader,
   SettingsSection,
 } from "@/components/settings/SettingsScaffold";
-import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
 import { humanizeUnderscore, isHeartbeatToggleOn } from "@/lib/heartbeat-scheduler";
-import { queryKeys } from "../lib/queryKeys";
+import { Link } from "@/lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
+import type { InstanceSchedulerHeartbeatAgent } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Clock3 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { agentsApi } from "../api/agents";
+import { heartbeatsApi } from "../api/heartbeats";
+import { EmptyState } from "../components/EmptyState";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
+import { useI18n } from "../context/I18nContext";
+import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 
 function asRecord(value: unknown): Record<string, unknown> | null {

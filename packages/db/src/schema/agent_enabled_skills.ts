@@ -1,10 +1,10 @@
 import {
   index,
   pgTable,
+  text,
   timestamp,
   uniqueIndex,
   uuid,
-  text,
 } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { organizations } from "./organizations.js";

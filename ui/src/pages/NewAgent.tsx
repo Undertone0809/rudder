@@ -1,12 +1,3 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "@/lib/router";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { agentsApi } from "../api/agents";
-import { organizationSkillsApi } from "../api/organizationSkills";
-import { queryKeys } from "../lib/queryKeys";
-import { AGENT_ROLES } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -14,13 +5,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Loader2, Shield } from "lucide-react";
-import { cn, agentUrl } from "../lib/utils";
-import { roleLabels } from "../components/agent-config-primitives";
-import { AgentConfigForm, type CreateConfigValues } from "../components/AgentConfigForm";
-import { defaultCreateValues } from "../components/agent-config-defaults";
-import { getUIAdapter } from "../agent-runtimes";
-import { ReportsToPicker } from "../components/ReportsToPicker";
+import {
+  buildOrganizationSkillPickerItems,
+  filterOrganizationSkillPickerItems,
+  filterSelectableNewAgentOrganizationSkillItems,
+} from "@/lib/organization-skill-picker";
+import { useNavigate, useSearchParams } from "@/lib/router";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
@@ -28,11 +18,21 @@ import {
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
-import {
-  buildOrganizationSkillPickerItems,
-  filterSelectableNewAgentOrganizationSkillItems,
-  filterOrganizationSkillPickerItems,
-} from "@/lib/organization-skill-picker";
+import { AGENT_ROLES } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, Shield } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getUIAdapter } from "../agent-runtimes";
+import { agentsApi } from "../api/agents";
+import { organizationSkillsApi } from "../api/organizationSkills";
+import { defaultCreateValues } from "../components/agent-config-defaults";
+import { roleLabels } from "../components/agent-config-primitives";
+import { AgentConfigForm, type CreateConfigValues } from "../components/AgentConfigForm";
+import { ReportsToPicker } from "../components/ReportsToPicker";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { queryKeys } from "../lib/queryKeys";
+import { agentUrl, cn } from "../lib/utils";
 
 const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["agentRuntimeType"]>([
   "claude_local",

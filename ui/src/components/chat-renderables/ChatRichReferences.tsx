@@ -1,16 +1,16 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, FileText, MessageSquareText } from "lucide-react";
+import { ApiError } from "@/api/client";
+import { issuesApi } from "@/api/issues";
+import { StatusBadge } from "@/components/StatusBadge";
+import { formatAssigneeUserLabel } from "@/lib/assignees";
+import { formatPriorityLabel } from "@/lib/priorities";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link } from "@/lib/router";
+import { cn, relativeTime } from "@/lib/utils";
 import type { ChatMessage, ChatRichReference, Issue, IssueComment } from "@rudderhq/shared";
 import { chatRichReferencesFromStructuredPayload } from "@rudderhq/shared";
-import { issuesApi } from "@/api/issues";
-import { ApiError } from "@/api/client";
-import { Link } from "@/lib/router";
-import { queryKeys } from "@/lib/queryKeys";
-import { formatPriorityLabel } from "@/lib/priorities";
-import { formatAssigneeUserLabel } from "@/lib/assignees";
-import { StatusBadge } from "@/components/StatusBadge";
-import { cn, relativeTime } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { AlertCircle, FileText, MessageSquareText } from "lucide-react";
+import { useMemo } from "react";
 
 type CardReference = ChatRichReference & { display: "card" };
 

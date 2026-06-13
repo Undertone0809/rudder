@@ -1,6 +1,6 @@
-import type { CSSProperties } from "react";
-import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
+import type { CSSProperties } from "react";
 import { formatPriorityLabel } from "../lib/priorities";
 import { describeRunReason } from "../lib/run-reason";
 

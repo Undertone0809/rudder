@@ -1,5 +1,5 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "../lib/utils";
 
 interface SidebarSectionHeaderProps {

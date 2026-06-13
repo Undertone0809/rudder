@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { doctor } from "../commands/doctor.js";
-import { writeConfig } from "../config/store.js";
 import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type RudderConfig } from "../config/schema.js";
+import { writeConfig } from "../config/store.js";
 
 const ORIGINAL_ENV = { ...process.env };
 

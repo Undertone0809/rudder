@@ -1,12 +1,4 @@
 import {
-  useEffect,
-  useMemo,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-  type CSSProperties,
-} from "react";
-import {
   usePluginAction,
   usePluginData,
   usePluginToast,
@@ -14,6 +6,14 @@ import {
   type PluginPageProps,
   type PluginSettingsPageProps,
 } from "@rudderhq/plugin-sdk/ui";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   ACTION_KEYS,
   DATA_KEYS,
@@ -25,17 +25,17 @@ import {
 import type {
   ImportLinearIssuesActionResult,
   IssueLinkData,
-  LinearIssueRow,
   LinearCatalogData,
+  LinearIssueRow,
+  LinearIssuesData,
   LinearOrganizationMapping,
   LinearPluginConfig,
-  LinearStateSummary,
   LinearStateMapping,
+  LinearStateSummary,
   LinearTeamMapping,
-  LinearIssuesData,
   PageBootstrapData,
-  SettingsCatalogData,
   SettingsBootstrapData,
+  SettingsCatalogData,
 } from "../types.js";
 
 const layoutStyles: Record<string, CSSProperties> = {

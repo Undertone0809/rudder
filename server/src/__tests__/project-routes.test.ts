@@ -1,8 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { projectRoutes } from "../routes/projects.js";
 import { errorHandler } from "../middleware/index.js";
+import { projectRoutes } from "../routes/projects.js";
 
 const mockProjectService = vi.hoisted(() => ({
   list: vi.fn(),

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { $createParagraphNode, $getRoot, createEditor } from "lexical";
+import { describe, expect, it } from "vitest";
 import { $createSkillTokenNode, SkillTokenNode } from "./skill-token-node";
 
 const SKILL_HREF = "/workspace/.agents/skills/build-advisor/SKILL.md";

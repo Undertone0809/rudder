@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
-import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopUpdateProgressProvider } from "@/context/DesktopUpdateProgressContext";
 import { I18nProvider } from "@/context/I18nContext";
-import type { DesktopUpdateProgressEvent, DesktopShellApi } from "@/lib/desktop-shell";
+import type { DesktopShellApi, DesktopUpdateProgressEvent } from "@/lib/desktop-shell";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopUpdateStatusCard } from "./DesktopUpdateStatusCard";
 
 (

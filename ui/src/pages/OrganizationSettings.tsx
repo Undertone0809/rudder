@@ -1,41 +1,40 @@
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "../context/DialogContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { organizationsApi } from "../api/orgs";
-import { accessApi } from "../api/access";
-import { assetsApi } from "../api/assets";
-import { chatsApi } from "../api/chats";
-import { issuesApi } from "../api/issues";
-import { queryKeys } from "../lib/queryKeys";
+import { OrganizationIntelligenceProfilesSettings } from "@/components/settings/OrganizationIntelligenceProfilesSettings";
+import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import { Button } from "@/components/ui/button";
-import { Link, useLocation, useNavigate } from "@/lib/router";
-import { Settings, Check, Download, Upload, ArchiveRestore, Trash2, Tags, Plus } from "lucide-react";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
-import { OrganizationPatternIcon } from "../components/OrganizationPatternIcon";
-import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
+import type { TranslationKey } from "@/i18n/locales/en";
+import { normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { applyOrganizationPrefix } from "@/lib/organization-routes";
-import { normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
-import { cn } from "../lib/utils";
-import {
-  Field,
-  ToggleField,
-  HintIcon,
-} from "../components/agent-config-primitives";
+import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
+import { Link, useLocation, useNavigate } from "@/lib/router";
 import {
   clearStoredSettingsOverlayBackgroundPath,
   preserveSettingsOverlayState,
   readSettingsOverlayBackgroundPath,
   readStoredSettingsOverlayBackgroundPath,
 } from "@/lib/settings-overlay-state";
-import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
-import { OrganizationIntelligenceProfilesSettings } from "@/components/settings/OrganizationIntelligenceProfilesSettings";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArchiveRestore, Check, Download, Plus, Settings, Tags, Trash2, Upload } from "lucide-react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { accessApi } from "../api/access";
+import { assetsApi } from "../api/assets";
+import { chatsApi } from "../api/chats";
+import { issuesApi } from "../api/issues";
+import { organizationsApi } from "../api/orgs";
+import {
+  Field,
+  HintIcon,
+  ToggleField,
+} from "../components/agent-config-primitives";
+import { OrganizationPatternIcon } from "../components/OrganizationPatternIcon";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
-import type { TranslationKey } from "@/i18n/locales/en";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { useOrganization } from "../context/OrganizationContext";
+import { queryKeys } from "../lib/queryKeys";
 
 type AgentSnippetInput = {
   onboardingTextUrl: string;

@@ -91,5 +91,5 @@ export type {
   WorktreeInitOptions,
   WorktreeListOptions,
   WorktreeMakeOptions,
-  WorktreeMergeHistoryOptions,
+  WorktreeMergeHistoryOptions
 };

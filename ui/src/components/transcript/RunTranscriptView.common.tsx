@@ -1,30 +1,22 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import type { TranscriptEntry } from "../../agent-runtimes";
-import { MarkdownBody, type MarkdownLinkClickHandler } from "../MarkdownBody";
-import { cn, formatTokens } from "../../lib/utils";
-import { readDesktopShell } from "../../lib/desktop-shell";
-import { stripBenignStderr } from "../../lib/benign-stderr";
-import { useOptionalToast } from "../../context/ToastContext";
+import type { LucideIcon } from "lucide-react";
 import {
   Boxes,
-  Check,
-  ChevronRight,
-  CircleAlert,
   FileDiff,
   FileSearch,
   FileText,
   FolderOpen,
   Globe,
   ListTree,
-  Loader2,
   Logs,
   Plug,
   Search,
   TerminalSquare,
-  User,
-  Wrench,
+  Wrench
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import type { TranscriptEntry } from "../../agent-runtimes";
+import { stripBenignStderr } from "../../lib/benign-stderr";
+import { cn } from "../../lib/utils";
+import { type MarkdownLinkClickHandler } from "../MarkdownBody";
 
 export type TranscriptMode = "nice" | "raw";
 export type TranscriptDensity = "comfortable" | "compact";

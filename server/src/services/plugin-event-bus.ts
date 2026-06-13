@@ -20,8 +20,8 @@
  * @see PLUGIN_SPEC.md §16.2 — Plugin-to-Plugin Events
  */
 
+import type { EventFilter, PluginEvent } from "@rudderhq/plugin-sdk";
 import type { PluginEventType } from "@rudderhq/shared";
-import type { PluginEvent, EventFilter } from "@rudderhq/plugin-sdk";
 
 // ---------------------------------------------------------------------------
 // Internal types

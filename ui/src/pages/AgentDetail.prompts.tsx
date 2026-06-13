@@ -1,39 +1,38 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  useRef,
-} from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { agentsApi } from "../api/agents";
-import { useSidebar } from "../context/SidebarContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { queryKeys } from "../lib/queryKeys";
-import { MarkdownEditor } from "../components/MarkdownEditor";
-import { assetsApi } from "../api/assets";
-import { CopyText } from "../components/CopyText";
-import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
-import { cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import {
-  Copy,
-  ChevronRight,
-  HelpCircle,
-  FolderOpen,
-} from "lucide-react";
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import {
   semanticBadgeToneClasses,
   semanticNoticeToneClasses,
 } from "@/components/ui/semanticTones";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   type Agent,
 } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ChevronRight,
+  Copy,
+  FolderOpen,
+  HelpCircle,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { agentsApi } from "../api/agents";
+import { assetsApi } from "../api/assets";
+import { CopyText } from "../components/CopyText";
+import { MarkdownEditor } from "../components/MarkdownEditor";
+import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
+import { useOrganization } from "../context/OrganizationContext";
+import { useSidebar } from "../context/SidebarContext";
+import { queryKeys } from "../lib/queryKeys";
+import { cn } from "../lib/utils";
 import { isMarkdown, setsEqual } from "./AgentDetail.helpers";
 
 export const DEFAULT_INSTRUCTIONS_ENTRY_FILE = "SOUL.md";

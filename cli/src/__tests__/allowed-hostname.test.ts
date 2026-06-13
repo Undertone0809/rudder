@@ -2,8 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type RudderConfig } from "../config/schema.js";
 import { addAllowedHostname } from "../commands/allowed-hostname.js";
+import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type RudderConfig } from "../config/schema.js";
 
 function createTempConfigPath() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-allowed-hostname-"));

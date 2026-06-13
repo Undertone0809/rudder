@@ -1,18 +1,18 @@
-import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
 import { Link } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
 import type { Goal, GoalDependencies } from "@rudderhq/shared";
-import { GOAL_STATUSES, GOAL_LEVELS } from "@rudderhq/shared";
+import { GOAL_LEVELS, GOAL_STATUSES } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
+import { ArchiveX, Loader2, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";
+import { agentUrl, cn, formatDate } from "../lib/utils";
 import { StatusBadge } from "./StatusBadge";
-import { formatDate, cn, agentUrl } from "../lib/utils";
-import { Separator } from "@/components/ui/separator";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
-import { ArchiveX, Loader2, Trash2 } from "lucide-react";
 
 interface GoalPropertiesProps {
   goal: Goal;

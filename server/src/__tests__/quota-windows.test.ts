@@ -1,25 +1,23 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { QuotaWindow } from "@rudderhq/agent-runtime-utils";
 import os from "node:os";
 import path from "node:path";
-import type { QuotaWindow } from "@rudderhq/agent-runtime-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Pure utility functions — import directly from adapter source
 import {
-  toPercent,
-  fetchWithTimeout,
   fetchClaudeQuota,
+  fetchWithTimeout,
   parseClaudeCliUsageText,
   readClaudeToken,
-  claudeConfigDir,
+  toPercent
 } from "@rudderhq/agent-runtime-claude-local/server";
 
 import {
-  secondsToWindowLabel,
-  readCodexAuthInfo,
-  readCodexToken,
   fetchCodexQuota,
   mapCodexRpcQuota,
-  codexHomeDir,
+  readCodexAuthInfo,
+  readCodexToken,
+  secondsToWindowLabel
 } from "@rudderhq/agent-runtime-codex-local/server";
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
-import * as React from "react"
-import { ChevronRight, MoreHorizontal } from "lucide-react"
-import { Slot } from "radix-ui"
+import { ChevronRight, MoreHorizontal } from "lucide-react";
+import { Slot } from "radix-ui";
+import * as React from "react";
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/utils";
 
 function Breadcrumb({ ...props }: React.ComponentProps<"nav">) {
   return <nav aria-label="breadcrumb" data-slot="breadcrumb" {...props} />
@@ -99,11 +99,7 @@ function BreadcrumbEllipsis({
 }
 
 export {
-  Breadcrumb,
-  BreadcrumbList,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-  BreadcrumbEllipsis,
-}
+  Breadcrumb, BreadcrumbEllipsis, BreadcrumbItem,
+  BreadcrumbLink, BreadcrumbList, BreadcrumbPage,
+  BreadcrumbSeparator
+};

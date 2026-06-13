@@ -30,15 +30,15 @@
  * @see PLUGIN_SPEC.md §21.3 — `plugin_jobs` / `plugin_job_runs` tables
  */
 
-import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { plugins, pluginJobs, pluginJobRuns } from "@rudderhq/db";
+import { pluginJobRuns, pluginJobs, plugins } from "@rudderhq/db";
 import type {
   PluginJobDeclaration,
+  PluginJobRecord,
   PluginJobRunStatus,
   PluginJobRunTrigger,
-  PluginJobRecord,
 } from "@rudderhq/shared";
+import { and, desc, eq } from "drizzle-orm";
 import { notFound } from "../errors.js";
 
 /**

@@ -2,29 +2,6 @@
 // This file is kept as a convenience shim so existing in-tree
 // imports (process/, http/, heartbeat.ts) don't need rewriting.
 export type {
-  AgentRuntimeAgent,
-  AgentRuntimeSessionManagement,
-  AgentRuntimeState,
-  UsageSummary,
-  AgentRuntimeExecutionResult,
-  AgentRuntimeLoadedSkillMeta,
-  AgentRuntimeInvocationMeta,
-  AgentRuntimeExecutionContext,
-  AgentRuntimeEnvironmentCheckLevel,
-  AgentRuntimeEnvironmentCheck,
-  AgentRuntimeEnvironmentTestStatus,
-  AgentRuntimeEnvironmentTestResult,
-  AgentRuntimeEnvironmentTestContext,
-  AgentRuntimeSkillSyncMode,
-  AgentRuntimeSkillState,
-  AgentRuntimeSkillOrigin,
-  AgentRuntimeSkillEntry,
-  AgentRuntimeSkillSnapshot,
-  AgentRuntimeSkillContext,
-  AgentRuntimeSessionCodec,
-  AgentRuntimeModel,
-  NativeContextManagement,
-  ResolvedSessionCompactionPolicy,
-  SessionCompactionPolicy,
-  ServerAgentRuntimeModule,
+  AgentRuntimeAgent, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestContext, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus, AgentRuntimeExecutionContext, AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta, AgentRuntimeLoadedSkillMeta, AgentRuntimeModel, AgentRuntimeSessionCodec, AgentRuntimeSessionManagement, AgentRuntimeSkillContext, AgentRuntimeSkillEntry, AgentRuntimeSkillOrigin, AgentRuntimeSkillSnapshot, AgentRuntimeSkillState, AgentRuntimeSkillSyncMode, AgentRuntimeState, NativeContextManagement,
+  ResolvedSessionCompactionPolicy, ServerAgentRuntimeModule, SessionCompactionPolicy, UsageSummary
 } from "@rudderhq/agent-runtime-utils";

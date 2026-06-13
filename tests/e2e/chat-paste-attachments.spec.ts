@@ -1,7 +1,7 @@
+import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { expect, test, type Page } from "@playwright/test";
 import { createE2EChatAgent } from "./support/chat-agent";
 
 async function createStreamingOrg(

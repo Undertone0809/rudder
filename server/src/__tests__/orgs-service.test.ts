@@ -1,10 +1,3 @@
-import fs from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { asc, eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agentConfigRevisions,
@@ -17,9 +10,9 @@ import {
   documents,
   ensurePostgresDatabase,
   executionWorkspaces,
+  heartbeatRuns,
   issueDocuments,
   issues,
-  heartbeatRuns,
   labels,
   organizationSkills,
   organizations,
@@ -29,13 +22,20 @@ import {
   workspaceRuntimeServices,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
+import { asc, eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
-import { agentService } from "../services/agents.js";
-import { organizationService } from "../services/orgs.js";
 import {
   resolveOrganizationRoot,
   resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
+import { agentService } from "../services/agents.js";
+import { organizationService } from "../services/orgs.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;

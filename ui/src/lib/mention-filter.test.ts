@@ -1,6 +1,6 @@
+import type { MentionOption } from "@/components/MarkdownEditor";
 import { describe, expect, it } from "vitest";
 import { MENTION_OPTION_RENDER_LIMIT, filterMentionOptions } from "./mention-filter";
-import type { MentionOption } from "@/components/MarkdownEditor";
 
 describe("filterMentionOptions", () => {
   it("keeps entity search results in the requested mention type order", () => {

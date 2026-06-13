@@ -1,8 +1,3 @@
-import { useEffect, useState } from "react";
-import type { BudgetPolicySummary } from "@rudderhq/shared";
-import { AlertTriangle, PauseCircle, ShieldAlert, Wallet } from "lucide-react";
-import { cn, formatCents } from "../lib/utils";
-import { useI18n } from "../context/I18nContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,6 +7,11 @@ import {
   semanticTextToneClasses,
   type SemanticTone,
 } from "@/components/ui/semanticTones";
+import type { BudgetPolicySummary } from "@rudderhq/shared";
+import { AlertTriangle, PauseCircle, ShieldAlert, Wallet } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useI18n } from "../context/I18nContext";
+import { cn, formatCents } from "../lib/utils";
 
 function centsInputValue(value: number) {
   return (value / 100).toFixed(2);

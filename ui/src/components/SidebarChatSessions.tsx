@@ -1,28 +1,28 @@
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, MoreHorizontal, PencilLine, Pin, PinOff, Plus } from "lucide-react";
-import { formatMessengerPreview, type ChatConversation } from "@rudderhq/shared";
-import { useLocation, useNavigate } from "@/lib/router";
+import { chatsApi } from "@/api/chats";
+import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
+import { SidebarSectionActionButton, SidebarSectionHeader } from "@/components/SidebarSectionHeader";
+import { sidebarItemVariants } from "@/components/sidebarItemStyles";
+import {
+  Collapsible,
+  CollapsibleContent,
+} from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Collapsible,
-  CollapsibleContent,
-} from "@/components/ui/collapsible";
-import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
-import { chatsApi } from "@/api/chats";
 import { prefetchChatConversation } from "@/lib/chat-prefetch";
 import { displayChatTitle } from "@/lib/chat-title";
 import { queryKeys } from "@/lib/queryKeys";
+import { useLocation, useNavigate } from "@/lib/router";
 import { cn, relativeTime } from "@/lib/utils";
-import { SidebarSectionActionButton, SidebarSectionHeader } from "@/components/SidebarSectionHeader";
-import { sidebarItemVariants } from "@/components/sidebarItemStyles";
+import { formatMessengerPreview, type ChatConversation } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, MoreHorizontal, PencilLine, Pin, PinOff, Plus } from "lucide-react";
+import { useState } from "react";
 
 function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestReplyPreview">): string {
   return displayChatTitle(conversation);

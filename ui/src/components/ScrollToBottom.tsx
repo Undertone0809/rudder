@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
 import { ArrowDown } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 function resolveScrollTarget() {
   const mainContent = document.getElementById("main-content");

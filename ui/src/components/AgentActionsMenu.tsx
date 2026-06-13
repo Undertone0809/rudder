@@ -1,13 +1,4 @@
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Copy, HeartPulse, Loader2, MessageSquare, MoreHorizontal, Pause, Play, Plus } from "lucide-react";
-import type { Agent } from "@rudderhq/shared";
 import { agentsApi } from "@/api/agents";
-import { useDialog } from "@/context/DialogContext";
-import { useToast } from "@/context/ToastContext";
-import { useNavigate } from "@/lib/router";
-import { queryKeys } from "@/lib/queryKeys";
-import { agentRouteRef, cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +6,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useDialog } from "@/context/DialogContext";
+import { useToast } from "@/context/ToastContext";
+import { queryKeys } from "@/lib/queryKeys";
+import { useNavigate } from "@/lib/router";
+import { agentRouteRef, cn } from "@/lib/utils";
+import type { Agent } from "@rudderhq/shared";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Copy, HeartPulse, Loader2, MessageSquare, MoreHorizontal, Pause, Play, Plus } from "lucide-react";
+import { useState } from "react";
 
 export function AgentActionsMenu({
   agent,

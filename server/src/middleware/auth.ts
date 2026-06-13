@@ -1,13 +1,13 @@
-import { createHash } from "node:crypto";
-import type { Request, RequestHandler, Response } from "express";
-import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { agentApiKeys, agents, organizationMemberships, instanceUserRoles } from "@rudderhq/db";
-import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
+import { agentApiKeys, agents, instanceUserRoles, organizationMemberships } from "@rudderhq/db";
 import type { DeploymentMode } from "@rudderhq/shared";
+import { and, eq, isNull } from "drizzle-orm";
+import type { Request, RequestHandler, Response } from "express";
+import { createHash } from "node:crypto";
+import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
-import { logger } from "./logger.js";
 import { boardAuthService } from "../services/board-auth.js";
+import { logger } from "./logger.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");

@@ -1,14 +1,14 @@
 import type {
-  PluginStatus,
-  PluginCategory,
   PluginCapability,
-  PluginUiSlotType,
-  PluginUiSlotEntityType,
-  PluginStateScopeKind,
-  PluginLauncherPlacementZone,
+  PluginCategory,
   PluginLauncherAction,
   PluginLauncherBounds,
+  PluginLauncherPlacementZone,
   PluginLauncherRenderEnvironment,
+  PluginStateScopeKind,
+  PluginStatus,
+  PluginUiSlotEntityType,
+  PluginUiSlotType,
 } from "../constants.js";
 
 // ---------------------------------------------------------------------------

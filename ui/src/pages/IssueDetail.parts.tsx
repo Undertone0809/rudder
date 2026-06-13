@@ -1,61 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
-import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { issuesApi } from "../api/issues";
-import { organizationsApi } from "../api/orgs";
-import { activityApi } from "../api/activity";
-import { heartbeatsApi } from "../api/heartbeats";
-import { agentsApi } from "../api/agents";
-import { accessApi } from "../api/access";
-import { authApi } from "../api/auth";
-import { pluginsApi } from "../api/plugins";
-import { organizationSkillsApi } from "../api/organizationSkills";
-import { projectsApi } from "../api/projects";
-import { useNavigationBack } from "../context/NavigationBackContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { useToast } from "../context/ToastContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { formatAssigneeUserLabel } from "../lib/assignees";
-import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
-import { formatChatAgentLabel } from "../lib/agent-labels";
-import { queryKeys } from "../lib/queryKeys";
-import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
-import {
-  hasBrowserBackStackEntry,
-  shouldHandleDocumentFocusEscape,
-  shouldHandleIssueDetailEscape,
-} from "../lib/detail-escape";
-import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
-import { resolveBoardActorLabel } from "../lib/activity-actors";
-import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
-import { useProjectOrder } from "../hooks/useProjectOrder";
-import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
-import { InlineEditor } from "../components/InlineEditor";
-import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
-import { IssueDetailFind } from "../components/IssueDetailFind";
-import { IssueProperties } from "../components/IssueProperties";
-import { LiveRunWidget } from "../components/LiveRunWidget";
-import type { MentionOption } from "../components/MarkdownEditor";
-import { ScrollToBottom } from "../components/ScrollToBottom";
-import { StatusIcon } from "../components/StatusIcon";
-import { PriorityIcon } from "../components/PriorityIcon";
-import { formatPriorityLabel } from "../lib/priorities";
-import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
-import { PluginLauncherOutlet } from "@/plugins/launchers";
-import { Separator } from "@/components/ui/separator";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -64,41 +7,37 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Link } from "@/lib/router";
+import type { Agent, Issue, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import { isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, type ActivityEvent } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Activity as ActivityIcon,
-  Check,
   ChevronRight,
-  Copy,
-  EyeOff,
   ExternalLink,
   FileCode2,
   Folder,
-  Hexagon,
-  ListTree,
   Loader2,
-  MessageSquare,
-  MoreHorizontal,
-  Paperclip,
-  Plus,
-  Repeat,
-  SlidersHorizontal,
-  Trash2,
-  Upload,
+  Paperclip
 } from "lucide-react";
-import { isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
-import type { Agent, Issue, IssueAttachment, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import { useEffect, useState, type ReactNode } from "react";
+import { organizationsApi } from "../api/orgs";
+import { StatusIcon } from "../components/StatusIcon";
+import { resolveBoardActorLabel } from "../lib/activity-actors";
+import { formatAssigneeUserLabel } from "../lib/assignees";
+import {
+  hasBrowserBackStackEntry,
+  shouldHandleDocumentFocusEscape,
+  shouldHandleIssueDetailEscape,
+} from "../lib/detail-escape";
+import { formatPriorityLabel } from "../lib/priorities";
+import { queryKeys } from "../lib/queryKeys";
+import { cn, formatTokens, relativeTime } from "../lib/utils";
 
 export {
   hasBrowserBackStackEntry,
   shouldHandleDocumentFocusEscape,
-  shouldHandleIssueDetailEscape,
+  shouldHandleIssueDetailEscape
 };
 
 export type IssueCostSummaryData = {

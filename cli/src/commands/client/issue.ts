@@ -1,6 +1,3 @@
-import { readFile, stat } from "node:fs/promises";
-import path from "node:path";
-import { Command } from "commander";
 import {
   addIssueCommentSchema,
   checkoutIssueSchema,
@@ -13,6 +10,10 @@ import {
   type IssueCommitReport,
   type IssueLabel,
 } from "@rudderhq/shared";
+import { Command } from "commander";
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
+import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
   formatInlineRecord,
@@ -21,7 +22,6 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
-import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 
 interface IssueBaseOptions extends BaseClientOptions {
   status?: string;

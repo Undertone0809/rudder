@@ -27,18 +27,18 @@
  * @see doc/plugins/PLUGIN_SPEC.md §25.4.5 — Frontend Cache Invalidation
  */
 
-import { Router } from "express";
-import path from "node:path";
-import fs from "node:fs";
-import crypto from "node:crypto";
 import type { Db } from "@rudderhq/db";
-import { pluginRegistryService } from "../services/plugin-registry.js";
+import { Router } from "express";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { logger } from "../middleware/logger.js";
 import {
   isPathInsideDir,
   resolvePluginPackageCandidateDirs,
   type PluginPackageResolutionOptions,
 } from "../services/plugin-loader.worker-paths.js";
+import { pluginRegistryService } from "../services/plugin-registry.js";
 
 // ---------------------------------------------------------------------------
 // Constants

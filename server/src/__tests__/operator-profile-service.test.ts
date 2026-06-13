@@ -1,8 +1,3 @@
-import fs from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   applyPendingMigrations,
   createDb,
@@ -10,6 +5,11 @@ import {
   operatorProfiles,
 } from "@rudderhq/db";
 import { eq } from "drizzle-orm";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { operatorProfileService } from "../services/operator-profile.js";
 
 type EmbeddedPostgresInstance = {

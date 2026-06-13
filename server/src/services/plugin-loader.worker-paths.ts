@@ -24,31 +24,12 @@
  * @see PLUGIN_SPEC.md §10 — Package Contract
  * @see PLUGIN_SPEC.md §12 — Process Model
  */
-import { existsSync } from "node:fs";
-import { readdir, readFile, rm, stat } from "node:fs/promises";
-import { execFile } from "node:child_process";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import type { Db } from "@rudderhq/db";
 import type {
-  PaperclipPluginManifestV1,
-  PluginLauncherDeclaration,
-  PluginRecord,
-  PluginUiSlotDeclaration,
+  PluginRecord
 } from "@rudderhq/shared";
-import { logger } from "../middleware/logger.js";
-import { pluginManifestValidator } from "./plugin-manifest-validator.js";
-import { pluginCapabilityValidator } from "./plugin-capability-validator.js";
-import { pluginRegistryService } from "./plugin-registry.js";
-import type { PluginWorkerManager, WorkerStartOptions, WorkerToHostHandlers } from "./plugin-worker-manager.js";
-import type { PluginEventBus } from "./plugin-event-bus.js";
-import type { PluginJobScheduler } from "./plugin-job-scheduler.js";
-import type { PluginJobStore } from "./plugin-job-store.js";
-import type { PluginToolDispatcher } from "./plugin-tool-dispatcher.js";
-import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
-import { execFileAsync, __dirname, NPM_PLUGIN_PACKAGE_PREFIX, DEFAULT_LOCAL_PLUGIN_DIR, DEV_TSX_LOADER_PATH, DiscoveredPlugin, PluginSource, ParsedSemver, PluginDiscoveryResult, getDeclaredPageRoutePaths, PluginLoaderOptions, PluginInstallOptions, PluginRuntimeServices, PluginLoadResult, PluginLoadAllResult, PluginUiContributionMetadata, PluginLoader, isPluginPackageName, readPackageJson, resolveManifestPath, parseSemver, compareIdentifiers, compareSemver, getMinimumHostVersion, getPluginUiContributionMetadata } from "./plugin-loader.helpers.js";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { __dirname } from "./plugin-loader.helpers.js";
 
 const SERVER_PACKAGE_ROOT = path.resolve(__dirname, "../..");
 

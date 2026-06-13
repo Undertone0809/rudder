@@ -46,42 +46,23 @@
  * - `usePluginStream(channel)` — subscribe to real-time SSE events from the worker
  */
 export {
-  usePluginData,
-  usePluginAction,
-  useHostContext,
-  usePluginStream,
-  usePluginToast,
+  useHostContext, usePluginAction, usePluginData, usePluginStream,
+  usePluginToast
 } from "./hooks.js";
 
 // Bridge error and host context types
 export type {
-  PluginBridgeError,
-  PluginBridgeErrorCode,
-  PluginHostContext,
-  PluginModalBoundsRequest,
+  PluginActionFn, PluginBridgeError,
+  PluginBridgeErrorCode, PluginDataResult, PluginHostContext, PluginLauncherBounds,
+  PluginLauncherRenderEnvironment, PluginModalBoundsRequest,
   PluginRenderCloseEvent,
   PluginRenderCloseHandler,
   PluginRenderCloseLifecycle,
-  PluginRenderEnvironmentContext,
-  PluginLauncherBounds,
-  PluginLauncherRenderEnvironment,
-  PluginDataResult,
-  PluginActionFn,
-  PluginStreamResult,
-  PluginToastTone,
-  PluginToastAction,
-  PluginToastInput,
-  PluginToastFn,
+  PluginRenderEnvironmentContext, PluginStreamResult, PluginToastAction, PluginToastFn, PluginToastInput, PluginToastTone
 } from "./types.js";
 
 // Slot component prop interfaces
 export type {
-  PluginPageProps,
-  PluginWidgetProps,
-  PluginDetailTabProps,
-  PluginSidebarProps,
-  PluginProjectSidebarItemProps,
   PluginCommentAnnotationProps,
-  PluginCommentContextMenuItemProps,
-  PluginSettingsPageProps,
+  PluginCommentContextMenuItemProps, PluginDetailTabProps, PluginPageProps, PluginProjectSidebarItemProps, PluginSettingsPageProps, PluginSidebarProps, PluginWidgetProps
 } from "./types.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseOpenCodeJsonl, isOpenCodeUnknownSessionError } from "./parse.js";
+import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
 
 describe("parseOpenCodeJsonl", () => {
   it("parses assistant text, usage, cost, and errors", () => {

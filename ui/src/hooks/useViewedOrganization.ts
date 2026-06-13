@@ -1,10 +1,10 @@
-import { useMemo } from "react";
-import { useParams } from "@/lib/router";
 import { useOrganization } from "@/context/OrganizationContext";
 import {
   findOrganizationByPrefix,
   normalizeOrganizationPrefix,
 } from "@/lib/organization-routes";
+import { useParams } from "@/lib/router";
+import { useMemo } from "react";
 
 export function useViewedOrganization() {
   const { orgPrefix } = useParams<{ orgPrefix?: string }>();

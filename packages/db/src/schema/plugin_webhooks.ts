@@ -1,14 +1,14 @@
+import type { PluginWebhookDeliveryStatus } from "@rudderhq/shared";
 import {
-  pgTable,
-  uuid,
-  text,
-  integer,
-  timestamp,
-  jsonb,
   index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { plugins } from "./plugins.js";
-import type { PluginWebhookDeliveryStatus } from "@rudderhq/shared";
 
 /**
  * `plugin_webhook_deliveries` table — inbound webhook delivery history for plugins.

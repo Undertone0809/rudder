@@ -1,18 +1,3 @@
-import { createPortal } from "react-dom";
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  buildAgentMentionHref,
-  buildLibraryEntryMentionMarkdown,
-  buildLibraryFileMentionMarkdown,
-  parseAgentMentionHref,
-  type Project,
-  type ProjectResourceAttachment,
-  type OrganizationWorkspaceFileDetail,
-  type OrganizationWorkspaceFileEntry,
-} from "@rudderhq/shared";
-import { useNavigate, useSearchParams } from "@/lib/router";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,69 +11,84 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { assetsApi } from "../api/assets";
-import { organizationsApi } from "../api/orgs";
-import { projectsApi } from "../api/projects";
-import { AgentIcon } from "../components/AgentIconPicker";
-import { ProjectIcon } from "../components/ProjectIdentity";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useI18n } from "../context/I18nContext";
-import { useToast } from "../context/ToastContext";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
-import { useViewedOrganization } from "../hooks/useViewedOrganization";
-import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
-import { MarkdownBody } from "../components/MarkdownBody";
-import { IssueDetailFind } from "../components/IssueDetailFind";
-import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
-import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
-import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
-import { parseMentionChipHref } from "../lib/mention-chips";
-import { queryKeys } from "../lib/queryKeys";
-import { libraryCopy } from "../lib/library-copy";
-import { EmptyState } from "../components/EmptyState";
-import { PageSkeleton } from "../components/PageSkeleton";
-import { ResourceLocatorField } from "../components/ResourceLocatorField";
+import { useNavigate, useSearchParams } from "@/lib/router";
+import { cn } from "@/lib/utils";
 import {
-  organizationResourceKindLabel,
-  organizationResourceSourceTypeLabel,
-} from "../lib/resource-options";
+  buildAgentMentionHref,
+  buildLibraryEntryMentionMarkdown,
+  buildLibraryFileMentionMarkdown,
+  parseAgentMentionHref,
+  type OrganizationWorkspaceFileDetail,
+  type OrganizationWorkspaceFileEntry,
+  type Project,
+  type ProjectResourceAttachment,
+} from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bot,
   Boxes,
   ChevronDown,
   ChevronRight,
-  Bot,
   Code2,
   Copy,
   ExternalLink,
-  HardDrive,
+  FileCode2,
   FilePlus2,
   FileText,
   Folder,
   FolderOpen,
   FolderPlus,
-  FileCode2,
+  HardDrive,
   Image as ImageIcon,
   Link2,
+  Loader2,
   MoreHorizontal,
   PackageOpen,
   Pencil,
-  Loader2,
   Terminal,
   Trash2,
   Unlink,
   X,
 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { assetsApi } from "../api/assets";
+import { organizationsApi } from "../api/orgs";
+import { projectsApi } from "../api/projects";
+import { AgentIcon } from "../components/AgentIconPicker";
+import { EmptyState } from "../components/EmptyState";
+import { IssueDetailFind } from "../components/IssueDetailFind";
+import { MarkdownBody } from "../components/MarkdownBody";
+import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
+import { PageSkeleton } from "../components/PageSkeleton";
+import { ProjectIcon } from "../components/ProjectIdentity";
+import { ResourceLocatorField } from "../components/ResourceLocatorField";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useI18n } from "../context/I18nContext";
+import { useToast } from "../context/ToastContext";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { useViewedOrganization } from "../hooks/useViewedOrganization";
+import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
+import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
+import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
+import { libraryCopy } from "../lib/library-copy";
+import { parseMentionChipHref } from "../lib/mention-chips";
+import { queryKeys } from "../lib/queryKeys";
+import {
+  organizationResourceKindLabel,
+  organizationResourceSourceTypeLabel,
+} from "../lib/resource-options";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
 const WORKSPACE_OPEN_FILE_TABS_STORAGE_PREFIX = "rudder.workspace.openFileTabs";

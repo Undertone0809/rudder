@@ -1,4 +1,3 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   activityLog,
@@ -12,23 +11,24 @@ import {
   issues,
   projects,
 } from "@rudderhq/db";
-import { SECRET_PROVIDERS, type SecretProvider } from "@rudderhq/shared";
 import type {
   CalendarEvent,
   CalendarEventKind,
   CalendarEventStatus,
-  GoogleCalendarOAuthConfig,
   CalendarSource,
   CalendarSourceStatus,
   CalendarVisibility,
   CreateCalendarEvent,
   CreateCalendarSource,
-  UpdateGoogleCalendarOAuthConfig,
+  GoogleCalendarOAuthConfig,
   UpdateCalendarEvent,
   UpdateCalendarSource,
+  UpdateGoogleCalendarOAuthConfig,
 } from "@rudderhq/shared";
-import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { SECRET_PROVIDERS, type SecretProvider } from "@rudderhq/shared";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { asBoolean, asNumber, parseObject } from "../agent-runtimes/utils.js";
+import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { secretService } from "./secrets.js";
 
 type Actor = { userId?: string | null };

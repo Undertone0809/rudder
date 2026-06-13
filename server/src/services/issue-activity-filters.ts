@@ -1,8 +1,8 @@
-import { sql } from "drizzle-orm";
 import {
   ISSUE_UPDATE_ACTIVITY_METADATA_KEYS,
   LOW_SIGNAL_ISSUE_UPDATE_ACTIVITY_FIELDS,
 } from "@rudderhq/shared";
+import { sql } from "drizzle-orm";
 
 const LOW_SIGNAL_ISSUE_UPDATE_ALLOWED_KEYS = [
   ...LOW_SIGNAL_ISSUE_UPDATE_ACTIVITY_FIELDS,

@@ -1,26 +1,3 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronUp,
-  CircleCheckBig,
-  CircleAlert,
-  MessageSquare,
-  RefreshCcw,
-  Send,
-  ShieldCheck,
-  UserPlus,
-} from "lucide-react";
-import type {
-  Agent,
-  ChatConversation,
-  MessengerApprovalThreadItem,
-  MessengerEvent,
-  MessengerIssueThreadItem,
-  IssueLabel,
-  Project,
-} from "@rudderhq/shared";
 import { accessApi } from "@/api/access";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
@@ -29,7 +6,6 @@ import { heartbeatsApi } from "@/api/heartbeats";
 import { issuesApi } from "@/api/issues";
 import { messengerApi } from "@/api/messenger";
 import { projectsApi } from "@/api/projects";
-import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
 import {
@@ -38,12 +14,11 @@ import {
   chatIssueApprovalLabelIds,
   chatIssueApprovalNeedsLabelSelection,
 } from "@/components/ApprovalPayload";
-import { MarkdownBody } from "@/components/MarkdownBody";
-import { formatPriorityLabel } from "@/lib/priorities";
-import { Button } from "@/components/ui/button";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
-import { Textarea } from "@/components/ui/textarea";
+import { MarkdownBody } from "@/components/MarkdownBody";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useToast } from "@/context/ToastContext";
 import {
@@ -52,11 +27,36 @@ import {
   useMessengerModel,
 } from "@/hooks/useMessenger";
 import { createIssueDetailLocationState } from "@/lib/issueDetailBreadcrumb";
-import { queryKeys } from "@/lib/queryKeys";
-import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { getRememberedMessengerPath, rememberMessengerPath, resolveRememberedMessengerEntry } from "@/lib/messenger-memory";
+import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
+import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { formatPriorityLabel } from "@/lib/priorities";
+import { queryKeys } from "@/lib/queryKeys";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { cn, relativeTime } from "@/lib/utils";
+import type {
+  Agent,
+  ChatConversation,
+  IssueLabel,
+  MessengerApprovalThreadItem,
+  MessengerEvent,
+  MessengerIssueThreadItem,
+  Project,
+} from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  CircleAlert,
+  CircleCheckBig,
+  MessageSquare,
+  RefreshCcw,
+  Send,
+  ShieldCheck,
+  UserPlus,
+} from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Chat } from "./Chat";
 import { IssueDetail } from "./IssueDetail";
 

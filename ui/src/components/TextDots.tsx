@@ -1,5 +1,5 @@
-import type { CSSProperties, ComponentPropsWithoutRef } from "react";
 import { cn } from "@/lib/utils";
+import type { CSSProperties, ComponentPropsWithoutRef } from "react";
 
 type TextDotsProps = ComponentPropsWithoutRef<"span"> & {
   text: string;

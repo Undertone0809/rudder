@@ -1,22 +1,22 @@
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
-  pgTable,
-  uuid,
-  text,
-  timestamp,
+  index,
   integer,
   jsonb,
-  index,
+  pgTable,
+  text,
+  timestamp,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
-import { projects } from "./projects.js";
-import { goals } from "./goals.js";
-import { organizations } from "./organizations.js";
-import { heartbeatRuns } from "./heartbeat_runs.js";
-import { projectWorkspaces } from "./project_workspaces.js";
 import { executionWorkspaces } from "./execution_workspaces.js";
+import { goals } from "./goals.js";
+import { heartbeatRuns } from "./heartbeat_runs.js";
+import { organizations } from "./organizations.js";
+import { projectWorkspaces } from "./project_workspaces.js";
+import { projects } from "./projects.js";
 
 export const issues = pgTable(
   "issues",

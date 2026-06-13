@@ -1,83 +1,10 @@
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  promises as fsPromises,
-  readdirSync,
-  readFileSync,
-  readlinkSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { createServer } from "node:net";
-import { Readable } from "node:stream";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
-import { and, eq, inArray, sql } from "drizzle-orm";
-import {
-  applyPendingMigrations,
-  agents,
-  assets,
-  organizations,
-  createDb,
-  documentRevisions,
-  documents,
-  ensurePostgresDatabase,
-  formatDatabaseBackupResult,
-  goals,
-  heartbeatRuns,
-  inspectMigrations,
-  issueAttachments,
-  issueComments,
-  issueDocuments,
-  issues,
-  projectWorkspaces,
-  projects,
-  runDatabaseBackup,
-  runDatabaseRestore,
-} from "@rudderhq/db";
 import type { Command } from "commander";
-import { ensureAgentJwtSecret, loadRudderEnvFile, mergePaperclipEnvEntries, readPaperclipEnvEntries, resolvePaperclipEnvFile } from "../config/env.js";
-import { expandHomePrefix } from "../config/home.js";
-import type { RudderConfig } from "../config/schema.js";
-import { readConfig, resolveConfigPath, writeConfig } from "../config/store.js";
-import { printRudderCliBanner } from "../utils/banner.js";
-import { resolveRuntimeLikePath } from "../utils/path-resolver.js";
+import { worktreeCleanupCommand, worktreeEnvCommand } from "./worktree-cleanup.js";
+import { worktreeInitCommand, worktreeMakeCommand } from "./worktree-init.js";
 import {
-  buildWorktreeConfig,
-  buildWorktreeEnvEntries,
-  DEFAULT_WORKTREE_HOME,
-  formatShellExports,
-  generateWorktreeColor,
-  isWorktreeSeedMode,
-  resolveSuggestedWorktreeName,
-  resolveWorktreeSeedPlan,
-  resolveWorktreeLocalPaths,
-  sanitizeWorktreeInstanceId,
-  type WorktreeSeedMode,
-  type WorktreeLocalPaths,
+  DEFAULT_WORKTREE_HOME
 } from "./worktree-lib.js";
-import {
-  buildWorktreeMergePlan,
-  parseWorktreeMergeScopes,
-  type IssueAttachmentRow,
-  type IssueDocumentRow,
-  type DocumentRevisionRow,
-  type PlannedAttachmentInsert,
-  type PlannedCommentInsert,
-  type PlannedIssueDocumentInsert,
-  type PlannedIssueDocumentMerge,
-  type PlannedIssueInsert,
-} from "./worktree-merge-history-lib.js";
-import { nonEmpty, isCurrentSourceConfigPath, WORKTREE_NAME_PREFIX, resolveWorktreeMakeName, resolveWorktreeHome, resolveWorktreeStartPoint, ConfiguredStorage, assertStorageCompanyPrefix, normalizeStorageObjectKey, resolveLocalStoragePath, s3BodyToBuffer, normalizeS3Prefix, buildS3ObjectKey, dynamicImport, createConfiguredStorageFromRudderConfig, openConfiguredStorage, streamToBuffer, isMissingStorageObjectError, readSourceAttachmentBody, resolveWorktreeMakeTargetPath, extractExecSyncErrorMessage, localBranchExists, resolveGitWorktreeAddArgs, readPidFilePort, readRunningPostmasterPid, isPortAvailable, findAvailablePort, detectGitBranchName, detectGitWorkspaceInfo, copyDirectoryContents, copyGitHooksToWorktreeGitDir, rebindWorkspaceCwd, rebindSeededProjectWorkspaces, resolveSourceConfigPath, resolveSourceConnectionString, copySeededSecretsKey, ensureEmbeddedPostgres, seedWorktreeDatabase, runWorktreeInit, worktreeInitCommand, worktreeMakeCommand } from "./worktree-init.js";
-import { WorktreeCleanupOptions, GitWorktreeListEntry, MergeSourceChoice, ResolvedWorktreeEndpoint, parseGitWorktreeList, toMergeSourceChoices, branchHasUniqueCommits, branchExistsOnAnyRemote, worktreePathHasUncommittedChanges, worktreeCleanupCommand, worktreeEnvCommand, ClosableDb, OpenDbHandle, ResolvedMergeCompany, closeDb, resolveCurrentEndpoint, resolveAttachmentLookupStorages, openConfiguredDb } from "./worktree-cleanup.js";
-import { resolveMergeCompany, renderMergePlan, collectMergePlan, ProjectMappingSelections, promptForProjectMappings, worktreeListCommand, resolveEndpointFromChoice, resolveWorktreeEndpointFromSelector, promptForSourceEndpoint, applyMergePlan, worktreeMergeHistoryCommand } from "./worktree-merge.js";
+import { worktreeListCommand, worktreeMergeHistoryCommand } from "./worktree-merge.js";
 
 export function registerWorktreeCommands(program: Command): void {
   const worktree = program.command("worktree").description("Worktree-local Rudder instance helpers");

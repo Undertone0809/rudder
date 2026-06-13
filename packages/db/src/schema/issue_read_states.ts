@@ -1,6 +1,6 @@
-import { pgTable, uuid, text, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
+import { index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { issues } from "./issues.js";
+import { organizations } from "./organizations.js";
 
 export const issueReadStates = pgTable(
   "issue_read_states",

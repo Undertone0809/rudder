@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { organizationSecretVersions, organizationSecrets } from "@rudderhq/db";
-import { secretService } from "../services/secrets.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { localEncryptedProvider } from "../secrets/local-encrypted-provider.js";
+import { secretService } from "../services/secrets.js";
 
 const TEST_SECRET_MASTER_KEY = "12345678901234567890123456789012";
 const originalSecretMasterKey = process.env.RUDDER_SECRETS_MASTER_KEY;

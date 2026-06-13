@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
-import type { LoggingConfig } from "../config/schema.js";
 import { resolveDefaultLogsDir, resolveRudderInstanceId } from "../config/home.js";
+import type { LoggingConfig } from "../config/schema.js";
 
 export async function promptLogging(): Promise<LoggingConfig> {
   const defaultLogDir = resolveDefaultLogsDir(resolveRudderInstanceId());

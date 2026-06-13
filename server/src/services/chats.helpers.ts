@@ -1,27 +1,16 @@
-import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { formatMessengerPreview, formatMessengerTitle, sanitizeChatStructuredPayload, type ChatStreamTranscriptEntry, type ChatTranscriptSummary } from "@rudderhq/shared";
 import {
   agents,
   approvals,
-  assets,
-  chatAttachments,
   chatContextLinks,
   chatConversations,
   chatConversationUserStates,
   chatMessages,
-  organizations,
   issues,
-  projects,
+  projects
 } from "@rudderhq/db";
-import { notFound, unprocessable } from "../errors.js";
-import { agentService } from "./agents.js";
-import { logActivity } from "./activity-log.js";
-import { approvalService } from "./approvals.js";
-import { organizationService } from "./orgs.js";
-import { issueApprovalService } from "./issue-approvals.js";
-import { issueService } from "./issues.js";
+import { formatMessengerPreview, type ChatStreamTranscriptEntry, type ChatTranscriptSummary } from "@rudderhq/shared";
+import { inArray, sql } from "drizzle-orm";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;

@@ -1,37 +1,37 @@
+import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
+import {
+  asNumber,
+  asString,
+  asStringArray,
+  buildRudderEnv,
+  ensureAbsoluteDirectory,
+  ensureCommandResolvable,
+  ensureLocalCliCredentialShimsInPath,
+  ensurePathInEnv,
+  ensureRudderCliInPath,
+  ensureRudderSkillSymlink,
+  joinPromptSections,
+  loadAgentInstructionsPrefix,
+  parseObject,
+  readRudderRuntimeSkillEntries,
+  redactEnvForLogs,
+  removeMaintainerOnlySkillSymlinks,
+  renderTemplate,
+  resolveLocalOperatorHome,
+  resolveRudderDesiredSkillNames,
+  runChildProcess,
+  selectPromptTemplate,
+  syncLocalCliCredentialHomeEntries,
+} from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
-import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
-import {
-  asString,
-  asNumber,
-  asStringArray,
-  parseObject,
-  buildRudderEnv,
-  redactEnvForLogs,
-  ensureAbsoluteDirectory,
-  ensureCommandResolvable,
-  ensureLocalCliCredentialShimsInPath,
-  ensureRudderSkillSymlink,
-  ensureRudderCliInPath,
-  ensurePathInEnv,
-  resolveLocalOperatorHome,
-  syncLocalCliCredentialHomeEntries,
-  readRudderRuntimeSkillEntries,
-  resolveRudderDesiredSkillNames,
-  removeMaintainerOnlySkillSymlinks,
-  renderTemplate,
-  joinPromptSections,
-  loadAgentInstructionsPrefix,
-  runChildProcess,
-  selectPromptTemplate,
-} from "@rudderhq/agent-runtime-utils/server-utils";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
-import { parseCursorJsonl, isCursorUnknownSessionError } from "./parse.js";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
+import { isCursorUnknownSessionError, parseCursorJsonl } from "./parse.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUDDER_INSTANCE_ID = "default";

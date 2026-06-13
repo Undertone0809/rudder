@@ -1,8 +1,8 @@
 import type { Db } from "@rudderhq/db";
 import type { StorageService } from "../../storage/types.js";
 import { accessService } from "../access.js";
-import { agentService } from "../agents.js";
 import { agentInstructionsService } from "../agent-instructions.js";
+import { agentService } from "../agents.js";
 import { assetService } from "../assets.js";
 import { issueService } from "../issues.js";
 import { organizationSkillService } from "../organization-skills.js";

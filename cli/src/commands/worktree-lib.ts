@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
 import path from "node:path";
-import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type RudderConfig } from "../config/schema.js";
 import { expandHomePrefix } from "../config/home.js";
+import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type RudderConfig } from "../config/schema.js";
 
 export const DEFAULT_WORKTREE_HOME = "~/.rudder-worktrees";
 export const WORKTREE_SEED_MODES = ["minimal", "full"] as const;

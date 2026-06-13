@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { CalendarEvent } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import {
   calendarEventRunHref,
   calendarEventSourceLabel,

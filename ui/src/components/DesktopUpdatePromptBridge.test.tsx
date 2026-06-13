@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
+import type { DesktopDeferredUpdatePrompt, DesktopShellApi } from "@/lib/desktop-shell";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DesktopDeferredUpdatePrompt, DesktopShellApi } from "@/lib/desktop-shell";
 import { DesktopUpdatePromptBridge } from "./DesktopUpdatePromptBridge";
 
 (

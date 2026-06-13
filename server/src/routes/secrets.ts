@@ -1,4 +1,3 @@
-import { Router } from "express";
 import type { Db } from "@rudderhq/db";
 import {
   SECRET_PROVIDERS,
@@ -7,9 +6,10 @@ import {
   rotateSecretSchema,
   updateSecretSchema,
 } from "@rudderhq/shared";
+import { Router } from "express";
 import { validate } from "../middleware/validate.js";
-import { assertBoard, assertCompanyAccess } from "./authz.js";
 import { logActivity, secretService } from "../services/index.js";
+import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 export function secretRoutes(db: Db) {
   const router = Router();

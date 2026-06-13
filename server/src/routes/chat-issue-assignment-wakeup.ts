@@ -1,7 +1,7 @@
+import type { Db } from "@rudderhq/db";
 import { logger } from "../middleware/logger.js";
 import type { logActivity } from "../services/activity-log.js";
 import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "../services/issue-assignment-wakeup.js";
-import type { Db } from "@rudderhq/db";
 
 export type ChatConvertedIssue = {
   id: string;

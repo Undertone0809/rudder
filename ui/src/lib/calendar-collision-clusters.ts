@@ -1,6 +1,5 @@
 import type { CalendarEvent } from "@rudderhq/shared";
 import type { TimedDaySegment } from "./calendar-day-segments";
-import { layoutTimedEvents } from "./calendar-event-layout";
 import {
   calendarAgentNameFor,
   calendarDisplayItemEvents,
@@ -8,6 +7,7 @@ import {
   type CalendarDisplayCollisionCluster,
   type CalendarDisplayItem,
 } from "./calendar-display-items";
+import { layoutTimedEvents } from "./calendar-event-layout";
 
 type CompactDenseTimedSegmentsOptions = {
   enabled?: boolean;

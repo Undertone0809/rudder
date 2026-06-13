@@ -1,29 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent, type SVGProps } from "react";
-import { Link, useNavigate, useParams } from "@/lib/router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  OrganizationSkill,
-  OrganizationSkillCreateRequest,
-  OrganizationSkillLocalScanResult,
-  OrganizationSkillDetail,
-  OrganizationSkillFileDetail,
-  OrganizationSkillListItem,
-  OrganizationSkillSourceBadge,
-  OrganizationSkillUpdateStatus,
-} from "@rudderhq/shared";
-import { organizationSkillsApi } from "../api/organizationSkills";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useI18n } from "../context/I18nContext";
-import { useToast } from "../context/ToastContext";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
-import { queryKeys } from "../lib/queryKeys";
-import { EmptyState } from "../components/EmptyState";
-import { MarkdownBody } from "../components/MarkdownBody";
-import { MarkdownEditor } from "../components/MarkdownEditor";
-import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
-import { PageSkeleton } from "../components/PageSkeleton";
-import { RudderLogo } from "../components/RudderLogo";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -32,26 +7,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "../lib/utils";
-import { readDesktopShell } from "../lib/desktop-shell";
-import {
-  formatOrganizationSkillSourceLabel,
-  formatOrganizationSkillSourceTooltip,
-  resolveOrganizationSkillSourceCopyText,
-} from "../lib/organization-skill-source-label";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Link, useNavigate, useParams } from "@/lib/router";
+import type {
+  OrganizationSkill,
+  OrganizationSkillCreateRequest,
+  OrganizationSkillDetail,
+  OrganizationSkillFileDetail,
+  OrganizationSkillListItem,
+  OrganizationSkillLocalScanResult,
+  OrganizationSkillSourceBadge,
+  OrganizationSkillUpdateStatus,
+} from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
   ChevronRight,
   Code2,
+  ExternalLink,
   Eye,
   Folder,
   Github,
   Link2,
-  ExternalLink,
   Pencil,
   Plus,
   RefreshCw,
@@ -60,6 +39,27 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { useEffect, useMemo, useState, type MouseEvent, type SVGProps } from "react";
+import { organizationSkillsApi } from "../api/organizationSkills";
+import { EmptyState } from "../components/EmptyState";
+import { MarkdownBody } from "../components/MarkdownBody";
+import { MarkdownEditor } from "../components/MarkdownEditor";
+import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
+import { PageSkeleton } from "../components/PageSkeleton";
+import { RudderLogo } from "../components/RudderLogo";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useI18n } from "../context/I18nContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useToast } from "../context/ToastContext";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { readDesktopShell } from "../lib/desktop-shell";
+import {
+  formatOrganizationSkillSourceLabel,
+  formatOrganizationSkillSourceTooltip,
+  resolveOrganizationSkillSourceCopyText,
+} from "../lib/organization-skill-source-label";
+import { queryKeys } from "../lib/queryKeys";
+import { cn } from "../lib/utils";
 
 const OFFICE_HOURS_SKILL_PATH = "/Users/zeeland/.codex/skills/office-hours/SKILL.md";
 

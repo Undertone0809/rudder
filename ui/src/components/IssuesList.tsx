@@ -1,41 +1,41 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import type { AgentRole, Issue, IssueSearchField, ReorderIssue } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
+import { ArrowUpDown, Check, ChevronRight, CircleDot, Columns3, Filter, Layers, List, Pin, Plus, Search, SlidersHorizontal, User, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { authApi } from "../api/auth";
+import { issuesApi } from "../api/issues";
 import { useDialog, type NewIssueDefaults } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
-import { issuesApi } from "../api/issues";
-import { authApi } from "../api/auth";
-import { AgentIcon } from "./AgentIconPicker";
-import { queryKeys } from "../lib/queryKeys";
 import { agentTitleBadgeLabel, formatChatAgentLabel } from "../lib/agent-labels";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { groupBy } from "../lib/groupBy";
-import { formatDate, cn } from "../lib/utils";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { timeAgo } from "../lib/timeAgo";
-import { StatusIcon } from "./StatusIcon";
-import { PriorityIcon } from "./PriorityIcon";
+import {
+  issueSortOptions,
+  issuePriorityOrder as priorityOrder,
+  sortIssues,
+  issueStatusOrder as statusOrder,
+  type IssueSortField,
+} from "../lib/issue-sort";
 import { formatPriorityLabel } from "../lib/priorities";
+import { queryKeys } from "../lib/queryKeys";
+import { timeAgo } from "../lib/timeAgo";
+import { cn, formatDate } from "../lib/utils";
+import { AgentIcon } from "./AgentIconPicker";
 import { AssigneeLabel } from "./AssigneeLabel";
 import { EmptyState } from "./EmptyState";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { IssueRow } from "./IssueRow";
-import { PageSkeleton } from "./PageSkeleton";
-import { ProjectIcon } from "./ProjectIdentity";
-import {
-  issuePriorityOrder as priorityOrder,
-  issueSortOptions,
-  issueStatusOrder as statusOrder,
-  sortIssues,
-  type IssueSortField,
-} from "../lib/issue-sort";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverAnchor, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Pin, SlidersHorizontal } from "lucide-react";
 import { DEFAULT_ISSUE_DISPLAY_PROPERTIES, KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
-import type { AgentRole, Issue, IssueSearchField, ReorderIssue } from "@rudderhq/shared";
+import { PageSkeleton } from "./PageSkeleton";
+import { PriorityIcon } from "./PriorityIcon";
+import { ProjectIcon } from "./ProjectIdentity";
+import { StatusIcon } from "./StatusIcon";
 
 /* ── Helpers ── */
 

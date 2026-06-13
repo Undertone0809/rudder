@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
 import { cn } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
-import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
 
 interface InlineEditorProps {
   value: string;

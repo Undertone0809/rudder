@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Agent } from "@rudderhq/shared";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AGENT_ORDER_UPDATED_EVENT,
   getAgentOrderStorageKey,

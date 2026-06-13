@@ -1,6 +1,6 @@
 import type { PauseReason, ProjectIconName, ProjectStatus } from "../constants.js";
-import type { ProjectExecutionWorkspacePolicy, WorkspaceRuntimeService } from "./workspace-runtime.js";
 import type { ProjectResourceAttachment } from "./resource.js";
+import type { ProjectExecutionWorkspacePolicy, WorkspaceRuntimeService } from "./workspace-runtime.js";
 
 export type ProjectWorkspaceSourceType = "local_path" | "git_repo" | "remote_managed" | "non_git_path";
 export type ProjectWorkspaceVisibility = "default" | "advanced";

@@ -6,8 +6,8 @@ import {
   normalizeLangfuseEnvironmentName,
   readLocalRuntimeDescriptor,
   removeLocalRuntimeDescriptorIfOwned,
-  resolveLangfuseEnvironmentName,
   resolveEffectiveLocalEnvName,
+  resolveLangfuseEnvironmentName,
   resolveLocalRuntimePaths,
   writeLocalRuntimeDescriptor,
 } from "../local-runtime.js";

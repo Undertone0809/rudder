@@ -1,5 +1,5 @@
-import { cn } from "../lib/utils";
 import { statusBadge, statusBadgeDefault } from "../lib/status-colors";
+import { cn } from "../lib/utils";
 
 export function StatusBadge({ status }: { status: string }) {
   return (

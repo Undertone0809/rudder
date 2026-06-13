@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState, useEffect, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
 interface SidebarContextValue {
   sidebarOpen: boolean;

@@ -1,8 +1,3 @@
-import { readConfigFile } from "./config-file.js";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
-import { parse as parseEnvFileContents } from "dotenv";
-import { resolveRudderEnvPath } from "./paths.js";
 import {
   AUTH_BASE_URL_MODES,
   DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
@@ -10,13 +5,17 @@ import {
   DEPLOYMENT_MODES,
   SECRET_PROVIDERS,
   STORAGE_PROVIDERS,
-  type LangfuseConfig,
   type AuthBaseUrlMode,
   type DeploymentExposure,
   type DeploymentMode,
+  type LangfuseConfig,
   type SecretProvider,
   type StorageProvider,
 } from "@rudderhq/shared";
+import { parse as parseEnvFileContents } from "dotenv";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { readConfigFile } from "./config-file.js";
 import {
   resolveDefaultBackupDir,
   resolveDefaultEmbeddedPostgresDir,
@@ -25,6 +24,7 @@ import {
   resolveHomeAwarePath,
 } from "./home-paths.js";
 import { resolveEffectiveLocalEnvName, resolveLangfuseEnvironmentName } from "./local-runtime.js";
+import { resolveRudderEnvPath } from "./paths.js";
 
 function loadEnvFileWithoutOverride(filePath: string, blockedKeys?: ReadonlySet<string>): void {
   if (!existsSync(filePath)) return;

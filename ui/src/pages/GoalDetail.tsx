@@ -1,30 +1,30 @@
-import { useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link, useNavigate, useParams } from "@/lib/router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { ActivityEvent, Issue, Project } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect } from "react";
 import { activityApi } from "../api/activity";
 import { agentsApi } from "../api/agents";
+import { assetsApi } from "../api/assets";
 import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
-import { assetsApi } from "../api/assets";
-import { usePanel } from "../context/PanelContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "../context/DialogContext";
-import { useToast } from "../context/ToastContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { queryKeys } from "../lib/queryKeys";
+import { EntityRow } from "../components/EntityRow";
 import { GoalProperties } from "../components/GoalProperties";
 import { GoalTree } from "../components/GoalTree";
-import { StatusBadge } from "../components/StatusBadge";
-import { ProjectIcon } from "../components/ProjectIdentity";
 import { InlineEditor } from "../components/InlineEditor";
-import { EntityRow } from "../components/EntityRow";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { ProjectIcon } from "../components/ProjectIdentity";
+import { StatusBadge } from "../components/StatusBadge";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { usePanel } from "../context/PanelContext";
+import { useToast } from "../context/ToastContext";
+import { queryKeys } from "../lib/queryKeys";
 import { formatDate, issueUrl, projectUrl } from "../lib/utils";
-import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Pencil, Plus, Trash2 } from "lucide-react";
-import type { ActivityEvent, Issue, Project } from "@rudderhq/shared";
 
 function SummaryMetric({
   label,

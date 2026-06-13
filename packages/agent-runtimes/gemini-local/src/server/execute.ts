@@ -1,8 +1,3 @@
-import fs from "node:fs/promises";
-import type { Dirent } from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
@@ -14,22 +9,26 @@ import {
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensureLocalCliCredentialShimsInPath,
-  ensureRudderSkillSymlink,
+  ensurePathInEnv,
   ensureRudderCliInPath,
+  ensureRudderSkillSymlink,
   joinPromptSections,
   loadAgentInstructionsPrefix,
-  ensurePathInEnv,
-  resolveLocalOperatorHome,
-  syncLocalCliCredentialHomeEntries,
-  readRudderRuntimeSkillEntries,
-  resolveRudderDesiredSkillNames,
-  removeMaintainerOnlySkillSymlinks,
   parseObject,
+  readRudderRuntimeSkillEntries,
   redactEnvForLogs,
+  removeMaintainerOnlySkillSymlinks,
   renderTemplate,
+  resolveLocalOperatorHome,
+  resolveRudderDesiredSkillNames,
   runChildProcess,
   selectPromptTemplate,
+  syncLocalCliCredentialHomeEntries,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 import {
   describeGeminiFailure,

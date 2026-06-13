@@ -10,13 +10,13 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
-import { organizations } from "./organizations.js";
-import { organizationSecrets } from "./organization_secrets.js";
-import { issues } from "./issues.js";
-import { projects } from "./projects.js";
-import { goals } from "./goals.js";
 import { chatConversations } from "./chat_conversations.js";
 import { chatMessages } from "./chat_messages.js";
+import { goals } from "./goals.js";
+import { issues } from "./issues.js";
+import { organizationSecrets } from "./organization_secrets.js";
+import { organizations } from "./organizations.js";
+import { projects } from "./projects.js";
 
 export const automations = pgTable(
   "automations",

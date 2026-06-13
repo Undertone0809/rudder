@@ -1,5 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { Link, useNavigate, useParams } from "@/lib/router";
+import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity as ActivityIcon,
@@ -13,49 +27,34 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { agentsApi } from "../api/agents";
 import { automationsApi, type AutomationTriggerResponse, type RotateAutomationTriggerResponse } from "../api/automations";
 import { heartbeatsApi } from "../api/heartbeats";
-import { LiveRunWidget } from "../components/LiveRunWidget";
-import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useToast } from "../context/ToastContext";
-import { queryKeys } from "../lib/queryKeys";
-import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
-import { buildAutomationTriggerPatch } from "../lib/automation-trigger-patch";
-import { formatChatAgentLabel } from "../lib/agent-labels";
-import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
-import { timeAgo } from "../lib/timeAgo";
-import { cn } from "../lib/utils";
-import { EmptyState } from "../components/EmptyState";
-import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
-import { ProjectIcon } from "../components/ProjectIdentity";
+import { EmptyState } from "../components/EmptyState";
 import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
+import { LiveRunWidget } from "../components/LiveRunWidget";
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
-import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
-import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
+import { PageSkeleton } from "../components/PageSkeleton";
+import { ProjectIcon } from "../components/ProjectIdentity";
+import { ScheduleEditor } from "../components/ScheduleEditor";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
-import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Badge } from "@/components/ui/badge";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
-import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, automationPolicyDescription, automationPolicyLabel, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, SidebarSection, SidebarRow, SidebarPropertyRow, SidebarSelectValue, TriggerEditor } from "./AutomationDetail.parts";
+import { useOrganization } from "../context/OrganizationContext";
+import { useToast } from "../context/ToastContext";
+import { formatChatAgentLabel } from "../lib/agent-labels";
+import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
+import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
+import { queryKeys } from "../lib/queryKeys";
+import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
+import { timeAgo } from "../lib/timeAgo";
+import { cn } from "../lib/utils";
+import { addUniqueId, automationPolicyDescription, automationPolicyLabel, automationRiskLabel, autoResizeTextarea, catchUpPolicies, catchUpPolicyDescriptions, concurrencyPolicies, concurrencyPolicyDescriptions, formatActivityDetailValue, formatAutomationTimestamp, getActivityDetailString, getLocalTimezone, humanizeToken, removeId, runSourceLabel, SecretMessage, SidebarPropertyRow, SidebarRow, SidebarSection, SidebarSelectValue, summarizeTrigger, TriggerEditor, triggerKindLabel } from "./AutomationDetail.parts";
 
 export function AutomationDetail() {
   const { automationId } = useParams<{ automationId: string }>();

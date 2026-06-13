@@ -1,8 +1,8 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
-import { __liveUpdatesTestUtils } from "./LiveUpdatesProvider";
 import { queryKeys } from "../lib/queryKeys";
+import { __liveUpdatesTestUtils } from "./LiveUpdatesProvider";
 
 describe("LiveUpdatesProvider issue invalidation", () => {
   it("refreshes touched inbox queries for issue activity", () => {

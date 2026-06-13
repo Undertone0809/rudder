@@ -1,3 +1,7 @@
+import { Button } from "@/components/ui/button";
+import { useI18n } from "@/context/I18nContext";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { Link } from "@/lib/router";
 import {
   ArrowLeft,
   Boxes,
@@ -7,12 +11,8 @@ import {
   Network,
   Settings,
 } from "lucide-react";
-import { Link } from "@/lib/router";
-import { Button } from "@/components/ui/button";
-import { SidebarNavItem } from "./SidebarNavItem";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { useI18n } from "@/context/I18nContext";
+import { SidebarNavItem } from "./SidebarNavItem";
 
 export function OrganizationSettingsSidebar({ showOrganizationSwitcher = true }: { showOrganizationSwitcher?: boolean }) {
   const sidebarNavScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:organization-settings");

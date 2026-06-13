@@ -49,7 +49,7 @@
  */
 
 import type { PluginCapability } from "@rudderhq/shared";
-import type { WorkerToHostMethods, WorkerToHostMethodName } from "./protocol.js";
+import type { WorkerToHostMethodName, WorkerToHostMethods } from "./protocol.js";
 import { PLUGIN_RPC_ERROR_CODES } from "./protocol.js";
 
 // ---------------------------------------------------------------------------

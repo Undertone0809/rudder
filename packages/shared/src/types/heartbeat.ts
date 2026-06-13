@@ -3,8 +3,8 @@ import type {
   AgentStatus,
   HeartbeatInvocationSource,
   HeartbeatRunStatus,
-  WakeupTriggerDetail,
   WakeupRequestStatus,
+  WakeupTriggerDetail,
 } from "../constants.js";
 
 export type HeartbeatRecoveryTrigger = "manual" | "automatic";

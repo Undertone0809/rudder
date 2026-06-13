@@ -1,6 +1,6 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { setChatFlagState, setChatScopedState } from "@/lib/chat-stream-state";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 
 export type ChatStreamDraftState = "streaming" | "finalizing" | "stopped" | "failed";
 

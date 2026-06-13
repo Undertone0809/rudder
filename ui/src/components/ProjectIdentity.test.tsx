@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
+import { PROJECT_COLORS } from "@rudderhq/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { PROJECT_COLORS } from "@rudderhq/shared";
-import { ProjectIdentityPicker, ProjectIcon } from "./ProjectIdentity";
+import { ProjectIcon, ProjectIdentityPicker } from "./ProjectIdentity";
 
 describe("ProjectIdentity", () => {
   it("renders the fallback folder icon for legacy projects", () => {

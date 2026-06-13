@@ -1,8 +1,8 @@
-import fs from "node:fs";
 import * as p from "@clack/prompts";
+import fs from "node:fs";
 import pc from "picocolors";
-import { getDisposableLocalEnvProfiles, resolveLocalEnvProfile } from "../cli/src/config/local-env.js";
 import { describeLocalInstancePaths } from "../cli/src/config/home.js";
+import { getDisposableLocalEnvProfiles, resolveLocalEnvProfile } from "../cli/src/config/local-env.js";
 
 function parseArgs(argv: string[]) {
   let localEnv: string | undefined;

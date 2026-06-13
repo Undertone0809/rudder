@@ -1,7 +1,7 @@
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execFile, spawn } from "node:child_process";
 
 export type DesktopIdeId = "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
 export type DesktopWorkspaceLaunchTargetId =

@@ -1,9 +1,11 @@
+import type { WorkspaceOperation } from "@rudderhq/shared";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import type { WorkspaceOperationRecorder } from "../services/workspace-operations.ts";
 import {
   cleanupExecutionWorkspaceArtifacts,
   ensureRuntimeServicesForRun,
@@ -13,8 +15,6 @@ import {
   stopRuntimeServicesForExecutionWorkspace,
   type RealizedExecutionWorkspace,
 } from "../services/workspace-runtime.ts";
-import type { WorkspaceOperation } from "@rudderhq/shared";
-import type { WorkspaceOperationRecorder } from "../services/workspace-operations.ts";
 
 const execFileAsync = promisify(execFile);
 const leasedRunIds = new Set<string>();

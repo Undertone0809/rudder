@@ -1,13 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  OrganizationIntelligenceProfile,
-  OrganizationIntelligenceProfilePurpose,
-  OrganizationSecret,
-} from "@rudderhq/shared";
-import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
-import { Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { organizationsApi } from "@/api/orgs";
+import { secretsApi } from "@/api/secrets";
 import { RuntimeProviderCard } from "@/components/AgentConfigForm.environment";
 import {
   defaultConfigForRuntime,
@@ -18,10 +10,18 @@ import {
   runtimeProviderItemClassName,
   runtimeProviderRailClassName,
 } from "@/components/AgentConfigForm.helpers";
-import { organizationsApi } from "@/api/orgs";
-import { secretsApi } from "@/api/secrets";
+import { Button } from "@/components/ui/button";
 import { queryKeys } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
+import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
+import type {
+  OrganizationIntelligenceProfile,
+  OrganizationIntelligenceProfilePurpose,
+  OrganizationSecret,
+} from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 type ProfileDraft = {
   purpose: OrganizationIntelligenceProfilePurpose;

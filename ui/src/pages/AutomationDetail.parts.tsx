@@ -1,22 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  ChevronDown,
-  RefreshCw,
-  Trash2,
-} from "lucide-react";
-import type { InstanceLocale } from "@rudderhq/shared";
-import { buildAutomationTriggerPatch } from "../lib/automation-trigger-patch";
-import { translateLegacyString } from "../i18n/legacyPhrases";
-import { cn, formatDateTime } from "../lib/utils";
-import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
-import {
-  automationPolicyDescription,
-  automationPolicyLabel,
-  catchUpPolicyDescriptions,
-  concurrencyPolicyDescriptions,
-} from "../lib/automation-localization";
-import { useDialog } from "../context/DialogContext";
-import { useI18n } from "../context/I18nContext";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,13 +10,30 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import type { AutomationTrigger } from "@rudderhq/shared";
+import type { AutomationTrigger, InstanceLocale } from "@rudderhq/shared";
+import {
+  ChevronDown,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
+import { useDialog } from "../context/DialogContext";
+import { useI18n } from "../context/I18nContext";
+import { translateLegacyString } from "../i18n/legacyPhrases";
+import {
+  automationPolicyDescription,
+  automationPolicyLabel,
+  catchUpPolicyDescriptions,
+  concurrencyPolicyDescriptions,
+} from "../lib/automation-localization";
+import { buildAutomationTriggerPatch } from "../lib/automation-trigger-patch";
+import { cn, formatDateTime } from "../lib/utils";
 
 export const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 export const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
 export const signingModes = ["bearer", "hmac_sha256"];
-export { concurrencyPolicyDescriptions, catchUpPolicyDescriptions, automationPolicyDescription, automationPolicyLabel };
+export { automationPolicyDescription, automationPolicyLabel, catchUpPolicyDescriptions, concurrencyPolicyDescriptions };
 export type SecretMessage = {
   title: string;
   webhookUrl: string;

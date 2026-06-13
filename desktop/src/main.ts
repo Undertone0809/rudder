@@ -1,22 +1,14 @@
-import { spawn } from "node:child_process";
+import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, shell, systemPreferences, Tray } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Notification, app, BrowserWindow, Menu, MenuItem, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, systemPreferences } from "electron";
-import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
-import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml } from "./boot-screen.js";
-import { DESKTOP_CLI_FLAG, ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
+import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
-import {
-  canOpenBlockedNavigationExternally,
-  collectDesktopNavigationOrigins,
-  isAllowedDesktopNavigation,
-} from "./navigation-guard.js";
 import {
   listAvailableIdeTargets,
   listWorkspaceLaunchTargets,
@@ -25,6 +17,19 @@ import {
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
+import {
+  canOpenBlockedNavigationExternally,
+  collectDesktopNavigationOrigins,
+  isAllowedDesktopNavigation,
+} from "./navigation-guard.js";
+import {
+  consumePostUpdateReloadMarker,
+  resolvePostUpdateReloadDelayMs
+} from "./post-update-reload.js";
+import {
+  resolveExternalRuntimeServerEntrypoint,
+  resolveSharedRudderHomeDir,
+} from "./runtime-cache.js";
 import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
 import {
   applyThemePreferenceToNativeTheme,
@@ -33,31 +38,14 @@ import {
   type DesktopThemePreference,
 } from "./theme-preference.js";
 import {
-  normalizeDesktopUpdateChannel,
-  readDesktopUpdateChannel,
-  writeDesktopUpdateChannel,
-} from "./update-channel-preference.js";
-import {
-  clearPostUpdateReloadMarker,
-  consumePostUpdateReloadMarker,
-  resolvePostUpdateReloadDelayMs,
-  writePostUpdateReloadMarker,
-} from "./post-update-reload.js";
-import {
-  checkForRudderDesktopUpdates,
-  type DesktopUpdateChannel,
-  type DesktopUpdateCheckResult,
+  type DesktopUpdateChannel
 } from "./update-check.js";
-import {
-  resolveExternalRuntimeServerEntrypoint,
-  resolveSharedRudderHomeDir,
-} from "./runtime-cache.js";
 
-import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
-import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
 import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
 import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
 import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
+import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
+import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
 import {
   toWorkspaceLaunchTargetPayload,
   type DesktopWorkspaceLaunchTargetPayload,

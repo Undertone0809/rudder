@@ -1,29 +1,29 @@
-import { randomUUID } from "node:crypto";
 import type {
+  Agent,
+  Goal,
+  Issue,
+  IssueComment,
+  Organization,
   PaperclipPluginManifestV1,
   PluginCapability,
   PluginEventType,
-  Organization,
   Project,
-  Issue,
-  IssueComment,
-  Agent,
-  Goal,
 } from "@rudderhq/shared";
+import { randomUUID } from "node:crypto";
 import type {
+  AgentSession,
+  AgentSessionEvent,
   EventFilter,
   PluginContext,
   PluginEntityRecord,
   PluginEntityUpsert,
+  PluginEvent,
   PluginJobContext,
   PluginLauncherRegistration,
-  PluginEvent,
+  PluginWorkspace,
   ScopeKey,
   ToolResult,
   ToolRunContext,
-  PluginWorkspace,
-  AgentSession,
-  AgentSessionEvent,
 } from "./types.js";
 
 export interface TestHarnessOptions {

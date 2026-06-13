@@ -2,13 +2,13 @@ import { z } from "zod";
 import {
   AGENT_AVATAR_BACKGROUND_PRESET_IDS,
   AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX,
-  AGENT_RUNTIME_TYPES,
   AGENT_ICON_NAMES,
   AGENT_ROLES,
+  AGENT_RUNTIME_TYPES,
   AGENT_STATUSES,
 } from "../constants.js";
-import { envConfigSchema } from "./secret.js";
 import { validateModelFallbacksConfig } from "./model-fallbacks.js";
+import { envConfigSchema } from "./secret.js";
 
 export const agentPermissionsSchema = z.object({
   canCreateAgents: z.boolean().optional().default(false),

@@ -1,7 +1,7 @@
-import { CalendarDays } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { cn } from "../lib/utils";
+import { CalendarDays } from "lucide-react";
 import { useSlidingIndicator } from "../hooks/useSlidingIndicator";
+import { cn } from "../lib/utils";
 
 export type DashboardDatePreset = "7d" | "15d" | "30d" | "custom";
 

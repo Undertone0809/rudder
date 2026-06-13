@@ -1,10 +1,10 @@
 import {
   type AnyPgColumn,
+  index,
   pgTable,
-  uuid,
   text,
   timestamp,
-  index,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { organizations } from "./organizations.js";

@@ -1,6 +1,5 @@
 export {
-  organizationSkillService,
-  organizationSkillService as organizationSkillFacade,
+  organizationSkillService as organizationSkillFacade, organizationSkillService
 } from "./knowledge-portability/organization-skills.js";
 
 export {
@@ -11,11 +10,11 @@ export {
   normalizeGitHubSkillDirectory,
   type ImportPackageSkillResult,
   type LocalSkillInventoryMode,
-  type ProjectSkillScanTarget,
+  type ProjectSkillScanTarget
 } from "./knowledge-portability/organization-skills.catalog.js";
 
 export {
   discoverProjectWorkspaceSkillDirectories,
   parseSkillImportSourceInput,
-  readLocalSkillImportFromDirectory,
+  readLocalSkillImportFromDirectory
 } from "./knowledge-portability/organization-skills.sources.js";

@@ -1,90 +1,53 @@
-import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
-import { execFile } from "node:child_process";
-import path from "node:path";
-import { promisify } from "node:util";
 import type { Db } from "@rudderhq/db";
 import type {
-  OrganizationPortabilityAgentManifestEntry,
-  OrganizationPortabilityCollisionStrategy,
-  OrganizationPortabilityEnvInput,
+  OrganizationExportJobStage,
   OrganizationPortabilityExport,
-  OrganizationPortabilityFileEntry,
   OrganizationPortabilityExportPreviewResult,
   OrganizationPortabilityExportResult,
-  OrganizationPortabilityImport,
-  OrganizationPortabilityImportResult,
-  OrganizationPortabilityInclude,
-  OrganizationPortabilityManifest,
-  OrganizationPortabilityPreview,
-  OrganizationPortabilityPreviewAgentPlan,
-  OrganizationPortabilityPreviewResult,
-  OrganizationPortabilityProjectManifestEntry,
-  OrganizationPortabilityProjectWorkspaceManifestEntry,
-  OrganizationPortabilityIssueAutomationManifestEntry,
-  OrganizationPortabilityIssueAutomationTriggerManifestEntry,
-  OrganizationPortabilityIssueManifestEntry,
-  OrganizationPortabilitySidebarOrder,
-  OrganizationPortabilitySkillManifestEntry,
-  OrganizationSkill,
-  OrganizationExportJobStage,
+  OrganizationPortabilityFileEntry,
+  OrganizationPortabilityManifest
 } from "@rudderhq/shared";
 import {
-  ISSUE_PRIORITIES,
-  ISSUE_STATUSES,
-  PROJECT_STATUSES,
-  AUTOMATION_CATCH_UP_POLICIES,
-  AUTOMATION_CONCURRENCY_POLICIES,
-  AUTOMATION_STATUSES,
-  AUTOMATION_TRIGGER_KINDS,
-  AUTOMATION_TRIGGER_SIGNING_MODES,
-  deriveOrganizationUrlKey,
   deriveProjectUrlKey,
-  getBundledRudderSkillSlug,
-  normalizeAgentUrlKey,
-  toBundledRudderSkillKey,
+  normalizeAgentUrlKey
 } from "@rudderhq/shared";
-import { notFound, unprocessable } from "../../errors.js";
+import { notFound } from "../../errors.js";
+import { renderOrgChartPng } from "../../routes/org-chart-svg.js";
 import type { StorageService } from "../../storage/types.js";
-import { accessService } from "../access.js";
-import { agentService } from "../agents.js";
 import { agentInstructionsService } from "../agent-instructions.js";
+import { agentService } from "../agents.js";
 import { assetService } from "../assets.js";
+import { automationService } from "../automations.js";
+import { issueService } from "../issues.js";
 import { generateReadme } from "../organization-export-readme.js";
-import { renderOrgChartPng, type OrgNode } from "../../routes/org-chart-svg.js";
 import { organizationSkillService } from "../organization-skills.js";
 import { organizationService } from "../orgs.js";
-import { validateCron } from "../cron.js";
-import { issueService } from "../issues.js";
 import { projectService } from "../projects.js";
-import { automationService } from "../automations.js";
 
 import {
   ADAPTER_DEFAULT_RULES_BY_TYPE,
-  COMPANY_LOGO_FILE_NAME,
-  RUNTIME_DEFAULT_RULES,
-  type AutomationLike,
-  type OrganizationPortabilityExportOptions,
   asString,
-  buildAutomationManifestFromLiveAutomation,
   buildOrgTreeFromManifest,
   buildPortableProjectWorkspaces,
   buildSkillExportDirMap,
   classifyPortableFileKind,
+  COMPANY_LOGO_FILE_NAME,
   exportPortableProjectExecutionWorkspacePolicy,
   isPlainRecord,
   normalizeSkillKey,
   normalizeSkillSlug,
+  RUNTIME_DEFAULT_RULES,
   stripEmptyValues,
   toSafeSlug,
   uniqueSlug,
+  type AutomationLike,
+  type OrganizationPortabilityExportOptions
 } from "./organization-portability.core.js";
 import {
-  buildMarkdown,
   bufferToPortableBinaryFile,
+  buildMarkdown,
   extractPortableEnvInputs,
   filterExportFiles,
-  inferContentTypeFromPath,
   isAbsoluteCommand,
   normalizeInclude,
   normalizePortableConfig,
@@ -93,7 +56,7 @@ import {
   pruneDefaultLikeValue,
   resolveCompanyLogoExtension,
   sortAgentsBySidebarOrder,
-  streamToBuffer,
+  streamToBuffer
 } from "./organization-portability.files.js";
 import {
   buildEnvInputMap,
@@ -105,7 +68,6 @@ import {
   shouldReferenceSkillOnExport,
   withSkillSourceMetadata,
 } from "./organization-portability.package.js";
-import { resolveSource } from "./organization-portability.resolve-source.js";
 
 type ExportContext = {
   db: Db;

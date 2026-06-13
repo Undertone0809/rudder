@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
+import { ToastProvider, useToast } from "@/context/ToastContext";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ToastProvider, useToast } from "@/context/ToastContext";
 import { ToastViewport } from "./ToastViewport";
 
 (

@@ -1,6 +1,3 @@
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Info, Mail, RefreshCw } from "lucide-react";
 import { healthApi } from "@/api/health";
 import {
   SettingsDivider,
@@ -14,7 +11,6 @@ import { useDesktopUpdateProgress } from "@/context/DesktopUpdateProgressContext
 import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/context/ToastContext";
 import type { TranslationKey } from "@/i18n/locales/en";
-import { queryKeys } from "@/lib/queryKeys";
 import {
   readDesktopShell,
   type DesktopBootState,
@@ -22,6 +18,10 @@ import {
   type DesktopUpdateProgressEvent,
   type DesktopUpdateProgressPhase,
 } from "@/lib/desktop-shell";
+import { queryKeys } from "@/lib/queryKeys";
+import { useQuery } from "@tanstack/react-query";
+import { Info, Mail, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 const RELEASES_URL = "https://github.com/Undertone0809/rudder/releases";
 const FEEDBACK_MAILTO = "mailto:zeeland4work@gmail.com";

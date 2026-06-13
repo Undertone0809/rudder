@@ -1,14 +1,14 @@
+import { _electron as electron } from "@playwright/test";
+import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { access, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { access, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createRequire } from "node:module";
-import { _electron as electron } from "@playwright/test";
-import electronBinary from "electron";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");

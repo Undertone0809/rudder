@@ -1,32 +1,19 @@
-import { createWriteStream } from "node:fs";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { pipeline } from "node:stream/promises";
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
-import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
 import type {
   AgentRuntimeType,
-  ChatConversation,
   ChatContextLink,
-  IssueLabel,
-  ChatMessage,
-  ChatRuntimeDescriptor,
-  OperatorProfileSettings,
+  ChatConversation
 } from "@rudderhq/shared";
-import { chatAskUserRequestFromStructuredPayload, sanitizeChatStructuredPayload } from "@rudderhq/shared";
-import { findServerAdapter } from "../agent-runtimes/index.js";
-import type { AgentRuntimeInvocationMeta, AgentRuntimeLoadedSkillMeta } from "../agent-runtimes/index.js";
-import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "../agent-runtimes/types.js";
-import { agentRunContextService, type AgentRunContextAgent } from "./agent-run-context.js";
-import { agentService } from "./agents.js";
+import { randomUUID } from "node:crypto";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
+import { findServerAdapter } from "../agent-runtimes/index.js";
 import type { StorageService } from "../storage/types.js";
-import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
+import { agentRunContextService } from "./agent-run-context.js";
+import { agentService } from "./agents.js";
+import { asString, buildConversationPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractGeneratedAttachments, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor } from "./chat-assistant.helpers.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
-import { CHAT_UNSUPPORTED_ADAPTER_TYPES, CHAT_RESULT_SENTINEL_PREFIX, ChatAttachmentPromptReference, ResolvedChatRuntimeSource, ChatAssistantResult, ChatGeneratedAttachment, GenerateChatAssistantReplyInput, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, ChatAssistantStreamError, safeTrim, asString, summarizeBody, modelLabel, unconfiguredDescriptor, unavailableAgentDescriptor, buildPrompt, buildCurrentUserAttachmentPromptSection, buildOperatorProfilePromptSection, buildSelectedProjectPromptSection, buildSelectedIssuePromptSection, buildIssueLabelsPromptSection, buildChatSpeakerPromptSection, buildChatResponseQualityPromptSection, buildBaseSystemPromptSections, buildPlanModePromptSection, buildResponseSchemaPromptSection, systemPrompt, extractJsonObject, asRecord, extractImageGenerationItem, base64PngToBuffer, extractGeneratedAttachments, isImageAttachment, extensionForContentType, safeAttachmentFilename, prepareChatAttachmentReferences, validateAssistantResult, buildConversationPrompt, resultText, configArgs, stripCliArgs, applyPlanModeRuntimeOverlay, chatExecutionConfig, linkedIssueIdsForChat, linkedProjectIdForChat, stubAgent, summarizeRuntimeSkills, longestSentinelPrefixSuffix, createAssistantTextAccumulator, createSentinelStream, parseAssistantEnvelope, parseCompletedAssistantReply, partialBodyFromRawAssistantText, maybeEmitAssistantState, maybeEmitAssistantDelta, maybeEmitTranscriptEntry, maybeEmitObservedTranscriptEntry, shouldSuppressChatTranscriptEntry } from "./chat-assistant.helpers.js";
+import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
 export * from "./chat-assistant.helpers.js";
 
 export function chatAssistantService(db: Db, storage?: StorageService) {

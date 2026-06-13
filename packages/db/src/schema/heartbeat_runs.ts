@@ -1,7 +1,7 @@
-import { type AnyPgColumn, pgTable, uuid, text, timestamp, jsonb, index, integer, bigint, boolean } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
-import { agents } from "./agents.js";
+import { type AnyPgColumn, bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { agentWakeupRequests } from "./agent_wakeup_requests.js";
+import { agents } from "./agents.js";
+import { organizations } from "./organizations.js";
 
 export const heartbeatRuns = pgTable(
   "heartbeat_runs",

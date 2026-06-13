@@ -1,27 +1,27 @@
-import { useRef, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { GOAL_STATUSES, GOAL_LEVELS } from "@rudderhq/shared";
-import { useDialog } from "../context/DialogContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { goalsApi } from "../api/goals";
-import { assetsApi } from "../api/assets";
-import { queryKeys } from "../lib/queryKeys";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { GOAL_LEVELS, GOAL_STATUSES } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Layers,
   Maximize2,
   Minimize2,
   Target,
-  Layers,
 } from "lucide-react";
+import { useRef, useState } from "react";
+import { assetsApi } from "../api/assets";
+import { goalsApi } from "../api/goals";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
 import { StatusBadge } from "./StatusBadge";

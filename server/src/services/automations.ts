@@ -1,54 +1,45 @@
-import crypto from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
-import type { Db } from "@rudderhq/db";
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { Db } from "@rudderhq/db";
 import {
   agents,
-  organizationSecrets,
-  goals,
-  heartbeatRuns,
-  issueFollows,
-  issues,
-  projects,
   automationRuns,
   automations,
   automationTriggers,
   chatContextLinks,
   chatConversations,
   chatMessages,
+  goals,
+  heartbeatRuns,
+  issueFollows,
+  issues,
+  organizationSecrets,
+  projects,
 } from "@rudderhq/db";
 import type {
-  CreateAutomation,
-  CreateAutomationTrigger,
   Automation,
   AutomationDetail,
   AutomationListItem,
   AutomationRunSummary,
   AutomationTrigger,
   AutomationTriggerSecretMaterial,
+  ChatAttachment,
+  ChatConversation,
+  ChatMessage,
+  CreateAutomation,
+  CreateAutomationTrigger,
   RunAutomation,
   UpdateAutomation,
   UpdateAutomationTrigger,
-  ChatConversation,
-  ChatAttachment,
-  ChatMessage,
 } from "@rudderhq/shared";
 import { chatIssueProposalFromStructuredPayload } from "@rudderhq/shared";
-import { conflict, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
+import crypto from "node:crypto";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { conflict, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
-import { issueService } from "./issues.js";
-import { chatService } from "./chats.js";
-import { chatAssistantService, ChatAssistantStreamError, type ChatAssistantResult, type ChatGeneratedAttachment } from "./chat-assistant.js";
-import { claimChatGeneration, hasActiveChatGeneration } from "./chat-generation-locks.js";
-import { secretService } from "./secrets.js";
 import { getStorageService } from "../storage/index.js";
 import type { StorageService } from "../storage/types.js";
-import { validateCron } from "./cron.js";
-import { heartbeatService } from "./heartbeat.js";
-import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "./issue-assignment-wakeup.js";
 import { logActivity } from "./activity-log.js";
-import { publishLiveEvent } from "./live-events.js";
 import {
   assertTimeZone,
   LIVE_HEARTBEAT_RUN_STATUSES,
@@ -56,9 +47,17 @@ import {
   nextCronTickInTimeZone,
   nextResultText,
   normalizeWebhookTimestampMs,
-  OPEN_ISSUE_STATUSES,
-  TERMINAL_ISSUE_STATUSES,
+  OPEN_ISSUE_STATUSES
 } from "./automations.scheduler.js";
+import { chatAssistantService, ChatAssistantStreamError, type ChatAssistantResult, type ChatGeneratedAttachment } from "./chat-assistant.js";
+import { claimChatGeneration, hasActiveChatGeneration } from "./chat-generation-locks.js";
+import { chatService } from "./chats.js";
+import { validateCron } from "./cron.js";
+import { heartbeatService } from "./heartbeat.js";
+import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "./issue-assignment-wakeup.js";
+import { issueService } from "./issues.js";
+import { publishLiveEvent } from "./live-events.js";
+import { secretService } from "./secrets.js";
 
 type Actor = { agentId?: string | null; userId?: string | null };
 type AutomationRow = typeof automations.$inferSelect;

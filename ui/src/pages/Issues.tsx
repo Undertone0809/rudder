@@ -1,37 +1,37 @@
-import { useEffect, useMemo, useCallback, useRef, useState, type ReactElement } from "react";
+import { useIssueFollows } from "@/hooks/useIssueFollows";
 import { useLocation, useSearchParams } from "@/lib/router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Agent, IssueSearchField, Project, ReorderIssue } from "@rudderhq/shared";
-import { issuesApi } from "../api/issues";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CircleDot, Clock3, FolderKanban, PencilLine, Trash2, UserRound } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
-import { projectsApi } from "../api/projects";
 import { heartbeatsApi } from "../api/heartbeats";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useDialog } from "../context/DialogContext";
-import { useToast } from "../context/ToastContext";
-import { queryKeys } from "../lib/queryKeys";
-import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
-import { rememberIssueNavigation } from "../lib/issue-navigation";
-import { getIssueScopeFilters, isFollowingIssue } from "../lib/issue-scope-filters";
-import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
-import { formatAssigneeUserLabel, parseAssigneeValue } from "../lib/assignees";
-import {
-  deleteIssueDraft,
-  ISSUE_DRAFT_CHANGED_EVENT,
-  type IssueDraftSummary,
-  summarizeIssueDrafts,
-} from "../lib/new-issue-dialog";
-import { relativeTime } from "../lib/utils";
-import { formatPriorityLabel } from "../lib/priorities";
+import { issuesApi } from "../api/issues";
+import { projectsApi } from "../api/projects";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
 import { LinearIssueSourceBoard } from "../components/LinearIssueSourceBoard";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { PriorityBarsIcon } from "../components/PriorityIcon";
-import { CircleDot, Clock3, FolderKanban, PencilLine, Trash2, UserRound } from "lucide-react";
-import { useIssueFollows } from "@/hooks/useIssueFollows";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useToast } from "../context/ToastContext";
+import { formatAssigneeUserLabel, parseAssigneeValue } from "../lib/assignees";
+import { rememberIssueNavigation } from "../lib/issue-navigation";
+import { getIssueScopeFilters, isFollowingIssue } from "../lib/issue-scope-filters";
+import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
+import {
+  deleteIssueDraft,
+  ISSUE_DRAFT_CHANGED_EVENT,
+  summarizeIssueDrafts,
+  type IssueDraftSummary,
+} from "../lib/new-issue-dialog";
+import { formatPriorityLabel } from "../lib/priorities";
+import { queryKeys } from "../lib/queryKeys";
+import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
+import { relativeTime } from "../lib/utils";
 
 type DraftMetadataItem = {
   key: string;

@@ -1,7 +1,8 @@
+import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { promises as fs } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
+import { createOrganizationSkillScanHandlers } from "../services/knowledge-portability/organization-skills.scans.js";
 import {
   discoverProjectWorkspaceSkillDirectories,
   findMissingLocalSkillIds,
@@ -9,7 +10,6 @@ import {
   parseSkillImportSourceInput,
   readLocalSkillImportFromDirectory,
 } from "../services/organization-skills.js";
-import { createOrganizationSkillScanHandlers } from "../services/knowledge-portability/organization-skills.scans.js";
 
 const cleanupDirs = new Set<string>();
 

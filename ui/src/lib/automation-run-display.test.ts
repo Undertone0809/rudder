@@ -1,6 +1,6 @@
+import type { AutomationRunSummary } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import { getAutomationRunDisplay, summarizeAutomationCiPayload } from "./automation-run-display";
-import type { AutomationRunSummary } from "@rudderhq/shared";
 
 const baseRun: AutomationRunSummary = {
   id: "run-1",

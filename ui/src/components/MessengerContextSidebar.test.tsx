@@ -1,9 +1,9 @@
 // @vitest-environment node
 
+import { formatExactTimestamp } from "@/components/HoverTimestamp";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatExactTimestamp } from "@/components/HoverTimestamp";
 import { MessengerContextSidebar } from "./MessengerContextSidebar";
 
 const invalidateQueries = vi.fn();

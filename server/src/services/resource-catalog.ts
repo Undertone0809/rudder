@@ -1,4 +1,3 @@
-import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   organizationResources,
@@ -11,9 +10,10 @@ import type {
   OrganizationResource,
   ProjectResourceAttachment,
   ProjectResourceAttachmentInput,
-  UpdateProjectResourceAttachmentRequest,
   UpdateOrganizationResourceRequest,
+  UpdateProjectResourceAttachmentRequest,
 } from "@rudderhq/shared";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import { badRequest, conflict } from "../errors.js";
 
 function toOrganizationResource(row: typeof organizationResources.$inferSelect): OrganizationResource {

@@ -1,6 +1,6 @@
-import { Component, type ErrorInfo, type ReactNode } from "react";
-import { readDesktopShell } from "@/lib/desktop-shell";
 import { ConsoleRingBuffer } from "@/lib/console-ring-buffer";
+import { readDesktopShell } from "@/lib/desktop-shell";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 
 type AppErrorBoundaryProps = {
   children: ReactNode;

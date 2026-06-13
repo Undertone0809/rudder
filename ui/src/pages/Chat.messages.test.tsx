@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
-import type { ReactNode } from "react";
-import { createRoot } from "react-dom/client";
 import type { ChatMessage } from "@rudderhq/shared";
+import type { ReactNode } from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LazyStreamTranscriptItem } from "./Chat.messages";
 

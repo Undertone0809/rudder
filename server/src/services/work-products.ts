@@ -1,7 +1,7 @@
-import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { issueWorkProducts } from "@rudderhq/db";
 import type { IssueWorkProduct } from "@rudderhq/shared";
+import { and, desc, eq } from "drizzle-orm";
 
 type IssueWorkProductRow = typeof issueWorkProducts.$inferSelect;
 

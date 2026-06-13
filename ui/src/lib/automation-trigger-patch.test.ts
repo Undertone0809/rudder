@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { AutomationTrigger } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import { buildAutomationTriggerPatch } from "./automation-trigger-patch";
 
 function makeScheduleTrigger(overrides: Partial<AutomationTrigger> = {}): AutomationTrigger {

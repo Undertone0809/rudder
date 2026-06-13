@@ -1,4 +1,3 @@
-import { and, eq } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { organizationIntelligenceProfiles } from "@rudderhq/db";
 import {
@@ -8,6 +7,7 @@ import {
   type OrganizationIntelligenceProfilePurpose,
   type OrganizationIntelligenceProfileStatus,
 } from "@rudderhq/shared";
+import { and, eq } from "drizzle-orm";
 
 const AGENT_ONLY_CONFIG_KEYS = new Set([
   "promptTemplate",

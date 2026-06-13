@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
 import express from "express";
 import request from "supertest";
+import { afterEach, describe, expect, it } from "vitest";
 import { healthRoutes } from "../routes/health.js";
 import { serverVersion } from "../version.js";
 

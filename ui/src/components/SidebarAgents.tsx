@@ -1,28 +1,28 @@
-import { useMemo, useState } from "react";
-import { NavLink, useLocation } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
-import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "../context/DialogContext";
-import { useSidebar } from "../context/SidebarContext";
-import { agentsApi } from "../api/agents";
-import { authApi } from "../api/auth";
-import { heartbeatsApi } from "../api/heartbeats";
-import { queryKeys } from "../lib/queryKeys";
-import { formatSidebarAgentLabel } from "../lib/agent-labels";
-import { sidebarAgentStatusTag } from "../lib/agent-sidebar-status";
-import { statusBadge, statusBadgeDefault } from "../lib/status-colors";
-import { agentRouteRef, agentUrl, cn } from "../lib/utils";
-import { useAgentOrder } from "../hooks/useAgentOrder";
-import { AgentIcon } from "./AgentIconPicker";
-import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
-import { SidebarSectionActionButton, SidebarSectionHeader } from "./SidebarSectionHeader";
-import { sidebarItemVariants } from "./sidebarItemStyles";
 import {
   Collapsible,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
+import { NavLink, useLocation } from "@/lib/router";
 import type { Agent } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
+import { useMemo, useState } from "react";
+import { agentsApi } from "../api/agents";
+import { authApi } from "../api/auth";
+import { heartbeatsApi } from "../api/heartbeats";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useSidebar } from "../context/SidebarContext";
+import { useAgentOrder } from "../hooks/useAgentOrder";
+import { formatSidebarAgentLabel } from "../lib/agent-labels";
+import { sidebarAgentStatusTag } from "../lib/agent-sidebar-status";
+import { queryKeys } from "../lib/queryKeys";
+import { statusBadge, statusBadgeDefault } from "../lib/status-colors";
+import { agentRouteRef, agentUrl, cn } from "../lib/utils";
+import { AgentIcon } from "./AgentIconPicker";
+import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
+import { SidebarSectionActionButton, SidebarSectionHeader } from "./SidebarSectionHeader";
+import { sidebarItemVariants } from "./sidebarItemStyles";
 
 export function SidebarAgents() {
   const [open, setOpen] = useState(true);

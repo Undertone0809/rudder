@@ -1,7 +1,7 @@
-import { CalendarDays, LayoutDashboard } from "lucide-react";
-import { Link, useLocation } from "@/lib/router";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { Link, useLocation } from "@/lib/router";
 import { cn } from "@/lib/utils";
+import { CalendarDays, LayoutDashboard } from "lucide-react";
 
 function dashboardCalendarMode(pathname: string): "dashboard" | "calendar" {
   const relativePath = toOrganizationRelativePath(pathname);

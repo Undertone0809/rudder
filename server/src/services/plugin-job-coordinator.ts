@@ -24,12 +24,12 @@
  * @see ./plugin-lifecycle.ts — Plugin state machine
  */
 
-import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
-import type { PluginJobScheduler } from "./plugin-job-scheduler.js";
-import type { PluginJobStore } from "./plugin-job-store.js";
-import { pluginRegistryService } from "./plugin-registry.js";
 import type { Db } from "@rudderhq/db";
 import { logger } from "../middleware/logger.js";
+import type { PluginJobScheduler } from "./plugin-job-scheduler.js";
+import type { PluginJobStore } from "./plugin-job-store.js";
+import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
+import { pluginRegistryService } from "./plugin-registry.js";
 
 // ---------------------------------------------------------------------------
 // Types

@@ -1,5 +1,3 @@
-import { useEffect, useRef, useState } from "react";
-import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +12,8 @@ import {
   type DesktopDeferredUpdatePrompt,
   type DesktopDeferredUpdatePromptDecision,
 } from "@/lib/desktop-shell";
+import { AlertTriangle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 function splitPromptDetail(detail: string) {
   const [body = "", ...rest] = detail.split(/\n{2,}/);

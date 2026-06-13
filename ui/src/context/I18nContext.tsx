@@ -1,3 +1,9 @@
+import { healthApi } from "@/api/health";
+import { en, type TranslationKey } from "@/i18n/locales/en";
+import { zhCN } from "@/i18n/locales/zh-CN";
+import { queryKeys } from "@/lib/queryKeys";
+import type { InstanceLocale } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
 import {
   createContext,
   useCallback,
@@ -6,12 +12,6 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
-import type { InstanceLocale } from "@rudderhq/shared";
-import { healthApi } from "@/api/health";
-import { queryKeys } from "@/lib/queryKeys";
-import { en, type TranslationKey } from "@/i18n/locales/en";
-import { zhCN } from "@/i18n/locales/zh-CN";
 import { LegacyI18nBridge } from "./LegacyI18nBridge";
 
 type TranslationParams = Record<string, string | number>;

@@ -1,13 +1,14 @@
-import { Command } from "commander";
 import {
   createAutomationSchema,
-  updateAutomationSchema,
   runAutomationSchema,
+  updateAutomationSchema,
   type AutomationDetail,
   type AutomationListItem,
   type AutomationRun,
   type AutomationRunSummary,
 } from "@rudderhq/shared";
+import { Command } from "commander";
+import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
   handleCommandError,
@@ -15,7 +16,6 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
-import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 
 interface AutomationListOptions extends BaseClientOptions {
   status?: string;

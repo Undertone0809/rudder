@@ -1,14 +1,12 @@
-import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { projects, projectGoals, goals, agents, projectWorkspaces, workspaceRuntimeServices } from "@rudderhq/db";
+import { agents, goals, projectGoals, projectWorkspaces, projects, workspaceRuntimeServices } from "@rudderhq/db";
 import {
   DEFAULT_PROJECT_ICON,
   PROJECT_COLORS,
   deriveProjectUrlKey,
   isUuidLike,
-  type CreateProjectInlineResourceInput,
   normalizeProjectUrlKey,
+  type CreateProjectInlineResourceInput,
   type ProjectCodebase,
   type ProjectExecutionWorkspacePolicy,
   type ProjectGoalRef,
@@ -17,18 +15,20 @@ import {
   type ProjectWorkspace,
   type WorkspaceRuntimeService,
 } from "@rudderhq/shared";
-import { listWorkspaceRuntimeServicesForProjectWorkspaces } from "./workspace-runtime.js";
-import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
-import {
-  listProjectResourceAttachmentsByProjectIds,
-  replaceProjectResourceAttachments,
-} from "./resource-catalog.js";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { unprocessable } from "../errors.js";
 import {
   ensureOrganizationWorkspaceLayout,
   ensureProjectLibraryLayout,
   resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
-import { unprocessable } from "../errors.js";
+import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
+import {
+  listProjectResourceAttachmentsByProjectIds,
+  replaceProjectResourceAttachments,
+} from "./resource-catalog.js";
+import { listWorkspaceRuntimeServicesForProjectWorkspaces } from "./workspace-runtime.js";
 
 type ProjectRow = typeof projects.$inferSelect;
 type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;

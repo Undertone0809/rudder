@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { printOpenCodeStreamEvent } from "@rudderhq/agent-runtime-opencode-local/cli";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "@rudderhq/agent-runtime-opencode-local/server";
 import { parseOpenCodeStdoutLine } from "@rudderhq/agent-runtime-opencode-local/ui";
-import { printOpenCodeStreamEvent } from "@rudderhq/agent-runtime-opencode-local/cli";
+import { describe, expect, it, vi } from "vitest";
 
 describe("opencode_local parser", () => {
   it("extracts session, summary, usage, cost, and terminal error message", () => {

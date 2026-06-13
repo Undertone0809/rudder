@@ -1,9 +1,9 @@
-import type { Agent, AgentRole } from "@rudderhq/shared";
-import { Minus, User } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { AgentIcon } from "./AgentIconPicker";
 import { agentTitleBadgeLabel } from "@/lib/agent-labels";
 import { cn } from "@/lib/utils";
+import type { Agent, AgentRole } from "@rudderhq/shared";
+import { Minus, User } from "lucide-react";
+import { AgentIcon } from "./AgentIconPicker";
 
 type AssigneeLabelKind = "agent" | "user" | "unassigned";
 

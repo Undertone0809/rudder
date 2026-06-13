@@ -1,5 +1,5 @@
-import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "@/agent-runtimes";
+import type { ChatMessage } from "@rudderhq/shared";
 
 function timestampMs(value: Date | string | null | undefined): number | null {
   if (!value) return null;

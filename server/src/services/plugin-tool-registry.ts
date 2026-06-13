@@ -19,13 +19,13 @@
  * @see PLUGIN_SPEC.md §13.10 — `executeTool`
  */
 
+import type { ExecuteToolParams, ToolResult, ToolRunContext } from "@rudderhq/plugin-sdk";
 import type {
   PaperclipPluginManifestV1,
   PluginToolDeclaration,
 } from "@rudderhq/shared";
-import type { ToolRunContext, ToolResult, ExecuteToolParams } from "@rudderhq/plugin-sdk";
-import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import { logger } from "../middleware/logger.js";
+import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
 // ---------------------------------------------------------------------------
 // Constants

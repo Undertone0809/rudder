@@ -6,16 +6,16 @@ import type {
 import {
   asString,
   asStringArray,
-  parseObject,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensurePathInEnv,
+  parseObject,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import path from "node:path";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
-import { parseCursorJsonl } from "./parse.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
+import { parseCursorJsonl } from "./parse.js";
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";

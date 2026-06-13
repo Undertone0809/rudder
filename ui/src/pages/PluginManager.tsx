@@ -4,20 +4,10 @@
  *
  * @see PLUGIN_SPEC.md §9 — Plugin Marketplace / Manager
  */
-import { useEffect, useMemo, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { PluginRecord } from "@rudderhq/shared";
-import { Link, useLocation } from "@/lib/router";
-import { AlertTriangle, Plus, Power, Puzzle, Settings, Trash } from "lucide-react";
-import { useOrganization } from "@/context/OrganizationContext";
-import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { pluginsApi } from "@/api/plugins";
-import { queryKeys } from "@/lib/queryKeys";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -27,9 +17,19 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/context/ToastContext";
-import { cn } from "@/lib/utils";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link, useLocation } from "@/lib/router";
 import { preserveSettingsOverlayState } from "@/lib/settings-overlay-state";
+import { cn } from "@/lib/utils";
+import type { PluginRecord } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Plus, Power, Puzzle, Settings, Trash } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 function firstNonEmptyLine(value: string | null | undefined): string | null {
   if (!value) return null;

@@ -1,6 +1,6 @@
-import type { FinanceByKind } from "@rudderhq/shared";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { financeEventKindDisplayName, formatCents } from "@/lib/utils";
+import type { FinanceByKind } from "@rudderhq/shared";
 
 interface FinanceKindCardProps {
   rows: FinanceByKind[];

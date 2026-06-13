@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
 import express from "express";
 import request from "supertest";
+import { describe, expect, it } from "vitest";
 import { privateHostnameGuard } from "../middleware/private-hostname-guard.js";
 
 function createApp(opts: { enabled: boolean; allowedHostnames?: string[]; bindHost?: string }) {

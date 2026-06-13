@@ -1,23 +1,3 @@
-import { useState, useEffect, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useNavigate } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
-import { useOrganization } from "../context/OrganizationContext";
-import { useSidebar } from "../context/SidebarContext";
-import { issuesApi } from "../api/issues";
-import { agentsApi } from "../api/agents";
-import { projectsApi } from "../api/projects";
-import { chatsApi } from "../api/chats";
-import { organizationsApi } from "../api/orgs";
-import { instanceSettingsApi } from "../api/instanceSettings";
-import { queryKeys } from "../lib/queryKeys";
-import { eventMatchesShortcutAction, isEditableShortcutTarget } from "../lib/keyboard-shortcuts";
-import {
-  getGlobalSearchScopeDefinition,
-  getPendingGlobalSearchScopeSuggestion,
-  shouldConfirmGlobalSearchScopeFromKey,
-  shouldConfirmGlobalSearchScopeFromValue,
-  type GlobalSearchScope,
-} from "../lib/global-search-scope";
 import {
   CommandDialog,
   CommandEmpty,
@@ -27,26 +7,45 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
+import { useNavigate } from "@/lib/router";
+import type { Agent, IssueSearchField, OrganizationWorkspaceFileEntry, Project } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
 import {
-  CircleDot,
   Bot,
-  Hexagon,
-  Target,
-  LayoutDashboard,
-  MessageSquare,
-  DollarSign,
-  History,
+  CircleDot,
   Clock3,
-  MessagesSquare,
-  X,
+  DollarSign,
   FileText,
   Folder,
+  Hexagon,
+  History,
+  LayoutDashboard,
+  MessageSquare,
+  MessagesSquare,
+  Target,
+  X,
 } from "lucide-react";
-import { Identity } from "./Identity";
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { agentsApi } from "../api/agents";
+import { chatsApi } from "../api/chats";
+import { instanceSettingsApi } from "../api/instanceSettings";
+import { issuesApi } from "../api/issues";
+import { organizationsApi } from "../api/orgs";
+import { projectsApi } from "../api/projects";
+import { useOrganization } from "../context/OrganizationContext";
+import { useSidebar } from "../context/SidebarContext";
+import {
+  getGlobalSearchScopeDefinition,
+  getPendingGlobalSearchScopeSuggestion,
+  shouldConfirmGlobalSearchScopeFromKey,
+  shouldConfirmGlobalSearchScopeFromValue,
+  type GlobalSearchScope,
+} from "../lib/global-search-scope";
+import { eventMatchesShortcutAction, isEditableShortcutTarget } from "../lib/keyboard-shortcuts";
+import { queryKeys } from "../lib/queryKeys";
+import { agentUrl, projectUrl } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
 import { ProjectIcon } from "./ProjectIdentity";
-import { agentUrl, projectUrl } from "../lib/utils";
-import type { Agent, IssueSearchField, OrganizationWorkspaceFileEntry, Project } from "@rudderhq/shared";
 
 const GLOBAL_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title", "description", "comment"];
 const LIBRARY_SEARCH_LIMIT = 20;

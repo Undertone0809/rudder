@@ -1,8 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { approvalRoutes } from "../routes/approvals.js";
 import { errorHandler } from "../middleware/index.js";
+import { approvalRoutes } from "../routes/approvals.js";
 
 const mockApprovalService = vi.hoisted(() => ({
   list: vi.fn(),

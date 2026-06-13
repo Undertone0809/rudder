@@ -1,7 +1,5 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Map, SlidersHorizontal } from "lucide-react";
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import {
   SettingsChoiceCard,
   SettingsDivider,
@@ -10,19 +8,21 @@ import {
   SettingsSection,
   SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
-import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import { Button } from "@/components/ui/button";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useDialog } from "../context/DialogContext";
-import { useI18n } from "../context/I18nContext";
-import { useTheme } from "../context/ThemeContext";
-import { useNavigate } from "@/lib/router";
-import { queryKeys } from "../lib/queryKeys";
-import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import {
   readDesktopShell,
   type DesktopUpdateChannel,
 } from "@/lib/desktop-shell";
+import { useNavigate } from "@/lib/router";
+import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Map, SlidersHorizontal } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
+import { useI18n } from "../context/I18nContext";
+import { useTheme } from "../context/ThemeContext";
+import { queryKeys } from "../lib/queryKeys";
 
 function ThemePreview({ mode }: { mode: "light" | "system" | "dark" }) {
   return (

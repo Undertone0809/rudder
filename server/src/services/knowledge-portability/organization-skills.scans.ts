@@ -1,4 +1,3 @@
-import path from "node:path";
 import type {
   OrganizationSkill,
   OrganizationSkillLocalScanConflict,
@@ -10,16 +9,16 @@ import type {
   OrganizationSkillProjectScanResult,
   OrganizationSkillProjectScanSkipped,
 } from "@rudderhq/shared";
+import path from "node:path";
 import type { projectService } from "../projects.js";
+import type { ImportedSkill, ProjectSkillScanTarget } from "./organization-skills.catalog.js";
 import {
   asString,
   normalizeSkillDirectory,
-  normalizeSkillSlug,
   normalizeSourceLocatorDirectory,
   resolveManagedSkillsRoot,
-  statPath,
+  statPath
 } from "./organization-skills.catalog.js";
-import type { ImportedSkill, ProjectSkillScanTarget } from "./organization-skills.catalog.js";
 import {
   discoverProjectWorkspaceSkillDirectories,
   readLocalSkillImportFromDirectory,

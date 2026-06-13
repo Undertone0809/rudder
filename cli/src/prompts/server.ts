@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
-import type { AuthConfig, ServerConfig } from "../config/schema.js";
 import { parseHostnameCsv } from "../config/hostnames.js";
+import type { AuthConfig, ServerConfig } from "../config/schema.js";
 
 export async function promptServer(opts?: {
   currentServer?: Partial<ServerConfig>;

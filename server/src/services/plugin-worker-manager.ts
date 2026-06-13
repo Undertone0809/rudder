@@ -18,36 +18,36 @@
  * @see PLUGIN_SPEC.md §13 — Host-Worker Protocol
  */
 
+import type {
+  HostToWorkerMethodName,
+  HostToWorkerMethods,
+  InitializeParams,
+  JsonRpcId,
+  JsonRpcNotification,
+  JsonRpcRequest,
+  JsonRpcResponse,
+  WorkerToHostMethodName,
+  WorkerToHostMethods,
+} from "@rudderhq/plugin-sdk";
+import {
+  createErrorResponse,
+  createRequest,
+  isJsonRpcNotification,
+  isJsonRpcRequest,
+  isJsonRpcResponse,
+  isJsonRpcSuccessResponse,
+  JSONRPC_ERROR_CODES,
+  JSONRPC_VERSION,
+  JsonRpcCallError,
+  JsonRpcParseError,
+  parseMessage,
+  PLUGIN_RPC_ERROR_CODES,
+  serializeMessage,
+} from "@rudderhq/plugin-sdk";
+import type { PaperclipPluginManifestV1 } from "@rudderhq/shared";
 import { fork, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
-import type { PaperclipPluginManifestV1 } from "@rudderhq/shared";
-import {
-  JSONRPC_VERSION,
-  JSONRPC_ERROR_CODES,
-  PLUGIN_RPC_ERROR_CODES,
-  createRequest,
-  createErrorResponse,
-  parseMessage,
-  serializeMessage,
-  isJsonRpcResponse,
-  isJsonRpcRequest,
-  isJsonRpcNotification,
-  isJsonRpcSuccessResponse,
-  JsonRpcParseError,
-  JsonRpcCallError,
-} from "@rudderhq/plugin-sdk";
-import type {
-  JsonRpcId,
-  JsonRpcResponse,
-  JsonRpcRequest,
-  JsonRpcNotification,
-  HostToWorkerMethodName,
-  HostToWorkerMethods,
-  WorkerToHostMethodName,
-  WorkerToHostMethods,
-  InitializeParams,
-} from "@rudderhq/plugin-sdk";
 import { logger } from "../middleware/logger.js";
 
 // ---------------------------------------------------------------------------

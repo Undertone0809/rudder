@@ -9,8 +9,8 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
 import { authUsers } from "./auth.js";
+import { organizations } from "./organizations.js";
 
 export const workspaceBackups = pgTable(
   "workspace_backups",

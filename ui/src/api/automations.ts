@@ -1,12 +1,11 @@
 import type {
-  ActivityEvent,
   Automation,
   AutomationDetail,
   AutomationListItem,
   AutomationRun,
   AutomationRunSummary,
   AutomationTrigger,
-  AutomationTriggerSecretMaterial,
+  AutomationTriggerSecretMaterial
 } from "@rudderhq/shared";
 import { activityApi } from "./activity";
 import { api } from "./client";

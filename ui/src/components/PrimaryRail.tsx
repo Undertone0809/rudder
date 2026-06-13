@@ -1,52 +1,52 @@
-import {
-  type CSSProperties,
-  useCallback,
-  useEffect,
-  useRef,
-} from "react";
-import { useQuery } from "@tanstack/react-query";
-import {
-  Bot,
-  MessageCirclePlus,
-  FolderKanban,
-  Inbox,
-  LibraryBig,
-  LayoutDashboard,
-  MessageSquare,
-  Network,
-  Plus,
-  Repeat,
-  Search,
-  Settings,
-  CircleCheckBig,
-  UsersRound,
-} from "lucide-react";
-import { NavLink, useLocation, useNavigate } from "@/lib/router";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { useDialog } from "@/context/DialogContext";
-import { useInboxBadge } from "@/hooks/useInboxBadge";
-import { useOrganization } from "@/context/OrganizationContext";
-import { readRememberedIssueNavigationPath } from "@/lib/issue-navigation";
-import { readDesktopShell } from "@/lib/desktop-shell";
 import { instanceSettingsApi } from "@/api/instanceSettings";
-import {
-  readDesktopNotificationPermission,
-  requestDesktopNotificationPermission,
-} from "@/lib/desktop-notification-permission";
-import { queryKeys } from "@/lib/queryKeys";
-import { requestMessengerUnreadScroll } from "@/lib/messenger-unread-scroll";
-import { OrganizationSwitcher } from "./OrganizationSwitcher";
-import { useI18n } from "@/context/I18nContext";
-import { toOrganizationRelativePath } from "@/lib/organization-routes";
-import { useSidebar } from "@/context/SidebarContext";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useDialog } from "@/context/DialogContext";
+import { useI18n } from "@/context/I18nContext";
+import { useOrganization } from "@/context/OrganizationContext";
+import { useSidebar } from "@/context/SidebarContext";
+import { useInboxBadge } from "@/hooks/useInboxBadge";
+import {
+  readDesktopNotificationPermission,
+  requestDesktopNotificationPermission,
+} from "@/lib/desktop-notification-permission";
+import { readDesktopShell } from "@/lib/desktop-shell";
+import { readRememberedIssueNavigationPath } from "@/lib/issue-navigation";
+import { requestMessengerUnreadScroll } from "@/lib/messenger-unread-scroll";
+import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { queryKeys } from "@/lib/queryKeys";
+import { NavLink, useLocation, useNavigate } from "@/lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
+import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Bot,
+  CircleCheckBig,
+  FolderKanban,
+  Inbox,
+  LayoutDashboard,
+  LibraryBig,
+  MessageCirclePlus,
+  MessageSquare,
+  Network,
+  Plus,
+  Repeat,
+  Search,
+  Settings,
+  UsersRound,
+} from "lucide-react";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
+import { OrganizationSwitcher } from "./OrganizationSwitcher";
 
 const DEFAULT_NOTIFICATION_SETTINGS = {
   desktopInboxNotifications: true,

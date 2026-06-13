@@ -2,8 +2,8 @@ import type { Db } from "@rudderhq/db";
 import { operatorProfiles } from "@rudderhq/db";
 import {
   keyboardShortcutSettingsSchema,
-  type KeyboardShortcutSettings,
   operatorProfileSettingsSchema,
+  type KeyboardShortcutSettings,
   type OperatorProfileSettings,
   type PatchKeyboardShortcutSettings,
   type PatchOperatorProfileSettings,

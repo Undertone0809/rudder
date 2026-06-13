@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { testEnvironment } from "@rudderhq/agent-runtime-claude-local/server";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { testEnvironment } from "@rudderhq/agent-runtime-claude-local/server";
+import { afterEach, describe, expect, it } from "vitest";
 
 const ORIGINAL_ANTHROPIC = process.env.ANTHROPIC_API_KEY;
 

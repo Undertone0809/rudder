@@ -11,11 +11,11 @@
  *
  * Processes each subdirectory that contains a COMPANY.md file.
  */
+import type { CompanyPortabilityManifest } from "@rudderhq/shared";
 import * as fs from "fs";
 import * as path from "path";
-import { renderOrgChartPng, type OrgNode, type OrgChartOverlay } from "../server/src/routes/org-chart-svg.js";
+import { renderOrgChartPng, type OrgChartOverlay, type OrgNode } from "../server/src/routes/org-chart-svg.js";
 import { generateReadme } from "../server/src/services/company-export-readme.js";
-import type { CompanyPortabilityManifest } from "@rudderhq/shared";
 
 // ── YAML frontmatter parser (minimal, no deps) ──────────────────
 

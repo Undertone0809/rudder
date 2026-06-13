@@ -1,9 +1,9 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
-import { translateMessage } from "./I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { libraryCopy } from "@/lib/library-copy";
+import { describe, expect, it } from "vitest";
+import { translateMessage } from "./I18nContext";
 
 describe("translateMessage", () => {
   it("returns localized copy for zh-CN", () => {

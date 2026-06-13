@@ -1,18 +1,18 @@
-import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import {
   calendarEventListQuerySchema,
   createCalendarEventSchema,
   createCalendarSourceSchema,
   googleCalendarSyncSchema,
-  updateGoogleCalendarOAuthConfigSchema,
   updateCalendarEventSchema,
   updateCalendarSourceSchema,
+  updateGoogleCalendarOAuthConfigSchema,
 } from "@rudderhq/shared";
+import { Router, type Request } from "express";
 import { validate } from "../middleware/validate.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
-import { calendarService, type CalendarEventFilters } from "../services/calendar.js";
 import { logActivity } from "../services/activity-log.js";
+import { calendarService, type CalendarEventFilters } from "../services/calendar.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 function csv(value: string | undefined) {
   return value

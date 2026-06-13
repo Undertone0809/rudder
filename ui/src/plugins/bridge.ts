@@ -25,16 +25,16 @@
  * @see PLUGIN_SPEC.md §19.7 — Error Propagation Through The Bridge
  */
 
-import { createContext, useCallback, useContext, useRef, useState, useEffect } from "react";
+import { ApiError } from "@/api/client";
+import { pluginsApi } from "@/api/plugins";
+import { useToast, type ToastInput } from "@/context/ToastContext";
 import type {
   PluginBridgeErrorCode,
   PluginLauncherBounds,
   PluginLauncherRenderContextSnapshot,
   PluginLauncherRenderEnvironment,
 } from "@rudderhq/shared";
-import { pluginsApi } from "@/api/plugins";
-import { ApiError } from "@/api/client";
-import { useToast, type ToastInput } from "@/context/ToastContext";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Bridge error type (mirrors the SDK's PluginBridgeError)

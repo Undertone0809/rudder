@@ -1,7 +1,7 @@
-import { pgTable, uuid, text, integer, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
+import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { documents } from "./documents.js";
+import { organizations } from "./organizations.js";
 
 export const documentRevisions = pgTable(
   "document_revisions",

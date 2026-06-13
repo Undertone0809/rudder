@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { Agent, Project } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import {
   buildPortableAgentSlugMap,
   buildPortableProjectSlugMap,

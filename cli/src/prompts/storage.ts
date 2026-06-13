@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
-import type { StorageConfig } from "../config/schema.js";
 import { resolveDefaultStorageDir, resolveRudderInstanceId } from "../config/home.js";
+import type { StorageConfig } from "../config/schema.js";
 
 function defaultStorageBaseDir(): string {
   return resolveDefaultStorageDir(resolveRudderInstanceId());

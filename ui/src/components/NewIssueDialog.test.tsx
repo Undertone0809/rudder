@@ -1,9 +1,9 @@
 // @vitest-environment node
 
-import { renderToStaticMarkup } from "react-dom/server";
-import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NewIssueDefaults } from "@/context/DialogContext";
+import type { ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NewIssueDialog } from "./NewIssueDialog";
 
 let capturedMentions: Array<Record<string, unknown>> = [];

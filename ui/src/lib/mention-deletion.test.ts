@@ -1,14 +1,14 @@
-import { describe, expect, it } from "vitest";
 import { $createLinkNode, LinkNode } from "@lexical/link";
 import { buildAgentMentionHref } from "@rudderhq/shared";
 import {
-  createEditor,
   $createParagraphNode,
   $createTextNode,
   $getRoot,
   $getSelection,
   $isRangeSelection,
+  createEditor,
 } from "lexical";
+import { describe, expect, it } from "vitest";
 import { deleteSelectedMentionChip } from "./mention-deletion";
 import { $createMentionTokenNode, MentionTokenNode } from "./mention-token-node";
 import { $createSkillTokenNode, SkillTokenNode } from "./skill-token-node";

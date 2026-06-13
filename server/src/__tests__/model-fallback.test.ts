@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
 import type {
   AgentRuntimeExecutionContext,
   AgentRuntimeExecutionResult,
   ServerAgentRuntimeModule,
 } from "@rudderhq/agent-runtime-utils";
+import { describe, expect, it, vi } from "vitest";
 import { executeAdapterWithModelFallbacks } from "../services/runtime-kernel/model-fallback.js";
 
 function result(

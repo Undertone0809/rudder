@@ -3,9 +3,9 @@ import { performance } from "node:perf_hooks";
 import { eq, sql } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   agents,
+  applyPendingMigrations,
   approvalComments,
   approvals,
-  applyPendingMigrations,
   chatConversationUserStates,
   chatConversations,
   chatMessages,
@@ -21,10 +21,10 @@ import {
   messengerThreadUserStates,
   organizations,
 } from "../../packages/db/src/index.js";
-import { sidebarBadgeService } from "../../server/src/services/sidebar-badges.js";
-import { messengerService } from "../../server/src/services/messenger.js";
-import { costService } from "../../server/src/services/costs.js";
 import { visibleIncomingMessageSql } from "../../server/src/services/chats.helpers.js";
+import { costService } from "../../server/src/services/costs.js";
+import { messengerService } from "../../server/src/services/messenger.js";
+import { sidebarBadgeService } from "../../server/src/services/sidebar-badges.js";
 
 type ScaleName = "smoke" | "medium" | "cost-heavy";
 

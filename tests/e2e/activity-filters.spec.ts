@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 
 test.describe("Organization activity filters", () => {
   test("filters the activity feed by agent and user", async ({ page }) => {

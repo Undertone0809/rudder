@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { printCursorStreamEvent } from "@rudderhq/agent-runtime-cursor-local/cli";
 import { isCursorUnknownSessionError, parseCursorJsonl } from "@rudderhq/agent-runtime-cursor-local/server";
 import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
-import { printCursorStreamEvent } from "@rudderhq/agent-runtime-cursor-local/cli";
+import { describe, expect, it, vi } from "vitest";
 
 describe("cursor parser", () => {
   it("extracts session, summary, usage, cost, and terminal error message", () => {

@@ -1,14 +1,14 @@
-import { and, eq, sql } from "drizzle-orm";
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
-  automations,
   automationRuns,
+  automations,
   chatContextLinks,
   chatConversations,
   chatMessages,
   issues,
 } from "@rudderhq/db";
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import { and, eq, sql } from "drizzle-orm";
 import { CHAT_TRANSCRIPT_KEY } from "./chats.helpers.js";
 
 function automationRunOutputBody(input: {

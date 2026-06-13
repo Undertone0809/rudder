@@ -1,14 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { Separator } from "@/components/ui/separator";
 import { Link } from "@/lib/router";
 import { AGENT_ROLE_LABELS, type Agent, type AgentRuntimeState } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
 import { agentsApi } from "../api/agents";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";
-import { StatusBadge } from "./StatusBadge";
-import { Identity } from "./Identity";
+import { agentUrl, formatDate } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
-import { formatDate, agentUrl } from "../lib/utils";
-import { Separator } from "@/components/ui/separator";
+import { StatusBadge } from "./StatusBadge";
 
 interface AgentPropertiesProps {
   agent: Agent;

@@ -1,11 +1,11 @@
 import { z } from "zod";
 import {
-  ISSUE_PRIORITIES,
   AUTOMATION_CATCH_UP_POLICIES,
   AUTOMATION_CONCURRENCY_POLICIES,
   AUTOMATION_OUTPUT_MODES,
   AUTOMATION_STATUSES,
   AUTOMATION_TRIGGER_SIGNING_MODES,
+  ISSUE_PRIORITIES,
 } from "../constants.js";
 
 const automationTextFieldSchema = z.string().optional().nullable();

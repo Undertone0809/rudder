@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { assets } from "@rudderhq/db";
+import { eq } from "drizzle-orm";
 
 export function assetService(db: Db) {
   return {

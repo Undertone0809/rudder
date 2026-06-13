@@ -1,8 +1,8 @@
 import type { IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
 import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
-import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings, IssueRunWorkspaceSettings, RunWorkspace } from "./workspace-runtime.js";
 import type { IssueWorkProduct } from "./work-product.js";
+import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings, IssueRunWorkspaceSettings, RunWorkspace } from "./workspace-runtime.js";
 
 export interface IssueAncestorProject {
   id: string;

@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { ThemeProvider } from "@/context/ThemeContext";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,6 @@ import {
   MessengerIssuesView,
   MessengerSystemView,
 } from "./Messenger";
-import { ThemeProvider } from "@/context/ThemeContext";
 
 const invalidateQueries = vi.fn();
 const mutate = vi.fn();

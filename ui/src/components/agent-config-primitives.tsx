@@ -1,13 +1,13 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import {
   Tooltip,
-  TooltipTrigger,
   TooltipContent,
+  TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import { HelpCircle, ChevronDown, ChevronRight } from "lucide-react";
-import { cn } from "../lib/utils";
 import { AGENT_ROLE_LABELS } from "@rudderhq/shared";
+import { ChevronDown, ChevronRight, HelpCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { cn } from "../lib/utils";
 
 /* ---- Help text for (?) tooltips ---- */
 export const help: Record<string, string> = {

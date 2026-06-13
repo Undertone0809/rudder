@@ -1,14 +1,7 @@
-import { Link, useLocation, useNavigate } from "@/lib/router";
-import { CircleHelp, Menu, PanelLeftOpen, Plus, Search } from "lucide-react";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useSidebar } from "../context/SidebarContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "@/context/DialogContext";
-import { useQuery } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { issuesApi } from "@/api/issues";
+import { projectsApi } from "@/api/projects";
+import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
+import { StatusIcon } from "@/components/StatusIcon";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -17,18 +10,25 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { cn } from "@/lib/utils";
-import { PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
-import { PluginLauncherOutlet, usePluginLaunchers } from "@/plugins/launchers";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useDialog } from "@/context/DialogContext";
 import { useI18n } from "@/context/I18nContext";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
-import { issuesApi } from "@/api/issues";
-import { projectsApi } from "@/api/projects";
 import { queryKeys } from "@/lib/queryKeys";
-import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
-import { StatusIcon } from "@/components/StatusIcon";
+import { Link, useLocation, useNavigate } from "@/lib/router";
+import { cn } from "@/lib/utils";
+import { PluginLauncherOutlet, usePluginLaunchers } from "@/plugins/launchers";
+import { PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import type { Issue, IssueSearchField } from "@rudderhq/shared";
+import { useQuery } from "@tanstack/react-query";
+import { CircleHelp, Menu, PanelLeftOpen, Plus, Search } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useSidebar } from "../context/SidebarContext";
 
 type GlobalToolbarContext = { orgId: string | null; orgPrefix: string | null };
 

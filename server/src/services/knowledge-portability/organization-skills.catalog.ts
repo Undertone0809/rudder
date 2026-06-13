@@ -1,41 +1,19 @@
-import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { and, asc, eq } from "drizzle-orm";
-import type { Db } from "@rudderhq/db";
-import { agents as agentRows, organizationSkills } from "@rudderhq/db";
-import { readRudderSkillSyncPreference, writeRudderSkillSyncPreference } from "@rudderhq/agent-runtime-utils/server-utils";
-import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
-import { readSkillMetadataFromPath } from "@rudderhq/agent-runtime-utils/server-utils";
+import { readRudderSkillSyncPreference, readSkillMetadataFromPath } from "@rudderhq/agent-runtime-utils/server-utils";
+import { organizationSkills } from "@rudderhq/db";
 import type {
   AgentSkillEntry,
-  AgentSkillSnapshot,
   AgentSkillSourceClass,
   AgentSkillState,
   AgentSkillSyncMode,
   OrganizationSkill,
-  OrganizationSkillCreateRequest,
   OrganizationSkillCompatibility,
-  OrganizationSkillDetail,
-  OrganizationSkillFileDetail,
+  OrganizationSkillCreateRequest,
   OrganizationSkillFileInventoryEntry,
-  OrganizationSkillImportResult,
   OrganizationSkillListItem,
-  OrganizationSkillLocalScanConflict,
-  OrganizationSkillLocalScanRequest,
-  OrganizationSkillLocalScanResult,
-  OrganizationSkillLocalScanSkipped,
-  OrganizationSkillProjectScanConflict,
-  OrganizationSkillProjectScanRequest,
-  OrganizationSkillProjectScanResult,
-  OrganizationSkillProjectScanSkipped,
   OrganizationSkillSourceBadge,
   OrganizationSkillSourceType,
   OrganizationSkillTrustLevel,
-  OrganizationSkillUpdateStatus,
-  OrganizationSkillUsageAgent,
+  OrganizationSkillUsageAgent
 } from "@rudderhq/shared";
 import {
   RUDDER_BUNDLED_SKILL_SLUGS,
@@ -45,15 +23,15 @@ import {
   resolveOrganizationSkillReference,
   toBundledRudderSkillKey,
 } from "@rudderhq/shared";
+import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { unprocessable } from "../../errors.js";
 import {
-  resolveAgentSkillsDir,
   resolveOrganizationSkillsDir,
-  resolveOrganizationWorkspaceRoot,
+  resolveOrganizationWorkspaceRoot
 } from "../../home-paths.js";
-import { conflict, notFound, unprocessable } from "../../errors.js";
-import { agentEnabledSkillsService } from "../agent-enabled-skills.js";
-import { agentService } from "../agents.js";
-import { projectService } from "../projects.js";
 
 export type OrganizationSkillRow = typeof organizationSkills.$inferSelect;
 

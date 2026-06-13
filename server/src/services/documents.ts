@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { documentRevisions, documents, issueDocuments, issues } from "@rudderhq/db";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { conflict } from "../errors.js";
 
 function mapLibraryDocumentRow(

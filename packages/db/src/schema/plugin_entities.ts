@@ -1,14 +1,14 @@
+import type { PluginStateScopeKind } from "@rudderhq/shared";
 import {
+  index,
+  jsonb,
   pgTable,
-  uuid,
   text,
   timestamp,
-  jsonb,
-  index,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { plugins } from "./plugins.js";
-import type { PluginStateScopeKind } from "@rudderhq/shared";
 
 /**
  * `plugin_entities` table — persistent high-level mapping between Rudder

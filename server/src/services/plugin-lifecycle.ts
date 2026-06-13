@@ -35,18 +35,17 @@
  * @see PLUGIN_SPEC.md §12 — Process Model
  * @see PLUGIN_SPEC.md §12.5 — Graceful Shutdown Policy
  */
-import { EventEmitter } from "node:events";
 import type { Db } from "@rudderhq/db";
 import type {
-  PluginStatus,
   PluginRecord,
-  PaperclipPluginManifestV1,
+  PluginStatus
 } from "@rudderhq/shared";
-import { pluginRegistryService } from "./plugin-registry.js";
-import { pluginLoader, type PluginLoader } from "./plugin-loader.js";
-import type { PluginWorkerManager, WorkerStartOptions } from "./plugin-worker-manager.js";
+import { EventEmitter } from "node:events";
 import { badRequest, notFound } from "../errors.js";
 import { logger } from "../middleware/logger.js";
+import { pluginLoader, type PluginLoader } from "./plugin-loader.js";
+import { pluginRegistryService } from "./plugin-registry.js";
+import type { PluginWorkerManager, WorkerStartOptions } from "./plugin-worker-manager.js";
 
 // ---------------------------------------------------------------------------
 // Lifecycle state machine

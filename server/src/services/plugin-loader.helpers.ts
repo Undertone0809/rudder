@@ -24,30 +24,25 @@
  * @see PLUGIN_SPEC.md §10 — Package Contract
  * @see PLUGIN_SPEC.md §12 — Process Model
  */
-import { existsSync } from "node:fs";
-import { readdir, readFile, rm, stat } from "node:fs/promises";
-import { execFile } from "node:child_process";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import type { Db } from "@rudderhq/db";
 import type {
   PaperclipPluginManifestV1,
   PluginLauncherDeclaration,
   PluginRecord,
   PluginUiSlotDeclaration,
 } from "@rudderhq/shared";
-import { logger } from "../middleware/logger.js";
-import { pluginManifestValidator } from "./plugin-manifest-validator.js";
-import { pluginCapabilityValidator } from "./plugin-capability-validator.js";
-import { pluginRegistryService } from "./plugin-registry.js";
-import type { PluginWorkerManager, WorkerStartOptions, WorkerToHostHandlers } from "./plugin-worker-manager.js";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { PluginEventBus } from "./plugin-event-bus.js";
 import type { PluginJobScheduler } from "./plugin-job-scheduler.js";
 import type { PluginJobStore } from "./plugin-job-store.js";
-import type { PluginToolDispatcher } from "./plugin-tool-dispatcher.js";
 import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
+import type { PluginToolDispatcher } from "./plugin-tool-dispatcher.js";
+import type { PluginWorkerManager, WorkerToHostHandlers } from "./plugin-worker-manager.js";
 
 export const execFileAsync = promisify(execFile);
 export const __dirname = path.dirname(fileURLToPath(import.meta.url));

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { MentionOption } from "@/components/MarkdownEditor";
+import { describe, expect, it } from "vitest";
 import { buildMarkdownMentionOptions } from "./markdown-mention-options";
 
 describe("buildMarkdownMentionOptions", () => {

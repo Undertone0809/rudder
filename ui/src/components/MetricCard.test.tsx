@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
+import { Bot } from "lucide-react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Bot } from "lucide-react";
 import { afterEach, describe, expect, it } from "vitest";
 import { MetricCard } from "./MetricCard";
 

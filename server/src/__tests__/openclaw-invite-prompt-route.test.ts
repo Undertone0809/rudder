@@ -1,8 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { accessRoutes } from "../routes/access.js";
 import { errorHandler } from "../middleware/index.js";
+import { accessRoutes } from "../routes/access.js";
 
 const mockAccessService = vi.hoisted(() => ({
   hasPermission: vi.fn(),

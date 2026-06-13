@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   Agent,
   AgentDetail,
@@ -7,12 +6,13 @@ import type {
   Project,
 } from "@rudderhq/shared";
 import { FileText } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
-import { formatPriorityLabel } from "../lib/priorities";
 import type { ParsedMentionChip } from "../lib/mention-chips";
+import { formatPriorityLabel } from "../lib/priorities";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentAvatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";

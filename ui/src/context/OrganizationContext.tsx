@@ -1,3 +1,5 @@
+import type { Organization } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createContext,
   useCallback,
@@ -7,12 +9,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Organization } from "@rudderhq/shared";
-import { organizationsApi } from "../api/orgs";
 import { ApiError } from "../api/client";
-import { queryKeys } from "../lib/queryKeys";
+import { organizationsApi } from "../api/orgs";
 import type { OrganizationSelectionSource } from "../lib/organization-selection";
+import { queryKeys } from "../lib/queryKeys";
 type OrganizationSelectionOptions = { source?: OrganizationSelectionSource };
 
 interface OrganizationContextValue {

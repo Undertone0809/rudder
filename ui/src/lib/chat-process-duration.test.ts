@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "@/agent-runtimes";
+import type { ChatMessage } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import {
   formatChatProcessDuration,
   resolvePersistedChatProcessEndedAt,

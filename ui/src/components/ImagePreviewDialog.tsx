@@ -1,19 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
-import { Copy, Download, Folder, X } from "lucide-react";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/context/ToastContext";
-import {
-  getContainedImagePreviewSize,
-  getImagePreviewViewportBounds,
-  isValidImageNaturalSize,
-  type ImageNaturalSize,
-} from "@/lib/image-preview";
 import {
   canShowImageInFolder,
   copyImage,
   downloadImage,
   showImageInFolder,
 } from "@/lib/image-actions";
+import {
+  getContainedImagePreviewSize,
+  getImagePreviewViewportBounds,
+  isValidImageNaturalSize,
+  type ImageNaturalSize,
+} from "@/lib/image-preview";
+import { Copy, Download, Folder, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 export interface ImagePreviewState {
   alt: string;

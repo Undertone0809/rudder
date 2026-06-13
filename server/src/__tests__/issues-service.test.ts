@@ -1,16 +1,8 @@
-import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agents,
-  assets,
   applyPendingMigrations,
-  organizations,
+  assets,
   createDb,
   ensurePostgresDatabase,
   executionWorkspaces,
@@ -21,10 +13,18 @@ import {
   issues,
   labels,
   organizationMemberships,
+  organizations,
   projects,
   projectWorkspaces,
 } from "@rudderhq/db";
 import { buildAgentMentionHref, deriveOrganizationUrlKey } from "@rudderhq/shared";
+import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { issueService } from "../services/issues.ts";
 
 type EmbeddedPostgresInstance = {

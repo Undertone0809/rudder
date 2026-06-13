@@ -1,118 +1,5 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
-import { createPortal } from "react-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowUp,
-  Boxes,
-  Bot,
-  CheckCircle2,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Folder,
-  ListChecks,
-  Loader2,
-  Paperclip,
-  Pencil,
-  Plus,
-  RotateCcw,
-  Settings2,
-  Square,
-  Sparkles,
-  X,
-} from "lucide-react";
-import {
-  type Agent,
-  type Approval,
-  chatAskUserRequestFromStructuredPayload,
-  type ChatAskUserQuestion,
-  type ChatAskUserRequest,
-  type ChatConversation,
-  type ChatMessage,
-  type ChatOperationProposalDecisionAction,
-  type ChatOperationProposalDecisionStatus,
-  type ChatPrimaryIssueSummary,
-  type Issue,
-  formatMessengerPreview,
-  type MessengerThreadSummary,
-  type Project,
-} from "@rudderhq/shared";
-import type { TranscriptEntry } from "@/agent-runtimes";
-import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
-import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
-import { TextDots } from "@/components/TextDots";
-import { formatPriorityLabel } from "@/lib/priorities";
 import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
-import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
-import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
-import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker";
-import { HoverTimestampLabel } from "@/components/HoverTimestamp";
-import { StatusBadge } from "@/components/StatusBadge";
-import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useOrganization } from "@/context/OrganizationContext";
-import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { useSidebar } from "@/context/SidebarContext";
 import { useToast } from "@/context/ToastContext";
-import { useChatGenerations, type ChatStreamDraft, type ChatStreamDraftState } from "@/context/ChatGenerationContext";
-import { agentsApi } from "@/api/agents";
-import { approvalsApi } from "@/api/approvals";
-import { ApiError } from "@/api/client";
-import { chatsApi } from "@/api/chats";
-import { instanceSettingsApi } from "@/api/instanceSettings";
-import { issuesApi } from "@/api/issues";
-import { projectsApi } from "@/api/projects";
-import { organizationSkillsApi } from "@/api/organizationSkills";
-import { prefetchChatConversation } from "@/lib/chat-prefetch";
-import { readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
-import {
-  readChatPendingAttachmentsForScope,
-  resolveChatPendingAttachmentScopeKey,
-  updateChatPendingAttachmentsForScope,
-} from "@/lib/chat-pending-attachments";
-import {
-  NO_CHAT_AGENT_ID,
-  isSelectableChatAgentId,
-  rememberChatAgentId,
-  resolveDefaultChatAgentId,
-  selectableChatAgents,
-} from "@/lib/chat-agent-selection";
-import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
-import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
-import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title";
-import { formatChatAgentLabel } from "@/lib/agent-labels";
-import { rememberMessengerPath } from "@/lib/messenger-memory";
-import { projectColorCssVars } from "@/lib/project-colors";
-import { queryKeys } from "@/lib/queryKeys";
-import {
-  formatChatProcessDuration,
-  lastTranscriptAtMs,
-  resolvePersistedChatProcessEndedAt,
-  resolvePersistedChatProcessStartedAt,
-} from "@/lib/chat-process-duration";
-import {
-  readChatScopedFlag,
-  readChatScopedState,
-  shouldShowMessageDuringActiveStream,
-} from "@/lib/chat-stream-state";
-import { toOrganizationRelativePath } from "@/lib/organization-routes";
-import {
-  appendSkillReferencesToDraft,
-} from "@/lib/organization-skill-picker";
-import { formatAssigneeUserLabel } from "@/lib/assignees";
-import { readDesktopShell } from "@/lib/desktop-shell";
 import {
   canShowImageInFolder,
   copyImage as copyImageAction,
@@ -120,10 +7,18 @@ import {
   showImageInFolder as showImageInFolderAction,
 } from "@/lib/image-actions";
 import { resolveLocalFileTarget } from "@/lib/local-file-targets";
-import { cn, relativeTime } from "@/lib/utils";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { useI18n } from "@/context/I18nContext";
-import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick } from "./Chat.parts";
+import {
+  type ChatMessage
+} from "@rudderhq/shared";
+import {
+  Copy,
+  Folder,
+  Paperclip,
+  X
+} from "lucide-react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { createPortal } from "react-dom";
+import { AttachmentPreviewState, ChatImageContextMenuPosition, attachmentDisplayName, clampChatImageContextMenuPosition } from "./Chat.parts";
 
 export function ChatImageAttachmentTile({
   src,

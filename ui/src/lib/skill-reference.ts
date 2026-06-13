@@ -1,5 +1,5 @@
-import type { CSSProperties } from "react";
 import { Boxes } from "lucide-react";
+import type { CSSProperties } from "react";
 import { buildLucideIconMask } from "./mention-chips";
 
 export interface ParsedSkillReference {

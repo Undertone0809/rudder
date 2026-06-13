@@ -1,10 +1,10 @@
-import { Router } from "express";
 import type { Db } from "@rudderhq/db";
-import { and, eq, sql } from "drizzle-orm";
 import { joinRequests } from "@rudderhq/db";
-import { sidebarBadgeService } from "../services/sidebar-badges.js";
+import { and, eq, sql } from "drizzle-orm";
+import { Router } from "express";
 import { accessService } from "../services/access.js";
 import { dashboardService } from "../services/dashboard.js";
+import { sidebarBadgeService } from "../services/sidebar-badges.js";
 import { assertCompanyAccess } from "./authz.js";
 
 export function sidebarBadgeRoutes(db: Db) {

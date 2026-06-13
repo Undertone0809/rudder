@@ -1,11 +1,11 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
-  organizationMemberships,
   instanceUserRoles,
+  organizationMemberships,
   principalPermissionGrants,
 } from "@rudderhq/db";
 import type { PermissionKey, PrincipalType } from "@rudderhq/shared";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 type MembershipRow = typeof organizationMemberships.$inferSelect;
 type GrantInput = {

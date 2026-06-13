@@ -1,13 +1,4 @@
 import {
-  $createParagraphNode,
-  $isElementNode,
-  type EditorConfig,
-  type LexicalNode,
-  type NodeKey,
-  type SerializedTextNode,
-  TextNode,
-} from "lexical";
-import {
   addExportVisitor$,
   addImportVisitor$,
   addLexicalNode$,
@@ -15,6 +6,15 @@ import {
   type LexicalVisitor,
   type MdastImportVisitor,
 } from "@mdxeditor/editor";
+import {
+  $createParagraphNode,
+  $isElementNode,
+  TextNode,
+  type EditorConfig,
+  type LexicalNode,
+  type NodeKey,
+  type SerializedTextNode,
+} from "lexical";
 import { applySkillTokenDecoration, parseSkillReference } from "./skill-reference";
 
 export interface SerializedSkillTokenNode extends SerializedTextNode {

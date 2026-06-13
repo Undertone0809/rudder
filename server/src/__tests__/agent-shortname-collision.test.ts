@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { AGENT_NAME_POOL, pickUniqueAgentName } from "../services/agent-name-pool.ts";
 import {
   createDefaultAgentAvatarIcon,
   deduplicateAgentName,
   hasAgentShortnameCollision,
   normalizeCreatedAgentAvatarIcon,
 } from "../services/agents.ts";
-import { AGENT_NAME_POOL, pickUniqueAgentName } from "../services/agent-name-pool.ts";
 
 describe("hasAgentShortnameCollision", () => {
   it("detects collisions by normalized shortname", () => {

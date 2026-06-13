@@ -1,15 +1,11 @@
-import { useState, type ComponentType } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@/lib/router";
-import { useDialog } from "../context/DialogContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { agentsApi } from "../api/agents";
-import { queryKeys } from "../lib/queryKeys";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { useNavigate } from "@/lib/router";
+import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Bot,
@@ -19,7 +15,11 @@ import {
   Sparkles,
   Terminal,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useState, type ComponentType } from "react";
+import { agentsApi } from "../api/agents";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { queryKeys } from "../lib/queryKeys";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 
 type AdvancedAdapterType =

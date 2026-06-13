@@ -1,13 +1,13 @@
-import { index, pgTable, text, timestamp, uuid, boolean } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
-import { calendarSources } from "./calendar_sources.js";
-import { agents } from "./agents.js";
-import { issues } from "./issues.js";
-import { projects } from "./projects.js";
-import { goals } from "./goals.js";
-import { approvals } from "./approvals.js";
-import { heartbeatRuns } from "./heartbeat_runs.js";
+import { boolean, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { activityLog } from "./activity_log.js";
+import { agents } from "./agents.js";
+import { approvals } from "./approvals.js";
+import { calendarSources } from "./calendar_sources.js";
+import { goals } from "./goals.js";
+import { heartbeatRuns } from "./heartbeat_runs.js";
+import { issues } from "./issues.js";
+import { organizations } from "./organizations.js";
+import { projects } from "./projects.js";
 
 export const calendarEvents = pgTable(
   "calendar_events",

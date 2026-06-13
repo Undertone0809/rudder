@@ -1,9 +1,87 @@
-import { useEffect, useMemo, useState } from "react";
+import { ChartCard, IssueStatusChart, PriorityChart } from "@/components/ActivityCharts";
+import { ActivityRow } from "@/components/ActivityRow";
+import { PauseResumeButton, RunButton } from "@/components/AgentActionButtons";
+import { AgentIdentity } from "@/components/AgentAvatar";
+import { AgentIcon, AgentIconPicker } from "@/components/AgentIconPicker";
+import { AgentProperties } from "@/components/AgentProperties";
+import { ApprovalCard } from "@/components/ApprovalCard";
+import { ApprovalPayloadRenderer } from "@/components/ApprovalPayload";
+import { AgentMenuLabel, AssigneeLabel, AssigneeSelfActionLabel } from "@/components/AssigneeLabel";
+import { BudgetIncidentCard } from "@/components/BudgetIncidentCard";
+import { BudgetPolicyCard } from "@/components/BudgetPolicyCard";
+import { CopyText } from "@/components/CopyText";
+import { DashboardDateRangeControl, type DashboardDatePreset } from "@/components/DashboardDateRangeControl";
+import { EmptyState } from "@/components/EmptyState";
+import { EntityRow } from "@/components/EntityRow";
+import { FilterBar, type FilterValue } from "@/components/FilterBar";
+import { FinanceKindCard } from "@/components/FinanceKindCard";
+import { FinanceTimelineCard } from "@/components/FinanceTimelineCard";
+import { GoalProperties } from "@/components/GoalProperties";
+import { GoalTree } from "@/components/GoalTree";
+import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
+import { HoverTimestampLabel } from "@/components/HoverTimestamp";
+import { Identity } from "@/components/Identity";
+import { InlineEditor } from "@/components/InlineEditor";
+import { InlineEntitySelector } from "@/components/InlineEntitySelector";
+import { IssueLabelChip } from "@/components/IssueLabelChip";
+import { IssueRow } from "@/components/IssueRow";
+import { JsonSchemaForm, type JsonSchemaNode } from "@/components/JsonSchemaForm";
+import { MarkdownBody } from "@/components/MarkdownBody";
+import { MetricCard } from "@/components/MetricCard";
+import { PackageFileTree, type FileTreeNode } from "@/components/PackageFileTree";
+import { PageSkeleton } from "@/components/PageSkeleton";
+import { PageTabBar } from "@/components/PageTabBar";
+import { PriorityIcon } from "@/components/PriorityIcon";
+import { ProjectProperties } from "@/components/ProjectProperties";
+import { QuotaBar } from "@/components/QuotaBar";
+import { ReportsToPicker } from "@/components/ReportsToPicker";
+import { ResourceLocatorField } from "@/components/ResourceLocatorField";
+import { RudderLogo } from "@/components/RudderLogo";
+import { ScheduleEditor } from "@/components/ScheduleEditor";
+import { SidebarNavItem } from "@/components/SidebarNavItem";
+import { SidebarSection } from "@/components/SidebarSection";
+import { SidebarSectionActionButton, SidebarSectionHeader } from "@/components/SidebarSectionHeader";
+import { SkillReferenceToken } from "@/components/SkillReferenceToken";
+import { StatusBadge } from "@/components/StatusBadge";
+import { StatusIcon } from "@/components/StatusIcon";
+import { TextDots } from "@/components/TextDots";
+import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
+import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
+import { runTranscriptFixtureEntries } from "@/fixtures/runTranscriptFixtures";
+import { cn } from "@/lib/utils";
+import type {
+  ActivityEvent,
+  Agent,
+  AgentRole,
+  Approval,
+  BudgetIncident,
+  BudgetPolicySummary,
+  ChatAskUserRequest,
+  ChatConversation,
+  ChatMessage,
+  FinanceByKind,
+  FinanceEvent,
+  Goal,
+  Issue,
+  Project,
+} from "@rudderhq/shared";
+import type { LucideIcon } from "lucide-react";
 import {
   Bot,
   Boxes,
-  ChevronDown,
   CheckCircle2,
+  ChevronDown,
   Component,
   DollarSign,
   FileText,
@@ -23,91 +101,12 @@ import {
   Square,
   Workflow,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import type {
-  ActivityEvent,
-  Agent,
-  AgentRole,
-  Approval,
-  BudgetIncident,
-  BudgetPolicySummary,
-  ChatAskUserRequest,
-  ChatConversation,
-  ChatMessage,
-  FinanceByKind,
-  FinanceEvent,
-  Goal,
-  Issue,
-  Project,
-} from "@rudderhq/shared";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount } from "@/components/ui/avatar";
-import { StatusBadge } from "@/components/StatusBadge";
-import { StatusIcon } from "@/components/StatusIcon";
-import { PriorityIcon } from "@/components/PriorityIcon";
-import { EntityRow } from "@/components/EntityRow";
-import { EmptyState } from "@/components/EmptyState";
-import { MetricCard } from "@/components/MetricCard";
-import { FilterBar, type FilterValue } from "@/components/FilterBar";
-import { InlineEditor } from "@/components/InlineEditor";
-import { PageSkeleton } from "@/components/PageSkeleton";
-import { Identity } from "@/components/Identity";
-import { AgentIdentity } from "@/components/AgentAvatar";
-import { AgentIcon, AgentIconPicker } from "@/components/AgentIconPicker";
-import { AgentProperties } from "@/components/AgentProperties";
-import { AgentMenuLabel, AssigneeLabel, AssigneeSelfActionLabel } from "@/components/AssigneeLabel";
-import { IssueLabelChip } from "@/components/IssueLabelChip";
-import { ActivityRow } from "@/components/ActivityRow";
-import { ApprovalCard } from "@/components/ApprovalCard";
-import { ApprovalPayloadRenderer } from "@/components/ApprovalPayload";
-import { CopyText } from "@/components/CopyText";
-import { IssueRow } from "@/components/IssueRow";
-import { PauseResumeButton, RunButton } from "@/components/AgentActionButtons";
-import { TextDots } from "@/components/TextDots";
-import { QuotaBar } from "@/components/QuotaBar";
-import { HoverTimestampLabel } from "@/components/HoverTimestamp";
-import { ChartCard, IssueStatusChart, PriorityChart } from "@/components/ActivityCharts";
-import { BudgetIncidentCard } from "@/components/BudgetIncidentCard";
-import { BudgetPolicyCard } from "@/components/BudgetPolicyCard";
-import { DashboardDateRangeControl, type DashboardDatePreset } from "@/components/DashboardDateRangeControl";
-import { FinanceKindCard } from "@/components/FinanceKindCard";
-import { FinanceTimelineCard } from "@/components/FinanceTimelineCard";
-import { GoalTree } from "@/components/GoalTree";
-import { GoalProperties } from "@/components/GoalProperties";
-import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
-import { InlineEntitySelector } from "@/components/InlineEntitySelector";
-import { JsonSchemaForm, type JsonSchemaNode } from "@/components/JsonSchemaForm";
-import { MarkdownBody } from "@/components/MarkdownBody";
-import { PackageFileTree, type FileTreeNode } from "@/components/PackageFileTree";
-import { PageTabBar } from "@/components/PageTabBar";
-import { ProjectProperties } from "@/components/ProjectProperties";
-import { ReportsToPicker } from "@/components/ReportsToPicker";
-import { ResourceLocatorField } from "@/components/ResourceLocatorField";
-import { ScheduleEditor } from "@/components/ScheduleEditor";
-import { SidebarNavItem } from "@/components/SidebarNavItem";
-import { SidebarSection } from "@/components/SidebarSection";
-import { SidebarSectionActionButton, SidebarSectionHeader } from "@/components/SidebarSectionHeader";
-import { SkillReferenceToken } from "@/components/SkillReferenceToken";
-import { RudderLogo } from "@/components/RudderLogo";
-import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
-import { runTranscriptFixtureEntries } from "@/fixtures/runTranscriptFixtures";
-import { DesignGuide } from "./DesignGuide";
-import { RunTranscriptUxLab } from "./RunTranscriptUxLab";
+import { useEffect, useMemo, useState } from "react";
 import {
-  AssistantDraftItem,
   AskUserAnswerBubble,
   AskUserHistoryRecord,
   AskUserPanel,
+  AssistantDraftItem,
   ChatAssistantAttributionRow,
   ChatAttachmentList,
   ChatAttachmentPreviewDialog,
@@ -124,7 +123,8 @@ import {
   StreamTranscriptItem,
   type AttachmentPreviewState,
 } from "./Chat.parts";
-import { cn } from "@/lib/utils";
+import { DesignGuide } from "./DesignGuide";
+import { RunTranscriptUxLab } from "./RunTranscriptUxLab";
 
 type UiLabSectionId = "overview" | "primitives" | "common" | "design-guide" | "transcripts" | "coverage";
 

@@ -1,14 +1,7 @@
-import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
 import {
   activityLog,
-  applyPendingMigrations,
   agents,
+  applyPendingMigrations,
   approvalComments,
   approvals,
   assets,
@@ -19,9 +12,9 @@ import {
   ensurePostgresDatabase,
   heartbeatRuns,
   invites,
-  issueFollows,
   issueComments,
   issueDocuments,
+  issueFollows,
   issues,
   joinRequests,
   messengerThreadUserStates,
@@ -29,8 +22,15 @@ import {
   projects,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { issueService } from "../services/issues.ts";
+import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { chatService } from "../services/chats.ts";
+import { issueService } from "../services/issues.ts";
 import { messengerService } from "../services/messenger.ts";
 
 type EmbeddedPostgresInstance = {

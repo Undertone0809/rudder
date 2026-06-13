@@ -1,15 +1,14 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
-import { constants as fsConstants, promises as fs, type Dirent } from "node:fs";
+import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { defaultPathForPlatform, fileExists, quoteForCmd, resolveCommandPath, resolveSpawnTarget } from "./server-utils.instructions.js";
+import { appendWithCap, asString, buildManagedSkillOrigin, ChildProcessWithEvents, compactSkillText, DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES, DEFAULT_LOCAL_CLI_OPERATOR_HOME_SHIM_COMMANDS, InstalledSkillTarget, isChildProcessAlive, isMaintainerOnlySkillTarget, LocalCliCredentialShimCommand, parseObject, PersistentSkillSnapshotOptions, readSkillMetadataFromDirectory, resolveInstalledEntryTarget, RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES, RudderSkillEntry, runningProcesses, RunProcessResult, skillLocationLabel, SpawnTarget } from "./server-utils.process.js";
 import type {
   AgentRuntimeSkillEntry,
   AgentRuntimeSkillSnapshot,
 } from "./types.js";
-import { RunProcessResult, RunningProcess, SpawnTarget, ChildProcessWithEvents, runningProcesses, isChildProcessAlive, MAX_CAPTURE_BYTES, MAX_EXCERPT_BYTES, SENSITIVE_ENV_KEY, RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES, DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES, LocalCliCredentialShimCommand, DEFAULT_LOCAL_CLI_OPERATOR_HOME_SHIM_COMMANDS, RudderSkillEntry, InstalledSkillTarget, PersistentSkillSnapshotOptions, normalizePathSlashes, isMaintainerOnlySkillTarget, skillLocationLabel, buildManagedSkillOrigin, compactSkillText, parseSkillFrontmatterMetadata, readSkillMetadataFromDirectory, readSkillMetadataFromPath, resolveInstalledEntryTarget, parseObject, asString, asNumber, asBoolean, asStringArray, parseJson, appendWithCap, resolvePathValue, renderTemplate } from "./server-utils.process.js";
-import { DEFAULT_AGENT_PROMPT_TEMPLATE, ISSUE_ASSIGN_PROMPT_TEMPLATE, COMMENT_MENTION_PROMPT_TEMPLATE, ISSUE_COMMENTED_PROMPT_TEMPLATE, ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE, ISSUE_RECOVERY_PROMPT_TEMPLATE, RECOVERY_PROMPT_TEMPLATE, ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE, selectPromptTemplate, joinPromptSections, RUDDER_AGENT_OPERATING_CONTRACT } from "./server-utils.prompts.js";
-import { LoadedAgentInstructionsPrefix, toPromptPath, isInsidePath, displayInstructionPath, displayInstructionDir, loadAgentInstructionsPrefix, redactEnvForLogs, buildRudderEnv, defaultPathForPlatform, windowsPathExts, pathExists, fileExists, resolveCommandPath, quoteForCmd, resolveSpawnTarget } from "./server-utils.instructions.js";
 
 const LOCAL_CLI_CREDENTIAL_AUTH_CHECK_TIMEOUT_MS = 3000;
 

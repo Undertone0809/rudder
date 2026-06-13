@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import type { Issue } from "@rudderhq/shared";
 import type { MouseEventHandler, ReactNode } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Issue } from "@rudderhq/shared";
 import {
   KanbanBoard,
   applyKanbanDropOrderPreview,

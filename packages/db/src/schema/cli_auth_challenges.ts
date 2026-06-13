@@ -1,7 +1,7 @@
-import { pgTable, uuid, text, timestamp, index } from "drizzle-orm/pg-core";
+import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { authUsers } from "./auth.js";
-import { organizations } from "./organizations.js";
 import { boardApiKeys } from "./board_api_keys.js";
+import { organizations } from "./organizations.js";
 
 export const cliAuthChallenges = pgTable(
   "cli_auth_challenges",

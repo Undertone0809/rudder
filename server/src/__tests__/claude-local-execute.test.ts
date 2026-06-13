@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { execute, runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/server";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execute, runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/server";
+import { describe, expect, it } from "vitest";
 import {
   clearInheritedGitIdentityEnv,
   expectPreparedGitConfigCapture,

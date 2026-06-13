@@ -1,158 +1,22 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  useRef,
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
-} from "react";
-import { useParams, useNavigate, Link, Navigate, useBeforeUnload } from "@/lib/router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  agentsApi,
-  type AgentKey,
-  type ClaudeLoginResult,
-  type AgentPermissionUpdate,
-} from "../api/agents";
-import { organizationSkillsApi } from "../api/organizationSkills";
-import { budgetsApi } from "../api/budgets";
-import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
-import { instanceSettingsApi } from "../api/instanceSettings";
-import { ApiError } from "../api/client";
-import {
-  ChartCard,
-  RunActivityChart,
-  PriorityChart,
-  IssueStatusChart,
-  SuccessRateChart,
-  SkillsUsageChart,
-} from "../components/ActivityCharts";
-import { activityApi } from "../api/activity";
-import { issuesApi } from "../api/issues";
-import { usePanel } from "../context/PanelContext";
-import { useSidebar } from "../context/SidebarContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { useToast } from "../context/ToastContext";
-import { useDialog } from "../context/DialogContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { retryHeartbeatRun } from "../lib/heartbeat-retry";
-import { queryKeys } from "../lib/queryKeys";
-import { findOrganizationByPrefix } from "../lib/organization-routes";
-import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
-import { getRunFailureDisplay, getRunStderrExcerptDisplayText, shouldShowRunStderrExcerpt } from "../lib/run-detail-display";
-import { AgentConfigForm } from "../components/AgentConfigForm";
-import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
-import { PageTabBar } from "../components/PageTabBar";
-import { roleLabels, help } from "../components/agent-config-primitives";
-import { MarkdownEditor } from "../components/MarkdownEditor";
-import { assetsApi } from "../api/assets";
-import { getUIAdapter, buildTranscript } from "../agent-runtimes";
-import { StatusBadge } from "../components/StatusBadge";
-import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
-import { MarkdownBody } from "../components/MarkdownBody";
-import { CopyText } from "../components/CopyText";
-import { EntityRow } from "../components/EntityRow";
-import { Identity } from "../components/Identity";
-import { PageSkeleton } from "../components/PageSkeleton";
-import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
-import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
-import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
-import { ScrollToBottom } from "../components/ScrollToBottom";
-import { formatCents, formatDate, formatDateTime, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
-import { cn } from "../lib/utils";
-import { formatRunDurationLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs } from "@/components/ui/tabs";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  MoreHorizontal,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Timer,
-  Loader2,
-  Slash,
-  RotateCcw,
-  Trash2,
-  Plus,
-  Key,
+  Copy,
   Eye,
   EyeOff,
-  Copy,
-  ChevronRight,
-  ChevronDown,
-  ArrowLeft,
-  HelpCircle,
-  FolderOpen,
-  Search,
-  MessageSquare,
-  Maximize2,
+  Key,
+  Plus
 } from "lucide-react";
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  useState
+} from "react";
 import {
-  semanticBadgeToneClasses,
-  semanticNoticeToneClasses,
-} from "@/components/ui/semanticTones";
-import { AgentIcon, AgentIconPicker, getAgentAvatarImageSrc } from "../components/AgentIconPicker";
-import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
-import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
-import {
-  getBundledRudderSkillSlug,
-  isUuidLike,
-  summarizeTokenUsage,
-  tokenUsageCacheRatio,
-  type Agent,
-  type AgentSkillAnalytics,
-  type AgentSkillEntry,
-  type AgentSkillSnapshot,
-  type AgentDetail as AgentDetailRecord,
-  type BudgetPolicySummary,
-  type HeartbeatRun,
-  type HeartbeatRunEvent,
-  type AgentRuntimeState,
-  type LiveEvent,
-  type OrganizationSkillCreateRequest,
-  type WorkspaceOperation,
-} from "@rudderhq/shared";
-import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@rudderhq/agent-runtime-utils";
-import { agentRouteRef } from "../lib/utils";
-import { heartbeatRunEventText, heartbeatRunEventToTranscriptEntry, mergeTranscriptEntries } from "../lib/run-detail-events";
-import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
-import {
-  arraysEqual,
-  canManageSkillEntry,
-  isExternalSkillEntry,
-  sortSkillRowsByPinnedSelectionKey,
-  sortUnique,
-  toggleSkillSelection,
-} from "../lib/agent-skills-state";
-import { runStatusIcons, REDACTED_ENV_VALUE, SECRET_ENV_KEY_RE, JWT_VALUE_RE, formatDateInputValue, parseDateInputValue, getRecentDayKeys, getDayKeysBetween, formatRangeLabel, isWithinRange, compactSkillText, resolveSkillSummaryText, isGenericSkillRuntimeDetail, isGenericSkillLocationLabel, SkillSwitch, CreateAgentSkillDialog, shouldHideExternalSkillEntry, redactPathText, redactPathValue, formatInvocationValueForDisplay, shouldRedactSecretValue, redactEnvValue, isMarkdown, formatEnvForDisplay, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, ScrollContainer, isWindowContainer, isElementScrollContainer, findScrollContainer, readScrollMetrics, scrollToContainerBottom, AgentDetailView, parseAgentDetailView, usageNumber, usageString, setsEqual, runMetrics, formatExactTokens, formatExactTokenLabel, formatCompactTokenLabel, formatCacheRatio, formatRunCostUsd, shouldShowInlineTokenLabel, RunLogChunk, utf8ByteLength, runLogChunkDedupeKey, asRecord, asNonEmptyString, readInvocationSkillList, InvocationSkillEvidence, parseStoredLogContent, RunEventsList, workspaceOperationPhaseLabel, workspaceOperationStatusTone, WorkspaceOperationStatusBadge, WorkspaceOperationLogViewer, WorkspaceOperationsSection, SummaryRow, useRunDurationNow } from "./AgentDetail.helpers";
+  agentsApi,
+  type AgentKey
+} from "../api/agents";
+import { queryKeys } from "../lib/queryKeys";
+import { formatDate } from "../lib/utils";
 
 export function KeysTab({ agentId, orgId }: { agentId: string; orgId?: string }) {
   const queryClient = useQueryClient();

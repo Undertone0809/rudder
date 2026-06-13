@@ -1,49 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Agent, CalendarEvent, CalendarSource, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig, Issue } from "@rudderhq/shared";
-import {
-  AlertCircle,
-  ArrowLeft,
-  ArrowRight,
-  CalendarDays,
-  CheckCircle2,
-  Copy,
-  ExternalLink,
-  Loader2,
-  Plus,
-  RefreshCw,
-  Trash2,
-  X,
-} from "lucide-react";
-import { Link } from "@/lib/router";
-import { agentsApi } from "@/api/agents";
-import { calendarApi } from "@/api/calendar";
-import { issuesApi } from "@/api/issues";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
-import { AgentIcon, AgentIdentity } from "@/components/AgentAvatar";
-import { EmptyState } from "@/components/EmptyState";
-import { PageSkeleton } from "@/components/PageSkeleton";
-import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
-import { useToast } from "@/context/ToastContext";
-import { useViewedOrganization } from "@/hooks/useViewedOrganization";
-import { agentUrl, cn, formatDateTime, formatTime, issueUrl } from "@/lib/utils";
-import { queryKeys } from "@/lib/queryKeys";
-import { layoutTimedEvents } from "@/lib/calendar-event-layout";
-import { timedEventSegmentsForDay, type TimedDaySegment } from "@/lib/calendar-day-segments";
+import { AgentIcon } from "@/components/AgentAvatar";
 import { compactDenseTimedSegments } from "@/lib/calendar-collision-clusters";
+import { timedEventSegmentsForDay, type TimedDaySegment } from "@/lib/calendar-day-segments";
 import { buildCalendarDisplayItems, type CalendarDisplayCluster, type CalendarDisplayCollisionCluster, type CalendarDisplayItem } from "@/lib/calendar-display-items";
-import { formatSidebarAgentLabel } from "@/lib/agent-labels";
-import {
-  calendarEventRunHref,
-  calendarEventSourceLabel,
-  formatCalendarDetailTimeRange,
-} from "@/lib/calendar-detail";
+import { layoutTimedEvents } from "@/lib/calendar-event-layout";
+import { Link } from "@/lib/router";
+import { cn, formatTime } from "@/lib/utils";
+import type { Agent, CalendarEvent, Issue } from "@rudderhq/shared";
+import { useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 
 export type CalendarView = "day" | "week" | "month" | "agenda";
 export type DraftKind = "human_event" | "agent_work_block";

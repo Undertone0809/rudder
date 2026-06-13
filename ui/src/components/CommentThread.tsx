@@ -1,9 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { buildIssueMentionHref } from "@rudderhq/shared";
-import type { IssueComment, Agent } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
-import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,25 +6,29 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { LiveRunForIssue } from "../api/heartbeats";
+import { useDialog } from "@/context/DialogContext";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
+import { PluginSlotOutlet } from "@/plugins/slots";
+import type { Agent, IssueComment } from "@rudderhq/shared";
+import { buildIssueMentionHref } from "@rudderhq/shared";
+import { Check, ChevronDown, Copy, Link2, MoreHorizontal, Paperclip, Pencil, TerminalSquare, Trash2 } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { TranscriptEntry } from "../agent-runtimes";
-import { Identity } from "./Identity";
-import { AgentIdentity } from "./AgentAvatar";
-import { MarkdownBody } from "./MarkdownBody";
-import type { MarkdownLinkClickHandler } from "./MarkdownBody";
-import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
-import type { MarkdownAgentMentionPreview } from "./MarkdownBody";
-import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
+import type { LiveRunForIssue } from "../api/heartbeats";
 import { formatChatAgentLabel } from "../lib/agent-labels";
+import { resolveOperatorDisplayName } from "../lib/operator-display";
+import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from "../lib/run-duration-label";
+import { formatDateTime, relativeTime } from "../lib/utils";
+import { AgentIdentity } from "./AgentAvatar";
+import { Identity } from "./Identity";
+import type { MarkdownAgentMentionPreview, MarkdownLinkClickHandler } from "./MarkdownBody";
+import { MarkdownBody } from "./MarkdownBody";
+import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
+import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
-import { formatDateTime, relativeTime } from "../lib/utils";
-import { formatRunDurationLabel, formatRunTimingTitle, isRunTimingActive } from "../lib/run-duration-label";
-import { resolveOperatorDisplayName } from "../lib/operator-display";
-import { PluginSlotOutlet } from "@/plugins/slots";
-import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
-import { useDialog } from "@/context/DialogContext";
 
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 

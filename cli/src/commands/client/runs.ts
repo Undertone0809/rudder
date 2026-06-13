@@ -1,5 +1,6 @@
-import { Command } from "commander";
 import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
+import { Command } from "commander";
+import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
   handleCommandError,
@@ -7,7 +8,6 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
-import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 
 interface RunsListOptions extends BaseClientOptions {
   updatedAfter?: string;

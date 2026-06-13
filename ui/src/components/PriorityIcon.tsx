@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { Check } from "lucide-react";
-import { cn } from "../lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Check } from "lucide-react";
+import { useState } from "react";
+import { cn } from "../lib/utils";
 
 import { getPriorityConfig, priorityConfig, priorityValues, type PriorityValue } from "../lib/priorities";
 const barHeights = ["h-1", "h-1.5", "h-2.5", "h-3.5"];

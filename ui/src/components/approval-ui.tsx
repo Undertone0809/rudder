@@ -1,5 +1,5 @@
-import type { ComponentPropsWithoutRef, ElementType, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import type { ComponentPropsWithoutRef, ElementType, ReactNode } from "react";
 
 export function ApprovalPanel({ className, ...props }: ComponentPropsWithoutRef<"section">) {
   return <section className={cn("surface-panel rounded-[var(--radius-md)] px-4 py-4", className)} {...props} />;

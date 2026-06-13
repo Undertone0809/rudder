@@ -1,82 +1,67 @@
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
-  activityLog,
   agents,
   assets,
-  organizations,
-  organizationMemberships,
   documents,
+  executionWorkspaces,
   goals,
   heartbeatRuns,
-  executionWorkspaces,
   issueAttachments,
-  issueFollows,
-  issueLabels,
   issueComments,
   issueDocuments,
+  issueFollows,
+  issueLabels,
   issueReadStates,
   issues,
   labels,
+  organizationMemberships,
+  organizations,
   projectWorkspaces,
-  projects,
+  projects
 } from "@rudderhq/db";
 import {
-  extractAgentMentionIds,
-  extractProjectMentionIds,
-  isUuidLike,
   type IssueSearchField,
   type IssueSearchMatch,
-  type ReorderIssue,
+  type ReorderIssue
 } from "@rudderhq/shared";
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { redactCurrentUserText } from "../log-redaction.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
   parseProjectExecutionWorkspacePolicy,
 } from "./execution-workspace-policy.js";
-import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
-import { instanceSettingsService } from "./instance-settings.js";
-import { redactCurrentUserText } from "../log-redaction.js";
-import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { getDefaultCompanyGoal } from "./goals.js";
+import { instanceSettingsService } from "./instance-settings.js";
+import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
+import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 
-import {
-  ALL_ISSUE_STATUSES,
-  MAX_ISSUE_COMMENT_PAGE_LIMIT,
-  BOARD_ORDER_STEP,
-  isUniqueConstraintConflict,
-  assertTransition,
-  applyStatusSideEffects,
-  sameRunLock,
-  TERMINAL_HEARTBEAT_RUN_STATUSES,
-  escapeLikePattern,
-  textContains,
-  buildSearchSnippet,
-  fieldSearchMatch,
-  touchedByUserCondition,
-  participatedByAgentCondition,
-  myLastCommentAtExpr,
-  myLastReadAtExpr,
-  myLastTouchAtExpr,
-  unreadForUserCondition,
-  followedByUserCondition,
-  deriveIssueUserContext,
-  labelMapForIssues,
-  withIssueLabels,
-  ACTIVE_RUN_STATUSES,
-  activeRunMapForIssues,
-  withActiveRuns,
-  type IssueRow,
-  type IssueLabelRow,
-  type IssueWithLabels,
-  type IssueWithLabelsAndRun,
-  type IssueActiveRunRow,
-  type IssueFilters,
-  type IssueWithSearchMatch,
-} from "./issues.helpers.js";
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
-export type { IssueFilters } from "./issues.helpers.js";
+import {
+  BOARD_ORDER_STEP,
+  TERMINAL_HEARTBEAT_RUN_STATUSES,
+  activeRunMapForIssues,
+  applyStatusSideEffects,
+  assertTransition,
+  buildSearchSnippet,
+  deriveIssueUserContext,
+  escapeLikePattern,
+  fieldSearchMatch,
+  followedByUserCondition,
+  isUniqueConstraintConflict,
+  participatedByAgentCondition,
+  sameRunLock,
+  touchedByUserCondition,
+  unreadForUserCondition,
+  withActiveRuns,
+  withIssueLabels,
+  type IssueFilters,
+  type IssueRow,
+  type IssueWithLabelsAndRun,
+  type IssueWithSearchMatch
+} from "./issues.helpers.js";
 export { deriveIssueUserContext } from "./issues.helpers.js";
+export type { IssueFilters } from "./issues.helpers.js";
 
 const DEFAULT_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title"];
 

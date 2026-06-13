@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  getBundledRudderSkillSlug,
   buildOrganizationSkillSearchText,
   formatOrganizationSkillPublicRef,
+  getBundledRudderSkillSlug,
   normalizeOrganizationSkillKey,
   resolveOrganizationSkillReference,
   toBundledRudderSkillKey,

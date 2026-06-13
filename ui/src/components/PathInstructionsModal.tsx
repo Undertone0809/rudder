@@ -1,14 +1,14 @@
-import { useState } from "react";
-import type { InstancePathPickerSelectionType } from "@rudderhq/shared";
-import { Apple, Loader2, Monitor, Terminal } from "lucide-react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import type { InstancePathPickerSelectionType } from "@rudderhq/shared";
+import { Apple, Loader2, Monitor, Terminal } from "lucide-react";
+import { useState } from "react";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { useToast } from "../context/ToastContext";
 import { getPathPickerFailureMessage, shouldFallbackToManualPathInstructions } from "../lib/path-picker";

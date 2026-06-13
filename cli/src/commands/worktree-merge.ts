@@ -1,74 +1,33 @@
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  promises as fsPromises,
-  readdirSync,
-  readFileSync,
-  readlinkSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { createServer } from "node:net";
-import { Readable } from "node:stream";
 import * as p from "@clack/prompts";
-import pc from "picocolors";
-import { and, eq, inArray, sql } from "drizzle-orm";
 import {
-  applyPendingMigrations,
   agents,
   assets,
-  organizations,
-  createDb,
   documentRevisions,
   documents,
-  ensurePostgresDatabase,
-  formatDatabaseBackupResult,
   goals,
   heartbeatRuns,
-  inspectMigrations,
   issueAttachments,
   issueComments,
   issueDocuments,
   issues,
+  organizations,
   projectWorkspaces,
-  projects,
-  runDatabaseBackup,
-  runDatabaseRestore,
+  projects
 } from "@rudderhq/db";
-import type { Command } from "commander";
-import { ensureAgentJwtSecret, loadRudderEnvFile, mergePaperclipEnvEntries, readPaperclipEnvEntries, resolvePaperclipEnvFile } from "../config/env.js";
-import { expandHomePrefix } from "../config/home.js";
-import type { RudderConfig } from "../config/schema.js";
-import { readConfig, resolveConfigPath, writeConfig } from "../config/store.js";
-import { printRudderCliBanner } from "../utils/banner.js";
-import { resolveRuntimeLikePath } from "../utils/path-resolver.js";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
-  buildWorktreeConfig,
-  buildWorktreeEnvEntries,
-  DEFAULT_WORKTREE_HOME,
-  formatShellExports,
-  generateWorktreeColor,
-  isWorktreeSeedMode,
-  resolveSuggestedWorktreeName,
-  resolveWorktreeSeedPlan,
-  resolveWorktreeLocalPaths,
-  sanitizeWorktreeInstanceId,
-  type WorktreeSeedMode,
-  type WorktreeLocalPaths,
-} from "./worktree-lib.js";
+  existsSync
+} from "node:fs";
+import path from "node:path";
+import pc from "picocolors";
+import { ClosableDb, MergeSourceChoice, ResolvedMergeCompany, ResolvedWorktreeEndpoint, openConfiguredDb, resolveAttachmentLookupStorages, resolveCurrentEndpoint, toMergeSourceChoices } from "./worktree-cleanup.js";
+import { ConfiguredStorage, nonEmpty, openConfiguredStorage, readSourceAttachmentBody } from "./worktree-init.js";
 import {
   buildWorktreeMergePlan,
   parseWorktreeMergeScopes,
+  type DocumentRevisionRow,
   type IssueAttachmentRow,
   type IssueDocumentRow,
-  type DocumentRevisionRow,
   type PlannedAttachmentInsert,
   type PlannedCommentInsert,
   type PlannedIssueDocumentInsert,
@@ -79,8 +38,6 @@ import type {
   WorktreeListOptions,
   WorktreeMergeHistoryOptions,
 } from "./worktree-types.js";
-import { nonEmpty, isCurrentSourceConfigPath, WORKTREE_NAME_PREFIX, resolveWorktreeMakeName, resolveWorktreeHome, resolveWorktreeStartPoint, ConfiguredStorage, assertStorageCompanyPrefix, normalizeStorageObjectKey, resolveLocalStoragePath, s3BodyToBuffer, normalizeS3Prefix, buildS3ObjectKey, dynamicImport, createConfiguredStorageFromRudderConfig, openConfiguredStorage, streamToBuffer, isMissingStorageObjectError, readSourceAttachmentBody, resolveWorktreeMakeTargetPath, extractExecSyncErrorMessage, localBranchExists, resolveGitWorktreeAddArgs, readPidFilePort, readRunningPostmasterPid, isPortAvailable, findAvailablePort, detectGitBranchName, detectGitWorkspaceInfo, copyDirectoryContents, copyGitHooksToWorktreeGitDir, rebindWorkspaceCwd, rebindSeededProjectWorkspaces, resolveSourceConfigPath, resolveSourceConnectionString, copySeededSecretsKey, ensureEmbeddedPostgres, seedWorktreeDatabase, runWorktreeInit, worktreeInitCommand, worktreeMakeCommand } from "./worktree-init.js";
-import { WorktreeCleanupOptions, GitWorktreeListEntry, MergeSourceChoice, ResolvedWorktreeEndpoint, parseGitWorktreeList, toMergeSourceChoices, branchHasUniqueCommits, branchExistsOnAnyRemote, worktreePathHasUncommittedChanges, worktreeCleanupCommand, worktreeEnvCommand, ClosableDb, OpenDbHandle, ResolvedMergeCompany, closeDb, resolveCurrentEndpoint, resolveAttachmentLookupStorages, openConfiguredDb } from "./worktree-cleanup.js";
 
 export async function resolveMergeCompany(input: {
   sourceDb: ClosableDb;

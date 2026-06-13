@@ -1,80 +1,24 @@
-import { type CSSProperties, type ReactNode, type RefCallback, useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type PluginUiContribution } from "@/api/plugins";
+import { AgentIcon } from "@/components/AgentIconPicker";
+import { ProjectIcon } from "@/components/ProjectIdentity";
+import { StatusIcon } from "@/components/StatusIcon";
+import { useSidebar } from "@/context/SidebarContext";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { Link } from "@/lib/router";
+import { cn, issueUrl, projectRouteRef } from "@/lib/utils";
+import type { Agent, CalendarEventStatus, Issue } from "@rudderhq/shared";
 import {
-  Archive,
-  Boxes,
-  CalendarDays,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Circle,
-  Clock3,
-  Copy,
-  DollarSign,
   Eye,
   EyeOff,
-  FolderTree,
-  History,
-  MessageSquare,
-  MoreHorizontal,
-  Network,
   PanelLeftClose,
-  PencilLine,
-  Pin,
-  PinOff,
   Plus,
-  Settings2,
-  Target,
-  UserRound,
+  UserRound
 } from "lucide-react";
-import { Link, useLocation, useNavigate } from "@/lib/router";
-import { cn, agentUrl, issueUrl, projectRouteRef } from "@/lib/utils";
-import { toOrganizationRelativePath } from "@/lib/organization-routes";
-import { useOrganization } from "@/context/OrganizationContext";
-import { useSidebar } from "@/context/SidebarContext";
-import { useToast } from "@/context/ToastContext";
-import { useDialog } from "@/context/DialogContext";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { issuesApi } from "@/api/issues";
-import { authApi } from "@/api/auth";
-import { projectsApi } from "@/api/projects";
-import { agentsApi } from "@/api/agents";
-import { calendarApi } from "@/api/calendar";
-import { chatsApi } from "@/api/chats";
-import { heartbeatsApi } from "@/api/heartbeats";
-import { displayChatTitle } from "@/lib/chat-title";
-import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
-import { formatSidebarAgentLabel } from "@/lib/agent-labels";
-import { queryKeys } from "@/lib/queryKeys";
-import { relativeTime } from "@/lib/utils";
-import {
-  RECENT_ISSUES_CHANGED_EVENT,
-  readRecentIssueIds,
-  recordRecentIssue,
-  resolveRecentIssues,
-} from "@/lib/recent-issues";
-import { isFollowingIssue } from "@/lib/issue-scope-filters";
-import {
-  ISSUE_DRAFT_CHANGED_EVENT,
-  summarizeIssueDrafts,
-} from "@/lib/new-issue-dialog";
-import { useIssueFollows } from "@/hooks/useIssueFollows";
-import { AgentIcon } from "@/components/AgentIconPicker";
-import { AgentActionsMenu } from "@/components/AgentActionsMenu";
-import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
-import { ProjectIcon } from "@/components/ProjectIdentity";
-import { StatusIcon } from "@/components/StatusIcon";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
-import { Checkbox } from "@/components/ui/checkbox";
-import { CALENDAR_EVENT_STATUS_OPTIONS, useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
-import type { Agent, CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
+import { useState, type CSSProperties, type ReactNode, type RefCallback } from "react";
 
 export const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
 export const LINEAR_PLUGIN_KEY = "rudder.linear";

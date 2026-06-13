@@ -7,10 +7,10 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { organizations } from "./organizations.js";
 import { executionWorkspaces } from "./execution_workspaces.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 import { issues } from "./issues.js";
+import { organizations } from "./organizations.js";
 import { projects } from "./projects.js";
 import { workspaceRuntimeServices } from "./workspace_runtime_services.js";
 

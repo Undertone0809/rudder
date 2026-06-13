@@ -1,10 +1,10 @@
+import { renderTemplate, selectPromptTemplate } from "@rudderhq/agent-runtime-utils/server-utils";
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderTemplate, selectPromptTemplate } from "@rudderhq/agent-runtime-utils/server-utils";
-import { issueRoutes } from "../routes/issues.js";
-import { errorHandler } from "../middleware/index.js";
 import { HttpError } from "../errors.js";
+import { errorHandler } from "../middleware/index.js";
+import { issueRoutes } from "../routes/issues.js";
 
 const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),

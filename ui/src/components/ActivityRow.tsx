@@ -1,11 +1,11 @@
-import { Link } from "@/lib/router";
-import { Identity } from "./Identity";
-import { AgentIdentity } from "./AgentAvatar";
 import { resolveActivityActorName } from "@/lib/activity-actors";
-import { timeAgo } from "../lib/timeAgo";
-import { cn } from "../lib/utils";
+import { Link } from "@/lib/router";
 import { deriveProjectUrlKey, issueUpdatedChangedKeys, type ActivityEvent, type Agent } from "@rudderhq/shared";
 import { formatPriorityLabel } from "../lib/priorities";
+import { timeAgo } from "../lib/timeAgo";
+import { cn } from "../lib/utils";
+import { AgentIdentity } from "./AgentAvatar";
+import { Identity } from "./Identity";
 
 const ACTION_VERBS: Record<string, string> = {
   "issue.created": "created",

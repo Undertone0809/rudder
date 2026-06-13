@@ -1,4 +1,3 @@
-import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import {
   createAutomationSchema,
@@ -8,10 +7,11 @@ import {
   updateAutomationSchema,
   updateAutomationTriggerSchema,
 } from "@rudderhq/shared";
-import { validate } from "../middleware/validate.js";
-import { accessService, logActivity, automationService } from "../services/index.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { Router, type Request } from "express";
 import { forbidden, unauthorized } from "../errors.js";
+import { validate } from "../middleware/validate.js";
+import { accessService, automationService, logActivity } from "../services/index.js";
+import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export function automationRoutes(db: Db) {
   const router = Router();

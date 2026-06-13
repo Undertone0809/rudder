@@ -7,8 +7,8 @@ import {
   listWorkspaceLaunchTargets,
   openWorkspace,
   openWorkspaceFileInIde,
-  resolveWorkspaceRootDirectory,
   resolveWorkspaceFileAbsolutePath,
+  resolveWorkspaceRootDirectory,
   windowsTerminalLaunchArgs,
 } from "./ide-opener.js";
 

@@ -1,7 +1,7 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { agents, automations, costEvents, financeEvents, goals, issues, projectGoals, projects } from "@rudderhq/db";
 import type { GoalDependencies, GoalDependencyPreview } from "@rudderhq/shared";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { conflict, unprocessable } from "../errors.js";
 
 type GoalReader = Pick<Db, "select">;

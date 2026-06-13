@@ -1,38 +1,37 @@
 import type { Db } from "@rudderhq/db";
-import { pluginLogs, agentTaskSessions as agentTaskSessionsTable } from "@rudderhq/db";
-import { eq, and, like, desc } from "drizzle-orm";
+import { agentTaskSessions as agentTaskSessionsTable, pluginLogs } from "@rudderhq/db";
 import type {
-  HostServices,
-  Organization,
   Agent,
-  Project,
-  Issue,
   Goal,
-  PluginWorkspace,
+  HostServices,
+  Issue,
   IssueComment,
+  Organization,
+  Project
 } from "@rudderhq/plugin-sdk";
-import { organizationService } from "./orgs.js";
-import { agentService } from "./agents.js";
-import { projectService } from "./projects.js";
-import { issueService } from "./issues.js";
-import { goalService } from "./goals.js";
-import { heartbeatService } from "./heartbeat.js";
-import { subscribeCompanyLiveEvents } from "./live-events.js";
+import { and, desc, eq, like } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { activityService } from "./activity.js";
-import { costService } from "./costs.js";
-import { assetService } from "./assets.js";
-import { pluginRegistryService } from "./plugin-registry.js";
-import { pluginStateStore } from "./plugin-state-store.js";
-import { createPluginSecretsHandler } from "./plugin-secrets-handler.js";
-import { logActivity } from "./activity-log.js";
-import type { PluginEventBus } from "./plugin-event-bus.js";
 import { lookup as dnsLookup } from "node:dns/promises";
-import type { IncomingMessage, RequestOptions as HttpRequestOptions } from "node:http";
+import type { RequestOptions as HttpRequestOptions, IncomingMessage } from "node:http";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { logger } from "../middleware/logger.js";
+import { logActivity } from "./activity-log.js";
+import { activityService } from "./activity.js";
+import { agentService } from "./agents.js";
+import { assetService } from "./assets.js";
+import { costService } from "./costs.js";
+import { goalService } from "./goals.js";
+import { heartbeatService } from "./heartbeat.js";
+import { issueService } from "./issues.js";
+import { subscribeCompanyLiveEvents } from "./live-events.js";
+import { organizationService } from "./orgs.js";
+import type { PluginEventBus } from "./plugin-event-bus.js";
+import { pluginRegistryService } from "./plugin-registry.js";
+import { createPluginSecretsHandler } from "./plugin-secrets-handler.js";
+import { pluginStateStore } from "./plugin-state-store.js";
+import { projectService } from "./projects.js";
 
 // ---------------------------------------------------------------------------
 // SSRF protection for plugin HTTP fetch

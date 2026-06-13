@@ -1,58 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
-import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { issuesApi } from "../api/issues";
-import { organizationsApi } from "../api/orgs";
-import { activityApi } from "../api/activity";
-import { heartbeatsApi } from "../api/heartbeats";
-import { agentsApi } from "../api/agents";
-import { accessApi } from "../api/access";
-import { authApi } from "../api/auth";
-import { pluginsApi } from "../api/plugins";
-import { organizationSkillsApi } from "../api/organizationSkills";
-import { projectsApi } from "../api/projects";
-import { useNavigationBack } from "../context/NavigationBackContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { useToast } from "../context/ToastContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useDialog } from "../context/DialogContext";
-import { useI18n } from "../context/I18nContext";
-import { formatAssigneeUserLabel } from "../lib/assignees";
-import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
-import { formatChatAgentLabel } from "../lib/agent-labels";
-import { queryKeys } from "../lib/queryKeys";
-import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
-import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/detail-escape";
-import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
-import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
-import { toOrganizationRelativePath } from "../lib/organization-routes";
-import { resolveBoardActorLabel } from "../lib/activity-actors";
-import { useIssueFollows } from "../hooks/useIssueFollows";
-import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
-import { useProjectOrder } from "../hooks/useProjectOrder";
-import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
-import { libraryCopy } from "../lib/library-copy";
-import { InlineEditor } from "../components/InlineEditor";
-import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
-import { IssueDetailFind } from "../components/IssueDetailFind";
-import { IssueParentContext } from "../components/IssueParentContext";
-import { IssueProperties } from "../components/IssueProperties";
-import { LiveRunWidget } from "../components/LiveRunWidget";
-import type { MentionOption } from "../components/MarkdownEditor";
-import { ScrollToBottom } from "../components/ScrollToBottom";
-import { StatusIcon } from "../components/StatusIcon";
-import { PriorityIcon } from "../components/PriorityIcon";
-import { formatPriorityLabel } from "../lib/priorities";
-import { Identity } from "../components/Identity";
-import { AgentIdentity } from "../components/AgentAvatar";
-import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
-import { PluginLauncherOutlet } from "@/plugins/launchers";
-import { Separator } from "@/components/ui/separator";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -68,6 +14,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
+import { PluginLauncherOutlet } from "@/plugins/launchers";
+import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
+import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity as ActivityIcon,
   Check,
@@ -77,7 +34,6 @@ import {
   FileCode2,
   FileText,
   Folder,
-  Hexagon,
   ListTree,
   Loader2,
   MessageSquare,
@@ -89,10 +45,53 @@ import {
   Repeat,
   SlidersHorizontal,
   Trash2,
-  Upload,
+  Upload
 } from "lucide-react";
-import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
-import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
+import { accessApi } from "../api/access";
+import { activityApi } from "../api/activity";
+import { agentsApi } from "../api/agents";
+import { authApi } from "../api/auth";
+import { heartbeatsApi } from "../api/heartbeats";
+import { issuesApi } from "../api/issues";
+import { organizationSkillsApi } from "../api/organizationSkills";
+import { organizationsApi } from "../api/orgs";
+import { pluginsApi } from "../api/plugins";
+import { projectsApi } from "../api/projects";
+import { AgentIdentity } from "../components/AgentAvatar";
+import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
+import { Identity } from "../components/Identity";
+import { InlineEditor } from "../components/InlineEditor";
+import { IssueDetailFind } from "../components/IssueDetailFind";
+import { IssueParentContext } from "../components/IssueParentContext";
+import { IssueProperties } from "../components/IssueProperties";
+import { LiveRunWidget } from "../components/LiveRunWidget";
+import type { MentionOption } from "../components/MarkdownEditor";
+import { PriorityIcon } from "../components/PriorityIcon";
+import { ScrollToBottom } from "../components/ScrollToBottom";
+import { StatusIcon } from "../components/StatusIcon";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
+import { useI18n } from "../context/I18nContext";
+import { useNavigationBack } from "../context/NavigationBackContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useToast } from "../context/ToastContext";
+import { useIssueFollows } from "../hooks/useIssueFollows";
+import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
+import { useProjectOrder } from "../hooks/useProjectOrder";
+import { resolveBoardActorLabel } from "../lib/activity-actors";
+import { formatChatAgentLabel } from "../lib/agent-labels";
+import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
+import { formatAssigneeUserLabel } from "../lib/assignees";
+import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/detail-escape";
+import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
+import { libraryCopy } from "../lib/library-copy";
+import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
+import { toOrganizationRelativePath } from "../lib/organization-routes";
+import { formatPriorityLabel } from "../lib/priorities";
+import { queryKeys } from "../lib/queryKeys";
+import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
+import { cn, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
 
 type IssueCostSummaryData = {
   input: number;

@@ -1,4 +1,3 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   agents,
@@ -9,6 +8,7 @@ import {
   heartbeatRuns,
 } from "@rudderhq/db";
 import type { SidebarBadges } from "@rudderhq/shared";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { visibleIncomingMessageSql } from "./chats.helpers.js";
 import { messengerService } from "./messenger.js";
 

@@ -1,16 +1,16 @@
-import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { issuesApi } from "../api/issues";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { queryKeys } from "../lib/queryKeys";
 import { StatusIcon } from "../components/StatusIcon";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { queryKeys } from "../lib/queryKeys";
 
-import { EntityRow } from "../components/EntityRow";
+import { ListTodo } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
+import { EntityRow } from "../components/EntityRow";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { formatDate } from "../lib/utils";
-import { ListTodo } from "lucide-react";
 
 export function MyIssues() {
   const { selectedOrganizationId } = useOrganization();

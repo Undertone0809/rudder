@@ -1,42 +1,12 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AGENT_RUN_CONCURRENCY_DEFAULT,
-  type AgentRuntimeEnvironmentTestResult,
-  type Organization,
-} from "@rudderhq/shared";
-import { useLocation, useNavigate, useParams } from "@/lib/router";
-import { useDialog } from "../context/DialogContext";
-import { useOrganization } from "../context/OrganizationContext";
-import { organizationsApi } from "../api/orgs";
-import { ApiError } from "../api/client";
-import { goalsApi } from "../api/goals";
-import { agentsApi } from "../api/agents";
-import { issuesApi } from "../api/issues";
-import { onboardingApi } from "../api/onboarding";
-import { projectsApi } from "../api/projects";
-import { queryKeys } from "../lib/queryKeys";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger
 } from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { cn, formatTime } from "../lib/utils";
-import {
-  extractModelName,
-  extractProviderIdWithFallback
-} from "../lib/model-utils";
-import { resolveRuntimeModels } from "../lib/runtime-models";
-import { getUIAdapter } from "../agent-runtimes";
-import { defaultCreateValues } from "./agent-config-defaults";
-import {
-  filterRuntimeEnvironmentDisplayChecks,
-  normalizeRuntimeEnvironmentDisplayStatus,
-} from "./AgentConfigForm";
-import { parseOnboardingGoalInput } from "../lib/onboarding-goal";
+import { useLocation, useNavigate, useParams } from "@/lib/router";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
@@ -44,39 +14,65 @@ import {
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
-import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
-import { markProductTourPending } from "./ProductTourOverlay";
-import { AsciiArtAnimation } from "./AsciiArtAnimation";
-import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 import {
-  Building2,
-  Bot,
-  Code,
-  Gem,
-  ListTodo,
-  Rocket,
+  AGENT_RUN_CONCURRENCY_DEFAULT,
+  type AgentRuntimeEnvironmentTestResult,
+  type Organization,
+} from "@rudderhq/shared";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
   ArrowLeft,
   ArrowRight,
-  Terminal,
-  Sparkles,
-  MousePointer2,
+  Bot,
+  Building2,
   Check,
-  FolderKanban,
-  Loader2,
   ChevronDown,
+  Code,
+  FolderKanban,
+  Gem,
+  ListTodo,
+  Loader2,
+  MousePointer2,
+  Rocket,
+  Sparkles,
+  Terminal,
   X
 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getUIAdapter } from "../agent-runtimes";
+import { agentsApi } from "../api/agents";
+import { ApiError } from "../api/client";
+import { goalsApi } from "../api/goals";
+import { issuesApi } from "../api/issues";
+import { onboardingApi } from "../api/onboarding";
+import { organizationsApi } from "../api/orgs";
+import { projectsApi } from "../api/projects";
+import { useDialog } from "../context/DialogContext";
+import { useOrganization } from "../context/OrganizationContext";
+import {
+  extractModelName,
+  extractProviderIdWithFallback
+} from "../lib/model-utils";
+import { parseOnboardingGoalInput } from "../lib/onboarding-goal";
+import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
+import { queryKeys } from "../lib/queryKeys";
+import { resolveRuntimeModels } from "../lib/runtime-models";
+import { cn } from "../lib/utils";
+import { defaultCreateValues } from "./agent-config-defaults";
+import { AsciiArtAnimation } from "./AsciiArtAnimation";
+import { AdapterEnvironmentResult } from "./OnboardingWizard.environment";
 import {
   DEFAULT_FIRST_AGENT_TITLE,
   DEFAULT_TASK_DESCRIPTION,
   DEFAULT_TASK_TITLE,
   ONBOARDING_DRAFT_ORGANIZATION_STORAGE_KEY,
   ONBOARDING_PROJECT_NAME,
+  upsertOrganization,
   type AdapterType,
   type Step,
-  upsertOrganization,
 } from "./OnboardingWizard.parts";
-import { AdapterEnvironmentResult } from "./OnboardingWizard.environment";
+import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
+import { markProductTourPending } from "./ProductTourOverlay";
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
   const { organizations, setSelectedOrganizationId, loading: organizationsLoading } = useOrganization();

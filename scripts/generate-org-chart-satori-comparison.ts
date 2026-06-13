@@ -13,11 +13,11 @@
 import * as fs from "fs";
 import * as path from "path";
 import {
-  renderOrgChartSvg,
-  renderOrgChartPng,
-  type OrgNode,
-  type OrgChartStyle,
   ORG_CHART_STYLES,
+  renderOrgChartPng,
+  renderOrgChartSvg,
+  type OrgChartStyle,
+  type OrgNode,
 } from "../server/src/routes/org-chart-svg.js";
 
 // ── Sample org data ──────────────────────────────────────────────

@@ -1,61 +1,3 @@
-import { Router, type Request, type Response } from "express";
-import multer from "multer";
-import sharp from "sharp";
-import { generateKeyPairSync, randomUUID } from "node:crypto";
-import path from "node:path";
-import type { Db } from "@rudderhq/db";
-import { agents as agentsTable, organizations, heartbeatRuns } from "@rudderhq/db";
-import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
-import {
-  agentSkillSyncSchema,
-  agentSkillEnableSchema,
-  createAgentKeySchema,
-  createAgentHireSchema,
-  createAgentSchema,
-  deriveAgentUrlKey,
-  isUuidLike,
-  organizationSkillCreateSchema,
-  resetAgentSessionSchema,
-  testAgentRuntimeEnvironmentSchema,
-  type AgentSkillAnalytics,
-  type AgentSkillSnapshot,
-  type InstanceSchedulerHeartbeatAgent,
-  upsertAgentInstructionsFileSchema,
-  updateAgentInstructionsBundleSchema,
-  updateAgentPermissionsSchema,
-  updateAgentInstructionsPathSchema,
-  wakeAgentSchema,
-  updateAgentSchema,
-} from "@rudderhq/shared";
-import { validate } from "../middleware/validate.js";
-import {
-  agentService,
-  agentInstructionsService,
-  accessService,
-  approvalService,
-  organizationSkillService,
-  organizationIntelligenceProfileService,
-  budgetService,
-  heartbeatService,
-  issueApprovalService,
-  issueService,
-  logActivity,
-  secretService,
-  syncInstructionsBundleConfigFromFilePath,
-  workspaceOperationService,
-} from "../services/index.js";
-import { normalizeCreatedAgentAvatarIcon } from "../services/agents.js";
-import { assetService } from "../services/assets.js";
-import type { StorageService } from "../storage/types.js";
-import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
-import { findServerAdapter, listAgentRuntimeModels } from "../agent-runtimes/index.js";
-import { redactEventPayload } from "../redaction.js";
-import { redactCurrentUserValue } from "../log-redaction.js";
-import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
-import { instanceSettingsService } from "../services/instance-settings.js";
-import { runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/server";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
@@ -64,12 +6,57 @@ import {
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@rudderhq/agent-runtime-opencode-local/server";
+import type { Db } from "@rudderhq/db";
+import { agents as agentsTable, organizations } from "@rudderhq/db";
+import {
+  agentSkillEnableSchema,
+  agentSkillSyncSchema,
+  deriveAgentUrlKey,
+  isUuidLike,
+  organizationSkillCreateSchema,
+  resetAgentSessionSchema,
+  testAgentRuntimeEnvironmentSchema,
+  type AgentSkillAnalytics,
+  type AgentSkillSnapshot,
+  type InstanceSchedulerHeartbeatAgent
+} from "@rudderhq/shared";
+import { eq } from "drizzle-orm";
+import { Router, type Request, type Response } from "express";
+import multer from "multer";
+import { generateKeyPairSync } from "node:crypto";
+import path from "node:path";
+import sharp from "sharp";
+import { findServerAdapter, listAgentRuntimeModels } from "../agent-runtimes/index.js";
+import { resolveStoredOrDerivedAgentWorkspaceKey } from "../agent-workspace-key.js";
+import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { validate } from "../middleware/validate.js";
+import { redactEventPayload } from "../redaction.js";
+import { assetService } from "../services/assets.js";
 import {
   loadDefaultAgentInstructionsBundle,
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
-import { resolveStoredOrDerivedAgentWorkspaceKey } from "../agent-workspace-key.js";
+import {
+  accessService,
+  agentInstructionsService,
+  agentService,
+  approvalService,
+  budgetService,
+  heartbeatService,
+  issueApprovalService,
+  issueService,
+  logActivity,
+  organizationIntelligenceProfileService,
+  organizationSkillService,
+  secretService,
+  workspaceOperationService
+} from "../services/index.js";
+import { instanceSettingsService } from "../services/instance-settings.js";
+import type { StorageService } from "../storage/types.js";
 import { registerAgentManagementRoutes } from "./agents.management-routes.js";
+import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
+import { ORG_CHART_STYLES, renderOrgChartPng, renderOrgChartSvg, type OrgChartStyle, type OrgNode } from "./org-chart-svg.js";
 
 const AGENT_AVATAR_CONTENT_TYPES = new Set([
   "image/png",

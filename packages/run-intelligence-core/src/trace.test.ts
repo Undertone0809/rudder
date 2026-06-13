@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildObservedRunTrace } from "./trace.js";
 import { observedRunFromFilesystem } from "./loaders/rudder.js";
+import { buildObservedRunTrace } from "./trace.js";
 
 describe("buildObservedRunTrace", () => {
   it("keeps tool payloads compact in previews while preserving full detail", () => {

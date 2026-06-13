@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestHarness } from "@rudderhq/plugin-sdk/testing";
-import manifest from "../src/manifest.js";
-import plugin, { buildIssueDescription, normalizeConfig, resolveMappedStatus } from "../src/worker.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ACTION_KEYS, DATA_KEYS, ENTITY_TYPE_LINEAR_ISSUE_LINK } from "../src/constants.js";
 import { buildLinearIssuesFilter } from "../src/linear-api.js";
+import manifest from "../src/manifest.js";
 import type { ImportLinearIssuesActionResult, LinearOrganizationMapping, SettingsCatalogData } from "../src/types.js";
+import plugin, { buildIssueDescription, normalizeConfig, resolveMappedStatus } from "../src/worker.js";
 
 const orgId = "org-linear";
 const projectId = "project-linear";

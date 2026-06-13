@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { $createParagraphNode, $getRoot, createEditor } from "lexical";
 import { buildAgentMentionHref } from "@rudderhq/shared";
+import { $createParagraphNode, $getRoot, createEditor } from "lexical";
+import { describe, expect, it } from "vitest";
 import { $createMentionTokenNode, MentionTokenNode } from "./mention-token-node";
 
 const MENTION_HREF = buildAgentMentionHref("agent-123", "code");

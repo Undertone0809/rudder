@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  parseAllowedTypes,
-  matchesContentType,
   DEFAULT_ALLOWED_TYPES,
+  matchesContentType,
+  parseAllowedTypes,
 } from "../attachment-types.js";
 
 describe("parseAllowedTypes", () => {

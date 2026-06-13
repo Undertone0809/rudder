@@ -1,7 +1,7 @@
 import type { CalendarEvent } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
-import { timedEventSegmentsForDay } from "./calendar-day-segments";
 import { compactDenseTimedSegments } from "./calendar-collision-clusters";
+import { timedEventSegmentsForDay } from "./calendar-day-segments";
 import { buildCalendarDisplayItems } from "./calendar-display-items";
 
 function event(overrides: Partial<CalendarEvent> & Pick<CalendarEvent, "id" | "startAt" | "endAt">): CalendarEvent {

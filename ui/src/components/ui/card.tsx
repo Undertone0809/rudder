@@ -1,7 +1,7 @@
-import * as React from "react"
-import { cva, type VariantProps } from "class-variance-authority"
+import { cva, type VariantProps } from "class-variance-authority";
+import * as React from "react";
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/utils";
 
 const cardVariants = cva(
   "text-card-foreground flex flex-col gap-5 rounded-[var(--radius-md)] border",
@@ -106,12 +106,5 @@ function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 export {
-  Card,
-  cardVariants,
-  CardHeader,
-  CardFooter,
-  CardTitle,
-  CardAction,
-  CardDescription,
-  CardContent,
-}
+  Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, cardVariants
+};

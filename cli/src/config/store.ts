@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { rudderConfigSchema, type RudderConfig } from "./schema.js";
 import {
   resolveDefaultConfigPath,
   resolveRudderInstanceId,
 } from "./home.js";
+import { rudderConfigSchema, type RudderConfig } from "./schema.js";
 
 const DEFAULT_CONFIG_BASENAME = "config.json";
 

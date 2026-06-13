@@ -1,5 +1,5 @@
-import { Command } from "commander";
 import type { ActivityEvent } from "@rudderhq/shared";
+import { Command } from "commander";
 import {
   addCommonClientOptions,
   formatInlineRecord,

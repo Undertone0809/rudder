@@ -1,5 +1,5 @@
-import { createContext, useContext, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { CALENDAR_EVENT_STATUSES, type CalendarEventStatus } from "@rudderhq/shared";
+import { createContext, useContext, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 
 export const CALENDAR_EVENT_STATUS_OPTIONS: CalendarEventStatus[] = [
   "planned",

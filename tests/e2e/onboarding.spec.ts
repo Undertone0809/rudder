@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const SKIP_LLM = process.env.RUDDER_E2E_SKIP_LLM !== "false";
 

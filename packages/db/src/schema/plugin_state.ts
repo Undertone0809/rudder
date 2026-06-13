@@ -1,13 +1,13 @@
+import type { PluginStateScopeKind } from "@rudderhq/shared";
 import {
+  index,
+  jsonb,
   pgTable,
-  uuid,
   text,
   timestamp,
-  jsonb,
-  index,
   unique,
+  uuid,
 } from "drizzle-orm/pg-core";
-import type { PluginStateScopeKind } from "@rudderhq/shared";
 import { plugins } from "./plugins.js";
 
 /**

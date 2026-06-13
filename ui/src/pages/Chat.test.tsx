@@ -1,39 +1,47 @@
 // @vitest-environment node
 
-import type { ReactNode } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import type { Agent, ChatConversation, ChatMessage, Issue, MessengerThreadSummary, Project } from "@rudderhq/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
 import {
-  ChatSystemMessageBody,
-  ChatMessageItem,
-  INTERRUPTED_CHAT_CONTINUATION_PROMPT,
-  ProposalCard,
+  readChatScopedPendingFiles,
+  updateChatScopedPendingFiles,
+} from "@/lib/chat-pending-attachments";
+import {
+  createImageDesktopPayload,
+  resolveImageFilename,
+} from "@/lib/image-actions";
+import type { Agent, ChatConversation, ChatMessage, Issue, MessengerThreadSummary, Project } from "@rudderhq/shared";
+import type { ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
   CHAT_PROJECT_BY_AGENT_STORAGE_KEY,
+  ChatMessageItem,
+  ChatSystemMessageBody,
+  INTERRUPTED_CHAT_CONTINUATION_PROMPT,
   NO_PROJECT_ID,
+  ProposalCard,
   askUserAnswerFromMessage,
+  askUserRequestFromMessage,
   assistantStateLabel,
   buildChatProposalRevisionPrompt,
   buildDraftChatContextLinks,
-  chatIssueApprovalPayloadWithProposalOverride,
   canContinueInterruptedChatMessage,
   canRetryFailedChatMessage,
   chatEmptyStateHeading,
+  chatIssueApprovalPayloadWithProposalOverride,
   computeDisplayedChatMessages,
   draftIssueContextLabel,
-  askUserRequestFromMessage,
   findLatestUnansweredAskUserMessage,
   findRetrySourceUserMessage,
   formatAskUserAnswerMessage,
+  isAskUserMessageAnswered,
   isChatAgentSelectionLocked,
   isChatProjectSelectionLocked,
-  isAskUserMessageAnswered,
   isUserVisibleIncomingChatMessage,
   issueProposalPrincipalSelectionValue,
+  issueProposalWithPrincipalSelection,
   issueProposalWithPriority,
   issueProposalWithStatus,
-  issueProposalWithPrincipalSelection,
   parseAskUserAnswerMessage,
   rememberChatProjectId,
   rememberChatProjectIdForAgent,
@@ -45,14 +53,6 @@ import {
   withOptimisticPlanMode,
 } from "./Chat";
 import { mergeMessengerThreadSummaries } from "./Chat.parts";
-import {
-  createImageDesktopPayload,
-  resolveImageFilename,
-} from "@/lib/image-actions";
-import {
-  readChatScopedPendingFiles,
-  updateChatScopedPendingFiles,
-} from "@/lib/chat-pending-attachments";
 
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (

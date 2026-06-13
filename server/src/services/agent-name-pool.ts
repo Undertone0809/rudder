@@ -1,5 +1,5 @@
-import { randomInt } from "node:crypto";
 import { normalizeAgentUrlKey } from "@rudderhq/shared";
+import { randomInt } from "node:crypto";
 
 export interface AgentNamingRow {
   id: string;

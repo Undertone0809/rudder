@@ -1,8 +1,3 @@
-import { Buffer } from "node:buffer";
-import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import {
   PLUGIN_STATE_SCOPE_KINDS,
   definePlugin,
@@ -14,14 +9,18 @@ import {
   type PluginHealthDiagnostics,
   type PluginJobContext,
   type PluginLauncherRegistration,
+  type PluginStateScopeKind,
   type PluginWebhookInput,
   type PluginWorkspace,
-  type PluginStateScopeKind,
   type ScopeKey,
-  type ToolResult,
-  type ToolRunContext,
+  type ToolResult
 } from "@rudderhq/plugin-sdk";
 import type { Goal, Issue } from "@rudderhq/shared";
+import { Buffer } from "node:buffer";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import {
   DEFAULT_CONFIG,
   JOB_KEYS,

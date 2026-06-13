@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { parseCodexStdoutLine } from "@rudderhq/agent-runtime-codex-local/ui";
+import { describe, expect, it } from "vitest";
 import { buildTranscript, type RunLogChunk } from "./transcript";
 
 describe("buildTranscript", () => {

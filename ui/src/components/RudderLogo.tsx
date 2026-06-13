@@ -1,5 +1,5 @@
-import type { ImgHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
+import type { ImgHTMLAttributes } from "react";
 
 type RudderLogoProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src">;
 

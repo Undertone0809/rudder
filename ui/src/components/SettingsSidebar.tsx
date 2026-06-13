@@ -1,4 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { accessApi } from "@/api/access";
+import { healthApi } from "@/api/health";
+import { pluginsApi } from "@/api/plugins";
+import { Button } from "@/components/ui/button";
+import { useI18n } from "@/context/I18nContext";
+import { useOrganization } from "@/context/OrganizationContext";
+import { useSidebar } from "@/context/SidebarContext";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { useViewedOrganization } from "@/hooks/useViewedOrganization";
+import { sortOrganizationsByStoredOrder } from "@/lib/organization-order";
+import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link, NavLink, useLocation, useNavigate } from "@/lib/router";
+import { preserveSettingsOverlayState } from "@/lib/settings-overlay-state";
+import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import {
   ActivitySquare,
@@ -13,24 +27,10 @@ import {
   ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
-import { Link, NavLink, useLocation, useNavigate } from "@/lib/router";
-import { accessApi } from "@/api/access";
-import { healthApi } from "@/api/health";
-import { pluginsApi } from "@/api/plugins";
-import { queryKeys } from "@/lib/queryKeys";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { useOrganization } from "@/context/OrganizationContext";
-import { useSidebar } from "@/context/SidebarContext";
-import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
-import { sortOrganizationsByStoredOrder } from "@/lib/organization-order";
+import { useEffect, useMemo, useState } from "react";
 import { OrganizationPatternIcon } from "./OrganizationPatternIcon";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { SidebarNavItem } from "./SidebarNavItem";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { useViewedOrganization } from "@/hooks/useViewedOrganization";
-import { useI18n } from "@/context/I18nContext";
-import { preserveSettingsOverlayState } from "@/lib/settings-overlay-state";
 
 export function SettingsSidebar({
   showOrganizationSwitcher = true,

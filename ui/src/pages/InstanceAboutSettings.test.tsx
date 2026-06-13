@@ -1,9 +1,9 @@
 // @vitest-environment node
 
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
 import { en } from "@/i18n/locales/en";
 import { zhCN } from "@/i18n/locales/zh-CN";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
 import { InstanceAboutSettings, resolveAboutCurrentVersion } from "./InstanceAboutSettings";
 
 vi.mock("@tanstack/react-query", () => ({

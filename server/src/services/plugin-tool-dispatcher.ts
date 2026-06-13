@@ -23,22 +23,22 @@
  */
 
 import type { Db } from "@rudderhq/db";
+import type { ToolRunContext } from "@rudderhq/plugin-sdk";
 import type {
   PaperclipPluginManifestV1,
   PluginRecord,
 } from "@rudderhq/shared";
-import type { ToolRunContext, ToolResult } from "@rudderhq/plugin-sdk";
-import type { PluginWorkerManager } from "./plugin-worker-manager.js";
+import { logger } from "../middleware/logger.js";
 import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
+import { pluginRegistryService } from "./plugin-registry.js";
 import {
   createPluginToolRegistry,
   type PluginToolRegistry,
   type RegisteredTool,
-  type ToolListFilter,
   type ToolExecutionResult,
+  type ToolListFilter,
 } from "./plugin-tool-registry.js";
-import { pluginRegistryService } from "./plugin-registry.js";
-import { logger } from "../middleware/logger.js";
+import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
 // ---------------------------------------------------------------------------
 // Types

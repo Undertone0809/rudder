@@ -1,11 +1,11 @@
-import { useState } from "react";
-import type { Agent } from "@rudderhq/shared";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import type { Agent } from "@rudderhq/shared";
 import { User } from "lucide-react";
+import { useState } from "react";
 import { cn } from "../lib/utils";
 import { roleLabels } from "./agent-config-primitives";
 import { AgentIcon } from "./AgentIconPicker";

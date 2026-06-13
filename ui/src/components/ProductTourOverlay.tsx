@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Circle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDialog } from "@/context/DialogContext";
 import { useI18n } from "@/context/I18nContext";
 import { useNavigate } from "@/lib/router";
 import { cn } from "@/lib/utils";
+import { Check, ChevronLeft, ChevronRight, Circle, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const PRODUCT_TOUR_STORAGE_KEY = "rudder.productTour.completed.v1";
 const PRODUCT_TOUR_PENDING_STORAGE_KEY = "rudder.productTour.pendingAfterSetup.v1";

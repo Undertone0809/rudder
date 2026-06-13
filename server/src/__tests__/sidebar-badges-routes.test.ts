@@ -1,8 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
 import { errorHandler } from "../middleware/index.js";
+import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
 
 const mockSidebarBadgeService = vi.hoisted(() => ({
   getBaseCounts: vi.fn(),

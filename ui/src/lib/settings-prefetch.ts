@@ -1,4 +1,3 @@
-import type { QueryClient } from "@tanstack/react-query";
 import { accessApi } from "@/api/access";
 import { chatsApi } from "@/api/chats";
 import { healthApi } from "@/api/health";
@@ -8,6 +7,7 @@ import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
 import { pluginsApi } from "@/api/plugins";
 import { queryKeys } from "@/lib/queryKeys";
+import type { QueryClient } from "@tanstack/react-query";
 
 const SETTINGS_PREFETCH_STALE_TIME_MS = 60_000;
 const SETTINGS_PREFETCH_DEDUPE_WINDOW_MS = 750;

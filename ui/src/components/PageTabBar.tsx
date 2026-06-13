@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import type { ReactNode } from "react";
 import { useSidebar } from "../context/SidebarContext";
 import { useSlidingIndicator } from "../hooks/useSlidingIndicator";
 

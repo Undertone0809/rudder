@@ -1,5 +1,9 @@
-import { useMemo } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { authApi } from "@/api/auth";
+import { messengerApi } from "@/api/messenger";
+import { useOrganization } from "@/context/OrganizationContext";
+import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { queryKeys } from "@/lib/queryKeys";
+import { useLocation } from "@/lib/router";
 import type {
   MessengerApprovalThreadItem,
   MessengerEvent,
@@ -9,12 +13,8 @@ import type {
   MessengerThreadKind,
   MessengerThreadSummary,
 } from "@rudderhq/shared";
-import { authApi } from "@/api/auth";
-import { messengerApi } from "@/api/messenger";
-import { useOrganization } from "@/context/OrganizationContext";
-import { queryKeys } from "@/lib/queryKeys";
-import { toOrganizationRelativePath } from "@/lib/organization-routes";
-import { useLocation } from "@/lib/router";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 
 export type MessengerRouteState =
   | { kind: "root" }

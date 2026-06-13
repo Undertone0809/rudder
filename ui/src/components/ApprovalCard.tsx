@@ -1,19 +1,18 @@
-import type { ReactNode } from "react";
-import { Link } from "@/lib/router";
 import { Button } from "@/components/ui/button";
-import { Identity } from "./Identity";
+import { Link } from "@/lib/router";
+import type { Agent, Approval } from "@rudderhq/shared";
+import type { ReactNode } from "react";
+import { timeAgo } from "../lib/timeAgo";
 import { AgentIdentity } from "./AgentAvatar";
+import { ApprovalInset, ApprovalPanel } from "./approval-ui";
 import {
   approvalLabel,
-  typeIcon,
-  defaultTypeIcon,
   ApprovalPayloadRenderer,
+  defaultTypeIcon,
+  typeIcon,
   type ApprovalPayloadContext,
 } from "./ApprovalPayload";
-import { ApprovalInset, ApprovalPanel } from "./approval-ui";
 import { StatusBadge } from "./StatusBadge";
-import { timeAgo } from "../lib/timeAgo";
-import type { Approval, Agent } from "@rudderhq/shared";
 
 export function ApprovalCard({
   approval,

@@ -1,14 +1,14 @@
-import { useEffect, useState } from "react";
 import { Link } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
+import { ChevronRight, GitBranch } from "lucide-react";
+import { useEffect, useState } from "react";
 import { agentsApi, type OrgNode } from "../api/agents";
-import { useOrganization } from "../context/OrganizationContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { queryKeys } from "../lib/queryKeys";
-import { StatusBadge } from "../components/StatusBadge";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { ChevronRight, GitBranch } from "lucide-react";
+import { StatusBadge } from "../components/StatusBadge";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 
 function OrgTree({

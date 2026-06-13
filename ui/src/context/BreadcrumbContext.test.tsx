@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
-import { useEffect } from "react";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { BreadcrumbProvider, useBreadcrumbs, type Breadcrumb } from "./BreadcrumbContext";

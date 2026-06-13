@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { AgentRuntimeConfigFieldsProps } from "./types";
 import { Field, help } from "../components/agent-config-primitives";
+import type { AgentRuntimeConfigFieldsProps } from "./types";
 
 // TODO(issue-worktree-support): re-enable this UI once the workflow is ready to ship.
 const SHOW_EXPERIMENTAL_ISSUE_WORKTREE_UI = false;

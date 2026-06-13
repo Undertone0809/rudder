@@ -1,43 +1,19 @@
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
-import type { Db } from "@rudderhq/db";
 import {
   activityLog,
-  agents,
-  assets,
-  organizations,
-  organizationMemberships,
-  documents,
-  goals,
   heartbeatRuns,
-  executionWorkspaces,
-  issueAttachments,
+  issueComments,
   issueFollows,
   issueLabels,
-  issueComments,
-  issueDocuments,
   issueReadStates,
   issues,
-  labels,
-  projectWorkspaces,
-  projects,
+  labels
 } from "@rudderhq/db";
 import {
-  extractAgentMentionIds,
-  extractProjectMentionIds,
-  isUuidLike,
   type IssueSearchField,
-  type IssueSearchMatch,
-  type ReorderIssue,
+  type IssueSearchMatch
 } from "@rudderhq/shared";
-import { conflict, notFound, unprocessable } from "../errors.js";
-import {
-  defaultIssueExecutionWorkspaceSettingsForProject,
-  parseProjectExecutionWorkspacePolicy,
-} from "./execution-workspace-policy.js";
-import { instanceSettingsService } from "./instance-settings.js";
-import { redactCurrentUserText } from "../log-redaction.js";
-import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
-import { getDefaultCompanyGoal } from "./goals.js";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { conflict } from "../errors.js";
 
 
 export const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];

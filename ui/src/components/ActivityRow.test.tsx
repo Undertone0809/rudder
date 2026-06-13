@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
-import type { ReactNode } from "react";
 import { resolveActivityActorName, resolveBoardActorLabel } from "@/lib/activity-actors";
+import type { ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
 import { ActivityRow } from "./ActivityRow";
 
 vi.mock("@/lib/router", () => ({

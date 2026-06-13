@@ -1,4 +1,3 @@
-import { Command } from "commander";
 import {
   organizationSkillImportSchema,
   organizationSkillLocalScanRequestSchema,
@@ -10,6 +9,8 @@ import {
   type OrganizationSkillLocalScanResult,
   type OrganizationSkillProjectScanResult,
 } from "@rudderhq/shared";
+import { Command } from "commander";
+import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
   formatInlineRecord,
@@ -18,7 +19,6 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
-import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 
 interface SkillListOptions extends BaseClientOptions {
   orgId?: string;

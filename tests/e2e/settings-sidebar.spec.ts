@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { E2E_CODEX_STUB } from "./support/e2e-env";
 
 test.describe("Settings sidebar", () => {
   test("keeps fixed light mode even when the system prefers dark", async ({ page }) => {

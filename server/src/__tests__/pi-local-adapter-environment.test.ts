@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { testEnvironment } from "@rudderhq/agent-runtime-pi-local/server";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { testEnvironment } from "@rudderhq/agent-runtime-pi-local/server";
+import { describe, expect, it } from "vitest";
 
 async function writeFakePiCommand(binDir: string, mode: "success" | "stale-package"): Promise<void> {
   const commandPath = path.join(binDir, "pi");

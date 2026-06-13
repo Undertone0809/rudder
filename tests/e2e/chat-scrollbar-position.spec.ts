@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
-import { E2E_DATABASE_URL } from "./support/e2e-env";
 import { createE2EChatAgent } from "./support/chat-agent";
+import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 

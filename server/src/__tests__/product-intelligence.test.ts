@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
 import type {
   AgentRuntimeExecutionResult,
   ServerAgentRuntimeModule,
 } from "@rudderhq/agent-runtime-utils";
 import type { OrganizationIntelligenceProfile } from "@rudderhq/shared";
+import { describe, expect, it, vi } from "vitest";
 import { executeResolvedProductIntelligenceProfile } from "../services/product-intelligence.js";
 
 function result(patch: Partial<AgentRuntimeExecutionResult>): AgentRuntimeExecutionResult {

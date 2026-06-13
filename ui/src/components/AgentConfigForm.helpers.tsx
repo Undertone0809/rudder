@@ -1,72 +1,31 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AGENT_RUNTIME_TYPES,
-  AGENT_RUN_CONCURRENCY_DEFAULT,
-  AGENT_RUN_CONCURRENCY_MAX,
-  AGENT_RUN_CONCURRENCY_MIN,
-} from "@rudderhq/shared";
-import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
-import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
-import type {
-  Agent,
-  AgentRuntimeEnvironmentTestResult,
-  OrganizationSecret,
-  EnvBinding,
-} from "@rudderhq/shared";
-import type { AgentRuntimeModel } from "../api/agents";
-import { agentsApi } from "../api/agents";
-import { secretsApi } from "../api/secrets";
-import { assetsApi } from "../api/assets";
+import { models as CLAUDE_LOCAL_MODELS } from "@rudderhq/agent-runtime-claude-local";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudderhq/agent-runtime-codex-local";
-import { models as CLAUDE_LOCAL_MODELS } from "@rudderhq/agent-runtime-claude-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
-import {
-  semanticBadgeToneClasses,
-} from "@/components/ui/semanticTones";
-import { Heart, ChevronDown, Plus, Trash2, X } from "lucide-react";
-import { cn, formatTime } from "../lib/utils";
-import { extractModelName, extractProviderId } from "../lib/model-utils";
-import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
-import { resolveRuntimeModels } from "../lib/runtime-models";
-import { queryKeys } from "../lib/queryKeys";
-import { useOrganization } from "../context/OrganizationContext";
-import { useDialog } from "../context/DialogContext";
-import {
-  Field,
-  ToggleField,
-  ToggleWithNumber,
-  CollapsibleSection,
-  DraftInput,
-  DraftNumberInput,
-  help,
-  adapterLabels,
-} from "./agent-config-primitives";
-import { defaultCreateValues } from "./agent-config-defaults";
+import type { CreateConfigValues, ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
+import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
+import type {
+  Agent,
+  AgentRuntimeEnvironmentTestResult,
+  EnvBinding
+} from "@rudderhq/shared";
 import { getUIAdapter } from "../agent-runtimes";
-import type { AgentRuntimeConfigFieldsProps } from "../agent-runtimes/types";
-import { ClaudeLocalAdvancedFields } from "../agent-runtimes/claude-local/config-fields";
-import { MarkdownEditor } from "./MarkdownEditor";
-import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
-import { ReportsToPicker } from "./ReportsToPicker";
+import type { AgentRuntimeModel } from "../api/agents";
+import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
+import { defaultCreateValues } from "./agent-config-defaults";
+import {
+  adapterLabels
+} from "./agent-config-primitives";
 
 /* ---- Create mode values ---- */
 
 // Canonical type lives in @rudderhq/agent-runtime-utils; re-exported here
 // so existing imports from this file keep working.
 export type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
-import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 
 export type AgentConfigFormProps = {
   adapterModels?: AgentRuntimeModel[];

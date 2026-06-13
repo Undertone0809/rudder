@@ -1,19 +1,18 @@
+import * as p from "@clack/prompts";
+import type {
+  Organization,
+  OrganizationPortabilityExportResult,
+  OrganizationPortabilityFileEntry,
+  OrganizationPortabilityImportResult,
+  OrganizationPortabilityInclude,
+  OrganizationPortabilityPreviewResult,
+} from "@rudderhq/shared";
 import { Command } from "commander";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import * as p from "@clack/prompts";
 import pc from "picocolors";
-import type {
-  Organization,
-  OrganizationPortabilityFileEntry,
-  OrganizationPortabilityExportResult,
-  OrganizationPortabilityInclude,
-  OrganizationPortabilityPreviewResult,
-  OrganizationPortabilityImportResult,
-} from "@rudderhq/shared";
-import { ApiRequestError } from "../../client/http.js";
 import { openUrl } from "../../client/board-auth.js";
-import { binaryContentTypeByExtension, readZipArchive } from "./zip.js";
+import { ApiRequestError } from "../../client/http.js";
 import {
   addCommonClientOptions,
   formatInlineRecord,
@@ -22,6 +21,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { binaryContentTypeByExtension, readZipArchive } from "./zip.js";
 
 interface CompanyCommandOptions extends BaseClientOptions {}
 type CompanyDeleteSelectorMode = "auto" | "id" | "prefix";

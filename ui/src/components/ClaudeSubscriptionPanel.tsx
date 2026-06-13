@@ -1,5 +1,5 @@
-import type { QuotaWindow } from "@rudderhq/shared";
 import { cn, quotaSourceDisplayName } from "@/lib/utils";
+import type { QuotaWindow } from "@rudderhq/shared";
 
 interface ClaudeSubscriptionPanelProps {
   windows: QuotaWindow[];

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { HeartbeatRun } from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
 import { diagnoseRun } from "./diagnosis.js";
 import { observedRunFromFilesystem } from "./loaders/rudder.js";
 

@@ -1,20 +1,20 @@
-import os from "node:os";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import type { Db } from "@rudderhq/db";
 import type {
   AgentRuntimeExecutionResult,
   AgentRuntimeInvocationMeta,
   ServerAgentRuntimeModule,
 } from "@rudderhq/agent-runtime-utils";
+import type { Db } from "@rudderhq/db";
 import type { OrganizationIntelligenceProfile, OrganizationIntelligenceProfilePurpose } from "@rudderhq/shared";
-import { unprocessable } from "../errors.js";
+import { randomUUID } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
 import { findServerAdapter } from "../agent-runtimes/registry.js";
-import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
+import { unprocessable } from "../errors.js";
 import {
   organizationIntelligenceProfileService,
   sanitizeConfigForProductIntelligence,
 } from "./organization-intelligence-profiles.js";
+import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
 import { secretService } from "./secrets.js";
 
 export interface ProductIntelligenceExecuteInput {

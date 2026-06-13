@@ -1,8 +1,8 @@
-import type { ComponentType } from "react";
 import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import type { ComponentType } from "react";
 
 // Re-export shared types so local consumers don't need to change imports
-export type { TranscriptEntry, StdoutLineParser, CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+export type { CreateConfigValues, StdoutLineParser, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 
 export interface AgentRuntimeConfigFieldsProps {
   mode: "create" | "edit";

@@ -1,8 +1,8 @@
 import type {
-  AgentRuntimeType,
-  PauseReason,
   AgentRole,
+  AgentRuntimeType,
   AgentStatus,
+  PauseReason,
 } from "../constants.js";
 import type {
   OrganizationMembership,

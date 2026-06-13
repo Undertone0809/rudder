@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { Request } from "express";
+import { describe, expect, it } from "vitest";
 import { buildInviteOnboardingTextDocument } from "../routes/access.js";
 
 function buildReq(host: string): Request {

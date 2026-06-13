@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
 
-import type { ReactNode } from "react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import type { ChatConversation, ChatMessage, Project } from "@rudderhq/shared";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
-import { Chat } from "./Chat";
+import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
 import {
   resetChatPendingAttachmentsForTests,
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
 } from "@/lib/chat-pending-attachments";
-import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
+import type { ChatConversation, ChatMessage, Project } from "@rudderhq/shared";
+import type { ReactNode } from "react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Chat } from "./Chat";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }

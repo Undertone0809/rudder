@@ -1,29 +1,29 @@
+import { Button } from "@/components/ui/button";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { PluginSlotOutlet } from "@/plugins/slots";
+import { useQuery } from "@tanstack/react-query";
 import {
   CircleDot,
   Clock3,
-  Target,
   LayoutDashboard,
   MessageSquare,
   Network,
+  Repeat,
   Search,
   SquarePen,
-  Repeat,
+  Target,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { SidebarSection } from "./SidebarSection";
-import { SidebarNavItem } from "./SidebarNavItem";
-import { SidebarProjects } from "./SidebarProjects";
-import { SidebarChatSessions } from "./SidebarChatSessions";
-import { SidebarAgents } from "./SidebarAgents";
-import { OrganizationSwitcher } from "./OrganizationSwitcher";
+import { heartbeatsApi } from "../api/heartbeats";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
-import { heartbeatsApi } from "../api/heartbeats";
-import { queryKeys } from "../lib/queryKeys";
 import { useInboxBadge } from "../hooks/useInboxBadge";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import { Button } from "@/components/ui/button";
-import { PluginSlotOutlet } from "@/plugins/slots";
+import { queryKeys } from "../lib/queryKeys";
+import { OrganizationSwitcher } from "./OrganizationSwitcher";
+import { SidebarAgents } from "./SidebarAgents";
+import { SidebarChatSessions } from "./SidebarChatSessions";
+import { SidebarNavItem } from "./SidebarNavItem";
+import { SidebarProjects } from "./SidebarProjects";
+import { SidebarSection } from "./SidebarSection";
 
 export function MobileWorkspaceDrawer() {
   const { openNewIssue } = useDialog();

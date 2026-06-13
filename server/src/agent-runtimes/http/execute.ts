@@ -1,5 +1,5 @@
 import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "../types.js";
-import { asString, asNumber, parseObject } from "../utils.js";
+import { asNumber, asString, parseObject } from "../utils.js";
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
   const { config, runId, agent, context } = ctx;

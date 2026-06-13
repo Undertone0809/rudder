@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "@/api/issues";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { queryKeys } from "@/lib/queryKeys";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 export const LEGACY_STARRED_ISSUES_KEY = "rudder:starred-issues";
 

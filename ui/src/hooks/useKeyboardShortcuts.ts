@@ -1,10 +1,10 @@
-import { useEffect } from "react";
-import type { KeyboardShortcutSettings } from "@rudderhq/shared";
+import { hasBlockingEscapeLayer } from "@/lib/detail-escape";
 import {
   eventMatchesShortcutAction,
   isEditableShortcutTarget,
 } from "@/lib/keyboard-shortcuts";
-import { hasBlockingEscapeLayer } from "@/lib/detail-escape";
+import type { KeyboardShortcutSettings } from "@rudderhq/shared";
+import { useEffect } from "react";
 
 interface ShortcutHandlers {
   onNewIssue?: () => void;

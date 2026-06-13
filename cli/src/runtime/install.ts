@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import type { Stats } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolveRudderHomeDir } from "../config/home.js";
 

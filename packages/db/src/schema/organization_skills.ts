@@ -1,11 +1,11 @@
 import {
+  index,
+  jsonb,
   pgTable,
-  uuid,
   text,
   timestamp,
-  jsonb,
-  index,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations.js";
 
