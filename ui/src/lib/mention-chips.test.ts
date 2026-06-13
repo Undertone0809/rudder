@@ -104,6 +104,7 @@ describe("mention chips", () => {
       issueId: "issue-123",
       ref: "RUD-123",
       commentId: "comment-456",
+      status: null,
     });
 
     expect(mention ? mentionChipNavigationPath(mention) : null).toBe("/issues/RUD-123#comment-comment-456");
@@ -115,10 +116,21 @@ describe("mention chips", () => {
       issueId: "issue-123",
       ref: "RUD-123",
       commentId: "comment-456",
+      status: null,
     });
 
     expect(element.dataset.mentionKind).toBe("issue");
     expect(element.classList.contains("rudder-mention-chip--issue")).toBe(true);
+  });
+
+  it("parses issue mention status metadata for rendered chips", () => {
+    expect(parseMentionChipHref("issue://issue-123?r=RUD-123&s=in_review")).toEqual({
+      kind: "issue",
+      issueId: "issue-123",
+      ref: "RUD-123",
+      commentId: null,
+      status: "in_review",
+    });
   });
 
   it("parses and decorates library file mention links", () => {

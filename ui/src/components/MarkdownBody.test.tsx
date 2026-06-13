@@ -433,6 +433,22 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain(">@PAP-123 auth flow</a>");
   });
 
+  it("renders issue mentions with status metadata using the issue status icon", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[@PAP-123 auth flow](${buildIssueMentionHref("issue-789", "PAP-123", null, "in_review")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/issues/PAP-123"');
+    expect(html).toContain('data-mention-kind="issue"');
+    expect(html).toContain("rudder-mention-chip--with-status-icon");
+    expect(html).toContain('data-slot="issue-status-icon"');
+    expect(html).toContain('data-status="in_review"');
+  });
+
   it("renders issue comment mentions as chips that link to the comment anchor", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

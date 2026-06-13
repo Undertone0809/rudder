@@ -135,7 +135,7 @@ function mentionTokenDetails(option: MentionOption, agentMentionIntent?: "refere
     return { href: option.skillMarkdownTarget, label: option.skillRefLabel };
   }
   if (option.kind === "issue" && option.issueId) {
-    return { href: buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null), label: option.name };
+    return { href: buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null, null, option.issueStatus ?? null), label: option.name };
   }
   if (option.kind === "chat" && option.chatConversationId) {
     return { href: buildChatMentionHref(option.chatConversationId, option.chatTitle ?? option.name), label: option.name };

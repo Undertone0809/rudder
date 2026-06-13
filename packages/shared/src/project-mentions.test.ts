@@ -101,6 +101,7 @@ describe("project-mentions", () => {
       issueId: "issue-123",
       ref: "PAP-123",
       commentId: null,
+      status: null,
     });
     expect(extractIssueMentionIds(`[@PAP-123](${href})`)).toEqual(["issue-123"]);
   });
@@ -112,11 +113,30 @@ describe("project-mentions", () => {
       issueId: "issue-123",
       ref: "PAP-123",
       commentId: "comment-456",
+      status: null,
     });
     expect(parseIssueMentionHref("issue://issue-123?ref=PAP-123&commentId=comment-456")).toEqual({
       issueId: "issue-123",
       ref: "PAP-123",
       commentId: "comment-456",
+      status: null,
+    });
+  });
+
+  it("round-trips issue mentions with status metadata", () => {
+    const href = buildIssueMentionHref("issue-123", "PAP-123", null, "in_review");
+    expect(href).toBe("issue://issue-123?r=PAP-123&s=in_review");
+    expect(parseIssueMentionHref(href)).toEqual({
+      issueId: "issue-123",
+      ref: "PAP-123",
+      commentId: null,
+      status: "in_review",
+    });
+    expect(parseIssueMentionHref("issue://issue-123?ref=PAP-123&status=blocked")).toEqual({
+      issueId: "issue-123",
+      ref: "PAP-123",
+      commentId: null,
+      status: "blocked",
     });
   });
 

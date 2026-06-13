@@ -880,7 +880,7 @@ function mentionTokenDetails(option: MentionOption, agentMentionIntent?: "refere
   }
   if (option.kind === "issue" && option.issueId) {
     return {
-      href: buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null),
+      href: buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null, null, option.issueStatus ?? null),
       isSkill: false,
       label: option.name,
     };
@@ -1764,7 +1764,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                 const mentionHref = option.kind === "project" && option.projectId
                   ? buildProjectMentionHref(option.projectId, option.projectColor ?? null, option.projectIcon ?? null)
                   : option.kind === "issue" && option.issueId
-                    ? buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null)
+                    ? buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null, null, option.issueStatus ?? null)
                     : option.kind === "chat" && option.chatConversationId
                       ? buildChatMentionHref(option.chatConversationId, option.chatTitle ?? option.name)
                       : option.kind === "library_doc" && option.libraryDocumentId

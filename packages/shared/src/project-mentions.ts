@@ -54,6 +54,7 @@ export interface ParsedIssueMention {
   issueId: string;
   ref: string | null;
   commentId: string | null;
+  status: string | null;
 }
 
 export interface ParsedChatMention {
@@ -205,13 +206,15 @@ export function parseAgentMentionHref(href: string): ParsedAgentMention | null {
   };
 }
 
-export function buildIssueMentionHref(issueId: string, ref?: string | null, commentId?: string | null): string {
+export function buildIssueMentionHref(issueId: string, ref?: string | null, commentId?: string | null, status?: string | null): string {
   const trimmedIssueId = issueId.trim();
   const trimmedRef = ref?.trim();
   const trimmedCommentId = commentId?.trim();
+  const trimmedStatus = status?.trim();
   const params = new URLSearchParams();
   if (trimmedRef) params.set("r", trimmedRef);
   if (trimmedCommentId) params.set("c", trimmedCommentId);
+  if (trimmedStatus) params.set("s", trimmedStatus);
   const query = params.toString();
   return query ? `${ISSUE_MENTION_SCHEME}${trimmedIssueId}?${query}` : `${ISSUE_MENTION_SCHEME}${trimmedIssueId}`;
 }
@@ -233,11 +236,13 @@ export function parseIssueMentionHref(href: string): ParsedIssueMention | null {
 
   const ref = (url.searchParams.get("r") ?? url.searchParams.get("ref") ?? "").trim() || null;
   const commentId = (url.searchParams.get("c") ?? url.searchParams.get("commentId") ?? "").trim() || null;
+  const status = (url.searchParams.get("s") ?? url.searchParams.get("status") ?? "").trim() || null;
 
   return {
     issueId,
     ref,
     commentId,
+    status,
   };
 }
 

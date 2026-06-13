@@ -22,6 +22,7 @@ export type ParsedMentionChip =
       issueId: string;
       ref: string | null;
       commentId: string | null;
+      status: string | null;
     }
   | {
       kind: "chat";
@@ -83,6 +84,7 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
       issueId: issue.issueId,
       ref: issue.ref,
       commentId: issue.commentId,
+      status: issue.status,
     };
   }
 

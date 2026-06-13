@@ -844,7 +844,7 @@ export function mentionTokenDetails(
   }
   if (option.kind === "issue" && option.issueId) {
     return {
-      href: buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null),
+      href: buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null, null, option.issueStatus ?? null),
       isSkill: false,
       label: option.name,
     };
