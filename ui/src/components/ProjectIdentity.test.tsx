@@ -14,7 +14,10 @@ describe("ProjectIdentity", () => {
       root.render(<ProjectIcon color={PROJECT_COLORS[0]} icon={null} label="Project identity" />);
     });
 
-    expect(container.querySelector('[aria-label="Project identity"]')).toBeTruthy();
+    const projectIcon = container.querySelector<HTMLElement>('[aria-label="Project identity"]');
+    expect(projectIcon).toBeTruthy();
+    expect(projectIcon?.style.getPropertyValue("--project-accent-color")).toBe("#6366f1");
+    expect(projectIcon?.style.background).toBe("");
     act(() => root.unmount());
   });
 

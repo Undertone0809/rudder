@@ -1,4 +1,4 @@
-import { projectColorBackgroundStyle } from "@/lib/project-colors";
+import { projectColorBackgroundStyle, projectColorCssVars } from "@/lib/project-colors";
 import { getProjectIconComponent, normalizeProjectIconName } from "@/lib/project-icons";
 import { cn } from "@/lib/utils";
 import { DEFAULT_PROJECT_ICON, PROJECT_COLORS, PROJECT_ICONS, type ProjectIconName } from "@rudderhq/shared";
@@ -47,11 +47,11 @@ export function ProjectIcon({
     <span
       data-testid={testId}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center text-white shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_24%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_72%,transparent)]",
+        "inline-flex shrink-0 items-center justify-center text-[color:var(--project-accent-color)]",
         iconSizeClass[size],
         className,
       )}
-      style={projectColorBackgroundStyle(color)}
+      style={projectColorCssVars(color)}
       aria-label={label}
       aria-hidden={label ? undefined : true}
     >
@@ -104,7 +104,7 @@ export function ProjectIdentityPicker({
 }) {
   const currentIcon = normalizeProjectIconName(icon);
   return (
-    <div className={cn("w-72 space-y-3 p-2", className)}>
+    <div className={cn("w-72 space-y-3 p-2", className)} style={projectColorCssVars(color)}>
       <div className="grid grid-cols-6 gap-1.5" aria-label="Project colors">
         {PROJECT_COLORS.map((candidate) => {
           const selected = candidate === color;
@@ -137,7 +137,7 @@ export function ProjectIdentityPicker({
               className={cn(
                 "relative inline-flex h-8 w-8 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] border text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
                 selected
-                  ? "border-[color:var(--project-accent-color,var(--accent-base))] bg-accent text-foreground"
+                  ? "border-[color:color-mix(in_oklab,var(--project-accent-color)_54%,var(--border-base))] bg-muted/55 text-[color:var(--project-accent-color)]"
                   : "border-border/70 bg-transparent",
               )}
               aria-label={`Select ${candidate} project icon`}
@@ -145,7 +145,7 @@ export function ProjectIdentityPicker({
               onClick={() => onIconChange(candidate)}
             >
               <Icon className="h-4 w-4" />
-              {selected ? <Check className="absolute h-2.5 w-2.5 translate-x-2.5 translate-y-2.5 text-foreground" /> : null}
+              {selected ? <Check className="absolute h-2.5 w-2.5 translate-x-2.5 translate-y-2.5 text-[color:var(--project-accent-color)]" /> : null}
             </button>
           );
         })}
