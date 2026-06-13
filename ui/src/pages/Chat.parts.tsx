@@ -455,16 +455,23 @@ export function inferAttachmentExtension(contentType: string) {
   return subtype && subtype.length > 0 ? subtype : "bin";
 }
 
+const stagedPendingAttachmentKeys = new WeakMap<File, string>();
+let stagedPendingAttachmentKeySequence = 0;
+
 export async function materializePendingAttachment(file: File, index: number) {
   const buffer = await file.arrayBuffer();
   const filename = file.name.trim() || `pasted-attachment-${index + 1}.${inferAttachmentExtension(file.type)}`;
-  return new File([buffer], filename, {
+  const materializedFile = new File([buffer], filename, {
     type: file.type,
     lastModified: file.lastModified || Date.now(),
   });
+  stagedPendingAttachmentKeys.set(materializedFile, `staged-${++stagedPendingAttachmentKeySequence}`);
+  return materializedFile;
 }
 
 export function pendingAttachmentKey(file: File) {
+  const stagedKey = stagedPendingAttachmentKeys.get(file);
+  if (stagedKey) return stagedKey;
   return `${file.name}-${file.size}-${file.lastModified}`;
 }
 

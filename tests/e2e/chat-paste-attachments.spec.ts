@@ -93,6 +93,54 @@ async function pasteTextAttachment(page: Page, fileName: string, contents: strin
   );
 }
 
+async function pasteSameNamedImages(page: Page, count: number) {
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.evaluate(
+    async (element, imageCount) => {
+      const dataTransfer = new DataTransfer();
+      for (let index = 0; index < imageCount; index += 1) {
+        dataTransfer.items.add(
+          new File([`image-${index}`], "image.png", {
+            type: "image/png",
+            lastModified: 1000,
+          }),
+        );
+      }
+
+      const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(pasteEvent, "clipboardData", {
+        value: dataTransfer,
+      });
+      element.dispatchEvent(pasteEvent);
+    },
+    count,
+  );
+}
+
+test("keeps multiple same-named pasted images staged independently", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1100 });
+  const organization = await createStreamingOrg(page, `Paste-Multi-Images-${Date.now()}`, {
+    model: "gpt-5.4",
+  });
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
+  await pasteSameNamedImages(page, 4);
+
+  const pendingAttachments = page.getByTestId("chat-pending-attachment");
+  await expect(pendingAttachments).toHaveCount(4);
+  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(4);
+
+  await page.getByRole("button", { name: "Remove image.png" }).first().click();
+  await expect(pendingAttachments).toHaveCount(3);
+  await expect(page.getByTestId("chat-pending-image-attachment")).toHaveCount(3);
+});
+
 test("pastes clipboard images and files into chat as pending attachments and exposes them to the assistant", async ({ page }) => {
   const { tempDir, stubPath, capturePath } = await createAttachmentAwareCodexStub();
   try {

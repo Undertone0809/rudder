@@ -762,6 +762,42 @@ describe("Chat attachment previews", () => {
     expect(container.textContent).not.toContain("Turn a chat into an issue");
   });
 
+  it("keeps multiple pasted images with identical clipboard metadata staged", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "plain-user-message", body: "Please inspect these screenshots." })],
+    };
+
+    const { container } = renderChat();
+    const editorScroll = container.querySelector("[data-testid='chat-composer-editor-scroll']");
+    expect(editorScroll).not.toBeNull();
+
+    const images = Array.from({ length: 4 }, (_, index) =>
+      new File([`image-${index}`], "image.png", {
+        type: "image/png",
+        lastModified: 1000,
+      })
+    );
+    await act(async () => {
+      dispatchPasteFiles(editorScroll!, images);
+      await Promise.resolve();
+    });
+
+    expect(container.querySelectorAll("[data-testid='chat-pending-attachment']")).toHaveLength(4);
+    expect(container.querySelectorAll("[data-testid='chat-pending-image-attachment']")).toHaveLength(4);
+
+    const removeButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[aria-label='Remove image.png']"),
+    );
+    expect(removeButtons).toHaveLength(4);
+
+    await act(async () => {
+      removeButtons[0]?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelectorAll("[data-testid='chat-pending-attachment']")).toHaveLength(3);
+  });
+
   it("approves issue proposals with the operator-selected issue status", async () => {
     const { container } = renderChat();
 
