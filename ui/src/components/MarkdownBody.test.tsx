@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
+import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "../context/ThemeContext";
 import { MarkdownBody } from "./MarkdownBody";
 import type { MentionOption } from "./MarkdownEditor";
@@ -691,6 +691,7 @@ describe("MarkdownBody", () => {
     expect(document.body.textContent).toContain("Rudder dev");
     expect(document.body.textContent).toContain("Wesley");
     expect(document.body.querySelector('[data-slot="issue-status-icon"]')).toBeTruthy();
+    expect(document.body.querySelector(".rudder-entity-preview-card")?.classList.contains("motion-entity-preview-pop")).toBe(true);
   });
 
   it("loads an issue comment preview from comment-anchored issue links", async () => {

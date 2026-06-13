@@ -387,7 +387,7 @@ export function RudderEntityPreview({ mention, label, children }: RudderEntityPr
             align="center"
             sideOffset={8}
             collisionPadding={16}
-            className={cn("rudder-entity-preview-card", state.status === "loading" && "rudder-entity-preview-card--loading")}
+            className={cn("rudder-entity-preview-card motion-entity-preview-pop", state.status === "loading" && "rudder-entity-preview-card--loading")}
           >
             {state.status === "ready" ? (
               <PreviewContent preview={state.preview} />

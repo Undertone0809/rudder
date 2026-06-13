@@ -386,6 +386,39 @@
   animation-delay: 84ms;
 }
 
+.motion-entity-preview-pop {
+  transform-origin: var(--radix-tooltip-content-transform-origin, top center);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+  will-change: opacity, transform, filter;
+}
+
+.rudder-entity-preview-card.motion-entity-preview-pop:is([data-state="delayed-open"], [data-state="instant-open"]) {
+  animation: rudder-entity-preview-pop var(--motion-duration-standard) var(--motion-ease-enter) both;
+}
+
+.rudder-entity-preview-card.motion-entity-preview-pop[data-state="closed"] {
+  animation: rudder-entity-preview-close var(--motion-duration-fast) var(--motion-ease-exit) both;
+}
+
+.rudder-entity-preview-wrap > :is(a, button, [role="button"]) {
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    text-decoration-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.rudder-entity-preview-wrap:is(:hover, :focus-within) > :is(a, button, [role="button"]) {
+  text-decoration-color: currentColor;
+}
+
+.rudder-entity-preview-wrap > :is(a, button, [role="button"]):focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent-base) 10%, transparent);
+}
+
 .motion-disclosure-enter {
   transform-origin: top;
   animation: rudder-disclosure-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
@@ -717,6 +750,40 @@
   }
 }
 
+@keyframes rudder-entity-preview-pop {
+  0% {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translate3d(0, -6px, 0) scale(0.97);
+  }
+
+  68% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate3d(0, 1px, 0) scale(1.006);
+  }
+
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes rudder-entity-preview-close {
+  from {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    filter: blur(1px);
+    transform: translate3d(0, -4px, 0) scale(0.985);
+  }
+}
+
 @keyframes rudder-disclosure-enter {
   0% {
     opacity: 0;
@@ -749,6 +816,7 @@
   .motion-chat-empty-recent-conversations,
   .motion-organization-menu-pop,
   .motion-organization-menu-pop [data-org-menu-item],
+  .motion-entity-preview-pop,
   .motion-disclosure-enter,
   .rudder-text-dots__dot {
     animation: none !important;
@@ -768,6 +836,8 @@
   .motion-chat-empty-recent-conversations,
   .motion-rail-active-indicator,
   .motion-context-active-indicator,
+  .motion-entity-preview-pop,
+  .rudder-entity-preview-wrap > :is(a, button, [role="button"]),
   .motion-disclosure-icon {
     transition: none !important;
   }
@@ -799,10 +869,12 @@
   .motion-chat-empty-heading,
   .motion-organization-menu-pop,
   .motion-organization-menu-pop [data-org-menu-item],
+  .motion-entity-preview-pop,
   .motion-disclosure-enter {
     opacity: 1 !important;
     transform: none !important;
     scale: 1 !important;
     clip-path: none !important;
+    filter: none !important;
   }
 }

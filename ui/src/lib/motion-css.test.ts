@@ -93,6 +93,19 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("clip-path: inset(0 16% 100% 0 round var(--radius-md))");
   });
 
+  it("defines entity hover preview motion with reduced-motion coverage", () => {
+    expect(motionCss).toContain(".motion-entity-preview-pop");
+    expect(motionCss).toContain('@keyframes rudder-entity-preview-pop');
+    expect(motionCss).toContain('@keyframes rudder-entity-preview-close');
+    expect(motionCss).toContain('.rudder-entity-preview-card.motion-entity-preview-pop:is([data-state="delayed-open"], [data-state="instant-open"])');
+    expect(motionCss).toContain('.rudder-entity-preview-card.motion-entity-preview-pop[data-state="closed"]');
+    expect(motionCss).toContain(".rudder-entity-preview-wrap:is(:hover, :focus-within)");
+    expect(motionCss).toContain('.rudder-entity-preview-wrap > :is(a, button, [role="button"]):focus-visible');
+    expect(motionCss).toMatch(/\.motion-entity-preview-pop,[\s\S]*?animation: none !important/);
+    expect(motionCss).toMatch(/\.motion-entity-preview-pop,[\s\S]*?transition: none !important/);
+    expect(motionCss).toMatch(/\.motion-entity-preview-pop,[\s\S]*?filter: none !important/);
+  });
+
   it("defines motion for transcript disclosure controls", () => {
     expect(motionCss).toContain(".motion-disclosure-enter");
     expect(motionCss).toContain(".motion-disclosure-icon");
