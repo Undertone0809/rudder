@@ -180,7 +180,7 @@ describe("index.css motion rules", () => {
     expect(tabScrollerScrollbar).toContain("height: 4px !important");
   });
 
-  it("keeps Library file-tab corners aligned with the desktop workspace radius", () => {
+  it("keeps Library file-tab chrome and sidebar dividers aligned", () => {
     const editorSurface = cssBlock(".rudder-doc-editor-surface");
     const tabStrip = cssBlock(".rudder-doc-editor-tab-strip");
     const sidebarHeader = cssBlock(".rudder-doc-editor-sidebar-header");
@@ -198,7 +198,7 @@ describe("index.css motion rules", () => {
     expect(sidebarHeader).toContain("height: var(--rudder-doc-editor-sidebar-header-height)");
     expect(sidebarBreadcrumbOnly).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-breadcrumb-height)");
     expect(sidebarTabsOnly).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height)");
-    expect(sidebarTabsAndBreadcrumb).toContain("--rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) + var(--rudder-doc-editor-breadcrumb-height))");
+    expect(sidebarTabsAndBreadcrumb).toContain("--rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
     expect(sidebarChromeStates).toContain("align-items: flex-start");
     expect(sidebarChromeStates).toContain("padding-top: calc((var(--rudder-doc-editor-sidebar-header-content-height) - 28px) / 2)");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
@@ -217,6 +217,7 @@ describe("index.css motion rules", () => {
     expect(organizationWorkspacesSource).toContain("sidebarHasTabStrip && !sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--tabs-only\"");
     expect(organizationWorkspacesSource).toContain("!sidebarHasTabStrip && sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--breadcrumb-only\"");
     expect(organizationWorkspacesSource).toContain("sidebarHasTabStrip && sidebarHasBreadcrumb && \"rudder-doc-editor-sidebar-header--tabs-and-breadcrumb\"");
+    expect(organizationWorkspacesSource).toContain("flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border transition-colors");
     expect(tabStripClassTokens).toContain("rounded-tr-[var(--radius-lg)]");
     expect(tabStripClassTokens).toContain("border-r");
     expect(tabStripClassTokens).toContain("border-[color:var(--border-base)]");
