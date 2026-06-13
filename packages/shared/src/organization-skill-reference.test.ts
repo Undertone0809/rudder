@@ -32,7 +32,7 @@ const organizationSkill: OrganizationSkillListItem = {
   sourceType: "local_path",
   sourceLocator: "/workspace/skills/alpha-test",
   sourceBadge: "local",
-  sourceLabel: "Rudder workspace",
+  sourceLabel: "Organization library",
   sourcePath: "/workspace/skills/alpha-test/SKILL.md",
   workspaceEditPath: null,
   description: null,
@@ -117,7 +117,7 @@ describe("organization-skill-reference", () => {
     const searchText = buildOrganizationSkillSearchText(organizationSkill, agentContext);
     expect(searchText).toContain("org/acme/builder/alpha-test");
     expect(searchText).toContain("alpha test");
-    expect(searchText).toContain("rudder workspace");
+    expect(searchText).toContain("organization library");
     expect(searchText).toContain("/workspace/skills/alpha-test/skill.md");
     expect(searchText).not.toContain("organization/org-123/alpha-test");
   });

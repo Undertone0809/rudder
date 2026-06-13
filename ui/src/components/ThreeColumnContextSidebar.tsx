@@ -561,7 +561,7 @@ function ProjectListSection({
       </SectionLabel>
       <SlidingContextNav
         activeIndex={activeProjectIndex}
-        ariaLabel="Project workspaces"
+        ariaLabel="Projects"
         className="motion-context-nav--project-card-list scrollbar-auto-hide mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
         scrollRef={scrollRef}
         indicatorTestId="project-sidebar-active-indicator"
@@ -592,7 +592,7 @@ function ProjectListSection({
                 <span className="truncate text-sm font-medium text-foreground">{project.name}</span>
               </div>
               <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                {project.description || "Project workspace"}
+                {project.description || "Project"}
               </div>
             </Link>
           );
@@ -1449,7 +1449,7 @@ export function ThreeColumnContextSidebar() {
           <SectionLabel>Org</SectionLabel>
           <SlidingContextNav
             activeIndex={activeOrgContextIndex}
-            ariaLabel="Organization workspaces"
+            ariaLabel="Organization surfaces"
             className="mt-2"
             indicatorTestId="org-sidebar-active-indicator"
           >

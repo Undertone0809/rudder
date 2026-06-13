@@ -280,10 +280,10 @@ export function resolveRuntimeSessionParamsForWorkspace(input: {
     sessionParams: migratedSessionParams,
     warning:
       previousCwd
-        ? `Agent workspace "${canonicalAgentCwd}" is now the canonical run workspace. ` +
+        ? `Agent directory "${canonicalAgentCwd}" is now the canonical run directory. ` +
           `Attempting to resume session "${previousSessionId}" that was previously saved in "${previousCwd}".`
-        : `Agent workspace "${canonicalAgentCwd}" is now the canonical run workspace. ` +
-          `Attempting to resume session "${previousSessionId}" with the canonical agent workspace attached.`,
+        : `Agent directory "${canonicalAgentCwd}" is now the canonical run directory. ` +
+          `Attempting to resume session "${previousSessionId}" with the canonical agent directory attached.`,
   };
 }
 

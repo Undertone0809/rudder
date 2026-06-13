@@ -158,21 +158,21 @@ export const en = {
   "organizationSettings.save.button": "Save changes",
   "organizationSettings.save.saved": "Saved",
   "organizationSettings.save.failed": "Failed to save",
-  "organizationSettings.workspace.shared.title": "Shared organization workspace",
+  "organizationSettings.workspace.shared.title": "Shared organization Library",
   "organizationSettings.workspace.shared.description":
-    "This path is system-managed per organization and cannot be changed. Use Workspaces to browse shared files, plans, and skill packages.",
-  "organizationSettings.workspace.rootPath.label": "Workspace root",
+    "This path is system-managed per organization and cannot be changed. Use Library to browse shared files, plans, and skill packages.",
+  "organizationSettings.workspace.rootPath.label": "Library root",
   "organizationSettings.workspace.rootPath.hint":
     "System-managed for this organization.",
   "organizationSettings.workspace.rootPath.loading": "Loading...",
   "organizationSettings.workspace.usage.label": "Usage",
   "organizationSettings.workspace.usage.hint":
-    "Structured resource references live in Resources; Workspaces stays a generic shared file surface.",
+    "Structured resource references live in Library; the file browser remains a generic shared file surface.",
   "organizationSettings.workspace.usage.resources":
     "Use Resources for canonical repos, docs, URLs, and connectors that should load into agent runs.",
   "organizationSettings.workspace.usage.workspaces":
-    "Use Workspaces for shared files, notes, plans, and skill packages that should live on disk.",
-  "organizationSettings.workspace.open": "Open workspaces",
+    "Use Library for shared files, notes, plans, and skill packages that should live on disk.",
+  "organizationSettings.workspace.open": "Open Library",
   "organizationSettings.workspace.backups": "Backups",
   "organizationSettings.labels.intro.title": "Issue label management",
   "organizationSettings.labels.intro.description":

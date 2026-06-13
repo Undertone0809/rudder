@@ -115,7 +115,7 @@ function assertSafeRelativePath(value: string) {
   const normalized = normalizeRequestedPath(value);
   if (!normalized) return "";
   if (path.isAbsolute(normalized) || normalized.split("/").includes("..")) {
-    throw unprocessable("Backup path must stay inside the organization workspace root");
+    throw unprocessable("Backup path must stay inside the organization Library root");
   }
   return normalized;
 }
@@ -126,7 +126,7 @@ function resolveWithinRoot(rootPath: string, relativePath: string) {
   const resolvedTarget = normalized ? path.resolve(resolvedRoot, normalized) : resolvedRoot;
   const relative = path.relative(resolvedRoot, resolvedTarget);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw unprocessable("Backup path must stay inside the organization workspace root");
+    throw unprocessable("Backup path must stay inside the organization Library root");
   }
   return { resolvedRoot, resolvedTarget, normalizedPath: toPortableRelativePath(relative === "" ? "" : relative) };
 }

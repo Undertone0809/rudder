@@ -85,7 +85,7 @@ vi.mock("@tanstack/react-query", () => ({
             editable: true,
             editableReason: null,
             sourceBadge: "local",
-            sourceLabel: "Rudder workspace",
+            sourceLabel: "Organization library",
             sourcePath: "/workspace/skills/build-advisor/SKILL.md",
             workspaceEditPath: null,
           },

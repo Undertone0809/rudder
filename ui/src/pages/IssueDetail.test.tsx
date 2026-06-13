@@ -126,7 +126,7 @@ const queryData = new Map<string, unknown>([
     editable: true,
     editableReason: null,
     sourceBadge: "local",
-    sourceLabel: "Rudder workspace",
+    sourceLabel: "Organization library",
     sourcePath: "/workspace/skills/build-advisor/SKILL.md",
     workspaceEditPath: null,
   }]],

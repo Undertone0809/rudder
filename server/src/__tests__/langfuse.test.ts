@@ -37,7 +37,7 @@ describe("langfuse helpers", () => {
 
   it("does not redact whole prompt strings for non-secret text that resembles key names", () => {
     const prompt = [
-      "Use Workspaces for disk-backed shared files.",
+      "Use Library for disk-backed shared files.",
       "Document examples may mention api_key without containing a secret.",
     ].join("\n");
 

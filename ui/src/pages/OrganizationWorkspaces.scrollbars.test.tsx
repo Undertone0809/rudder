@@ -542,7 +542,7 @@ describe("OrganizationWorkspaces scroll regions", () => {
 
     const launcher = document.querySelector("[data-testid='org-workspaces-sidebar-launcher']");
     expect(launcher).not.toBeNull();
-    expect(launcher?.getAttribute("aria-label")).toBe("Open workspace menu");
+    expect(launcher?.getAttribute("aria-label")).toBe("Open Library menu");
     expect(launcher?.textContent).not.toContain("VS Code");
     expect(document.querySelector("[data-testid='org-workspaces-editor-launcher']")).toBeNull();
 

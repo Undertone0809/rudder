@@ -59,8 +59,8 @@ const copy: Record<LibraryCopyKey, { en: string; "zh-CN": string }> = {
     "zh-CN": "添加这个项目中智能体应使用的代码库、文档文件、URL 和外部系统。",
   },
   organizationSkillsHelp: {
-    en: "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Library.",
-    "zh-CN": "内置 Rudder 技能固定开启。社区预设和其他组织技能保持可选；由工作区支持的技能可在文档中编辑。",
+    en: "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; Library-backed skills can be edited from Library.",
+    "zh-CN": "内置 Rudder 技能固定开启。社区预设和其他组织技能保持可选；由文档库支持的技能可在文档中编辑。",
   },
   resourceNotFoundInProjectLibrary: {
     en: "Resource not found in this project Library.",

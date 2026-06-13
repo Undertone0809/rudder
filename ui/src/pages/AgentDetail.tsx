@@ -3408,7 +3408,7 @@ function AgentSkillsTab({
       case "catalog":
         return "Catalog";
       case "rudder":
-        return "Rudder workspace";
+        return "Organization library";
       default:
         return null;
     }

@@ -90,8 +90,8 @@ describe("translateMessage", () => {
     expect(translateLegacyString("zh-CN", "Agent-private skills belong to this agent only. Edit them in Library, then enable them here when you want Rudder to load them.")).toBe(
       "Agent-private skills belong to this agent only. Edit them in Library, then enable them here when you want Rudder to load them.",
     );
-    expect(translateLegacyString("zh-CN", "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Library.")).toBe(
-      "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Library.",
+    expect(translateLegacyString("zh-CN", "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; Library-backed skills can be edited from Library.")).toBe(
+      "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; Library-backed skills can be edited from Library.",
     );
     expect(libraryCopy("attachFromLibrary", "zh-CN")).toBe("从文档添加");
     expect(libraryCopy("noLibraryFiles", "zh-CN")).toBe("暂无文档文件。");
@@ -101,7 +101,7 @@ describe("translateMessage", () => {
       "智能体私有技能只属于当前智能体。先在文档中编辑，需要 Rudder 加载时再在这里启用。",
     );
     expect(libraryCopy("organizationSkillsHelp", "zh-CN")).toBe(
-      "内置 Rudder 技能固定开启。社区预设和其他组织技能保持可选；由工作区支持的技能可在文档中编辑。",
+      "内置 Rudder 技能固定开启。社区预设和其他组织技能保持可选；由文档库支持的技能可在文档中编辑。",
     );
     expect(translateLegacyString("zh-CN", "Choose file")).toBe("选择文件");
     expect(translateLegacyString("zh-CN", "No file chosen")).toBe("未选择文件");

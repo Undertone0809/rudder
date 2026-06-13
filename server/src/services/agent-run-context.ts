@@ -352,8 +352,8 @@ export function agentRunContextService(db: Db) {
 
       const fallbackCwd = sharedOrganizationCwd ?? agentWorkspace.root;
       const fallbackLabel = sharedOrganizationCwd
-        ? `shared organization workspace "${fallbackCwd}"`
-        : `canonical agent workspace "${fallbackCwd}"`;
+        ? `shared organization directory "${fallbackCwd}"`
+        : `canonical agent directory "${fallbackCwd}"`;
       const warnings: string[] = [];
       if (preferredWorkspaceWarning) warnings.push(preferredWorkspaceWarning);
       if (missingProjectCwds.length > 0) {
@@ -361,12 +361,12 @@ export function agentRunContextService(db: Db) {
         const extraMissingCount = Math.max(0, missingProjectCwds.length - 1);
         warnings.push(
           extraMissingCount > 0
-            ? `Project workspace path "${firstMissing}" and ${extraMissingCount} other configured path(s) are not available yet. Run will start in ${fallbackLabel}.`
-            : `Project workspace path "${firstMissing}" is not available yet. Run will start in ${fallbackLabel}.`,
+            ? `Project working directory path "${firstMissing}" and ${extraMissingCount} other configured path(s) are not available yet. Run will start in ${fallbackLabel}.`
+            : `Project working directory path "${firstMissing}" is not available yet. Run will start in ${fallbackLabel}.`,
         );
       } else if (!hasConfiguredProjectCwd) {
         warnings.push(
-          `Project workspace has no local cwd configured. Run will start in ${fallbackLabel}.`,
+          `Project has no local working directory configured. Run will start in ${fallbackLabel}.`,
         );
       }
       return {
@@ -418,11 +418,11 @@ export function agentRunContextService(db: Db) {
     const warnings: string[] = [];
     if (sessionCwd) {
       warnings.push(
-        `Saved session workspace "${sessionCwd}" is not available. Run will start in canonical agent workspace "${cwd}".`,
+        `Saved session working directory "${sessionCwd}" is not available. Run will start in canonical agent directory "${cwd}".`,
       );
     } else if (resolvedProjectId) {
       warnings.push(
-        `No shared workspace is currently available for this issue. Run will start in canonical agent workspace "${cwd}".`,
+        `No shared directory is currently available for this issue. Run will start in canonical agent directory "${cwd}".`,
       );
     }
     return {

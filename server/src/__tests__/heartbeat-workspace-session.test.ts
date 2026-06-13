@@ -78,7 +78,7 @@ describe("resolveRuntimeSessionParamsForWorkspace", () => {
       cwd: canonicalAgentCwd,
       workspaceId: "workspace-1",
     });
-    expect(result.warning).toContain("canonical run workspace");
+    expect(result.warning).toContain("canonical run directory");
   });
 
   it("does not migrate when the session is already on the canonical agent workspace", () => {
@@ -135,7 +135,7 @@ describe("resolveRuntimeSessionParamsForWorkspace", () => {
       cwd: canonicalAgentCwd,
       workspaceId: "workspace-1",
     });
-    expect(result.warning).toContain("canonical run workspace");
+    expect(result.warning).toContain("canonical run directory");
   });
 
   it("attaches the canonical agent workspace when the saved session has no cwd", () => {
@@ -159,7 +159,7 @@ describe("resolveRuntimeSessionParamsForWorkspace", () => {
       sessionId: "session-1",
       cwd: canonicalAgentCwd,
     });
-    expect(result.warning).toContain("canonical run workspace");
+    expect(result.warning).toContain("canonical run directory");
   });
 
   it("copies resolved workspace metadata when migrating a session without saved workspace metadata", () => {
@@ -192,7 +192,7 @@ describe("resolveRuntimeSessionParamsForWorkspace", () => {
       repoUrl: "https://example.com/repo.git",
       repoRef: "main",
     });
-    expect(result.warning).toContain("canonical run workspace");
+    expect(result.warning).toContain("canonical run directory");
   });
 });
 
@@ -340,9 +340,9 @@ describe("buildExplicitResumeSessionOverride", () => {
 
 describe("formatRuntimeWorkspaceWarningLog", () => {
   it("emits informational workspace warnings on stdout", () => {
-    expect(formatRuntimeWorkspaceWarningLog("Run will start in canonical agent workspace")).toEqual({
+    expect(formatRuntimeWorkspaceWarningLog("Run will start in canonical agent directory")).toEqual({
       stream: "stdout",
-      chunk: "[rudder] Run will start in canonical agent workspace\n",
+      chunk: "[rudder] Run will start in canonical agent directory\n",
     });
   });
 });

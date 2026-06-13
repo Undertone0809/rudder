@@ -277,8 +277,8 @@ export function BreadcrumbBar({
       size="icon-sm"
       className="desktop-window-no-drag shrink-0 text-muted-foreground hover:text-foreground"
       onClick={() => setSidebarOpen(true)}
-      aria-label="Open workspace sidebar"
-      title="Open workspace sidebar"
+      aria-label="Open context sidebar"
+      title="Open context sidebar"
     >
       <PanelLeftOpen className="h-4 w-4" />
     </Button>
@@ -295,13 +295,13 @@ export function BreadcrumbBar({
       return "Shared Library for markdown notes, codebases, references, outputs, and reusable context that humans and agents can both work with.";
     }
     if (/^\/workspaces(?:\/|$)/.test(relativePath)) {
-      return "Shared workspace files, plans, and skill packages for this organization. Use this page for disk-backed context and editable files.";
+      return "Shared Library files, plans, and skill packages for this organization. Use this page for disk-backed context and editable files.";
     }
     return null;
   }, [relativePath]);
   const workspacesHeaderTooltipLabel = useMemo(() => {
     if (/^\/(?:library|resources)(?:\/|$)/.test(relativePath)) return "About Library";
-    if (/^\/workspaces(?:\/|$)/.test(relativePath)) return "About organization workspaces";
+    if (/^\/workspaces(?:\/|$)/.test(relativePath)) return "About Library";
     return null;
   }, [relativePath]);
 

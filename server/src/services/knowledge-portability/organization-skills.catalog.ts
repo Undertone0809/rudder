@@ -1234,7 +1234,7 @@ export function deriveSkillSourceInfo(skill: OrganizationSkill): {
       return {
         editable: true,
         editableReason: null,
-        sourceLabel: "Rudder workspace",
+        sourceLabel: "Organization library",
         sourceBadge: "rudder",
         sourcePath: managedRoot,
       };

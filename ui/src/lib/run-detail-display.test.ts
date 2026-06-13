@@ -53,11 +53,11 @@ describe("shouldShowRunStderrExcerpt", () => {
 describe("getRunFailureDisplay", () => {
   it("labels workspace permission preflight failures separately from agent failures", () => {
     expect(getRunFailureDisplay({
-      error: "Rudder workspace permission repair needed: managed life path is not writable: /tmp/agent/life (EACCES).",
+      error: "Rudder managed agent directory permission repair needed: managed life path is not writable: /tmp/agent/life (EACCES).",
       errorCode: "workspace_permission_repair_needed",
     })).toEqual({
-      title: "Workspace permission repair needed",
-      body: "Rudder could not verify write access to its managed agent workspace before starting the run.",
+      title: "Agent directory permission repair needed",
+      body: "Rudder could not verify write access to its managed agent directory before starting the run.",
       code: "workspace_permission_repair_needed",
       tone: "destructive",
       actionLabel: "Open instance details",

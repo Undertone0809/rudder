@@ -54,7 +54,7 @@ describe("organization-skill-picker", () => {
           sourceType: "local_path",
           sourceLocator: "/workspace/skills/alpha-test",
           sourceBadge: "local",
-          sourceLabel: "Rudder workspace",
+          sourceLabel: "Organization library",
           sourcePath: "/workspace/skills/alpha-test/SKILL.md",
         }),
         makeSkill({
@@ -98,7 +98,7 @@ describe("organization-skill-picker", () => {
       sourceType: "local_path",
       sourceLocator: "/workspace/skills/alpha-test",
       sourceBadge: "rudder",
-      sourceLabel: "Rudder workspace",
+      sourceLabel: "Organization library",
       sourcePath: "/workspace/skills",
     });
 
@@ -116,7 +116,7 @@ describe("organization-skill-picker", () => {
           sourceType: "local_path",
           sourceLocator: "/workspace/skills/alpha-test",
           sourceBadge: "local",
-          sourceLabel: "Rudder workspace",
+          sourceLabel: "Organization library",
           sourcePath: "/workspace/skills/alpha-test/SKILL.md",
         }),
         makeSkill({
@@ -140,7 +140,7 @@ describe("organization-skill-picker", () => {
 
     expect(filterOrganizationSkillPickerItems(items, "alpha").map((item) => item.id)).toEqual(["alpha"]);
     expect(filterOrganizationSkillPickerItems(items, "github").map((item) => item.id)).toEqual(["beta"]);
-    expect(filterOrganizationSkillPickerItems(items, "workspace").map((item) => item.id)).toEqual(["alpha"]);
+    expect(filterOrganizationSkillPickerItems(items, "library").map((item) => item.id)).toEqual(["alpha"]);
     expect(filterOrganizationSkillPickerItems(items, "org/acme/builder/beta-test").map((item) => item.id)).toEqual(["beta"]);
   });
 
@@ -184,7 +184,7 @@ describe("organization-skill-picker", () => {
           sourceType: "local_path",
           sourceLocator: "/workspace/skills/alpha-test",
           sourceBadge: "local",
-          sourceLabel: "Rudder workspace",
+          sourceLabel: "Organization library",
           sourcePath: "/workspace/skills/alpha-test/SKILL.md",
         }),
       ],

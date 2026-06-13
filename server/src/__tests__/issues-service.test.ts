@@ -1146,7 +1146,7 @@ describe("issueService.list participantAgentId", () => {
         parentId: parent.id,
         projectWorkspaceId: otherProjectWorkspaceId,
       }),
-    ).rejects.toThrow("Project workspace must belong to the selected project");
+    ).rejects.toThrow("Project run directory must belong to the selected project");
 
     await expect(
       svc.create(orgId, {

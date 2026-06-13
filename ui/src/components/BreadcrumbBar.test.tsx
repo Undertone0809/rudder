@@ -116,13 +116,13 @@ describe("BreadcrumbBar", () => {
     expect(html).toContain("Messenger");
   });
 
-  it("shows a workspace sidebar opener when hidden card headers are collapsed", () => {
+  it("shows a context sidebar opener when hidden card headers are collapsed", () => {
     sidebarOpen = false;
     pathname = "/RUD/agents/designlead/configuration";
 
     const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
 
-    expect(html).toContain("Open workspace sidebar");
+    expect(html).toContain("Open context sidebar");
   });
 
   it("uses the Linear source header without native issue actions", () => {

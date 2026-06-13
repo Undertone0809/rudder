@@ -290,7 +290,7 @@ function WorkspaceLaunchMenu({
                 "h-7 w-7 rounded-md text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
                 className,
               )}
-              aria-label="Open workspace menu"
+              aria-label="Open Library menu"
               disabled={openingTargetId !== null}
               data-testid={testId}
             >
@@ -302,7 +302,7 @@ function WorkspaceLaunchMenu({
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent>Open workspace</TooltipContent>
+        <TooltipContent>Open Library</TooltipContent>
       </Tooltip>
       <DropdownMenuContent
         align={contentAlign}
@@ -2704,7 +2704,7 @@ export function OrganizationWorkspaceFilesSidebar() {
                 <div className="px-2 py-3 text-sm text-destructive">{rootQuery.error.message}</div>
               ) : !rootQuery.data?.rootExists ? (
                 <div className="px-2 py-3 text-sm text-muted-foreground">
-                  {rootQuery.data?.message ?? "The shared workspace root is not available on this machine yet."}
+                  {rootQuery.data?.message ?? "The shared Library root is not available on this machine yet."}
                 </div>
               ) : rootQuery.data.entries.length === 0 ? (
                 <div className="px-2 py-3 text-sm text-muted-foreground">
@@ -2884,7 +2884,7 @@ export function OrganizationWorkspaceFilesSidebar() {
           <DialogHeader>
             <DialogTitle>Delete entry</DialogTitle>
             <DialogDescription>
-              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization workspace.
+              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization Library.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -4423,7 +4423,7 @@ export function OrganizationWorkspaceBrowser({
       {!workspace.rootExists ? (
         <EmptyState
           icon={HardDrive}
-          message={workspace.message ?? "The shared workspace root is not available on this machine yet."}
+          message={workspace.message ?? "The shared Library root is not available on this machine yet."}
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col lg:h-full lg:overflow-hidden lg:flex-row">
@@ -5139,7 +5139,7 @@ export function OrganizationWorkspaceBrowser({
           <DialogHeader>
             <DialogTitle>Delete entry</DialogTitle>
             <DialogDescription>
-              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization workspace.
+              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization Library.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

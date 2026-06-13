@@ -88,7 +88,7 @@ function resolveWithinRoot(rootPath: string, requestedPath: string) {
   const resolvedTarget = normalizedPath ? path.resolve(resolvedRoot, normalizedPath) : resolvedRoot;
   const relative = path.relative(resolvedRoot, resolvedTarget);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw unprocessable("Requested path must stay inside the organization workspace root");
+    throw unprocessable("Requested path must stay inside the organization Library root");
   }
   return {
     resolvedRoot,
@@ -132,16 +132,16 @@ function isProtectedLibraryResourcePath(normalizedPath: string) {
 
 function assertMutableWorkspaceEntry(normalizedPath: string) {
   if (!normalizedPath) {
-    throw unprocessable("The organization workspace root cannot be renamed or deleted");
+    throw unprocessable("The organization Library root cannot be renamed or deleted");
   }
   if (isProtectedAgentWorkspaceContainerPath(normalizedPath)) {
-    throw unprocessable("Agent workspace entries can only be copied by path");
+    throw unprocessable("Agent directory entries can only be copied by path");
   }
   if (isProtectedAgentInstructionsEntryPath(normalizedPath)) {
     throw unprocessable("Protected agent instruction entries can only be copied or edited");
   }
   if (isProtectedAgentManagedEntryPath(normalizedPath)) {
-    throw unprocessable("Protected agent managed workspace entries can only be copied or edited");
+    throw unprocessable("Protected agent managed directory entries can only be copied or edited");
   }
   if (isProtectedOrganizationSkillsEntryPath(normalizedPath)) {
     throw unprocessable("Organization skill entries can only be copied or edited");
@@ -328,12 +328,12 @@ export function organizationWorkspaceBrowserService(db: Db) {
           directoryPath: "",
           rootExists: false,
           entries: [],
-          message: "The workspace root is not available on this machine yet.",
+          message: "The shared Library root is not available on this machine yet.",
         };
       }
 
       if (!(await pathExistsAsDirectory(resolvedTarget))) {
-        throw notFound("Directory not found inside the organization workspace");
+        throw notFound("Directory not found inside the organization Library");
       }
 
       const rawEntries = (await fs.readdir(resolvedTarget, { withFileTypes: true }))
@@ -441,13 +441,13 @@ export function organizationWorkspaceBrowserService(db: Db) {
           contentType: null,
           previewKind: "binary",
           contentPath: null,
-          message: "The workspace root is not available on this machine yet.",
+          message: "The shared Library root is not available on this machine yet.",
           truncated: false,
         };
       }
 
       if (!(await pathExistsAsFile(resolvedTarget))) {
-        throw notFound("File not found inside the organization workspace");
+        throw notFound("File not found inside the organization Library");
       }
 
       const buffer = await fs.readFile(resolvedTarget);
@@ -516,10 +516,10 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, filePath);
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) {
-        throw notFound("The workspace root is not available on this machine yet.");
+        throw notFound("The shared Library root is not available on this machine yet.");
       }
       if (!(await pathExistsAsFile(resolvedTarget))) {
-        throw notFound("File not found inside the organization workspace");
+        throw notFound("File not found inside the organization Library");
       }
 
       const buffer = await fs.readFile(resolvedTarget);
@@ -540,10 +540,10 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, filePath);
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) {
-        throw notFound("The workspace root is not available on this machine yet.");
+        throw notFound("The shared Library root is not available on this machine yet.");
       }
       if (!(await pathExistsAsFile(resolvedTarget))) {
-        throw notFound("File not found inside the organization workspace");
+        throw notFound("File not found inside the organization Library");
       }
 
       await fs.writeFile(resolvedTarget, content, "utf8");
@@ -575,7 +575,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, filePath);
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) {
-        throw notFound("The workspace root is not available on this machine yet.");
+        throw notFound("The shared Library root is not available on this machine yet.");
       }
       if (!normalizedPath) {
         throw unprocessable("File path is required");
@@ -614,7 +614,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, directoryPath);
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) {
-        throw notFound("The workspace root is not available on this machine yet.");
+        throw notFound("The shared Library root is not available on this machine yet.");
       }
       if (!normalizedPath) {
         throw unprocessable("Directory path is required");
@@ -640,24 +640,24 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, entryPath);
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) {
-        throw notFound("The workspace root is not available on this machine yet.");
+        throw notFound("The shared Library root is not available on this machine yet.");
       }
       assertMutableWorkspaceEntry(normalizedPath);
 
       const stat = await statWorkspaceEntry(resolvedTarget);
       if (!stat) {
-        throw notFound("Entry not found inside the organization workspace");
+        throw notFound("Entry not found inside the organization Library");
       }
 
       const nextName = normalizeEntryName(name);
       const nextTarget = path.resolve(path.dirname(resolvedTarget), nextName);
       const relative = path.relative(resolvedRoot, nextTarget);
       if (relative.startsWith("..") || path.isAbsolute(relative)) {
-        throw unprocessable("Entry path must stay inside the organization workspace root");
+        throw unprocessable("Entry path must stay inside the organization Library root");
       }
       const nextPath = toPortableRelativePath(relative);
       if (isProtectedAgentWorkspaceContainerPath(nextPath)) {
-        throw unprocessable("Entries cannot be moved into the protected agent workspace area");
+        throw unprocessable("Entries cannot be moved into the protected agent area");
       }
       if (normalizedPath === nextPath) {
         return {
@@ -695,19 +695,19 @@ export function organizationWorkspaceBrowserService(db: Db) {
       } = resolveWithinRoot(root.rootPath, destinationDirectoryPath);
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) {
-        throw notFound("The workspace root is not available on this machine yet.");
+        throw notFound("The shared Library root is not available on this machine yet.");
       }
       assertMutableWorkspaceEntry(normalizedPath);
       if (isProtectedAgentWorkspaceContainerPath(normalizedDestinationDirectory)) {
-        throw unprocessable("Entries cannot be moved into the protected agent workspace area");
+        throw unprocessable("Entries cannot be moved into the protected agent area");
       }
 
       const stat = await statWorkspaceEntry(resolvedTarget);
       if (!stat) {
-        throw notFound("Entry not found inside the organization workspace");
+        throw notFound("Entry not found inside the organization Library");
       }
       if (!(await pathExistsAsDirectory(resolvedDestinationDirectory))) {
-        throw notFound("Destination directory not found inside the organization workspace");
+        throw notFound("Destination directory not found inside the organization Library");
       }
       if (stat.isDirectory()) {
         const relativeDestination = path.relative(resolvedTarget, resolvedDestinationDirectory);
@@ -719,7 +719,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const nextTarget = path.resolve(resolvedDestinationDirectory, path.basename(resolvedTarget));
       const nextRelativePath = path.relative(resolvedRoot, nextTarget);
       if (nextRelativePath.startsWith("..") || path.isAbsolute(nextRelativePath)) {
-        throw unprocessable("Entry path must stay inside the organization workspace root");
+        throw unprocessable("Entry path must stay inside the organization Library root");
       }
       const nextPath = toPortableRelativePath(nextRelativePath);
       assertCanCreateWorkspaceEntry(nextPath);
@@ -751,13 +751,13 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, entryPath);
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) {
-        throw notFound("The workspace root is not available on this machine yet.");
+        throw notFound("The shared Library root is not available on this machine yet.");
       }
       assertMutableWorkspaceEntry(normalizedPath);
 
       const stat = await statWorkspaceEntry(resolvedTarget);
       if (!stat) {
-        throw notFound("Entry not found inside the organization workspace");
+        throw notFound("Entry not found inside the organization Library");
       }
 
       await fs.rm(resolvedTarget, { recursive: true, force: false });

@@ -768,7 +768,7 @@ describe("RunTranscriptView", () => {
           "[rudder] Shared 6 local CLI credential entries into managed HOME /Users/zeeland/.rudder/instances/dev/organizations/org/claude-home:\n"
           + ".config/gh, .config/configstore, .docker, .kube, .npmrc, .ssh\n"
           + "[rudder] Prepared local CLI credential shim for: gh\n"
-          + "[rudder] Agent workspace \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/vera\" is now the canonical run workspace. Attempting to resume session \"019dfc\" that was previously saved in \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces\".\n"
+          + "[rudder] Agent directory \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/vera\" is now the canonical run directory. Attempting to resume session \"019dfc\" that was previously saved in \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces\".\n"
           + "[rudder] Codex session \"019dfc\" was saved for cwd \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/vera\" and will not be resumed in \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces\".\n"
           + "[rudder] Using Rudder-managed Claude home \"/tmp/claude-home\" (seeded from \"/Users/zeeland/.claude\").\n"
           + "[rudder] Using Rudder-managed Cursor home \"/tmp/cursor-home\" (seeded from \"/Users/zeeland/.cursor\").\n"
@@ -803,7 +803,7 @@ describe("RunTranscriptView", () => {
     expect(hiddenHtml).not.toContain("Shared 6 local CLI credential entries");
     expect(hiddenHtml).not.toContain(".config/gh");
     expect(hiddenHtml).not.toContain("Prepared local CLI credential shim");
-    expect(hiddenHtml).not.toContain("canonical run workspace");
+    expect(hiddenHtml).not.toContain("canonical run directory");
     expect(hiddenHtml).not.toContain("will not be resumed");
     expect(hiddenHtml).not.toContain("Rudder-managed Claude home");
     expect(hiddenHtml).not.toContain("Rudder-managed Cursor home");
@@ -818,7 +818,7 @@ describe("RunTranscriptView", () => {
     expect(visibleHtml).toContain("Shared 6 local CLI credential entries");
     expect(visibleHtml).toContain(".config/gh");
     expect(visibleHtml).toContain("Prepared local CLI credential shim");
-    expect(visibleHtml).toContain("canonical run workspace");
+    expect(visibleHtml).toContain("canonical run directory");
     expect(visibleHtml).toContain("will not be resumed");
     expect(visibleHtml).toContain("Rudder-managed Claude home");
     expect(visibleHtml).toContain("Rudder-managed Cursor home");

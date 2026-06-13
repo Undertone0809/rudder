@@ -37,14 +37,14 @@ describe("organization-skill-source-label", () => {
     expect(
       formatOrganizationSkillSourceLabel({
         sourceBadge: "rudder",
-        sourceLabel: "Bundled by Rudder",
+        sourceLabel: "Organization library",
         fallbackLabel: "Bundled by Rudder",
       }),
-    ).toBe("Bundled by Rudder");
+    ).toBe("Organization library");
     expect(
       formatOrganizationSkillSourceTooltip({
         sourceBadge: "rudder",
-        sourceLabel: "Bundled by Rudder",
+        sourceLabel: "Organization library",
         fallbackLabel: "Bundled by Rudder",
       }),
     ).toBeNull();

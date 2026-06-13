@@ -362,7 +362,7 @@ describe("agentRunContextService resolveWorkspaceForRun", () => {
       },
     ]);
     expect(resolved.warnings).toEqual([
-      'Project workspace has no local cwd configured. Run will start in shared organization workspace "/tmp/org-home".',
+      'Project has no local working directory configured. Run will start in shared organization directory "/tmp/org-home".',
     ]);
   });
 });

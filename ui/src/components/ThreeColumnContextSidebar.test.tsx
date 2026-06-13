@@ -310,6 +310,9 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     renderSidebar();
 
     expect(document.querySelector("[data-testid='workspace-projects-scroll']")?.classList.contains("scrollbar-auto-hide")).toBe(true);
+    expect(document.body.textContent).toContain("Project");
+    expect(document.body.textContent).not.toContain("Project workspace");
+    expect(document.querySelector("[aria-label='Projects']")).not.toBeNull();
   });
 
   it("shows calendar timeline filters with user-facing status labels", () => {
