@@ -463,6 +463,23 @@ describe("MarkdownBody", () => {
   });
 
   it("renders agent and project mentions as chips", () => {
+    markdownMentionsMock.mentions = [
+      {
+        id: "agent:agent-123",
+        name: "CodexCoder",
+        kind: "agent",
+        agentId: "agent-123",
+        agentIcon: "code",
+      },
+      {
+        id: "project:project-456",
+        name: "Rudder App",
+        kind: "project",
+        projectId: "project-456",
+        projectColor: "#336699",
+      },
+    ];
+
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <MarkdownBody>
@@ -486,7 +503,7 @@ describe("MarkdownBody", () => {
   it("uses the current agent avatar when rendering existing agent mention links", () => {
     markdownMentionsMock.mentions = [{
       id: "agent:agent-123",
-      name: "CodexCoder",
+      name: "Current CodexCoder",
       kind: "agent",
       agentId: "agent-123",
       agentIcon: "dicebear:notionists:11111111-1111-4111-8111-111111111111",
@@ -501,9 +518,68 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('data-mention-kind="agent"');
+    expect(html).toContain(">Current CodexCoder</a>");
     expect(html).toContain("--rudder-mention-agent-avatar-background");
     expect(html).toContain("data:image/svg+xml");
     expect(html).toContain("--rudder-mention-icon-mask:none");
+  });
+
+  it("uses current entity display data instead of stale link metadata", () => {
+    markdownMentionsMock.mentions = [
+      {
+        id: "agent:agent-123",
+        name: "Renamed Agent",
+        kind: "agent",
+        agentId: "agent-123",
+        agentIcon: "code",
+      },
+      {
+        id: "project:project-456",
+        name: "Renamed Project",
+        kind: "project",
+        projectId: "project-456",
+        projectColor: "#22c55e",
+        projectIcon: "plane",
+      },
+      {
+        id: "issue:issue-789",
+        name: "ZST-789 Renamed issue",
+        kind: "issue",
+        issueId: "issue-789",
+        issueIdentifier: "ZST-789",
+        issueStatus: "blocked",
+      },
+      {
+        id: "chat:chat-123",
+        name: "Renamed Chat",
+        kind: "chat",
+        chatConversationId: "chat-123",
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {[
+            "[Old Agent](agent://agent-123?i=user)",
+            "[Old Project](project://project-456?c=336699&i=folder)",
+            "[OLD-1 Old issue](issue://issue-789?r=OLD-1&s=todo)",
+            "[Old Chat](chat://chat-123?t=Old%20Chat)",
+          ].join(" ")}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain(">Renamed Agent</a>");
+    expect(html).toContain(">Renamed Project</a>");
+    expect(html).toContain(">ZST-789 Renamed issue</a>");
+    expect(html).toContain(">Renamed Chat</a>");
+    expect(html).toContain('href="/issues/issue-789"');
+    expect(html).toContain('data-mention-status="blocked"');
+    expect(html).not.toContain("Old Agent");
+    expect(html).not.toContain("Old Project");
+    expect(html).not.toContain("OLD-1 Old issue");
+    expect(html).not.toContain("Old Chat");
   });
 
   it("renders issue mentions as chips that link to the issue route", () => {
@@ -515,7 +591,7 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain('href="/issues/PAP-123"');
+    expect(html).toContain('href="/issues/issue-789"');
     expect(html).toContain('data-mention-kind="issue"');
     expect(html).toContain(">PAP-123 auth flow</a>");
     expect(html).not.toContain(">@PAP-123 auth flow</a>");
@@ -535,7 +611,7 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain('href="/ZST/issues/ZST-557"');
+    expect(html).toContain('href="/ZST/issues/issue-789"');
     expect(html).toContain('href="/ZST/messenger/chat/chat-123"');
     expect(html).toContain('href="/ZST/library?path=docs%2Freview.md"');
     expect(html).not.toContain("issue://issue-789");
@@ -544,6 +620,15 @@ describe("MarkdownBody", () => {
   });
 
   it("renders issue mentions with status metadata using the issue status icon", () => {
+    markdownMentionsMock.mentions = [{
+      id: "issue:issue-789",
+      name: "PAP-123 auth flow",
+      kind: "issue",
+      issueId: "issue-789",
+      issueIdentifier: "PAP-123",
+      issueStatus: "in_review",
+    }];
+
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <MarkdownBody>
@@ -552,7 +637,7 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain('href="/issues/PAP-123"');
+    expect(html).toContain('href="/issues/issue-789"');
     expect(html).toContain('data-mention-kind="issue"');
     expect(html).toContain('data-mention-status="in_review"');
     expect(html).toContain("rudder-mention-chip--with-status-icon");
@@ -562,6 +647,14 @@ describe("MarkdownBody", () => {
 
   it("loads an issue preview from the rendered mention chip on focus", async () => {
     window.localStorage.setItem("rudder.selectedOrganizationId", "org-1");
+    markdownMentionsMock.mentions = [{
+      id: "issue:issue-789",
+      name: "PAP-123 auth flow",
+      kind: "issue",
+      issueId: "issue-789",
+      issueIdentifier: "PAP-123",
+      issueStatus: "in_review",
+    }];
     entityPreviewApiMocks.getIssue.mockResolvedValue({
       id: "issue-789",
       orgId: "org-1",
@@ -707,6 +800,15 @@ describe("MarkdownBody", () => {
   });
 
   it("renders issue comment mentions as chips that link to the comment anchor", () => {
+    markdownMentionsMock.mentions = [{
+      id: "issue:issue-789",
+      name: "PAP-123 auth flow",
+      kind: "issue",
+      issueId: "issue-789",
+      issueIdentifier: "PAP-123",
+      issueStatus: "in_review",
+    }];
+
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <MarkdownBody>
@@ -715,9 +817,11 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain('href="/issues/PAP-123#comment-comment-123"');
+    expect(html).toContain('href="/issues/issue-789#comment-comment-123"');
     expect(html).toContain('data-mention-kind="issue"');
+    expect(html).toContain('data-mention-status="in_review"');
     expect(html).toContain(">Issue comment abc12345</a>");
+    expect(html).not.toContain(">PAP-123 auth flow</a>");
   });
 
   it("renders skill references as non-interactive tokens instead of links", () => {

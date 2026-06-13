@@ -65,7 +65,7 @@ test("issue comment actions menu copies content and direct links", async ({ page
   const writesAfterLink = await page.evaluate(() => (
     (window as typeof window & { __rudderClipboardWrites?: string[] }).__rudderClipboardWrites ?? []
   ));
-  const expectedMentionHref = `issue://${issue.id}?r=${routeRef}&c=${comment.id}`;
+  const expectedMentionHref = `issue://${issue.id}?c=${comment.id}`;
   const expectedSerializedMentionHref = expectedMentionHref.replaceAll("&", "\\&");
   const copiedMarkdownLink = writesAfterLink.at(-1);
   expect(copiedMarkdownLink).toBe(`[Issue comment ${comment.id.slice(0, 8)}](${expectedMentionHref})`);
@@ -104,10 +104,10 @@ test("issue comment actions menu copies content and direct links", async ({ page
   const linkedCommentBlock = page.locator(`#comment-${linkedComment.id}`);
   await expect(linkedCommentBlock).toBeVisible();
   const renderedCopiedLink = linkedCommentBlock.getByRole("link", { name: `Issue comment ${comment.id.slice(0, 8)}` });
-  const expectedRenderedHref = `/issues/${routeRef}#comment-${comment.id}`;
+  const expectedRenderedHref = `/${organization.issuePrefix}/issues/${issue.id}#comment-${comment.id}`;
   await expect(renderedCopiedLink).toHaveAttribute("href", expectedRenderedHref);
   await renderedCopiedLink.click();
-  await expect(page).toHaveURL(`${new URL(page.url()).origin}${expectedRenderedHref}`);
+  await expect(page).toHaveURL(`${new URL(page.url()).origin}/${organization.issuePrefix}/issues/${routeRef}#comment-${comment.id}`);
   await expect(commentBlock).toHaveClass(/border-primary/);
 
   const updatedBody = "Review note updated: edit and delete stay owner-only";

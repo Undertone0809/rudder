@@ -307,9 +307,14 @@ export function refreshMilkdownMentionTokenStyles(root: HTMLElement | null, ment
       : parsed.kind === "project"
         ? {
             ...parsed,
-            color: parsed.color ?? optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? null,
-            icon: parsed.icon ?? optionByKey.get(`project:${parsed.projectId}`)?.projectIcon ?? null,
+            color: optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? parsed.color ?? null,
+            icon: optionByKey.get(`project:${parsed.projectId}`)?.projectIcon ?? parsed.icon ?? null,
           }
+        : parsed.kind === "issue"
+          ? {
+              ...parsed,
+              status: optionByKey.get(`issue:${parsed.issueId}`)?.issueStatus ?? parsed.status ?? null,
+            }
         : parsed;
     if (!element.dataset.mentionHref) {
       applyMentionChipDecoration(element, mention);
@@ -343,6 +348,9 @@ function mentionOptionMap(mentions: MentionOption[]) {
     if (mention.kind === "project" && mention.projectId) {
       map.set(`project:${mention.projectId}`, mention);
     }
+    if (mention.kind === "issue" && mention.issueId) {
+      map.set(`issue:${mention.issueId}`, mention);
+    }
   }
   return map;
 }
@@ -363,9 +371,14 @@ function buildMilkdownTokenDecorations(doc: ProseMirrorDoc, mentions: MentionOpt
         : parsed.kind === "project"
           ? {
               ...parsed,
-              color: parsed.color ?? optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? null,
-              icon: parsed.icon ?? optionByKey.get(`project:${parsed.projectId}`)?.projectIcon ?? null,
+              color: optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? parsed.color ?? null,
+              icon: optionByKey.get(`project:${parsed.projectId}`)?.projectIcon ?? parsed.icon ?? null,
             }
+          : parsed.kind === "issue"
+            ? {
+                ...parsed,
+                status: optionByKey.get(`issue:${parsed.issueId}`)?.issueStatus ?? parsed.status ?? null,
+              }
           : parsed;
       decorations.push(Decoration.inline(pos, pos + node.nodeSize, milkdownMentionDecorationAttrs(mention, label, href)));
       return;

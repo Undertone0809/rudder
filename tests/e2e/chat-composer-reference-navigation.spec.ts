@@ -2,19 +2,23 @@ import { expect, test, type Page } from "@playwright/test";
 import { createE2EChatAgent } from "./support/chat-agent";
 
 function buildProjectMentionHref(projectId: string, color?: string | null) {
-  return color ? `project://${projectId}?c=${encodeURIComponent(color.replace(/^#/, ""))}` : `project://${projectId}`;
+  void color;
+  return `project://${projectId}`;
 }
 
 function buildLibraryDocMentionHref(documentId: string, title: string) {
-  return `library-doc://${documentId}?t=${encodeURIComponent(title)}`;
+  void title;
+  return `library-doc://${documentId}`;
 }
 
 function buildLibraryFileMentionHref(filePath: string, title: string) {
-  return `library-file://file?p=${encodeURIComponent(filePath)}&t=${encodeURIComponent(title)}`;
+  void title;
+  return `library-file://file?p=${encodeURIComponent(filePath)}`;
 }
 
 function buildLibraryDirectoryMentionHref(directoryPath: string, title: string) {
-  return `library-directory://directory?p=${encodeURIComponent(directoryPath)}&t=${encodeURIComponent(title)}`;
+  void title;
+  return `library-directory://directory?p=${encodeURIComponent(directoryPath)}`;
 }
 
 function organizationSkillMarkdownTarget(skill: { sourceLocator?: string | null; sourcePath?: string | null }) {
@@ -142,11 +146,10 @@ test("chat composer reference tokens navigate to their target pages with a comma
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
 
-  const issueRef = issue.identifier ?? issue.id;
   const draft = [
     `[${agent.name}](agent://${agent.id})`,
     `[${project.name}](${buildProjectMentionHref(project.id, project.color ?? null)})`,
-    `[${issue.title}](issue://${issue.id}?r=${encodeURIComponent(issueRef)})`,
+    `[${issue.title}](issue://${issue.id})`,
     `[Referenced navigation chat](chat://${referencedChat.id})`,
     `[${libraryDoc.title}](${buildLibraryDocMentionHref(libraryDoc.id, libraryDoc.title)})`,
     `[${libraryFileName}](${buildLibraryFileMentionHref(libraryFilePath, libraryFileName)})`,
@@ -186,7 +189,7 @@ test("chat composer reference tokens navigate to their target pages with a comma
   await page.goto(hostChatPath);
   await expect(issueToken).toBeVisible({ timeout: 15_000 });
   await issueToken.click({ modifiers: ["ControlOrMeta"] });
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${issueRef}$`));
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${issue.id}$`));
 
   await page.goto(hostChatPath);
   await expect(chatToken).toBeVisible({ timeout: 15_000 });

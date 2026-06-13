@@ -2,11 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 test.use({ serviceWorkers: "block" });
 
-function buildIssueMentionHref(issueId: string, ref: string | null, status: string) {
-  const params = new URLSearchParams();
-  if (ref) params.set("r", ref);
-  params.set("s", status);
-  return `issue://${issueId}?${params.toString()}`;
+function buildIssueMentionHref(issueId: string) {
+  return `issue://${issueId}`;
 }
 
 async function createOrganization(page: Page) {
@@ -96,7 +93,7 @@ test("issue done mentions render the canonical status icon in comments and edito
   const targetRef = targetIssue.identifier ?? targetIssue.id;
   const hostIssue = await createIssue(page, organization.id, "Status chip host issue", "todo");
   const hostRef = hostIssue.identifier ?? hostIssue.id;
-  const issueMentionHref = buildIssueMentionHref(targetIssue.id, targetRef, "done");
+  const issueMentionHref = buildIssueMentionHref(targetIssue.id);
 
   const commentRes = await page.request.post(`/api/issues/${hostIssue.id}/comments`, {
     data: {

@@ -1,11 +1,3 @@
-import {
-  AGENT_AVATAR_BACKGROUND_PRESET_IDS,
-  AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX,
-  DEFAULT_PROJECT_ICON,
-  PROJECT_COLORS,
-  PROJECT_ICONS,
-} from "./constants.js";
-
 export const PROJECT_MENTION_SCHEME = "project://";
 export const AGENT_MENTION_SCHEME = "agent://";
 export const ISSUE_MENTION_SCHEME = "issue://";
@@ -15,10 +7,6 @@ export const LIBRARY_ENTRY_MENTION_SCHEME = "library-entry://";
 export const LIBRARY_FILE_MENTION_SCHEME = "library-file://";
 export const LIBRARY_DIRECTORY_MENTION_SCHEME = "library-directory://";
 
-const HEX_COLOR_RE = /^[0-9a-f]{6}$/i;
-const HEX_COLOR_SHORT_RE = /^[0-9a-f]{3}$/i;
-const HEX_COLOR_WITH_HASH_RE = /^#[0-9a-f]{6}$/i;
-const HEX_COLOR_SHORT_WITH_HASH_RE = /^#[0-9a-f]{3}$/i;
 const PROJECT_MENTION_LINK_RE = /\[[^\]]*]\((project:\/\/[^)\s]+)\)/gi;
 const AGENT_MENTION_LINK_RE = /\[[^\]]*]\((agent:\/\/[^)\s]+)\)/gi;
 const ISSUE_MENTION_LINK_RE = /\[[^\]]*]\((issue:\/\/[^)\s]+)\)/gi;
@@ -27,16 +15,6 @@ const LIBRARY_DOC_MENTION_LINK_RE = /\[[^\]]*]\((library-doc:\/\/[^)\s]+)\)/gi;
 const LIBRARY_ENTRY_MENTION_LINK_RE = /\[[^\]]*]\((library-entry:\/\/[^)\s]+)\)/gi;
 const LIBRARY_FILE_MENTION_LINK_RE = /\[[^\]]*]\((library-file:\/\/[^)\s]+)\)/gi;
 const LIBRARY_DIRECTORY_MENTION_LINK_RE = /\[[^\]]*]\((library-directory:\/\/[^)\s]+)\)/gi;
-const AGENT_ICON_NAME_RE = /^[a-z0-9-]+$/i;
-const AGENT_AVATAR_UUID_RE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-const AGENT_ASSET_ICON_RE = new RegExp(`^asset:${AGENT_AVATAR_UUID_RE}(?:\\?bg=([a-z0-9-]+))?$`, "i");
-const AGENT_DICEBEAR_NOTIONISTS_ICON_RE = new RegExp(
-  `^${AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX}${AGENT_AVATAR_UUID_RE}(?:\\?bg=([a-z0-9-]+))?$`,
-  "i",
-);
-const PROJECT_COLOR_VALUES = new Set<string>(PROJECT_COLORS);
-const PROJECT_ICON_VALUES = new Set<string>(PROJECT_ICONS);
-const AGENT_AVATAR_BACKGROUND_VALUES = new Set<string>(AGENT_AVATAR_BACKGROUND_PRESET_IDS);
 
 export interface ParsedProjectMention {
   projectId: string;
@@ -83,46 +61,6 @@ export interface ParsedLibraryDirectoryMention {
   title: string | null;
 }
 
-function normalizeHexColor(input: string | null | undefined): string | null {
-  if (!input) return null;
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  if (HEX_COLOR_WITH_HASH_RE.test(trimmed)) {
-    return trimmed.toLowerCase();
-  }
-  if (HEX_COLOR_RE.test(trimmed)) {
-    return `#${trimmed.toLowerCase()}`;
-  }
-  if (HEX_COLOR_SHORT_WITH_HASH_RE.test(trimmed)) {
-    const raw = trimmed.slice(1).toLowerCase();
-    return `#${raw[0]}${raw[0]}${raw[1]}${raw[1]}${raw[2]}${raw[2]}`;
-  }
-  if (HEX_COLOR_SHORT_RE.test(trimmed)) {
-    const raw = trimmed.toLowerCase();
-    return `#${raw[0]}${raw[0]}${raw[1]}${raw[1]}${raw[2]}${raw[2]}`;
-  }
-  return null;
-}
-
-function normalizeProjectMentionColor(input: string | null | undefined): string | null {
-  const hex = normalizeHexColor(input);
-  if (hex) return hex;
-  const trimmed = input?.trim();
-  if (trimmed && PROJECT_COLOR_VALUES.has(trimmed)) return trimmed;
-  return null;
-}
-
-function normalizeProjectMentionIcon(input: string | null | undefined): string | null {
-  const normalized = input?.trim().toLowerCase();
-  if (!normalized) return null;
-  return PROJECT_ICON_VALUES.has(normalized as (typeof PROJECT_ICONS)[number]) ? normalized : null;
-}
-
-function encodeMentionParam(value: string): string {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-}
-
 function stripMarkdownCode(markdown: string): string {
   return markdown
     .replace(/```[\s\S]*?```/g, "")
@@ -130,20 +68,10 @@ function stripMarkdownCode(markdown: string): string {
 }
 
 export function buildProjectMentionHref(projectId: string, color?: string | null, icon?: string | null): string {
+  void color;
+  void icon;
   const trimmedProjectId = projectId.trim();
-  const normalizedColor = normalizeProjectMentionColor(color ?? null);
-  const normalizedIcon = normalizeProjectMentionIcon(icon ?? null);
-  if (!normalizedColor && (!normalizedIcon || normalizedIcon === DEFAULT_PROJECT_ICON)) {
-    return `${PROJECT_MENTION_SCHEME}${trimmedProjectId}`;
-  }
-  const params = new URLSearchParams();
-  if (normalizedColor) {
-    params.set("c", normalizedColor.startsWith("#") ? normalizedColor.slice(1) : normalizedColor);
-  }
-  if (normalizedIcon && normalizedIcon !== DEFAULT_PROJECT_ICON) {
-    params.set("i", normalizedIcon);
-  }
-  return `${PROJECT_MENTION_SCHEME}${trimmedProjectId}?${params.toString()}`;
+  return `${PROJECT_MENTION_SCHEME}${trimmedProjectId}`;
 }
 
 export function parseProjectMentionHref(href: string): ParsedProjectMention | null {
@@ -161,21 +89,16 @@ export function parseProjectMentionHref(href: string): ParsedProjectMention | nu
   const projectId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
   if (!projectId) return null;
 
-  const color = normalizeProjectMentionColor(url.searchParams.get("c") ?? url.searchParams.get("color"));
-  const icon = normalizeProjectMentionIcon(url.searchParams.get("i") ?? url.searchParams.get("icon"));
-
   return {
     projectId,
-    color,
-    ...(icon ? { icon } : {}),
+    color: null,
   };
 }
 
 export function buildAgentMentionHref(agentId: string, icon?: string | null, intent?: "reference" | "wake" | null): string {
+  void icon;
   const trimmedAgentId = agentId.trim();
-  const normalizedIcon = normalizeAgentIcon(icon ?? null);
   const params = new URLSearchParams();
-  if (normalizedIcon) params.set("i", normalizedIcon);
   if (intent === "wake") params.set("intent", "wake");
   const search = params.toString();
   if (!search) {
@@ -201,20 +124,18 @@ export function parseAgentMentionHref(href: string): ParsedAgentMention | null {
 
   return {
     agentId,
-    icon: normalizeAgentIcon(url.searchParams.get("i") ?? url.searchParams.get("icon")),
+    icon: null,
     intent: url.searchParams.get("intent") === "wake" ? "wake" : "reference",
   };
 }
 
 export function buildIssueMentionHref(issueId: string, ref?: string | null, commentId?: string | null, status?: string | null): string {
+  void ref;
+  void status;
   const trimmedIssueId = issueId.trim();
-  const trimmedRef = ref?.trim();
   const trimmedCommentId = commentId?.trim();
-  const trimmedStatus = status?.trim();
   const params = new URLSearchParams();
-  if (trimmedRef) params.set("r", trimmedRef);
   if (trimmedCommentId) params.set("c", trimmedCommentId);
-  if (trimmedStatus) params.set("s", trimmedStatus);
   const query = params.toString();
   return query ? `${ISSUE_MENTION_SCHEME}${trimmedIssueId}?${query}` : `${ISSUE_MENTION_SCHEME}${trimmedIssueId}`;
 }
@@ -234,23 +155,20 @@ export function parseIssueMentionHref(href: string): ParsedIssueMention | null {
   const issueId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
   if (!issueId) return null;
 
-  const ref = (url.searchParams.get("r") ?? url.searchParams.get("ref") ?? "").trim() || null;
   const commentId = (url.searchParams.get("c") ?? url.searchParams.get("commentId") ?? "").trim() || null;
-  const status = (url.searchParams.get("s") ?? url.searchParams.get("status") ?? "").trim() || null;
 
   return {
     issueId,
-    ref,
+    ref: null,
     commentId,
-    status,
+    status: null,
   };
 }
 
 export function buildChatMentionHref(conversationId: string, title?: string | null): string {
+  void title;
   const trimmedConversationId = conversationId.trim();
-  const trimmedTitle = title?.trim();
-  if (!trimmedTitle) return `${CHAT_MENTION_SCHEME}${trimmedConversationId}`;
-  return `${CHAT_MENTION_SCHEME}${trimmedConversationId}?t=${encodeMentionParam(trimmedTitle)}`;
+  return `${CHAT_MENTION_SCHEME}${trimmedConversationId}`;
 }
 
 export function parseChatMentionHref(href: string): ParsedChatMention | null {
@@ -268,19 +186,16 @@ export function parseChatMentionHref(href: string): ParsedChatMention | null {
   const conversationId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
   if (!conversationId) return null;
 
-  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
-
   return {
     conversationId,
-    title,
+    title: null,
   };
 }
 
 export function buildLibraryDocMentionHref(documentId: string, title?: string | null): string {
+  void title;
   const trimmedDocumentId = documentId.trim();
-  const trimmedTitle = title?.trim();
-  if (!trimmedTitle) return `${LIBRARY_DOC_MENTION_SCHEME}${trimmedDocumentId}`;
-  return `${LIBRARY_DOC_MENTION_SCHEME}${trimmedDocumentId}?t=${encodeMentionParam(trimmedTitle)}`;
+  return `${LIBRARY_DOC_MENTION_SCHEME}${trimmedDocumentId}`;
 }
 
 export function parseLibraryDocMentionHref(href: string): ParsedLibraryDocMention | null {
@@ -298,23 +213,17 @@ export function parseLibraryDocMentionHref(href: string): ParsedLibraryDocMentio
   const documentId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
   if (!documentId) return null;
 
-  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
-
   return {
     documentId,
-    title,
+    title: null,
   };
 }
 
 export function buildLibraryEntryMentionHref(entryId: string, title?: string | null, pathHint?: string | null): string {
+  void title;
+  void pathHint;
   const trimmedEntryId = entryId.trim();
-  const search = new URLSearchParams();
-  const trimmedTitle = title?.trim();
-  const trimmedPathHint = pathHint?.trim();
-  if (trimmedTitle) search.set("t", trimmedTitle);
-  if (trimmedPathHint) search.set("p", trimmedPathHint);
-  const query = search.toString();
-  return `${LIBRARY_ENTRY_MENTION_SCHEME}${trimmedEntryId}${query ? `?${query}` : ""}`;
+  return `${LIBRARY_ENTRY_MENTION_SCHEME}${trimmedEntryId}`;
 }
 
 function escapeMarkdownLinkLabel(label: string): string {
@@ -340,21 +249,17 @@ export function parseLibraryEntryMentionHref(href: string): ParsedLibraryEntryMe
   const entryId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
   if (!entryId) return null;
 
-  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
-  const path = (url.searchParams.get("p") ?? url.searchParams.get("path") ?? "").trim() || null;
-
   return {
     entryId,
-    title,
-    path,
+    title: null,
+    path: null,
   };
 }
 
 export function buildLibraryFileMentionHref(filePath: string, title?: string | null): string {
+  void title;
   const trimmedFilePath = filePath.trim();
-  const trimmedTitle = title?.trim();
   const search = new URLSearchParams({ p: trimmedFilePath });
-  if (trimmedTitle) search.set("t", trimmedTitle);
   return `${LIBRARY_FILE_MENTION_SCHEME}file?${search.toString()}`;
 }
 
@@ -377,19 +282,16 @@ export function parseLibraryFileMentionHref(href: string): ParsedLibraryFileMent
   const filePath = (url.searchParams.get("p") ?? url.searchParams.get("path") ?? "").trim();
   if (!filePath) return null;
 
-  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
-
   return {
     filePath,
-    title,
+    title: null,
   };
 }
 
 export function buildLibraryDirectoryMentionHref(directoryPath: string, title?: string | null): string {
+  void title;
   const trimmedDirectoryPath = directoryPath.trim();
-  const trimmedTitle = title?.trim();
   const search = new URLSearchParams({ p: trimmedDirectoryPath });
-  if (trimmedTitle) search.set("t", trimmedTitle);
   return `${LIBRARY_DIRECTORY_MENTION_SCHEME}directory?${search.toString()}`;
 }
 
@@ -408,11 +310,9 @@ export function parseLibraryDirectoryMentionHref(href: string): ParsedLibraryDir
   const directoryPath = (url.searchParams.get("p") ?? url.searchParams.get("path") ?? "").trim();
   if (!directoryPath) return null;
 
-  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
-
   return {
     directoryPath,
-    title,
+    title: null,
   };
 }
 
@@ -531,20 +431,4 @@ export function extractLibraryDirectoryMentionPaths(markdown: string): string[] 
     if (parsed) paths.add(parsed.directoryPath);
   }
   return [...paths];
-}
-
-function normalizeAgentIcon(input: string | null | undefined): string | null {
-  if (!input) return null;
-  const trimmed = input.trim().toLowerCase();
-  const avatarBackground = trimmed.match(AGENT_ASSET_ICON_RE)?.[1]
-    ?? trimmed.match(AGENT_DICEBEAR_NOTIONISTS_ICON_RE)?.[1]
-    ?? null;
-  if (
-    AGENT_ASSET_ICON_RE.test(trimmed)
-    || AGENT_DICEBEAR_NOTIONISTS_ICON_RE.test(trimmed)
-  ) {
-    return avatarBackground && !AGENT_AVATAR_BACKGROUND_VALUES.has(avatarBackground) ? null : trimmed;
-  }
-  if (!trimmed || !AGENT_ICON_NAME_RE.test(trimmed)) return null;
-  return trimmed;
 }

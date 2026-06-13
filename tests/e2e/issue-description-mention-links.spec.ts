@@ -24,7 +24,7 @@ test("issue description special mention links stay inside the active organizatio
   const sourceIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {
       title: "Source issue with special mention link",
-      description: `Review [${targetIssueRef}](issue://${targetIssue.id}?r=${targetIssueRef}) before closing this issue.`,
+      description: `Review [${targetIssueRef}](issue://${targetIssue.id}) before closing this issue.`,
       status: "todo",
       priority: "medium",
     },
@@ -37,10 +37,10 @@ test("issue description special mention links stay inside the active organizatio
 
   const descriptionLink = page.getByRole("link", { name: targetIssueRef }).first();
   await expect(descriptionLink).toBeVisible();
-  await expect(descriptionLink).toHaveAttribute("href", `/${organization.issuePrefix}/issues/${targetIssueRef}`);
+  await expect(descriptionLink).toHaveAttribute("href", `/${organization.issuePrefix}/issues/${targetIssue.id}`);
 
   await descriptionLink.click();
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${targetIssueRef}$`));
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues/${targetIssue.id}$`));
   await expect(page.locator("main").getByRole("heading", {
     name: "Target issue for special mention navigation",
   })).toBeVisible();

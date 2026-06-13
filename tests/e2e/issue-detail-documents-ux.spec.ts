@@ -31,8 +31,8 @@ test.describe("Issue detail Library UX", () => {
       data: {
         title: "Issue should link docs from Library",
         description: [
-          `Use [@Product brief](library-doc://${libraryDoc.id}?t=Product%20brief) as the durable source.`,
-          "Use [@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md) as the live file source.",
+          `Use [@Product brief](library-doc://${libraryDoc.id}) as the durable source.`,
+          "Use [@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md) as the live file source.",
         ].join("\n\n"),
         status: "todo",
         priority: "medium",

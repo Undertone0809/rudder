@@ -113,7 +113,7 @@ test("chat composer keeps text after Rudder reference tokens when sending", asyn
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
 
-  const projectReference = `[${project.name}](project://${project.id}?c=linear-gradient%28135deg%2C%20%23ef4444%200%25%2C%20%23f59e0b%20100%25%29)`;
+  const projectReference = `[${project.name}](project://${project.id})`;
   const agentReference = `[${agent.name}](agent://${agent.id})`;
   const draft = `你需要结合 ${projectReference} 项目中的 issue 发版计划，优化一下 PRD roadmap，并让 ${agentReference} 继续跟进。`;
   await composer.fill(draft);

@@ -548,6 +548,41 @@ export function MarkdownBody({
       .filter((mention) => mention.kind === "agent")
       .map((mention) => [mention.agentId ?? mention.id.replace(/^agent:/, ""), mention] as const),
   );
+  const projectMentionById = new Map(
+    mentions
+      .filter((mention) => mention.kind === "project" && mention.projectId)
+      .map((mention) => [mention.projectId!, mention] as const),
+  );
+  const issueMentionById = new Map(
+    mentions
+      .filter((mention) => mention.kind === "issue" && mention.issueId)
+      .map((mention) => [mention.issueId!, mention] as const),
+  );
+  const chatMentionById = new Map(
+    mentions
+      .filter((mention) => mention.kind === "chat" && mention.chatConversationId)
+      .map((mention) => [mention.chatConversationId!, mention] as const),
+  );
+  const libraryDocMentionById = new Map(
+    mentions
+      .filter((mention) => mention.kind === "library_doc" && mention.libraryDocumentId)
+      .map((mention) => [mention.libraryDocumentId!, mention] as const),
+  );
+  const libraryEntryMentionById = new Map(
+    mentions
+      .filter((mention) => mention.kind === "library_file" && mention.libraryEntryId)
+      .map((mention) => [mention.libraryEntryId!, mention] as const),
+  );
+  const libraryFileMentionByPath = new Map(
+    mentions
+      .filter((mention) => mention.kind === "library_file" && mention.libraryFilePath)
+      .map((mention) => [mention.libraryFilePath!, mention] as const),
+  );
+  const libraryDirectoryMentionByPath = new Map(
+    mentions
+      .filter((mention) => mention.kind === "library_directory" && mention.libraryDirectoryPath)
+      .map((mention) => [mention.libraryDirectoryPath!, mention] as const),
+  );
   const skillPreviewByHref = new Map(
     (skillReferences ?? [])
       .map((preview) => [normalizeSkillReferenceLookupKey(preview.href), preview] as const)
@@ -661,13 +696,44 @@ export function MarkdownBody({
     a: ({ node, href, children: linkChildren }) => {
       const parsed = href ? parseMentionChipHref(href) : null;
       if (parsed) {
-        const mention = parsed.kind === "agent"
-          ? {
+        const fallbackMentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren));
+        const mention = (() => {
+          if (parsed.kind === "agent") {
+            return {
               ...parsed,
               icon: agentMentionById.get(parsed.agentId)?.agentIcon ?? parsed.icon,
-            }
-          : parsed;
-        const mentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren));
+            };
+          }
+          if (parsed.kind === "project") {
+            const current = projectMentionById.get(parsed.projectId);
+            return {
+              ...parsed,
+              color: current?.projectColor ?? parsed.color,
+              icon: current?.projectIcon ?? parsed.icon,
+            };
+          }
+          if (parsed.kind === "issue") {
+            const current = issueMentionById.get(parsed.issueId);
+            return {
+              ...parsed,
+              status: current?.issueStatus ?? parsed.status,
+            };
+          }
+          return parsed;
+        })();
+        const mentionLabel = (() => {
+          if (mention.kind === "agent") return agentMentionById.get(mention.agentId)?.name ?? fallbackMentionLabel;
+          if (mention.kind === "project") return projectMentionById.get(mention.projectId)?.name ?? fallbackMentionLabel;
+          if (mention.kind === "issue") {
+            return mention.commentId ? fallbackMentionLabel : issueMentionById.get(mention.issueId)?.name ?? fallbackMentionLabel;
+          }
+          if (mention.kind === "chat") return chatMentionById.get(mention.conversationId)?.name ?? fallbackMentionLabel;
+          if (mention.kind === "library_doc") return libraryDocMentionById.get(mention.documentId)?.name ?? fallbackMentionLabel;
+          if (mention.kind === "library_entry") return libraryEntryMentionById.get(mention.entryId)?.name ?? fallbackMentionLabel;
+          if (mention.kind === "library_file") return libraryFileMentionByPath.get(mention.filePath)?.name ?? fallbackMentionLabel;
+          if (mention.kind === "library_directory") return libraryDirectoryMentionByPath.get(mention.directoryPath)?.name ?? fallbackMentionLabel;
+          return fallbackMentionLabel;
+        })();
         const targetHref = applyOrganizationPrefix(mentionChipNavigationPath(mention), organizationPrefix);
         const mentionLink = (
           <a

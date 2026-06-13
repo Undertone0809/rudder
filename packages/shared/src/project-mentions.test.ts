@@ -28,54 +28,44 @@ import {
   parseLibraryFileMentionHref,
   parseProjectMentionHref,
 } from "./project-mentions.js";
-import { PROJECT_COLORS } from "./constants.js";
 
 describe("project-mentions", () => {
-  it("round-trips project mentions with color metadata", () => {
+  it("builds project mentions with only the stable project id", () => {
     const href = buildProjectMentionHref("project-123", "#336699");
+    expect(href).toBe("project://project-123");
     expect(parseProjectMentionHref(href)).toEqual({
       projectId: "project-123",
-      color: "#336699",
+      color: null,
     });
     expect(extractProjectMentionIds(`[@Rudder App](${href})`)).toEqual(["project-123"]);
   });
 
-  it("round-trips project mentions with gradient metadata", () => {
-    const href = buildProjectMentionHref("project-123", PROJECT_COLORS[0]);
+  it("parses legacy project display metadata without treating it as identity", () => {
+    const href = "project://project-123?c=336699&i=plane";
     expect(parseProjectMentionHref(href)).toEqual({
       projectId: "project-123",
-      color: PROJECT_COLORS[0],
+      color: null,
     });
     expect(extractProjectMentionIds(`[@Rudder App](${href})`)).toEqual(["project-123"]);
   });
 
-  it("round-trips project mentions with icon metadata", () => {
-    const href = buildProjectMentionHref("project-123", "#336699", "plane");
-    expect(parseProjectMentionHref(href)).toEqual({
-      projectId: "project-123",
-      color: "#336699",
-      icon: "plane",
-    });
-    expect(href).toContain("i=plane");
-  });
-
-  it("round-trips agent mentions with icon metadata", () => {
+  it("builds agent mentions with only the stable agent id", () => {
     const href = buildAgentMentionHref("agent-123", "code");
+    expect(href).toBe("agent://agent-123");
     expect(parseAgentMentionHref(href)).toEqual({
       agentId: "agent-123",
-      icon: "code",
+      icon: null,
       intent: "reference",
     });
     expect(extractAgentMentionIds(`[@CodexCoder](${href})`)).toEqual(["agent-123"]);
     expect(extractAgentWakeMentionIds(`[@CodexCoder](${href})`)).toEqual([]);
   });
 
-  it("round-trips agent mentions with avatar metadata", () => {
-    const icon = "dicebear:notionists:11111111-1111-4111-8111-111111111111?bg=mint";
-    const href = buildAgentMentionHref("agent-123", icon);
+  it("parses legacy agent icon metadata without treating it as identity", () => {
+    const href = "agent://agent-123?i=dicebear%3Anotionists%3A11111111-1111-4111-8111-111111111111%3Fbg%3Dmint";
     expect(parseAgentMentionHref(href)).toEqual({
       agentId: "agent-123",
-      icon,
+      icon: null,
       intent: "reference",
     });
   });
@@ -86,7 +76,7 @@ describe("project-mentions", () => {
 
     expect(parseAgentMentionHref(wakeHref)).toEqual({
       agentId: "agent-wake",
-      icon: "code",
+      icon: null,
       intent: "wake",
     });
     expect(extractAgentMentionIds(`[@Reference](${referenceHref}) [@Wake](${wakeHref})`))
@@ -95,11 +85,12 @@ describe("project-mentions", () => {
       .toEqual(["agent-wake"]);
   });
 
-  it("round-trips issue mentions with identifier metadata", () => {
+  it("builds issue mentions with only the stable issue id", () => {
     const href = buildIssueMentionHref("issue-123", "PAP-123");
+    expect(href).toBe("issue://issue-123");
     expect(parseIssueMentionHref(href)).toEqual({
       issueId: "issue-123",
-      ref: "PAP-123",
+      ref: null,
       commentId: null,
       status: null,
     });
@@ -108,78 +99,81 @@ describe("project-mentions", () => {
 
   it("round-trips issue mentions with comment anchors", () => {
     const href = buildIssueMentionHref("issue-123", "PAP-123", "comment-456");
-    expect(href).toBe("issue://issue-123?r=PAP-123&c=comment-456");
+    expect(href).toBe("issue://issue-123?c=comment-456");
     expect(parseIssueMentionHref(href)).toEqual({
       issueId: "issue-123",
-      ref: "PAP-123",
+      ref: null,
       commentId: "comment-456",
       status: null,
     });
     expect(parseIssueMentionHref("issue://issue-123?ref=PAP-123&commentId=comment-456")).toEqual({
       issueId: "issue-123",
-      ref: "PAP-123",
+      ref: null,
       commentId: "comment-456",
       status: null,
     });
   });
 
-  it("round-trips issue mentions with status metadata", () => {
+  it("does not emit or parse issue status display metadata", () => {
     const href = buildIssueMentionHref("issue-123", "PAP-123", null, "in_review");
-    expect(href).toBe("issue://issue-123?r=PAP-123&s=in_review");
+    expect(href).toBe("issue://issue-123");
     expect(parseIssueMentionHref(href)).toEqual({
       issueId: "issue-123",
-      ref: "PAP-123",
+      ref: null,
       commentId: null,
-      status: "in_review",
+      status: null,
     });
     expect(parseIssueMentionHref("issue://issue-123?ref=PAP-123&status=blocked")).toEqual({
       issueId: "issue-123",
-      ref: "PAP-123",
+      ref: null,
       commentId: null,
-      status: "blocked",
+      status: null,
     });
   });
 
-  it("round-trips chat mentions with title metadata", () => {
+  it("builds chat mentions with only the stable conversation id", () => {
     const href = buildChatMentionHref("chat-123", "Launch planning");
+    expect(href).toBe("chat://chat-123");
     expect(parseChatMentionHref(href)).toEqual({
       conversationId: "chat-123",
-      title: "Launch planning",
+      title: null,
     });
     expect(extractChatMentionIds(`[@Launch planning](${href})`)).toEqual(["chat-123"]);
   });
 
-  it("round-trips library doc mentions with title metadata", () => {
+  it("builds library doc mentions with only the stable document id", () => {
     const href = buildLibraryDocMentionHref("doc-123", "Product principles");
+    expect(href).toBe("library-doc://doc-123");
     expect(parseLibraryDocMentionHref(href)).toEqual({
       documentId: "doc-123",
-      title: "Product principles",
+      title: null,
     });
     expect(extractLibraryDocMentionIds(`[@Product principles](${href})`)).toEqual(["doc-123"]);
   });
 
-  it("round-trips library entry mentions with title and path-hint metadata", () => {
+  it("builds library entry mentions with only the stable entry id", () => {
     const href = buildLibraryEntryMentionHref("entry-123", "Product brief", "projects/rudder/product-brief.md");
+    expect(href).toBe("library-entry://entry-123");
     expect(parseLibraryEntryMentionHref(href)).toEqual({
       entryId: "entry-123",
-      title: "Product brief",
-      path: "projects/rudder/product-brief.md",
+      title: null,
+      path: null,
     });
     expect(extractLibraryEntryMentionIds(`[@Product brief](${href})`)).toEqual(["entry-123"]);
   });
 
   it("builds library mention markdown without requiring agents to hand-write URLs", () => {
     expect(buildLibraryEntryMentionMarkdown("entry-123", "Product [brief]", "projects/rudder/product-brief.md"))
-      .toBe("[Product \\[brief\\]](library-entry://entry-123?t=Product+%5Bbrief%5D&p=projects%2Frudder%2Fproduct-brief.md)");
+      .toBe("[Product \\[brief\\]](library-entry://entry-123)");
     expect(buildLibraryFileMentionMarkdown("projects/rudder/product-brief.md", "Product brief"))
-      .toBe("[Product brief](library-file://file?p=projects%2Frudder%2Fproduct-brief.md&t=Product+brief)");
+      .toBe("[Product brief](library-file://file?p=projects%2Frudder%2Fproduct-brief.md)");
   });
 
   it("round-trips library file mentions with path metadata", () => {
     const href = buildLibraryFileMentionHref("docs/product-brief.md", "Product brief");
     expect(parseLibraryFileMentionHref(href)).toEqual({
       filePath: "docs/product-brief.md",
-      title: "Product brief",
+      title: null,
     });
     expect(extractLibraryFileMentionPaths(`[@Product brief](${href})`)).toEqual(["docs/product-brief.md"]);
   });
@@ -188,7 +182,7 @@ describe("project-mentions", () => {
     const href = buildLibraryDirectoryMentionHref("projects/rudder-mkt", "Rudder marketing");
     expect(parseLibraryDirectoryMentionHref(href)).toEqual({
       directoryPath: "projects/rudder-mkt",
-      title: "Rudder marketing",
+      title: null,
     });
     expect(extractLibraryDirectoryMentionPaths(`[@Rudder marketing](${href})`)).toEqual(["projects/rudder-mkt"]);
   });

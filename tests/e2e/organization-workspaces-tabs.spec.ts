@@ -86,7 +86,7 @@ test("Library markdown file links open as retained editor tabs", async ({ page }
   const files = [
     {
       filePath: sourcePath,
-      content: `# Current\n\nOpen [Linked doc](library-file://file?p=${encodeURIComponent(linkedPath)}&t=linked.md) from this document.\n`,
+      content: `# Current\n\nOpen [Linked doc](library-file://file?p=${encodeURIComponent(linkedPath)}) from this document.\n`,
     },
     ...fillerPaths.map((filePath) => ({
       filePath,

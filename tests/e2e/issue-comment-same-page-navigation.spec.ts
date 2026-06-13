@@ -28,7 +28,7 @@ test("same-issue comment links scroll in place without reloading the issue page"
   expect(targetCommentRes.ok()).toBe(true);
   const targetComment = await targetCommentRes.json() as { id: string };
 
-  const linkHref = `issue://${issue.id}?r=${routeRef}&c=${targetComment.id}`;
+  const linkHref = `issue://${issue.id}?c=${targetComment.id}`;
   const linkCommentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
     data: {
       body: `[Issue comment ${targetComment.id.slice(0, 8)}](${linkHref})`,
@@ -51,7 +51,7 @@ test("same-issue comment links scroll in place without reloading the issue page"
   const commentLink = linkCommentBlock.getByRole("link", { name: `Issue comment ${targetComment.id.slice(0, 8)}` });
   await expect(commentLink).toHaveAttribute(
     "href",
-    `/${organization.issuePrefix}/issues/${routeRef}#comment-${targetComment.id}`,
+    `/${organization.issuePrefix}/issues/${issue.id}#comment-${targetComment.id}`,
   );
 
   await page.evaluate(() => {

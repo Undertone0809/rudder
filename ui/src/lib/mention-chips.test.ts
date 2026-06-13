@@ -62,7 +62,7 @@ describe("mention chips", () => {
     expect(parseMentionChipHref("library-doc://doc-123?t=Product%20principles")).toEqual({
       kind: "library_doc",
       documentId: "doc-123",
-      title: "Product principles",
+      title: null,
     });
 
     const element = document.createElement("a");
@@ -82,7 +82,7 @@ describe("mention chips", () => {
     expect(parseMentionChipHref("chat://chat-123?t=Launch%20planning")).toEqual({
       kind: "chat",
       conversationId: "chat-123",
-      title: "Launch planning",
+      title: null,
     });
 
     const element = document.createElement("a");
@@ -103,19 +103,19 @@ describe("mention chips", () => {
     expect(mention).toEqual({
       kind: "issue",
       issueId: "issue-123",
-      ref: "RUD-123",
+      ref: null,
       commentId: "comment-456",
       status: null,
     });
 
-    expect(mention ? mentionChipNavigationPath(mention) : null).toBe("/issues/RUD-123#comment-comment-456");
+    expect(mention ? mentionChipNavigationPath(mention) : null).toBe("/issues/issue-123#comment-comment-456");
 
     const element = document.createElement("a");
     element.textContent = "Issue comment comment-";
     applyMentionChipDecoration(element, {
       kind: "issue",
       issueId: "issue-123",
-      ref: "RUD-123",
+      ref: null,
       commentId: "comment-456",
       status: null,
     });
@@ -128,9 +128,9 @@ describe("mention chips", () => {
     expect(parseMentionChipHref("issue://issue-123?r=RUD-123&s=in_review")).toEqual({
       kind: "issue",
       issueId: "issue-123",
-      ref: "RUD-123",
+      ref: null,
       commentId: null,
-      status: "in_review",
+      status: null,
     });
   });
 
@@ -163,7 +163,7 @@ describe("mention chips", () => {
     expect(parseMentionChipHref("library-file://file?p=docs%2Fproduct-brief.md&t=Product%20brief")).toEqual({
       kind: "library_file",
       filePath: "docs/product-brief.md",
-      title: "Product brief",
+      title: null,
     });
 
     const element = document.createElement("a");
@@ -183,7 +183,7 @@ describe("mention chips", () => {
     expect(parseMentionChipHref("library-directory://directory?p=projects%2Frudder-mkt&t=Rudder%20marketing")).toEqual({
       kind: "library_directory",
       directoryPath: "projects/rudder-mkt",
-      title: "Rudder marketing",
+      title: null,
     });
 
     const element = document.createElement("a");

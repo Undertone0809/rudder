@@ -222,7 +222,7 @@ test.describe("Organization workspaces agent avatar", () => {
     const sourceContent = [
       `[Winter (CEO)](agent://${agent.id})`,
       "",
-      `[docs-proposal.md](library-file://file?p=${encodeURIComponent(targetFilePath)}&t=docs-proposal.md)`,
+      `[docs-proposal.md](library-file://file?p=${encodeURIComponent(targetFilePath)})`,
       "",
       `[skill-creator](${skillPath})`,
       "",

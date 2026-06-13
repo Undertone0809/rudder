@@ -1551,14 +1551,18 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
           const option = mentionOptionByKey.get(`project:${parsed.projectId}`);
           applyMentionChipDecoration(link, {
             ...parsed,
-            color: parsed.color ?? option?.projectColor ?? null,
-            icon: parsed.icon ?? option?.projectIcon ?? null,
+            color: option?.projectColor ?? parsed.color ?? null,
+            icon: option?.projectIcon ?? parsed.icon ?? null,
           });
           continue;
         }
 
         if (parsed.kind === "issue") {
-          applyMentionChipDecoration(link, parsed);
+          const option = mentionOptionByKey.get(`issue:${parsed.issueId}`);
+          applyMentionChipDecoration(link, {
+            ...parsed,
+            status: option?.issueStatus ?? parsed.status ?? null,
+          });
           continue;
         }
 

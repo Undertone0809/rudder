@@ -3,15 +3,18 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 test.use({ serviceWorkers: "block" });
 
 function buildProjectMentionHref(projectId: string, color?: string | null) {
-  return color ? `project://${projectId}?c=${encodeURIComponent(color.replace(/^#/, ""))}` : `project://${projectId}`;
+  void color;
+  return `project://${projectId}`;
 }
 
 function buildLibraryDocMentionHref(documentId: string, title: string) {
-  return `library-doc://${documentId}?t=${encodeURIComponent(title)}`;
+  void title;
+  return `library-doc://${documentId}`;
 }
 
 function buildLibraryFileMentionHref(filePath: string, title: string) {
-  return `library-file://file?p=${encodeURIComponent(filePath)}&t=${encodeURIComponent(title)}`;
+  void title;
+  return `library-file://file?p=${encodeURIComponent(filePath)}`;
 }
 
 async function createOrganization(page: Page) {
@@ -103,12 +106,12 @@ test("renderable entity links show hover previews except chat links", async ({ p
     data: {
       title: "Renderable link preview host",
       description: [
-        `[${targetIssueRef}](issue://${targetIssue.id}?r=${encodeURIComponent(targetIssueRef)}&s=todo)`,
+        `[${targetIssueRef}](issue://${targetIssue.id})`,
         `[${agent.name}](agent://${agent.id})`,
         `[${project.name}](${buildProjectMentionHref(project.id, project.color)})`,
         `[${libraryDoc.title}](${buildLibraryDocMentionHref(libraryDoc.id, libraryDoc.title)})`,
         `[${fileName}](${buildLibraryFileMentionHref(filePath, fileName)})`,
-        `[Preview chat](chat://${chat.id}?t=${encodeURIComponent("Preview chat")})`,
+        `[Preview chat](chat://${chat.id})`,
       ].join(" "),
       status: "todo",
       priority: "medium",
