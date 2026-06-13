@@ -328,6 +328,39 @@ test.describe("Workspace shell", () => {
     });
   });
 
+  test("lets the issues context sidebar resize to one third of the viewport", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Issues-Resize-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    await gotoOrganizationPath(page, organization, "/issues");
+
+    const contextCard = page.getByTestId("workspace-context-card");
+    const resizer = page.getByTestId("workspace-column-resizer");
+    await expect(contextCard).toBeVisible();
+    await expect(resizer).toBeVisible();
+
+    const initialContextBox = await contextCard.boundingBox();
+    const resizerBox = await resizer.boundingBox();
+    expect(initialContextBox).not.toBeNull();
+    expect(resizerBox).not.toBeNull();
+    expect(Math.round(initialContextBox!.width)).toBe(248);
+
+    await page.mouse.move(resizerBox!.x + resizerBox!.width / 2, resizerBox!.y + resizerBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(900, resizerBox!.y + resizerBox!.height / 2);
+    await page.mouse.up();
+
+    const resizedContextBox = await contextCard.boundingBox();
+    expect(resizedContextBox).not.toBeNull();
+    expect(Math.round(resizedContextBox!.width)).toBe(Math.floor(1280 / 3));
+  });
+
   test("renders agents as a rail plus dual workspace cards", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

@@ -71,10 +71,10 @@ const WORKSPACE_COLUMN_WIDTH_DEFAULTS: Record<WorkspaceColumnFamily, number> = {
   backups: 332,
 };
 
-const WORKSPACE_COLUMN_WIDTH_LIMITS: Record<WorkspaceColumnFamily, { min: number; max: number }> = {
+const WORKSPACE_COLUMN_WIDTH_LIMITS: Record<WorkspaceColumnFamily, { min: number; max: number; maxViewportFraction?: number }> = {
   chat: { min: 280, max: 420 },
   messenger: { min: 280, max: 420 },
-  issues: { min: 220, max: 340 },
+  issues: { min: 220, max: 340, maxViewportFraction: 1 / 3 },
   calendar: { min: 236, max: 360 },
   projects: { min: 236, max: 360 },
   agents: { min: 236, max: 360 },
@@ -205,8 +205,24 @@ function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily |
   return null;
 }
 
-function clampWorkspaceColumnWidth(family: WorkspaceColumnFamily, value: number): number {
-  const { min, max } = WORKSPACE_COLUMN_WIDTH_LIMITS[family];
+function getCurrentViewportWidth(): number | null {
+  if (typeof window === "undefined") return null;
+  return window.innerWidth;
+}
+
+export function getWorkspaceColumnMaxWidth(family: WorkspaceColumnFamily, viewportWidth: number | null = getCurrentViewportWidth()): number {
+  const { max, maxViewportFraction } = WORKSPACE_COLUMN_WIDTH_LIMITS[family];
+  if (!maxViewportFraction || viewportWidth === null || !Number.isFinite(viewportWidth)) return max;
+  return Math.max(max, Math.floor(viewportWidth * maxViewportFraction));
+}
+
+export function clampWorkspaceColumnWidth(
+  family: WorkspaceColumnFamily,
+  value: number,
+  viewportWidth: number | null = getCurrentViewportWidth(),
+): number {
+  const { min } = WORKSPACE_COLUMN_WIDTH_LIMITS[family];
+  const max = getWorkspaceColumnMaxWidth(family, viewportWidth);
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
