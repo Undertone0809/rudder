@@ -72,15 +72,31 @@ async function expectEditorIssueStatusMention(root: Locator, issueId: string, st
   expect(beforeStyle.display).not.toBe("none");
   expect(beforeStyle.maskImage).not.toBe("none");
   expect(beforeStyle.maskImage).not.toContain("viewBox='0 0 24 24'");
+
+  if (status === "done") {
+    const afterStyle = await visualChip.evaluate((element) => {
+      const style = window.getComputedStyle(element, "::after");
+      return {
+        content: style.content,
+        display: style.display,
+        background: style.backgroundColor,
+        maskImage: style.getPropertyValue("-webkit-mask-image") || style.getPropertyValue("mask-image"),
+      };
+    });
+    expect(afterStyle.content).not.toBe("none");
+    expect(afterStyle.display).not.toBe("none");
+    expect(afterStyle.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(afterStyle.maskImage).not.toBe("none");
+  }
 }
 
-test("issue status mentions render status icons in comments and editor surfaces", async ({ page }) => {
+test("issue done mentions render the canonical status icon in comments and editor surfaces", async ({ page }) => {
   const organization = await createOrganization(page);
-  const targetIssue = await createIssue(page, organization.id, "Status chip target issue", "todo");
+  const targetIssue = await createIssue(page, organization.id, "Status chip target issue", "done");
   const targetRef = targetIssue.identifier ?? targetIssue.id;
   const hostIssue = await createIssue(page, organization.id, "Status chip host issue", "todo");
   const hostRef = hostIssue.identifier ?? hostIssue.id;
-  const issueMentionHref = buildIssueMentionHref(targetIssue.id, targetRef, "todo");
+  const issueMentionHref = buildIssueMentionHref(targetIssue.id, targetRef, "done");
 
   const commentRes = await page.request.post(`/api/issues/${hostIssue.id}/comments`, {
     data: {
@@ -105,8 +121,8 @@ test("issue status mentions render status icons in comments and editor surfaces"
 
   const renderedCommentChip = page.locator(`#comment-${comment.id} a.rudder-mention-chip[data-mention-kind="issue"]`).first();
   await expect(renderedCommentChip).toBeVisible({ timeout: 15_000 });
-  await expect(renderedCommentChip).toHaveAttribute("data-mention-status", "todo");
-  await expect(renderedCommentChip.locator('[data-slot="issue-status-icon"][data-status="todo"]')).toBeVisible();
+  await expect(renderedCommentChip).toHaveAttribute("data-mention-status", "done");
+  await expect(renderedCommentChip.locator('[data-slot="issue-status-icon"][data-status="done"] [data-slot="status-done-check"]')).toBeVisible();
 
   const composer = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').last();
   await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -114,10 +130,10 @@ test("issue status mentions render status icons in comments and editor surfaces"
   await composer.click();
   await page.evaluate((markdown) => navigator.clipboard.writeText(markdown), `[${targetRef}](${issueMentionHref})`);
   await page.keyboard.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
-  await expectEditorIssueStatusMention(composer, targetIssue.id, "todo");
+  await expectEditorIssueStatusMention(composer, targetIssue.id, "done");
 
   await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
   const libraryEditor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
   await expect(libraryEditor).toBeVisible({ timeout: 15_000 });
-  await expectEditorIssueStatusMention(libraryEditor, targetIssue.id, "todo");
+  await expectEditorIssueStatusMention(libraryEditor, targetIssue.id, "done");
 });

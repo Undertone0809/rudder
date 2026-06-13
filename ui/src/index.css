@@ -3644,6 +3644,7 @@ a.rudder-mention-chip[data-mention-kind="issue"]::before {
 a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before {
   content: "";
   display: inline-block;
+  flex: none;
   width: 1.05em;
   height: 1.05em;
   background: var(--rudder-mention-status-color, currentColor);
@@ -3674,7 +3675,31 @@ a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before {
 
 .rudder-mention-chip--with-status-icon[data-mention-status="done"] {
   --rudder-mention-status-color: #16a34a;
-  --rudder-mention-status-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='8' cy='8' r='6.5' fill='black' stroke='none'/%3E%3Cpath d='M4.75 8.25 7 10.5l4.25-5' stroke='black' stroke-width='2'/%3E%3C/svg%3E");
+  --rudder-mention-status-check-color: var(--background);
+  --rudder-mention-status-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6.5' fill='black'/%3E%3C/svg%3E");
+  --rudder-mention-status-check-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.75 8.25 7 10.5l4.25-5'/%3E%3C/svg%3E");
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"],
+.rudder-milkdown-content .rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"],
+a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"] {
+  position: relative;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"]::after,
+.rudder-milkdown-content .rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"]::after,
+a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 1.05em;
+  height: 1.05em;
+  background: var(--rudder-mention-status-check-color, var(--background));
+  pointer-events: none;
+  transform: translateY(calc(-50% + 0.01em));
+  mask: var(--rudder-mention-status-check-mask) center / contain no-repeat;
+  -webkit-mask: var(--rudder-mention-status-check-mask) center / contain no-repeat;
 }
 
 .rudder-mention-chip--with-status-icon[data-mention-status="cancelled"] {
@@ -3712,6 +3737,11 @@ a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before {
 }
 
 .rudder-markdown a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before {
+  content: none;
+  display: none;
+}
+
+.rudder-markdown a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"]::after {
   content: none;
   display: none;
 }

@@ -23,6 +23,23 @@ function cssBlock(selector: string) {
 }
 
 describe("index.css motion rules", () => {
+  it("keeps editor issue done mentions as a two-layer status icon", () => {
+    const doneStatusBlock = cssBlock('.rudder-mention-chip--with-status-icon[data-mention-status="done"]');
+    const doneCircleMaskLine =
+      doneStatusBlock.split("\n").find((line) => /^\s*--rudder-mention-status-mask:/.test(line)) ?? "";
+    const doneCheckBlock =
+      indexCss.match(/\.rudder-mdxeditor-content \.rudder-mention-chip--with-status-icon\[data-mention-kind="issue"]\[data-mention-status="done"]::after,[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(doneStatusBlock).toContain("--rudder-mention-status-color: #16a34a");
+    expect(doneStatusBlock).toContain("--rudder-mention-status-check-color: var(--background)");
+    expect(doneCircleMaskLine).toContain("%3Ccircle");
+    expect(doneCircleMaskLine).not.toContain("%3Cpath");
+    expect(doneStatusBlock).toContain("M4.75 8.25 7 10.5l4.25-5");
+    expect(doneCheckBlock).toContain("background: var(--rudder-mention-status-check-color, var(--background))");
+    expect(doneCheckBlock).toContain("--rudder-mention-status-check-mask");
+    expect(indexCss).toContain('.rudder-markdown a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"]::after');
+  });
+
   it("keeps command palette visible and avoids duplicate centering transforms", () => {
     const commandPaletteContent = cssBlock(".command-palette-content");
     const commandPaletteOpen = cssBlock('.command-palette-content[data-state="open"]');
