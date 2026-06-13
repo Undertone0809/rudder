@@ -227,7 +227,7 @@ export function TranscriptChatToolActionRow({
 
   return (
     <div
-      className={cn(rowPaddingClass, highlightError && block.status === "error" && "rounded-lg bg-red-500/[0.04] px-2")}
+      className={cn(rowPaddingClass, highlightError && block.status === "error" && "-mx-2 rounded-lg bg-red-500/[0.04] px-2")}
       title={getTranscriptTimestampTitle(block.ts)}
     >
       <button

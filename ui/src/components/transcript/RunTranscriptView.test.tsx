@@ -1198,6 +1198,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("aria-expanded=\"true\"");
     expect(html).toContain("hover:bg-red-500/[0.05]");
     expect(html).toContain("bg-red-500/[0.08]");
+    expect(html).toContain("-mx-2 rounded-lg bg-red-500/[0.04] px-2");
     expect(html).toContain("First command failed");
     expect(html).toContain("Second command failed");
   });
