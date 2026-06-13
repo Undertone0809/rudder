@@ -1,15 +1,15 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { MarkdownBody, type MarkdownLinkClickHandler } from "../MarkdownBody";
 import { cn, formatTokens } from "../../lib/utils";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { stripBenignStderr } from "../../lib/benign-stderr";
-import { useOptionalToast } from "../../context/ToastContext";
 import {
   Boxes,
   Check,
   ChevronRight,
   CircleAlert,
+  Copy,
   FileDiff,
   FileSearch,
   FileText,
@@ -25,10 +25,40 @@ import {
   Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TranscriptMode, TranscriptDensity, TranscriptPresentation, TranscriptToolCategory, TranscriptDigestBucket, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptActionIconTreatment, TranscriptToolSemanticInfo, TranscriptToolCardEntry, TranscriptMemoryScope, TranscriptMemoryUpdateChange, TranscriptTodoListItem, RunTranscriptViewProps, TranscriptBlock, ChatTranscriptTurn, ChatTranscriptAction, COMMON_FILENAME_TOKENS, STRONG_WRITE_COMMAND_TOKENS, LONG_EVENT_COLLAPSE_CHARS, LONG_EVENT_COLLAPSE_LINES, LOCAL_POSIX_FILE_ROOTS, TranscriptMarkdownLinkClickHandler, asRecord, decodeFileUrlPath, resolveTranscriptLocalFileTarget, shouldHandlePlainClick, compactWhitespace, isTurnStartedText, isRudderDeveloperDiagnosticLine, isRudderDeveloperDiagnosticContinuationLine, filterRoutineStdout, isWarningStderrLine, isAnalyticsForbiddenHtmlStart, filterRenderableTranscriptEntries, shouldCollapseEventText, formatTranscriptTimestamp, getTranscriptActionIconTreatment, getTranscriptActionIconTone, TranscriptActionIcon, TranscriptActionIconSlot, TranscriptActionIconStack, getTranscriptTimestampTitle, formatTranscriptDuration, truncate, pluralize, humanizeLabel } from "./RunTranscriptView.common";
 import { decodeShellEscapes, stripWrappedShell, tokenizeShellForClassification, shellTokensForCommand, isShellControlToken, commandSegmentFrom, splitShellCommandSegments, hasHelpSignal, hasStdoutWriteRedirect, extractStdoutWriteRedirectTarget, extractStdoutWriteRedirectTargetFromTokens, commandSegmentHasStdoutWriteRedirect, commandUsesInPlaceSed, commandUsesInPlacePerl, isPackageInstallCommand, commandSegmentUsesInPlaceSed, commandSegmentUsesInPlacePerl, findStrongEditSegment, hasPackageInstallSegment, getShellPositionalArgsFromTokens, classifyShellCommand, unwrapQuotedToken, cleanShellToken, normalizeTranscriptPathToken, titleCaseAgentSlug, inferAgentNameFromMemoryPath, classifyAgentMemoryPath, formatMemoryScopeLabel, formatMemoryScopeSummary, formatMemoryEffect, formatMemoryOperation, splitFileChangeEntries, extractMemoryUpdateFailureReason, parseMemoryUpdateSystemText, tokenizeShell } from "./RunTranscriptView.shell";
 import { normalizePathTarget, dedupeTargets, extractSkillSlugFromEntryPath, extractSkillSlugsFromEntryPaths, formatSkillUseAction, isLikelyPathToken, isLikelySedExpressionToken, getShellPositionalArgs, extractRecordPaths, extractRecordQuery, readStringField, extractQueryValues, extractWebSearchQueries, isWebSearchTool, formatWebSearchSummary, McpToolDetails, MCP_METADATA_KEYS, parseMcpToolName, sanitizeMcpArgs, extractMcpToolDetails, summarizeMcpValue, summarizeMcpArgs, formatMcpLabel, formatMcpSummary, formatTargetAction, quoteSummaryText, formatSearchActionSummary, summarizeCommandPhrase, extractShellFlagValue, formatRudderTarget, summarizeIssueComment, describeRudderCommandSemanticInfo, describeCommandSemanticInfo, formatUnknown, formatToolPayload, extractToolUseId, describeToolInvocation, summarizeRecord, summarizeToolInput, parseStructuredToolResult, formatCommandTerminalOutput, isCommandTool, describeToolSemanticInfo } from "./RunTranscriptView.semantic";
 import { formatSemanticDigest, summarizeToolResult, parseSystemActivity, getTodoListCompletedCount, formatTodoListSummary, formatTodoListRaw, shouldHideNiceModeStderr, groupCommandBlocks, segmentTranscriptEntriesByTurn, normalizeTranscript, summarizeChatTurn, normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
+
+async function writeTranscriptClipboardText(text: string) {
+  const desktopShell = readDesktopShell();
+  if (desktopShell?.copyText) {
+    await desktopShell.copyText(text);
+    return;
+  }
+
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand?.("copy");
+  textarea.remove();
+  if (!copied) throw new Error("Clipboard write failed.");
+}
+
+function formatCommandCopyText(command: string, output: string | null) {
+  return output ? `${command}\n\n${output}` : command;
+}
 
 export function TranscriptMessageBlock({
   block,
@@ -240,11 +270,30 @@ export function CommandTerminalDetail({
   status: TranscriptToolCardEntry["status"];
   className?: string;
 }) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const copyLabel =
+    copyState === "copied" ? "Copied command output" : copyState === "failed" ? "Copy failed" : "Copy command output";
+  const copyText = useMemo(() => formatCommandCopyText(command, output), [command, output]);
+
+  useEffect(() => () => clearTimeout(resetTimerRef.current), []);
+
+  const handleCopy = useCallback(async () => {
+    clearTimeout(resetTimerRef.current);
+    try {
+      await writeTranscriptClipboardText(copyText);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    resetTimerRef.current = setTimeout(() => setCopyState("idle"), 1600);
+  }, [copyText]);
+
   return (
     <div
       data-testid="command-terminal-detail"
       className={cn(
-        "overflow-hidden rounded-xl border border-neutral-800 bg-[#0a0a0a] text-neutral-100 shadow-[0_18px_45px_-28px_rgb(0_0_0/0.75)]",
+        "group/command-terminal relative overflow-hidden rounded-xl border border-neutral-800 bg-[#0a0a0a] text-neutral-100 shadow-[0_18px_45px_-28px_rgb(0_0_0/0.75)]",
         className,
       )}
     >
@@ -253,6 +302,29 @@ export function CommandTerminalDetail({
         <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
         <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
       </div>
+      <TooltipProvider delayDuration={120}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-[#242424]/90 text-neutral-300 opacity-0 shadow-sm transition-all hover:border-white/20 hover:bg-[#2f2f2f] hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35 group-hover/command-terminal:opacity-100"
+              aria-label={copyLabel}
+              data-testid="command-terminal-copy-button"
+              data-copy-state={copyState}
+              onClick={() => void handleCopy()}
+            >
+              {copyState === "copied" ? (
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={8}>
+            {copyLabel}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <div className="p-4 font-mono text-[11px] leading-5">
         <pre className="overflow-x-auto whitespace-pre-wrap break-words text-neutral-100">
           <span className="select-none text-emerald-400">$ </span>

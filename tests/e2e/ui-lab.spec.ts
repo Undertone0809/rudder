@@ -133,4 +133,31 @@ test.describe("UI Lab", () => {
     await page.locator('[data-transcript-file-change="true"] button').first().click();
     await expect(page.getByText("/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/projects/rudder/proposals", { exact: false })).toBeVisible();
   });
+
+  test("shows a hover copy action on command terminal transcript details", async ({ page, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const organization = await createUiLabOrganization(page);
+
+    await page.goto(`/${organization.issuePrefix}/tests/ux/runs`);
+    await expect(page.getByText("Run transcript UX lab")).toBeVisible();
+    await expect(page.getByText("Run Transcript Fixtures")).toBeVisible();
+
+    await page.getByRole("button", { name: "Expand tool activity group 1" }).click();
+    const docGoalCommand = page.getByRole("button", { name: "Expand command details" }).filter({ hasText: "Read doc/GOAL.md" });
+    await expect(docGoalCommand).toHaveCount(1);
+    await docGoalCommand.click();
+
+    const commandTerminal = page.getByTestId("command-terminal-detail").first();
+    const commandCopyButton = page.getByTestId("command-terminal-copy-button").first();
+    await expect(commandTerminal).toBeVisible();
+    await expect(commandCopyButton).toHaveCSS("opacity", "0");
+    await commandTerminal.hover();
+    await expect(commandCopyButton).toHaveCSS("opacity", "1");
+    await commandCopyButton.click();
+    await expect(commandCopyButton).toHaveAttribute("data-copy-state", "copied");
+
+    const copiedCommandOutput = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copiedCommandOutput).toContain("sed -n '1,220p' doc/GOAL.md");
+    expect(copiedCommandOutput).not.toContain("$ sed");
+  });
 });

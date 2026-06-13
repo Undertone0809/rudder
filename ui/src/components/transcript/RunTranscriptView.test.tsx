@@ -1282,6 +1282,9 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("data-testid=\"command-terminal-detail\"");
+    expect(html).toContain("data-testid=\"command-terminal-copy-button\"");
+    expect(html).toContain("aria-label=\"Copy command output\"");
+    expect(html).toContain("group-hover/command-terminal:opacity-100");
     expect(html).toContain("ls -la /Users/zeeland/.vercel 2&gt;/dev/null || true");
     expect(html).toContain("ls: /Users/zeeland/.vercel: Permission denied");
     expect(html).not.toContain("Command activity");
