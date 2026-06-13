@@ -37,6 +37,7 @@ import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import {
+  applyMentionChipDecoration,
   mentionChipInlineStyle,
   mentionChipNavigationPath,
   parseMentionChipHref,
@@ -239,8 +240,11 @@ function serializeInlineStyle(style: CSSProperties | undefined) {
   return declarations.length > 0 ? declarations.join(" ") : undefined;
 }
 
-function milkdownMentionDecorationAttrs(mention: ParsedMentionChip, label: string, href: string) {
+export function milkdownMentionDecorationAttrs(mention: ParsedMentionChip, label: string, href: string) {
   const classNames = ["rudder-mention-chip", `rudder-mention-chip--${mention.kind}`];
+  if (mention.kind === "issue" && mention.status) {
+    classNames.push("rudder-mention-chip--with-status-icon");
+  }
   if (mention.kind === "project") {
     classNames.push("rudder-project-mention-chip");
   }
@@ -249,6 +253,9 @@ function milkdownMentionDecorationAttrs(mention: ParsedMentionChip, label: strin
     "data-mention-kind": mention.kind,
     "data-mention-href": href,
   };
+  if (mention.kind === "issue" && mention.status) {
+    attrs["data-mention-status"] = mention.status;
+  }
   const navigationPath = rudderTokenNavigationPath(href);
   attrs.title = navigationPath ? `Open ${label}` : label;
   const style = serializeInlineStyle(mentionChipInlineStyle(mention));
@@ -278,8 +285,9 @@ function applyMentionStyleProperties(element: HTMLElement, mention: ParsedMentio
 function refreshMilkdownMentionTokenStyles(root: HTMLElement | null, mentions: MentionOption[]) {
   if (!root) return;
   const optionByKey = mentionOptionMap(mentions);
-  for (const element of root.querySelectorAll<HTMLElement>("[data-mention-href]")) {
-    const parsed = parseMentionChipHref(element.dataset.mentionHref ?? "");
+  for (const element of root.querySelectorAll<HTMLElement>("[data-mention-href], a[href]")) {
+    const href = element.dataset.mentionHref ?? element.getAttribute("href") ?? "";
+    const parsed = parseMentionChipHref(href);
     if (!parsed) continue;
     const mention = parsed.kind === "agent"
       ? { ...parsed, icon: optionByKey.get(`agent:${parsed.agentId}`)?.agentIcon ?? parsed.icon ?? null }
@@ -290,6 +298,10 @@ function refreshMilkdownMentionTokenStyles(root: HTMLElement | null, mentions: M
             icon: parsed.icon ?? optionByKey.get(`project:${parsed.projectId}`)?.projectIcon ?? null,
           }
         : parsed;
+    if (!element.dataset.mentionHref) {
+      applyMentionChipDecoration(element, mention);
+      element.dataset.mentionHref = href;
+    }
     applyMentionStyleProperties(element, mention);
   }
 }

@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyMentionChipDecoration,
+  clearMentionChipDecoration,
   mentionChipInlineStyle,
   mentionChipNavigationPath,
   parseMentionChipHref,
@@ -131,6 +132,31 @@ describe("mention chips", () => {
       commentId: null,
       status: "in_review",
     });
+  });
+
+  it("decorates status-bearing issue mention links for editor status icons", () => {
+    const element = document.createElement("a");
+    element.textContent = "@RUD-123";
+
+    applyMentionChipDecoration(element, {
+      kind: "issue",
+      issueId: "issue-123",
+      ref: "RUD-123",
+      commentId: null,
+      status: "todo",
+    });
+
+    expect(element.textContent).toBe("RUD-123");
+    expect(element.dataset.mentionKind).toBe("issue");
+    expect(element.dataset.mentionStatus).toBe("todo");
+    expect(element.classList.contains("rudder-mention-chip--issue")).toBe(true);
+    expect(element.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
+
+    clearMentionChipDecoration(element);
+
+    expect(element.dataset.mentionKind).toBeUndefined();
+    expect(element.dataset.mentionStatus).toBeUndefined();
+    expect(element.classList.contains("rudder-mention-chip--with-status-icon")).toBe(false);
   });
 
   it("parses and decorates library file mention links", () => {

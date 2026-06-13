@@ -17,6 +17,7 @@ import {
   insertTextAfterRudderTokenBoundary,
   isMilkdownEditableUnexpectedlyBlank,
   isRudderTokenHref,
+  milkdownMentionDecorationAttrs,
   mentionMarkdown,
   moveSelectionAfterRudderTokenBoundary,
   readCanonicalFragmentMarkdown,
@@ -149,6 +150,23 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     };
 
     expect(mentionMarkdown(option, "wake")).toBe(`[Jade](${buildAgentMentionHref("agent-1", "bot", "wake")}) `);
+  });
+
+  it("decorates status-bearing issue mentions with editor status icon attributes", () => {
+    const href = buildIssueMentionHref("issue-1", "R-6", null, "todo");
+    const attrs = milkdownMentionDecorationAttrs({
+      kind: "issue",
+      issueId: "issue-1",
+      ref: "R-6",
+      commentId: null,
+      status: "todo",
+    }, "R-6", href);
+
+    expect(attrs.class).toContain("rudder-mention-chip--issue");
+    expect(attrs.class).toContain("rudder-mention-chip--with-status-icon");
+    expect(attrs["data-mention-kind"]).toBe("issue");
+    expect(attrs["data-mention-status"]).toBe("todo");
+    expect(attrs["data-mention-href"]).toBe(href);
   });
 
   it("recognizes Rudder mention and skill links as token links", () => {

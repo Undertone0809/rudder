@@ -467,6 +467,7 @@ describe("MarkdownBody", () => {
 
     expect(html).toContain('href="/issues/PAP-123"');
     expect(html).toContain('data-mention-kind="issue"');
+    expect(html).toContain('data-mention-status="in_review"');
     expect(html).toContain("rudder-mention-chip--with-status-icon");
     expect(html).toContain('data-slot="issue-status-icon"');
     expect(html).toContain('data-status="in_review"');

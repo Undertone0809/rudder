@@ -206,6 +206,10 @@ export function applyMentionChipDecoration(element: HTMLElement, mention: Parsed
   element.dataset.mentionKind = mention.kind;
   element.setAttribute("contenteditable", "false");
   element.classList.add("rudder-mention-chip", `rudder-mention-chip--${mention.kind}`);
+  if (mention.kind === "issue" && mention.status) {
+    element.dataset.mentionStatus = mention.status;
+    element.classList.add("rudder-mention-chip--with-status-icon");
+  }
   if (mention.kind === "project") {
     element.classList.add("rudder-project-mention-chip");
   }
@@ -226,6 +230,7 @@ export function applyMentionChipDecoration(element: HTMLElement, mention: Parsed
 export function clearMentionChipDecoration(element: HTMLElement) {
   delete element.dataset.mentionKind;
   delete element.dataset.mentionHref;
+  delete element.dataset.mentionStatus;
   element.classList.remove(
     "rudder-mention-chip",
     "rudder-mention-chip--agent",
@@ -236,6 +241,7 @@ export function clearMentionChipDecoration(element: HTMLElement) {
     "rudder-mention-chip--library_file",
     "rudder-mention-chip--library_directory",
     "rudder-mention-chip--project",
+    "rudder-mention-chip--with-status-icon",
     "rudder-project-mention-chip",
   );
   element.removeAttribute("contenteditable");

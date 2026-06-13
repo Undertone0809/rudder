@@ -679,6 +679,7 @@ export function MarkdownBody({
               mention.kind === "issue" && mention.status && "rudder-mention-chip--with-status-icon",
             )}
             data-mention-kind={mention.kind}
+            data-mention-status={mention.kind === "issue" && mention.status ? mention.status : undefined}
             style={mentionChipInlineStyle(mention)}
             {...markdownSourceAttributes(node)}
           >
