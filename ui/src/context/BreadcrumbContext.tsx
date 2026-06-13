@@ -17,7 +17,13 @@ interface BreadcrumbContextValue {
 
 const BreadcrumbContext = createContext<BreadcrumbContextValue | null>(null);
 
-export function BreadcrumbProvider({ children }: { children: ReactNode }) {
+export function BreadcrumbProvider({
+  children,
+  manageDocumentTitle = true,
+}: {
+  children: ReactNode;
+  manageDocumentTitle?: boolean;
+}) {
   const [breadcrumbs, setBreadcrumbsState] = useState<Breadcrumb[]>([]);
   const [headerActions, setHeaderActionsState] = useState<ReactNode | null>(null);
 
@@ -30,6 +36,7 @@ export function BreadcrumbProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!manageDocumentTitle) return;
     if (breadcrumbs.length === 0) {
       document.title = "Rudder";
     } else {
@@ -40,7 +47,7 @@ export function BreadcrumbProvider({ children }: { children: ReactNode }) {
       });
       document.title = `${parts.join(" · ")} · Rudder`;
     }
-  }, [breadcrumbs]);
+  }, [breadcrumbs, manageDocumentTitle]);
 
   return (
     <BreadcrumbContext.Provider value={{ breadcrumbs, setBreadcrumbs, headerActions, setHeaderActions }}>

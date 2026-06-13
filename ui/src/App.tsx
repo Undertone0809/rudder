@@ -8,6 +8,7 @@ import { ProductTourOverlay } from "./components/ProductTourOverlay";
 import { ToastViewport } from "./components/ToastViewport";
 import { DesktopUpdatePromptBridge } from "./components/DesktopUpdatePromptBridge";
 import { DesktopUpdateStatusCard } from "./components/DesktopUpdateStatusCard";
+import { BreadcrumbProvider } from "./context/BreadcrumbContext";
 import { accessApi } from "./api/access";
 import { agentsApi } from "./api/agents";
 import { authApi } from "./api/auth";
@@ -506,7 +507,9 @@ function DesktopSettingsOverlayLayout() {
         navigate(backgroundPath, { replace: true });
       }}
     >
-      <Outlet />
+      <BreadcrumbProvider manageDocumentTitle={false}>
+        <Outlet />
+      </BreadcrumbProvider>
     </DesktopSettingsModalFrame>
   );
 }
