@@ -70,6 +70,7 @@ afterEach(() => {
   cleanupFn = null;
   markdownMentionsMock.mentions = [];
   document.body.innerHTML = "";
+  window.history.pushState({}, "", "/");
 });
 
 function render(element: ReactNode) {
@@ -431,6 +432,28 @@ describe("MarkdownBody", () => {
     expect(html).toContain('data-mention-kind="issue"');
     expect(html).toContain(">PAP-123 auth flow</a>");
     expect(html).not.toContain(">@PAP-123 auth flow</a>");
+  });
+
+  it("prefixes special mention links with the active organization route", () => {
+    window.history.pushState({}, "", "/ZST/issues/ZST-559");
+
+    const issueHref = buildIssueMentionHref("issue-789", "ZST-557");
+    const chatHref = buildChatMentionHref("chat-123", "Review chat");
+    const libraryFileHref = buildLibraryFileMentionHref("docs/review.md", "review.md");
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[ZST-557](${issueHref}) [Review chat](${chatHref}) [review.md](${libraryFileHref})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/ZST/issues/ZST-557"');
+    expect(html).toContain('href="/ZST/messenger/chat/chat-123"');
+    expect(html).toContain('href="/ZST/library?path=docs%2Freview.md"');
+    expect(html).not.toContain("issue://issue-789");
+    expect(html).not.toContain("chat://chat-123");
+    expect(html).not.toContain("library-file://file");
   });
 
   it("renders issue mentions with status metadata using the issue status icon", () => {

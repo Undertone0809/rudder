@@ -7,6 +7,7 @@ import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
 import { parseSkillReference } from "../lib/skill-reference";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { ImagePreviewDialog, type ImagePreviewState } from "./ImagePreviewDialog";
@@ -60,6 +61,11 @@ function flattenText(value: ReactNode): string {
 
 function normalizeSkillReferenceLookupKey(value: string | null | undefined) {
   return value?.trim().replace(/\/+$/u, "").toLowerCase() ?? "";
+}
+
+function currentOrganizationPrefixFromLocation(): string | null {
+  if (typeof window === "undefined") return null;
+  return extractOrganizationPrefixFromPath(window.location.pathname);
 }
 
 function escapeRegExp(value: string) {
@@ -551,6 +557,7 @@ export function MarkdownBody({
       .map((preview) => [normalizeSkillReferenceLookupKey(preview.label), preview] as const)
       .filter(([key]) => key.length > 0),
   );
+  const organizationPrefix = currentOrganizationPrefixFromLocation();
   const normalizedChildren = linkBareAgentMentions(
     normalizeEscapedMarkdownNewlines(children),
     agentMentions,
@@ -660,7 +667,7 @@ export function MarkdownBody({
             }
           : parsed;
         const mentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren));
-        const targetHref = mentionChipNavigationPath(mention);
+        const targetHref = applyOrganizationPrefix(mentionChipNavigationPath(mention), organizationPrefix);
         return (
           <a
             href={targetHref}
