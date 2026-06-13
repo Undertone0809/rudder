@@ -38,7 +38,6 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder issue commit <issue> --sha <sha> --message <subject>` | Report a code commit created during issue work as structured issue activity. | yes | no | no | attached when available |
 | `rudder issue done <issue> --comment-file <path> [--image <path>]` | Mark an issue done with a required completion comment, optionally uploading images. | yes | no | no | attached when available |
 | `rudder issue block <issue> --comment-file <path> [--image <path>]` | Mark an issue blocked with a required blocker comment, optionally uploading images. | yes | no | no | attached when available |
-| `rudder issue release <issue>` | Release an issue back to todo and clear ownership. | yes | no | no | attached when available |
 | `rudder project list --org-id <id>` | List projects in an organization. | no | required | no | no |
 | `rudder project get <project-id-or-shortname> [--org-id <id>]` | Read one project by ID or shortname. | no | no | no | no |
 | `rudder project create --org-id <id> --name <name>` | Create a project in the organization. | yes | required | no | attached when available |

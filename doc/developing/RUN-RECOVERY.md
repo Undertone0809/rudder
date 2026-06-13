@@ -96,8 +96,12 @@ V1 still does not do:
 
 - automatic retry for logic/task/business failures
 - automatic reassignment
-- automatic issue release
+- automatic ownership reset
 - automatic issue status rollback
+
+Internal heartbeat cleanup may still clear an issue's active execution lock and
+promote follow-up work through `releaseIssueExecutionAndPromote`. That path is
+not a public CLI or REST command for manually releasing issue ownership.
 
 Missing issue close-out is not treated as a failed-run recovery case. Rudder may queue a bounded same-agent passive follow-up for `missing_closure`, but that prompt asks the agent to close, comment, block, or hand off the issue rather than resume a failed runtime.
 

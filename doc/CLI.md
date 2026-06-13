@@ -169,7 +169,6 @@ pnpm rudder issue comment <issue-id> --body-file ./comment.md [--image ./screens
 pnpm rudder issue done <issue-id> --comment-file ./comment.md [--image ./screenshot.png]
 pnpm rudder issue block <issue-id> --comment-file ./comment.md [--image ./screenshot.png]
 pnpm rudder issue checkout <issue-id> --agent-id <agent-id> [--expected-statuses todo,backlog,blocked]
-pnpm rudder issue release <issue-id>
 ```
 
 `issue search` and `issue list --query` call the server-side `q` search on

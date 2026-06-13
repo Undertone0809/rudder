@@ -46,7 +46,6 @@ describe("agent-v1 registry", () => {
       "issue.commit",
       "issue.done",
       "issue.block",
-      "issue.release",
       "project.list",
       "project.get",
       "project.create",

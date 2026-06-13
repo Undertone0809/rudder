@@ -822,43 +822,6 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     res.json(updated);
   });
 
-  router.post("/issues/:id/release", async (req, res) => {
-    const id = req.params.id as string;
-    const existing = await svc.getById(id);
-    if (!existing) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    assertCompanyAccess(req, existing.orgId);
-    if (!(await assertAgentRunCheckoutOwnership(req, res, existing))) return;
-    const actorRunId = requireAgentRunId(req, res);
-    if (req.actor.type === "agent" && !actorRunId) return;
-
-    const released = await svc.release(
-      id,
-      req.actor.type === "agent" ? req.actor.agentId : undefined,
-      actorRunId,
-    );
-    if (!released) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: released.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "issue.released",
-      entityType: "issue",
-      entityId: released.id,
-    });
-
-    res.json(released);
-  });
-
   router.post("/issues/:id/commit", validate(reportIssueCommitSchema), async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);

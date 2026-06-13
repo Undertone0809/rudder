@@ -564,7 +564,6 @@ All endpoints are under `/api` and return JSON.
 - `GET /issues/:issueId`
 - `PATCH /issues/:issueId`
 - `POST /issues/:issueId/checkout`
-- `POST /issues/:issueId/release`
 - `POST /issues/:issueId/comments`
 - `GET /issues/:issueId/comments`
 - `POST /orgs/:orgId/issues/:issueId/attachments` (multipart upload)

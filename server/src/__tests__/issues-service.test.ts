@@ -1424,65 +1424,6 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
-  it("clears execution lock fields when releasing an in-progress issue", async () => {
-    const orgId = randomUUID();
-    const agentId = randomUUID();
-    const runId = randomUUID();
-    const issueId = randomUUID();
-
-    await db.insert(organizations).values({
-      id: orgId,
-      name: "Rudder",
-      urlKey: deriveOrganizationUrlKey("Rudder"),
-      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
-
-    await db.insert(agents).values({
-      id: agentId,
-      orgId,
-      name: "Owner",
-      role: "engineer",
-      status: "active",
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {},
-      runtimeConfig: {},
-      permissions: {},
-    });
-
-    await db.insert(heartbeatRuns).values({
-      id: runId,
-      orgId,
-      agentId,
-      invocationSource: "automation",
-      status: "running",
-    });
-
-    await db.insert(issues).values({
-      id: issueId,
-      orgId,
-      title: "Execution lock handoff",
-      status: "in_progress",
-      priority: "high",
-      assigneeAgentId: agentId,
-      createdByAgentId: agentId,
-      checkoutRunId: runId,
-      executionRunId: runId,
-      executionAgentNameKey: "owner",
-      executionLockedAt: new Date(),
-      startedAt: new Date(),
-    });
-
-    const released = await svc.release(issueId, agentId, runId);
-    expect(released).not.toBeNull();
-    expect(released?.status).toBe("todo");
-    expect(released?.assigneeAgentId).toBeNull();
-    expect(released?.checkoutRunId).toBeNull();
-    expect(released?.executionRunId).toBeNull();
-    expect(released?.executionAgentNameKey).toBeNull();
-    expect(released?.executionLockedAt).toBeNull();
-  });
-
   it("clears stale execution lock on assignee change so reassigned agent can checkout", async () => {
     const orgId = randomUUID();
     const oldAgentId = randomUUID();
@@ -1716,67 +1657,6 @@ describe("issueService.list participantAgentId", () => {
       adoptedFromRunId: null,
     });
     await expect(svc.assertCheckoutOwner(issueId, agentId, otherRunId)).rejects.toThrow(/Issue run ownership conflict/i);
-  });
-
-  it("rejects release when a different run tries to release the checkout lock", async () => {
-    const orgId = randomUUID();
-    const agentId = randomUUID();
-    const checkoutRunId = randomUUID();
-    const otherRunId = randomUUID();
-    const issueId = randomUUID();
-
-    await db.insert(organizations).values({
-      id: orgId,
-      name: "Rudder",
-      urlKey: deriveOrganizationUrlKey("Rudder"),
-      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
-
-    await db.insert(agents).values({
-      id: agentId,
-      orgId,
-      name: "Owner",
-      role: "engineer",
-      status: "active",
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {},
-      runtimeConfig: {},
-      permissions: {},
-    });
-
-    await db.insert(heartbeatRuns).values([
-      {
-        id: checkoutRunId,
-        orgId,
-        agentId,
-        invocationSource: "automation",
-        status: "running",
-      },
-      {
-        id: otherRunId,
-        orgId,
-        agentId,
-        invocationSource: "automation",
-        status: "running",
-      },
-    ]);
-
-    await db.insert(issues).values({
-      id: issueId,
-      orgId,
-      title: "Release ownership",
-      status: "in_progress",
-      priority: "medium",
-      assigneeAgentId: agentId,
-      createdByAgentId: agentId,
-      checkoutRunId,
-      executionRunId: checkoutRunId,
-      executionLockedAt: new Date(),
-      startedAt: new Date(),
-    });
-
-    await expect(svc.release(issueId, agentId, otherRunId)).rejects.toThrow(/Only checkout run can release issue/i);
   });
 
   it("defaults execution workspace settings from project policy without an instance flag gate", async () => {

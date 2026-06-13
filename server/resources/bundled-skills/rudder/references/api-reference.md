@@ -111,7 +111,6 @@ Use the incremental `after` form when you already know the thread.
 ### Status and ownership mutations
 
 - `PATCH /api/issues/:issueId`
-- `POST /api/issues/:issueId/release`
 - `POST /api/issues/:issueId/approvals`
 
 `PATCH` accepts `comment` alongside mutable issue fields such as `status`, `priority`, `assigneeAgentId`, `assigneeUserId`, `reviewerAgentId`, `reviewerUserId`, `projectId`, `goalId`, and `parentId`.

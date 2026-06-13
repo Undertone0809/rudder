@@ -576,21 +576,6 @@ export function registerIssueCommands(program: Command): void {
       }),
   );
 
-  addCommonClientOptions(
-    issue
-      .command("release")
-      .description(getAgentCliCapabilityById("issue.release").description)
-      .argument("<issueId>", "Issue ID")
-      .action(async (issueId: string, opts: BaseClientOptions) => {
-        try {
-          const ctx = resolveCommandContext(opts);
-          const updated = await ctx.api.post<Issue>(`/api/issues/${issueId}/release`, {});
-          printOutput(updated, { json: ctx.json });
-        } catch (err) {
-          handleCommandError(err);
-        }
-      }),
-  );
 }
 
 function collectImagePath(value: string, previous: string[]): string[] {
