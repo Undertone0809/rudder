@@ -24,11 +24,19 @@ const mockBudgetService = vi.hoisted(() => ({
 
 const mockRuntimeAdapter = vi.hoisted(() => {
   const calls: Array<{ runId: string; taskKey: string | null }> = [];
+  const completions: Array<() => void> = [];
+  const pending: Array<Promise<unknown>> = [];
 
   return {
     calls,
     reset() {
       calls.length = 0;
+    },
+    async completePendingExecutions() {
+      const resolvers = completions.splice(0);
+      for (const resolve of resolvers) resolve();
+      const pendingExecutions = pending.splice(0);
+      await Promise.allSettled(pendingExecutions);
     },
     adapter: {
       type: "codex_local",
@@ -53,7 +61,18 @@ const mockRuntimeAdapter = vi.hoisted(() => {
           runId: ctx.runId,
           taskKey: ctx.runtime.taskKey,
         });
-        return await new Promise(() => {});
+        const result = new Promise((resolve) => {
+          completions.push(() => {
+            resolve({
+              exitCode: 0,
+              signal: null,
+              timedOut: false,
+              summary: "Test execution released",
+            });
+          });
+        });
+        pending.push(result);
+        return await result;
       },
     },
   };
@@ -182,11 +201,30 @@ describe("heartbeat run concurrency", () => {
   });
 
   afterAll(async () => {
+    if (db) {
+      await db
+        .update(heartbeatRuns)
+        .set({
+          status: "cancelled",
+          finishedAt: new Date(),
+          error: "Cancelled during test teardown",
+        })
+        .where(inArray(heartbeatRuns.status, ["queued"]));
+    }
+    await mockRuntimeAdapter.completePendingExecutions();
+    await waitForCondition(async () => {
+      if (!db) return true;
+      const liveRuns = await db
+        .select({ id: heartbeatRuns.id })
+        .from(heartbeatRuns)
+        .where(inArray(heartbeatRuns.status, ["running"]));
+      return liveRuns.length === 0;
+    }, 10_000);
     await instance?.stop();
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   async function seedAgentFixture(options?: number | {
     runtimeConfig?: Record<string, unknown>;
