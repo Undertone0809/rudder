@@ -994,9 +994,27 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("href")).toBe("https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/");
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.getAttribute("rel")).toBe("noreferrer noopener");
-    expect(link?.querySelector(".rudder-link-chip-icon")).toBeTruthy();
+    expect(link?.querySelector("svg.rudder-link-chip-icon")).toBeTruthy();
+    expect(link?.querySelector(".rudder-link-chip-logo")).toBeNull();
     expect(link?.querySelector(".rudder-link-chip-domain")?.textContent).toBe("the guide");
     expect(link?.querySelector(".rudder-link-chip-detail")?.textContent).toBe("gingiris.github.io");
+  });
+
+  it("uses recognized website logos inside external link chips", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"Read [Rudder docs](https://doc.rudder.zeeland.studio)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a.rudder-link-chip--website");
+    const logo = link?.querySelector("img.rudder-link-chip-logo");
+    expect(logo?.getAttribute("src")).toBe("/rudder-logo.png");
+    expect(link?.querySelector("svg.rudder-link-chip-icon")).toBeNull();
+    expect(link?.querySelector(".rudder-link-chip-domain")?.textContent).toBe("Rudder docs");
+    expect(link?.querySelector(".rudder-link-chip-detail")?.textContent).toBe("doc.rudder.zeeland.studio");
   });
 
   it("keeps same-origin absolute markdown links in the current window", () => {
@@ -1026,7 +1044,8 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("href")).toBe(url);
     expect(link?.getAttribute("title")).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
-    expect(link?.querySelector(".rudder-link-chip-icon")).toBeTruthy();
+    expect(link?.querySelector("svg.rudder-link-chip-icon")).toBeTruthy();
+    expect(link?.querySelector(".rudder-link-chip-logo")).toBeNull();
     expect(link?.querySelector(".rudder-link-chip-domain")?.textContent).toBe("gingiris.github.io");
     expect(link?.querySelector(".rudder-link-chip-detail")?.textContent).toBe("growth-tools/blog/2026/04/02/github-readme-template-guide/");
     expect(link?.textContent).not.toContain("https://");

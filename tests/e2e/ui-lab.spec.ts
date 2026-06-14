@@ -144,7 +144,7 @@ test.describe("UI Lab", () => {
     await expect(websiteLinkChip).toBeVisible();
     await expect(websiteLinkChip).toHaveAttribute("href", "https://doc.rudder.zeeland.studio");
     await expect(websiteLinkChip).toHaveAttribute("target", "_blank");
-    await expect(websiteLinkChip.locator(".rudder-link-chip-icon")).toBeVisible();
+    await expect(websiteLinkChip.locator("img.rudder-link-chip-logo")).toHaveAttribute("src", "/rudder-logo.png");
     await expect(websiteLinkChip.locator(".rudder-link-chip-domain")).toHaveText("Rudder docs");
     await expect(websiteLinkChip.locator(".rudder-link-chip-detail")).toHaveText("doc.rudder.zeeland.studio");
   });
