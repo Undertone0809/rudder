@@ -1240,7 +1240,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     approvalMutation.isPending
                                     || convertToIssueMutation.isPending
                                     || operationProposalMutation.isPending }
-                                  decisionNote={decisionNotesByMessageId[message.id] ?? ""} onDecisionNoteChange={(value) => setDecisionNoteForMessage(message.id, value)} onApprovalAction={handleProposalApprovalAction} onResolveOperationProposal={handleOperationProposalDecision} onConvertToIssue={(messageToConvert) =>
+                                  decisionNote={decisionNotesByMessageId[message.id] ?? ""} onDecisionNoteChange={(value) => setDecisionNoteForMessage(message.id, value)}
+                                  decisionNoteMentions={mentionOptions}
+                                  onDecisionNoteMentionQueryChange={setLibraryFileMentionQuery}
+                                  onDecisionNoteInlineTokenClick={handleComposerInlineTokenClick}
+                                  onApprovalAction={handleProposalApprovalAction} onResolveOperationProposal={handleOperationProposalDecision} onConvertToIssue={(messageToConvert) =>
                                     convertToIssueMutation.mutate({
                                       chatId: selectedConversation.id,
                                       message: messageToConvert,

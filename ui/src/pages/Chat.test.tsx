@@ -184,6 +184,9 @@ function renderChatMessageItem(messageToRender: ChatMessage) {
         agents={[]}
         decisionNote=""
         onDecisionNoteChange={vi.fn()}
+        decisionNoteMentions={[]}
+        onDecisionNoteMentionQueryChange={vi.fn()}
+        onDecisionNoteInlineTokenClick={vi.fn()}
         onApprovalAction={vi.fn()}
         onResolveOperationProposal={vi.fn()}
         onConvertToIssue={vi.fn()}
@@ -215,6 +218,9 @@ function renderProposalCard(
         agents={agents}
         decisionNote={decisionNote}
         onDecisionNoteChange={vi.fn()}
+        decisionNoteMentions={[]}
+        onDecisionNoteMentionQueryChange={vi.fn()}
+        onDecisionNoteInlineTokenClick={vi.fn()}
         onApprovalAction={vi.fn()}
         {...extraProps}
         onResolveOperationProposal={vi.fn()}
@@ -527,6 +533,9 @@ describe("ProposalCard", () => {
     expect(html).toContain("w-full max-w-full justify-end");
     expect(html).toContain("Wesley");
     expect(html).toContain("CTO");
+    expect(html).toContain('data-testid="proposal-review-note"');
+    expect(html).toContain("rudder-mdxeditor-scope");
+    expect(html).not.toContain("<textarea");
   });
 
   it("renders explicit no-owner reasons on issue proposal cards", () => {

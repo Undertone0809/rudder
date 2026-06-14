@@ -1481,6 +1481,9 @@ function CommonComponentsSection() {
                 agents={[fixtureAgent]}
                 decisionNote={chatDecisionNote}
                 onDecisionNoteChange={setChatDecisionNote}
+                decisionNoteMentions={[]}
+                onDecisionNoteMentionQueryChange={() => {}}
+                onDecisionNoteInlineTokenClick={() => {}}
                 onApprovalAction={() => {}}
                 onResolveOperationProposal={() => {}}
                 onConvertToIssue={() => {}}
@@ -1499,6 +1502,9 @@ function CommonComponentsSection() {
                 agents={[fixtureAgent]}
                 decisionNote={chatDecisionNote}
                 onDecisionNoteChange={setChatDecisionNote}
+                decisionNoteMentions={[]}
+                onDecisionNoteMentionQueryChange={() => {}}
+                onDecisionNoteInlineTokenClick={() => {}}
                 onApprovalAction={() => {}}
                 onResolveOperationProposal={() => {}}
                 onConvertToIssue={() => {}}
@@ -1517,6 +1523,9 @@ function CommonComponentsSection() {
                 agents={[fixtureAgent]}
                 decisionNote={chatDecisionNote}
                 onDecisionNoteChange={setChatDecisionNote}
+                decisionNoteMentions={[]}
+                onDecisionNoteMentionQueryChange={() => {}}
+                onDecisionNoteInlineTokenClick={() => {}}
                 onApprovalAction={() => {}}
                 onResolveOperationProposal={() => {}}
                 onConvertToIssue={() => {}}

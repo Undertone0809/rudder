@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createE2EChatAgent } from "./support/chat-agent";
@@ -8,6 +8,30 @@ async function selectInlineEntityOption(page: Page, name: string) {
   const popover = page.locator(".motion-inline-selector-pop:visible").last();
   await expect(popover).toBeVisible();
   await popover.getByRole("button", { name }).click();
+}
+
+async function createSkill(request: APIRequestContext, orgId: string, name: string, slug: string) {
+  const skillRes = await request.post(`/api/orgs/${orgId}/skills`, {
+    data: {
+      name,
+      slug,
+      markdown: `---\nname: ${name}\n---\n\n# ${name}\n`,
+    },
+  });
+  expect(skillRes.ok()).toBe(true);
+  return skillRes.json();
+}
+
+async function syncAgentSkills(
+  request: APIRequestContext,
+  agentId: string,
+  orgId: string,
+  desiredSkills: string[],
+) {
+  const syncRes = await request.post(`/api/agents/${agentId}/skills/sync?orgId=${encodeURIComponent(orgId)}`, {
+    data: { desiredSkills },
+  });
+  expect(syncRes.ok()).toBe(true);
 }
 
 async function writeProposalStub(
@@ -163,6 +187,8 @@ test.describe("Chat proposal review block", () => {
       },
     });
     const organization = await createProposalOrg(page, `Reject-${Date.now()}`, command);
+    await createSkill(page.request, organization.id, "Build Advisor", "build-advisor");
+    await syncAgentSkills(page.request, organization.chatAgent.id, organization.id, ["build-advisor"]);
 
     await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
     const composer = page.locator(".rudder-mdxeditor-content").first();
@@ -184,7 +210,22 @@ test.describe("Chat proposal review block", () => {
     await expect(page.getByTestId("proposal-review-gate")).toHaveCount(0);
     await expect(page.getByPlaceholder("Ask anything")).toHaveCount(0);
 
-    await reviewBlock.getByTestId("proposal-review-note").fill("Need a concrete execution scope before opening this.");
+    const reviewNote = reviewBlock.getByTestId("proposal-review-note");
+    const reviewNoteEditor = reviewNote.locator(".rudder-mdxeditor-content[contenteditable='true']");
+    await expect(reviewNoteEditor).toBeVisible();
+    await reviewNoteEditor.fill("@pro");
+    await expect(page.getByTestId(`markdown-mention-option-agent:${organization.chatAgent.id}`)).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId(`markdown-mention-option-agent:${organization.chatAgent.id}`).dispatchEvent("mousedown");
+    await expect(reviewNote.locator("[data-mention-kind='agent']")).toContainText("Proposal Agent");
+
+    await reviewNoteEditor.press("End");
+    await reviewNoteEditor.type(" $advisor");
+    const skillOption = page.getByTestId("markdown-mention-menu").locator('[data-testid^="markdown-mention-option-skill:"]').first();
+    await expect(skillOption).toContainText("build-advisor", { timeout: 15_000 });
+    await skillOption.dispatchEvent("mousedown");
+    await expect(reviewNote.locator("[data-skill-token='true']")).toContainText("build-advisor");
+
+    await reviewNoteEditor.fill("Need a concrete execution scope before opening this.");
     await reviewBlock.getByRole("button", { name: "Reject" }).click();
 
     await expect(reviewBlock).toHaveAttribute("data-status", "rejected", { timeout: 15_000 });

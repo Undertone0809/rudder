@@ -418,6 +418,9 @@ export function ProposalCard({
   onIssueProposalChange,
   decisionNote,
   onDecisionNoteChange,
+  decisionNoteMentions,
+  onDecisionNoteMentionQueryChange,
+  onDecisionNoteInlineTokenClick,
   onApprovalAction,
   onResolveOperationProposal,
   onConvertToIssue,
@@ -433,6 +436,9 @@ export function ProposalCard({
   onIssueProposalChange?: (messageId: string, nextProposal: Record<string, unknown>) => void;
   decisionNote: string;
   onDecisionNoteChange: (value: string) => void;
+  decisionNoteMentions: MentionOption[];
+  onDecisionNoteMentionQueryChange: (query: string | null) => void;
+  onDecisionNoteInlineTokenClick: MarkdownEditorProps["onInlineTokenClick"];
   onApprovalAction: (approvalId: string, action: ApprovalAction, messageId: string) => void;
   onResolveOperationProposal: (messageId: string, action: ChatOperationProposalDecisionAction, decisionNote: string) => void;
   onConvertToIssue: (message: ChatMessage) => void;
@@ -712,18 +718,29 @@ export function ProposalCard({
                 <span className="text-xs font-medium text-muted-foreground">
                   {showRevisionAction || showOperationActions ? "Feedback for agent" : "Decision note"}
                 </span>
-                <Textarea
+                <div
                   id={decisionNoteId}
                   data-testid="proposal-review-note"
-                  value={decisionNote}
-                  onChange={(event) => onDecisionNoteChange(event.target.value)}
-                  placeholder={
-                    showRevisionAction || showOperationActions
-                      ? "Tell the agent what must change before approval."
-                      : "Optional note for approval or rejection."
-                  }
-                  className="chat-field min-h-[88px] rounded-[var(--radius-lg)]"
-                />
+                  className="chat-field rounded-[var(--radius-lg)] px-3 py-2.5"
+                >
+                  <MarkdownEditor
+                    value={decisionNote}
+                    onChange={onDecisionNoteChange}
+                    mentions={decisionNoteMentions}
+                    onMentionQueryChange={onDecisionNoteMentionQueryChange}
+                    onInlineTokenClick={onDecisionNoteInlineTokenClick}
+                    mentionMenuSize="compact"
+                    plainText
+                    bordered={false}
+                    placeholder={
+                      showRevisionAction || showOperationActions
+                        ? "Tell the agent what must change before approval."
+                        : "Optional note for approval or rejection."
+                    }
+                    className="rounded-[var(--radius-md)] bg-transparent"
+                    contentClassName="min-h-[88px] bg-transparent text-sm leading-6 text-foreground"
+                  />
+                </div>
               </label>
             ) : null}
 
@@ -1550,6 +1567,9 @@ export function ChatMessageItem({
   issueProposalOverride,
   decisionNote,
   onDecisionNoteChange,
+  decisionNoteMentions,
+  onDecisionNoteMentionQueryChange,
+  onDecisionNoteInlineTokenClick,
   onApprovalAction,
   onIssueProposalChange,
   onResolveOperationProposal,
@@ -1576,6 +1596,9 @@ export function ChatMessageItem({
   issueProposalOverride?: Record<string, unknown>;
   decisionNote: string;
   onDecisionNoteChange: (value: string) => void;
+  decisionNoteMentions: MentionOption[];
+  onDecisionNoteMentionQueryChange: (query: string | null) => void;
+  onDecisionNoteInlineTokenClick: MarkdownEditorProps["onInlineTokenClick"];
   onApprovalAction: (approvalId: string, action: ApprovalAction, messageId: string) => void;
   onIssueProposalChange?: (messageId: string, nextProposal: Record<string, unknown>) => void;
   onResolveOperationProposal: (messageId: string, action: ChatOperationProposalDecisionAction, decisionNote: string) => void;
@@ -1624,6 +1647,9 @@ export function ChatMessageItem({
         onIssueProposalChange={onIssueProposalChange}
         decisionNote={decisionNote}
         onDecisionNoteChange={onDecisionNoteChange}
+        decisionNoteMentions={decisionNoteMentions}
+        onDecisionNoteMentionQueryChange={onDecisionNoteMentionQueryChange}
+        onDecisionNoteInlineTokenClick={onDecisionNoteInlineTokenClick}
         onApprovalAction={onApprovalAction}
         onResolveOperationProposal={onResolveOperationProposal}
         onConvertToIssue={onConvertToIssue}
