@@ -5,11 +5,11 @@ description: >
   stages: requirements, advisor/product analysis, UI design, implementation,
   verification, review, commit/push, and handoff. Use for stage selection,
   reviewer gates, aborted-run recovery, component-lab work, scoped performance
-  optimization, agent-scenario trigger routing, skill-improvement routing, and
-  risky dirty-worktree cleanup. Keep thin: if the prompt clearly names release,
-  UI polish, run/debug, local preview, data path, Desktop recovery, PR preview,
-  mock data, review-only work, or direct skill optimization, use the narrower
-  maintainer or meta-skill directly.
+  optimization, skill-improvement routing, and risky dirty-worktree cleanup.
+  Keep thin: if the prompt clearly names release, UI polish, run/debug, local
+  preview, data path, Desktop recovery, PR preview, mock data, review-only
+  work, or direct skill optimization, use the narrower maintainer or meta-skill
+  directly.
 ---
 
 # Development Lifecycle Router Maintainer
@@ -79,14 +79,6 @@ When the narrow route is clear, state the route in one sentence and then follow
 the downstream skill. Do not expand a lifecycle plan just because this router is
 available.
 
-Before declaring a visible artifact route obvious, check whether the disputed
-effect is agent-visible Rudder state: wakeup, run admission, reviewer routing,
-approval follow-up, passive close-out, chat-agent output, runtime/tool-call
-parity, skill usage, or skill-management state. If so, the route is not obvious
-until the actor, trigger, system effect, and terminal consumer are named.
-Explicit user-named specialized routes still win, and plain UI rendering,
-release, docs, or review-only work should stay with the narrow owner.
-
 Keep only these cases in the router:
 
 - the user asks which workflow or skill should handle the work
@@ -120,22 +112,6 @@ skill-optimizer" and attaches a screenshot where the prior assistant proposed
 route is `skill_optimization -> skill-optimizer`. Do not generate UI mockups or
 recommend the design skills unless the user separately asks to continue the UI
 task.
-
-### Agent Scenario Trigger Gate
-
-After meta-request precedence, but before generic stage classification, identify
-whether the request is about an agent-visible Rudder scenario. If the visible
-artifact could mislead routing, record `actor`, `trigger`, `system effect`, and
-`terminal consumer`. Use that tuple only to select the smallest owner and proof
-bar. Do not copy the bundled `rudder` skill's runtime-agent procedure.
-
-| Observable trigger or actor | Route bias | Proof bar | Avoid |
-| --- | --- | --- | --- |
-| operator `@agent`, wake comment, timer/manual wake | `debug` for concrete run evidence; `runtime_contract` for routing or provider parity | wake/comment/run readback plus terminal surface | stopping at mention rendering or composer UI proof |
-| reviewer wake, approval follow-up, passive close-out | concrete run/log -> `debug-run-transcript-maintainer`; review-only verdict -> `agent-work-reviewer-maintainer`; otherwise implementation or `runtime_contract` after obligation is clear | structured review decision, approval-linked issue readback, or close-out state | treating it as fresh assignment or generic transcript debug |
-| chat agent reply or chat-native automation | chat/runtime contract unless it is only composer UI | persisted message/run/effect and consumer surface | assuming heartbeat-only behavior |
-| organization skill or agent-private skill work | bundled `rudder` procedure, product bug, or `skill-optimizer` by user intent | enabled/created/readback state or skill patch evidence | copying org-skill CLI procedure into this router |
-| provider/tool-call/skill-usage parity | `runtime_contract` | provider matrix and persisted Rudder evidence | accepting Codex-only proof for provider parity |
 
 ## Core Rule
 
