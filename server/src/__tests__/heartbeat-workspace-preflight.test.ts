@@ -370,7 +370,7 @@ describe("heartbeat managed workspace preflight", () => {
     await expect(fs.stat(path.join(agentHome, "skills")).then((stat) => stat.isDirectory())).resolves.toBe(true);
   });
 
-  it("loads HEARTBEAT.md through the heartbeat service actor path", async () => {
+  it("ignores legacy HEARTBEAT.md through the heartbeat service actor path", async () => {
     const agent = await seedAgentFixture();
     const agentHome = resolveDefaultAgentWorkspaceDir(agent.orgId, {
       id: agent.agentId,
@@ -427,7 +427,7 @@ describe("heartbeat managed workspace preflight", () => {
     };
     expect(capture.prompt).toContain("# Persona");
     expect(capture.prompt).toContain("# Rudder Heartbeat Instruction");
-    expect(capture.prompt).toContain("# Heartbeat");
+    expect(capture.prompt).not.toContain("# Heartbeat\n\n- Check assigned issues.");
     expect(capture.prompt).toContain("Follow the heartbeat prompt.");
     expect(invokeEventPayload).toEqual(expect.objectContaining({
       agentRuntimeType: "codex_local",
@@ -438,15 +438,14 @@ describe("heartbeat managed workspace preflight", () => {
       }),
       commandNotes: expect.arrayContaining([
         "Loaded Rudder heartbeat instructions from runtime code",
-        "Loaded supplemental agent heartbeat notes from $AGENT_HOME/instructions/HEARTBEAT.md",
       ]),
     }));
     const promptMetrics = (invokeEventPayload as {
       promptMetrics: { runtimeHeartbeatChars: number; heartbeatFileChars: number; heartbeatChars: number };
     }).promptMetrics;
     expect(promptMetrics.runtimeHeartbeatChars).toBeGreaterThan(0);
-    expect(promptMetrics.heartbeatFileChars).toBeGreaterThan(0);
-    expect(promptMetrics.heartbeatChars).toBeGreaterThan(0);
+    expect(promptMetrics.heartbeatFileChars).toBe(0);
+    expect(promptMetrics.heartbeatChars).toBe(promptMetrics.runtimeHeartbeatChars);
     await waitForCondition(async () => {
       const events = await getRunEvents(run!.id);
       return events.some((event) => event.eventType === "lifecycle" && event.message === "run succeeded");

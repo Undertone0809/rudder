@@ -1,6 +1,7 @@
 import { agents, type Db } from "@rudderhq/db";
 import type {
   AgentRole,
+  OrganizationLegacyHeartbeatInstructionDeleteResult,
   OrganizationWorkspaceEntryMutationResult,
   OrganizationWorkspaceFileDetail,
   OrganizationWorkspaceFileEntry,
@@ -112,6 +113,14 @@ function isProtectedAgentInstructionsEntryPath(normalizedPath: string) {
     return PROTECTED_AGENT_INSTRUCTIONS_FILE_NAMES.has(segments[3]?.toUpperCase() ?? "");
   }
   return false;
+}
+
+function isLegacyAgentHeartbeatInstructionPath(normalizedPath: string) {
+  const segments = normalizedPath.split("/").filter(Boolean);
+  return segments.length === 4
+    && segments[0] === "agents"
+    && segments[2] === "instructions"
+    && segments[3] === "HEARTBEAT.md";
 }
 
 function isProtectedAgentManagedEntryPath(normalizedPath: string) {
@@ -769,6 +778,45 @@ export function organizationWorkspaceBrowserService(db: Db) {
         isDirectory: stat.isDirectory(),
         libraryEntryId: libraryEntry?.id ?? null,
       };
+    },
+
+    async deleteLegacyHeartbeatInstructions(orgId: string): Promise<OrganizationLegacyHeartbeatInstructionDeleteResult> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const rootExists = await pathExistsAsDirectory(root.rootPath);
+      if (!rootExists) {
+        throw notFound("The shared Library root is not available on this machine yet.");
+      }
+
+      const agentRows = await db
+        .select({
+          id: agents.id,
+          name: agents.name,
+          workspaceKey: agents.workspaceKey,
+        })
+        .from(agents)
+        .where(eq(agents.orgId, orgId));
+      const deleted: OrganizationLegacyHeartbeatInstructionDeleteResult["deleted"] = [];
+
+      for (const agent of agentRows) {
+        const workspaceKey = resolveStoredOrDerivedAgentWorkspaceKey({
+          id: agent.id,
+          name: agent.name,
+          workspaceKey: agent.workspaceKey,
+        });
+        const normalizedPath = toPortableRelativePath(path.join("agents", workspaceKey, "instructions", "HEARTBEAT.md"));
+        if (!isLegacyAgentHeartbeatInstructionPath(normalizedPath)) continue;
+        const heartbeatPath = path.join(root.rootPath, normalizedPath);
+        if (!(await pathExistsAsFile(heartbeatPath))) continue;
+
+        await fs.rm(heartbeatPath, { force: false });
+        const libraryEntry = await libraryEntries.markWorkspaceFileEntryDeleted(orgId, normalizedPath);
+        deleted.push({
+          path: normalizedPath,
+          libraryEntryId: libraryEntry?.id ?? null,
+        });
+      }
+
+      return { deleted };
     },
   };
 }

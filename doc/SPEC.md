@@ -72,14 +72,14 @@ Agents are durable team members with explicit roles, runtime configuration, capa
 Rudder-managed local coding runtimes use `SOUL.md` as the conventional durable
 identity/persona entry file and inject Rudder's shared operating contract from
 runtime code. Other adapters can still define their own identity surface. For
-example, an OpenClaw adapter might use SOUL.md plus supplemental heartbeat
-notes, a Claude Code adapter might use CLAUDE.md, and a bare Python script might
-use command-line args.
+example, an OpenClaw adapter might use SOUL.md plus runtime-owned wakeup
+prompts, a Claude Code adapter might use CLAUDE.md, and a bare Python script
+might use command-line args.
 
 For Rudder-supported heartbeat scenes, the fixed heartbeat pipeline is owned by
-Rudder runtime code. Agent or adapter files can add persona, tool, memory, or
-supplemental heartbeat notes, but they are not the source of truth for the
-standard wakeup loop.
+Rudder runtime code. Agent or adapter files can add persona, tool, or memory
+context, but `HEARTBEAT.md` files are ignored legacy artifacts, not
+supplemental runtime context or a source of truth for the standard wakeup loop.
 
 Rudder provides the control plane and shared contract for supported managed
 local runtimes. Adapter-specific runtimes remain responsible for their own
@@ -103,7 +103,7 @@ At the protocol level, Rudder tracks:
 
 Each adapter type defines its own config schema. Examples:
 
-- **OpenClaw adapter**: SOUL.md content, optional supplemental heartbeat notes, OpenClaw-specific settings
+- **OpenClaw adapter**: SOUL.md content, runtime-owned wakeup prompt settings, OpenClaw-specific settings
 - **Process adapter**: command to run, environment variables, working directory
 - **HTTP adapter**: endpoint URL, auth headers, payload template
 

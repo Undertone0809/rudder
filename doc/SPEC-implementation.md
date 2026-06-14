@@ -773,11 +773,9 @@ Stable instruction inputs:
   instructions
 - sibling `SOUL.md`, `TOOLS.md`, and `MEMORY.md` files when present beside the
   configured instruction entry file
-- sibling or explicit-entry `HEARTBEAT.md` files, when present for `heartbeat`
-  scene runs, as supplemental custom heartbeat notes after the code-owned
-  heartbeat instruction prompt
-- `HEARTBEAT.md` content is excluded from non-`heartbeat` scenes even when a
-  legacy or explicit `instructionsFilePath` points directly at that file
+- legacy sibling or explicit-entry `HEARTBEAT.md` files are ignored in every
+  scene; the heartbeat pipeline is owned by Rudder's code-owned heartbeat
+  instruction prompt
 - enabled Rudder skills resolved for the agent/runtime
 - scene-level invariant rules for `heartbeat` or `chat`
 

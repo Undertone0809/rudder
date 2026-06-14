@@ -1197,6 +1197,13 @@ test.describe("Workspace shell", () => {
     await page.keyboard.press("Escape");
     await filesCard.getByRole("button", { name: "instructions", exact: true }).click();
     await filesCard.getByRole("button", { name: "HEARTBEAT.md", exact: true }).click();
+    const legacyHeartbeatDialog = page.getByRole("dialog", { name: "Legacy HEARTBEAT.md" });
+    await expect(legacyHeartbeatDialog).toBeVisible();
+    await expect(legacyHeartbeatDialog).toContainText("Heartbeat instructions are built into Rudder runtime now");
+    await legacyHeartbeatDialog.getByRole("button", { name: "Keep files for now" }).click();
+    await expect(legacyHeartbeatDialog).toHaveCount(0);
+
+    await filesCard.getByRole("button", { name: "notes.md", exact: true }).click();
     const agentPathBreadcrumb = page.getByTestId("org-workspaces-path-breadcrumb");
     await expect(agentPathBreadcrumb.getByRole("button", { name: "Jade", exact: true })).toBeVisible();
     await expect(agentPathBreadcrumb.getByText(originalWorkspaceKey, { exact: true })).toHaveCount(0);
@@ -1208,8 +1215,6 @@ test.describe("Workspace shell", () => {
     await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
     await expect(page.getByTestId("org-workspaces-open-in-ide-button")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Activate for agents" })).toHaveCount(0);
-
-    await filesCard.getByRole("button", { name: "notes.md", exact: true }).click();
     await expect(markdownEditor).toContainText("Shared Notes");
 
     await page.getByTestId("org-workspaces-editor-tab-notes.md").click({ button: "right" });

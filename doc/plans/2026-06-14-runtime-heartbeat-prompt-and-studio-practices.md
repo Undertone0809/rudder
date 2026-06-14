@@ -76,19 +76,19 @@ review -> handoff`.
 ## Legacy `HEARTBEAT.md` Handling
 
 Runtime-owned heartbeat instructions become authoritative for the fixed
-pipeline. Existing user-authored `HEARTBEAT.md` files are not deleted.
+pipeline. This section was superseded on 2026-06-14 by
+`2026-06-14-retire-legacy-heartbeat-md.md`: existing user-authored
+`HEARTBEAT.md` files are now ignored by runtime prompt assembly and can be
+bulk-deleted from the Library UI.
 
 Compatibility policy:
 
 - Managed default bundles stop creating `HEARTBEAT.md`.
-- For heartbeat scenes, a sibling or explicit-entry `HEARTBEAT.md` may still be
-  loaded only as supplemental custom heartbeat notes after the code-owned
-  runtime heartbeat prompt.
+- Sibling or explicit-entry `HEARTBEAT.md` files are ignored in every scene.
 - Command notes must make precedence explicit: runtime heartbeat instructions
-  loaded from code; custom `HEARTBEAT.md` loaded as supplemental notes.
-- For non-heartbeat scenes, `HEARTBEAT.md` remains skipped.
-- `HEARTBEAT.md` content must not be described in docs or metrics as the
-  platform heartbeat operating protocol.
+  are loaded from code; legacy `HEARTBEAT.md` files are not loaded.
+- `HEARTBEAT.md` content must not be described in docs or metrics as
+  supplemental runtime context.
 
 ## Runtime Prompt Assembly And Observability
 
@@ -98,9 +98,8 @@ Prompt order for heartbeat scenes:
 2. `RUDDER_AGENT_HEARTBEAT_INSTRUCTION`
 3. configured entry instructions and sibling `SOUL.md` / `TOOLS.md` /
    `MEMORY.md`
-4. supplemental `HEARTBEAT.md` notes, if present
-5. wake-trigger prompt with dynamic issue/comment/recovery context
-6. enabled skills, including bundled `rudder`
+4. wake-trigger prompt with dynamic issue/comment/recovery context
+5. enabled skills, including bundled `rudder`
 
 Observability contract:
 
@@ -108,11 +107,8 @@ Observability contract:
   code`.
 - Keep a distinct metric for runtime heartbeat prompt bytes, for example
   `runtimeHeartbeatChars`.
-- Keep file-backed supplemental `HEARTBEAT.md` bytes separate, for example
-  `heartbeatFileChars`, or clearly redefine the existing metric without
-  implying it came from a file.
-- `heartbeatFilePath` should stay `null` when only the runtime prompt is
-  injected.
+- Keep `heartbeatFileChars` at zero and `heartbeatFilePath` as `null`; legacy
+  file-backed heartbeat bytes are not injected.
 
 ## Actor Journey
 

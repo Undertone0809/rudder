@@ -81,6 +81,13 @@ export interface OrganizationWorkspaceEntryMutationResult {
   libraryEntryId?: string | null;
 }
 
+export interface OrganizationLegacyHeartbeatInstructionDeleteResult {
+  deleted: Array<{
+    path: string;
+    libraryEntryId?: string | null;
+  }>;
+}
+
 export interface LibraryEntry {
   id: string;
   orgId: string;
