@@ -1,11 +1,16 @@
 import {
   createAutomationSchema,
+  createAutomationTriggerSchema,
+  rotateAutomationTriggerSecretSchema,
   runAutomationSchema,
   updateAutomationSchema,
+  updateAutomationTriggerSchema,
   type AutomationDetail,
   type AutomationListItem,
   type AutomationRun,
   type AutomationRunSummary,
+  type AutomationTrigger,
+  type AutomationTriggerSecretMaterial,
 } from "@rudderhq/shared";
 import { Command } from "commander";
 import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
@@ -54,8 +59,28 @@ interface AutomationRunOptions extends BaseClientOptions {
   source?: string;
 }
 
+interface AutomationTriggerCreateOptions extends BaseClientOptions {
+  payload?: string;
+  kind?: string;
+  label?: string;
+  enabled?: boolean;
+  disabled?: boolean;
+  cronExpression?: string;
+  timezone?: string;
+  signingMode?: string;
+  replayWindowSec?: string;
+}
+
+interface AutomationTriggerUpdateOptions extends Omit<AutomationTriggerCreateOptions, "kind"> {}
+
+interface AutomationTriggerMutationResult {
+  trigger: AutomationTrigger;
+  secretMaterial: AutomationTriggerSecretMaterial | null;
+}
+
 export function registerAutomationCommands(program: Command): void {
   const automation = program.command("automation").description("Automation operations");
+  const triggers = automation.command("triggers").description("Automation trigger operations");
 
   addCommonClientOptions(
     automation
@@ -122,9 +147,7 @@ export function registerAutomationCommands(program: Command): void {
   );
 
   addCommonClientOptions(
-    automation
-      .command("triggers")
-      .description("Automation trigger operations")
+    triggers
       .command("list")
       .description(getAgentCliCapabilityById("automation.triggers.list").description)
       .argument("<automationId>", "Automation ID")
@@ -134,6 +157,99 @@ export function registerAutomationCommands(program: Command): void {
           const row = await ctx.api.get<AutomationDetail>(`/api/automations/${encodeURIComponent(automationId)}`);
           const triggers = row?.triggers ?? [];
           printOutput(triggers, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+  );
+
+  addCommonClientOptions(
+    triggers
+      .command("create")
+      .description(getAgentCliCapabilityById("automation.triggers.create").description)
+      .argument("<automationId>", "Automation ID")
+      .option("--payload <json>", "Raw automation trigger create payload JSON")
+      .option("--kind <kind>", "Trigger kind: schedule, webhook, or api")
+      .option("--label <label>", "Trigger label")
+      .option("--enabled", "Create the trigger enabled")
+      .option("--disabled", "Create the trigger disabled")
+      .option("--cron-expression <expr>", "Schedule cron expression")
+      .option("--timezone <timezone>", "Schedule timezone; defaults to UTC for schedule triggers")
+      .option("--signing-mode <mode>", "Webhook signing mode")
+      .option("--replay-window-sec <seconds>", "Webhook replay window in seconds")
+      .action(async (automationId: string, opts: AutomationTriggerCreateOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts);
+          const payload = createAutomationTriggerSchema.parse(buildAutomationTriggerPayload(opts));
+          const created = await ctx.api.post<AutomationTriggerMutationResult>(
+            `/api/automations/${encodeURIComponent(automationId)}/triggers`,
+            payload,
+          );
+          printOutput(created, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+  );
+
+  addCommonClientOptions(
+    triggers
+      .command("update")
+      .description(getAgentCliCapabilityById("automation.triggers.update").description)
+      .argument("<triggerId>", "Automation trigger ID")
+      .option("--payload <json>", "Raw automation trigger update payload JSON")
+      .option("--label <label>", "Trigger label")
+      .option("--enabled", "Enable the trigger")
+      .option("--disabled", "Disable the trigger")
+      .option("--cron-expression <expr>", "Schedule cron expression")
+      .option("--timezone <timezone>", "Schedule timezone")
+      .option("--signing-mode <mode>", "Webhook signing mode")
+      .option("--replay-window-sec <seconds>", "Webhook replay window in seconds")
+      .action(async (triggerId: string, opts: AutomationTriggerUpdateOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts);
+          const payload = updateAutomationTriggerSchema.parse(buildAutomationTriggerPayload(opts));
+          const updated = await ctx.api.patch<AutomationTrigger>(
+            `/api/automation-triggers/${encodeURIComponent(triggerId)}`,
+            payload,
+          );
+          printOutput(updated, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+  );
+
+  addCommonClientOptions(
+    triggers
+      .command("delete")
+      .description(getAgentCliCapabilityById("automation.triggers.delete").description)
+      .argument("<triggerId>", "Automation trigger ID")
+      .action(async (triggerId: string, opts: BaseClientOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts);
+          await ctx.api.delete(`/api/automation-triggers/${encodeURIComponent(triggerId)}`);
+          printOutput({ id: triggerId, deleted: true }, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+  );
+
+  addCommonClientOptions(
+    triggers
+      .command("rotate-secret")
+      .description(getAgentCliCapabilityById("automation.triggers.rotate-secret").description)
+      .argument("<triggerId>", "Automation trigger ID")
+      .action(async (triggerId: string, opts: BaseClientOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts);
+          const payload = rotateAutomationTriggerSecretSchema.parse({});
+          const rotated = await ctx.api.post<AutomationTriggerMutationResult>(
+            `/api/automation-triggers/${encodeURIComponent(triggerId)}/rotate-secret`,
+            payload,
+          );
+          printOutput(rotated, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }
@@ -284,6 +400,39 @@ function buildAutomationPayload(opts: AutomationCreateOptions | AutomationUpdate
       notifyOnIssueCreated: opts.notifyOnIssueCreated,
     }),
   };
+}
+
+function buildAutomationTriggerPayload(opts: AutomationTriggerCreateOptions | AutomationTriggerUpdateOptions) {
+  return {
+    ...parseJsonObjectOption(opts.payload, "--payload"),
+    ...definedRecord({
+      kind: "kind" in opts ? opts.kind : undefined,
+      label: opts.label,
+      enabled: parseEnabledOption(opts),
+      cronExpression: opts.cronExpression,
+      timezone: opts.timezone,
+      signingMode: opts.signingMode,
+      replayWindowSec: parseOptionalIntegerOption(opts.replayWindowSec, "--replay-window-sec"),
+    }),
+  };
+}
+
+function parseEnabledOption(opts: { enabled?: boolean; disabled?: boolean }): boolean | undefined {
+  if (opts.enabled && opts.disabled) {
+    throw new Error("Pass only one of --enabled or --disabled");
+  }
+  if (opts.enabled) return true;
+  if (opts.disabled) return false;
+  return undefined;
+}
+
+function parseOptionalIntegerOption(value: string | undefined, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${label} must be an integer`);
+  }
+  return parsed;
 }
 
 function definedRecord(record: Record<string, unknown>) {

@@ -68,6 +68,10 @@ describe("agent-v1 registry", () => {
       "automation.get",
       "automation.runs",
       "automation.triggers.list",
+      "automation.triggers.create",
+      "automation.triggers.update",
+      "automation.triggers.delete",
+      "automation.triggers.rotate-secret",
       "automation.create",
       "automation.update",
       "automation.enable",
@@ -92,6 +96,23 @@ describe("agent-v1 registry", () => {
       "runs.cancel",
       "runs.retry",
     ]);
+  });
+
+  it("marks automation trigger mutation commands as mutating agent-v1 capabilities", () => {
+    const manifest = buildAgentCliCapabilitiesManifest("agent-v1");
+    const byId = new Map(manifest.capabilities.map((entry) => [entry.id, entry]));
+
+    for (const id of [
+      "automation.triggers.create",
+      "automation.triggers.update",
+      "automation.triggers.delete",
+      "automation.triggers.rotate-secret",
+    ]) {
+      const capability = byId.get(id);
+      expect(capability).toBeDefined();
+      expect(capability?.mutating).toBe(true);
+      expect(capability?.attachesRunIdWhenAvailable).toBe(true);
+    }
   });
 
   it("keeps the CLI reference doc in sync with the registry", () => {

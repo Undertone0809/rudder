@@ -206,6 +206,12 @@ pnpm rudder automation list --org-id <org-id> [--status active] [--assignee-agen
 pnpm rudder automation get <automation-id>
 pnpm rudder automation runs <automation-id> [--limit 50]
 pnpm rudder automation triggers list <automation-id>
+pnpm rudder automation triggers create <automation-id> --kind schedule --cron-expression "0 9 * * 1" [--timezone UTC] [--label "..."] [--disabled]
+pnpm rudder automation triggers create <automation-id> --kind webhook [--signing-mode bearer|hmac_sha256] [--replay-window-sec 300]
+pnpm rudder automation triggers create <automation-id> --kind api [--label "..."] [--payload '{"enabled":true}']
+pnpm rudder automation triggers update <trigger-id> [--label "..."] [--enabled|--disabled] [--cron-expression "..."] [--timezone UTC] [--signing-mode bearer|hmac_sha256] [--replay-window-sec 300] [--payload '{"label":null}']
+pnpm rudder automation triggers delete <trigger-id>
+pnpm rudder automation triggers rotate-secret <trigger-id>
 pnpm rudder automation create --org-id <org-id> --title "..." --assignee-agent-id <agent-id> [--payload '{"outputMode":"chat_output"}']
 pnpm rudder automation update <automation-id> [--title "..."] [--payload '{"status":"paused"}']
 pnpm rudder automation enable <automation-id>
@@ -217,6 +223,11 @@ Automation read commands use the stable automation REST APIs and do not create
 activity rows. Mutations use the governed automation routes, so agent-authenticated
 calls attach `RUDDER_AGENT_ID` and `RUDDER_RUN_ID` when available and keep the
 same permission/attribution behavior as the UI.
+
+Trigger mutation commands accept `--payload <json>` for the raw server payload
+and also expose the common schedule/webhook/api fields as flags. Create supports
+`schedule`, `webhook`, and `api` trigger kinds; update targets the trigger id
+returned by `automation get` or `automation triggers list`.
 
 ## Chat Commands
 

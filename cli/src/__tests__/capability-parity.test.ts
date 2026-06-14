@@ -202,6 +202,202 @@ describe("CLI automation/chat/runs parity", () => {
     });
   });
 
+  it("creates automation triggers with schedule flags and attribution headers", async () => {
+    process.env.RUDDER_AGENT_ID = "agent-1";
+    process.env.RUDDER_RUN_ID = "run-1";
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      trigger: {
+        id: "trigger-1",
+        automationId: "automation-1",
+        kind: "schedule",
+        label: "Morning run",
+        enabled: false,
+        cronExpression: "0 9 * * *",
+        timezone: "Asia/Shanghai",
+      },
+      secretMaterial: null,
+    }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const output = captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "automation",
+      "triggers",
+      "create",
+      "automation-1",
+      "--kind",
+      "schedule",
+      "--label",
+      "Morning run",
+      "--disabled",
+      "--cron-expression",
+      "0 9 * * *",
+      "--timezone",
+      "Asia/Shanghai",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(url).pathname).toBe("/api/automations/automation-1/triggers");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toMatchObject({
+      "x-rudder-agent-id": "agent-1",
+      "x-rudder-run-id": "run-1",
+    });
+    expect(JSON.parse(String(init.body))).toEqual({
+      kind: "schedule",
+      label: "Morning run",
+      enabled: false,
+      cronExpression: "0 9 * * *",
+      timezone: "Asia/Shanghai",
+    });
+    expect(JSON.parse(output.stdoutText()).trigger.id).toBe("trigger-1");
+  });
+
+  it("preserves raw automation trigger payload timezone defaults", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      trigger: { id: "trigger-1", kind: "schedule" },
+      secretMaterial: null,
+    }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "automation",
+      "triggers",
+      "create",
+      "automation-1",
+      "--payload",
+      "{\"kind\":\"schedule\",\"cronExpression\":\"0 10 * * *\",\"timezone\":\"America/New_York\"}",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      kind: "schedule",
+      cronExpression: "0 10 * * *",
+      timezone: "America/New_York",
+      enabled: true,
+    });
+  });
+
+  it("deletes automation triggers with stable JSON output", async () => {
+    process.env.RUDDER_AGENT_ID = "agent-1";
+    process.env.RUDDER_RUN_ID = "run-1";
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const output = captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "automation",
+      "triggers",
+      "delete",
+      "trigger-1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(url).pathname).toBe("/api/automation-triggers/trigger-1");
+    expect(init.method).toBe("DELETE");
+    expect(init.headers).toMatchObject({
+      "x-rudder-agent-id": "agent-1",
+      "x-rudder-run-id": "run-1",
+    });
+    expect(JSON.parse(output.stdoutText())).toEqual({ id: "trigger-1", deleted: true });
+  });
+
+  it("updates and rotates automation triggers through governed mutation routes", async () => {
+    process.env.RUDDER_AGENT_ID = "agent-1";
+    process.env.RUDDER_RUN_ID = "run-1";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "trigger-1",
+        label: "Renamed",
+        enabled: true,
+        replayWindowSec: 600,
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        trigger: { id: "trigger-1", kind: "webhook" },
+        secretMaterial: { webhookUrl: "https://example.test/hook", webhookSecret: "secret" },
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "automation",
+      "triggers",
+      "update",
+      "trigger-1",
+      "--label",
+      "Renamed",
+      "--enabled",
+      "--replay-window-sec",
+      "600",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "automation",
+      "triggers",
+      "rotate-secret",
+      "trigger-1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    const [updateUrl, updateInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(updateUrl).pathname).toBe("/api/automation-triggers/trigger-1");
+    expect(updateInit.method).toBe("PATCH");
+    expect(updateInit.headers).toMatchObject({
+      "x-rudder-agent-id": "agent-1",
+      "x-rudder-run-id": "run-1",
+    });
+    expect(JSON.parse(String(updateInit.body))).toEqual({
+      label: "Renamed",
+      enabled: true,
+      replayWindowSec: 600,
+    });
+
+    const [rotateUrl, rotateInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(new URL(rotateUrl).pathname).toBe("/api/automation-triggers/trigger-1/rotate-secret");
+    expect(rotateInit.method).toBe("POST");
+    expect(rotateInit.headers).toMatchObject({
+      "x-rudder-agent-id": "agent-1",
+      "x-rudder-run-id": "run-1",
+    });
+    expect(JSON.parse(String(rotateInit.body))).toEqual({});
+  });
+
   it("uses server chat search and clips human snippets", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify([
       {

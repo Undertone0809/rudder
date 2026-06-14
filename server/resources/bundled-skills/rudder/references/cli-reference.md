@@ -60,6 +60,10 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder automation get <automation-id>` | Read one automation detail including triggers and recent runs. | no | no | no | no |
 | `rudder automation runs <automation-id>` | List recent runs for one automation. | no | no | no | no |
 | `rudder automation triggers list <automation-id>` | List triggers configured for one automation. | no | no | no | no |
+| `rudder automation triggers create <automation-id> --kind <kind>` | Create a schedule, webhook, or API trigger through the governed automation API. | yes | no | no | attached when available |
+| `rudder automation triggers update <trigger-id>` | Update an automation trigger through the governed automation API. | yes | no | no | attached when available |
+| `rudder automation triggers delete <trigger-id>` | Delete an automation trigger through the governed automation API. | yes | no | no | attached when available |
+| `rudder automation triggers rotate-secret <trigger-id>` | Rotate an automation webhook trigger secret through the governed automation API. | yes | no | no | attached when available |
 | `rudder automation create --org-id <id> --title <title> --assignee-agent-id <id>` | Create an automation through the governed automation API. | yes | required | no | attached when available |
 | `rudder automation update <automation-id>` | Update automation fields through the governed automation API. | yes | no | no | attached when available |
 | `rudder automation enable <automation-id>` | Enable an automation by setting status to active. | yes | no | no | attached when available |
