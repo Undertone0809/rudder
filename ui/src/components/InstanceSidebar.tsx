@@ -3,13 +3,17 @@ import { pluginsApi } from "@/api/plugins";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/context/I18nContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { readDesktopShell } from "@/lib/desktop-shell";
+import { RUDDER_DOCS_URL } from "@/lib/product-links";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, NavLink } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  BookOpen,
   Clock3,
+  ExternalLink,
   IdCard,
   Info,
   Puzzle,
@@ -45,6 +49,34 @@ function SettingsNavLink({
       <Icon className="h-4 w-4 shrink-0" />
       <span className="truncate">{label}</span>
     </NavLink>
+  );
+}
+
+function openExternalLink(target: string) {
+  const desktopShell = readDesktopShell();
+  if (desktopShell) {
+    void desktopShell.openExternal(target);
+    return;
+  }
+  window.open(target, "_blank", "noopener,noreferrer");
+}
+
+function SettingsExternalLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(event) => {
+        event.preventDefault();
+        openExternalLink(href);
+      }}
+      className="flex items-center gap-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-active)_30%,transparent)] hover:text-foreground"
+    >
+      <BookOpen className="h-4 w-4 shrink-0" />
+      <span className="flex-1 truncate">{label}</span>
+      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" aria-hidden="true" />
+    </a>
   );
 }
 
@@ -148,6 +180,10 @@ export function InstanceSidebar() {
             ) : null}
           </div>
         ) : null}
+
+        <div className="space-y-1 border-t border-[color:color-mix(in_oklab,var(--border-soft)_78%,transparent)] pt-3">
+          <SettingsExternalLink href={RUDDER_DOCS_URL} label={t("common.docs")} />
+        </div>
       </nav>
     </aside>
   );

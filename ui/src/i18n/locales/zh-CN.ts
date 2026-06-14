@@ -3,6 +3,7 @@ import type { Messages } from "./en";
 export const zhCN: Messages = {
   "common.loading": "加载中...",
   "common.documentation": "文档",
+  "common.docs": "文档",
   "common.workspace": "工作台",
   "common.skipToMainContent": "跳转到主要内容",
   "common.systemSettings": "系统设置",

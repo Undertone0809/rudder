@@ -9,6 +9,7 @@ import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { sortOrganizationsByStoredOrder } from "@/lib/organization-order";
 import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
+import { RUDDER_DOCS_URL } from "@/lib/product-links";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, NavLink, useLocation, useNavigate } from "@/lib/router";
 import { preserveSettingsOverlayState } from "@/lib/settings-overlay-state";
@@ -17,8 +18,10 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ActivitySquare,
   ArrowLeft,
+  BookOpen,
   Check,
   Clock3,
+  ExternalLink,
   IdCard,
   Info,
   Keyboard,
@@ -28,9 +31,47 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { readDesktopShell } from "../lib/desktop-shell";
 import { OrganizationPatternIcon } from "./OrganizationPatternIcon";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { SidebarNavItem } from "./SidebarNavItem";
+import { sidebarItemVariants } from "./sidebarItemStyles";
+
+function openExternalLink(target: string) {
+  const desktopShell = readDesktopShell();
+  if (desktopShell) {
+    void desktopShell.openExternal(target);
+    return;
+  }
+  window.open(target, "_blank", "noopener,noreferrer");
+}
+
+function SettingsExternalLink({
+  href,
+  label,
+  variant,
+}: {
+  href: string;
+  label: string;
+  variant: "default" | "compact";
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(event) => {
+        event.preventDefault();
+        openExternalLink(href);
+      }}
+      className={sidebarItemVariants({ variant, active: false })}
+    >
+      <BookOpen className="h-4 w-4 shrink-0" />
+      <span className="flex-1 truncate">{label}</span>
+      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" aria-hidden="true" />
+    </a>
+  );
+}
 
 export function SettingsSidebar({
   showOrganizationSwitcher = true,
@@ -254,6 +295,17 @@ export function SettingsSidebar({
             </div>
           </>
         ) : null}
+
+        <div className={cn(
+          "space-y-1 border-t border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] pt-3",
+          !modalVariant && !renderOrganizationList && "mt-auto",
+        )}>
+          <SettingsExternalLink
+            href={RUDDER_DOCS_URL}
+            label={t("common.docs")}
+            variant={modalVariant ? "compact" : "default"}
+          />
+        </div>
 
         {renderOrganizationList && sidebarOrganizations.length > 0 ? (
           <div className={cn("space-y-1 pt-2", !modalVariant && "mt-auto")}>

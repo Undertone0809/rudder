@@ -1,6 +1,7 @@
 export const en = {
   "common.loading": "Loading...",
   "common.documentation": "Documentation",
+  "common.docs": "Docs",
   "common.workspace": "Workspace",
   "common.skipToMainContent": "Skip to main content",
   "common.systemSettings": "System settings",

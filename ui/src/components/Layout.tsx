@@ -29,6 +29,7 @@ import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
 import { findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/organization-routes";
 import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
 import { rememberPrimaryRailPath } from "../lib/primary-rail-memory";
+import { RUDDER_DOCS_URL } from "../lib/product-links";
 import { queryKeys } from "../lib/queryKeys";
 import {
   buildSettingsOverlayState,
@@ -784,7 +785,7 @@ export function Layout() {
             <div className="editorial-dock px-3 py-3">
               <div className="flex items-center gap-1">
                 <a
-                  href="https://docs.github.com/Undertone0809/rudder/"
+                  href={RUDDER_DOCS_URL}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex min-w-0 flex-1 items-center gap-2.5 rounded-full px-3 py-2 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground"
