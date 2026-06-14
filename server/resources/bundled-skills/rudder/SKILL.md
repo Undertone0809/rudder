@@ -1,19 +1,81 @@
 ---
 name: rudder
-description: Interact with the Rudder control plane through the `rudder` CLI to manage tasks, approvals, comments, Library files, and organization skills during heartbeats. Use for Rudder coordination only, not for the domain work itself.
+description: Operate correctly inside Rudder heartbeats and work loops. Use this skill to choose the right Rudder control-plane action, preserve ownership, close out work, record reviews, cite durable artifacts, and route organization-skill work through the CLI-backed references.
 ---
 
 # Rudder Skill
 
-You run in **heartbeats**: short execution windows triggered by Rudder. Each heartbeat, wake up, inspect assigned work, do one useful chunk, communicate clearly, and exit.
+This is the operating skill for agents working under Rudder. Rudder work is not
+only "run a command"; it is a governed loop:
 
-This skill is now **CLI-first**.
+```text
+Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+```
 
-- Use `rudder ... --json` for control-plane work.
+You run in **heartbeats**: short execution windows triggered by Rudder. Each
+heartbeat, inspect why you were woken, determine your role, do one useful
+bounded chunk, leave a durable Rudder-visible signal, and exit.
+
+Use normal tools for the domain work itself. Use this skill for Rudder
+coordination: ownership, assignments, approvals, comments, reviews, Library
+handoffs, and organization-skill operations.
+
+## Control-Plane Interface
+
+- Use `rudder ... --json` for normal control-plane work.
 - Use `rudder agent capabilities --json` when you need machine-readable discovery of supported commands.
 - Use `references/cli-reference.md` for the stable command catalog.
 - Treat `references/api-reference.md` as **internal/debug/compatibility** documentation, not the normal agent interface. API fallback is allowed only when a CLI command exits nonzero with a diagnostic error, or when a runtime/packaging bug makes a required `rudder ... --json` command return exit 0 with empty stdout; record that fallback in the issue comment or run notes.
 - If a remote runtime wake text explicitly says **HTTP compatibility mode**, follow that wake text for that run. Otherwise use the CLI.
+
+## Heartbeat Operating Loop
+
+1. Identify yourself and the wake context.
+2. Decide whether you are an assignee, reviewer, approval follow-up, mention
+   recipient, passive close-out run, or skill-management helper.
+3. Checkout before domain work when you are the assignee.
+4. Load compact issue context before acting.
+5. Do one bounded useful chunk.
+6. Leave exactly one durable close-out signal: progress, done, block, handoff,
+   or structured review decision.
+7. Escalate through `chainOfCommand` when the next step needs a manager or
+   human decision.
+
+## Heartbeat Decision Model
+
+| Trigger or relationship | Required first action | Ownership rule | Required close-out |
+|---|---|---|---|
+| Identity unknown | Run `rudder agent me --json`. | Use returned id, org, role, budget, and `chainOfCommand`. | Continue only after identity is known. |
+| `RUDDER_APPROVAL_ID` | Read approval and linked issues. | Do not ignore issue state changed by the approval. | Mark resolved issues done or comment what remains. |
+| Inbox `relationship: "assignee"` | Follow inbox priority, then checkout. | Single-assignee ownership controls work; never retry `409`. | One progress, done, block, or handoff signal. |
+| Inbox `relationship: "reviewer"` | Inspect review or blocked state. | Reviewers do not silently implement. | One `rudder issue review --decision ...` result. |
+| `RUDDER_WAKE_COMMENT_ID` | Load issue context with the wake comment id. | Self-assign only when the comment explicitly transfers ownership. | Respond if useful, then continue assigned work or close out. |
+| `RUDDER_WAKE_REASON=issue_passive_followup` | Inspect current issue state. | This is close-out governance, not new work discovery. | Comment, finish, block, or hand off explicitly. |
+| `RUDDER_WAKE_REASON=issue_review_closeout_missing` | Inspect current review or blocker state. | Free-form accept/reject text is not a decision. | Record one structured review decision. |
+| Blocked assignee work | Skip unless new context lets you unblock. | Name human or external blockers explicitly. | Use `issue block` or a reviewer `blocked` decision. |
+| Durable project artifact | Write under the project Library root or use Library fallback. | Filesystem writes alone are not handoff evidence. | Cite the returned `markdownLink`. |
+| Self-use skill creation | Prefer an agent-private skill. | Do not mutate org skill library for private need. | Report installed/enabled state. |
+| Board-authorized org skill work | Read `references/organization-skills.md`. | `enable` is additive; `sync` replaces optional enabled skills. | Report the resulting selection. |
+| Delegation needed | Create a sub-issue only when a new task is needed. | Set `parentId`; set `goalId` unless intentionally top-level. | Leave a handoff comment. |
+
+## Critical Operating Rules
+
+- Always checkout before doing task work.
+- Never retry a `409` from checkout.
+- Never look for unassigned work.
+- Self-assign only on explicit @-mention handoff.
+- Always communicate before exit on active work, except blocked issues with no new context.
+- Treat `issue_passive_followup` as close-out governance, not a fresh assignment.
+- Treat `issue_review_closeout_missing` as review close-out governance.
+- A reviewer does not take over implementation unless explicitly asked.
+- A reviewer request for changes must use `rudder issue review --decision request_changes`, not only a reject comment.
+- If blocked, explicitly set the issue to `blocked` with a blocker comment before exit.
+- Never cancel cross-team tasks. Reassign upward with explanation.
+- Use `chainOfCommand` for escalation.
+- Above 80% spend, focus on critical work only.
+- Use `rudder-create-agent` for hiring or new-agent creation workflows.
+- If you make a git commit you MUST add `Co-Authored-By: Rudder <noreply@github.com/Undertone0809/rudder>` to the end of each commit message.
+- Git commits must use an explicit safe identity. Rudder prepares isolated Codex homes and runtime worktrees with `user.useConfigOnly=true`; if `git commit` reports missing identity, configure repo-local `user.name` and `user.email` instead of bypassing the guard. Never accept `*@*.local` author or committer metadata.
 
 ## Authentication
 
@@ -258,21 +320,9 @@ rudder agent skills create "$RUDDER_AGENT_ID" --name "<name>" --description "<de
 
 This creates the package under `AGENT_HOME/skills` and does not require organization skill mutation permission.
 
-When a board user or authorized agent asks you to find, import, inspect, or assign organization skills:
-
-1. Read `references/organization-skills.md`
-2. Use the CLI surfaces in this order:
-
-```bash
-rudder skill scan-local --org-id "$RUDDER_ORG_ID" --json
-rudder skill scan-projects --org-id "$RUDDER_ORG_ID" --json
-rudder skill import --org-id "$RUDDER_ORG_ID" --source "<source>" --json
-rudder skill list --org-id "$RUDDER_ORG_ID" --json
-rudder skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
-rudder skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
-rudder agent skills enable "<agent-id>" "<selection-ref>" --json
-rudder agent skills sync "<agent-id>" --desired-skills "<csv>" --json
-```
+When a board user or authorized agent asks you to find, import, inspect, or
+assign organization skills, read `references/organization-skills.md` and follow
+that workflow instead of rebuilding the command sequence here.
 
 Use `skills enable` when adding one or more skills because it preserves the
 agent's existing enabled selections. Use `skills sync` only when you intend to
@@ -321,28 +371,6 @@ Planning rules:
 - when you create or update a durable Library file, always include a user-visible Markdown link to that file in your final chat reply or issue comment
 - when you reference the plan in comments, use the `markdownLink` returned by `rudder library file ref ... --json`
 - `rudder issue documents ...` has been retired. Use Project Library files for durable plans/specs and cite them from issue text or comments.
-
-## Critical Rules
-
-- Always checkout before doing task work.
-- Never retry a `409` from checkout.
-- Never look for unassigned work.
-- Self-assign only on explicit @-mention handoff.
-- Always communicate before exit on active work, except blocked issues with no new context.
-- Treat `issue_passive_followup` as close-out governance, not a fresh assignment: inspect current state, then comment, finish, block, or hand off explicitly.
-- Treat `issue_review_closeout_missing` as review close-out governance: inspect
-  current state, including blocked handoffs, then record one structured review
-  decision.
-- A reviewer does not take over implementation unless explicitly asked.
-- A reviewer request for changes must use `rudder issue review --decision
-  request_changes`, not only a reject comment.
-- If blocked, explicitly set the issue to `blocked` with a blocker comment before exit.
-- Never cancel cross-team tasks. Reassign upward with explanation.
-- Use `chainOfCommand` for escalation.
-- Above 80% spend, focus on critical work only.
-- Use `rudder-create-agent` for hiring or new-agent creation workflows.
-- If you make a git commit you MUST add `Co-Authored-By: Rudder <noreply@github.com/Undertone0809/rudder>` to the end of each commit message.
-- Git commits must use an explicit safe identity. Rudder prepares isolated Codex homes and runtime worktrees with `user.useConfigOnly=true`; if `git commit` reports missing identity, configure repo-local `user.name` and `user.email` instead of bypassing the guard. Never accept `*@*.local` author or committer metadata.
 
 ## Comment Style (Required)
 
