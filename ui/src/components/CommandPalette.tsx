@@ -276,10 +276,11 @@ export function CommandPalette() {
         if (v && isMobile) setSidebarOpen(false);
       }}
       contentStyle={isMobile ? undefined : { left: "50vw", top: "50vh" }}
-      className={launchSource === "primary-rail"
-        ? "command-palette-content command-palette-content--from-rail glass-popover command-palette-glass sm:max-w-2xl"
-        : "command-palette-content glass-popover command-palette-glass sm:max-w-2xl"
-      }>
+      className={[
+        "command-palette-content glass-popover command-palette-glass sm:max-w-2xl",
+        launchSource === "primary-rail" ? "command-palette-content--from-rail" : null,
+        isSearchLoading ? "command-palette-content--searching" : null,
+      ].filter(Boolean).join(" ")}>
       <CommandInput
         placeholder={placeholder}
         value={query}

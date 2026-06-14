@@ -70,7 +70,36 @@ describe("index.css motion rules", () => {
       indexCss.match(/@media \(min-width: 768px\) \{\s*\[data-slot="dialog-content"\]\.command-palette-content \{[^}]+}/)?.[0] ?? "";
 
     expect(commandPaletteContent).toContain("left: 50vw !important");
+    expect(commandPaletteContent).toContain("position: relative");
+    expect(commandPaletteContent).toContain("isolation: isolate");
     expect(commandPaletteDesktopPositioning).toContain("top: 50vh !important");
+  });
+
+  it("animates the command palette panel boundary while searching", () => {
+    const searchRing = cssBlock(".command-palette-content--searching::before");
+    const searchHalo = cssBlock(".command-palette-content--searching::after");
+    const keyframes = cssBlock("@keyframes command-palette-search-ring");
+    const reducedMotion =
+      indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.command-palette-content--searching::before[\s\S]*?\n\s*\}/)?.[0] ?? "";
+
+    expect(indexCss).toContain("@property --command-palette-search-angle");
+    expect(searchRing).toContain("conic-gradient");
+    expect(searchRing).toContain("from var(--command-palette-search-angle)");
+    expect(searchRing).toContain("border-image:");
+    expect(searchRing).toContain("animation: command-palette-search-ring 1.35s linear infinite");
+    expect(searchRing).not.toContain("mask-composite");
+    expect(searchRing).toContain("pointer-events: none");
+    expect(searchHalo).toContain("box-shadow:");
+    expect(keyframes).toContain("--command-palette-search-angle: 360deg");
+    expect(reducedMotion).toContain("animation: none");
+  });
+
+  it("keeps entity preview metadata labels centered with their value icons", () => {
+    const previewRow =
+      indexCss.match(/\.rudder-entity-preview-row \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(previewRow).toContain("align-items: center");
+    expect(previewRow).not.toContain("align-items: baseline");
   });
 
   it("keeps glass popovers above utility backgrounds", () => {

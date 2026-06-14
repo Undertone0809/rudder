@@ -50,6 +50,7 @@ import {
   skillTokenIconInlineStyle,
 } from "../lib/skill-reference";
 import { filterMentionOptions } from "../lib/mention-filter";
+import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
 import { ProjectIcon } from "./ProjectIdentity";
@@ -954,8 +955,9 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   activateInlineTokensOnPlainClick,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
+  const editorValue = useMemo(() => normalizeRelaxedMarkdownSyntax(value), [value]);
   const containerRef = useRef<HTMLDivElement>(null);
-  const latestValueRef = useRef(value);
+  const latestValueRef = useRef(editorValue);
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
   const imageUploadHandlerRef = useRef(imageUploadHandler);
@@ -1012,7 +1014,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       .make()
       .config((ctx) => {
         ctx.set(rootCtx, root);
-        ctx.set(defaultValueCtx, value);
+        ctx.set(defaultValueCtx, editorValue);
         const listenerManager = ctx.get(listenerCtx);
         listenerManager.markdownUpdated((_ctx, markdown) => {
           latestValueRef.current = markdown;
@@ -1093,11 +1095,11 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   }), [focus, getCurrentMarkdown]);
 
   useEffect(() => {
-    if (value === latestValueRef.current) return;
-    latestValueRef.current = value;
+    if (editorValue === latestValueRef.current) return;
+    latestValueRef.current = editorValue;
     const editor = loading ? get() : getInstance();
-    editor?.action(replaceAll(value, true));
-  }, [get, getInstance, loading, value]);
+    editor?.action(replaceAll(editorValue, true));
+  }, [editorValue, get, getInstance, loading]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -1495,7 +1497,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           return;
         }
 
-        const markdown = event.clipboardData.getData("text/plain");
+        const markdown = normalizeRelaxedMarkdownSyntax(event.clipboardData.getData("text/plain"));
         if (!markdown || !shouldParsePastedMarkdown(markdown)) return;
         event.preventDefault();
         const editor = loading ? get() : getInstance();

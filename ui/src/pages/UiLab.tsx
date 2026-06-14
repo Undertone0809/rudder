@@ -59,6 +59,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { runTranscriptFixtureEntries } from "@/fixtures/runTranscriptFixtures";
+import { RUDDER_DOCS_URL } from "@/lib/product-links";
 import { cn } from "@/lib/utils";
 import type {
   ActivityEvent,
@@ -1852,6 +1853,8 @@ function CommonComponentsSection() {
                 "A component lab entry should include **real rendered state**, compact fixture data, and a clear coverage row.",
                 "",
                 "@Holden should render as an agent mention chip when a comment calls for agent attention.",
+                "",
+                `Website references such as [Rudder docs](${RUDDER_DOCS_URL}) and [reference guide](https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/) should render as compact link chips.`,
                 "",
                 "- Keep examples deterministic.",
                 "- Use workflow E2E for behavior-heavy surfaces.",

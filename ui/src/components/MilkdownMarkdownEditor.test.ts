@@ -26,6 +26,7 @@ import {
   shouldActivateMilkdownInlineTokenClick,
   shouldParsePastedMarkdown,
 } from "./MilkdownMarkdownEditor";
+import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
 import type { MentionOption } from "./MarkdownEditor";
 
 describe("isMilkdownEditableUnexpectedlyBlank", () => {
@@ -54,6 +55,21 @@ describe("isMilkdownEditableUnexpectedlyBlank", () => {
 });
 
 describe("MilkdownMarkdownEditor mention serialization", () => {
+  it("normalizes relaxed markdown before Milkdown parses Library documents", () => {
+    expect(normalizeRelaxedMarkdownSyntax([
+      "[https://github.com/Undertone0809/rudder/releases?page=5](https://github.com/Undertone0809/rudder/releases?",
+      "page=5)",
+      "",
+      "-[]1",
+      "-\\[]1",
+    ].join("\n"))).toBe([
+      "[https://github.com/Undertone0809/rudder/releases?page=5](https://github.com/Undertone0809/rudder/releases?page=5)",
+      "",
+      "- [ ] 1",
+      "- \\[]1",
+    ].join("\n"));
+  });
+
   it("keeps canonical Rudder mention markdown for all mention kinds", () => {
     const options: Array<{ option: MentionOption; expected: string }> = [
       {

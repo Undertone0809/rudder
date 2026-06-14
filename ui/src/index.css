@@ -4,6 +4,12 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@property --command-palette-search-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
 ::highlight(rudder-issue-find-highlight) {
   background: color-mix(in oklab, #f4c430 62%, transparent);
   color: inherit;
@@ -691,9 +697,11 @@
 
   [data-slot="dialog-content"].command-palette-content {
     left: 50vw !important;
+    position: relative;
     transform-origin: center 42%;
     will-change: opacity, transform;
     backface-visibility: hidden;
+    isolation: isolate;
   }
 
   @media (min-width: 768px) {
@@ -716,6 +724,46 @@
     opacity: 0 !important;
     transform: translateY(-3px) !important;
     animation: none !important;
+  }
+
+  .command-palette-content--searching::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    border-radius: inherit;
+    border: 2px solid transparent;
+    border-image:
+      conic-gradient(
+        from var(--command-palette-search-angle),
+        transparent 0deg 42deg,
+        color-mix(in oklab, var(--accent-base) 34%, transparent) 78deg,
+        color-mix(in oklab, var(--accent-base) 86%, white) 112deg,
+        color-mix(in oklab, var(--ring) 90%, transparent) 146deg,
+        transparent 190deg 360deg
+      ) 1;
+    opacity: 0.96;
+    animation: command-palette-search-ring 1.35s linear infinite;
+  }
+
+  .command-palette-content--searching::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    z-index: 1;
+    pointer-events: none;
+    border-radius: inherit;
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--accent-base) 26%, transparent),
+      0 0 30px -10px color-mix(in oklab, var(--accent-base) 76%, transparent);
+    opacity: 0.78;
+  }
+
+  @keyframes command-palette-search-ring {
+    to {
+      --command-palette-search-angle: 360deg;
+    }
   }
 
   .rail-create-menu-content {
@@ -832,7 +880,8 @@
     .rail-create-menu-content[data-state="open"],
     .rail-create-menu-content[data-state="closed"],
     .automation-trigger-menu-content[data-state="open"],
-    .automation-trigger-menu-content[data-state="closed"] {
+    .automation-trigger-menu-content[data-state="closed"],
+    .command-palette-content--searching::before {
       animation: none;
     }
   }
@@ -3039,6 +3088,18 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   text-decoration: none;
 }
 
+.rudder-markdown .rudder-link-chip-icon {
+  color: color-mix(in oklab, currentColor 76%, var(--muted-foreground) 24%);
+}
+
+.rudder-markdown a.rudder-link-chip img.rudder-link-chip-logo {
+  display: block;
+  margin: 0;
+  border-radius: 3px;
+  box-shadow: none;
+  object-fit: contain;
+}
+
 .rudder-markdown .rudder-link-chip-domain,
 .rudder-markdown .rudder-link-chip-detail {
   min-width: 0;
@@ -3287,7 +3348,7 @@ a.rudder-skill-token::before {
   display: grid;
   grid-template-columns: 4.2rem minmax(0, 1fr);
   gap: 0.45rem;
-  align-items: baseline;
+  align-items: center;
 }
 
 .rudder-entity-preview-row-label {

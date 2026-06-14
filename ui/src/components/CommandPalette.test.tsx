@@ -127,14 +127,16 @@ vi.mock("@/components/ui/command", () => ({
   CommandDialog: ({
     open,
     children,
+    className,
     contentStyle,
   }: {
     open: boolean;
     children: ReactNode;
+    className?: string;
     contentStyle?: CSSProperties;
   }) =>
     open ? (
-      <div role="dialog" style={contentStyle}>
+      <div role="dialog" className={className} style={contentStyle}>
         {children}
       </div>
     ) : null,
@@ -356,6 +358,37 @@ describe("CommandPalette", () => {
 
     expect(container.textContent).toContain("Searching...");
     expect(container.textContent).not.toContain("No results found.");
+    expect(container.querySelector('[role="dialog"]')?.className).toContain("command-palette-content--searching");
+  });
+
+  it("does not render the command palette loading ring when cached results are visible", () => {
+    queryStateByKey.set(JSON.stringify([
+      "issues",
+      "org-1",
+      "search",
+      "pending",
+      "__all-projects__",
+      "title,description,comment",
+    ]), {
+      data: [
+        {
+          id: "issue-cached",
+          identifier: "RUD-732",
+          title: "Cached pending issue",
+          status: "todo",
+          assigneeAgentId: null,
+        },
+      ],
+      isFetching: true,
+    });
+    const container = renderCommandPalette();
+    const input = openCommandPalette(container);
+
+    changeInput(input, "pending");
+
+    expect(container.textContent).toContain("Cached pending issue");
+    expect(container.textContent).not.toContain("Searching...");
+    expect(container.querySelector('[role="dialog"]')?.className).not.toContain("command-palette-content--searching");
   });
 
   it("opens from the configured command palette shortcut", () => {
