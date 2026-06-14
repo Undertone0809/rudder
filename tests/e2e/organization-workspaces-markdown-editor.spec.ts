@@ -105,9 +105,9 @@ test("Library markdown paste parses markdown syntax and keeps code blocks readab
 
 test("Library markdown copied list selections keep Markdown bullet markers", async ({ page }) => {
   const organization = await createOrg(page, "Library-Markdown-Copy-List");
-  const filePath = "agents/Wesley/instructions/HEARTBEAT.md";
-  const heartbeatMarkdown = [
-    "# HEARTBEAT.md -- Agent Heartbeat Checklist",
+  const filePath = "docs/heartbeat-copy.md";
+  const checklistMarkdown = [
+    "# Runtime Heartbeat Checklist Copy Fixture",
     "",
     "## 6. Exit",
     "",
@@ -126,7 +126,7 @@ test("Library markdown copied list selections keep Markdown bullet markers", asy
     page,
     organization.id,
     filePath,
-    heartbeatMarkdown,
+    checklistMarkdown,
   );
   await selectOrg(page, organization.id);
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -179,12 +179,60 @@ test("Library markdown copied list selections keep Markdown bullet markers", asy
 
   await selectEditorNodeContents(":scope");
   await expect.poll(() => page.evaluate(() => window.getSelection()?.toString() ?? "")).toContain(
-    "HEARTBEAT.md -- Agent Heartbeat Checklist",
+    "Runtime Heartbeat Checklist Copy Fixture",
   );
   await page.evaluate(() => navigator.clipboard.writeText("__rudder_clipboard_sentinel__"));
   await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
 
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(heartbeatMarkdown);
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(checklistMarkdown);
+});
+
+test("Library legacy HEARTBEAT.md opens the deprecation cleanup dialog", async ({ page }) => {
+  const organization = await createOrg(page, "Library-Legacy-Heartbeat-Dialog");
+  const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Wesley",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    },
+  });
+  expect(agentRes.ok()).toBe(true);
+  const agentsDirectoryRes = await page.request.get(
+    `/api/orgs/${organization.id}/workspace/files?path=${encodeURIComponent("agents")}`,
+  );
+  expect(agentsDirectoryRes.ok()).toBe(true);
+  const agentsDirectory = await agentsDirectoryRes.json() as {
+    entries: Array<{ displayLabel?: string | null; path: string }>;
+  };
+  const agentWorkspace = agentsDirectory.entries.find((entry) => entry.displayLabel === "Wesley");
+  expect(agentWorkspace).toBeTruthy();
+  const heartbeatPath = `${agentWorkspace!.path}/instructions/HEARTBEAT.md`;
+  const memoryPath = `${agentWorkspace!.path}/instructions/MEMORY.md`;
+  await writeWorkspaceFile(page, organization.id, heartbeatPath, "# Legacy Heartbeat\n\nManual routine.\n");
+  await writeWorkspaceFile(page, organization.id, memoryPath, "# Memory\n\nKeep this.\n");
+  await selectOrg(page, organization.id);
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(heartbeatPath)}`);
+
+  const dialog = page.getByRole("dialog", { name: "Legacy HEARTBEAT.md" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Heartbeat instructions are built into Rudder runtime now");
+  await expect(page.getByTestId("org-workspaces-markdown-editor")).toHaveCount(0);
+
+  const deleteResponse = page.waitForResponse((response) =>
+    response.request().method() === "DELETE"
+    && response.url().includes(`/api/orgs/${organization.id}/workspace/legacy-heartbeat-instructions`)
+    && response.status() === 200,
+  );
+  await dialog.getByRole("button", { name: "Delete all legacy HEARTBEAT.md files" }).click();
+  await deleteResponse;
+  await expect(dialog).toHaveCount(0);
+
+  const heartbeatRes = await page.request.get(`/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(heartbeatPath)}`);
+  expect(heartbeatRes.ok()).toBe(false);
+  const memoryRes = await page.request.get(`/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(memoryPath)}`);
+  expect(memoryRes.ok()).toBe(true);
 });
 
 test("Library markdown pasted images are uploaded as assets before save", async ({ page }) => {

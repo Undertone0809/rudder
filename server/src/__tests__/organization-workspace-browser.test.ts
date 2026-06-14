@@ -651,4 +651,89 @@ describe("organization workspace browser", () => {
     }));
   });
 
+  it("bulk deletes only legacy agent HEARTBEAT.md instruction files", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    const agentOneId = randomUUID();
+    const agentTwoId = randomUUID();
+    const agentOneWorkspaceKey = buildAgentWorkspaceKey("Ada", agentOneId);
+    const agentTwoWorkspaceKey = buildAgentWorkspaceKey("Bea", agentTwoId);
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Legacy Heartbeat Org",
+      urlKey: deriveOrganizationUrlKey("Legacy Heartbeat Org"),
+      issuePrefix: "LHB",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values([
+      {
+        id: agentOneId,
+        orgId,
+        name: "Ada",
+        workspaceKey: agentOneWorkspaceKey,
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: agentTwoId,
+        orgId,
+        name: "Bea",
+        workspaceKey: agentTwoWorkspaceKey,
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+
+    const root = resolveOrganizationWorkspaceRoot(orgId);
+    const agentOneInstructions = path.join(root, "agents", agentOneWorkspaceKey, "instructions");
+    const agentTwoInstructions = path.join(root, "agents", agentTwoWorkspaceKey, "instructions");
+    const staleInstructions = path.join(root, "agents", "stale-or-manual", "instructions");
+    await fs.mkdir(agentOneInstructions, { recursive: true });
+    await fs.mkdir(agentTwoInstructions, { recursive: true });
+    await fs.mkdir(staleInstructions, { recursive: true });
+    await fs.writeFile(path.join(agentOneInstructions, "HEARTBEAT.md"), "# Heartbeat one\n", "utf8");
+    await fs.writeFile(path.join(agentOneInstructions, "MEMORY.md"), "# Memory one\n", "utf8");
+    await fs.writeFile(path.join(agentTwoInstructions, "HEARTBEAT.md"), "# Heartbeat two\n", "utf8");
+    await fs.writeFile(path.join(agentTwoInstructions, "SOUL.md"), "# Soul two\n", "utf8");
+    await fs.writeFile(path.join(staleInstructions, "HEARTBEAT.md"), "# Stale heartbeat\n", "utf8");
+
+    const agentOneHeartbeatPath = `agents/${agentOneWorkspaceKey}/instructions/HEARTBEAT.md`;
+    const agentTwoHeartbeatPath = `agents/${agentTwoWorkspaceKey}/instructions/HEARTBEAT.md`;
+    await workspaceBrowser.readFile(orgId, agentOneHeartbeatPath);
+    await workspaceBrowser.readFile(orgId, agentTwoHeartbeatPath);
+
+    const result = await workspaceBrowser.deleteLegacyHeartbeatInstructions(orgId);
+
+    expect(result.deleted.map((entry) => entry.path).sort()).toEqual([
+      agentOneHeartbeatPath,
+      agentTwoHeartbeatPath,
+    ].sort());
+    await expect(fs.stat(path.join(agentOneInstructions, "HEARTBEAT.md"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(path.join(agentTwoInstructions, "HEARTBEAT.md"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(path.join(staleInstructions, "HEARTBEAT.md"), "utf8")).resolves.toBe("# Stale heartbeat\n");
+    await expect(fs.readFile(path.join(agentOneInstructions, "MEMORY.md"), "utf8")).resolves.toBe("# Memory one\n");
+    await expect(fs.readFile(path.join(agentTwoInstructions, "SOUL.md"), "utf8")).resolves.toBe("# Soul two\n");
+
+    const entries = await db.select().from(libraryEntries).where(eq(libraryEntries.orgId, orgId));
+    expect(entries.filter((entry) =>
+      entry.status === "deleted"
+      && entry.currentPath === null
+      && entry.title === "HEARTBEAT.md",
+    )).toHaveLength(2);
+    await expect(workspaceBrowser.deleteLegacyHeartbeatInstructions(orgId)).resolves.toEqual({ deleted: [] });
+  });
+
 });

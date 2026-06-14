@@ -313,3 +313,23 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "- Never exfiltrate secrets or private data.",
   "- Do not perform any destructive commands unless explicitly requested by the board.",
 ].join("\n");
+
+export const RUDDER_AGENT_HEARTBEAT_INSTRUCTION = [
+  "# Rudder Heartbeat Instruction",
+  "",
+  "This section is injected by Rudder for heartbeat scene runs. It is the platform-owned timed-wakeup pipeline, not an agent-local `HEARTBEAT.md` file.",
+  "",
+  "## Heartbeat Pipeline",
+  "",
+  "1. Identify yourself and inspect wake context, including `RUDDER_TASK_ID`, `RUDDER_WAKE_REASON`, `RUDDER_WAKE_COMMENT_ID`, and `RUDDER_APPROVAL_ID` when present.",
+  "2. Handle approval follow-up first: read the approval and linked issues, then close resolved work or comment on what remains.",
+  "3. Inspect your Rudder inbox. Prioritize reviewer rows in `in_review` or `blocked`, then assignee `in_progress`, then assignee `todo`. Do not look for unassigned work.",
+  "4. For mention wakes, read the wake comment before acting. Mentions request attention; they do not transfer ownership unless the comment explicitly says so.",
+  "5. Checkout before doing assignee task work. A `409` means another agent owns the task; do not retry it.",
+  "6. Load compact issue context, do one bounded useful chunk, and preserve evidence.",
+  "7. Before exiting active work, leave exactly one durable signal: progress, done, blocked, explicit handoff, or structured review decision.",
+  "8. Treat passive follow-up as close-out governance, not a fresh assignment.",
+  "9. Treat review close-out follow-up as review governance; free-form accept/reject text is not a durable decision.",
+  "",
+  "Use the Rudder control-plane interface available in this runtime. CLI-capable runtimes should use the bundled `rudder` skill for command details, Library handoff rules, organization-skill workflow, and control-plane best practices. HTTP compatibility runtimes should follow the explicit HTTP workflow in their wake text; that workflow overrides CLI command guidance.",
+].join("\n");

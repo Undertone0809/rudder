@@ -66,6 +66,7 @@ type AgentFixture = {
 
 type IssueFixture = {
   key: string;
+  practiceCaseKey?: string;
   projectKey: string;
   goalKey: string;
   assigneeKey?: string;
@@ -123,6 +124,49 @@ type ChatFixture = {
   }>;
 };
 
+const REQUIRED_PRACTICE_CASE_EVIDENCE = {
+  "good-checkout-before-work": {
+    body: "Good case: run `rudder issue checkout` before implementation. The second concurrent wake should stop on `409` instead of retrying or doing competing work.",
+    snippets: ["rudder issue checkout", "409"],
+  },
+  "bad-mention-self-assign": {
+    body: "Bad case: a plain @mention was treated as ownership transfer. The correction is to read the wake comment, respond if useful, and only checkout when the comment explicitly transfers ownership.",
+    snippets: ["plain @mention", "explicitly transfers ownership"],
+  },
+  "good-structured-review": {
+    body: "Good case: close review with `rudder issue review --decision approve --comment-file <path> --json` or the equivalent structured reviewDecision field. Free-form approval text is not enough.",
+    snippets: ["rudder issue review --decision approve", "reviewDecision"],
+  },
+  "bad-freeform-review": {
+    body: "Bad case: the reviewer wrote `looks fine` as a normal comment. The correction is to record a structured `reviewDecision`; otherwise review close-out remains missing.",
+    snippets: ["looks fine", "reviewDecision"],
+  },
+  "good-library-markdownlink": {
+    body: "Good case: cite the durable plan with the Library markdownLink, for example [Studio fixture plan](library-entry://studio-fixture-plan), after `rudder library file ref` returns it.",
+    snippets: ["library-entry://studio-fixture-plan", "rudder library file ref"],
+  },
+  "bad-local-artifact-path": {
+    body: "Bad case: the handoff only mentioned `/tmp/rudder-plan.md`. The correction is to put durable work in the Library and cite the returned markdownLink.",
+    snippets: ["/tmp/rudder-plan.md", "markdownLink"],
+  },
+  "good-explicit-blocker": {
+    body: "Good case: mark the issue blocked with the exact external blocker and next human action, instead of consuming more heartbeat runs with no new context.",
+    snippets: ["exact external blocker", "next human action"],
+  },
+  "bad-unparented-followup": {
+    body: "Bad case: a delegated follow-up was created without `parentId` or `goalId`. The correction is to preserve parent and goal links so the work remains inspectable.",
+    snippets: ["parentId", "goalId"],
+  },
+  "good-agent-private-skill": {
+    body: "Good case: create a self-use helper with `rudder agent skills create --enable` under `AGENT_HOME/skills` before proposing organization skill mutation.",
+    snippets: ["rudder agent skills create", "AGENT_HOME/skills"],
+  },
+  "bad-skills-sync-replacement": {
+    body: "Bad case: `skills sync` replaced useful enabled skills when the intent was additive. The correction is to use `skills enable` unless full replacement is intended.",
+    snippets: ["skills sync", "skills enable"],
+  },
+} as const;
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "../../../../..");
 const DATA_DIR = path.resolve(SCRIPT_DIR, "../data/rudder-studio");
@@ -162,6 +206,27 @@ function mustGet<T>(map: Map<string, T>, key: string, label: string): T {
   const value = map.get(key);
   if (!value) throw new Error(`Unknown ${label} key: ${key}`);
   return value;
+}
+
+function practiceCaseEvidenceBody(practiceCaseKey: string): string {
+  const evidence = REQUIRED_PRACTICE_CASE_EVIDENCE[practiceCaseKey as keyof typeof REQUIRED_PRACTICE_CASE_EVIDENCE];
+  if (!evidence) throw new Error(`Missing Rudder Studio practice case evidence: ${practiceCaseKey}`);
+  return evidence.body;
+}
+
+function issueCommentBody(fixture: IssueFixture): string {
+  if (fixture.practiceCaseKey) {
+    const blockerLine = fixture.status === "blocked"
+      ? `\n\nBlocked: ${fixture.runProfile.failure ?? "needs operator decision before continuing."}`
+      : "";
+    return `Practice case ${fixture.practiceCaseKey}: ${fixture.title}.\n\n${practiceCaseEvidenceBody(fixture.practiceCaseKey)}${blockerLine}`;
+  }
+
+  if (fixture.status === "blocked") {
+    return `Blocked: ${fixture.runProfile.failure ?? "needs operator decision before continuing."}`;
+  }
+
+  return `Progress update: ${fixture.title} now has ${fixture.runProfile.runs} recorded agent runs in Rudder Studio.`;
 }
 
 function addDays(date: Date, days: number): Date {
@@ -283,6 +348,40 @@ function validateReferences(
       if (!issueKeys.has(issueKey)) throw new Error(`Bad chat context issue: ${chat.key}/${issueKey}`);
     }
   }
+
+  const requiredPracticeCaseKeys = new Set([
+    "good-checkout-before-work",
+    "bad-mention-self-assign",
+    "good-structured-review",
+    "bad-freeform-review",
+    "good-library-markdownlink",
+    "bad-local-artifact-path",
+    "good-explicit-blocker",
+    "bad-unparented-followup",
+    "good-agent-private-skill",
+    "bad-skills-sync-replacement",
+  ]);
+  const issuePracticeCaseKeys = new Set(issueFixtures.map((issue) => issue.practiceCaseKey).filter(Boolean));
+  for (const key of requiredPracticeCaseKeys) {
+    if (!issuePracticeCaseKeys.has(key)) throw new Error(`Missing Rudder Studio practice case: ${key}`);
+    const evidence = REQUIRED_PRACTICE_CASE_EVIDENCE[key as keyof typeof REQUIRED_PRACTICE_CASE_EVIDENCE];
+    if (!evidence) throw new Error(`Missing Rudder Studio practice evidence: ${key}`);
+    for (const snippet of evidence.snippets) {
+      if (!evidence.body.includes(snippet)) {
+        throw new Error(`Practice case evidence ${key} is missing snippet: ${snippet}`);
+      }
+    }
+  }
+  for (const issue of issueFixtures) {
+    if (!issue.practiceCaseKey) continue;
+    if (!requiredPracticeCaseKeys.has(issue.practiceCaseKey)) {
+      throw new Error(`Unknown Rudder Studio practice case: ${issue.practiceCaseKey}`);
+    }
+    const commentBody = issueCommentBody(issue);
+    if (!commentBody.includes(`Practice case ${issue.practiceCaseKey}`)) {
+      throw new Error(`Practice case comment missing case label: ${issue.practiceCaseKey}`);
+    }
+  }
 }
 
 function runStatusForIssue(issue: IssueFixture, runIndex: number): string {
@@ -309,7 +408,8 @@ async function main() {
 
   const expectedRuns = issueFixtures.reduce((sum, issue) => sum + issue.runProfile.runs, 0);
   if (dryRun) {
-    console.log(`Rudder Studio fixture OK: ${agentFixtures.length} agents, ${scenario.goals.length} goals, ${scenario.projects.length} projects, ${issueFixtures.length} issues, ${expectedRuns} generated runs.`);
+    const practiceCaseCount = issueFixtures.filter((issue) => issue.practiceCaseKey).length;
+    console.log(`Rudder Studio fixture OK: ${agentFixtures.length} agents, ${scenario.goals.length} goals, ${scenario.projects.length} projects, ${issueFixtures.length} issues, ${expectedRuns} generated runs, ${practiceCaseCount} practice cases with evidence.`);
     return;
   }
 
@@ -523,6 +623,7 @@ async function main() {
           issue: { key: fixture.key, title: fixture.title, status: fixture.status },
           projectKey: fixture.projectKey,
           billingCode: fixture.billingCode,
+          practiceCaseKey: fixture.practiceCaseKey ?? null,
         },
         stdoutExcerpt: status === "completed" ? `Completed work on ${fixture.key}: ${fixture.title}` : null,
         stderrExcerpt: status === "failed" ? fixture.runProfile.failure ?? "Seeded blocked run" : null,
@@ -629,9 +730,7 @@ async function main() {
         orgId,
         issueId,
         authorAgentId: agentId,
-        body: fixture.status === "blocked"
-          ? `Blocked: ${fixture.runProfile.failure ?? "needs operator decision before continuing."}`
-          : `Progress update: ${fixture.title} now has ${fixture.runProfile.runs} recorded agent runs in Rudder Studio.`,
+        body: issueCommentBody(fixture),
         createdAt: atDay(historyStart, Math.min(28, fixture.day + 2), 13),
         updatedAt: atDay(historyStart, Math.min(28, fixture.day + 2), 13),
       });
@@ -648,7 +747,7 @@ async function main() {
         action: fixture.status === "done" ? "issue.completed" : "issue.progressed",
         entityType: "issue",
         entityId: issueId,
-        details: { issueKey: fixture.key, projectKey: fixture.projectKey, status: fixture.status },
+        details: { issueKey: fixture.key, projectKey: fixture.projectKey, status: fixture.status, practiceCaseKey: fixture.practiceCaseKey ?? null },
         createdAt: atDay(historyStart, Math.min(28, fixture.day + 2), 14),
       });
     }

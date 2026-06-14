@@ -41,6 +41,9 @@ Maintain the scenario from causal work records, not screen states:
    number of human operator checkpoints.
 4. Dashboard, Messenger, issue filters, approvals, and costs should become
    meaningful because the underlying work is coherent.
+5. Practice cases are issue records with `practiceCaseKey`, not separate static
+   docs. They should be visible through the same issue, run, comment, and
+   activity surfaces as normal work.
 
 Do not create a special Calendar-only story unless the user explicitly asks for
 Calendar component testing. In a realistic Rudder Studio month, Calendar should
@@ -108,6 +111,40 @@ After seeding, open the printed dashboard URL. The org should show:
 - pending approvals for Product Hunt gating and budget override
 - Calendar density from derived heartbeat run events, plus a few human reviews
 - Messenger conversations that explain why the scenario is organized this way
+- Rudder control-plane practice cases that teach good and bad agent behavior
+  from actual Studio records, not from an isolated tutorial page
+
+## Rudder Practice Cases
+
+Rudder Studio intentionally includes good and bad practice examples because the
+scenario is also used to teach agents how to operate inside Rudder.
+
+Good cases:
+
+- `good-checkout-before-work`: checkout before task work under concurrent
+  wakeups.
+- `good-structured-review`: close review with a structured
+  `rudder issue review --decision ...` result.
+- `good-library-markdownlink`: hand off durable files with the Library
+  `markdownLink`, not only a filesystem path.
+- `good-explicit-blocker`: mark real external blockers explicitly instead of
+  burning repeated runs.
+- `good-agent-private-skill`: use an agent-private skill for a self-use helper
+  before mutating organization skills.
+
+Bad cases:
+
+- `bad-mention-self-assign`: treating a mention as ownership transfer.
+- `bad-freeform-review`: writing approval text without a structured decision.
+- `bad-local-artifact-path`: leaving a durable handoff as a local path.
+- `bad-unparented-followup`: creating delegated follow-up work without
+  `parentId` and `goalId`.
+- `bad-skills-sync-replacement`: using `skills sync` when additive
+  `skills enable` was intended.
+
+The seed script validates that each required case key exists. If you add or
+rename a case, update both the fixture issue and the script's required key set
+in the same change.
 
 ## Update Rules
 

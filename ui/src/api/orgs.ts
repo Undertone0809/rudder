@@ -10,6 +10,7 @@ import type {
   OrganizationExportJobCreateResult,
   OrganizationIntelligenceProfile,
   OrganizationIntelligenceProfilePurpose,
+  OrganizationLegacyHeartbeatInstructionDeleteResult,
   OrganizationPortabilityExportPreviewResult,
   OrganizationPortabilityExportRequest,
   OrganizationPortabilityExportResult,
@@ -175,6 +176,10 @@ export const organizationsApi = {
       `/orgs/${orgId}/workspace/entry${query ? `?${query}` : ""}`,
     );
   },
+  deleteLegacyHeartbeatInstructions: (orgId: string) =>
+    api.delete<OrganizationLegacyHeartbeatInstructionDeleteResult>(
+      `/orgs/${orgId}/workspace/legacy-heartbeat-instructions`,
+    ),
   listWorkspaceBackups: (orgId: string) =>
     api.get<WorkspaceBackupList>(`/orgs/${orgId}/workspace/backups`),
   createWorkspaceBackup: (orgId: string, data: WorkspaceBackupCreateRequest = {}) =>

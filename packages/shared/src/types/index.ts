@@ -102,7 +102,7 @@ export type {
   OrganizationSkillTrustLevel, OrganizationSkillUpdateStatus, OrganizationSkillUsageAgent, OrganizationSkillWorkspaceEditPath
 } from "./organization-skill.js";
 export type {
-  LibraryEntry, Organization, OrganizationWorkspace, OrganizationWorkspaceDirectoryCreateRequest, OrganizationWorkspaceEntryMoveRequest,
+  LibraryEntry, Organization, OrganizationLegacyHeartbeatInstructionDeleteResult, OrganizationWorkspace, OrganizationWorkspaceDirectoryCreateRequest, OrganizationWorkspaceEntryMoveRequest,
   OrganizationWorkspaceEntryMutationResult, OrganizationWorkspaceEntryRenameRequest, OrganizationWorkspaceFileCreateRequest, OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList, OrganizationWorkspaceFileUpdateRequest, OrganizationWorkspaceRootSource
 } from "./organization.js";

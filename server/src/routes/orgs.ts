@@ -672,6 +672,29 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     res.json(result);
   });
 
+  router.delete("/:orgId/workspace/legacy-heartbeat-instructions", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const result = await workspaceBrowser.deleteLegacyHeartbeatInstructions(orgId);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.legacy_heartbeat_instructions.deleted",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        deletedPaths: result.deleted.map((entry) => entry.path),
+        deletedCount: result.deleted.length,
+      },
+    });
+    res.json(result);
+  });
+
   router.get("/:orgId/workspace/backups", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
