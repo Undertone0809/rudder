@@ -83,6 +83,7 @@ describe("agent-v1 registry", () => {
       "chat.send",
       "chat.archive",
       "runs.list",
+      "runs.by-skill",
       "runs.get",
       "runs.events",
       "runs.log",

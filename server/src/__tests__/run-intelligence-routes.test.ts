@@ -122,6 +122,66 @@ describe("run intelligence routes", () => {
     });
   });
 
+  it("passes used skill filters to run list queries", async () => {
+    mockListObservedRuns.mockResolvedValue([
+      {
+        run: { id: "run-1", orgId: "org-1" },
+        agentName: "Agent",
+        orgName: "Org",
+        issue: { id: "issue-1", identifier: "ZST-1", title: "Fix skill" },
+        bundle: {
+          agentRuntimeType: "codex_local",
+          agentConfigRevisionId: null,
+          agentConfigRevisionCreatedAt: null,
+          agentConfigFingerprint: null,
+          runtimeConfigFingerprint: null,
+        },
+        skillEvidence: {
+          evidenceType: "used",
+          matchedSkillKey: "skill-optimizer",
+          matchedSkillLabel: "Skill Optimizer",
+          sourceEventType: "adapter.skill_usage",
+          sourceEventId: 12,
+          sourceEventCreatedAt: "2026-06-11T00:00:02.000Z",
+        },
+        errorSummary: null,
+        langfuse: null,
+      },
+    ]);
+
+    const res = await request(createApp())
+      .get("/api/run-intelligence/orgs/org-1/runs")
+      .query({ usedSkill: "skill-optimizer", limit: "20" });
+
+    expect(res.status).toBe(200);
+    expect(mockListObservedRuns).toHaveBeenCalledWith(expect.anything(), {
+      orgId: "org-1",
+      updatedAfter: null,
+      runIdPrefix: null,
+      agentId: null,
+      status: null,
+      runtime: null,
+      issueId: null,
+      usedSkill: "skill-optimizer",
+      loadedSkill: null,
+      createdBefore: null,
+      limit: 20,
+    });
+    expect(res.body[0]?.skillEvidence).toMatchObject({
+      evidenceType: "used",
+      matchedSkillKey: "skill-optimizer",
+    });
+  });
+
+  it("rejects ambiguous used and loaded skill filters", async () => {
+    const res = await request(createApp())
+      .get("/api/run-intelligence/orgs/org-1/runs")
+      .query({ usedSkill: "skill-optimizer", loadedSkill: "skill-optimizer" });
+
+    expect(res.status).toBe(400);
+    expect(mockListObservedRuns).not.toHaveBeenCalled();
+  });
+
   it("enforces org access on single-run lookup", async () => {
     mockGetObservedRun.mockResolvedValue({
       run: { id: "run-2", orgId: "org-2" },

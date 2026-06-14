@@ -18,6 +18,17 @@ export interface RunIssueRef {
   title: string | null;
 }
 
+export type RunSkillEvidenceType = "used" | "loaded";
+
+export interface RunSkillEvidenceMatch {
+  evidenceType: RunSkillEvidenceType;
+  matchedSkillKey: string;
+  matchedSkillLabel: string | null;
+  sourceEventType: string | null;
+  sourceEventId: number | null;
+  sourceEventCreatedAt: string | null;
+}
+
 export interface ObservedRun {
   run: HeartbeatRun;
   agentName: string | null;
@@ -25,6 +36,8 @@ export interface ObservedRun {
   issue: RunIssueRef | null;
   bundle: EvalBundle;
   langfuse?: ExecutionLangfuseLink | null;
+  errorSummary?: string | null;
+  skillEvidence?: RunSkillEvidenceMatch | null;
 }
 
 export interface RunLogChunk {
@@ -121,11 +134,4 @@ export interface RunComparison {
   }>;
 }
 
-export interface RunExportRow {
-  run: HeartbeatRun;
-  agentName: string | null;
-  orgName: string | null;
-  issue: RunIssueRef | null;
-  bundle: EvalBundle;
-  langfuse?: ExecutionLangfuseLink | null;
-}
+export interface RunExportRow extends ObservedRun {}

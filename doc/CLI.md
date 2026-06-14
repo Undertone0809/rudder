@@ -241,7 +241,8 @@ entries are omitted unless `--include-transcript` / `--include-output` is set.
 ## Run Debugging Commands
 
 ```sh
-pnpm rudder runs list --org-id <org-id> [--status failed] [--agent-id <id>] [--issue-id <id>] [--runtime codex_local] [--limit 200]
+pnpm rudder runs list --org-id <org-id> [--status failed] [--agent-id <id>] [--issue-id <id>] [--runtime codex_local] [--used-skill <skill-key>] [--loaded-skill <skill-key>] [--limit 200]
+pnpm rudder runs by-skill <skill-key-or-name> --org-id <org-id> [--evidence used|loaded] [--limit 50]
 pnpm rudder runs get <run-id>
 pnpm rudder runs events <run-id>
 pnpm rudder runs log <run-id> [--max-chars 12000]
@@ -250,6 +251,20 @@ pnpm rudder runs errors <run-id> [--max-chars 1200]
 pnpm rudder runs cancel <run-id>
 pnpm rudder runs retry <run-id>
 ```
+
+`runs list --used-skill <skill>` returns runs where telemetry shows the skill
+was actually used. This is the default evidence semantic for skill optimization;
+it does not count skills that were only loaded into the runtime. Use
+`--loaded-skill <skill>` only when you deliberately need the broader "available
+to the run" evidence set. Both filters match a skill key or display/runtime
+name and include `skillEvidence`, `errorSummary`, Langfuse link metadata,
+issue context, agent, runtime, timestamps, and the raw run fields in JSON.
+
+`runs by-skill <skill>` is the agent-facing evidence packet for skill
+optimization. It defaults to `--evidence used`, summarizes recent matching runs
+by status, agent, issue, and common errors, then prints follow-up commands such
+as `rudder runs transcript <run-id>` or `rudder runs errors <run-id>`. Pass
+`--json` for a stable object with `{ skill, summary, rows, nextCommands }`.
 
 `runs transcript` is normalized server-side from persisted run detail and log
 content. Human output is compact, clipped, and newest-first by default; pass

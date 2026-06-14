@@ -5,7 +5,7 @@ import {
   type ObservedRunStep,
 } from "@rudderhq/run-intelligence-core";
 import { Router } from "express";
-import { notFound } from "../errors.js";
+import { badRequest, notFound } from "../errors.js";
 import {
   getObservedRun,
   getObservedRunDetail,
@@ -199,6 +199,11 @@ export function runIntelligenceRoutes(db: Db) {
   router.get("/run-intelligence/orgs/:orgId/runs", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    const usedSkill = asString(req.query.usedSkill);
+    const loadedSkill = asString(req.query.loadedSkill);
+    if (usedSkill && loadedSkill) {
+      throw badRequest("Use either usedSkill or loadedSkill, not both.");
+    }
 
     const rows = await listObservedRuns(db, {
       orgId,
@@ -208,6 +213,8 @@ export function runIntelligenceRoutes(db: Db) {
       status: asString(req.query.status),
       runtime: asString(req.query.runtime),
       issueId: asString(req.query.issueId),
+      usedSkill,
+      loadedSkill,
       createdBefore: asDateOrNull(req.query.createdBefore),
       limit: Math.max(1, Math.min(1000, Number(req.query.limit ?? 200) || 200)),
     });
