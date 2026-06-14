@@ -535,12 +535,13 @@ describe("agent skill routes", () => {
         agentRuntimeType: "claude_local",
       }),
       expect.objectContaining({
-        "HEARTBEAT.md": expect.any(String),
         "SOUL.md": "You are QA.",
         "TOOLS.md": expect.any(String),
       }),
       { entryFile: "SOUL.md", replaceExisting: false, clearLegacyPromptTemplate: true },
     );
+    const customBundle = mockAgentInstructionsService.materializeManagedBundle.mock.calls[0]?.[1] as Record<string, string>;
+    expect(customBundle).not.toHaveProperty("HEARTBEAT.md");
     expect(mockAgentService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({
@@ -576,7 +577,6 @@ describe("agent skill routes", () => {
         agentRuntimeType: "claude_local",
       }),
       expect.objectContaining({
-        "HEARTBEAT.md": expect.stringContaining("Operator Assistant Heartbeat Checklist"),
         "SOUL.md": expect.stringContaining("You are the Operator Assistant."),
         "TOOLS.md": expect.stringContaining("# TOOLS.md"),
       }),
@@ -584,6 +584,7 @@ describe("agent skill routes", () => {
     );
     const ceoBundle = mockAgentInstructionsService.materializeManagedBundle.mock.calls[0]?.[1] as Record<string, string>;
     expect(ceoBundle["SOUL.md"]).toContain("Operator Assistant Persona");
+    expect(ceoBundle).not.toHaveProperty("HEARTBEAT.md");
     expect(ceoBundle).not.toHaveProperty("AGENTS.md");
   });
 

@@ -25,6 +25,13 @@ updated_at: 2026-06-03
 
 # Heartbeat Instructions Scene Gate
 
+Superseded note, 2026-06-14: `HEARTBEAT.md` no longer has runtime meaning in
+any scene. Rudder now injects the platform-owned heartbeat instruction prompt
+from runtime code and ignores legacy `HEARTBEAT.md` files. See
+`2026-06-14-retire-legacy-heartbeat-md.md`. The remainder of this plan is kept
+as historical context for the earlier scene-gate design and must not be read as
+the current runtime contract.
+
 ## Problem
 
 `HEARTBEAT.md` is the agent's heartbeat-run operating protocol. It should be

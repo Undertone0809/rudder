@@ -766,15 +766,16 @@ Stable instruction inputs:
 
 - agent runtime config and adapter-owned defaults
 - Rudder's code-owned agent operating contract for supported local runtimes
+- Rudder's code-owned heartbeat instruction prompt for supported local runtimes
+  when the invocation scene is `heartbeat`
 - managed or explicit role/persona instruction content such as `SOUL.md` /
   `instructionsFilePath` when the selected runtime supports file-based
   instructions
 - sibling `SOUL.md`, `TOOLS.md`, and `MEMORY.md` files when present beside the
   configured instruction entry file
-- sibling `HEARTBEAT.md` when present beside the configured instruction entry
-  file for `heartbeat` scene runs
-- `HEARTBEAT.md` content is excluded from non-`heartbeat` scenes even when a
-  legacy or explicit `instructionsFilePath` points directly at that file
+- legacy sibling or explicit-entry `HEARTBEAT.md` files are ignored in every
+  scene; the heartbeat pipeline is owned by Rudder's code-owned heartbeat
+  instruction prompt
 - enabled Rudder skills resolved for the agent/runtime
 - scene-level invariant rules for `heartbeat` or `chat`
 

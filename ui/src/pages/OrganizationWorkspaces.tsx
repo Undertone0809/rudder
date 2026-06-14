@@ -617,6 +617,14 @@ function isProtectedAgentInstructionsEntryPath(filePath: string) {
   return false;
 }
 
+function isLegacyAgentHeartbeatInstructionPath(filePath: string | null | undefined) {
+  const segments = (filePath ?? "").split("/").filter(Boolean);
+  return segments.length === 4
+    && segments[0] === "agents"
+    && segments[2] === "instructions"
+    && segments[3]?.toUpperCase() === "HEARTBEAT.MD";
+}
+
 function isProtectedAgentManagedEntryPath(filePath: string) {
   const segments = filePath.split("/").filter(Boolean);
   return segments.length >= 3
@@ -1497,6 +1505,54 @@ function WorkspaceTreeNode({
         {actionMenu}
       </div>
     </li>
+  );
+}
+
+function LegacyHeartbeatInstructionsDialog({
+  open,
+  filePath,
+  isDeleting,
+  onKeep,
+  onDeleteAll,
+}: {
+  open: boolean;
+  filePath: string | null;
+  isDeleting: boolean;
+  onKeep: () => void;
+  onDeleteAll: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!nextOpen && !isDeleting) onKeep();
+    }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Legacy HEARTBEAT.md</DialogTitle>
+          <DialogDescription>
+            Heartbeat instructions are built into Rudder runtime now. Agents no longer load or need
+            {filePath ? ` ${filePath}` : " this file"}, so you do not need to maintain it by hand.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onKeep}
+            disabled={isDeleting}
+          >
+            Keep files for now
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={onDeleteAll}
+            disabled={isDeleting}
+          >
+            {isDeleting ? "Deleting..." : "Delete all legacy HEARTBEAT.md files"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2948,9 +3004,13 @@ export function OrganizationWorkspaceBrowser({
   const initialSelectedFilePath = requestedDocumentId || requestedResourceAttachmentId || requestedDirectoryPath
     ? null
     : requestedFilePath ?? initialOpenFileTabState.selectedFilePath;
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialSelectedFilePath);
+  const initialSafeSelectedFilePath = isLegacyAgentHeartbeatInstructionPath(initialSelectedFilePath)
+    ? null
+    : initialSelectedFilePath;
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialSafeSelectedFilePath);
   const [openFilePaths, setOpenFilePaths] = useState<string[]>(
-    () => normalizeWorkspaceOpenFilePaths([...initialOpenFileTabState.openFilePaths, initialSelectedFilePath]),
+    () => normalizeWorkspaceOpenFilePaths([...initialOpenFileTabState.openFilePaths, initialSafeSelectedFilePath])
+      .filter((filePath) => !isLegacyAgentHeartbeatInstructionPath(filePath)),
   );
   const [tabContextMenu, setTabContextMenu] = useState<{
     filePath: string;
@@ -2979,6 +3039,9 @@ export function OrganizationWorkspaceBrowser({
   const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
+  const [legacyHeartbeatDialogPath, setLegacyHeartbeatDialogPath] = useState<string | null>(
+    isLegacyAgentHeartbeatInstructionPath(requestedFilePath) ? requestedFilePath : null,
+  );
   const [rootDropActive, setRootDropActive] = useState(false);
   const [draggedEntryPath, setDraggedEntryPath] = useState<string | null>(null);
   const [activeEntryPath, setActiveEntryPath] = useState<string | null>(requestedFilePath ?? requestedDirectoryPath);
@@ -3209,6 +3272,13 @@ export function OrganizationWorkspaceBrowser({
       return;
     }
     if (requestedFilePath) {
+      if (isLegacyAgentHeartbeatInstructionPath(requestedFilePath)) {
+        setLegacyHeartbeatDialogPath(requestedFilePath);
+        setSelectedFilePath(null);
+        setDraftFilePath(null);
+        setActiveEntryPath(requestedFilePath);
+        return;
+      }
       setSelectedFilePath(requestedFilePath);
       openWorkspaceFileTab(requestedFilePath);
       return;
@@ -3253,7 +3323,8 @@ export function OrganizationWorkspaceBrowser({
     const nextOpenFilePaths = requestedFilePath
       ? normalizeWorkspaceOpenFilePaths([...storedTabState.openFilePaths, requestedFilePath])
       : storedTabState.openFilePaths;
-    setOpenFilePaths(nextOpenFilePaths);
+    const safeOpenFilePaths = nextOpenFilePaths.filter((filePath) => !isLegacyAgentHeartbeatInstructionPath(filePath));
+    setOpenFilePaths(safeOpenFilePaths);
 
     if (requestedResourceAttachmentId) {
       setSelectedFilePath(null);
@@ -3262,6 +3333,13 @@ export function OrganizationWorkspaceBrowser({
     }
 
     if (requestedFilePath) {
+      if (isLegacyAgentHeartbeatInstructionPath(requestedFilePath)) {
+        setLegacyHeartbeatDialogPath(requestedFilePath);
+        setSelectedFilePath(null);
+        setDraftFilePath(null);
+        setActiveEntryPath(requestedFilePath);
+        return;
+      }
       setSelectedFilePath(requestedFilePath);
       setActiveEntryPath(requestedFilePath);
       return;
@@ -3274,7 +3352,11 @@ export function OrganizationWorkspaceBrowser({
       return;
     }
 
-    const restoredFilePath = storedTabState.selectedFilePath ?? storedTabState.openFilePaths[0] ?? null;
+    const restoredFilePath = (
+      isLegacyAgentHeartbeatInstructionPath(storedTabState.selectedFilePath)
+        ? null
+        : storedTabState.selectedFilePath
+    ) ?? safeOpenFilePaths[0] ?? null;
     setSelectedFilePath(restoredFilePath);
     setDraftFilePath(null);
     setActiveEntryPath(restoredFilePath);
@@ -3486,6 +3568,42 @@ export function OrganizationWorkspaceBrowser({
     onError: (error) => {
       pushToast({
         title: error instanceof Error ? error.message : "Failed to unlink resource",
+        tone: "error",
+      });
+    },
+  });
+
+  const deleteLegacyHeartbeatInstructions = useMutation({
+    mutationFn: () => organizationsApi.deleteLegacyHeartbeatInstructions(viewedOrganizationId!),
+    onSuccess: (result) => {
+      if (!viewedOrganizationId) return;
+      const deletedPaths = new Set(result.deleted.map((entry) => entry.path));
+      void invalidateWorkspaceBrowser();
+      setLegacyHeartbeatDialogPath(null);
+      setOpenFilePaths((current) =>
+        current.filter((filePath) => !isLegacyAgentHeartbeatInstructionPath(filePath) && !deletedPaths.has(filePath)),
+      );
+      if (isLegacyAgentHeartbeatInstructionPath(selectedFilePath) || (selectedFilePath && deletedPaths.has(selectedFilePath))) {
+        setSelectedFilePath(null);
+        setDraftFilePath(null);
+        syncedFileRef.current = { filePath: null, content: "" };
+        updateSelectedPath(searchParams, setSearchParams, null);
+      } else if (isLegacyAgentHeartbeatInstructionPath(requestedFilePath)) {
+        updateSelectedPath(searchParams, setSearchParams, null);
+      }
+      const activePath = activeEntryPath;
+      if (activePath && (isLegacyAgentHeartbeatInstructionPath(activePath) || deletedPaths.has(activePath))) {
+        setActiveEntryPath(parentWorkspaceDirectoryPath(activePath) || null);
+      }
+      pushToast({
+        title: "Legacy heartbeat files deleted",
+        body: `${result.deleted.length} file${result.deleted.length === 1 ? "" : "s"} removed`,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to delete legacy heartbeat files",
         tone: "error",
       });
     },
@@ -3937,6 +4055,11 @@ export function OrganizationWorkspaceBrowser({
 
   const handleSelectFile = (filePath: string) => {
     setTabContextMenu(null);
+    if (isLegacyAgentHeartbeatInstructionPath(filePath)) {
+      setLegacyHeartbeatDialogPath(filePath);
+      setActiveEntryPath(filePath);
+      return;
+    }
     flushCurrentDraft();
     allowDefaultFileOpenRef.current = true;
     openWorkspaceFileTab(filePath);
@@ -3944,6 +4067,16 @@ export function OrganizationWorkspaceBrowser({
     setSelectedFilePath(filePath);
     updateSelectedPath(searchParams, setSearchParams, filePath);
   };
+
+  function handleKeepLegacyHeartbeatFiles() {
+    setLegacyHeartbeatDialogPath(null);
+    if (isLegacyAgentHeartbeatInstructionPath(requestedFilePath) || isLegacyAgentHeartbeatInstructionPath(selectedFilePath)) {
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      updateSelectedPath(searchParams, setSearchParams, null);
+    }
+    setOpenFilePaths((current) => current.filter((filePath) => !isLegacyAgentHeartbeatInstructionPath(filePath)));
+  }
 
   const handleSelectResource = (attachmentId: string) => {
     setTabContextMenu(null);
@@ -5008,6 +5141,14 @@ export function OrganizationWorkspaceBrowser({
         </div>,
         document.body,
       ) : null}
+
+      <LegacyHeartbeatInstructionsDialog
+        open={legacyHeartbeatDialogPath !== null}
+        filePath={legacyHeartbeatDialogPath}
+        isDeleting={deleteLegacyHeartbeatInstructions.isPending}
+        onKeep={handleKeepLegacyHeartbeatFiles}
+        onDeleteAll={() => deleteLegacyHeartbeatInstructions.mutate()}
+      />
 
       <Dialog open={createTarget !== null} onOpenChange={(open) => {
         if (!open && !createWorkspaceEntry.isPending) {

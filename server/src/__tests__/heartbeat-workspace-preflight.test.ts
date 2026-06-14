@@ -370,7 +370,7 @@ describe("heartbeat managed workspace preflight", () => {
     await expect(fs.stat(path.join(agentHome, "skills")).then((stat) => stat.isDirectory())).resolves.toBe(true);
   });
 
-  it("loads HEARTBEAT.md through the heartbeat service actor path", async () => {
+  it("ignores legacy HEARTBEAT.md through the heartbeat service actor path", async () => {
     const agent = await seedAgentFixture();
     const agentHome = resolveDefaultAgentWorkspaceDir(agent.orgId, {
       id: agent.agentId,
@@ -426,19 +426,26 @@ describe("heartbeat managed workspace preflight", () => {
       rudderEnvKeys: string[];
     };
     expect(capture.prompt).toContain("# Persona");
-    expect(capture.prompt).toContain("# Heartbeat");
+    expect(capture.prompt).toContain("# Rudder Heartbeat Instruction");
+    expect(capture.prompt).not.toContain("# Heartbeat\n\n- Check assigned issues.");
     expect(capture.prompt).toContain("Follow the heartbeat prompt.");
     expect(invokeEventPayload).toEqual(expect.objectContaining({
       agentRuntimeType: "codex_local",
       promptMetrics: expect.objectContaining({
+        runtimeHeartbeatChars: expect.any(Number),
+        heartbeatFileChars: expect.any(Number),
         heartbeatChars: expect.any(Number),
       }),
       commandNotes: expect.arrayContaining([
-        "Loaded agent heartbeat instructions from $AGENT_HOME/instructions/HEARTBEAT.md",
+        "Loaded Rudder heartbeat instructions from runtime code",
       ]),
     }));
-    const promptMetrics = (invokeEventPayload as { promptMetrics: { heartbeatChars: number } }).promptMetrics;
-    expect(promptMetrics.heartbeatChars).toBeGreaterThan(0);
+    const promptMetrics = (invokeEventPayload as {
+      promptMetrics: { runtimeHeartbeatChars: number; heartbeatFileChars: number; heartbeatChars: number };
+    }).promptMetrics;
+    expect(promptMetrics.runtimeHeartbeatChars).toBeGreaterThan(0);
+    expect(promptMetrics.heartbeatFileChars).toBe(0);
+    expect(promptMetrics.heartbeatChars).toBe(promptMetrics.runtimeHeartbeatChars);
     await waitForCondition(async () => {
       const events = await getRunEvents(run!.id);
       return events.some((event) => event.eventType === "lifecycle" && event.message === "run succeeded");

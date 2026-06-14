@@ -1323,14 +1323,18 @@ describe("codex execute", () => {
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
-      expect(capture.prompt).toContain("# Heartbeat");
+      expect(capture.prompt).toContain("# Rudder Heartbeat Instruction");
+      expect(capture.prompt).not.toContain("# Heartbeat\n\n- Check assigned issues.");
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
-      expect(commandNotes).toContain("Loaded agent heartbeat instructions from $AGENT_HOME/instructions/HEARTBEAT.md");
+      expect(commandNotes).toContain("Loaded Rudder heartbeat instructions from runtime code");
+      expect(commandNotes).not.toContain("Loaded supplemental agent heartbeat notes from $AGENT_HOME/instructions/HEARTBEAT.md");
       expect(commandNotes).toContain(
         "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Rudder does not currently suppress that discovery.",
       );
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
-      expect(promptMetrics.heartbeatChars).toBeGreaterThan(0);
+      expect(promptMetrics.runtimeHeartbeatChars).toBeGreaterThan(0);
+      expect(promptMetrics.heartbeatFileChars).toBe(0);
+      expect(promptMetrics.heartbeatChars).toBe(promptMetrics.runtimeHeartbeatChars);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
       expect(loadedSkills).toEqual([
         expect.objectContaining({

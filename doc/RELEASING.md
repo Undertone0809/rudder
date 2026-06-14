@@ -150,6 +150,10 @@ The workflow:
 - creates git tag `vX.Y.Z`
 - creates or updates the GitHub Release from `releases/vX.Y.Z.md`
 - starts the desktop release workflow for `vX.Y.Z`
+- deletes obsolete `canary/v*` GitHub Releases and git tags whose canary base is
+  the released stable version or older, while preserving the current npm
+  `@rudderhq/cli@canary` target if the next-base canary has not been published
+  yet
 - records the announcement channel, and publishes docs production when website
   content is part of the release scope
 
@@ -179,6 +183,18 @@ Windows, and macOS using isolated temporary HOME, npm cache, npm prefix, output,
 and Desktop install directories. Maintainers can also run it manually from the
 `Public Install Smoke` workflow with a package spec such as
 `@rudderhq/cli@latest`, `@rudderhq/cli@canary`, or an exact version.
+
+After a stable release, the workflow also runs:
+
+```bash
+node scripts/cleanup-obsolete-canaries.mjs --stable-version X.Y.Z
+```
+
+This cleans up canary GitHub Releases and `canary/*` tags for the released
+stable base and older bases. It intentionally does not unpublish npm canary
+versions. By default, it preserves the canary release currently selected by the
+npm `canary` dist-tag, because `@rudderhq/cli@canary` still needs matching
+Desktop assets until a next-base canary is published.
 
 ## Local Commands
 
@@ -364,6 +380,7 @@ Then fix forward with a new stable release.
 - [`scripts/release.sh`](../scripts/release.sh)
 - [`scripts/release-package-map.mjs`](../scripts/release-package-map.mjs)
 - [`scripts/create-github-release.sh`](../scripts/create-github-release.sh)
+- [`scripts/cleanup-obsolete-canaries.mjs`](../scripts/cleanup-obsolete-canaries.mjs)
 - [`scripts/rollback-latest.sh`](../scripts/rollback-latest.sh)
 - [`doc/PUBLISHING.md`](PUBLISHING.md)
 - [`doc/RELEASE-AUTOMATION-SETUP.md`](RELEASE-AUTOMATION-SETUP.md)

@@ -83,6 +83,13 @@ test.describe("Organization workspaces agent avatar", () => {
       },
     });
     expect(memoryFileRes.ok()).toBe(true);
+    const heartbeatFileRes = await request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: heartbeatPath,
+        content: "# Legacy Heartbeat\n",
+      },
+    });
+    expect(heartbeatFileRes.ok()).toBe(true);
     const agentSkillDirRes = await request.post(`/api/orgs/${organization.id}/workspace/directory`, {
       data: {
         directoryPath: agentSkillDirPath,
@@ -127,8 +134,12 @@ test.describe("Organization workspaces agent avatar", () => {
     }
 
     await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(heartbeatPath)}`);
+    const legacyHeartbeatDialog = page.getByRole("dialog", { name: "Legacy HEARTBEAT.md" });
+    await expect(legacyHeartbeatDialog).toBeVisible();
+    await legacyHeartbeatDialog.getByRole("button", { name: "Keep files for now" }).click();
+
+    await page.goto(`/${organization.issuePrefix}/library?directory=${encodeURIComponent(instructionsPath)}`);
     await expectProtectedMenu(instructionsPath, { includesNewFile: true });
-    await expectProtectedMenu(heartbeatPath);
 
     await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(memoryPath)}`);
     await expectProtectedMenu(`${agentWorkspace!.path}/memory`, { includesNewFile: true });

@@ -167,8 +167,17 @@ vi.mock("@tanstack/react-query", () => ({
     }
     return { data: null, isLoading: false, error: null };
   }),
-  useMutation: vi.fn(() => ({
-    mutate: vi.fn(),
+  useMutation: vi.fn((options?: {
+    mutationFn?: (variables: unknown) => unknown;
+    onSuccess?: (data: unknown, variables: unknown) => void;
+    onError?: (error: unknown) => void;
+  }) => ({
+    mutate: vi.fn((variables?: unknown) => {
+      Promise.resolve()
+        .then(() => options?.mutationFn?.(variables))
+        .then((data) => options?.onSuccess?.(data, variables))
+        .catch((error) => options?.onError?.(error));
+    }),
     isPending: false,
     isError: false,
   })),
@@ -407,6 +416,23 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(heartbeatMenu?.textContent).toContain("Copy absolute path");
     expect(heartbeatMenu?.textContent).not.toContain("Delete");
     expect(heartbeatMenu?.textContent).not.toContain("Rename");
+  });
+
+  it("routes legacy HEARTBEAT.md selection through the Library path owner", () => {
+    renderSidebar("agents/Asher/instructions/notes.md");
+
+    const heartbeatButton = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.trim() === "HEARTBEAT.md");
+    expect(heartbeatButton).toBeTruthy();
+
+    act(() => {
+      heartbeatButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(document.body.textContent).not.toContain("Legacy HEARTBEAT.md");
+    expect(mockState.setSearchParams).toHaveBeenCalled();
+    const [nextParams] = mockState.setSearchParams.mock.calls.at(-1) ?? [];
+    expect(nextParams?.toString()).toContain("path=agents%2FAsher%2Finstructions%2FHEARTBEAT.md");
   });
 
   it("copies distinct Library links and absolute paths from the entry menu", async () => {

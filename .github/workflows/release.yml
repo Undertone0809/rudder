@@ -242,6 +242,15 @@ jobs:
             --tag "$tag" \
             --version "${{ steps.publish.outputs.version }}"
 
+      - name: Clean up obsolete canary releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/cleanup-obsolete-canaries.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --remote origin \
+            --stable-version "${{ steps.publish.outputs.version }}"
+
   public-install-smoke:
     name: Public install smoke
     needs:

@@ -454,8 +454,14 @@ describe("openclaw gateway adapter execute", () => {
       expect(payload?.idempotencyKey).toBe("run-123");
       expect(payload?.sessionKey).toBe("rudder:issue:issue-123");
       expect(String(payload?.message ?? "")).toContain("wake now");
+      expect(String(payload?.message ?? "")).toContain("# Rudder Heartbeat Instruction");
+      expect(String(payload?.message ?? "")).toContain("HTTP compatibility mode: this runtime has not migrated to the CLI contract yet.");
+      expect(String(payload?.message ?? "")).toContain("The listed HTTP endpoints override any CLI command guidance.");
       expect(String(payload?.message ?? "")).toContain("RUDDER_RUN_ID=run-123");
       expect(String(payload?.message ?? "")).toContain("RUDDER_TASK_ID=task-123");
+      expect(String(payload?.message ?? "")).toContain("GET /api/approvals/{approvalId}/issues");
+      expect(String(payload?.message ?? "")).toContain("reviewDecision");
+      expect(String(payload?.message ?? "")).toContain("Do not leave only a free-form accept/reject comment.");
 
       expect(logs.some((entry) => entry.includes("[openclaw-gateway:event] run=run-123 stream=assistant"))).toBe(true);
     } finally {

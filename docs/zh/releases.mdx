@@ -18,6 +18,26 @@ npx @rudderhq/cli@latest start
 
 这个页面只记录稳定版本。Canary 会更频繁地用于验证和 Desktop 资产测试；如果需要查看预发布历史，可以看 [GitHub Releases](https://github.com/Undertone0809/rudder/releases)。
 
+## v0.3.4
+
+发布时间：2026-06-14
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.3.4)
+
+**重点变化**
+
+- 改善全局导航，包括 scoped command-palette search、loading feedback，以及 primary rail 记住上次进入的具体页面。
+- 打磨 renderable links、issue comment preview、entity hover card、website link chip 和 issue status mention icon。
+- 扩展 project identity control，包括更多语义化 icon、更大的 glyph、对齐的 trigger，以及保留 project icon mention chip。
+- proposal review feedback 支持 agent 和 skill mention。
+- 强化 release 维护流程：stable 发布后自动清理旧 canary GitHub Releases/tag，同时保留当前 npm canary 线。
+
+**安装**
+
+```sh
+npx @rudderhq/cli@latest start
+```
+
 ## v0.3.2
 
 发布时间：2026-06-07
