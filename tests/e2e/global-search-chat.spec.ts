@@ -6,6 +6,63 @@ import { E2E_DATABASE_URL } from "./support/e2e-env";
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Global search results", () => {
+  test("shows an animated panel boundary while command palette search is loading", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Search Loading Ring ${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    let releaseIssueSearch: (() => void) | null = null;
+    const issueSearchStarted = new Promise<void>((resolve) => {
+      page.route("**/api/orgs/*/issues**", async (route) => {
+        const url = new URL(route.request().url());
+        if (url.searchParams.get("q") !== "rare-loading-ring-token") {
+          await route.continue();
+          return;
+        }
+
+        resolve();
+        await new Promise<void>((release) => {
+          releaseIssueSearch = release;
+        });
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: "[]",
+        });
+      });
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`);
+
+    await page.getByRole("button", { name: "Search" }).click();
+    const searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, library...");
+    await expect(searchInput).toBeVisible();
+    await searchInput.fill("rare-loading-ring-token");
+    await issueSearchStarted;
+
+    const commandPalette = page.locator('[data-slot="dialog-content"].command-palette-content');
+    await expect(commandPalette).toHaveClass(/command-palette-content--searching/);
+    await expect(page.getByText("Searching...")).toBeVisible();
+    await expect.poll(async () => commandPalette.evaluate((element) => {
+      const styles = window.getComputedStyle(element, "::before");
+      return {
+        animationName: styles.animationName,
+        backgroundImage: styles.backgroundImage,
+      };
+    })).toMatchObject({
+      animationName: "command-palette-search-ring",
+    });
+
+    releaseIssueSearch?.();
+    await expect(commandPalette).not.toHaveClass(/command-palette-content--searching/, { timeout: 15_000 });
+  });
+
   test("finds a chat by message body and opens the conversation", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Search Chats ${Date.now()}` },
