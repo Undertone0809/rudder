@@ -55,6 +55,23 @@ describe("InlineEditor", () => {
     expect(html).not.toContain("hover:bg-accent/50");
   });
 
+  it("keeps empty multiline placeholders visually muted when caller text color is stronger", () => {
+    const html = renderToStaticMarkup(
+      <InlineEditor
+        value=""
+        onSave={() => undefined}
+        multiline
+        className="text-[15px] leading-7 text-foreground"
+        placeholder="Add a description..."
+      />,
+    );
+
+    expect(html).toContain("Add a description...");
+    expect(html).toContain("text-muted-foreground");
+    expect(html).toContain("italic");
+    expect(html).not.toContain("text-foreground");
+  });
+
   it("can keep multiline markdown in the wysiwyg editor before any click", () => {
     const html = renderToStaticMarkup(
       <InlineEditor

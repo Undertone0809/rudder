@@ -260,9 +260,9 @@ export function InlineEditor({
           ? "cursor-text"
           : "cursor-pointer transition-colors hover:bg-accent/50",
         pad,
+        className,
         multiline && !value && "min-h-9 py-1 text-muted-foreground italic",
         !multiline && !value && "text-muted-foreground italic",
-        className,
       )}
       onClick={(event) => {
         if (eventTargetElement(event.target)?.closest("a")) return;
