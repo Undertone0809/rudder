@@ -3039,6 +3039,10 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   text-decoration: none;
 }
 
+.rudder-markdown .rudder-link-chip-icon {
+  color: color-mix(in oklab, currentColor 76%, var(--muted-foreground) 24%);
+}
+
 .rudder-markdown .rudder-link-chip-domain,
 .rudder-markdown .rudder-link-chip-detail {
   min-width: 0;

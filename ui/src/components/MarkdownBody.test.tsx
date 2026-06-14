@@ -691,6 +691,7 @@ describe("MarkdownBody", () => {
     expect(document.body.textContent).toContain("Rudder dev");
     expect(document.body.textContent).toContain("Wesley");
     expect(document.body.querySelector('[data-slot="issue-status-icon"]')).toBeTruthy();
+    expect(document.body.querySelector('[data-slot="priority-bars-icon"]')).toBeTruthy();
     expect(document.body.querySelector(".rudder-entity-preview-card")?.classList.contains("motion-entity-preview-pop")).toBe(true);
   });
 
@@ -974,7 +975,7 @@ describe("MarkdownBody", () => {
   });
 
   it("renders external markdown links with safe new-window attributes", () => {
-    const html = renderToStaticMarkup(
+    const container = render(
       <ThemeProvider>
         <MarkdownBody>
           {"Read [the guide](https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/)"}
@@ -982,10 +983,13 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain('href="https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/"');
-    expect(html).toContain('target="_blank"');
-    expect(html).toContain('rel="noreferrer noopener"');
-    expect(html).not.toContain('class="rudder-link-chip"');
+    const link = container.querySelector("a.rudder-link-chip--website");
+    expect(link?.getAttribute("href")).toBe("https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.getAttribute("rel")).toBe("noreferrer noopener");
+    expect(link?.querySelector(".rudder-link-chip-icon")).toBeTruthy();
+    expect(link?.querySelector(".rudder-link-chip-domain")?.textContent).toBe("the guide");
+    expect(link?.querySelector(".rudder-link-chip-detail")?.textContent).toBe("gingiris.github.io");
   });
 
   it("keeps same-origin absolute markdown links in the current window", () => {
@@ -1003,20 +1007,22 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("target")).toBeNull();
   });
 
-  it("renders bare long URLs with the complete URL as link text", () => {
+  it("renders bare long website URLs as compact link chips", () => {
     const url = "https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/";
-    const html = renderToStaticMarkup(
+    const container = render(
       <ThemeProvider>
         <MarkdownBody>{url}</MarkdownBody>
       </ThemeProvider>,
     );
 
-    expect(html).toContain(`href="${url}"`);
-    expect(html).toContain(`title="${url}"`);
-    expect(html).toContain(`>${url}</a>`);
-    expect(html).not.toContain('class="rudder-link-chip"');
-    expect(html).not.toContain('github readme template guide');
-    expect(html).toContain('target="_blank"');
+    const link = container.querySelector("a.rudder-link-chip--website");
+    expect(link?.getAttribute("href")).toBe(url);
+    expect(link?.getAttribute("title")).toBe(url);
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.querySelector(".rudder-link-chip-icon")).toBeTruthy();
+    expect(link?.querySelector(".rudder-link-chip-domain")?.textContent).toBe("gingiris.github.io");
+    expect(link?.querySelector(".rudder-link-chip-detail")?.textContent).toBe("growth-tools/blog/2026/04/02/github-readme-template-guide/");
+    expect(link?.textContent).not.toContain("https://");
   });
 
   it("wraps markdown tables in a horizontal scroll boundary", () => {

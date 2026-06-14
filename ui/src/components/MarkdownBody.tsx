@@ -2,7 +2,7 @@ import { isValidElement, useCallback, useEffect, useId, useRef, useState, type C
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { buildAgentMentionHref } from "@rudderhq/shared";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, ExternalLink } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
@@ -225,9 +225,44 @@ function isExternalMarkdownHref(value: string | null | undefined) {
   }
 }
 
+function websiteUrlFromMarkdownHref(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return null;
+  const candidate = trimmed.startsWith("//")
+    ? `${typeof window === "undefined" ? "https:" : window.location.protocol}${trimmed}`
+    : trimmed;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (typeof window !== "undefined" && parsed.origin === window.location.origin) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function isBareMarkdownUrlLabel(label: string) {
   const normalizedLabel = label.trim();
   return /^(?:https?:\/\/|www\.|\/\/)/iu.test(normalizedLabel);
+}
+
+function formatWebsiteLinkDetail(url: URL) {
+  const path = `${url.pathname}${url.search}${url.hash}`.replace(/^\/+/, "");
+  if (!path) return null;
+  try {
+    return decodeURI(path);
+  } catch {
+    return path;
+  }
+}
+
+function websiteLinkPresentation(url: URL, label: string) {
+  const trimmedLabel = label.trim();
+  const host = url.hostname.replace(/^www\./iu, "");
+  if (trimmedLabel && !isBareMarkdownUrlLabel(trimmedLabel)) {
+    return { primary: trimmedLabel, detail: host };
+  }
+  return { primary: host, detail: formatWebsiteLinkDetail(url) };
 }
 
 function extractMermaidSource(children: ReactNode): string | null {
@@ -780,7 +815,32 @@ export function MarkdownBody({
       }
       const linkLabel = flattenText(linkChildren);
       const isExternal = isExternalMarkdownHref(href);
+      const websiteUrl = websiteUrlFromMarkdownHref(href);
       const isBareUrlLink = isExternal && isBareMarkdownUrlLabel(linkLabel);
+      const websitePresentation = websiteUrl ? websiteLinkPresentation(websiteUrl, linkLabel) : null;
+      if (websitePresentation) {
+        return (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer noopener"
+            title={href}
+            className="rudder-link-chip rudder-link-chip--website"
+            {...markdownSourceAttributes(node)}
+            onClick={(event) => {
+              if (!href || !onLinkClick) return;
+              const handled = onLinkClick({ event, href, label: linkLabel });
+              if (handled) event.preventDefault();
+            }}
+          >
+            <ExternalLink className="rudder-link-chip-icon h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="rudder-link-chip-domain">{websitePresentation.primary}</span>
+            {websitePresentation.detail ? (
+              <span className="rudder-link-chip-detail">{websitePresentation.detail}</span>
+            ) : null}
+          </a>
+        );
+      }
       return (
         <a
           href={href}

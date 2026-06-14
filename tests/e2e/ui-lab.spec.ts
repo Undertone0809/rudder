@@ -134,6 +134,21 @@ test.describe("UI Lab", () => {
     await expect(page.getByText("/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/projects/rudder/proposals", { exact: false })).toBeVisible();
   });
 
+  test("renders Markdown website links as icon chips", async ({ page }) => {
+    const organization = await createUiLabOrganization(page);
+
+    await page.goto(`/${organization.issuePrefix}/ui-lab`);
+    await page.getByRole("button", { name: /Common Components/ }).click();
+
+    const websiteLinkChip = page.locator("a.rudder-link-chip--website").filter({ hasText: "Rudder docs" });
+    await expect(websiteLinkChip).toBeVisible();
+    await expect(websiteLinkChip).toHaveAttribute("href", "https://doc.rudder.zeeland.studio");
+    await expect(websiteLinkChip).toHaveAttribute("target", "_blank");
+    await expect(websiteLinkChip.locator(".rudder-link-chip-icon")).toBeVisible();
+    await expect(websiteLinkChip.locator(".rudder-link-chip-domain")).toHaveText("Rudder docs");
+    await expect(websiteLinkChip.locator(".rudder-link-chip-detail")).toHaveText("doc.rudder.zeeland.studio");
+  });
+
   test("shows a hover copy action on command terminal transcript details", async ({ page, context }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     const organization = await createUiLabOrganization(page);
