@@ -25,7 +25,7 @@ import { summarizeTokenUsage, type Agent, type AgentSkillAnalytics, type Issue }
 import { Bot, CircleDot, Coins, DollarSign, LayoutDashboard, PauseCircle } from "lucide-react";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
-import { ChartCard, IssueStatusChart, PriorityChart, RunActivityChart, SkillsUsageChart, SuccessRateChart } from "../components/ActivityCharts";
+import { ChartCard, IssueStatusChart, PriorityChart, RunActivityChart, SkillsUsageChart, TokenUsageChart } from "../components/ActivityCharts";
 import { ActivityRow } from "../components/ActivityRow";
 import { AgentIdentity } from "../components/AgentAvatar";
 import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
@@ -256,6 +256,11 @@ export function Dashboard() {
   const { data: rangeCostSummary } = useQuery({
     queryKey: queryKeys.costs(selectedOrganizationId ?? "__none__", from, to),
     queryFn: () => costsApi.summary(selectedOrganizationId!, from, to),
+    enabled: Boolean(selectedOrganizationId) && showFilteredSections,
+  });
+  const { data: rangeCostTrend } = useQuery({
+    queryKey: queryKeys.costTrend(selectedOrganizationId ?? "__none__", from, to),
+    queryFn: () => costsApi.trend(selectedOrganizationId!, from, to),
     enabled: Boolean(selectedOrganizationId) && showFilteredSections,
   });
   const hasTokenUsage = (rangeCostSummary?.tokenEventCount ?? 0) > 0;
@@ -579,9 +584,9 @@ export function Dashboard() {
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}
             </ChartCard>
-            <ChartCard title="Success Rate" subtitle={`${rangeLabel} · daily success rate · hover for details`}>
+            <ChartCard title="Token Usage" subtitle={`${rangeLabel} · daily token volume · hover for details`}>
               {showFilteredSections ? (
-                <SuccessRateChart key={`success:${dashboardMotionKey}`} runs={filteredRuns} days={chartDays} />
+                <TokenUsageChart key={`tokens:${dashboardMotionKey}`} rows={rangeCostTrend ?? []} days={chartDays} />
               ) : (
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}

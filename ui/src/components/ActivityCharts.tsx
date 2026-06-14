@@ -1,8 +1,9 @@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
+import { summarizeTokenUsage, type AgentSkillAnalytics, type CostTrendPoint, type HeartbeatRun } from "@rudderhq/shared";
 import type { CSSProperties } from "react";
 import { formatPriorityLabel } from "../lib/priorities";
 import { describeRunReason } from "../lib/run-reason";
+import { formatTokens } from "../lib/utils";
 
 /* ---- Utilities ---- */
 
@@ -62,6 +63,14 @@ type ScaleTick = {
 };
 
 function formatCompactScaleValue(value: number): string {
+  if (value >= 1_000_000_000) {
+    const compact = value / 1_000_000_000;
+    return `${Number.isInteger(compact) ? compact.toFixed(0) : compact.toFixed(1)}B`;
+  }
+  if (value >= 1_000_000) {
+    const compact = value / 1_000_000;
+    return `${Number.isInteger(compact) ? compact.toFixed(0) : compact.toFixed(1)}M`;
+  }
   if (value >= 1000) {
     const compact = value / 1000;
     return `${Number.isInteger(compact) ? compact.toFixed(0) : compact.toFixed(1)}k`;
@@ -267,6 +276,12 @@ const successRateLegendItems = [
   { color: "#10b981", label: "80%+" },
   { color: "#eab308", label: "50-79%" },
   { color: "#ef4444", label: "Below 50%" },
+];
+
+const tokenUsageLegendItems = [
+  { color: "#3b82f6", label: "Uncached input" },
+  { color: "#06b6d4", label: "Cached" },
+  { color: "#10b981", label: "Output" },
 ];
 
 const skillsPalette = [
@@ -750,6 +765,89 @@ export function SuccessRateChart({
                         className="dashboard-chart-bar"
                         style={{ ...chartColumnMotionStyle(index), height: `${rate * 100}%`, minHeight: 2, backgroundColor: color }}
                       />
+                    ) : (
+                      <div
+                        className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                        style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                      />
+                    )}
+                  </div>
+                }
+              />
+            );
+          })}
+        </ScaledBarChartFrame>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function emptyCostTrendPoint(date: string): CostTrendPoint {
+  return {
+    date,
+    costCents: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    eventCount: 0,
+  };
+}
+
+export function TokenUsageChart({
+  rows,
+  days = getLast14Days(),
+}: {
+  rows: CostTrendPoint[];
+  days?: string[];
+}) {
+  const rowsByDate = new Map(rows.map((row) => [row.date, row]));
+  const series = days.map((day) => rowsByDate.get(day) ?? emptyCostTrendPoint(day));
+  const maxValue = Math.max(...series.map((row) => summarizeTokenUsage(row).totalTokens), 1);
+  const hasData = series.some((row) => summarizeTokenUsage(row).totalTokens > 0);
+
+  if (!hasData) return <p className="text-xs text-muted-foreground">No token usage yet</p>;
+
+  return (
+    <TooltipProvider delayDuration={120}>
+      <div className="dashboard-chart-motion">
+        <ScaledBarChartFrame days={days} ticks={buildCountScale(maxValue)} legendItems={tokenUsageLegendItems}>
+          {series.map((row, index) => {
+            const usage = summarizeTokenUsage(row);
+            const total = usage.totalTokens;
+            const heightPct = (total / maxValue) * 100;
+            return (
+              <ChartColumnTooltip
+                key={row.date}
+                day={row.date}
+                title={total > 0 ? `${formatTokens(total)} tokens` : "No token usage"}
+                details={
+                  <>
+                    <TooltipMetricRow label="Total tokens" value={formatTokens(total)} />
+                    <TooltipMetricRow color="#3b82f6" label="Uncached input" value={formatTokens(usage.uncachedInputTokens)} />
+                    <TooltipMetricRow color="#06b6d4" label="Cached input" value={formatTokens(usage.cachedInputTokens)} />
+                    <TooltipMetricRow color="#10b981" label="Output" value={formatTokens(usage.outputTokens)} />
+                    <TooltipMetricRow label="Events" value={row.eventCount} />
+                  </>
+                }
+                empty={total === 0}
+                trigger={
+                  <div className="flex h-full flex-col justify-end">
+                    {total > 0 ? (
+                      <div
+                        className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
+                        style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
+                      >
+                        {usage.uncachedInputTokens > 0 ? (
+                          <div className="bg-blue-500" style={{ flex: usage.uncachedInputTokens }} />
+                        ) : null}
+                        {usage.cachedInputTokens > 0 ? (
+                          <div className="bg-cyan-500" style={{ flex: usage.cachedInputTokens }} />
+                        ) : null}
+                        {usage.outputTokens > 0 ? (
+                          <div className="bg-emerald-500" style={{ flex: usage.outputTokens }} />
+                        ) : null}
+                      </div>
                     ) : (
                       <div
                         className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"

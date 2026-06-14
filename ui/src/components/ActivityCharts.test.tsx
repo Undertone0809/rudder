@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
-import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
+import type { AgentSkillAnalytics, CostTrendPoint, HeartbeatRun } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { RunActivityChart, RunTriggerDistributionChart, SkillsUsageChart, SuccessRateChart } from "./ActivityCharts";
+import { RunActivityChart, RunTriggerDistributionChart, SkillsUsageChart, SuccessRateChart, TokenUsageChart } from "./ActivityCharts";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -204,5 +204,59 @@ describe("SuccessRateChart", () => {
     expect(scale?.textContent).toContain("100%");
     expect(scale?.textContent).toContain("50%");
     expect(scale?.textContent).toContain("0%");
+  });
+});
+
+describe("TokenUsageChart", () => {
+  it("renders daily token volume with token-specific scale and legend", () => {
+    const rows = [
+      {
+        date: "2026-05-12",
+        costCents: 12,
+        inputTokens: 1_200_000,
+        cachedInputTokens: 200_000,
+        outputTokens: 300_000,
+        totalTokens: 1_500_000,
+        eventCount: 3,
+      },
+    ] as CostTrendPoint[];
+
+    const container = render(<TokenUsageChart rows={rows} days={["2026-05-12"]} />);
+    const scale = container.querySelector('[data-testid="dashboard-chart-scale"]');
+    const trigger = container.querySelector("button");
+
+    expect(scale?.textContent).toContain("1.5M");
+    expect(container.textContent).toContain("Uncached input");
+    expect(container.textContent).toContain("Cached");
+    expect(container.textContent).toContain("Output");
+    expect(trigger?.getAttribute("aria-label")).toContain("1.5M tokens");
+    expect(container.textContent).not.toContain("80%+");
+  });
+
+  it("labels cached token segments separately from uncached input", () => {
+    const rows = [
+      {
+        date: "2026-05-12",
+        costCents: 0,
+        inputTokens: 100,
+        cachedInputTokens: 75,
+        outputTokens: 25,
+        totalTokens: 125,
+        eventCount: 1,
+      },
+    ] as CostTrendPoint[];
+
+    const container = render(<TokenUsageChart rows={rows} days={["2026-05-12"]} />);
+
+    expect(container.textContent).toContain("Uncached input");
+    expect(container.textContent).toContain("Cached");
+    expect(container.textContent).not.toContain("InputCached");
+  });
+
+  it("uses an empty state when no token usage exists in the selected days", () => {
+    const container = render(<TokenUsageChart rows={[]} days={["2026-05-12"]} />);
+
+    expect(container.textContent).toContain("No token usage yet");
+    expect(container.querySelector(".dashboard-chart-bar")).toBeFalsy();
   });
 });
