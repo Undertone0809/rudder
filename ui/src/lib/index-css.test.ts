@@ -94,6 +94,14 @@ describe("index.css motion rules", () => {
     expect(reducedMotion).toContain("animation: none");
   });
 
+  it("keeps entity preview metadata labels centered with their value icons", () => {
+    const previewRow =
+      indexCss.match(/\.rudder-entity-preview-row \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(previewRow).toContain("align-items: center");
+    expect(previewRow).not.toContain("align-items: baseline");
+  });
+
   it("keeps glass popovers above utility backgrounds", () => {
     const glassPopover = cssBlock(".glass-popover.glass-popover");
 

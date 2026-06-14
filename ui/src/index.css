@@ -3340,7 +3340,7 @@ a.rudder-skill-token::before {
   display: grid;
   grid-template-columns: 4.2rem minmax(0, 1fr);
   gap: 0.45rem;
-  align-items: baseline;
+  align-items: center;
 }
 
 .rudder-entity-preview-row-label {
