@@ -211,15 +211,15 @@ describe("heartbeat run concurrency", () => {
         })
         .where(inArray(heartbeatRuns.status, ["queued"]));
     }
-    await mockRuntimeAdapter.completePendingExecutions();
     await waitForCondition(async () => {
+      await mockRuntimeAdapter.completePendingExecutions();
       if (!db) return true;
       const liveRuns = await db
         .select({ id: heartbeatRuns.id })
         .from(heartbeatRuns)
         .where(inArray(heartbeatRuns.status, ["running"]));
       return liveRuns.length === 0;
-    }, 10_000);
+    }, 20_000);
     await instance?.stop();
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
