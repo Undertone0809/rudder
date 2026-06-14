@@ -7,6 +7,7 @@ import {
   type AgentDetail as AgentDetailRecord,
   type AgentRuntimeState,
   type AgentSkillAnalytics,
+  type CostTrendPoint,
   type HeartbeatRun
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -32,7 +33,7 @@ import {
   RunActivityChart,
   RunTriggerDistributionChart,
   SkillsUsageChart,
-  SuccessRateChart,
+  TokenUsageChart,
 } from "../components/ActivityCharts";
 import { AgentConfigForm } from "../components/AgentConfigForm";
 import { EntityRow } from "../components/EntityRow";
@@ -134,6 +135,7 @@ export function AgentOverview({
   chartIssues,
   runtimeState,
   skillAnalytics,
+  costTrendRows,
   agentId,
   agentRouteId,
   rangeLabel,
@@ -148,6 +150,7 @@ export function AgentOverview({
   chartIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
   runtimeState?: AgentRuntimeState;
   skillAnalytics?: AgentSkillAnalytics;
+  costTrendRows: CostTrendPoint[];
   agentId: string;
   agentRouteId: string;
   rangeLabel: string;
@@ -181,8 +184,8 @@ export function AgentOverview({
         <ChartCard title="Issues by Status" subtitle={`${rangeLabel} · relative daily issue volume · hover for details`}>
           <IssueStatusChart issues={chartIssues} days={chartDays} />
         </ChartCard>
-        <ChartCard title="Success Rate" subtitle={`${rangeLabel} · daily success rate · hover for details`}>
-          <SuccessRateChart runs={chartRuns} days={chartDays} />
+        <ChartCard title="Token Usage" subtitle={`${rangeLabel} · daily token volume · hover for details`}>
+          <TokenUsageChart rows={costTrendRows} days={chartDays} />
         </ChartCard>
       </div>
 

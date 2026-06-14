@@ -42,6 +42,7 @@ import {
   type AgentSkillAnalytics,
   type AgentSkillEntry,
   type BudgetPolicySummary,
+  type CostTrendPoint,
   type HeartbeatRun,
   type HeartbeatRunEvent,
   type LiveEvent,
@@ -94,6 +95,7 @@ import {
 import { assetsApi } from "../api/assets";
 import { budgetsApi } from "../api/budgets";
 import { ApiError } from "../api/client";
+import { costsApi } from "../api/costs";
 import { HEARTBEAT_RUN_LIST_AGENT_LIMIT, heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { issuesApi } from "../api/issues";
@@ -104,7 +106,7 @@ import {
   PriorityChart,
   RunActivityChart,
   SkillsUsageChart,
-  SuccessRateChart,
+  TokenUsageChart,
 } from "../components/ActivityCharts";
 import { PauseResumeButton, RunButton } from "../components/AgentActionButtons";
 import { AgentConfigForm } from "../components/AgentConfigForm";
@@ -1108,6 +1110,18 @@ export function AgentDetail() {
     enabled: Boolean(resolvedAgentId) && needsDashboardData && (datePreset !== "custom" || customReady),
   });
 
+  const { data: agentCostTrend, isLoading: isAgentCostTrendLoading } = useQuery({
+    queryKey: queryKeys.costTrend(
+      resolvedCompanyId ?? "__none__",
+      from,
+      to,
+      "agent",
+      resolvedAgentId ?? routeAgentRef,
+    ),
+    queryFn: () => costsApi.trend(resolvedCompanyId!, from, to, { agentId: resolvedAgentId! }),
+    enabled: Boolean(resolvedCompanyId) && Boolean(resolvedAgentId) && needsDashboardData && (datePreset !== "custom" || customReady),
+  });
+
   const { data: heartbeats, isLoading: isHeartbeatsLoading } = useQuery({
     queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined, HEARTBEAT_RUN_LIST_AGENT_LIMIT),
     queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined, HEARTBEAT_RUN_LIST_AGENT_LIMIT),
@@ -1410,7 +1424,8 @@ export function AgentDetail() {
   const showConfigActionBar = (activeView === "configuration" || activeView === "instructions") && (configDirty || configSaving);
   const agentAvatarImageSrc = getAgentAvatarImageSrc(agent.icon);
   const isDashboardContentLoading = needsDashboardData && (
-    isHeartbeatsLoading
+    isAgentCostTrendLoading
+    || isHeartbeatsLoading
     || isIssuesLoading
     || isRuntimeStateLoading
     || isSkillAnalyticsLoading
@@ -1680,6 +1695,7 @@ export function AgentDetail() {
           chartIssues={filteredAssignedIssues}
           runtimeState={runtimeState}
           skillAnalytics={skillAnalytics}
+          costTrendRows={agentCostTrend ?? []}
           agentId={agent.id}
           agentRouteId={canonicalAgentRef}
           rangeLabel={rangeLabel}
@@ -1945,6 +1961,7 @@ function AgentOverview({
   chartIssues,
   runtimeState,
   skillAnalytics,
+  costTrendRows,
   agentId,
   agentRouteId,
   rangeLabel,
@@ -1959,6 +1976,7 @@ function AgentOverview({
   chartIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
   runtimeState?: AgentRuntimeState;
   skillAnalytics?: AgentSkillAnalytics;
+  costTrendRows: CostTrendPoint[];
   agentId: string;
   agentRouteId: string;
   rangeLabel: string;
@@ -1989,8 +2007,8 @@ function AgentOverview({
         <ChartCard title="Issues by Status" subtitle={`${rangeLabel} · relative daily issue volume · hover for details`}>
           <IssueStatusChart issues={chartIssues} days={chartDays} />
         </ChartCard>
-        <ChartCard title="Success Rate" subtitle={`${rangeLabel} · daily success rate · hover for details`}>
-          <SuccessRateChart runs={chartRuns} days={chartDays} />
+        <ChartCard title="Token Usage" subtitle={`${rangeLabel} · daily token volume · hover for details`}>
+          <TokenUsageChart rows={costTrendRows} days={chartDays} />
         </ChartCard>
       </div>
 
