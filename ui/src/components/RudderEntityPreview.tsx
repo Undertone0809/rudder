@@ -15,6 +15,7 @@ import type { ParsedMentionChip } from "../lib/mention-chips";
 import { formatPriorityLabel } from "../lib/priorities";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentAvatar";
+import { PriorityIcon } from "./PriorityIcon";
 import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -39,6 +40,7 @@ type PreviewRow = {
     icon: string | null;
   };
   issueStatus?: string | null;
+  priority?: string | null;
 };
 
 type AgentPreviewRef = {
@@ -184,6 +186,7 @@ async function buildIssuePreview(mention: Extract<PreviewableMention, { kind: "i
       : Promise.resolve(null),
   ]);
   const projectName = embeddedProject?.name ?? project?.name ?? null;
+  const projectIconSource = project ?? embeddedProject ?? null;
 
   const issueLabel = issue.identifier ?? mention.ref ?? "Issue";
   return {
@@ -193,8 +196,8 @@ async function buildIssuePreview(mention: Extract<PreviewableMention, { kind: "i
     status: issue.status,
     rows: [
       { label: "Status", value: formatHumanLabel(issue.status), issueStatus: issue.status },
-      { label: "Priority", value: formatPriorityLabel(issue.priority) },
-      { label: "Project", value: projectName, project: project ? { color: project.color ?? null, icon: project.icon ?? null } : undefined },
+      { label: "Priority", value: formatPriorityLabel(issue.priority), priority: issue.priority },
+      { label: "Project", value: projectName, project: projectName ? { color: projectIconSource?.color ?? null, icon: projectIconSource?.icon ?? null } : undefined },
       { label: "Assignee", value: assignee?.name, agent: assignee ? { icon: assignee.icon, role: assignee.role } : undefined },
       { label: "Reviewer", value: reviewer?.name, agent: reviewer ? { icon: reviewer.icon, role: reviewer.role } : undefined },
     ],
@@ -313,6 +316,43 @@ async function loadPreview(mention: PreviewableMention, label: string, orgId: st
   };
 }
 
+function PreviewRowIcon({ row }: { row: PreviewRow }) {
+  if (row.issueStatus) {
+    return (
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+        <StatusIcon status={row.issueStatus} className="size-3.5" />
+      </span>
+    );
+  }
+  if (row.priority) {
+    return (
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+        <PriorityIcon priority={row.priority} className="h-3.5 w-4" />
+      </span>
+    );
+  }
+  if (row.agent) {
+    return (
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+        <AgentIcon
+          icon={row.agent.icon}
+          role={row.agent.role}
+          fallbackSeed={row.value}
+          className="size-4 rounded-full"
+        />
+      </span>
+    );
+  }
+  if (row.project) {
+    return (
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+        <ProjectIcon color={row.project.color} icon={row.project.icon} size="xs" />
+      </span>
+    );
+  }
+  return null;
+}
+
 function PreviewRows({ rows }: { rows: PreviewRow[] }) {
   const visibleRows = rows.filter((row) => row.value);
   if (visibleRows.length === 0) return null;
@@ -322,16 +362,7 @@ function PreviewRows({ rows }: { rows: PreviewRow[] }) {
         <span key={row.label} className="rudder-entity-preview-row">
           <span className="rudder-entity-preview-row-label">{row.label}</span>
           <span className="rudder-entity-preview-row-value">
-            {row.issueStatus ? <StatusIcon status={row.issueStatus} className="size-3.5" /> : null}
-            {row.agent ? (
-              <AgentIcon
-                icon={row.agent.icon}
-                role={row.agent.role}
-                fallbackSeed={row.value}
-                className="size-4 shrink-0 rounded-full"
-              />
-            ) : null}
-            {row.project ? <ProjectIcon color={row.project.color} icon={row.project.icon} size="xs" /> : null}
+            <PreviewRowIcon row={row} />
             <span className="min-w-0 truncate">{row.value}</span>
           </span>
         </span>

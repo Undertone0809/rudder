@@ -692,6 +692,13 @@ describe("MarkdownBody", () => {
     expect(document.body.textContent).toContain("Wesley");
     expect(document.body.querySelector('[data-slot="issue-status-icon"]')).toBeTruthy();
     expect(document.body.querySelector('[data-slot="priority-bars-icon"]')).toBeTruthy();
+    const previewRows = Array.from(document.body.querySelectorAll(".rudder-entity-preview-row"));
+    const expectedPreviewRows = new Set(["Status", "Priority", "Project", "Assignee"]);
+    for (const row of previewRows) {
+      const label = row.querySelector(".rudder-entity-preview-row-label")?.textContent?.trim();
+      if (!label || !expectedPreviewRows.has(label)) continue;
+      expect(row.querySelector(".rudder-entity-preview-row-value > span[aria-hidden='true']")).toBeTruthy();
+    }
     expect(document.body.querySelector(".rudder-entity-preview-card")?.classList.contains("motion-entity-preview-pop")).toBe(true);
   });
 
