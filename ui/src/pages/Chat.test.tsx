@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { I18nProvider } from "@/context/I18nContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import {
   readChatScopedPendingFiles,
@@ -10,6 +11,7 @@ import {
   resolveImageFilename,
 } from "@/lib/image-actions";
 import type { Agent, ChatConversation, ChatMessage, Issue, MessengerThreadSummary, Project } from "@rudderhq/shared";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -210,25 +212,33 @@ function renderProposalCard(
   decisionNote = "",
   extraProps: Partial<Pick<Parameters<typeof ProposalCard>[0], "currentUserId" | "issueProposalOverride" | "onIssueProposalChange">> = {},
 ) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
   return renderToStaticMarkup(
-    <ThemeProvider>
-      <ProposalCard
-        conversation={chat}
-        message={message}
-        agents={agents}
-        decisionNote={decisionNote}
-        onDecisionNoteChange={vi.fn()}
-        decisionNoteMentions={[]}
-        onDecisionNoteMentionQueryChange={vi.fn()}
-        onDecisionNoteInlineTokenClick={vi.fn()}
-        onApprovalAction={vi.fn()}
-        {...extraProps}
-        onResolveOperationProposal={vi.fn()}
-        onConvertToIssue={vi.fn()}
-        actionPending={false}
-        skillReferences={[]}
-      />
-    </ThemeProvider>,
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider>
+        <ThemeProvider>
+          <ProposalCard
+            conversation={chat}
+            message={message}
+            agents={agents}
+            decisionNote={decisionNote}
+            onDecisionNoteChange={vi.fn()}
+            decisionNoteMentions={[]}
+            onDecisionNoteMentionQueryChange={vi.fn()}
+            onDecisionNoteInlineTokenClick={vi.fn()}
+            onApprovalAction={vi.fn()}
+            {...extraProps}
+            onResolveOperationProposal={vi.fn()}
+            onConvertToIssue={vi.fn()}
+            actionPending={false}
+            skillReferences={[]}
+          />
+        </ThemeProvider>
+      </I18nProvider>
+    </QueryClientProvider>,
   );
 }
 
