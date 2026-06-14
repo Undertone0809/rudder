@@ -20,6 +20,7 @@ import {
   Hexagon,
   History,
   LayoutDashboard,
+  Loader2,
   MessageSquare,
   MessagesSquare,
   Target,
@@ -120,13 +121,14 @@ export function CommandPalette() {
     ? getGlobalSearchScopeDefinition(pendingScopeSuggestion)
     : null;
 
-  const { data: issues = [] } = useQuery({
+  const issuesQuery = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId!),
     queryFn: () => issuesApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && open && (scope === null || scope === "issue"),
   });
+  const issues = issuesQuery.data ?? [];
 
-  const { data: searchedIssues = [] } = useQuery({
+  const searchedIssuesQuery = useQuery({
     queryKey: queryKeys.issues.search(selectedOrganizationId!, searchQuery, undefined, GLOBAL_ISSUE_SEARCH_FIELDS),
     queryFn: () => issuesApi.list(selectedOrganizationId!, {
       q: searchQuery,
@@ -137,8 +139,9 @@ export function CommandPalette() {
       && searchQuery.length > 0
       && (scope === null || scope === "issue"),
   });
+  const searchedIssues = searchedIssuesQuery.data ?? [];
 
-  const { data: searchedChats = [] } = useQuery({
+  const searchedChatsQuery = useQuery({
     queryKey: queryKeys.chats.search(selectedOrganizationId!, searchQuery),
     queryFn: () => chatsApi.list(selectedOrganizationId!, "all", { q: searchQuery }),
     enabled: !!selectedOrganizationId
@@ -146,8 +149,9 @@ export function CommandPalette() {
       && searchQuery.length > 0
       && (scope === null || scope === "chat"),
   });
+  const searchedChats = searchedChatsQuery.data ?? [];
 
-  const { data: librarySearch = { entries: [] } } = useQuery({
+  const librarySearchQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceMentionFiles(selectedOrganizationId!, searchQuery),
     queryFn: () => organizationsApi.listWorkspaceMentionFiles(selectedOrganizationId!, {
       query: searchQuery,
@@ -155,19 +159,22 @@ export function CommandPalette() {
     }),
     enabled: !!selectedOrganizationId && open && scope === "library" && searchQuery.length > 0,
   });
+  const librarySearch = librarySearchQuery.data ?? { entries: [] };
 
-  const { data: agents = [] } = useQuery({
+  const agentsQuery = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && open,
   });
+  const agents = agentsQuery.data ?? [];
   const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
 
-  const { data: allProjects = [] } = useQuery({
+  const projectsQuery = useQuery({
     queryKey: queryKeys.projects.list(selectedOrganizationId!),
     queryFn: () => projectsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && open,
   });
+  const allProjects = projectsQuery.data ?? [];
   const projects = useMemo(
     () => allProjects.filter((p) => !p.archivedAt),
     [allProjects],
@@ -254,6 +261,14 @@ export function CommandPalette() {
   const scopedEmptyLabel = scopeDefinition
     ? `No ${scopeDefinition.label.toLowerCase()} results found.`
     : "No results found.";
+  const relevantIssueQuery = searchQuery.length > 0 ? searchedIssuesQuery : issuesQuery;
+  const isSearchLoading = Boolean(selectedOrganizationId && open) && (
+    ((scope === null || scope === "issue") && relevantIssueQuery.isFetching && relevantIssueQuery.data === undefined)
+    || ((scope === null || scope === "chat") && searchQuery.length > 0 && searchedChatsQuery.isFetching && searchedChatsQuery.data === undefined)
+    || (scope === "library" && searchQuery.length > 0 && librarySearchQuery.isFetching && librarySearchQuery.data === undefined)
+    || ((scope === null || scope === "agent") && agentsQuery.isFetching && agentsQuery.data === undefined)
+    || ((scope === null || scope === "project") && projectsQuery.isFetching && projectsQuery.data === undefined)
+  );
 
   return (
     <CommandDialog open={open} onOpenChange={(v) => {
@@ -288,7 +303,14 @@ export function CommandPalette() {
       />
       <CommandList>
         {!(scope === "library" && searchQuery.length === 0) && (
-          <CommandEmpty>{scopedEmptyLabel}</CommandEmpty>
+          <CommandEmpty>
+            {isSearchLoading ? (
+              <span className="inline-flex items-center justify-center gap-2 text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Searching...
+              </span>
+            ) : scopedEmptyLabel}
+          </CommandEmpty>
         )}
 
         {pendingScopeDefinition && (

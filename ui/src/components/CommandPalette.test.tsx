@@ -14,6 +14,11 @@ import { CommandPalette } from "./CommandPalette";
 const navigateMock = vi.fn();
 const observedQueryKeys = vi.hoisted(() => [] as Array<readonly unknown[]>);
 const queryDataByKey = vi.hoisted(() => new Map<string, unknown>());
+const queryStateByKey = vi.hoisted(() => new Map<string, {
+  data?: unknown;
+  isFetching?: boolean;
+  isLoading?: boolean;
+}>());
 const shortcutSettingsMock = vi.hoisted(() => ({
   value: null as null | {
     shortcuts: Array<{
@@ -27,6 +32,8 @@ const shortcutSettingsMock = vi.hoisted(() => ({
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
     observedQueryKeys.push(queryKey);
+    const queryState = queryStateByKey.get(JSON.stringify(queryKey));
+    if (queryState !== undefined) return queryState;
     const queryData = queryDataByKey.get(JSON.stringify(queryKey));
     if (queryData !== undefined) return { data: queryData };
     if (enabled === false) return { data: [] };
@@ -183,6 +190,7 @@ afterEach(() => {
   cleanupFn = null;
   observedQueryKeys.length = 0;
   queryDataByKey.clear();
+  queryStateByKey.clear();
   shortcutSettingsMock.value = null;
   navigateMock.mockClear();
   document.body.innerHTML = "";
@@ -323,6 +331,31 @@ describe("CommandPalette", () => {
     expect(container.textContent).toContain("Issues");
     expect(container.textContent).toContain("RUD-498");
     expect(container.textContent).toContain("Global search regression");
+  });
+
+  it("shows a loading state while global search results are pending", () => {
+    queryStateByKey.set(JSON.stringify([
+      "issues",
+      "org-1",
+      "search",
+      "pending",
+      "__all-projects__",
+      "title,description,comment",
+    ]), { data: undefined, isFetching: true, isLoading: true });
+    queryStateByKey.set(JSON.stringify([
+      "chats",
+      "org-1",
+      "all",
+      "search",
+      "pending",
+    ]), { data: undefined, isFetching: true, isLoading: true });
+    const container = renderCommandPalette();
+    const input = openCommandPalette(container);
+
+    changeInput(input, "pending");
+
+    expect(container.textContent).toContain("Searching...");
+    expect(container.textContent).not.toContain("No results found.");
   });
 
   it("opens from the configured command palette shortcut", () => {
