@@ -31,6 +31,14 @@ async function expectPreviewFor(link: Locator, text: string) {
   await expect(link.page().locator(".rudder-entity-preview-card").filter({ hasText: text })).toBeVisible({ timeout: 15_000 });
 }
 
+async function expectPreviewIconFor(link: Locator, selector: string, text: string) {
+  await expect(link).toBeVisible({ timeout: 15_000 });
+  await link.hover();
+  const card = link.page().locator(".rudder-entity-preview-card").filter({ hasText: text });
+  await expect(card.locator(selector).first()).toBeVisible({ timeout: 15_000 });
+  return card;
+}
+
 test("renderable entity links show hover previews except chat links", async ({ page }) => {
   const organization = await createOrganization(page);
 
@@ -145,10 +153,10 @@ test("renderable entity links show hover previews except chat links", async ({ p
   const issueCommentLink = page.locator('a.rudder-mention-chip[data-mention-kind="issue"]').filter({ hasText: "Target comment" }).first();
   const chatLink = page.locator('a.rudder-mention-chip[data-mention-kind="chat"]').filter({ hasText: "Preview chat" }).first();
 
-  await expectPreviewFor(issueLink, "Issue preview summary from the real issue API.");
-  await expectPreviewFor(agentLink, "Handles entity preview validation.");
-  await expectPreviewFor(projectLink, "Project preview summary from the real project API.");
-  await expectPreviewFor(libraryDocLink, "Library document preview summary from the real document API.");
+  await expectPreviewIconFor(issueLink, '[data-slot="issue-status-icon"][data-status="todo"]', "Issue preview summary from the real issue API.");
+  await expectPreviewIconFor(agentLink, ".rudder-entity-preview-main-icon--agent", "Handles entity preview validation.");
+  await expectPreviewIconFor(projectLink, ".rudder-entity-preview-main-icon--project", "Project preview summary from the real project API.");
+  await expectPreviewIconFor(libraryDocLink, ".rudder-entity-preview-main-icon--library", "Library document preview summary from the real document API.");
   await expectPreviewFor(libraryFileLink, "Workspace file preview summary from the real workspace API.");
   await expectPreviewFor(issueCommentLink, "Comment preview body from the real comments API");
 

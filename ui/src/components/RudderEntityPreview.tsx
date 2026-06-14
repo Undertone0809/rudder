@@ -5,7 +5,7 @@ import type {
   OrganizationWorkspaceFileDetail,
   Project,
 } from "@rudderhq/shared";
-import { FileText } from "lucide-react";
+import { FileText, Folder } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
@@ -15,6 +15,8 @@ import type { ParsedMentionChip } from "../lib/mention-chips";
 import { formatPriorityLabel } from "../lib/priorities";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentAvatar";
+import { ProjectIcon } from "./ProjectIdentity";
+import { StatusIcon } from "./StatusIcon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type PreviewableMention = Exclude<ParsedMentionChip, { kind: "chat" }>;
@@ -28,6 +30,21 @@ interface RudderEntityPreviewProps {
 type PreviewRow = {
   label: string;
   value: string | null | undefined;
+  agent?: {
+    icon: string | null;
+    role: Agent["role"] | null;
+  };
+  project?: {
+    color: string | null;
+    icon: string | null;
+  };
+  issueStatus?: string | null;
+};
+
+type AgentPreviewRef = {
+  name: string;
+  icon: string | null;
+  role: Agent["role"] | null;
 };
 
 type EntityPreview =
@@ -35,6 +52,7 @@ type EntityPreview =
       kind: "issue";
       eyebrow: string;
       title: string;
+      status: string;
       rows: PreviewRow[];
       summary: string | null;
     }
@@ -42,6 +60,7 @@ type EntityPreview =
       kind: "issue_comment";
       eyebrow: string;
       title: string;
+      status: string;
       rows: PreviewRow[];
       summary: string | null;
     }
@@ -59,6 +78,8 @@ type EntityPreview =
       kind: "project";
       eyebrow: string;
       title: string;
+      color: string | null;
+      icon: string | null;
       rows: PreviewRow[];
       summary: string | null;
     }
@@ -66,6 +87,7 @@ type EntityPreview =
       kind: "library";
       eyebrow: string;
       title: string;
+      icon: "file" | "folder";
       rows: PreviewRow[];
       summary: string | null;
     };
@@ -123,13 +145,13 @@ function shortId(value: string | null | undefined) {
   return value.length > 8 ? value.slice(0, 8) : value;
 }
 
-async function readAgentName(agentId: string | null | undefined, orgId: string) {
+async function readAgentPreviewRef(agentId: string | null | undefined, orgId: string): Promise<AgentPreviewRef | null> {
   if (!agentId) return null;
   try {
     const agent = await agentsApi.get(agentId, orgId);
-    return agent.name;
+    return { name: agent.name, icon: agent.icon, role: agent.role };
   } catch {
-    return `agent ${shortId(agentId)}`;
+    return { name: `agent ${shortId(agentId)}`, icon: null, role: null };
   }
 }
 
@@ -146,6 +168,7 @@ async function buildIssueCommentPreview(
     kind: "issue_comment",
     eyebrow: `${issueLabel} comment`,
     title: "Comment",
+    status: issue.status,
     rows: [],
     summary: commentBodyPreview(comment.body) ?? "No comment body.",
   };
@@ -155,27 +178,30 @@ async function buildIssuePreview(mention: Extract<PreviewableMention, { kind: "i
   if (mention.commentId) return buildIssueCommentPreview(mention);
 
   const issue = await issuesApi.get(mention.issueId);
-  const [assigneeName, reviewerName, projectName] = await Promise.all([
-    readAgentName(issue.assigneeAgentId, orgId),
-    readAgentName(issue.reviewerAgentId, orgId),
-    issue.project?.name
-      ? Promise.resolve(issue.project.name)
-      : issue.projectId
-        ? projectsApi.get(issue.projectId, orgId).then((project) => project.name).catch(() => null)
-        : Promise.resolve(null),
+  const embeddedProject = issue.project as (Partial<Project> & { name?: string | null }) | null | undefined;
+  const [assignee, reviewer, project] = await Promise.all([
+    readAgentPreviewRef(issue.assigneeAgentId, orgId),
+    readAgentPreviewRef(issue.reviewerAgentId, orgId),
+    embeddedProject?.color || embeddedProject?.icon
+      ? Promise.resolve(embeddedProject)
+      : issue.projectId && !embeddedProject?.name
+      ? projectsApi.get(issue.projectId, orgId).catch(() => null)
+      : Promise.resolve(null),
   ]);
+  const projectName = embeddedProject?.name ?? project?.name ?? null;
 
   const issueLabel = issue.identifier ?? mention.ref ?? "Issue";
   return {
     kind: "issue",
     eyebrow: issueLabel,
     title: issue.title,
+    status: issue.status,
     rows: [
-      { label: "Status", value: formatHumanLabel(issue.status) },
+      { label: "Status", value: formatHumanLabel(issue.status), issueStatus: issue.status },
       { label: "Priority", value: formatPriorityLabel(issue.priority) },
-      { label: "Project", value: projectName },
-      { label: "Assignee", value: assigneeName },
-      { label: "Reviewer", value: reviewerName },
+      { label: "Project", value: projectName, project: project ? { color: project.color ?? null, icon: project.icon ?? null } : undefined },
+      { label: "Assignee", value: assignee?.name, agent: assignee ? { icon: assignee.icon, role: assignee.role } : undefined },
+      { label: "Reviewer", value: reviewer?.name, agent: reviewer ? { icon: reviewer.icon, role: reviewer.role } : undefined },
     ],
     summary: firstMarkdownParagraph(issue.description),
   };
@@ -208,6 +234,8 @@ function buildProjectPreview(project: Project): EntityPreview {
     kind: "project",
     eyebrow: "Project",
     title: project.name,
+    color: project.color,
+    icon: project.icon,
     rows: [
       { label: "Status", value: formatHumanLabel(project.status) },
       { label: "Goal", value: goalSummary },
@@ -230,6 +258,7 @@ function buildLibraryDocumentPreview(document: LibraryDocument): EntityPreview {
     kind: "library",
     eyebrow: "Library document",
     title: document.title ?? "Untitled document",
+    icon: "file",
     rows: [
       { label: "Revision", value: String(document.latestRevisionNumber) },
       { label: "Format", value: formatHumanLabel(document.format) },
@@ -243,6 +272,7 @@ function buildWorkspaceFilePreview(file: OrganizationWorkspaceFileDetail, title?
     kind: "library",
     eyebrow: file.previewKind === "text" ? "Library file" : "Library asset",
     title: title ?? basename(file.filePath),
+    icon: "file",
     rows: [
       { label: "Path", value: file.filePath },
       { label: "Type", value: file.contentType },
@@ -265,6 +295,7 @@ async function loadPreview(mention: PreviewableMention, label: string, orgId: st
         kind: "library",
         eyebrow: "Library file",
         title: entry.title || label,
+        icon: "file",
         rows: [
           { label: "Path", value: entry.currentPath ?? mention.path },
           { label: "Status", value: formatHumanLabel(entry.status) },
@@ -281,6 +312,7 @@ async function loadPreview(mention: PreviewableMention, label: string, orgId: st
     kind: "library",
     eyebrow: "Library folder",
     title: mention.title ?? basename(mention.directoryPath),
+    icon: "folder",
     rows: [{ label: "Path", value: mention.directoryPath }],
     summary: "Open the folder to inspect its files.",
   };
@@ -294,9 +326,68 @@ function PreviewRows({ rows }: { rows: PreviewRow[] }) {
       {visibleRows.map((row) => (
         <span key={row.label} className="rudder-entity-preview-row">
           <span className="rudder-entity-preview-row-label">{row.label}</span>
-          <span className="rudder-entity-preview-row-value">{row.value}</span>
+          <span className="rudder-entity-preview-row-value">
+            {row.issueStatus ? <StatusIcon status={row.issueStatus} className="size-3.5" /> : null}
+            {row.agent ? (
+              <AgentIcon
+                icon={row.agent.icon}
+                role={row.agent.role}
+                fallbackSeed={row.value}
+                className="size-4 shrink-0 rounded-full"
+              />
+            ) : null}
+            {row.project ? <ProjectIcon color={row.project.color} icon={row.project.icon} size="xs" /> : null}
+            <span className="min-w-0 truncate">{row.value}</span>
+          </span>
         </span>
       ))}
+    </span>
+  );
+}
+
+function PreviewIcon({ preview }: { preview: EntityPreview }) {
+  if (preview.kind === "agent") {
+    return (
+      <AgentIcon
+        icon={preview.icon}
+        role={preview.role}
+        fallbackSeed={preview.title}
+        className="rudder-entity-preview-main-icon rudder-entity-preview-main-icon--agent"
+      />
+    );
+  }
+  if (preview.kind === "issue" || preview.kind === "issue_comment") {
+    return <StatusIcon status={preview.status} className="rudder-entity-preview-main-icon" />;
+  }
+  if (preview.kind === "project") {
+    return (
+      <ProjectIcon
+        color={preview.color}
+        icon={preview.icon}
+        size="sm"
+        className="rudder-entity-preview-main-icon--project"
+      />
+    );
+  }
+  const LibraryIcon = preview.icon === "folder" ? Folder : FileText;
+  return (
+    <span className="rudder-entity-preview-main-icon rudder-entity-preview-main-icon--library">
+      <LibraryIcon className="size-4" aria-hidden="true" />
+    </span>
+  );
+}
+
+function PreviewHeader({ preview }: { preview: EntityPreview }) {
+  return (
+    <span className="rudder-entity-preview-head">
+      <PreviewIcon preview={preview} />
+      <span className="min-w-0">
+        <span className="rudder-entity-preview-eyebrow">{preview.eyebrow}</span>
+        <span className="rudder-entity-preview-title">{preview.title}</span>
+        {preview.kind === "agent" && preview.subtitle ? (
+          <span className="rudder-entity-preview-subtitle">{preview.subtitle}</span>
+        ) : null}
+      </span>
     </span>
   );
 }
@@ -305,14 +396,7 @@ function PreviewContent({ preview }: { preview: EntityPreview }) {
   if (preview.kind === "agent") {
     return (
       <>
-        <span className="rudder-entity-preview-agent-head">
-          <AgentIcon icon={preview.icon} role={preview.role} fallbackSeed={preview.title} className="size-8" />
-          <span className="min-w-0">
-            <span className="rudder-entity-preview-eyebrow">{preview.eyebrow}</span>
-            <span className="rudder-entity-preview-title">{preview.title}</span>
-            {preview.subtitle ? <span className="rudder-entity-preview-subtitle">{preview.subtitle}</span> : null}
-          </span>
-        </span>
+        <PreviewHeader preview={preview} />
         <PreviewRows rows={[{ label: "Status", value: preview.status }]} />
         {preview.summary ? <span className="rudder-entity-preview-summary">{preview.summary}</span> : null}
       </>
@@ -321,8 +405,7 @@ function PreviewContent({ preview }: { preview: EntityPreview }) {
 
   return (
     <>
-      <span className="rudder-entity-preview-eyebrow">{preview.eyebrow}</span>
-      <span className="rudder-entity-preview-title">{preview.title}</span>
+      <PreviewHeader preview={preview} />
       <PreviewRows rows={preview.rows} />
       {preview.summary ? <span className="rudder-entity-preview-summary">{preview.summary}</span> : null}
     </>
