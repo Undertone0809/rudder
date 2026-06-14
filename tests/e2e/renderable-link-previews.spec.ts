@@ -158,7 +158,10 @@ test("renderable entity links show hover previews except chat links", async ({ p
   await expectPreviewIconFor(projectLink, ".rudder-entity-preview-main-icon--project", "Project preview summary from the real project API.");
   await expectPreviewIconFor(libraryDocLink, ".rudder-entity-preview-main-icon--library", "Library document preview summary from the real document API.");
   await expectPreviewFor(libraryFileLink, "Workspace file preview summary from the real workspace API.");
-  await expectPreviewFor(issueCommentLink, "Comment preview body from the real comments API");
+  const commentCard = await expectPreviewIconFor(issueCommentLink, '[data-slot="issue-comment-preview-icon"]', "Comment preview body from the real comments API");
+  await expect(commentCard.locator('[data-slot="issue-status-icon"]')).toHaveCount(0);
+  await expect(commentCard).not.toContainText("Preview target issue");
+  await expect(commentCard).not.toContainText("High");
 
   await expect(chatLink).toBeVisible();
   expect(await chatLink.evaluate((element) => Boolean(element.closest(".rudder-entity-preview-wrap")))).toBe(false);

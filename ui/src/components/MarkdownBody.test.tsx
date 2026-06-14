@@ -737,13 +737,16 @@ describe("MarkdownBody", () => {
 
     await focusPreviewLink(container.querySelector("a.rudder-mention-chip"));
 
-    expect(entityPreviewApiMocks.getIssue).toHaveBeenCalledWith("issue-789");
+    expect(entityPreviewApiMocks.getIssue).not.toHaveBeenCalled();
     expect(entityPreviewApiMocks.getComment).toHaveBeenCalledWith("issue-789", "comment-123");
-    expect(document.body.textContent).toContain("PAP-123 comment");
-    expect(document.body.textContent).toContain("Reviewer said render the comment body instead of issue metadata.");
-    expect(document.body.textContent).not.toContain("Auth flow polish");
-    expect(document.body.textContent).not.toContain("In Review");
-    expect(document.body.textContent).not.toContain("High");
+    const card = document.body.querySelector(".rudder-entity-preview-card");
+    expect(card?.textContent).toContain("Issue comment");
+    expect(card?.textContent).toContain("Reviewer said render the comment body instead of issue metadata.");
+    expect(card?.textContent).not.toContain("Auth flow polish");
+    expect(card?.textContent).not.toContain("In Review");
+    expect(card?.textContent).not.toContain("High");
+    expect(card?.querySelector('[data-slot="issue-comment-preview-icon"]')).toBeTruthy();
+    expect(card?.querySelector('[data-slot="issue-status-icon"]')).toBeNull();
   });
 
   it("loads agent, project, and Library previews from rendered mention chips", async () => {

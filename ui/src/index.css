@@ -3229,6 +3229,15 @@ a.rudder-skill-token::before {
   height: 1.55rem;
 }
 
+.rudder-entity-preview-main-icon--comment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--muted-foreground) 12%, transparent);
+  color: var(--muted-foreground);
+}
+
 .rudder-entity-preview-main-icon--library {
   display: inline-flex;
   align-items: center;

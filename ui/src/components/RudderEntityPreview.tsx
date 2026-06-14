@@ -5,7 +5,7 @@ import type {
   OrganizationWorkspaceFileDetail,
   Project,
 } from "@rudderhq/shared";
-import { FileText, Folder } from "lucide-react";
+import { FileText, Folder, MessageSquareText } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
@@ -60,7 +60,6 @@ type EntityPreview =
       kind: "issue_comment";
       eyebrow: string;
       title: string;
-      status: string;
       rows: PreviewRow[];
       summary: string | null;
     }
@@ -158,17 +157,13 @@ async function readAgentPreviewRef(agentId: string | null | undefined, orgId: st
 async function buildIssueCommentPreview(
   mention: Extract<PreviewableMention, { kind: "issue" }>,
 ): Promise<EntityPreview> {
-  const [issue, comment] = await Promise.all([
-    issuesApi.get(mention.issueId),
-    issuesApi.getComment(mention.issueId, mention.commentId!),
-  ]);
-  const issueLabel = issue.identifier ?? mention.ref ?? "Issue";
+  const comment = await issuesApi.getComment(mention.issueId, mention.commentId!);
+  const issueLabel = mention.ref ?? "Issue";
 
   return {
     kind: "issue_comment",
     eyebrow: `${issueLabel} comment`,
     title: "Comment",
-    status: issue.status,
     rows: [],
     summary: commentBodyPreview(comment.body) ?? "No comment body.",
   };
@@ -356,8 +351,15 @@ function PreviewIcon({ preview }: { preview: EntityPreview }) {
       />
     );
   }
-  if (preview.kind === "issue" || preview.kind === "issue_comment") {
+  if (preview.kind === "issue") {
     return <StatusIcon status={preview.status} className="rudder-entity-preview-main-icon" />;
+  }
+  if (preview.kind === "issue_comment") {
+    return (
+      <span className="rudder-entity-preview-main-icon rudder-entity-preview-main-icon--comment" data-slot="issue-comment-preview-icon">
+        <MessageSquareText className="size-4" aria-hidden="true" />
+      </span>
+    );
   }
   if (preview.kind === "project") {
     return (
