@@ -7,6 +7,7 @@ import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
+import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
 import { parseSkillReference } from "../lib/skill-reference";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -694,7 +695,7 @@ export function MarkdownBody({
   );
   const organizationPrefix = currentOrganizationPrefixFromLocation();
   const normalizedChildren = linkBareAgentMentions(
-    normalizeEscapedMarkdownNewlines(children),
+    normalizeRelaxedMarkdownSyntax(normalizeEscapedMarkdownNewlines(children)),
     agentMentions,
   );
   const handleCopy = (event: ClipboardEvent<HTMLDivElement>) => {

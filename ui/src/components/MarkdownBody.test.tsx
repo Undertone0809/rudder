@@ -1076,4 +1076,25 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/issues/ZST-9"');
     expect(html).not.toContain('target="_blank"');
   });
+
+  it("renders relaxed Library markdown link and list syntax", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {[
+            "[https://github.com/Undertone0809/rudder/releases?page=5](https://github.com/Undertone0809/rudder/releases?",
+            "page=5)",
+            "",
+            "-[]1",
+            "-\\[]1",
+          ].join("\n")}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("https://github.com/Undertone0809/rudder/releases?page=5");
+    expect(container.querySelector("input[type='checkbox']")).toBeTruthy();
+    expect(container.textContent).toContain("[]1");
+  });
 });
