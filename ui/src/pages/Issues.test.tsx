@@ -24,6 +24,7 @@ const mockState = vi.hoisted(() => ({
   search: "?scope=drafts",
   session: { user: { id: "local-board" } },
   setBreadcrumbs: vi.fn(),
+  issuesListProps: null as null | Record<string, unknown>,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -80,7 +81,10 @@ vi.mock("@/hooks/useIssueFollows", () => ({
 }));
 
 vi.mock("@/components/IssuesList", () => ({
-  IssuesList: () => <div data-testid="issues-list">Issues list</div>,
+  IssuesList: (props: Record<string, unknown>) => {
+    mockState.issuesListProps = props;
+    return <div data-testid="issues-list">Issues list</div>;
+  },
 }));
 
 let cleanupFn: (() => void) | null = null;
@@ -144,6 +148,7 @@ beforeEach(() => {
   mockState.confirm.mockReturnValue(true);
   mockState.openNewIssue.mockReset();
   mockState.pushToast.mockReset();
+  mockState.issuesListProps = null;
   mockState.search = "?scope=drafts";
   vi.stubGlobal("confirm", mockState.confirm);
   vi.stubGlobal("matchMedia", vi.fn(() => ({
@@ -168,6 +173,20 @@ afterEach(() => {
   window.localStorage.clear();
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
+});
+
+describe("Issues agent participant scope", () => {
+  it("opens the board with the participant agent filter and isolated view state", () => {
+    mockState.search = "?participantAgentId=agent-1";
+
+    renderIssues();
+
+    expect(document.querySelector("[data-testid='issues-list']")).toBeTruthy();
+    expect(mockState.issuesListProps).toMatchObject({
+      viewStateKey: "rudder:issues-view:agent:agent-1",
+      searchFilters: { participantAgentId: "agent-1" },
+    });
+  });
 });
 
 describe("Issues draft scope", () => {

@@ -44,7 +44,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { formatRunDurationLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
-import { cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime } from "../lib/utils";
+import { agentIssuesUrl, cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime } from "../lib/utils";
 import { formatCacheRatio, formatCompactTokenLabel, formatExactTokenLabel, formatRunCostUsd, runMetrics, runStatusIcons, shouldShowInlineTokenLabel, useRunDurationNow } from "./AgentDetail.helpers";
 import { KeysTab } from "./AgentDetail.keys";
 
@@ -209,7 +209,7 @@ export function AgentOverview({
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">Recent Issues</h3>
           <Link
-            to={`/issues?participantAgentId=${agentId}`}
+            to={agentIssuesUrl(agentId)}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             See All &rarr;

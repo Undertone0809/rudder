@@ -149,7 +149,7 @@ import { getRunFailureDisplay, getRunStderrExcerptDisplayText, shouldShowRunStde
 import { heartbeatRunEventText, heartbeatRunEventToTranscriptEntry, mergeTranscriptEntries } from "../lib/run-detail-events";
 import { formatRunDurationLabel, formatRunOccurrenceLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
-import { agentRouteRef, cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
+import { agentIssuesUrl, agentRouteRef, cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
 import {
   applyRunFilters,
   applyRunSort,
@@ -1038,6 +1038,10 @@ export function AgentDetail() {
   const agentLookupRef = agent?.id ?? routeAgentRef;
   const resolvedAgentId = agent?.id ?? null;
   const handleDetailTabChange = useCallback((value: string) => {
+    if (value === "issues") {
+      navigate(agentIssuesUrl(agent?.id ?? routeAgentRef));
+      return;
+    }
     if (value === "instructions" && agent?.instructionsLibraryPath) {
       navigate({
         pathname: "/library",
@@ -1046,7 +1050,7 @@ export function AgentDetail() {
       return;
     }
     navigate(`/agents/${canonicalAgentRef}/${value}`);
-  }, [agent?.instructionsLibraryPath, canonicalAgentRef, navigate]);
+  }, [agent?.id, agent?.instructionsLibraryPath, canonicalAgentRef, navigate, routeAgentRef]);
 
   const { data: runtimeState, isLoading: isRuntimeStateLoading } = useQuery({
     queryKey: queryKeys.agents.runtimeState(resolvedAgentId ?? routeAgentRef),
@@ -1581,6 +1585,7 @@ export function AgentDetail() {
                 { value: "instructions", label: "Instructions" },
                 { value: "skills", label: "Skills" },
                 { value: "runs", label: "Runs" },
+                { value: "issues", label: "Issues" },
                 { value: "budget", label: "Budget" },
               ]}
               value={activeView}
@@ -2012,7 +2017,7 @@ function AgentOverview({
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">Recent Issues</h3>
           <Link
-            to={`/issues?participantAgentId=${agentId}`}
+            to={agentIssuesUrl(agentId)}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             See All &rarr;

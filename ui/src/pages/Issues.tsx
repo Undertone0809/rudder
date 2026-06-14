@@ -232,6 +232,9 @@ export function Issues() {
   const linearProjectId = searchParams.get("linearProjectId") ?? undefined;
   const projectId = searchParams.get("projectId") ?? undefined;
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
+  const issueViewStateKey = participantAgentId
+    ? `rudder:issues-view:agent:${participantAgentId}`
+    : "rudder:issues-view";
   const requestedGroupBy = searchParams.get("groupBy");
   const initialGroupBy = requestedGroupBy === "status"
     || requestedGroupBy === "priority"
@@ -484,7 +487,7 @@ export function Issues() {
         projects={projects}
         liveIssueIds={liveIssueIds}
         projectId={projectId}
-        viewStateKey="rudder:issues-view"
+        viewStateKey={issueViewStateKey}
         issueLinkState={issueLinkState}
         initialAssignees={searchParams.get("assignee") ? [searchParams.get("assignee")!] : undefined}
         initialSearch={initialSearch}

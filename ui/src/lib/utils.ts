@@ -234,6 +234,11 @@ export function issueUrl(issue: { id: string; identifier?: string | null }): str
   return `/issues/${issue.identifier ?? issue.id}`;
 }
 
+/** Build an issues-board URL scoped to every issue where the agent participates. */
+export function agentIssuesUrl(agentId: string): string {
+  return `/issues?participantAgentId=${encodeURIComponent(agentId)}`;
+}
+
 /** Build an agent route URL using the short URL key when available. */
 export function agentRouteRef(agent: { id: string; urlKey?: string | null; name?: string | null }): string {
   return agent.urlKey ?? deriveAgentUrlKey(agent.name, agent.id);

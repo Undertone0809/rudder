@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { formatDateTime, formatDateTimeSeconds, formatTime, formatTokens, relativeTime } from "./utils";
+import { agentIssuesUrl, formatDateTime, formatDateTimeSeconds, formatTime, formatTokens, relativeTime } from "./utils";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -17,6 +17,13 @@ describe("formatTokens", () => {
     expect(formatTokens(1_535_400)).toBe("1.5M");
     expect(formatTokens(1_200)).toBe("1.2k");
     expect(formatTokens(999)).toBe("999");
+  });
+});
+
+describe("agentIssuesUrl", () => {
+  it("builds an issue board URL filtered to the participating agent", () => {
+    expect(agentIssuesUrl("agent-123")).toBe("/issues?participantAgentId=agent-123");
+    expect(agentIssuesUrl("agent/with space")).toBe("/issues?participantAgentId=agent%2Fwith%20space");
   });
 });
 
