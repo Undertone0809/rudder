@@ -10,6 +10,7 @@ import {
   syncLocalCliCredentialHomeEntries,
   loadAgentInstructionsPrefix,
   renderTemplate,
+  RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
   RUDDER_AGENT_OPERATING_CONTRACT,
   runChildProcess,
   selectPromptTemplate,
@@ -382,8 +383,31 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.memoryFilePath).toBeNull();
     expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
     expect(loaded.metrics.operatingContractChars).toBeGreaterThan(0);
+    expect(loaded.metrics.runtimeHeartbeatChars).toBe(0);
     expect(loaded.metrics.instructionEntryChars).toBe(0);
     expect(loaded.metrics.memoryChars).toBe(0);
+    expect(loaded.metrics.heartbeatFileChars).toBe(0);
+    expect(loaded.metrics.heartbeatChars).toBe(0);
+  });
+
+  it("loads the runtime heartbeat instruction for heartbeat scenes without requiring a HEARTBEAT.md file", async () => {
+    const loaded = await loadAgentInstructionsPrefix({
+      instructionsFilePath: "",
+      includeHeartbeatInstructions: true,
+      onLog: async () => {},
+    });
+
+    expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
+    expect(loaded.prefix).toContain(RUDDER_AGENT_HEARTBEAT_INSTRUCTION);
+    expect(loaded.prefix).toContain("platform-owned timed-wakeup pipeline");
+    expect(loaded.commandNotes).toEqual([
+      "Loaded Rudder agent operating contract from runtime code",
+      "Loaded Rudder heartbeat instructions from runtime code",
+    ]);
+    expect(loaded.heartbeatFilePath).toBeNull();
+    expect(loaded.metrics.runtimeHeartbeatChars).toBeGreaterThan(0);
+    expect(loaded.metrics.heartbeatFileChars).toBe(0);
+    expect(loaded.metrics.heartbeatChars).toBe(loaded.metrics.runtimeHeartbeatChars);
   });
 
   it("loads the operating contract and entry instructions when no sibling memory file exists", async () => {
@@ -413,6 +437,7 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(loaded.memoryFilePath).toBeNull();
       expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
       expect(loaded.metrics.operatingContractChars).toBeGreaterThan(0);
+      expect(loaded.metrics.runtimeHeartbeatChars).toBe(0);
       expect(loaded.metrics.instructionEntryChars).toBeGreaterThan(0);
       expect(loaded.metrics.memoryChars).toBe(0);
       expect(logs).toContainEqual(expect.objectContaining({
@@ -460,17 +485,19 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(loaded.heartbeatFilePath).toBeNull();
       expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
       expect(loaded.metrics.operatingContractChars).toBeGreaterThan(0);
+      expect(loaded.metrics.runtimeHeartbeatChars).toBe(0);
       expect(loaded.metrics.instructionEntryChars).toBeGreaterThan(0);
       expect(loaded.metrics.soulChars).toBeGreaterThan(0);
       expect(loaded.metrics.toolsChars).toBeGreaterThan(0);
       expect(loaded.metrics.memoryChars).toBeGreaterThan(0);
+      expect(loaded.metrics.heartbeatFileChars).toBe(0);
       expect(loaded.metrics.heartbeatChars).toBe(0);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
-  it("loads sibling HEARTBEAT.md only when heartbeat instructions are requested", async () => {
+  it("loads sibling HEARTBEAT.md as supplemental notes only when heartbeat instructions are requested", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-heartbeat-"));
     const instructionsPath = path.join(root, "instructions", "SOUL.md");
     const heartbeatPath = path.join(root, "instructions", "HEARTBEAT.md");
@@ -486,10 +513,14 @@ describe("loadAgentInstructionsPrefix", () => {
       });
 
       expect(loaded.prefix).toContain("# Persona");
+      expect(loaded.prefix).toContain("# Rudder Heartbeat Instruction");
       expect(loaded.prefix).toContain("# Heartbeat");
-      expect(loaded.commandNotes).toContain("Loaded agent heartbeat instructions from $AGENT_HOME/instructions/HEARTBEAT.md");
+      expect(loaded.commandNotes).toContain("Loaded Rudder heartbeat instructions from runtime code");
+      expect(loaded.commandNotes).toContain("Loaded supplemental agent heartbeat notes from $AGENT_HOME/instructions/HEARTBEAT.md");
       expect(loaded.heartbeatFilePath).toBe(heartbeatPath);
-      expect(loaded.metrics.heartbeatChars).toBeGreaterThan(0);
+      expect(loaded.metrics.runtimeHeartbeatChars).toBeGreaterThan(0);
+      expect(loaded.metrics.heartbeatFileChars).toBeGreaterThan(0);
+      expect(loaded.metrics.heartbeatChars).toBe(loaded.metrics.runtimeHeartbeatChars + loaded.metrics.heartbeatFileChars);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -516,6 +547,8 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(loaded.heartbeatFilePath).toBeNull();
       expect(loaded.readFailed).toBe(false);
       expect(loaded.metrics.instructionEntryChars).toBe(0);
+      expect(loaded.metrics.runtimeHeartbeatChars).toBe(0);
+      expect(loaded.metrics.heartbeatFileChars).toBe(0);
       expect(loaded.metrics.heartbeatChars).toBe(0);
       expect(logs).toContainEqual(expect.objectContaining({
         stream: "stdout",
@@ -526,7 +559,7 @@ describe("loadAgentInstructionsPrefix", () => {
     }
   });
 
-  it("loads HEARTBEAT.md when it is the entry file for heartbeat runs", async () => {
+  it("loads HEARTBEAT.md entry files as supplemental notes for heartbeat runs", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-heartbeat-entry-load-"));
     const instructionsPath = path.join(root, "instructions", "HEARTBEAT.md");
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
@@ -539,11 +572,15 @@ describe("loadAgentInstructionsPrefix", () => {
         onLog: async () => {},
       });
 
+      expect(loaded.prefix).toContain("# Rudder Heartbeat Instruction");
       expect(loaded.prefix).toContain("# Heartbeat");
-      expect(loaded.commandNotes).toContain("Loaded agent heartbeat instructions from $AGENT_HOME/instructions/HEARTBEAT.md");
+      expect(loaded.commandNotes).toContain("Loaded Rudder heartbeat instructions from runtime code");
+      expect(loaded.commandNotes).toContain("Loaded supplemental agent heartbeat notes from $AGENT_HOME/instructions/HEARTBEAT.md");
       expect(loaded.heartbeatFilePath).toBe(instructionsPath);
       expect(loaded.metrics.instructionEntryChars).toBeGreaterThan(0);
-      expect(loaded.metrics.heartbeatChars).toBe(loaded.metrics.instructionEntryChars);
+      expect(loaded.metrics.runtimeHeartbeatChars).toBeGreaterThan(0);
+      expect(loaded.metrics.heartbeatFileChars).toBe(loaded.metrics.instructionEntryChars);
+      expect(loaded.metrics.heartbeatChars).toBe(loaded.metrics.runtimeHeartbeatChars + loaded.metrics.heartbeatFileChars);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

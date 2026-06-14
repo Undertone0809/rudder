@@ -25,7 +25,7 @@ A ClipHub package is a **organization template export** — the portable artifac
 | **Organization metadata** | Name, description, intended use case, category |
 | **Org chart** | Full reporting hierarchy — who reports to whom |
 | **Agent definitions** | Every agent: name, role, title, capabilities description |
-| **Adapter configs** | Per-agent adapter type and configuration (SOUL.md, HEARTBEAT.md, CLAUDE.md, process commands, webhook URLs — whatever the adapter needs) |
+| **Adapter configs** | Per-agent adapter type and configuration (SOUL.md, optional supplemental heartbeat notes, CLAUDE.md, process commands, webhook URLs — whatever the adapter needs) |
 | **Seed tasks** | Optional starter tasks and initiatives to bootstrap the organization's first run |
 | **Budget defaults** | Suggested token/cost budgets per agent and per organization |
 

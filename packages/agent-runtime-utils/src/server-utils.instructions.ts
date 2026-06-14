@@ -1,7 +1,7 @@
 import { promises as fs, constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { SENSITIVE_ENV_KEY, SpawnTarget } from "./server-utils.process.js";
-import { joinPromptSections, RUDDER_AGENT_OPERATING_CONTRACT } from "./server-utils.prompts.js";
+import { joinPromptSections, RUDDER_AGENT_HEARTBEAT_INSTRUCTION, RUDDER_AGENT_OPERATING_CONTRACT } from "./server-utils.prompts.js";
 
 export interface LoadedAgentInstructionsPrefix {
   prefix: string;
@@ -16,10 +16,12 @@ export interface LoadedAgentInstructionsPrefix {
   metrics: {
     instructionsChars: number;
     operatingContractChars: number;
+    runtimeHeartbeatChars: number;
     instructionEntryChars: number;
     soulChars: number;
     toolsChars: number;
     memoryChars: number;
+    heartbeatFileChars: number;
     heartbeatChars: number;
   };
 }
@@ -73,9 +75,16 @@ export async function loadAgentInstructionsPrefix(input: {
   const operatingContractSection =
     `${RUDDER_AGENT_OPERATING_CONTRACT}\n\n` +
     "The above Rudder agent operating contract was injected by Rudder at runtime.";
+  const runtimeHeartbeatSection = includeHeartbeatInstructions
+    ? `${RUDDER_AGENT_HEARTBEAT_INSTRUCTION}\n\n` +
+      "The above Rudder heartbeat instruction was injected by Rudder at runtime."
+    : "";
   const empty = {
-    prefix: operatingContractSection,
-    commandNotes: ["Loaded Rudder agent operating contract from runtime code"],
+    prefix: joinPromptSections([operatingContractSection, runtimeHeartbeatSection]),
+    commandNotes: [
+      "Loaded Rudder agent operating contract from runtime code",
+      ...(runtimeHeartbeatSection ? ["Loaded Rudder heartbeat instructions from runtime code"] : []),
+    ],
     instructionsFilePath,
     instructionsDir,
     soulFilePath: null,
@@ -84,13 +93,15 @@ export async function loadAgentInstructionsPrefix(input: {
     heartbeatFilePath: null,
     readFailed: false,
     metrics: {
-      instructionsChars: operatingContractSection.length,
+      instructionsChars: joinPromptSections([operatingContractSection, runtimeHeartbeatSection]).length,
       operatingContractChars: operatingContractSection.length,
+      runtimeHeartbeatChars: runtimeHeartbeatSection.length,
       instructionEntryChars: 0,
       soulChars: 0,
       toolsChars: 0,
       memoryChars: 0,
-      heartbeatChars: 0,
+      heartbeatFileChars: 0,
+      heartbeatChars: runtimeHeartbeatSection.length,
     },
   } satisfies LoadedAgentInstructionsPrefix;
 
@@ -110,9 +121,12 @@ export async function loadAgentInstructionsPrefix(input: {
     try {
       const instructionsContents = await fs.readFile(instructionsFilePath, "utf8");
       loadedPaths.add(path.resolve(instructionsFilePath));
+      const entryLabel = entryIsHeartbeatInstructions && includeHeartbeatInstructions
+        ? "supplemental agent heartbeat notes"
+        : "agent instructions";
       entrySection =
         `${instructionsContents}\n\n` +
-        `The above agent instructions were loaded from ${displayInstructionsFilePath}. ` +
+        `The above ${entryLabel} were loaded from ${displayInstructionsFilePath}. ` +
         `Resolve any relative file references from ${displayInstructionsDir}.`;
       await input.onLog(
         "stdout",
@@ -131,7 +145,7 @@ export async function loadAgentInstructionsPrefix(input: {
     }
   }
   if (entryIsHeartbeatInstructions && entrySection) {
-    commandNotes.push(`Loaded agent heartbeat instructions from ${displayInstructionsFilePath}`);
+    commandNotes.push(`Loaded supplemental agent heartbeat notes from ${displayInstructionsFilePath}`);
   } else if (entrySection) {
     commandNotes.splice(1, 0, `Loaded agent instructions from ${displayInstructionsFilePath}`);
   }
@@ -202,21 +216,22 @@ export async function loadAgentInstructionsPrefix(input: {
   const heartbeat = includeHeartbeatInstructions
     ? await loadSiblingInstructionFile({
         fileName: "HEARTBEAT.md",
-        label: "agent heartbeat instructions",
-        logLabel: "agent heartbeat instructions file",
+        label: "supplemental agent heartbeat notes",
+        logLabel: "supplemental agent heartbeat notes file",
       })
     : { path: null, section: "" };
   if (heartbeat.section && heartbeat.path) {
-    commandNotes.push(`Loaded agent heartbeat instructions from ${displayInstructionPath(heartbeat.path, instructionsFilePath)}`);
+    commandNotes.push(`Loaded supplemental agent heartbeat notes from ${displayInstructionPath(heartbeat.path, instructionsFilePath)}`);
   }
 
   const memoryFilePath = memory.section ? memory.path : null;
   const memorySection = memory.section;
   const entryHeartbeatSection = entryIsHeartbeatInstructions && includeHeartbeatInstructions ? entrySection : "";
   const heartbeatFilePath = entryHeartbeatSection ? instructionsFilePath : heartbeat.section ? heartbeat.path : null;
-  const heartbeatChars = entryHeartbeatSection.length + heartbeat.section.length;
+  const heartbeatFileChars = entryHeartbeatSection.length + heartbeat.section.length;
+  const heartbeatChars = runtimeHeartbeatSection.length + heartbeatFileChars;
 
-  const prefix = joinPromptSections([operatingContractSection, entrySection, soul.section, tools.section, memorySection, heartbeat.section]);
+  const prefix = joinPromptSections([operatingContractSection, runtimeHeartbeatSection, entrySection, soul.section, tools.section, memorySection, heartbeat.section]);
   return {
     prefix,
     commandNotes,
@@ -230,10 +245,12 @@ export async function loadAgentInstructionsPrefix(input: {
     metrics: {
       instructionsChars: prefix.length,
       operatingContractChars: operatingContractSection.length,
+      runtimeHeartbeatChars: runtimeHeartbeatSection.length,
       instructionEntryChars: entrySection.length,
       soulChars: soul.section.length,
       toolsChars: tools.section.length,
       memoryChars: memorySection.length,
+      heartbeatFileChars,
       heartbeatChars,
     },
   };

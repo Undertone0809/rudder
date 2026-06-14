@@ -426,18 +426,26 @@ describe("heartbeat managed workspace preflight", () => {
       rudderEnvKeys: string[];
     };
     expect(capture.prompt).toContain("# Persona");
+    expect(capture.prompt).toContain("# Rudder Heartbeat Instruction");
     expect(capture.prompt).toContain("# Heartbeat");
     expect(capture.prompt).toContain("Follow the heartbeat prompt.");
     expect(invokeEventPayload).toEqual(expect.objectContaining({
       agentRuntimeType: "codex_local",
       promptMetrics: expect.objectContaining({
+        runtimeHeartbeatChars: expect.any(Number),
+        heartbeatFileChars: expect.any(Number),
         heartbeatChars: expect.any(Number),
       }),
       commandNotes: expect.arrayContaining([
-        "Loaded agent heartbeat instructions from $AGENT_HOME/instructions/HEARTBEAT.md",
+        "Loaded Rudder heartbeat instructions from runtime code",
+        "Loaded supplemental agent heartbeat notes from $AGENT_HOME/instructions/HEARTBEAT.md",
       ]),
     }));
-    const promptMetrics = (invokeEventPayload as { promptMetrics: { heartbeatChars: number } }).promptMetrics;
+    const promptMetrics = (invokeEventPayload as {
+      promptMetrics: { runtimeHeartbeatChars: number; heartbeatFileChars: number; heartbeatChars: number };
+    }).promptMetrics;
+    expect(promptMetrics.runtimeHeartbeatChars).toBeGreaterThan(0);
+    expect(promptMetrics.heartbeatFileChars).toBeGreaterThan(0);
     expect(promptMetrics.heartbeatChars).toBeGreaterThan(0);
     await waitForCondition(async () => {
       const events = await getRunEvents(run!.id);

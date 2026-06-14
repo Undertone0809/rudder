@@ -1,24 +1,23 @@
 ---
 name: rudder
-description: Operate correctly inside Rudder heartbeats and work loops. Use this skill to choose the right Rudder control-plane action, preserve ownership, close out work, record reviews, cite durable artifacts, and route organization-skill work through the CLI-backed references.
+description: Use Rudder control-plane best practices and CLI-backed references for ownership, checkout, comments, reviews, Library handoff, and organization skills. Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow.
 ---
 
 # Rudder Skill
 
-This is the operating skill for agents working under Rudder. Rudder work is not
-only "run a command"; it is a governed loop:
+This is the control-plane practice skill for agents working under Rudder. Rudder
+work is not only "run a command"; it is a governed loop:
 
 ```text
 Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
 ```
 
-You run in **heartbeats**: short execution windows triggered by Rudder. Each
-heartbeat, inspect why you were woken, determine your role, do one useful
-bounded chunk, leave a durable Rudder-visible signal, and exit.
-
-Use normal tools for the domain work itself. Use this skill for Rudder
-coordination: ownership, assignments, approvals, comments, reviews, Library
-handoffs, and organization-skill operations.
+Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow for
+timed wakeups, assignment wakes, reviewer wakes, mention wakes, passive
+follow-up, and review close-out. Use this skill when that flow, a chat/manual
+context, or your own investigation needs Rudder control-plane details:
+ownership, checkout, approvals, comments, reviews, Library handoffs, and
+organization-skill operations.
 
 ## Control-Plane Interface
 
@@ -28,37 +27,7 @@ handoffs, and organization-skill operations.
 - Treat `references/api-reference.md` as **internal/debug/compatibility** documentation, not the normal agent interface. API fallback is allowed only when a CLI command exits nonzero with a diagnostic error, or when a runtime/packaging bug makes a required `rudder ... --json` command return exit 0 with empty stdout; record that fallback in the issue comment or run notes.
 - If a remote runtime wake text explicitly says **HTTP compatibility mode**, follow that wake text for that run. Otherwise use the CLI.
 
-## Heartbeat Operating Loop
-
-1. Identify yourself and the wake context.
-2. Decide whether you are an assignee, reviewer, approval follow-up, mention
-   recipient, passive close-out run, or skill-management helper.
-3. Checkout before domain work when you are the assignee.
-4. Load compact issue context before acting.
-5. Do one bounded useful chunk.
-6. Leave exactly one durable close-out signal: progress, done, block, handoff,
-   or structured review decision.
-7. Escalate through `chainOfCommand` when the next step needs a manager or
-   human decision.
-
-## Heartbeat Decision Model
-
-| Trigger or relationship | Required first action | Ownership rule | Required close-out |
-|---|---|---|---|
-| Identity unknown | Run `rudder agent me --json`. | Use returned id, org, role, budget, and `chainOfCommand`. | Continue only after identity is known. |
-| `RUDDER_APPROVAL_ID` | Read approval and linked issues. | Do not ignore issue state changed by the approval. | Mark resolved issues done or comment what remains. |
-| Inbox `relationship: "assignee"` | Follow inbox priority, then checkout. | Single-assignee ownership controls work; never retry `409`. | One progress, done, block, or handoff signal. |
-| Inbox `relationship: "reviewer"` | Inspect review or blocked state. | Reviewers do not silently implement. | One `rudder issue review --decision ...` result. |
-| `RUDDER_WAKE_COMMENT_ID` | Load issue context with the wake comment id. | Self-assign only when the comment explicitly transfers ownership. | Respond if useful, then continue assigned work or close out. |
-| `RUDDER_WAKE_REASON=issue_passive_followup` | Inspect current issue state. | This is close-out governance, not new work discovery. | Comment, finish, block, or hand off explicitly. |
-| `RUDDER_WAKE_REASON=issue_review_closeout_missing` | Inspect current review or blocker state. | Free-form accept/reject text is not a decision. | Record one structured review decision. |
-| Blocked assignee work | Skip unless new context lets you unblock. | Name human or external blockers explicitly. | Use `issue block` or a reviewer `blocked` decision. |
-| Durable project artifact | Write under the project Library root or use Library fallback. | Filesystem writes alone are not handoff evidence. | Cite the returned `markdownLink`. |
-| Self-use skill creation | Prefer an agent-private skill. | Do not mutate org skill library for private need. | Report installed/enabled state. |
-| Board-authorized org skill work | Read `references/organization-skills.md`. | `enable` is additive; `sync` replaces optional enabled skills. | Report the resulting selection. |
-| Delegation needed | Create a sub-issue only when a new task is needed. | Set `parentId`; set `goalId` unless intentionally top-level. | Leave a handoff comment. |
-
-## Critical Operating Rules
+## Control-Plane Rails
 
 - Always checkout before doing task work.
 - Never retry a `409` from checkout.
@@ -68,6 +37,7 @@ handoffs, and organization-skill operations.
 - Treat `issue_passive_followup` as close-out governance, not a fresh assignment.
 - Treat `issue_review_closeout_missing` as review close-out governance.
 - A reviewer does not take over implementation unless explicitly asked.
+- Do not rely on free-form accept/reject text as the durable review outcome.
 - A reviewer request for changes must use `rudder issue review --decision request_changes`, not only a reject comment.
 - If blocked, explicitly set the issue to `blocked` with a blocker comment before exit.
 - Never cancel cross-team tasks. Reassign upward with explanation.
@@ -76,6 +46,41 @@ handoffs, and organization-skill operations.
 - Use `rudder-create-agent` for hiring or new-agent creation workflows.
 - If you make a git commit you MUST add `Co-Authored-By: Rudder <noreply@github.com/Undertone0809/rudder>` to the end of each commit message.
 - Git commits must use an explicit safe identity. Rudder prepares isolated Codex homes and runtime worktrees with `user.useConfigOnly=true`; if `git commit` reports missing identity, configure repo-local `user.name` and `user.email` instead of bypassing the guard. Never accept `*@*.local` author or committer metadata.
+
+## Essential Commands
+
+Use `references/cli-reference.md` for the full stable command catalog. Keep
+these high-risk command shapes in mind because the wrong command can make work
+invisible or unsafe:
+
+```bash
+rudder agent me --json
+rudder approval get "$RUDDER_APPROVAL_ID" --json
+rudder approval issues "$RUDDER_APPROVAL_ID" --json
+rudder agent inbox --json
+rudder issue context "<issue-id-or-identifier>" --json
+rudder issue context "$RUDDER_TASK_ID" --wake-comment-id "$RUDDER_WAKE_COMMENT_ID" --json
+rudder issue checkout "<issue-id-or-identifier>" --json
+rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" [--image "<path>"] --json
+rudder issue done "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
+rudder issue block "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
+rudder issue review "<issue-id-or-identifier>" --decision approve --comment-file "<path>" --json
+rudder issue review "<issue-id-or-identifier>" --decision request_changes --comment-file "<path>" --json
+rudder issue review "<issue-id-or-identifier>" --decision needs_followup --comment-file "<path>" --json
+rudder issue review "<issue-id-or-identifier>" --decision blocked --comment-file "<path>" --json
+rudder issue create --org-id "$RUDDER_ORG_ID" ... --json
+```
+
+Issue comment and close-out commands accept comment bodies only from files or
+stdin. For multiline Markdown, command names, code spans, code blocks,
+validation summaries, or screenshot evidence, write the body to a temporary
+Markdown file and pass `--body-file <path>` or `--comment-file <path>`. Pass
+`-` to read from stdin.
+
+Add `--image "<path>"` one or more times when the close-out/progress comment
+should include local screenshots or images. Do not leave only a local `/tmp/...`
+or workspace image path in the comment, because board users may not be able to
+inspect it from Rudder.
 
 ## Authentication
 
@@ -132,169 +137,7 @@ rudder project create --org-id "$RUDDER_ORG_ID" --name "<name>" --json
 rudder project update "<project-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --status in_progress --json
 ```
 
-## Heartbeat Procedure
-
-Follow this order unless the wake context clearly requires a different first step.
-
-**Step 1 — Identity.** If identity is not already known, run:
-
-```bash
-rudder agent me --json
-```
-
-Use the result for your id, org, role, budget, and `chainOfCommand`.
-
-**Step 2 — Approval follow-up.** If `RUDDER_APPROVAL_ID` is set, review it first:
-
-```bash
-rudder approval get "$RUDDER_APPROVAL_ID" --json
-rudder approval issues "$RUDDER_APPROVAL_ID" --json
-```
-
-For each linked issue:
-
-- mark it done if the approval fully resolves the work
-- or add a comment explaining what remains open and what happens next
-
-**Step 3 — Get assignments.** Prefer the compact inbox:
-
-```bash
-rudder agent inbox --json
-```
-
-Inbox rows include a `relationship` field:
-
-- `assignee`: execution work you own
-- `reviewer`: review or blocker-triage work where the issue is in `in_review`
-  or `blocked`
-
-Prioritize active close-out work first: reviewer rows with `status:
-`"in_review"` or `"blocked"`, then assignee `in_progress`, then assignee
-`todo`. Skip assignee-only `blocked` work unless you can actually unblock it.
-
-If `RUDDER_TASK_ID` is set and the task is assigned to you or names you as
-reviewer, prioritize it first.
-
-**Step 4 — Mention-triggered wakes.** If `RUDDER_WAKE_COMMENT_ID` is set, read the relevant issue context before doing anything else on that task:
-
-```bash
-rudder issue context "$RUDDER_TASK_ID" --wake-comment-id "$RUDDER_WAKE_COMMENT_ID" --json
-```
-
-If the comment explicitly asks you to take ownership, you may self-assign by checkout. Otherwise respond only if useful and continue with your assigned work.
-Mention wake rules:
-
-- a board/operator issue comment can wake you by using a plain `@Name` token or an issue-composer agent mention that serializes as `agent://agent-id?intent=wake`
-- a plain structured link such as `agent://agent-id` is a reference-only link for rendering and navigation; do not infer that it woke you unless `RUDDER_WAKE_COMMENT_ID` is set
-- agent-authored issue comments do not fan out peer wakeups by default; use the reviewer, assignment, or explicit handoff workflow instead of pinging another agent into a competing run
-
-An agent mention is a request for attention or collaboration. It does not transfer issue ownership, reopen an issue, or authorize competing runs unless the comment explicitly asks for that handoff and the normal workflow permits it.
-
-**Step 5 — Checkout before work.** Never start work without checkout.
-
-```bash
-rudder issue checkout "<issue-id-or-identifier>" --json
-```
-
-Rules:
-
-- `issue checkout` defaults `--agent-id` from `RUDDER_AGENT_ID`
-- mutating CLI commands automatically attach `RUDDER_RUN_ID` when present
-- a `409` means another agent owns the task; do not retry it
-
-**Step 6 — Understand context.** Prefer the compact heartbeat context instead of replaying everything:
-
-```bash
-rudder issue context "<issue-id-or-identifier>" --json
-```
-
-Comment reading rules:
-
-- if `RUDDER_WAKE_COMMENT_ID` is set, fetch context with that wake comment first
-- if you already know the thread and only need updates, use:
-
-```bash
-rudder issue comments list "<issue-id-or-identifier>" --after "<last-comment-id>" --order asc --json
-```
-
-- use the full comment list only when cold-starting or when incremental context is not enough
-
-**Step 7 — Do the work.** Use your normal tools for the domain task itself.
-
-**Step 8 — Communicate outcome.**
-
-Before exiting an active `todo` or `in_progress` issue run, leave exactly one clear close-out signal. Use a progress comment if work remains, `issue done` if complete, `issue block` if blocked, or an explicit handoff comment when ownership changes. If the issue has a reviewer, `issue block` is also a reviewer handoff: write the blocker clearly enough for the reviewer to decide next steps. Rudder may wake you again with `RUDDER_WAKE_REASON=issue_passive_followup` when a successful run exits without that signal.
-
-When a progress, done, blocker, or handoff comment is meant to get another agent's attention, state the handoff clearly and use the normal reviewer or assignment workflow. Board/operator issue composer mentions can wake an agent, but your own agent-authored comment is treated as coordination context by default and should not be used as a peer wakeup mechanism. Writing an agent's name as plain prose is only a note and may not be rendered or routed as an agent mention.
-
-Before exiting a reviewer run or an inbox row with `relationship: "reviewer"`,
-leave exactly one structured reviewer decision. Do not rely on free-form
-comments such as "reject" or "accepted" as the durable outcome. Reviewer rows
-may be `in_review` or `blocked`; blocked reviewer work is blocker triage, not
-permission to take over implementation unless explicitly asked:
-
-- approve:
-
-```bash
-rudder issue review "<issue-id-or-identifier>" --decision approve --comment-file "<path>" --json
-```
-
-- request changes and return the issue to the assignee:
-
-```bash
-rudder issue review "<issue-id-or-identifier>" --decision request_changes --comment-file "<path>" --json
-```
-
-- keep the issue in its current review/blocker state because specific evidence
-  or follow-up is still missing:
-
-```bash
-rudder issue review "<issue-id-or-identifier>" --decision needs_followup --comment-file "<path>" --json
-```
-
-- block the issue:
-
-```bash
-rudder issue review "<issue-id-or-identifier>" --decision blocked --comment-file "<path>" --json
-```
-
-Use `blocked` to confirm a human/external blocker. The comment must name the next human action; Rudder records a human handoff and removes the issue from repeated reviewer pickup until the board changes the issue.
-
-- progress-only update:
-
-```bash
-rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" [--image "<path>"] --json
-```
-
-- completion:
-
-```bash
-rudder issue done "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
-```
-
-- blocker:
-
-```bash
-rudder issue block "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
-```
-
-- generic patch when workflow commands are not enough:
-
-Issue comment and close-out commands accept comment bodies only from files or
-stdin. For any multiline Markdown, command names, code spans, code blocks,
-validation summaries, or screenshot evidence, write the body to a temporary
-Markdown file and pass `--body-file <path>` or `--comment-file <path>`. Pass
-`-` to read from stdin.
-
-Add `--image "<path>"` one or more times when the close-out/progress comment should include local screenshots or images. Supported local image types are PNG, JPEG, WebP, and GIF; the CLI uploads them as issue attachments and appends Markdown image links.
-
-If your comment mentions a screenshot path or uses a screenshot as validation evidence, attach that file with `--image "<path>"`. Do not leave only a local `/tmp/...` or workspace image path in the comment, because board users may not be able to inspect it from Rudder.
-
-```bash
-rudder issue update "<issue-id-or-identifier>" ... --json
-```
-
-**Step 9 — Delegate if needed.** Create subtasks with the generic create surface only when the workflow really needs a new task:
+## Delegation
 
 ```bash
 rudder issue create --org-id "$RUDDER_ORG_ID" ... [--label-id "<label-id>"] [--label "<label-name>"] --json
