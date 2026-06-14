@@ -209,6 +209,7 @@ These files should always trigger code owner review:
 - `scripts/release-lib.sh`
 - `scripts/release-package-map.mjs`
 - `scripts/create-github-release.sh`
+- `scripts/cleanup-obsolete-canaries.mjs`
 - `scripts/collect-desktop-release-assets.mjs`
 - `scripts/rollback-latest.sh`
 - `doc/RELEASING.md`
