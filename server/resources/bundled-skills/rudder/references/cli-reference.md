@@ -74,7 +74,8 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder chat create --org-id <id>` | Create a chat conversation. | yes | required | no | attached when available |
 | `rudder chat send <chat-id> --body <text>` | Send a chat message and persist the assistant reply through the server. | yes | no | no | attached when available |
 | `rudder chat archive <chat-id>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
-| `rudder runs list --org-id <id>` | List observed agent runs with filters for status, agent, issue, runtime, and time. | no | required | no | no |
+| `rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>]` | List observed agent runs with filters for status, agent, issue, runtime, time, and skill evidence; used-skill means actual usage and loaded-skill is opt-in. | no | required | no | no |
+| `rudder runs by-skill <skill> --org-id <id> [--evidence <used-or-loaded>]` | Build a skill evidence packet from recent runs; defaults to actual usage and returns status counts, agents, issues, common errors, rows, and transcript/errors follow-up commands. | no | required | no | no |
 | `rudder runs get <run-id>` | Read one observed run detail. | no | no | no | no |
 | `rudder runs events <run-id>` | List persisted run events. | no | no | no | no |
 | `rudder runs log <run-id>` | Read stored run log content with clipped human output. | no | no | no | no |

@@ -8,9 +8,11 @@ import {
   type RunDiagnosis,
   type RunDiagnosisMode,
   type RunExportRow,
+  type RunSkillEvidenceMatch,
+  type RunSkillEvidenceType,
 } from "@rudderhq/run-intelligence-core";
 import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
-import { and, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { notFound } from "../errors.js";
 import { getExecutionLangfuseLink } from "../langfuse.js";
@@ -18,6 +20,112 @@ import { getRunLogStore } from "./run-log-store.js";
 
 function hashValue(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function fallbackSkillLabel(key: string) {
+  const parts = key.split(/[/:]/u).filter(Boolean);
+  return parts.at(-1) ?? key;
+}
+
+function normalizeSkillEvidenceEntry(value: unknown): { key: string; label: string | null } | null {
+  if (typeof value === "string") {
+    const key = value.trim();
+    return key ? { key, label: fallbackSkillLabel(key) } : null;
+  }
+  const record = asRecord(value);
+  const key = readString(record.key) ?? readString(record.runtimeName) ?? readString(record.name) ?? readString(record.label);
+  if (!key) return null;
+  return {
+    key,
+    label: readString(record.label) ?? readString(record.runtimeName) ?? readString(record.name) ?? fallbackSkillLabel(key),
+  };
+}
+
+function normalizeSkillQuery(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
+function skillEntryMatchesQuery(entry: { key: string; label: string | null }, query: string) {
+  return [entry.key, entry.label].some((candidate) => candidate?.trim().toLocaleLowerCase() === query);
+}
+
+function extractSkillEvidenceMatch(input: {
+  payload: unknown;
+  evidenceType: RunSkillEvidenceType;
+  skillQuery: string;
+  eventType: string | null;
+  eventId: number | null;
+  eventCreatedAt: Date | string | null;
+}): RunSkillEvidenceMatch | null {
+  const payload = asRecord(input.payload);
+  const keysField = input.evidenceType === "used" ? "usedSkillKeys" : "loadedSkillKeys";
+  const skillsField = input.evidenceType === "used" ? "usedSkills" : "loadedSkills";
+  const query = normalizeSkillQuery(input.skillQuery);
+  const candidates = [
+    ...(Array.isArray(payload[keysField]) ? payload[keysField] : []),
+    ...(Array.isArray(payload[skillsField]) ? payload[skillsField] : []),
+  ]
+    .map((entry) => normalizeSkillEvidenceEntry(entry))
+    .filter((entry): entry is { key: string; label: string | null } => Boolean(entry));
+  const match = candidates.find((entry) => skillEntryMatchesQuery(entry, query));
+  if (!match) return null;
+  const eventCreatedAt = input.eventCreatedAt instanceof Date
+    ? input.eventCreatedAt.toISOString()
+    : input.eventCreatedAt ?? null;
+  return {
+    evidenceType: input.evidenceType,
+    matchedSkillKey: match.key,
+    matchedSkillLabel: match.label,
+    sourceEventType: input.eventType,
+    sourceEventId: input.eventId,
+    sourceEventCreatedAt: eventCreatedAt,
+  };
+}
+
+function buildSkillExistsCondition(evidenceType: RunSkillEvidenceType, skillQuery: string) {
+  const keysField = evidenceType === "used" ? "usedSkillKeys" : "loadedSkillKeys";
+  const skillsField = evidenceType === "used" ? "usedSkills" : "loadedSkills";
+  const normalized = normalizeSkillQuery(skillQuery);
+  return sql`exists (
+    select 1
+    from heartbeat_run_events skill_events
+    where skill_events.run_id = ${heartbeatRuns.id}
+      and skill_events.org_id = ${heartbeatRuns.orgId}
+      and skill_events.event_type in ('adapter.invoke', 'adapter.skill_usage')
+      and (
+        exists (
+          select 1
+          from jsonb_array_elements_text(
+            case
+              when jsonb_typeof(skill_events.payload -> ${keysField}) = 'array' then skill_events.payload -> ${keysField}
+              else '[]'::jsonb
+            end
+          ) as skill_key(value)
+          where lower(skill_key.value) = ${normalized}
+        )
+        or exists (
+          select 1
+          from jsonb_array_elements(
+            case
+              when jsonb_typeof(skill_events.payload -> ${skillsField}) = 'array' then skill_events.payload -> ${skillsField}
+              else '[]'::jsonb
+            end
+          ) as skill_entry(value)
+          where lower(coalesce(skill_entry.value ->> 'key', '')) = ${normalized}
+             or lower(coalesce(skill_entry.value ->> 'label', '')) = ${normalized}
+             or lower(coalesce(skill_entry.value ->> 'runtimeName', '')) = ${normalized}
+             or lower(coalesce(skill_entry.value ->> 'name', '')) = ${normalized}
+        )
+      )
+  )`;
 }
 
 type RunRow = typeof heartbeatRuns.$inferSelect & {
@@ -37,6 +145,8 @@ export interface ListObservedRunsInput {
   status?: string | null;
   runtime?: string | null;
   issueId?: string | null;
+  usedSkill?: string | null;
+  loadedSkill?: string | null;
   createdBefore?: Date | null;
   limit: number;
 }
@@ -101,7 +211,9 @@ async function serializeRunRow(
   row: RunRow,
   issueMap: Map<string, { id: string; identifier: string | null; title: string | null }>,
   revisionsByAgentId: Map<string, Array<typeof agentConfigRevisions.$inferSelect>>,
+  skillEvidenceMap?: Map<string, RunSkillEvidenceMatch>,
 ): Promise<RunExportRow> {
+  const errorSummary = row.errorCode ?? row.error ?? row.stderrExcerpt ?? null;
   return {
     run: {
       id: row.id,
@@ -142,6 +254,8 @@ async function serializeRunRow(
     issue: row.issueId ? issueMap.get(row.issueId) ?? null : null,
     bundle: resolveBundleForRun(row, revisionsByAgentId),
     langfuse: await getExecutionLangfuseLink(row.id),
+    errorSummary,
+    skillEvidence: skillEvidenceMap?.get(row.id) ?? null,
   };
 }
 
@@ -154,6 +268,8 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
   if (input.runtime) conditions.push(eq(agents.agentRuntimeType, input.runtime));
   if (input.runIdPrefix) conditions.push(sql`${heartbeatRuns.id}::text ilike ${`${input.runIdPrefix}%`}`);
   if (input.issueId) conditions.push(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${input.issueId}`);
+  if (input.usedSkill) conditions.push(buildSkillExistsCondition("used", input.usedSkill));
+  if (input.loadedSkill) conditions.push(buildSkillExistsCondition("loaded", input.loadedSkill));
 
   return await db
     .select({
@@ -202,6 +318,50 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
     .where(and(...conditions))
     .orderBy(desc(heartbeatRuns.createdAt))
     .limit(input.limit) as RunRow[];
+}
+
+async function loadSkillEvidenceForRuns(
+  db: Db,
+  runRows: RunRow[],
+  input: Pick<ListObservedRunsInput, "usedSkill" | "loadedSkill">,
+) {
+  const skillQuery = input.usedSkill ?? input.loadedSkill ?? null;
+  const evidenceType: RunSkillEvidenceType = input.usedSkill ? "used" : "loaded";
+  if (!skillQuery || runRows.length === 0) return new Map<string, RunSkillEvidenceMatch>();
+
+  const runIds = runRows.map((row) => row.id);
+  const rows = await db
+    .select({
+      id: heartbeatRunEvents.id,
+      runId: heartbeatRunEvents.runId,
+      eventType: heartbeatRunEvents.eventType,
+      payload: heartbeatRunEvents.payload,
+      createdAt: heartbeatRunEvents.createdAt,
+    })
+    .from(heartbeatRunEvents)
+    .where(
+      and(
+        eq(heartbeatRunEvents.orgId, runRows[0]!.orgId),
+        inArray(heartbeatRunEvents.runId, runIds),
+        inArray(heartbeatRunEvents.eventType, ["adapter.invoke", "adapter.skill_usage"]),
+      ),
+    )
+    .orderBy(asc(heartbeatRunEvents.createdAt), asc(heartbeatRunEvents.id));
+
+  const evidenceByRunId = new Map<string, RunSkillEvidenceMatch>();
+  for (const row of rows) {
+    if (evidenceByRunId.has(row.runId)) continue;
+    const match = extractSkillEvidenceMatch({
+      payload: row.payload,
+      evidenceType,
+      skillQuery,
+      eventType: row.eventType,
+      eventId: row.id,
+      eventCreatedAt: row.createdAt,
+    });
+    if (match) evidenceByRunId.set(row.runId, match);
+  }
+  return evidenceByRunId;
 }
 
 async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
@@ -286,11 +446,12 @@ async function loadRunLogContent(run: typeof heartbeatRuns.$inferSelect) {
 
 export async function listObservedRuns(db: Db, input: ListObservedRunsInput): Promise<RunExportRow[]> {
   const rows = await loadRunRows(db, input);
-  const [issueMap, revisionsByAgentId] = await Promise.all([
+  const [issueMap, revisionsByAgentId, skillEvidenceMap] = await Promise.all([
     loadIssuesForRuns(db, rows),
     loadRevisionsForRuns(db, rows),
+    loadSkillEvidenceForRuns(db, rows, input),
   ]);
-  return Promise.all(rows.map((row) => serializeRunRow(row, issueMap, revisionsByAgentId)));
+  return Promise.all(rows.map((row) => serializeRunRow(row, issueMap, revisionsByAgentId, skillEvidenceMap)));
 }
 
 export async function getObservedRun(db: Db, runId: string): Promise<RunExportRow | null> {

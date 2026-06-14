@@ -404,6 +404,114 @@ describe("CLI automation/chat/runs parity", () => {
     expect(output.stdoutText()).toContain("rudder runs transcript run-1 --around-error step-2");
   });
 
+  it("requests run list filters with used skill evidence by default", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([
+      {
+        run: {
+          id: "run-1",
+          agentId: "agent-1",
+          status: "failed",
+          createdAt: "2026-06-11T00:00:00.000Z",
+          finishedAt: "2026-06-11T00:01:00.000Z",
+        },
+        agentName: "Wesley",
+        issue: { id: "issue-1", identifier: "ZST-1", title: "Optimize skill" },
+        bundle: { agentRuntimeType: "codex_local" },
+        langfuse: { traceUrl: "http://localhost:3000/project/test/traces/trace-1" },
+        errorSummary: "adapter_error",
+        skillEvidence: {
+          evidenceType: "used",
+          matchedSkillKey: "skill-optimizer",
+          matchedSkillLabel: "Skill Optimizer",
+        },
+      },
+    ]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const output = captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "runs",
+      "list",
+      "--used-skill",
+      "skill-optimizer",
+      "--org-id",
+      "org-1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+    ])).resolves.toBe(0);
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const requestedUrl = new URL(url);
+    expect(requestedUrl.pathname).toBe("/api/run-intelligence/orgs/org-1/runs");
+    expect(requestedUrl.searchParams.get("usedSkill")).toBe("skill-optimizer");
+    expect(requestedUrl.searchParams.get("loadedSkill")).toBeNull();
+    expect(output.stdoutText()).toContain("evidence=used");
+    expect(output.stdoutText()).toContain("skill=skill-optimizer");
+    expect(output.stdoutText()).toContain("rudder runs errors run-1");
+  });
+
+  it("builds a by-skill report and opts into loaded evidence explicitly", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([
+      {
+        run: {
+          id: "run-2",
+          agentId: "agent-1",
+          status: "succeeded",
+          createdAt: "2026-06-11T00:00:00.000Z",
+          finishedAt: "2026-06-11T00:02:00.000Z",
+        },
+        agentName: "Wesley",
+        issue: { id: "issue-1", identifier: "ZST-1", title: "Optimize skill" },
+        bundle: { agentRuntimeType: "codex_local" },
+        langfuse: null,
+        errorSummary: null,
+        skillEvidence: {
+          evidenceType: "loaded",
+          matchedSkillKey: "skill-optimizer",
+          matchedSkillLabel: "Skill Optimizer",
+        },
+      },
+    ]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const output = captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "runs",
+      "by-skill",
+      "skill-optimizer",
+      "--evidence",
+      "loaded",
+      "--org-id",
+      "org-1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const requestedUrl = new URL(url);
+    expect(requestedUrl.pathname).toBe("/api/run-intelligence/orgs/org-1/runs");
+    expect(requestedUrl.searchParams.get("loadedSkill")).toBe("skill-optimizer");
+    expect(requestedUrl.searchParams.get("usedSkill")).toBeNull();
+    expect(JSON.parse(output.stdoutText())).toMatchObject({
+      skill: { query: "skill-optimizer", evidenceType: "loaded" },
+      summary: {
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+      },
+      nextCommands: ["rudder runs transcript run-2"],
+    });
+  });
+
   it("requests full run transcript JSON with cursor and output controls", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       run: { id: "run-1", status: "failed" },
