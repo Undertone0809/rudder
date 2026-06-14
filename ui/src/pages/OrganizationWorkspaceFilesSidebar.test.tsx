@@ -424,7 +424,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     });
 
     expect(copyText).toHaveBeenLastCalledWith(
-      "[HEARTBEAT.md](library-file://file?p=agents%2FAsher%2Finstructions%2FHEARTBEAT.md&t=HEARTBEAT.md)",
+      "[HEARTBEAT.md](library-file://file?p=agents%2FAsher%2Finstructions%2FHEARTBEAT.md)",
     );
     expect(mockState.pushToast).toHaveBeenLastCalledWith(expect.objectContaining({
       title: "Library link copied",
