@@ -70,8 +70,8 @@ function extractSkillEvidenceMatch(input: {
   const skillsField = input.evidenceType === "used" ? "usedSkills" : "loadedSkills";
   const query = normalizeSkillQuery(input.skillQuery);
   const candidates = [
-    ...(Array.isArray(payload[keysField]) ? payload[keysField] : []),
     ...(Array.isArray(payload[skillsField]) ? payload[skillsField] : []),
+    ...(Array.isArray(payload[keysField]) ? payload[keysField] : []),
   ]
     .map((entry) => normalizeSkillEvidenceEntry(entry))
     .filter((entry): entry is { key: string; label: string | null } => Boolean(entry));
