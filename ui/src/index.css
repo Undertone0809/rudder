@@ -3092,8 +3092,11 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   color: color-mix(in oklab, currentColor 76%, var(--muted-foreground) 24%);
 }
 
-.rudder-markdown .rudder-link-chip-logo {
+.rudder-markdown a.rudder-link-chip img.rudder-link-chip-logo {
+  display: block;
+  margin: 0;
   border-radius: 3px;
+  box-shadow: none;
   object-fit: contain;
 }
 

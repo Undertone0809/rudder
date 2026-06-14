@@ -141,12 +141,23 @@ test.describe("UI Lab", () => {
     await page.getByRole("button", { name: /Common Components/ }).click();
 
     const websiteLinkChip = page.locator("a.rudder-link-chip--website").filter({ hasText: "Rudder docs" });
+    const fallbackLinkChip = page.locator("a.rudder-link-chip--website").filter({ hasText: "reference guide" });
     await expect(websiteLinkChip).toBeVisible();
+    await expect(fallbackLinkChip).toBeVisible();
     await expect(websiteLinkChip).toHaveAttribute("href", "https://doc.rudder.zeeland.studio");
     await expect(websiteLinkChip).toHaveAttribute("target", "_blank");
     await expect(websiteLinkChip.locator("img.rudder-link-chip-logo")).toHaveAttribute("src", "/rudder-logo.png");
     await expect(websiteLinkChip.locator(".rudder-link-chip-domain")).toHaveText("Rudder docs");
     await expect(websiteLinkChip.locator(".rudder-link-chip-detail")).toHaveText("doc.rudder.zeeland.studio");
+    await expect(fallbackLinkChip.locator("svg.rudder-link-chip-icon")).toBeVisible();
+
+    const [brandedHeight, fallbackHeight] = await Promise.all([
+      websiteLinkChip.evaluate((chip) => chip.getBoundingClientRect().height),
+      fallbackLinkChip.evaluate((chip) => chip.getBoundingClientRect().height),
+    ]);
+    expect(brandedHeight).toBeLessThanOrEqual(32);
+    expect(fallbackHeight).toBeLessThanOrEqual(32);
+    expect(Math.abs(brandedHeight - fallbackHeight)).toBeLessThanOrEqual(2);
   });
 
   test("shows a hover copy action on command terminal transcript details", async ({ page, context }) => {
