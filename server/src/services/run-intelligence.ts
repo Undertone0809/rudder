@@ -57,7 +57,7 @@ function skillEntryMatchesQuery(entry: { key: string; label: string | null }, qu
   return [entry.key, entry.label].some((candidate) => candidate?.trim().toLocaleLowerCase() === query);
 }
 
-function extractSkillEvidenceMatch(input: {
+export function extractSkillEvidenceMatch(input: {
   payload: unknown;
   evidenceType: RunSkillEvidenceType;
   skillQuery: string;

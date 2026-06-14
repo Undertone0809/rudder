@@ -50,7 +50,7 @@ describe("opencode local skill sync", () => {
     expect(before.warnings).toEqual([]);
     expect(before.desiredSkills).toContain(rudderSkillKey);
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("configured");
-    expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain("`rudder` CLI");
+    expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain("CLI-backed references");
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.originLabel).toBeUndefined();
 
     const after = await syncOpenCodeSkills(ctx, [rudderSkillKey]);

@@ -40,7 +40,7 @@ describe("claude local skill sync", () => {
     expect(snapshot.supported).toBe(true);
     expect(snapshot.desiredSkills).toEqual([]);
     expect(snapshot.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("available");
-    expect(snapshot.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain("`rudder` CLI");
+    expect(snapshot.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain("CLI-backed references");
     expect(snapshot.entries.find((entry) => entry.key === rudderSkillKey)?.originLabel).toBeUndefined();
   });
 
