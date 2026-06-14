@@ -19,6 +19,7 @@ import { readDesktopShell } from "@/lib/desktop-shell";
 import { readRememberedIssueNavigationPath } from "@/lib/issue-navigation";
 import { requestMessengerUnreadScroll } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { readRememberedPrimaryRailPath } from "@/lib/primary-rail-memory";
 import { queryKeys } from "@/lib/queryKeys";
 import { NavLink, useLocation, useNavigate } from "@/lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
@@ -177,10 +178,17 @@ export function PrimaryRail({
   const requestedNotificationPermissionRef = useRef(false);
   const orgGroupActive = /^\/(?:org|projects|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
+  const messengerEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "messenger", "/messenger");
+  const dashboardEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "dashboard", "/dashboard");
+  const issuesEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "issues", issueEntryPath);
+  const agentsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "agents", "/agents");
+  const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
+  const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/org");
+  const automationsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "automations", "/automations");
   const railItems: RailItem[] = [
     {
       key: "messenger",
-      to: "/messenger",
+      to: messengerEntryPath,
       label: "Messenger",
       icon: MessageSquare,
       badge: inboxBadge.inbox,
@@ -190,42 +198,42 @@ export function PrimaryRail({
     },
     {
       key: "dashboard",
-      to: "/dashboard",
+      to: dashboardEntryPath,
       label: "Dashboard",
       icon: LayoutDashboard,
       active: /^\/(?:dashboard|calendar)(?:\/|$)/.test(relativePath),
     },
     {
       key: "issues",
-      to: issueEntryPath,
+      to: issuesEntryPath,
       label: "Issue",
       icon: CircleCheckBig,
       active: /^\/issues(?:\/|$)/.test(relativePath),
     },
     {
       key: "agents",
-      to: "/agents",
+      to: agentsEntryPath,
       label: "Agents",
       icon: UsersRound,
       active: /^\/agents(?:\/|$)/.test(relativePath),
     },
     {
       key: "library",
-      to: "/library",
+      to: libraryEntryPath,
       label: locale === "zh-CN" ? "文档" : "Library",
       icon: LibraryBig,
       active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
     },
     {
       key: "organization",
-      to: "/org",
+      to: organizationEntryPath,
       label: "Organization",
       icon: Network,
       active: orgGroupActive,
     },
     {
       key: "automations",
-      to: "/automations",
+      to: automationsEntryPath,
       label: "Automations",
       icon: Repeat,
       active: /^\/automations(?:\/|$)/.test(relativePath),

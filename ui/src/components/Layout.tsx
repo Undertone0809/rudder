@@ -28,6 +28,7 @@ import {
 import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
 import { findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/organization-routes";
 import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
+import { rememberPrimaryRailPath } from "../lib/primary-rail-memory";
 import { queryKeys } from "../lib/queryKeys";
 import {
   buildSettingsOverlayState,
@@ -270,6 +271,10 @@ export function Layout() {
     () => toOrganizationRelativePath(location.pathname),
     [location.pathname],
   );
+  const relativeBoardUrl = useMemo(
+    () => `${relativeBoardPath}${location.search}${location.hash}`,
+    [location.hash, location.search, relativeBoardPath],
+  );
   const workspaceColumnFamily = useMemo(
     () => getWorkspaceColumnFamily(relativeBoardPath),
     [relativeBoardPath],
@@ -440,6 +445,10 @@ export function Layout() {
   const togglePanel = togglePanelVisible;
 
   useOrganizationPageMemory();
+
+  useEffect(() => {
+    rememberPrimaryRailPath(selectedOrganizationId, relativeBoardUrl);
+  }, [relativeBoardUrl, selectedOrganizationId]);
 
   useEffect(() => {
     if (!isMobile) {

@@ -37,6 +37,7 @@ const mockState = vi.hoisted(() => ({
   setSidebarOpen: vi.fn(),
   requestPermission: vi.fn(),
   pathname: "/dashboard",
+  primaryRailPaths: {} as Record<string, string>,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -93,6 +94,11 @@ vi.mock("@/context/I18nContext", () => ({
 
 vi.mock("@/lib/issue-navigation", () => ({
   readRememberedIssueNavigationPath: () => "/issues",
+}));
+
+vi.mock("@/lib/primary-rail-memory", () => ({
+  readRememberedPrimaryRailPath: (_orgId: string | null | undefined, section: string, fallbackPath: string) =>
+    mockState.primaryRailPaths[section] ?? fallbackPath,
 }));
 
 vi.mock("@/lib/organization-routes", () => ({
@@ -173,6 +179,7 @@ beforeEach(() => {
     },
   };
   mockState.pathname = "/dashboard";
+  mockState.primaryRailPaths = {};
   mockState.setSidebarOpen.mockReset();
 });
 
@@ -437,6 +444,31 @@ describe("PrimaryRail active motion indicator", () => {
     const nav = document.querySelector(".motion-rail-nav");
 
     expect(nav?.getAttribute("data-active-index")).toBe("4");
+  });
+
+  it("uses remembered section paths as primary rail destinations", async () => {
+    mockState.primaryRailPaths = {
+      messenger: "/messenger/issues/ZST-200",
+      dashboard: "/dashboard/calendar",
+      issues: "/issues/ZST-586",
+      agents: "/agents/wesley/runs/run-1",
+      library: "/library?path=projects%2Frudder",
+      organization: "/projects/rudder/issues",
+      automations: "/automations/weekly-ci",
+    };
+
+    await renderPrimaryRail();
+
+    const links = Array.from(document.querySelectorAll("a"));
+    const linkHref = (label: string) => links.find((link) => link.textContent?.includes(label))?.getAttribute("href");
+
+    expect(linkHref("Messenger")).toBe("/messenger/issues/ZST-200");
+    expect(linkHref("Dashboard")).toBe("/dashboard/calendar");
+    expect(linkHref("Issue")).toBe("/issues/ZST-586");
+    expect(linkHref("Agents")).toBe("/agents/wesley/runs/run-1");
+    expect(linkHref("Library")).toBe("/library?path=projects%2Frudder");
+    expect(linkHref("Organization")).toBe("/projects/rudder/issues");
+    expect(linkHref("Automations")).toBe("/automations/weekly-ci");
   });
 });
 
