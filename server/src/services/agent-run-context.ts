@@ -1,11 +1,11 @@
 import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
-import { automations, issues, projects, projectWorkspaces } from "@rudderhq/db";
+import { automations, automationTriggers, issues, projects, projectWorkspaces } from "@rudderhq/db";
 import {
   deriveProjectUrlKey,
   type ProjectResourceAttachment,
 } from "@rudderhq/shared";
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import fs from "node:fs/promises";
 import { parseObject } from "../agent-runtimes/utils.js";
 import {
@@ -76,6 +76,23 @@ type PreparedAgentRunConfig = {
   runtimeConfig: Record<string, unknown>;
   runtimeSkillEntries: RudderSkillEntry[];
   secretKeys: Set<string>;
+};
+
+type AgentAutomationPromptTrigger = {
+  id: string;
+  kind: string;
+  label: string | null;
+  enabled: boolean;
+  nextRunAt: Date | null;
+  lastFiredAt: Date | null;
+};
+
+type AgentAutomationPromptItem = {
+  id: string;
+  title: string;
+  outputMode: string;
+  lastTriggeredAt: Date | null;
+  triggers: AgentAutomationPromptTrigger[];
 };
 
 function readNonEmptyString(value: unknown): string | null {
@@ -160,7 +177,7 @@ function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
 
 function buildCompiledResourcesPrompt(
   projectResources: ProjectResourceAttachment[],
-  agentAutomations: Array<{ id: string; title: string }>,
+  agentAutomations: AgentAutomationPromptItem[],
 ) {
   return [
     buildProjectResourcesPrompt(projectResources),
@@ -171,28 +188,77 @@ function buildCompiledResourcesPrompt(
 }
 
 function buildAgentAutomationsPrompt(
-  agentAutomations: Array<{ id: string; title: string }>,
+  agentAutomations: AgentAutomationPromptItem[],
 ) {
   if (agentAutomations.length === 0) return "";
   return [
-    "## Agent Automations",
+    "## Your Current Automations",
     "",
-    "Automations assigned to this agent; use the ID to inspect details when needed.",
+    "These are your current automations; use the ID to inspect details when needed.",
     "",
-    ...agentAutomations.flatMap((automation) => [
-      `- ${automation.title}`,
-      `  - ID: \`${automation.id}\``,
-    ]),
+    ...agentAutomations.flatMap((automation) => {
+      const triggerLines = automation.triggers.length > 0
+        ? [
+          "  - Triggers:",
+          ...automation.triggers.map((trigger) => `    - ${formatAutomationTriggerForPrompt(trigger)}`),
+        ]
+        : ["  - Triggers: none configured"];
+      return [
+        `- ${formatPromptSingleLine(automation.title)}`,
+        `  - ID: \`${automation.id}\``,
+        `  - Output: ${formatAutomationOutputMode(automation.outputMode)}`,
+        `  - Last run: ${formatPromptDate(automation.lastTriggeredAt) ?? "never"}`,
+        ...triggerLines,
+      ];
+    }),
   ].join("\n");
+}
+
+function formatPromptSingleLine(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function formatPromptDate(value: Date | string | number | null | undefined): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function formatAutomationOutputMode(outputMode: string) {
+  if (outputMode === "track_issue") return "issue";
+  if (outputMode === "chat_output") return "chat";
+  return formatPromptSingleLine(outputMode);
+}
+
+function formatAutomationTriggerForPrompt(trigger: AgentAutomationPromptTrigger) {
+  const label = trigger.label?.trim()
+    ? `${formatPromptSingleLine(trigger.label)} (${trigger.kind})`
+    : trigger.kind;
+  const nextRun =
+    trigger.kind === "schedule"
+      ? `next trigger: ${formatPromptDate(trigger.nextRunAt) ?? "not scheduled"}`
+      : "next trigger: event-driven";
+  return [
+    label,
+    trigger.enabled ? "enabled" : "disabled",
+    nextRun,
+    `last fired: ${formatPromptDate(trigger.lastFiredAt) ?? "never"}`,
+  ].join("; ");
 }
 
 async function listAgentAutomationsForPrompt(
   db: Db,
   orgId: string,
   agentId: string,
-): Promise<Array<{ id: string; title: string }>> {
+): Promise<AgentAutomationPromptItem[]> {
   if (typeof (db as Partial<Db>).select !== "function") return [];
-  const query = db.select({ id: automations.id, title: automations.title });
+  const query = db.select({
+    id: automations.id,
+    title: automations.title,
+    outputMode: automations.outputMode,
+    lastTriggeredAt: automations.lastTriggeredAt,
+  });
   if (!query || typeof (query as { from?: unknown }).from !== "function") {
     return [];
   }
@@ -216,7 +282,57 @@ async function listAgentAutomationsForPrompt(
   ) {
     return [];
   }
-  return whereQuery.orderBy(asc(automations.title), asc(automations.id));
+  const automationRows = await whereQuery.orderBy(asc(automations.title), asc(automations.id));
+  const automationIds = automationRows.map((row) => row.id);
+  if (automationIds.length === 0) return [];
+
+  const triggersByAutomationId = new Map<string, AgentAutomationPromptTrigger[]>();
+  const triggerQuery = db.select({
+    automationId: automationTriggers.automationId,
+    id: automationTriggers.id,
+    kind: automationTriggers.kind,
+    label: automationTriggers.label,
+    enabled: automationTriggers.enabled,
+    nextRunAt: automationTriggers.nextRunAt,
+    lastFiredAt: automationTriggers.lastFiredAt,
+  });
+  if (triggerQuery && typeof (triggerQuery as { from?: unknown }).from === "function") {
+    const triggerFromQuery = triggerQuery.from(automationTriggers);
+    if (triggerFromQuery && typeof (triggerFromQuery as { where?: unknown }).where === "function") {
+      const triggerWhereQuery = triggerFromQuery.where(
+        and(
+          eq(automationTriggers.orgId, orgId),
+          inArray(automationTriggers.automationId, automationIds),
+        ),
+      );
+      if (triggerWhereQuery && typeof (triggerWhereQuery as { orderBy?: unknown }).orderBy === "function") {
+        const triggerRows = await triggerWhereQuery.orderBy(
+          asc(automationTriggers.createdAt),
+          asc(automationTriggers.id),
+        );
+        for (const trigger of triggerRows) {
+          const current = triggersByAutomationId.get(trigger.automationId) ?? [];
+          current.push({
+            id: trigger.id,
+            kind: trigger.kind,
+            label: trigger.label,
+            enabled: trigger.enabled,
+            nextRunAt: trigger.nextRunAt,
+            lastFiredAt: trigger.lastFiredAt,
+          });
+          triggersByAutomationId.set(trigger.automationId, current);
+        }
+      }
+    }
+  }
+
+  return automationRows.map((automation) => ({
+    id: automation.id,
+    title: automation.title,
+    outputMode: automation.outputMode,
+    lastTriggeredAt: automation.lastTriggeredAt,
+    triggers: triggersByAutomationId.get(automation.id) ?? [],
+  }));
 }
 
 async function resolveProjectLibraryContext(

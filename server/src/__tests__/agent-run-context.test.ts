@@ -171,14 +171,50 @@ describe("agentRunContextService buildSceneContext", () => {
     expect(mockListOrganizationResources).not.toHaveBeenCalled();
   });
 
-  it("appends assigned automation titles and ids to the compiled run prompt", async () => {
-    const orderBy = vi.fn(async () => [
-      { id: "automation-1", title: "Daily reviewer follow-up" },
-      { id: "automation-2", title: "Release channel watch" },
+  it("appends assigned automation context to the compiled run prompt", async () => {
+    const automationOrderBy = vi.fn(async () => [
+      {
+        id: "automation-1",
+        title: "Daily reviewer follow-up",
+        outputMode: "track_issue",
+        lastTriggeredAt: new Date("2026-06-14T09:30:00.000Z"),
+      },
+      {
+        id: "automation-2",
+        title: "Release channel watch",
+        outputMode: "chat_output",
+        lastTriggeredAt: null,
+      },
     ]);
-    const where = vi.fn(() => ({ orderBy }));
-    const from = vi.fn(() => ({ where }));
-    const db = { select: vi.fn(() => ({ from })) } as any;
+    const automationWhere = vi.fn(() => ({ orderBy: automationOrderBy }));
+    const automationFrom = vi.fn(() => ({ where: automationWhere }));
+    const triggerOrderBy = vi.fn(async () => [
+      {
+        automationId: "automation-1",
+        id: "trigger-1",
+        kind: "schedule",
+        label: "Weekday morning",
+        enabled: true,
+        nextRunAt: new Date("2026-06-16T09:00:00.000Z"),
+        lastFiredAt: new Date("2026-06-14T09:30:00.000Z"),
+      },
+      {
+        automationId: "automation-2",
+        id: "trigger-2",
+        kind: "webhook",
+        label: "Release webhook",
+        enabled: false,
+        nextRunAt: null,
+        lastFiredAt: null,
+      },
+    ]);
+    const triggerWhere = vi.fn(() => ({ orderBy: triggerOrderBy }));
+    const triggerFrom = vi.fn(() => ({ where: triggerWhere }));
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce({ from: automationFrom })
+        .mockReturnValueOnce({ from: triggerFrom }),
+    } as any;
 
     const svc = agentRunContextService(db);
     const context = await svc.buildSceneContext({
@@ -203,17 +239,28 @@ describe("agentRunContextService buildSceneContext", () => {
       runtimeConfig: {},
     });
 
-    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("## Agent Automations");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("## Your Current Automations");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain(
-      "Automations assigned to this agent; use the ID to inspect details when needed.",
+      "These are your current automations; use the ID to inspect details when needed.",
     );
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("- Daily reviewer follow-up");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("  - ID: `automation-1`");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("  - Output: issue");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("  - Last run: 2026-06-14T09:30:00.000Z");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain(
+      "    - Weekday morning (schedule); enabled; next trigger: 2026-06-16T09:00:00.000Z; last fired: 2026-06-14T09:30:00.000Z",
+    );
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("- Release channel watch");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("  - ID: `automation-2`");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("  - Output: chat");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("  - Last run: never");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain(
+      "    - Release webhook (webhook); disabled; next trigger: event-driven; last fired: never",
+    );
     expect(context.rudderWorkspace.orgResourcesPrompt).not.toContain("status");
     expect(context.rudderWorkspace.orgResourcesPrompt).toBe(context.rudderWorkspace.resourcesPrompt);
-    expect(orderBy).toHaveBeenCalledOnce();
+    expect(automationOrderBy).toHaveBeenCalledOnce();
+    expect(triggerOrderBy).toHaveBeenCalledOnce();
     expect(mockListProjectResourceAttachments).not.toHaveBeenCalled();
   });
 
