@@ -86,34 +86,6 @@ should include local screenshots or images. Do not leave only a local `/tmp/...`
 or workspace image path in the comment, because board users may not be able to
 inspect it from Rudder.
 
-## Self-Improvement And Workflow Updates
-
-When an operator asks you to improve, optimize, or remember a workflow, treat
-that as a request to update the durable operating surface that will affect the
-next run. Do not stop at advice if the relevant surface is available and you
-have authority to change it.
-
-Use the smallest governed surface that matches the request:
-
-- Automation behavior: inspect the current chat or automation, then use
-  `rudder automation list`, `rudder automation get`, and
-  `rudder automation update` as needed.
-- Skill behavior: inspect real run evidence with
-  `rudder runs by-skill <skill> --org-id "$RUDDER_ORG_ID"` or
-  `rudder runs list --used-skill <skill> --org-id "$RUDDER_ORG_ID"`, then read
-  the relevant `rudder runs transcript` or `rudder runs errors` output before
-  editing.
-- Personal operating memory: use the runtime memory skill or files required by
-  the agent operating contract.
-- Agent-private skill changes: prefer `rudder agent skills create ... --enable`
-  or edit the agent-private skill package when that is the intended scope.
-- Organization skill changes: follow `references/organization-skills.md`.
-
-If the change is broad, ambiguous, destructive, or outside your authority,
-propose the update and ask for approval. When you do make a change, report the
-exact automation, skill, memory file, instruction file, or Library file that
-changed.
-
 ## Authentication
 
 Rudder injects the runtime context for you. Common env vars:

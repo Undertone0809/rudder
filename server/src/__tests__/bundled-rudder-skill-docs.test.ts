@@ -84,22 +84,6 @@ describe("bundled rudder skill docs", () => {
     expect(contents).not.toMatch(/rudder skill (?:scan-local|scan-projects|import|list|get|file) --org-id/);
   });
 
-  it("teaches governed workflow and skill self-improvement paths", async () => {
-    const contents = await readSkillDoc();
-
-    expect(contents).toContain("## Self-Improvement And Workflow Updates");
-    expect(contents).toContain("update the durable operating surface");
-    expect(contents).toContain("Do not stop at advice");
-    expect(contents).toContain("rudder automation list");
-    expect(contents).toContain("rudder automation get");
-    expect(contents).toContain("rudder automation update");
-    expect(contents).toContain('rudder runs by-skill <skill> --org-id "$RUDDER_ORG_ID"');
-    expect(contents).toContain('rudder runs list --used-skill <skill> --org-id "$RUDDER_ORG_ID"');
-    expect(contents).toContain("rudder runs transcript");
-    expect(contents).toContain("rudder runs errors");
-    expect(contents).toMatch(/report the\s+exact automation, skill, memory file, instruction file, or Library file/);
-  });
-
   it("does not turn the main skill into an agent-v1 command catalog", async () => {
     const contents = await readSkillDoc();
 

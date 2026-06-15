@@ -358,14 +358,6 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
     expect(loaded.prefix).toContain(RUDDER_AGENT_OPERATING_CONTRACT);
     expect(loaded.prefix).toContain("installed but not enabled");
-    expect(loaded.prefix).toContain("## Self-Improvement and Automation Requests");
-    expect(loaded.prefix).toContain("update the durable operating surface that controls future behavior");
-    expect(loaded.prefix).toContain("rudder automation get");
-    expect(loaded.prefix).toContain("rudder automation update");
-    expect(loaded.prefix).toContain("rudder runs by-skill <skill> --org-id <id>");
-    expect(loaded.prefix).toContain("rudder runs list --used-skill <skill>");
-    expect(loaded.prefix).toContain("rudder runs transcript");
-    expect(loaded.prefix).toContain("rudder runs errors");
     expect(loaded.prefix).toContain("library:projects/<project-key>/");
     expect(loaded.prefix).toContain("$RUDDER_PROJECT_LIBRARY_ROOT");
     expect(loaded.prefix).toContain("always include a user-visible Markdown link");
