@@ -35,6 +35,7 @@
     "perf:control-plane": "node cli/node_modules/tsx/dist/cli.mjs scripts/perf/control-plane-baseline.ts",
     "docs:dev": "cd docs && pnpm --package=node@20 --package=mint@latest dlx mint dev",
     "docs:validate": "cd docs && PUPPETEER_SKIP_DOWNLOAD=1 pnpm --package=node@20 --package=mint@latest dlx mint validate",
+    "docs:health": "node scripts/check-docs-public-health.mjs",
     "desktop:build": "pnpm --filter @rudderhq/desktop build",
     "desktop:dist": "pnpm --filter @rudderhq/desktop dist",
     "desktop:verify": "pnpm --filter @rudderhq/desktop smoke && pnpm desktop:dist && node desktop/scripts/smoke.mjs --mode=packaged",

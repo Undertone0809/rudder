@@ -28,6 +28,7 @@ env:
   VERCEL_PROJECT_ID: prj_ppjxvoIGcoV3jGTeq8vBhzObXaJV
   VERCEL_SCOPE: zeelands-projects
   DOCS_PRODUCTION_DOMAIN: doc.rudder.zeeland.studio
+  DOCS_PRODUCTION_ALIASES: rudder-docs.vercel.app,rudder-docs-zeelands-projects.vercel.app,rudder-docs-zeeland-zeelands-projects.vercel.app
 
 jobs:
   publish:
@@ -207,17 +208,25 @@ jobs:
             --scope "$VERCEL_SCOPE" \
             --token "$VERCEL_TOKEN"
 
-      - name: Verify production domain
+          IFS=',' read -ra aliases <<< "$DOCS_PRODUCTION_ALIASES"
+          for alias_domain in "${aliases[@]}"; do
+            vercel alias set "${{ steps.deploy.outputs.deployment_url }}" "$alias_domain" \
+              --scope "$VERCEL_SCOPE" \
+              --token "$VERCEL_TOKEN"
+          done
+
+      - name: Verify production domains
         run: |
+          hosts="$DOCS_PRODUCTION_DOMAIN,$DOCS_PRODUCTION_ALIASES"
           for attempt in {1..12}; do
-            if curl --fail --silent --show-error --location "https://$DOCS_PRODUCTION_DOMAIN" >/dev/null; then
+            if DOCS_HEALTH_HOSTS="$hosts" node scripts/check-docs-public-health.mjs; then
               exit 0
             fi
-            echo "Waiting for $DOCS_PRODUCTION_DOMAIN to serve the new alias ($attempt/12)..."
+            echo "Waiting for docs production domains to serve the new alias ($attempt/12)..."
             sleep 5
           done
 
-          curl --fail --show-error --location "https://$DOCS_PRODUCTION_DOMAIN" >/dev/null
+          DOCS_HEALTH_HOSTS="$hosts" node scripts/check-docs-public-health.mjs
 
       - name: Create docs release tag
         run: |

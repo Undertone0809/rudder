@@ -16,6 +16,16 @@ Validate the docs project:
 pnpm docs:validate
 ```
 
+Check the public docs surface after a deploy:
+
+```bash
+pnpm docs:health
+```
+
+By default this checks the canonical docs domain plus the public Vercel project
+aliases. Use `DOCS_HEALTH_HOSTS=host.example.com pnpm docs:health` when you
+need to check only one deployment channel.
+
 ## Deployment
 
 The docs site has two Vercel-backed channels:
@@ -26,8 +36,14 @@ The docs site has two Vercel-backed channels:
   `.github/workflows/docs-production.yml`.
 
 Both workflows validate the Mintlify project, export the static site, deploy it
-through the Vercel CLI, and then assign the channel domain. Production publishes
-also create a `docs/vYYYY.MM.DD` git tag for the source commit.
+through the Vercel CLI, assign the channel domain, and verify key public paths
+such as `/robots.txt`, `/sitemap.xml`, `/zh`, `/llms.txt`, and favicons.
+Production publishes also bind the public Vercel project aliases to the same
+deployment and create a `docs/vYYYY.MM.DD` git tag for the source commit.
+Those aliases are intentionally production-facing public entry points; the
+staging channel uses `staging.doc.rudder.zeeland.studio` only. Staging pages are
+still expected to emit production canonical URLs so preview traffic does not
+compete with the canonical docs host in search indexes.
 
 ## Content Scope
 

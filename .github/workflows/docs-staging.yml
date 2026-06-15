@@ -97,11 +97,11 @@ jobs:
       - name: Verify staging domain
         run: |
           for attempt in {1..12}; do
-            if curl --fail --silent --show-error --location "https://$DOCS_STAGING_DOMAIN" >/dev/null; then
+            if DOCS_HEALTH_HOSTS="$DOCS_STAGING_DOMAIN" node scripts/check-docs-public-health.mjs; then
               exit 0
             fi
             echo "Waiting for $DOCS_STAGING_DOMAIN to serve the new alias ($attempt/12)..."
             sleep 5
           done
 
-          curl --fail --show-error --location "https://$DOCS_STAGING_DOMAIN" >/dev/null
+          DOCS_HEALTH_HOSTS="$DOCS_STAGING_DOMAIN" node scripts/check-docs-public-health.mjs

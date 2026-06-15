@@ -1,0 +1,36 @@
+name: Docs public health
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-public-health
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DOCS_HEALTH_HOSTS: doc.rudder.zeeland.studio,rudder-docs.vercel.app,rudder-docs-zeelands-projects.vercel.app,rudder-docs-zeeland-zeelands-projects.vercel.app
+
+jobs:
+  check:
+    name: Check public docs routes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.repository == 'Undertone0809/rudder'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Check docs public health
+        run: node scripts/check-docs-public-health.mjs --attempts 3 --retry-delay-ms 5000
