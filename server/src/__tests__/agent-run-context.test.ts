@@ -204,6 +204,9 @@ describe("agentRunContextService buildSceneContext", () => {
     });
 
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("## Agent Automations");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain(
+      "Automations assigned to this agent; use the ID to inspect details when needed.",
+    );
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("- Daily reviewer follow-up");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("  - ID: `automation-1`");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("- Release channel watch");

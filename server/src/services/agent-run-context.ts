@@ -177,6 +177,8 @@ function buildAgentAutomationsPrompt(
   return [
     "## Agent Automations",
     "",
+    "Automations assigned to this agent; use the ID to inspect details when needed.",
+    "",
     ...agentAutomations.flatMap((automation) => [
       `- ${automation.title}`,
       `  - ID: \`${automation.id}\``,
