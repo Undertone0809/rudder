@@ -1904,7 +1904,7 @@ describe("issue lifecycle routes", () => {
     expect(mockIssueService.deleteComment).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       "comment-1",
-      { userId: "local-board" },
+      { userId: "local-board", allowAgentAuthored: true },
     );
     const activityCall = mockLogActivity.mock.calls.find((call) => call[1]?.action === "issue.comment_deleted");
     expect(activityCall?.[1]).toEqual(expect.objectContaining({

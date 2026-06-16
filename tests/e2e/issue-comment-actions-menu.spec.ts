@@ -33,12 +33,39 @@ test("issue comment actions menu copies content and direct links", async ({ page
   expect(issueRes.ok()).toBe(true);
   const issue = await issueRes.json() as { id: string; identifier: string | null };
 
+  const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Comment Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+      },
+    },
+  });
+  expect(agentRes.ok()).toBe(true);
+  const agent = await agentRes.json() as { id: string };
+
+  const agentKeyRes = await page.request.post(`/api/agents/${agent.id}/keys`, {
+    data: { name: "issue-comment-actions-menu-e2e" },
+  });
+  expect(agentKeyRes.ok()).toBe(true);
+  const agentKey = await agentKeyRes.json() as { token: string };
+
   const body = "Review note:\n\n- keep the copied markdown intact";
   const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
     data: { body },
   });
   expect(commentRes.ok()).toBe(true);
   const comment = await commentRes.json() as { id: string; body: string };
+
+  const agentCommentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+    data: { body: "Agent handoff note that the board may remove." },
+    headers: { authorization: `Bearer ${agentKey.token}` },
+  });
+  expect(agentCommentRes.ok()).toBe(true);
+  const agentComment = await agentCommentRes.json() as { id: string; body: string };
 
   await page.evaluate((orgId) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -49,6 +76,38 @@ test("issue comment actions menu copies content and direct links", async ({ page
 
   const commentBlock = page.locator(`#comment-${comment.id}`);
   await expect(commentBlock).toBeVisible();
+
+  const agentCommentBlock = page.locator(`#comment-${agentComment.id}`);
+  await expect(agentCommentBlock).toBeVisible();
+  await agentCommentBlock.getByRole("button", { name: "Comment actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Copy content" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Edit" })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  const deleteAgentDialog = page.getByRole("dialog", { name: "Delete this comment?" });
+  await expect(deleteAgentDialog).toBeVisible();
+  const [deleteAgentResponse] = await Promise.all([
+    page.waitForResponse((response) => {
+      const pathname = new URL(response.url()).pathname;
+      return (
+        (
+          pathname.endsWith(`/api/issues/${issue.id}/comments/${agentComment.id}`)
+          || pathname.endsWith(`/api/issues/${routeRef}/comments/${agentComment.id}`)
+        )
+        && response.request().method() === "DELETE"
+      );
+    }),
+    deleteAgentDialog.getByRole("button", { name: "Delete" }).click(),
+  ]);
+  expect(deleteAgentResponse.ok()).toBe(true);
+  await expect(agentCommentBlock).toHaveCount(0);
+
+  const deletedAgentCommentRes = await page.request.get(`/api/issues/${issue.id}/comments/${agentComment.id}`);
+  expect(deletedAgentCommentRes.ok()).toBe(true);
+  const deletedAgentComment = await deletedAgentCommentRes.json() as { body: string; deletedAt: string | null };
+  expect(deletedAgentComment.body).toBe("");
+  expect(deletedAgentComment.deletedAt).toBeTruthy();
 
   await commentBlock.getByRole("button", { name: "Comment actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Copy content" })).toBeVisible();
@@ -203,17 +262,13 @@ test("issue comment actions menu copies content and direct links", async ({ page
     deleteDialog.getByRole("button", { name: "Delete" }).click(),
   ]);
   expect(deleteResponse.ok()).toBe(true);
-  await expect(commentBlock).toContainText("Comment deleted");
-  await expect(commentBlock).not.toContainText("Review note updated:");
+  await expect(commentBlock).toHaveCount(0);
   await expect(activity).not.toContainText("deleted a comment");
-  await expect(commentBlock.getByRole("button", { name: "Comment actions" })).toHaveCount(0);
 
   await page.reload();
-  await expect(commentBlock).toContainText("Comment deleted");
-  await expect(commentBlock).not.toContainText("Review note updated:");
+  await expect(commentBlock).toHaveCount(0);
   await expect(activity).not.toContainText("edited a comment");
   await expect(activity).not.toContainText("deleted a comment");
-  await expect(commentBlock.getByRole("button", { name: "Comment actions" })).toHaveCount(0);
 
   const deletedCommentRes = await page.request.get(`/api/issues/${issue.id}/comments/${comment.id}`);
   expect(deletedCommentRes.ok()).toBe(true);

@@ -635,7 +635,40 @@ describe("CommentThread", () => {
     expect(container.querySelector('input[type="file"]')).toBeNull();
   });
 
-  it("hides edit and delete actions for other users and agent-authored comments", () => {
+  it("allows deleting agent-authored comments without exposing edit", async () => {
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-agent",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: null,
+              authorAgentId: "agent-1",
+              body: "Agent body",
+              createdAt: new Date("2026-05-07T00:01:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:01:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+          onUpdate={async () => undefined}
+          onDelete={onDelete}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(container.textContent).toContain("Copy content");
+    expect(container.textContent).not.toContain("Edit");
+    expect(container.textContent).toContain("Delete");
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Delete")) ?? null);
+    await vi.waitFor(() => expect(onDelete).toHaveBeenCalledWith("comment-agent"));
+  });
+
+  it("hides edit and delete actions for other users' comments", () => {
     const container = renderInteractive(
       <MemoryRouter>
         <CommentThread
@@ -649,16 +682,6 @@ describe("CommentThread", () => {
               body: "Other user body",
               createdAt: new Date("2026-05-07T00:00:00.000Z"),
               updatedAt: new Date("2026-05-07T00:00:00.000Z"),
-            },
-            {
-              id: "comment-agent",
-              issueId: "issue-1",
-              orgId: "org-1",
-              authorUserId: null,
-              authorAgentId: "agent-1",
-              body: "Agent body",
-              createdAt: new Date("2026-05-07T00:01:00.000Z"),
-              updatedAt: new Date("2026-05-07T00:01:00.000Z"),
             },
           ]}
           onAdd={async () => undefined}

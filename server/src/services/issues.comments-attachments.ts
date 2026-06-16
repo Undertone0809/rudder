@@ -65,6 +65,41 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
     return { issue, comment };
   }
 
+  async function getDeletableComment(
+    issueId: string,
+    commentId: string,
+    actor: { userId: string; allowAgentAuthored?: boolean },
+  ) {
+    const issue = await db
+      .select({ id: issues.id, orgId: issues.orgId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    if (!issue) throw notFound("Issue not found");
+
+    const comment = await db
+      .select()
+      .from(issueComments)
+      .where(
+        and(
+          eq(issueComments.id, commentId),
+          eq(issueComments.issueId, issue.id),
+          eq(issueComments.orgId, issue.orgId),
+        ),
+      )
+      .then((rows) => rows[0] ?? null);
+    if (!comment) throw notFound("Comment not found");
+    if (comment.deletedAt) throw forbidden("Deleted comments cannot be modified");
+
+    const ownsUserComment = !comment.authorAgentId && !!comment.authorUserId && comment.authorUserId === actor.userId;
+    const canDeleteAgentComment = actor.allowAgentAuthored === true && !!comment.authorAgentId;
+    if (!ownsUserComment && !canDeleteAgentComment) {
+      throw forbidden("Only the comment author or a board user deleting an agent comment can delete this comment");
+    }
+
+    return { issue, comment };
+  }
+
   return {
     findMentionedAgents: async (orgId: string, body: string) => {
       const explicitAgentMentionIds = extractAgentWakeMentionIds(body).filter(isUuidLike);
@@ -295,8 +330,12 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       return serializeCommentForResponse(comment, currentUserRedactionOptions.enabled);
     },
 
-    deleteComment: async (issueId: string, commentId: string, actor: { userId: string }) => {
-      const { issue } = await getMutableUserComment(issueId, commentId, actor.userId);
+    deleteComment: async (
+      issueId: string,
+      commentId: string,
+      actor: { userId: string; allowAgentAuthored?: boolean },
+    ) => {
+      const { issue } = await getDeletableComment(issueId, commentId, actor);
       const now = new Date();
       const [comment] = await db
         .update(issueComments)

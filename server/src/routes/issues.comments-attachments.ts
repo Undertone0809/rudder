@@ -138,6 +138,7 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     const actor = getActorInfo(req);
     const comment = await svc.deleteComment(id, commentId, {
       userId: actor.actorId,
+      allowAgentAuthored: true,
     });
 
     await logActivity(db, {

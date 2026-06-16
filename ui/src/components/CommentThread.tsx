@@ -242,7 +242,8 @@ function CommentActionsMenu({
   orgId,
   projectId,
   location,
-  canModify,
+  canEdit,
+  canDelete,
   onEdit,
   onDelete,
 }: {
@@ -250,7 +251,8 @@ function CommentActionsMenu({
   orgId?: string | null;
   projectId?: string | null;
   location: ReturnType<typeof useLocation>;
-  canModify: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -284,23 +286,27 @@ function CommentActionsMenu({
           {copiedAction === "link" ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5" />}
           Copy link
         </DropdownMenuItem>
-        {canModify ? (
+        {canEdit || canDelete ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={onEdit}>
-              <Pencil className="h-3.5 w-3.5" />
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={(event) => {
-                event.preventDefault();
-                onDelete();
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </DropdownMenuItem>
+            {canEdit ? (
+              <DropdownMenuItem onSelect={onEdit}>
+                <Pencil className="h-3.5 w-3.5" />
+                Edit
+              </DropdownMenuItem>
+            ) : null}
+            {canDelete ? (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onSelect={(event) => {
+                  event.preventDefault();
+                  onDelete();
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </DropdownMenuItem>
+            ) : null}
           </>
         ) : null}
         {orgId ? (
@@ -620,7 +626,8 @@ const TimelineList = memo(function TimelineList({
         const isDeleted = !!comment.deletedAt;
         if (isDeleted) return null;
         const isEdited = new Date(comment.updatedAt).getTime() > new Date(comment.createdAt).getTime() + 1000;
-        const canModify = !!currentUserId && !comment.authorAgentId && comment.authorUserId === currentUserId;
+        const canEdit = !!currentUserId && !comment.authorAgentId && comment.authorUserId === currentUserId;
+        const canDelete = !!currentUserId && (canEdit || !!comment.authorAgentId);
         const isEditing = editingCommentId === comment.id;
         const handleStartEdit = () => {
           setEditingCommentId(comment.id);
@@ -712,7 +719,8 @@ const TimelineList = memo(function TimelineList({
                     orgId={orgId}
                     projectId={projectId}
                     location={location}
-                    canModify={canModify}
+                    canEdit={canEdit}
+                    canDelete={canDelete}
                     onEdit={handleStartEdit}
                     onDelete={handleDelete}
                   />

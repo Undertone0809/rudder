@@ -377,7 +377,7 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
-  it("allows only the authoring user to edit or soft-delete user issue comments", async () => {
+  it("allows authoring users to edit/delete their comments and board users to delete agent comments", async () => {
     const orgId = randomUUID();
     const issueId = randomUUID();
     const userCommentId = randomUUID();
@@ -436,6 +436,10 @@ describe("issueService.list participantAgentId", () => {
       .rejects.toMatchObject({ status: 403 });
     await expect(svc.updateComment(issueId, agentCommentId, "User edit of agent comment", { userId: "author-user" }))
       .rejects.toMatchObject({ status: 403 });
+    await expect(svc.deleteComment(issueId, userCommentId, { userId: "other-user", allowAgentAuthored: true }))
+      .rejects.toMatchObject({ status: 403 });
+    await expect(svc.deleteComment(issueId, agentCommentId, { userId: "author-user" }))
+      .rejects.toMatchObject({ status: 403 });
 
     const beforeIssue = await db
       .select({ updatedAt: issues.updatedAt })
@@ -457,6 +461,14 @@ describe("issueService.list participantAgentId", () => {
     expect(deleted.body).toBe("");
     expect(deleted.deletedByUserId).toBe("author-user");
     expect(deleted.deletedAt).toBeTruthy();
+
+    const deletedAgentComment = await svc.deleteComment(issueId, agentCommentId, {
+      userId: "board-user",
+      allowAgentAuthored: true,
+    });
+    expect(deletedAgentComment.body).toBe("");
+    expect(deletedAgentComment.deletedByUserId).toBe("board-user");
+    expect(deletedAgentComment.deletedAt).toBeTruthy();
 
     await expect(svc.updateComment(issueId, userCommentId, "Edit after delete", { userId: "author-user" }))
       .rejects.toMatchObject({ status: 403 });
