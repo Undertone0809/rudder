@@ -54,6 +54,7 @@ import {
   logActivity,
   operatorProfileService,
   organizationService,
+  productIntelligenceService,
   projectService,
 } from "../services/index.js";
 import { summarizeRuntimeSkillsForTrace } from "../services/runtime-trace-metadata.js";
@@ -75,6 +76,10 @@ export function chatRoutes(db: Db, storage: StorageService) {
   const assistantSvc = chatAssistantService(db, storage);
   const operatorProfiles = operatorProfileService(db);
   const heartbeat = heartbeatService(db);
+  const productIntelligence = productIntelligenceService(db);
+
+  const CHAT_TITLE_SOURCE_LIMIT = 1600;
+  const CHAT_TITLE_MAX_LENGTH = 80;
 
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -150,6 +155,78 @@ export function chatRoutes(db: Db, storage: StorageService) {
 
   function stringQuery(value: unknown) {
     return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  }
+
+  function buildChatTitlePrompt(body: string) {
+    const normalized = body.replace(/\s+/g, " ").trim();
+    const source = normalized.length > CHAT_TITLE_SOURCE_LIMIT
+      ? `${normalized.slice(0, CHAT_TITLE_SOURCE_LIMIT)}\n\n[Input truncated for title generation.]`
+      : normalized;
+    return [
+      "Generate a concise title for this chat.",
+      "Rules:",
+      "- Return only the title text.",
+      "- No quotes, markdown, emoji, or trailing punctuation.",
+      `- Maximum ${CHAT_TITLE_MAX_LENGTH} characters.`,
+      "",
+      "First user message:",
+      source,
+    ].join("\n");
+  }
+
+  function runtimeResultText(result: unknown) {
+    if (!result || typeof result !== "object") return "";
+    const candidate = result as Record<string, unknown>;
+    if (candidate.timedOut === true || candidate.signal !== null || candidate.exitCode !== 0) return "";
+    for (const key of ["output", "stdout", "text", "message", "summary"]) {
+      const value = candidate[key];
+      if (typeof value === "string" && value.trim().length > 0) return value;
+    }
+    return "";
+  }
+
+  function sanitizeGeneratedChatTitle(raw: string) {
+    let title = raw
+      .replace(/^```(?:\w+)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim()
+      .replace(/^#+\s*/, "")
+      .replace(/^[-*]\s*/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    title = title.replace(/^["'`]+|["'`]+$/g, "").trim();
+    title = title.replace(/[.!?:;]+$/g, "").trim();
+    if (!title) return null;
+    return title.length > CHAT_TITLE_MAX_LENGTH
+      ? title.slice(0, CHAT_TITLE_MAX_LENGTH).trim()
+      : title;
+  }
+
+  function startChatTitleGeneration(conversation: ChatConversation, body: string) {
+    if (conversation.title !== "New chat" || body.trim().length === 0) return;
+    const prompt = buildChatTitlePrompt(body);
+    void (async () => {
+      try {
+        const result = await productIntelligence.execute({
+          orgId: conversation.orgId,
+          purpose: "lightweight",
+          feature: "chat_title",
+          prompt,
+        });
+        const title = sanitizeGeneratedChatTitle(runtimeResultText(result));
+        if (!title) return;
+        await svc.updateDefaultTitle(conversation.id, title);
+      } catch (error) {
+        logger.warn(
+          {
+            err: error,
+            conversationId: conversation.id,
+            orgId: conversation.orgId,
+          },
+          "Failed to generate chat title with organization lightweight model",
+        );
+      }
+    })();
   }
 
   function positiveIntegerQuery(value: unknown, fallback: number, max: number) {
@@ -1317,6 +1394,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
         actor,
         req.body.editUserMessageId ?? null,
       );
+      if (!req.body.editUserMessageId) {
+        startChatTitleGeneration(conversation as ChatConversation, req.body.body);
+      }
       const turnContext = turnContextFromUserMessage(userMessage);
       chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
         surface: "chat_turn",
@@ -1509,6 +1589,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,
     addUserMessage,
+    startChatTitleGeneration,
     attachFilesToUserMessage,
     loadAssistantInput,
     chatReplyingAgentId,

@@ -10,7 +10,7 @@ import {
   chatMessages,
   organizations
 } from "@rudderhq/db";
-import { formatMessengerTitle, sanitizeChatStructuredPayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { sanitizeChatStructuredPayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { notFound, unprocessable } from "../errors.js";
@@ -520,18 +520,6 @@ export function chatService(db: Db) {
       .where(eq(chatConversations.id, conversationId));
   }
 
-  async function maybePromoteConversationTitle(conversationId: string, body: string) {
-    const conversation = await getConversationOrThrow(conversationId);
-    const title = conversation.title.trim();
-    if (title !== "New chat") return;
-    const nextTitle = formatMessengerTitle(body, { max: 80 });
-    if (!nextTitle) return;
-    await db
-      .update(chatConversations)
-      .set({ title: nextTitle, updatedAt: new Date() })
-      .where(eq(chatConversations.id, conversationId));
-  }
-
   async function list(
       orgId: string,
       options?: { status?: "active" | "resolved" | "archived" | "all"; q?: string },
@@ -722,6 +710,19 @@ export function chatService(db: Db) {
           updatedAt: new Date(),
         })
         .where(eq(chatConversations.id, id))
+        .returning();
+      if (!updated) return null;
+      return getById(id);
+  }
+
+  async function updateDefaultTitle(id: string, title: string) {
+      const [updated] = await db
+        .update(chatConversations)
+        .set({
+          title,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(chatConversations.id, id), eq(chatConversations.title, "New chat")))
         .returning();
       if (!updated) return null;
       return getById(id);
@@ -1109,9 +1110,6 @@ export function chatService(db: Db) {
       if (!message) throw new Error("Failed to create chat message");
       if (input.role === "user" || isVisibleIncomingChatMessage(message)) {
         await refreshConversationTouch(conversationId, message.createdAt);
-      }
-      if (input.role === "user") {
-        await maybePromoteConversationTitle(conversationId, input.body);
       }
       const [hydrated] = await hydrateMessages([message]);
       return hydrated;
@@ -1857,6 +1855,7 @@ export function chatService(db: Db) {
     getById,
     create,
     update,
+    updateDefaultTitle,
     listAttachmentsForConversation,
     remove,
     resolve,

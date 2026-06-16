@@ -48,6 +48,7 @@ const mockChatService = vi.hoisted(() => ({
   resolve: vi.fn(),
   createProposalApproval: vi.fn(),
   resolveOperationProposal: vi.fn(),
+  updateDefaultTitle: vi.fn(),
 }));
 
 const mockCompanyService = vi.hoisted(() => ({
@@ -89,6 +90,10 @@ const mockOperatorProfileService = vi.hoisted(() => ({
   get: vi.fn(),
 }));
 
+const mockProductIntelligenceService = vi.hoisted(() => ({
+  execute: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockChatAssistantService = vi.hoisted(() => ({
   enrichConversation: vi.fn(),
@@ -118,6 +123,7 @@ vi.mock("../services/index.js", () => ({
     upsert: vi.fn(),
     ensureDefaultsFromRuntime: vi.fn(),
   }),
+  productIntelligenceService: () => mockProductIntelligenceService,
   logActivity: mockLogActivity,
   operatorProfileService: () => mockOperatorProfileService,
   projectService: () => mockProjectService,
@@ -1562,6 +1568,164 @@ describe("chat routes", () => {
     );
   });
 
+  it("generates a new chat title with the organization lightweight model without blocking the assistant reply", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Help me debug the release failure");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "I will inspect it.");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockProductIntelligenceService.execute.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "\"Debug release failure\"",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "I will inspect it.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "I will inspect it.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Help me debug the release failure" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalled();
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
+        orgId: "organization-1",
+        purpose: "lightweight",
+        feature: "chat_title",
+        prompt: expect.stringContaining("Help me debug the release failure"),
+      }));
+      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith("chat-1", "Debug release failure");
+    });
+  });
+
+  it("keeps chat sending successful when lightweight title generation is not configured", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Working on it");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockProductIntelligenceService.execute.mockRejectedValueOnce(new Error("No lightweight profile configured"));
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Working on it",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Working on it",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need help" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalled();
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalled();
+    });
+    expect(mockChatService.updateDefaultTitle).not.toHaveBeenCalled();
+  });
+
+  it("does not update a chat title from failed lightweight title generation output", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need a migration plan");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Working on it");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockProductIntelligenceService.execute.mockResolvedValueOnce({
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      stdout: "Migration plan",
+      errorMessage: "model failed",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Working on it",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Working on it",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need a migration plan" });
+
+    expect(res.status).toBe(201);
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalled();
+    });
+    expect(mockChatService.updateDefaultTitle).not.toHaveBeenCalled();
+  });
+
+  it("bounds long chat title generation prompts", async () => {
+    const conversation = createConversation();
+    const longBody = "x".repeat(5000);
+    const userMessage = createMessage("message-user", "user", "message", longBody);
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Working on it");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockProductIntelligenceService.execute.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "Long input summary",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Working on it",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Working on it",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: longBody });
+
+    expect(res.status).toBe(201);
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalled();
+    });
+    const prompt = mockProductIntelligenceService.execute.mock.calls[0]?.[0]?.prompt;
+    expect(prompt).toContain("[Input truncated for title generation.]");
+    expect(prompt.length).toBeLessThan(2200);
+  });
+
   it("does not use process transcript text as failed non-stream observation output", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
@@ -2163,6 +2327,49 @@ describe("chat routes", () => {
         structuredPayload: askUserPayload,
       }),
     );
+  });
+
+  it("generates a new chat title for streamed messages after acknowledging the user message", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Plan the migration");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "I will plan it.");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockProductIntelligenceService.execute.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "Migration plan",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "I will plan it.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "I will plan it.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Plan the migration" });
+
+    expect(res.status).toBe(201);
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalledWith(expect.objectContaining({
+        orgId: "organization-1",
+        purpose: "lightweight",
+        feature: "chat_title",
+        prompt: expect.stringContaining("Plan the migration"),
+      }));
+      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith("chat-1", "Migration plan");
+    });
   });
 
   it("stores streamed chat attachments before invoking the assistant", async () => {

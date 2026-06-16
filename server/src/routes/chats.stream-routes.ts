@@ -78,6 +78,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,
     addUserMessage,
+    startChatTitleGeneration,
     attachFilesToUserMessage,
     loadAssistantInput,
     chatReplyingAgentId,
@@ -209,6 +210,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         actor,
         parsedBody.data.editUserMessageId ?? null,
       );
+      if (!parsedBody.data.editUserMessageId) {
+        startChatTitleGeneration(conversation as ChatConversation, parsedBody.data.body);
+      }
       const userAttachments = await attachFilesToUserMessage(
         conversation as ChatConversation,
         userMessage.id,
