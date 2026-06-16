@@ -22,7 +22,7 @@ Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is appended separately at runtime
 - promptTemplate (string, optional): user prompt template passed via -p flag
-- model (string, required): Pi model id in provider/model format (for example xai/grok-4)
+- model (string, required): Pi model id in provider/model format (for example kimi-coding/kimi-for-coding)
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
 - thinking (string, optional): thinking level (off, minimal, low, medium, high, xhigh)
 - command (string, optional): defaults to "pi"

@@ -20,7 +20,7 @@ Don't use when:
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is prepended separately at runtime
-- model (string, required): OpenCode model id in provider/model format (for example anthropic/claude-sonnet-4-5)
+- model (string, required): OpenCode model id in provider/model format (for example opencode/deepseek-v4-flash-free)
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
 - variant (string, optional): provider-specific model variant (for example minimal|low|medium|high|max)
 - promptTemplate (string, optional): run prompt template

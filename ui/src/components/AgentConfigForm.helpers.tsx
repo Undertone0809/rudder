@@ -152,8 +152,8 @@ export function defaultModelForRuntime(agentRuntimeType: string) {
   if (agentRuntimeType === "codex_local") return DEFAULT_CODEX_LOCAL_MODEL;
   if (agentRuntimeType === "gemini_local") return DEFAULT_GEMINI_LOCAL_MODEL;
   if (agentRuntimeType === "cursor") return DEFAULT_CURSOR_LOCAL_MODEL;
-  if (agentRuntimeType === "opencode_local") return "anthropic/claude-sonnet-4-5";
-  if (agentRuntimeType === "pi_local") return "xai/grok-4";
+  if (agentRuntimeType === "opencode_local") return "opencode/deepseek-v4-flash-free";
+  if (agentRuntimeType === "pi_local") return "kimi-coding/kimi-for-coding";
   return "";
 }
 
