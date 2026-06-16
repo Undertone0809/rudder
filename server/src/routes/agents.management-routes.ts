@@ -1159,8 +1159,21 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     assertCompanyAccess(req, orgId);
     const agentId = req.query.agentId as string | undefined;
     const limitParam = req.query.limit as string | undefined;
-    const limit = Math.max(1, Math.min(1000, limitParam ? parseInt(limitParam, 10) || 100 : 100));
-    const runs = await heartbeat.list(orgId, agentId, limit);
+    const startDateParam = req.query.startDate as string | undefined;
+    const endDateParam = req.query.endDate as string | undefined;
+    const startDate = startDateParam ? new Date(startDateParam) : undefined;
+    const endDate = endDateParam ? new Date(endDateParam) : undefined;
+    const filters = {
+      startDate: startDate && Number.isFinite(startDate.getTime()) ? startDate : undefined,
+      endDate: endDate && Number.isFinite(endDate.getTime()) ? endDate : undefined,
+    };
+    const hasDateRange = Boolean(filters.startDate || filters.endDate);
+    const limit = limitParam
+      ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 100))
+      : hasDateRange
+        ? undefined
+        : 100;
+    const runs = await heartbeat.list(orgId, agentId, limit, filters);
     res.json(runs);
   });
 

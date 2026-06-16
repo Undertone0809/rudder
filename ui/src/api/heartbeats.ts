@@ -33,11 +33,23 @@ export const HEARTBEAT_RUN_LIST_COMPACT_LIMIT = 50;
 export const HEARTBEAT_RUN_LIST_AGENT_LIMIT = 200;
 export const HEARTBEAT_RUN_LIST_HISTORY_LIMIT = 1000;
 
+export interface HeartbeatRunListFilters {
+  startDate?: string;
+  endDate?: string;
+}
+
 export const heartbeatsApi = {
-  list: (orgId: string, agentId?: string, limit = HEARTBEAT_RUN_LIST_DEFAULT_LIMIT) => {
+  list: (
+    orgId: string,
+    agentId?: string,
+    limit: number | null = HEARTBEAT_RUN_LIST_DEFAULT_LIMIT,
+    filters: HeartbeatRunListFilters = {},
+  ) => {
     const searchParams = new URLSearchParams();
     if (agentId) searchParams.set("agentId", agentId);
-    if (limit) searchParams.set("limit", String(limit));
+    if (limit !== null) searchParams.set("limit", String(limit));
+    if (filters.startDate) searchParams.set("startDate", filters.startDate);
+    if (filters.endDate) searchParams.set("endDate", filters.endDate);
     const qs = searchParams.toString();
     return api.get<HeartbeatRun[]>(`/orgs/${orgId}/heartbeat-runs${qs ? `?${qs}` : ""}`);
   },

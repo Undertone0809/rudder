@@ -125,6 +125,81 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
     }
   });
 
+  it("lists heartbeat runs within a date range", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const olderRunId = randomUUID();
+    const firstInRangeRunId = randomUUID();
+    const secondInRangeRunId = randomUUID();
+    const newerRunId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RUD",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Wesley",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values([
+      {
+        id: olderRunId,
+        orgId,
+        agentId,
+        invocationSource: "timer",
+        status: "succeeded",
+        createdAt: new Date("2026-06-09T23:59:59.000Z"),
+        updatedAt: new Date("2026-06-09T23:59:59.000Z"),
+      },
+      {
+        id: firstInRangeRunId,
+        orgId,
+        agentId,
+        invocationSource: "timer",
+        status: "succeeded",
+        createdAt: new Date("2026-06-10T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-10T00:00:00.000Z"),
+      },
+      {
+        id: secondInRangeRunId,
+        orgId,
+        agentId,
+        invocationSource: "timer",
+        status: "failed",
+        createdAt: new Date("2026-06-16T12:00:00.000Z"),
+        updatedAt: new Date("2026-06-16T12:00:00.000Z"),
+      },
+      {
+        id: newerRunId,
+        orgId,
+        agentId,
+        invocationSource: "timer",
+        status: "succeeded",
+        createdAt: new Date("2026-06-16T12:00:01.000Z"),
+        updatedAt: new Date("2026-06-16T12:00:01.000Z"),
+      },
+    ]);
+
+    const rows = await svc.list(orgId, undefined, undefined, {
+      startDate: new Date("2026-06-10T00:00:00.000Z"),
+      endDate: new Date("2026-06-16T12:00:00.000Z"),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([secondInRangeRunId, firstInRangeRunId]);
+  });
+
   it("aggregates recent used skills from adapter invoke events", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

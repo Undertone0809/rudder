@@ -24,7 +24,7 @@ import type {
 import {
   summarizeTokenUsage
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
 import type {
   AgentRuntimeExecutionResult
 } from "../../agent-runtimes/index.js";
@@ -1398,18 +1398,24 @@ export function heartbeatService(db: Db) {
   const { executeRun } = executeHandlers;
   const { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = miscHandlers;
   return {
-    list: async (orgId: string, agentId?: string, limit?: number) => {
+    list: async (
+      orgId: string,
+      agentId?: string,
+      limit?: number,
+      filters: { startDate?: Date; endDate?: Date } = {},
+    ) => {
+      const conditions = [eq(heartbeatRuns.orgId, orgId)];
+      if (agentId) conditions.push(eq(heartbeatRuns.agentId, agentId));
+      if (filters.startDate) conditions.push(gte(heartbeatRuns.createdAt, filters.startDate));
+      if (filters.endDate) conditions.push(lte(heartbeatRuns.createdAt, filters.endDate));
+
       const query = db
         .select(heartbeatRunListColumns)
         .from(heartbeatRuns)
-        .where(
-          agentId
-            ? and(eq(heartbeatRuns.orgId, orgId), eq(heartbeatRuns.agentId, agentId))
-            : eq(heartbeatRuns.orgId, orgId),
-        )
+        .where(and(...conditions))
         .orderBy(desc(heartbeatRuns.createdAt));
 
-      const rows = limit ? await query.limit(limit) : await query;
+      const rows = limit !== undefined ? await query.limit(limit) : await query;
       const runIds = rows.map((row) => row.id);
       const usedSkillsByRun = new Map<string, Map<string, { key: string; label: string }>>();
       if (agentId && runIds.length > 0) {

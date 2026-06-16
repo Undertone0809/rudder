@@ -7,6 +7,7 @@ import { agentRoutes } from "../routes/agents.js";
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelRun: vi.fn(),
   getRun: vi.fn(),
+  list: vi.fn(),
   retryRun: vi.fn(),
 }));
 
@@ -81,6 +82,28 @@ function createApp(
 describe("heartbeat run retry route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("lists heartbeat runs by date range without applying the default recency limit", async () => {
+    mockHeartbeatService.list.mockResolvedValue([]);
+
+    const res = await request(createApp())
+      .get("/api/orgs/organization-1/heartbeat-runs")
+      .query({
+        startDate: "2026-06-10T00:00:00.000Z",
+        endDate: "2026-06-16T12:00:00.000Z",
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockHeartbeatService.list).toHaveBeenCalledWith(
+      "organization-1",
+      undefined,
+      undefined,
+      {
+        startDate: new Date("2026-06-10T00:00:00.000Z"),
+        endDate: new Date("2026-06-16T12:00:00.000Z"),
+      },
+    );
   });
 
   it("retries a failed run through the dedicated recovery endpoint", async () => {
