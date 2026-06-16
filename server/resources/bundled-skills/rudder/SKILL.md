@@ -48,7 +48,7 @@ organization-skill operations.
 - Use `chainOfCommand` for escalation.
 - Above 80% spend, focus on critical work only.
 - Use `rudder-create-agent` for hiring or new-agent creation workflows.
-- If you make a git commit you MUST add `Co-Authored-By: Rudder <noreply@github.com/Undertone0809/rudder>` to the end of each commit message.
+- If you make a git commit you MUST add `Co-Authored-By: Rudder <285064165+Rudderhq@users.noreply.github.com>` to the end of each commit message.
 - Git commits must use an explicit safe identity. Rudder prepares isolated Codex homes and runtime worktrees with `user.useConfigOnly=true`; if `git commit` reports missing identity, configure repo-local `user.name` and `user.email` instead of bypassing the guard. Never accept `*@*.local` author or committer metadata.
 
 ## Essential Commands
