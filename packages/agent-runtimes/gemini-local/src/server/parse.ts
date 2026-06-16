@@ -121,6 +121,16 @@ export function parseGeminiJsonl(stdout: string) {
       continue;
     }
 
+    if (type === "message") {
+      const role = asString(event.role, "").trim();
+      if (role === "assistant") {
+        const contentText = asString(event.content, "").trim();
+        if (contentText) messages.push(contentText);
+        messages.push(...collectMessageText(event.message));
+      }
+      continue;
+    }
+
     if (type === "result") {
       resultEvent = event;
       accumulateUsage(usage, event.usage ?? event.usageMetadata);

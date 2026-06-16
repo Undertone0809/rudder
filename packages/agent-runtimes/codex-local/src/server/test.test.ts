@@ -1,0 +1,43 @@
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { testEnvironment } from "./test.js";
+
+describe("codex testEnvironment", () => {
+  const originalPath = process.env.PATH;
+
+  afterEach(() => {
+    process.env.PATH = originalPath;
+  });
+
+  it("allows slow successful local probes by default", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-"));
+    const command = path.join(tempDir, "codex");
+    await writeFile(
+      command,
+      [
+        "#!/usr/bin/env node",
+        "setTimeout(() => {",
+        "  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hello' } }) + '\\n');",
+        "  process.stdout.write(JSON.stringify({ type: 'turn.completed', usage: {} }) + '\\n');",
+        "}, 11_000);",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(command, 0o755);
+    process.env.PATH = `${tempDir}${path.delimiter}${originalPath ?? ""}`;
+
+    try {
+      const result = await testEnvironment({
+        orgId: "org-1",
+        agentRuntimeType: "codex_local",
+        config: { cwd: process.cwd() },
+      });
+
+      expect(result.checks.map((check) => check.code)).toContain("codex_hello_probe_passed");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }, 20_000);
+});

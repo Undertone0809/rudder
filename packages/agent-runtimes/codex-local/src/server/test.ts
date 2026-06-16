@@ -50,6 +50,7 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
 
 const CODEX_AUTH_REQUIRED_RE =
   /(?:not\s+logged\s+in|login\s+required|authentication\s+required|unauthorized|invalid(?:\s+or\s+missing)?\s+api(?:[_\s-]?key)?|openai[_\s-]?api[_\s-]?key|api[_\s-]?key.*required|please\s+run\s+`?codex\s+login`?)/i;
+const DEFAULT_CODEX_HELLO_PROBE_TIMEOUT_SEC = 90;
 
 export async function testEnvironment(
   ctx: AgentRuntimeEnvironmentTestContext,
@@ -129,6 +130,7 @@ export async function testEnvironment(
       });
     } else {
       const model = asString(config.model, "").trim();
+      const helloProbeTimeoutSec = Math.max(1, Number(config.helloProbeTimeoutSec) || DEFAULT_CODEX_HELLO_PROBE_TIMEOUT_SEC);
       const modelReasoningEffort = asString(
         config.modelReasoningEffort,
         asString(config.reasoningEffort, ""),
@@ -161,7 +163,7 @@ export async function testEnvironment(
         {
           cwd,
           env,
-          timeoutSec: 45,
+          timeoutSec: helloProbeTimeoutSec,
           graceSec: 5,
           stdin: "Respond with hello.",
           onLog: async () => {},

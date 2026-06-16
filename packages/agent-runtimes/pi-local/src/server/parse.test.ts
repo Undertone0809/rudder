@@ -209,6 +209,23 @@ describe("parsePiJsonl", () => {
     expect(parsed.usage.cachedInputTokens).toBe(25);
     expect(parsed.usage.costUsd).toBe(0.003);
   });
+
+  it("extracts assistant error messages from turn_end events", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "turn_end",
+        message: {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "401 invalid x-api-key",
+        },
+      }),
+    ].join("\n");
+
+    const parsed = parsePiJsonl(stdout);
+    expect(parsed.errors).toContain("401 invalid x-api-key");
+  });
 });
 
 describe("isPiUnknownSessionError", () => {

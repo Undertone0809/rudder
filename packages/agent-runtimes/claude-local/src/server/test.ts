@@ -49,6 +49,74 @@ function summarizeProbeDetail(stdout: string, stderr: string): string | null {
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+export function classifyClaudeHelloProbe(input: {
+  timedOut: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}): AgentRuntimeEnvironmentCheck {
+  const parsedStream = parseClaudeStreamJson(input.stdout);
+  const parsed = parsedStream.resultJson;
+  const loginMeta = detectClaudeLoginRequired({
+    parsed,
+    stdout: input.stdout,
+    stderr: input.stderr,
+  });
+  const detail = summarizeProbeDetail(input.stdout, input.stderr);
+
+  if (loginMeta.requiresLogin) {
+    return {
+      code: "claude_hello_probe_auth_required",
+      level: "warn",
+      message: "Claude CLI is installed, but login is required.",
+      ...(detail ? { detail } : {}),
+      hint: loginMeta.loginUrl
+        ? `Run \`claude auth login\` and complete sign-in at ${loginMeta.loginUrl}, then retry.`
+        : "Run `claude auth login` in this environment, then retry the probe.",
+    };
+  }
+
+  const summary = parsedStream.summary.trim();
+  const hasHello = /\bhello\b/i.test(summary);
+  if (hasHello && ((input.exitCode ?? 0) === 0 || input.timedOut)) {
+    return {
+      code: input.timedOut ? "claude_hello_probe_passed_with_timeout" : "claude_hello_probe_passed",
+      level: input.timedOut ? "warn" : "info",
+      message: input.timedOut
+        ? "Claude hello probe produced the expected response before the CLI process timed out."
+        : "Claude hello probe succeeded.",
+      ...(summary ? { detail: summary.replace(/\s+/g, " ").trim().slice(0, 240) } : {}),
+    };
+  }
+
+  if (input.timedOut) {
+    return {
+      code: "claude_hello_probe_timed_out",
+      level: "warn",
+      message: "Claude hello probe timed out.",
+      hint: "Retry the probe. If this persists, verify Claude can run `Respond with hello` from this directory manually.",
+    };
+  }
+
+  if ((input.exitCode ?? 1) === 0) {
+    return {
+      code: "claude_hello_probe_unexpected_output",
+      level: "warn",
+      message: "Claude probe ran but did not return `hello` as expected.",
+      ...(summary ? { detail: summary.replace(/\s+/g, " ").trim().slice(0, 240) } : {}),
+      hint: "Try the probe manually (`claude --print - --output-format stream-json --verbose`) and prompt `Respond with hello`.",
+    };
+  }
+
+  return {
+    code: "claude_hello_probe_failed",
+    level: "error",
+    message: "Claude hello probe failed.",
+    ...(detail ? { detail } : {}),
+    hint: "Run `claude --print - --output-format stream-json --verbose` manually in this directory and prompt `Respond with hello` to debug.",
+  };
+}
+
 export async function testEnvironment(
   ctx: AgentRuntimeEnvironmentTestContext,
 ): Promise<AgentRuntimeEnvironmentTestResult> {
@@ -160,57 +228,7 @@ export async function testEnvironment(
         },
       );
 
-      const parsedStream = parseClaudeStreamJson(probe.stdout);
-      const parsed = parsedStream.resultJson;
-      const loginMeta = detectClaudeLoginRequired({
-        parsed,
-        stdout: probe.stdout,
-        stderr: probe.stderr,
-      });
-      const detail = summarizeProbeDetail(probe.stdout, probe.stderr);
-
-      if (probe.timedOut) {
-        checks.push({
-          code: "claude_hello_probe_timed_out",
-          level: "warn",
-          message: "Claude hello probe timed out.",
-          hint: "Retry the probe. If this persists, verify Claude can run `Respond with hello` from this directory manually.",
-        });
-      } else if (loginMeta.requiresLogin) {
-        checks.push({
-          code: "claude_hello_probe_auth_required",
-          level: "warn",
-          message: "Claude CLI is installed, but login is required.",
-          ...(detail ? { detail } : {}),
-          hint: loginMeta.loginUrl
-            ? `Run \`claude auth login\` and complete sign-in at ${loginMeta.loginUrl}, then retry.`
-            : "Run `claude auth login` in this environment, then retry the probe.",
-        });
-      } else if ((probe.exitCode ?? 1) === 0) {
-        const summary = parsedStream.summary.trim();
-        const hasHello = /\bhello\b/i.test(summary);
-        checks.push({
-          code: hasHello ? "claude_hello_probe_passed" : "claude_hello_probe_unexpected_output",
-          level: hasHello ? "info" : "warn",
-          message: hasHello
-            ? "Claude hello probe succeeded."
-            : "Claude probe ran but did not return `hello` as expected.",
-          ...(summary ? { detail: summary.replace(/\s+/g, " ").trim().slice(0, 240) } : {}),
-          ...(hasHello
-            ? {}
-            : {
-                hint: "Try the probe manually (`claude --print - --output-format stream-json --verbose`) and prompt `Respond with hello`.",
-              }),
-        });
-      } else {
-        checks.push({
-          code: "claude_hello_probe_failed",
-          level: "error",
-          message: "Claude hello probe failed.",
-          ...(detail ? { detail } : {}),
-          hint: "Run `claude --print - --output-format stream-json --verbose` manually in this directory and prompt `Respond with hello` to debug.",
-        });
-      }
+      checks.push(classifyClaudeHelloProbe(probe));
     }
   }
 

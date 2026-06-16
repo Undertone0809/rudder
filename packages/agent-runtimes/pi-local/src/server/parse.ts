@@ -90,6 +90,12 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
           result.finalMessage = text;
           result.messages.push(text);
         }
+
+        const stopReason = asString(message.stopReason, "");
+        const errorMessage = asString(message.errorMessage, "").trim();
+        if (stopReason === "error" && errorMessage) {
+          result.errors.push(errorMessage);
+        }
         
         // Extract usage and cost from assistant message
         const usage = asRecord(message.usage);

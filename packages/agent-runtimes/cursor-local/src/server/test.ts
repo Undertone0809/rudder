@@ -36,9 +36,9 @@ function firstNonEmptyLine(text: string): string {
   );
 }
 
-function commandLooksLike(command: string, expected: string): boolean {
+function commandLooksLikeAny(command: string, expected: string[]): boolean {
   const base = path.basename(command).toLowerCase();
-  return base === expected || base === `${expected}.cmd` || base === `${expected}.exe`;
+  return expected.some((name) => base === name || base === `${name}.cmd` || base === `${name}.exe`);
 }
 
 function summarizeProbeDetail(stdout: string, stderr: string, parsedError: string | null): string | null {
@@ -51,13 +51,14 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
 
 const CURSOR_AUTH_REQUIRED_RE =
   /(?:authentication\s+required|not\s+authenticated|not\s+logged\s+in|unauthorized|invalid(?:\s+or\s+missing)?\s+api(?:[_\s-]?key)?|cursor[_\s-]?api[_\s-]?key|run\s+'?agent\s+login'?\s+first|api(?:[_\s-]?key)?(?:\s+is)?\s+required)/i;
+const DEFAULT_CURSOR_HELLO_PROBE_TIMEOUT_SEC = 90;
 
 export async function testEnvironment(
   ctx: AgentRuntimeEnvironmentTestContext,
 ): Promise<AgentRuntimeEnvironmentTestResult> {
   const checks: AgentRuntimeEnvironmentCheck[] = [];
   const config = parseObject(ctx.config);
-  const command = asString(config.command, "agent");
+  const command = asString(config.command, "cursor-agent");
   const cwd = asString(config.cwd, process.cwd());
 
   try {
@@ -113,23 +114,24 @@ export async function testEnvironment(
       code: "cursor_api_key_missing",
       level: "warn",
       message: "CURSOR_API_KEY is not set. Cursor runs may fail until authentication is configured.",
-      hint: "Set CURSOR_API_KEY in adapter env or run `agent login`.",
+      hint: "Set CURSOR_API_KEY in adapter env or run `cursor-agent login`.",
     });
   }
 
   const canRunProbe =
     checks.every((check) => check.code !== "cursor_cwd_invalid" && check.code !== "cursor_command_unresolvable");
   if (canRunProbe) {
-    if (!commandLooksLike(command, "agent")) {
+    if (!commandLooksLikeAny(command, ["cursor-agent", "agent"])) {
       checks.push({
         code: "cursor_hello_probe_skipped_custom_command",
         level: "info",
-        message: "Skipped hello probe because command is not `agent`.",
+        message: "Skipped hello probe because command is not `cursor-agent`.",
         detail: command,
-        hint: "Use the `agent` CLI command to run the automatic installation and auth probe.",
+        hint: "Use the `cursor-agent` CLI command to run the automatic installation and auth probe.",
       });
     } else {
       const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
+      const helloProbeTimeoutSec = Math.max(1, Number(config.helloProbeTimeoutSec) || DEFAULT_CURSOR_HELLO_PROBE_TIMEOUT_SEC);
       const extraArgs = (() => {
         const fromExtraArgs = asStringArray(config.extraArgs);
         if (fromExtraArgs.length > 0) return fromExtraArgs;
@@ -149,7 +151,7 @@ export async function testEnvironment(
         {
           cwd,
           env,
-          timeoutSec: 45,
+          timeoutSec: helloProbeTimeoutSec,
           graceSec: 5,
           onLog: async () => {},
         },
@@ -163,7 +165,7 @@ export async function testEnvironment(
           code: "cursor_hello_probe_timed_out",
           level: "warn",
           message: "Cursor hello probe timed out.",
-          hint: "Retry the probe. If this persists, verify `agent -p --mode ask --output-format json \"Respond with hello.\"` manually.",
+          hint: "Retry the probe. If this persists, verify `cursor-agent -p --mode ask --output-format json \"Respond with hello.\"` manually.",
         });
       } else if ((probe.exitCode ?? 1) === 0) {
         const summary = parsed.summary.trim();
@@ -178,7 +180,7 @@ export async function testEnvironment(
           ...(hasHello
             ? {}
             : {
-                hint: "Try `agent -p --mode ask --output-format json \"Respond with hello.\"` manually to inspect full output.",
+                hint: "Try `cursor-agent -p --mode ask --output-format json \"Respond with hello.\"` manually to inspect full output.",
               }),
         });
       } else if (CURSOR_AUTH_REQUIRED_RE.test(authEvidence)) {
@@ -187,7 +189,7 @@ export async function testEnvironment(
           level: "warn",
           message: "Cursor CLI is installed, but authentication is not ready.",
           ...(detail ? { detail } : {}),
-          hint: "Run `agent login` or configure CURSOR_API_KEY in adapter env/shell, then retry the probe.",
+          hint: "Run `cursor-agent login` or configure CURSOR_API_KEY in adapter env/shell, then retry the probe.",
         });
       } else {
         checks.push({
@@ -195,7 +197,7 @@ export async function testEnvironment(
           level: "error",
           message: "Cursor hello probe failed.",
           ...(detail ? { detail } : {}),
-          hint: "Run `agent -p --mode ask --output-format json \"Respond with hello.\"` manually in this working directory to debug.",
+          hint: "Run `cursor-agent -p --mode ask --output-format json \"Respond with hello.\"` manually in this working directory to debug.",
         });
       }
     }

@@ -1275,7 +1275,7 @@ export function OnboardingWizard() {
                               in env or run{" "}
                               <span className="font-mono">
                                 {agentRuntimeType === "cursor"
-                                  ? "agent login"
+                                  ? "cursor-agent login"
                                   : agentRuntimeType === "codex_local"
                                     ? "codex login"
                                     : agentRuntimeType === "gemini_local"
