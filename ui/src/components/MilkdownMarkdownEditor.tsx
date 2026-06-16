@@ -583,6 +583,16 @@ function normalizeVisibleCopyText(value: string) {
     .trim();
 }
 
+export function shouldCopySelectionAsMarkdown(visibleSelectionText: string) {
+  const normalized = visibleSelectionText
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u200B/g, "")
+    .replace(/\u00A0/g, " ")
+    .trim();
+  if (!normalized) return false;
+  return normalized.split("\n").some((line, index) => index > 0 && line.trim().length > 0);
+}
+
 function getAllSubstringIndexes(value: string, search: string): number[] {
   const indexes: number[] = [];
   let index = value.indexOf(search);
@@ -1421,7 +1431,11 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         const selectedFragment = selection.getRangeAt(0).cloneContents();
         const fragmentMarkdownOptions = listMarkdownOptionsForSelection(selection);
         let canonicalMarkdown = "";
-        const selectedVisibleText = normalizeVisibleCopyText(selection.toString());
+        const selectedRawText = selection.toString();
+        if (!shouldCopySelectionAsMarkdown(selectedRawText)) {
+          return;
+        }
+        const selectedVisibleText = normalizeVisibleCopyText(selectedRawText);
         const fullVisibleText = normalizeVisibleCopyText(editable.innerText);
         if (selectedVisibleText && selectedVisibleText === fullVisibleText) {
           canonicalMarkdown = latestValueRef.current;

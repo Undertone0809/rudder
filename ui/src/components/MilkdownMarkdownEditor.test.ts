@@ -25,6 +25,7 @@ import {
   refreshMilkdownMentionTokenStyles,
   rudderTokenNavigationPath,
   shouldActivateMilkdownInlineTokenClick,
+  shouldCopySelectionAsMarkdown,
   shouldParsePastedMarkdown,
 } from "./MilkdownMarkdownEditor";
 import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
@@ -685,6 +686,14 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
       "- Parent item",
       "  - Nested item",
     ].join("\n"));
+  });
+
+  it("only upgrades multi-line selections to markdown clipboard text", () => {
+    expect(shouldCopySelectionAsMarkdown("Ask Jade today")).toBe(false);
+    expect(shouldCopySelectionAsMarkdown("Ask Jade today\n")).toBe(false);
+    expect(shouldCopySelectionAsMarkdown("Ask Jade today\n\n")).toBe(false);
+    expect(shouldCopySelectionAsMarkdown("Ask Jade today\nReview the plan")).toBe(true);
+    expect(shouldCopySelectionAsMarkdown("Ask Jade today\n\nReview the plan")).toBe(true);
   });
 
   it("resolves special Rudder references to app navigation paths", () => {
