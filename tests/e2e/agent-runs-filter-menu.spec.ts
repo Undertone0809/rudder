@@ -40,6 +40,7 @@ test.describe("Agent runs filter menu", () => {
     const selectedRunId = randomUUID();
     const failedRunId = randomUUID();
     const newestShortRunId = randomUUID();
+    const issueContextId = randomUUID();
     await e2eDb.insert(heartbeatRuns).values([
       {
         id: selectedRunId,
@@ -78,7 +79,7 @@ test.describe("Agent runs filter menu", () => {
         },
         resultJson: { summary: "Process lost on launch" },
         contextSnapshot: {
-          issueId: "issue-filter-e2e",
+          issueId: issueContextId,
           recovery: { failureKind: "process_lost" },
         },
         createdAt: new Date("2026-05-23T09:00:00.000Z"),
@@ -153,7 +154,7 @@ test.describe("Agent runs filter menu", () => {
     await expect(sortPopover.getByRole("menuitemradio", { name: "Duration ↓" })).toBeVisible();
     await expect(listPane.getByRole("link").first()).toContainText(failedRunId.slice(0, 8));
 
-    await mainContent.getByRole("button", { name: "Filter" }).click();
+    await mainContent.getByRole("button", { name: /^Filter$/ }).click();
     const popover = page.getByTestId("run-filter-popover");
     await expect(popover).toBeVisible();
     await expect(popover.getByText("Filter runs")).toBeVisible();
@@ -168,11 +169,19 @@ test.describe("Agent runs filter menu", () => {
     await expect(listPane.getByText(failedRunId.slice(0, 8))).toBeVisible();
     await expect(mainContent.getByTestId("agent-runs-detail-pane").getByText("Selected run should stay open")).toBeVisible();
 
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("run-filter-popover")).toHaveCount(0);
+    await listPane.getByRole("link").filter({ hasText: failedRunId.slice(0, 8) }).click();
+    await expect(page).toHaveURL(new RegExp(`/agents/[^/]+/runs/${failedRunId}`));
+    await expect(page).toHaveURL(/runStatus=failed/);
+    await expect(page).toHaveURL(/runSkill=build-advisor/);
+    await expect(mainContent.getByTestId("agent-runs-detail-pane").getByText("Process lost")).toBeVisible();
+
     await mainContent.getByRole("button", { name: "Clear run filters" }).click();
     await expect(page).not.toHaveURL(/runStatus=failed/);
     await expect(page).not.toHaveURL(/runSkill=build-advisor/);
 
-    await mainContent.getByRole("button", { name: "Filter" }).click();
+    await mainContent.getByRole("button", { name: /^Filter$/ }).click();
     const customPopover = page.getByTestId("run-filter-popover");
     await expect(customPopover).toBeVisible();
     await customPopover.getByRole("button", { name: "Custom" }).click();
@@ -185,7 +194,7 @@ test.describe("Agent runs filter menu", () => {
     await expect(page).toHaveURL(new RegExp(`runTo=${encodeURIComponent(customTo)}`));
     await expect(listPane.getByText(failedRunId.slice(0, 8))).toBeVisible();
     await expect(listPane.getByText(newestShortRunId.slice(0, 8))).toHaveCount(0);
-    await expect(listPane.getByText("Selected run is outside the current filters.")).toBeVisible();
+    await expect(listPane.getByText("Selected run is outside the current filters.")).toHaveCount(0);
     await expect(mainContent.getByText(/Custom:/)).toBeVisible();
   });
 });
