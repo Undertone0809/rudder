@@ -153,7 +153,9 @@ describe("SkillsUsageChart", () => {
 
     expect(container.querySelector('[data-testid="skills-usage-area-chart"]')).toBeTruthy();
     expect(container.querySelector("svg")).toBeTruthy();
-    expect(container.querySelectorAll("path").length).toBeGreaterThanOrEqual(2);
+    const pathData = Array.from(container.querySelectorAll("path")).map((path) => path.getAttribute("d") ?? "");
+    expect(pathData.length).toBeGreaterThanOrEqual(2);
+    expect(pathData.every((path) => path.includes(" C "))).toBe(true);
     expect(container.textContent).toContain("7");
     expect(container.textContent).toContain("Skill A");
     expect(container.textContent).toContain("Skill B");

@@ -217,6 +217,10 @@ test.describe("Agent dashboard skills analytics", () => {
     await expect(usageChart.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "0" })).toBeVisible();
     await expect(usageChart.locator("svg path")).toHaveCount(4);
     await expect(usageChart.locator("svg path").first()).toHaveAttribute("d", /\S/);
+    const agentChartPathData = await usageChart.locator("svg path").evaluateAll((paths) =>
+      paths.map((path) => path.getAttribute("d") ?? ""),
+    );
+    expect(agentChartPathData.every((path) => path.includes(" C "))).toBe(true);
     await expect(usageChart.getByText("build-advisor")).toBeVisible();
     await expect(usageChart.getByText("screenshot")).toBeVisible();
     await expect(usageChart.getByText("pua")).toBeVisible();
@@ -392,6 +396,10 @@ test.describe("Agent dashboard skills analytics", () => {
     await expect(usageChart.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "0" })).toBeVisible();
     await expect(usageChart.locator("svg path")).toHaveCount(4);
     await expect(usageChart.locator("svg path").first()).toHaveAttribute("d", /\S/);
+    const dashboardChartPathData = await usageChart.locator("svg path").evaluateAll((paths) =>
+      paths.map((path) => path.getAttribute("d") ?? ""),
+    );
+    expect(dashboardChartPathData.every((path) => path.includes(" C "))).toBe(true);
     await expect(usageChart.getByText("build-advisor")).toBeVisible();
     await expect(usageChart.getByText("screenshot")).toBeVisible();
     await expect(usageChart.getByText("deep-research")).toBeVisible();

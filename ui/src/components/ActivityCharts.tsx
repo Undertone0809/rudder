@@ -358,6 +358,8 @@ type SkillAreaSeries = {
   values: number[];
 };
 
+type SmoothChartPoint = { x: number; y: number };
+
 function buildSkillAreaSeries(
   analytics: AgentSkillAnalytics,
   colorBySkillKey: Map<string, string>,
@@ -384,22 +386,45 @@ function buildSkillAreaSeries(
   return series;
 }
 
+function formatSvgNumber(value: number): string {
+  return value.toFixed(2);
+}
+
+function formatSvgPoint(point: SmoothChartPoint): string {
+  return `${formatSvgNumber(point.x)} ${formatSvgNumber(point.y)}`;
+}
+
+function buildSmoothCurveSegments(points: SmoothChartPoint[]): string {
+  if (points.length < 2) return "";
+  return points
+    .slice(1)
+    .map((point, index) => {
+      const previous = points[index]!;
+      const horizontalDelta = (point.x - previous.x) / 2;
+      const controlStart = { x: previous.x + horizontalDelta, y: previous.y };
+      const controlEnd = { x: point.x - horizontalDelta, y: point.y };
+      return `C ${formatSvgPoint(controlStart)} ${formatSvgPoint(controlEnd)} ${formatSvgPoint(point)}`;
+    })
+    .join(" ");
+}
+
+function buildSmoothCurvePath(points: SmoothChartPoint[]): string {
+  if (points.length === 0) return "";
+  return `M ${formatSvgPoint(points[0]!)} ${buildSmoothCurveSegments(points)}`.trim();
+}
+
 function buildSkillAreaPath(points: Array<{ x: number; top: number; bottom: number }>): string {
   if (points.length === 0) return "";
-  const topPath = points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.top.toFixed(2)}`)
-    .join(" ");
-  const bottomPath = [...points]
+  const topPoints = points.map((point) => ({ x: point.x, y: point.top }));
+  const bottomPoints = [...points]
     .reverse()
-    .map((point) => `L ${point.x.toFixed(2)} ${point.bottom.toFixed(2)}`)
-    .join(" ");
-  return `${topPath} ${bottomPath} Z`;
+    .map((point) => ({ x: point.x, y: point.bottom }));
+  const bottomStart = bottomPoints[0]!;
+  return `${buildSmoothCurvePath(topPoints)} L ${formatSvgPoint(bottomStart)} ${buildSmoothCurveSegments(bottomPoints)} Z`.trim();
 }
 
 function buildSkillLinePath(points: Array<{ x: number; y: number }>): string {
-  return points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
-    .join(" ");
+  return buildSmoothCurvePath(points);
 }
 
 /* ---- Chart Components ---- */
