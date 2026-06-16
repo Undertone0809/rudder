@@ -6,15 +6,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { Agent } from "@rudderhq/shared";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { History } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { accessApi } from "../api/access";
 import { activityApi, type ActivityListFilters } from "../api/activity";
 import { agentsApi } from "../api/agents";
-import { goalsApi } from "../api/goals";
-import { issuesApi } from "../api/issues";
-import { projectsApi } from "../api/projects";
 import { ActivityRow } from "../components/ActivityRow";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -24,6 +21,47 @@ import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { queryKeys } from "../lib/queryKeys";
 
 type PrincipalFilter = "all" | "system" | `agent:${string}` | `user:${string}`;
+
+const ACTIVITY_PAGE_SIZE = 30;
+const ENTITY_TYPE_FILTER_OPTIONS = [
+  "agent",
+  "agent_api_key",
+  "agent_workspace",
+  "approval",
+  "asset",
+  "automation",
+  "automation_run",
+  "automation_trigger",
+  "budget_incident",
+  "budget_policy",
+  "calendar_event",
+  "calendar_source",
+  "chat",
+  "comment",
+  "cost_event",
+  "document",
+  "finance_event",
+  "goal",
+  "heartbeat_run",
+  "instance_settings",
+  "invite",
+  "issue",
+  "join_request",
+  "label",
+  "operator_profile",
+  "organization",
+  "organization_intelligence_profile",
+  "organization_resource",
+  "organization_skill",
+  "organization_workspace",
+  "plugin",
+  "project",
+  "project_resource_attachment",
+  "run_workspace",
+  "secret",
+  "user",
+  "workspace_backup",
+];
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -36,6 +74,7 @@ export function Activity() {
   const [entityTypeFilter, setEntityTypeFilter] = useState("all");
   const [principalFilter, setPrincipalFilter] = useState<PrincipalFilter>("all");
   const [knownActivityUserIds, setKnownActivityUserIds] = useState<string[]>([]);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Activity" }]);
@@ -63,33 +102,47 @@ export function Activity() {
     [activityFilters],
   );
 
-  const { data, isLoading, error } = useQuery({
+  const {
+    data: activityPages,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: queryKeys.activity(selectedOrganizationId!, activityFiltersKey),
-    queryFn: () => activityApi.list(selectedOrganizationId!, activityFilters),
+    queryFn: ({ pageParam }) => activityApi.listPage(selectedOrganizationId!, {
+      ...activityFilters,
+      limit: ACTIVITY_PAGE_SIZE,
+      cursor: pageParam,
+    }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: !!selectedOrganizationId,
   });
+
+  const data = useMemo(
+    () => activityPages?.pages.flatMap((page) => page.items) ?? [],
+    [activityPages],
+  );
+
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    if (!node || !hasNextPage || isFetchingNextPage) return;
+    if (typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      void fetchNextPage();
+    }, { rootMargin: "320px 0px" });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, data.length]);
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
     queryFn: () => agentsApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId,
-  });
-
-  const { data: issues } = useQuery({
-    queryKey: queryKeys.issues.list(selectedOrganizationId!),
-    queryFn: () => issuesApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId,
-  });
-
-  const { data: projects } = useQuery({
-    queryKey: queryKeys.projects.list(selectedOrganizationId!),
-    queryFn: () => projectsApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId,
-  });
-
-  const { data: goals } = useQuery({
-    queryKey: queryKeys.goals.list(selectedOrganizationId!),
-    queryFn: () => goalsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
 
@@ -107,18 +160,11 @@ export function Activity() {
 
   const entityNameMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const i of issues ?? []) map.set(`issue:${i.id}`, i.identifier ?? i.id.slice(0, 8));
     for (const a of agents ?? []) map.set(`agent:${a.id}`, a.name);
-    for (const p of projects ?? []) map.set(`project:${p.id}`, p.name);
-    for (const g of goals ?? []) map.set(`goal:${g.id}`, g.title);
     return map;
-  }, [issues, agents, projects, goals]);
+  }, [agents]);
 
-  const entityTitleMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const i of issues ?? []) map.set(`issue:${i.id}`, i.title);
-    return map;
-  }, [issues]);
+  const entityTitleMap = useMemo(() => new Map<string, string>(), []);
 
   const currentBoardUserId = currentBoardAccess?.user?.id ?? currentBoardAccess?.userId;
 
@@ -134,7 +180,7 @@ export function Activity() {
 
       add(currentBoardUserId);
       if (principalFilter.startsWith("user:")) add(principalFilter.slice("user:".length));
-      for (const event of data ?? []) {
+      for (const event of data) {
         if (event.actorType === "user") add(event.actorId);
       }
 
@@ -172,16 +218,13 @@ export function Activity() {
 
   const filtered = data;
 
-  const entityTypes = data
-    ? [
-      ...new Set([
-        ...data.map((e) => e.entityType),
-        entityTypeFilter !== "all" ? entityTypeFilter : "",
-      ]),
-    ].filter(Boolean).sort()
-    : entityTypeFilter !== "all"
-      ? [entityTypeFilter]
-      : [];
+  const entityTypes = [
+    ...new Set([
+      ...ENTITY_TYPE_FILTER_OPTIONS,
+      ...data.map((e) => e.entityType),
+      entityTypeFilter !== "all" ? entityTypeFilter : "",
+    ]),
+  ].filter(Boolean).sort();
 
   return (
     <div className="space-y-4">
@@ -226,11 +269,11 @@ export function Activity() {
 
       {error && <p className="text-sm text-destructive">{error.message}</p>}
 
-      {filtered && filtered.length === 0 && (
+      {filtered.length === 0 && (
         <EmptyState icon={History} message="No activity yet." />
       )}
 
-      {filtered && filtered.length > 0 && (
+      {filtered.length > 0 && (
         <div className="border border-border divide-y divide-border">
           {filtered.map((event) => (
             <ActivityRow
@@ -244,6 +287,12 @@ export function Activity() {
             />
           ))}
         </div>
+      )}
+
+      <div ref={loadMoreRef} className="h-px" aria-hidden="true" />
+
+      {isFetchingNextPage && (
+        <p className="text-center text-xs text-muted-foreground">Loading more activity...</p>
       )}
     </div>
   );

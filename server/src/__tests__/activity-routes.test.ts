@@ -6,6 +6,7 @@ import { activityRoutes } from "../routes/activity.js";
 
 const mockActivityService = vi.hoisted(() => ({
   list: vi.fn(),
+  listPage: vi.fn(),
   forIssue: vi.fn(),
   runsForIssue: vi.fn(),
   issuesForRun: vi.fn(),
@@ -75,6 +76,39 @@ describe("activity routes", () => {
       actorId: "user-1",
       entityType: "project",
       entityId: undefined,
+    });
+  });
+
+  it("passes paginated activity list parameters to the service", async () => {
+    mockActivityService.listPage.mockResolvedValue({
+      items: [{ id: "activity-1" }],
+      nextCursor: "next-page",
+    });
+
+    const res = await request(createApp())
+      .get("/api/orgs/organization-1/activity")
+      .query({
+        actorType: "system",
+        limit: "25",
+        cursor: "cursor-1",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockActivityService.listPage).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      agentId: undefined,
+      userId: undefined,
+      actorType: "system",
+      actorId: undefined,
+      entityType: undefined,
+      entityId: undefined,
+      limit: 25,
+      cursor: "cursor-1",
+    });
+    expect(mockActivityService.list).not.toHaveBeenCalled();
+    expect(res.body).toEqual({
+      items: [{ id: "activity-1" }],
+      nextCursor: "next-page",
     });
   });
 

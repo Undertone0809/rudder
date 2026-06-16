@@ -633,7 +633,7 @@ function invalidateActivityQueries(
   orgId: string,
   payload: Record<string, unknown>,
 ) {
-  queryClient.invalidateQueries({ queryKey: queryKeys.activity(orgId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.activityRoot(orgId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(orgId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(orgId) });
 

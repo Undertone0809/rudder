@@ -193,6 +193,26 @@ function activityEntityLabel(entityType: string): string | null {
   }
 }
 
+function readDetailString(details: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = details?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function fallbackEntityName(event: ActivityEvent): string | null {
+  const identifier = readDetailString(event.details, "identifier")
+    ?? readDetailString(event.details, "issueIdentifier");
+  if (event.entityType === "issue" && identifier) return identifier;
+
+  const name = readDetailString(event.details, "name");
+  if (name) return name;
+
+  const title = readDetailString(event.details, "title");
+  if (event.entityType === "project" || event.entityType === "goal" || event.entityType === "agent") {
+    return title;
+  }
+  return null;
+}
+
 interface ActivityRowProps {
   event: ActivityEvent;
   agentMap: Map<string, Agent>;
@@ -222,9 +242,9 @@ export function ActivityRow({
 
   const name = isHeartbeatEvent
     ? (heartbeatAgentId ? entityNameMap.get(`agent:${heartbeatAgentId}`) : null)
-    : entityNameMap.get(`${event.entityType}:${event.entityId}`);
+    : entityNameMap.get(`${event.entityType}:${event.entityId}`) ?? fallbackEntityName(event);
 
-  const fallbackTitle = typeof event.details?.title === "string" ? event.details.title : null;
+  const fallbackTitle = readDetailString(event.details, "issueTitle") ?? readDetailString(event.details, "title");
   const entityTitle = entityTitleMap?.get(`${event.entityType}:${event.entityId}`) ?? fallbackTitle;
 
   const link = isHeartbeatEvent && heartbeatAgentId

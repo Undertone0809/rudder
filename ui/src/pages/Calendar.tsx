@@ -206,7 +206,7 @@ export function Calendar() {
       queryClient.invalidateQueries({ queryKey: queryKeys.calendar.sources(viewedOrganizationId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.calendar.googleConfig(viewedOrganizationId) }),
       queryClient.invalidateQueries({ queryKey: ["calendar", viewedOrganizationId] }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.activity(viewedOrganizationId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.activityRoot(viewedOrganizationId) }),
     ]);
   };
 

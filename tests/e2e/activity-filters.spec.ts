@@ -66,4 +66,57 @@ test.describe("Organization activity filters", () => {
     await expect(page.getByText(userTitle)).toBeVisible();
     await expect(page.getByText(agentTitle)).toHaveCount(0);
   });
+
+  test("loads organization activity incrementally as the user scrolls", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Activity Infinite ${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const oldestTitle = `Oldest incremental activity ${Date.now()}`;
+    const newestTitle = `Newest incremental activity ${Date.now()}`;
+
+    for (let index = 0; index < 45; index += 1) {
+      const title = index === 0
+        ? oldestTitle
+        : index === 44
+          ? newestTitle
+          : `Incremental activity ${index} ${Date.now()}`;
+      const res = await page.request.post(`/api/orgs/${organization.id}/activity`, {
+        data: {
+          actorType: "system",
+          actorId: "activity-e2e",
+          action: "project.updated",
+          entityType: "project",
+          entityId: randomUUID(),
+          details: { title },
+        },
+      });
+      expect(res.ok()).toBe(true);
+    }
+
+    const activityRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === `/api/orgs/${organization.id}/activity`) {
+        activityRequests.push(`${url.searchParams.get("limit") ?? ""}:${url.searchParams.has("cursor")}`);
+      }
+    });
+
+    await page.goto(`/${organization.issuePrefix}/activity`);
+
+    await expect(page.getByText(newestTitle)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(oldestTitle)).toHaveCount(0);
+    await expect.poll(() => activityRequests.some((entry) => entry === "30:false")).toBe(true);
+
+    await page.locator("#main-content").evaluate((element) => {
+      element.scrollTo(0, element.scrollHeight);
+    });
+
+    await expect(page.getByText(oldestTitle)).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => activityRequests.some((entry) => entry === "30:true")).toBe(true);
+  });
 });

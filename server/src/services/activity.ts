@@ -2,6 +2,8 @@ import type { Db } from "@rudderhq/db";
 import { activityLog, chatContextLinks, chatConversations, heartbeatRuns, issues } from "@rudderhq/db";
 import { isLowSignalIssueContentOnlyUpdate } from "@rudderhq/shared";
 import { and, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { badRequest } from "../errors.js";
+import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
 
 export interface ActivityFilters {
   orgId: string;
@@ -11,6 +13,67 @@ export interface ActivityFilters {
   actorId?: string;
   entityType?: string;
   entityId?: string;
+}
+
+export interface ActivityPageFilters extends ActivityFilters {
+  limit?: number;
+  cursor?: string | null;
+}
+
+type ActivityCursor = {
+  createdAt: string;
+  id: string;
+};
+
+type OrganizationActivityRow = {
+  activityLog: typeof activityLog.$inferSelect;
+  issueIdentifier?: string | null;
+  issueTitle?: string | null;
+};
+
+type PaginatedOrganizationActivityRow = OrganizationActivityRow & {
+  cursorCreatedAt: string;
+};
+
+const DEFAULT_ACTIVITY_PAGE_LIMIT = 30;
+const MAX_ACTIVITY_PAGE_LIMIT = 100;
+const ACTIVITY_CURSOR_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeActivityPageLimit(limit: number | undefined): number {
+  if (limit === undefined) return DEFAULT_ACTIVITY_PAGE_LIMIT;
+  if (!Number.isFinite(limit)) throw badRequest("invalid 'limit' value");
+  const normalized = Math.floor(limit);
+  if (normalized < 1 || normalized > MAX_ACTIVITY_PAGE_LIMIT) {
+    throw badRequest(`'limit' must be between 1 and ${MAX_ACTIVITY_PAGE_LIMIT}`);
+  }
+  return normalized;
+}
+
+function encodeActivityCursor(row: PaginatedOrganizationActivityRow): string {
+  return Buffer.from(JSON.stringify({
+    createdAt: row.cursorCreatedAt,
+    id: row.activityLog.id,
+  } satisfies ActivityCursor)).toString("base64url");
+}
+
+function decodeActivityCursor(cursor: string | null | undefined): ActivityCursor | null {
+  if (!cursor) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<ActivityCursor>;
+    if (
+      typeof decoded.id !== "string"
+      || typeof decoded.createdAt !== "string"
+      || !UUID_RE.test(decoded.id)
+      || !ACTIVITY_CURSOR_TIMESTAMP_RE.test(decoded.createdAt)
+      || Number.isNaN(new Date(decoded.createdAt).getTime())
+    ) {
+      throw new Error("invalid cursor");
+    }
+    return { id: decoded.id, createdAt: decoded.createdAt };
+  } catch {
+    throw badRequest("Activity cursor is invalid or expired");
+  }
 }
 
 function isLowSignalContentOnlyIssueUpdate(event: typeof activityLog.$inferSelect): boolean {
@@ -31,45 +94,78 @@ function shouldShowOrganizationActivity(event: typeof activityLog.$inferSelect):
 export function activityService(db: Db) {
   const issueIdAsText = sql<string>`${issues.id}::text`;
   const conversationIdAsText = sql<string>`${chatConversations.id}::text`;
+  const organizationActivityVisibleCondition = and(
+    ne(activityLog.action, "issue.read_marked"),
+    sql`not (${issueLowSignalContentOnlyActivitySql("activity_log")})`,
+  );
+  const activityCursorCreatedAt = sql<string>`to_char(${activityLog.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+  function activityRowWithIssueDetails(row: OrganizationActivityRow) {
+    if (row.activityLog.entityType !== "issue") return row.activityLog;
+    if (!row.issueIdentifier && !row.issueTitle) return row.activityLog;
+    const details = row.activityLog.details ?? {};
+    return {
+      ...row.activityLog,
+      details: {
+        ...details,
+        ...(row.issueIdentifier ? { issueIdentifier: row.issueIdentifier } : {}),
+        ...(row.issueTitle ? { issueTitle: row.issueTitle } : {}),
+        ...(row.issueIdentifier && typeof details.identifier !== "string" ? { identifier: row.issueIdentifier } : {}),
+        ...(row.issueTitle && typeof details.title !== "string" ? { title: row.issueTitle } : {}),
+      },
+    };
+  }
+
+  function organizationActivityConditions(filters: ActivityFilters) {
+    const conditions = [eq(activityLog.orgId, filters.orgId)];
+    if (organizationActivityVisibleCondition) conditions.push(organizationActivityVisibleCondition);
+
+    if (filters.agentId) {
+      const agentCondition = or(
+        eq(activityLog.agentId, filters.agentId),
+        and(
+          eq(activityLog.actorType, "agent"),
+          eq(activityLog.actorId, filters.agentId),
+        ),
+      );
+      if (agentCondition) conditions.push(agentCondition);
+    }
+    if (filters.userId) {
+      conditions.push(eq(activityLog.actorType, "user"));
+      conditions.push(eq(activityLog.actorId, filters.userId));
+    }
+    if (filters.actorType) {
+      conditions.push(eq(activityLog.actorType, filters.actorType));
+    }
+    if (filters.actorId) {
+      conditions.push(eq(activityLog.actorId, filters.actorId));
+    }
+    if (filters.entityType) {
+      conditions.push(eq(activityLog.entityType, filters.entityType));
+    }
+    if (filters.entityId) {
+      conditions.push(eq(activityLog.entityId, filters.entityId));
+    }
+
+    return conditions;
+  }
+
   return {
     list: (filters: ActivityFilters) => {
-      const conditions = [eq(activityLog.orgId, filters.orgId)];
-      conditions.push(ne(activityLog.action, "issue.read_marked"));
-
-      if (filters.agentId) {
-        const agentCondition = or(
-          eq(activityLog.agentId, filters.agentId),
-          and(
-            eq(activityLog.actorType, "agent"),
-            eq(activityLog.actorId, filters.agentId),
-          ),
-        );
-        if (agentCondition) conditions.push(agentCondition);
-      }
-      if (filters.userId) {
-        conditions.push(eq(activityLog.actorType, "user"));
-        conditions.push(eq(activityLog.actorId, filters.userId));
-      }
-      if (filters.actorType) {
-        conditions.push(eq(activityLog.actorType, filters.actorType));
-      }
-      if (filters.actorId) {
-        conditions.push(eq(activityLog.actorId, filters.actorId));
-      }
-      if (filters.entityType) {
-        conditions.push(eq(activityLog.entityType, filters.entityType));
-      }
-      if (filters.entityId) {
-        conditions.push(eq(activityLog.entityId, filters.entityId));
-      }
+      const conditions = organizationActivityConditions(filters);
 
       return db
-        .select({ activityLog })
+        .select({
+          activityLog,
+          issueIdentifier: issues.identifier,
+          issueTitle: issues.title,
+        })
         .from(activityLog)
         .leftJoin(
           issues,
           and(
             eq(activityLog.entityType, sql`'issue'`),
+            eq(issues.orgId, activityLog.orgId),
             eq(activityLog.entityId, issueIdAsText),
           ),
         )
@@ -82,8 +178,61 @@ export function activityService(db: Db) {
             ),
           ),
         )
-        .orderBy(desc(activityLog.createdAt))
-        .then((rows) => rows.map((r) => r.activityLog).filter(shouldShowOrganizationActivity));
+        .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
+        .then((rows) => rows.map(activityRowWithIssueDetails).filter(shouldShowOrganizationActivity));
+    },
+
+    listPage: async (filters: ActivityPageFilters) => {
+      const limit = normalizeActivityPageLimit(filters.limit);
+      const decodedCursor = decodeActivityCursor(filters.cursor);
+      const conditions = organizationActivityConditions(filters);
+      if (decodedCursor) {
+        conditions.push(
+          or(
+            sql`${activityLog.createdAt} < ${decodedCursor.createdAt}::timestamptz`,
+            and(
+              sql`${activityLog.createdAt} = ${decodedCursor.createdAt}::timestamptz`,
+              sql`${activityLog.id} < ${decodedCursor.id}::uuid`,
+            ),
+          )!,
+        );
+      }
+
+      const rows = await db
+        .select({
+          activityLog,
+          issueIdentifier: issues.identifier,
+          issueTitle: issues.title,
+          cursorCreatedAt: activityCursorCreatedAt,
+        })
+        .from(activityLog)
+        .leftJoin(
+          issues,
+          and(
+            eq(activityLog.entityType, sql`'issue'`),
+            eq(issues.orgId, activityLog.orgId),
+            eq(activityLog.entityId, issueIdAsText),
+          ),
+        )
+        .where(
+          and(
+            ...conditions,
+            or(
+              sql`${activityLog.entityType} != 'issue'`,
+              isNull(issues.hiddenAt),
+            ),
+          ),
+        )
+        .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
+        .limit(limit + 1);
+
+      const pageRows = rows.slice(0, limit);
+      return {
+        items: pageRows.map(activityRowWithIssueDetails).filter(shouldShowOrganizationActivity),
+        nextCursor: rows.length > limit && pageRows.length > 0
+          ? encodeActivityCursor(pageRows[pageRows.length - 1]!)
+          : null,
+      };
     },
 
     forIssue: async (issueId: string) => {

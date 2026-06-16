@@ -32,17 +32,39 @@ export interface ActivityListFilters {
   actorId?: string;
 }
 
+export interface ActivityListPage {
+  items: ActivityEvent[];
+  nextCursor: string | null;
+}
+
+export interface ActivityListPageOptions extends ActivityListFilters {
+  limit?: number;
+  cursor?: string | null;
+}
+
+function activityListSearchParams(filters?: ActivityListPageOptions): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters?.entityType) params.set("entityType", filters.entityType);
+  if (filters?.entityId) params.set("entityId", filters.entityId);
+  if (filters?.agentId) params.set("agentId", filters.agentId);
+  if (filters?.userId) params.set("userId", filters.userId);
+  if (filters?.actorType) params.set("actorType", filters.actorType);
+  if (filters?.actorId) params.set("actorId", filters.actorId);
+  if (filters?.limit) params.set("limit", String(filters.limit));
+  if (filters?.cursor) params.set("cursor", filters.cursor);
+  return params;
+}
+
 export const activityApi = {
   list: (orgId: string, filters?: ActivityListFilters) => {
-    const params = new URLSearchParams();
-    if (filters?.entityType) params.set("entityType", filters.entityType);
-    if (filters?.entityId) params.set("entityId", filters.entityId);
-    if (filters?.agentId) params.set("agentId", filters.agentId);
-    if (filters?.userId) params.set("userId", filters.userId);
-    if (filters?.actorType) params.set("actorType", filters.actorType);
-    if (filters?.actorId) params.set("actorId", filters.actorId);
+    const params = activityListSearchParams(filters);
     const qs = params.toString();
     return api.get<ActivityEvent[]>(`/orgs/${orgId}/activity${qs ? `?${qs}` : ""}`);
+  },
+  listPage: (orgId: string, options?: ActivityListPageOptions) => {
+    const params = activityListSearchParams(options);
+    const qs = params.toString();
+    return api.get<ActivityListPage>(`/orgs/${orgId}/activity${qs ? `?${qs}` : ""}`);
   },
   forIssue: (issueId: string) => api.get<ActivityEvent[]>(`/issues/${issueId}/activity`),
   runsForIssue: (issueId: string) => api.get<RunForIssue[]>(`/issues/${issueId}/runs`),

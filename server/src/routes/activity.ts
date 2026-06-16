@@ -1,6 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import { Router } from "express";
 import { z } from "zod";
+import { badRequest } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { sanitizeRecord } from "../redaction.js";
 import { activityService } from "../services/activity.js";
@@ -30,6 +31,14 @@ export function activityRoutes(db: Db) {
     return value === "agent" || value === "user" || value === "system" ? value : undefined;
   }
 
+  function positiveIntegerQueryParam(value: unknown): number | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "string" || !value.trim()) throw badRequest("invalid 'limit' value");
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) throw badRequest("invalid 'limit' value");
+    return parsed;
+  }
+
   async function resolveIssueByRef(rawId: string) {
     if (/^[A-Z]+-\d+$/i.test(rawId)) {
       return issueSvc.getByIdentifier(rawId);
@@ -50,6 +59,17 @@ export function activityRoutes(db: Db) {
       entityType: stringQueryParam(req.query.entityType),
       entityId: stringQueryParam(req.query.entityId),
     };
+    const limit = positiveIntegerQueryParam(req.query.limit);
+    const cursor = stringQueryParam(req.query.cursor);
+    if (limit !== undefined || cursor !== undefined) {
+      const result = await svc.listPage({
+        ...filters,
+        limit,
+        cursor,
+      });
+      res.json(result);
+      return;
+    }
     const result = await svc.list(filters);
     res.json(result);
   });

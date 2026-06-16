@@ -234,7 +234,7 @@ describe("LiveUpdatesProvider notification preferences", () => {
       queryKey: queryKeys.issues.detail("issue-1"),
     });
     expect(invalidations).toContainEqual({
-      queryKey: queryKeys.activity("organization-1"),
+      queryKey: queryKeys.activityRoot("organization-1"),
     });
     expect(invalidations).toContainEqual({
       queryKey: queryKeys.messenger.threadPreview("organization-1"),

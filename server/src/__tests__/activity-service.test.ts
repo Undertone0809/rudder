@@ -10,6 +10,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
+import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -431,5 +432,354 @@ describe("activityService.forIssue", () => {
       "run-agent",
       "issue-agent",
     ]);
+  });
+
+  it("paginates organization activity by a stable cursor", async () => {
+    const orgId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "system",
+        actorId: "test",
+        action: "activity.oldest",
+        entityType: "project",
+        entityId: "project-oldest",
+        details: { title: "Oldest event" },
+        createdAt: new Date("2026-04-01T10:00:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "system",
+        actorId: "test",
+        action: "activity.middle",
+        entityType: "project",
+        entityId: "project-middle",
+        details: { title: "Middle event" },
+        createdAt: new Date("2026-04-01T10:01:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "system",
+        actorId: "test",
+        action: "activity.newest",
+        entityType: "project",
+        entityId: "project-newest",
+        details: { title: "Newest event" },
+        createdAt: new Date("2026-04-01T10:02:00.000Z"),
+      },
+    ]);
+
+    const firstPage = await svc.listPage({ orgId, limit: 2 });
+
+    expect(firstPage.items.map((event) => event.action)).toEqual([
+      "activity.newest",
+      "activity.middle",
+    ]);
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+    const secondPage = await svc.listPage({
+      orgId,
+      limit: 2,
+      cursor: firstPage.nextCursor,
+    });
+
+    expect(secondPage.items.map((event) => event.action)).toEqual(["activity.oldest"]);
+    expect(secondPage.nextCursor).toBeNull();
+  });
+
+  it("uses activity id as a cursor tiebreaker for events with the same timestamp", async () => {
+    const orgId = randomUUID();
+    const createdAt = new Date("2026-04-01T10:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(activityLog).values([
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        orgId,
+        actorType: "system",
+        actorId: "test",
+        action: "activity.same_timestamp_oldest",
+        entityType: "project",
+        entityId: "project-oldest",
+        details: { title: "Oldest same-timestamp event" },
+        createdAt,
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000002",
+        orgId,
+        actorType: "system",
+        actorId: "test",
+        action: "activity.same_timestamp_middle",
+        entityType: "project",
+        entityId: "project-middle",
+        details: { title: "Middle same-timestamp event" },
+        createdAt,
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000003",
+        orgId,
+        actorType: "system",
+        actorId: "test",
+        action: "activity.same_timestamp_newest",
+        entityType: "project",
+        entityId: "project-newest",
+        details: { title: "Newest same-timestamp event" },
+        createdAt,
+      },
+    ]);
+
+    const firstPage = await svc.listPage({ orgId, limit: 2 });
+    expect(firstPage.items.map((event) => event.action)).toEqual([
+      "activity.same_timestamp_newest",
+      "activity.same_timestamp_middle",
+    ]);
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+    const secondPage = await svc.listPage({
+      orgId,
+      limit: 2,
+      cursor: firstPage.nextCursor,
+    });
+
+    expect(secondPage.items.map((event) => event.action)).toEqual([
+      "activity.same_timestamp_oldest",
+    ]);
+    expect(secondPage.nextCursor).toBeNull();
+  });
+
+  it("does not skip rows with sub-millisecond timestamp differences", async () => {
+    const orgId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.execute(sql`
+      insert into activity_log
+        (id, org_id, actor_type, actor_id, action, entity_type, entity_id, details, created_at)
+      values
+        (
+          '00000000-0000-4000-8000-000000000001',
+          ${orgId},
+          'system',
+          'test',
+          'activity.same_millisecond_oldest',
+          'project',
+          'project-oldest',
+          '{"title":"Oldest microsecond event"}'::jsonb,
+          '2026-04-01T10:00:00.000100Z'::timestamptz
+        ),
+        (
+          '00000000-0000-4000-8000-000000000002',
+          ${orgId},
+          'system',
+          'test',
+          'activity.same_millisecond_middle',
+          'project',
+          'project-middle',
+          '{"title":"Middle microsecond event"}'::jsonb,
+          '2026-04-01T10:00:00.000500Z'::timestamptz
+        ),
+        (
+          '00000000-0000-4000-8000-000000000003',
+          ${orgId},
+          'system',
+          'test',
+          'activity.same_millisecond_newest',
+          'project',
+          'project-newest',
+          '{"title":"Newest microsecond event"}'::jsonb,
+          '2026-04-01T10:00:00.000900Z'::timestamptz
+        )
+    `);
+
+    const firstPage = await svc.listPage({ orgId, limit: 2 });
+    expect(firstPage.items.map((event) => event.action)).toEqual([
+      "activity.same_millisecond_newest",
+      "activity.same_millisecond_middle",
+    ]);
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+    const secondPage = await svc.listPage({
+      orgId,
+      limit: 2,
+      cursor: firstPage.nextCursor,
+    });
+
+    expect(secondPage.items.map((event) => event.action)).toEqual([
+      "activity.same_millisecond_oldest",
+    ]);
+    expect(secondPage.nextCursor).toBeNull();
+  });
+
+  it("fills organization activity pages after excluding low-signal issue updates", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      identifier: "RST-370",
+      title: "Visible activity should fill the page",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "user",
+        actorId: "board",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: issueId,
+        details: { title: "Renamed issue", _previous: { title: "Old title" } },
+        createdAt: new Date("2026-04-01T10:03:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: "board",
+        action: "project.updated",
+        entityType: "project",
+        entityId: "project-visible-newer",
+        details: { title: "Visible newer event" },
+        createdAt: new Date("2026-04-01T10:02:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: "board",
+        action: "project.updated",
+        entityType: "project",
+        entityId: "project-visible-older",
+        details: { title: "Visible older event" },
+        createdAt: new Date("2026-04-01T10:01:00.000Z"),
+      },
+    ]);
+
+    const page = await svc.listPage({ orgId, limit: 2 });
+
+    expect(page.items.map((event) => event.entityId)).toEqual([
+      "project-visible-newer",
+      "project-visible-older",
+    ]);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("adds issue identifiers and titles to organization activity pages", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      identifier: "RST-369",
+      title: "Keep activity rows self contained",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "user",
+      actorId: "board",
+      action: "issue.comment_added",
+      entityType: "issue",
+      entityId: issueId,
+      details: { commentId: "comment-1" },
+      createdAt: new Date("2026-04-01T10:00:00.000Z"),
+    });
+
+    const page = await svc.listPage({ orgId, limit: 1 });
+
+    expect(page.items[0]?.details).toMatchObject({
+      commentId: "comment-1",
+      identifier: "RST-369",
+      issueIdentifier: "RST-369",
+      title: "Keep activity rows self contained",
+      issueTitle: "Keep activity rows self contained",
+    });
+  });
+
+  it("does not overwrite existing activity detail titles while adding issue details", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      identifier: "RST-371",
+      title: "Canonical issue title",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "user",
+      actorId: "board",
+      action: "issue.comment_added",
+      entityType: "issue",
+      entityId: issueId,
+      details: {
+        identifier: "LEGACY-1",
+        title: "Original activity detail title",
+      },
+      createdAt: new Date("2026-04-01T10:00:00.000Z"),
+    });
+
+    const page = await svc.listPage({ orgId, limit: 1 });
+
+    expect(page.items[0]?.details).toMatchObject({
+      identifier: "LEGACY-1",
+      title: "Original activity detail title",
+      issueIdentifier: "RST-371",
+      issueTitle: "Canonical issue title",
+    });
   });
 });

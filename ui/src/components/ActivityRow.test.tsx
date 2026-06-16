@@ -45,6 +45,36 @@ describe("resolveActivityActorName", () => {
 });
 
 describe("ActivityRow", () => {
+  it("uses activity issue details when the page has not loaded a full issue map", () => {
+    const html = renderToStaticMarkup(
+      <ActivityRow
+        event={{
+          id: "activity-issue-details",
+          orgId: "org-1",
+          actorType: "user",
+          actorId: "user-1",
+          action: "issue.comment_added",
+          entityType: "issue",
+          entityId: "issue-1",
+          agentId: null,
+          runId: null,
+          details: {
+            identifier: "ZST-369",
+            title: "Do not load the full issue list for activity rows",
+          },
+          createdAt: new Date("2026-04-09T10:00:00.000Z"),
+        }}
+        agentMap={new Map()}
+        entityNameMap={new Map()}
+        currentBoardUserId="user-1"
+      />,
+    );
+
+    expect(html).toContain("href=\"/issues/ZST-369\"");
+    expect(html).toContain("ZST-369");
+    expect(html).toContain("Do not load the full issue list for activity rows");
+  });
+
   it("falls back to the activity details title when no entity map entry exists", () => {
     const html = renderToStaticMarkup(
       <ActivityRow
