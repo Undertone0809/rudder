@@ -57,6 +57,7 @@ import {
 import { logger } from "./middleware/logger.js";
 import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
+import { chatAgentRunService } from "./services/chat-agent-runs.js";
 import {
   automationService,
   heartbeatService,
@@ -925,6 +926,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   if (config.heartbeatSchedulerEnabled) {
     const heartbeat = heartbeatService(db as any);
     const automations = automationService(db as any);
+    const chatRuns = chatAgentRunService(db as any);
   
     // Reap orphaned running runs at startup while in-memory execution state is empty,
     // then resume any persisted queued runs that were waiting on the previous process.
@@ -935,6 +937,20 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       .then(() => heartbeat.resumeQueuedRuns())
       .catch((err) => {
         logger.error({ err }, "startup heartbeat recovery failed");
+      });
+    void chatRuns
+      .finalizeStaleRuns({
+        olderThanMs: 0,
+        error: "Chat run was left active across server startup",
+        errorCode: "chat_run_startup_recovery",
+      })
+      .then((finalized) => {
+        if (finalized > 0) {
+          logger.warn({ finalized }, "startup chat run recovery finalized active chat runs");
+        }
+      })
+      .catch((err) => {
+        logger.error({ err }, "startup chat run recovery failed");
       });
     intervalHandles.push(setInterval(() => {
       void heartbeat
@@ -968,6 +984,16 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         .then(() => heartbeat.resumeQueuedRuns())
         .catch((err) => {
           logger.error({ err }, "periodic heartbeat recovery failed");
+        });
+      void chatRuns
+        .finalizeStaleRuns()
+        .then((finalized) => {
+          if (finalized > 0) {
+            logger.warn({ finalized }, "periodic chat run recovery finalized stale chat runs");
+          }
+        })
+        .catch((err) => {
+          logger.error({ err }, "periodic chat run recovery failed");
         });
     }, config.heartbeatSchedulerIntervalMs));
   }

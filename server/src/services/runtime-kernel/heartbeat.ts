@@ -548,8 +548,9 @@ export function heartbeatService(db: Db) {
   async function emitHeartbeatLiveEval(runId: string) {
     try {
       const { detail, scores } = await buildObservedRunLangfuseScores(db, runId);
+      const run = { ...detail.run, chatConversationId: detail.run.chatConversationId ?? null };
       await createExecutionScores(
-        buildHeartbeatObservabilityContext(detail.run, {
+        buildHeartbeatObservabilityContext(run, {
           runtime: detail.bundle.agentRuntimeType,
           metadata: {
             agentName: detail.agentName,

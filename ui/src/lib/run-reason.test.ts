@@ -107,4 +107,16 @@ describe("describeRunReason", () => {
       contextSnapshot: { wakeReason: "retry_failed_run" },
     })).label).toBe("Retry");
   });
+
+  it("describes chat-sourced assistant reply runs", () => {
+    const reason = describeRunReason(makeRun({
+      invocationSource: "chat",
+      triggerDetail: "chat_assistant_reply",
+      chatConversationId: "chat-1",
+      contextSnapshot: { scene: "chat", conversationId: "chat-1" },
+    }));
+
+    expect(reason.label).toBe("Chat reply");
+    expect(reason.description).toContain("assistant reply");
+  });
 });

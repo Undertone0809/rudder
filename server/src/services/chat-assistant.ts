@@ -11,6 +11,7 @@ import { findServerAdapter } from "../agent-runtimes/index.js";
 import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
+import { chatAgentRunService } from "./chat-agent-runs.js";
 import { asString, buildConversationPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor } from "./chat-assistant.helpers.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
@@ -19,6 +20,7 @@ export * from "./chat-assistant.helpers.js";
 export function chatAssistantService(db: Db, storage?: StorageService) {
   const agentsSvc = agentService(db);
   const runContextSvc = agentRunContextService(db);
+  const chatRunsSvc = chatAgentRunService(db);
 
   async function resolveChatInvocation(input: {
     conversation: Pick<ChatConversation, "id" | "orgId" | "preferredAgentId" | "primaryIssueId" | "contextLinks" | "planMode">;
@@ -239,7 +241,18 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const runtimeAgentType = runtimeSource.agentRuntimeType;
     const runtimeAgentId = runtimeSource.descriptor.runtimeAgentId;
     const resultSentinel = `${CHAT_RESULT_SENTINEL_PREFIX}${randomUUID()}__`;
-    const runId = `chat-${input.conversation.id}-${randomUUID()}`;
+    const chatRun = await chatRunsSvc.createRun({
+      conversation: input.conversation,
+      agentId: runtimeAgentId,
+      triggerDetail: input.stream ? "chat_assistant_reply_stream" : "chat_assistant_reply",
+      userMessageId: input.userMessageId ?? null,
+      chatTurnId: input.chatTurnId ?? null,
+      turnVariant: input.turnVariant ?? 0,
+      linkedIssueIds,
+      linkedProjectId,
+    });
+    const runId = chatRun.id;
+    await input.onRunCreated?.(runId);
     const assistantTextAccumulator = createAssistantTextAccumulator();
     const sentinelStream = createSentinelStream(resultSentinel);
     let parser = adapter.parseStdoutLine;
@@ -281,6 +294,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             };
             await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, assistantTranscriptEntry);
             await maybeEmitTranscriptEntry(input.onTranscriptEntry, assistantTranscriptEntry);
+            await chatRunsSvc.appendTranscriptEntry(chatRun, assistantTranscriptEntry);
           }
           continue;
         }
@@ -296,6 +310,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           continue;
         }
         await maybeEmitTranscriptEntry(input.onTranscriptEntry, entry);
+        await chatRunsSvc.appendTranscriptEntry(chatRun, entry);
       }
     };
 
@@ -365,6 +380,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           },
           ...(media.length > 0 ? { media } : {}),
           onMeta: async (meta) => {
+            await chatRunsSvc.appendAdapterInvoke(chatRun, meta, runtimeSource.runtimeSkills);
             await input.onInvocationMeta?.({
               ...meta,
               loadedSkills: runtimeSource.runtimeSkills,
@@ -389,6 +405,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 };
                 await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, entry);
                 await maybeEmitTranscriptEntry(input.onTranscriptEntry, entry);
+                await chatRunsSvc.appendTranscriptEntry(chatRun, entry);
                 return;
               }
               await flushStdoutChunk(chunk);
@@ -429,6 +446,15 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
     if (input.abortSignal?.aborted) {
       await maybeEmitAssistantState(input.onAssistantState, "stopped");
+      await chatRunsSvc.finalizeRun(runId, {
+        status: "cancelled",
+        error: "Chat run stopped before completion",
+        errorCode: "chat_stopped",
+        resultJson: {
+          outcome: "stopped",
+          partialBody,
+        },
+      });
       return {
         outcome: "stopped",
         partialBody,
@@ -437,6 +463,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     }
 
     if (result.timedOut) {
+      await chatRunsSvc.finalizeRun(runId, {
+        status: "timed_out",
+        error: "Chat request timed out",
+        errorCode: "chat_timed_out",
+        resultJson: {
+          partialBody: finalPartialBody,
+        },
+      });
       throw new ChatAssistantStreamError(
         "Chat request timed out",
         finalPartialBody,
@@ -445,6 +479,15 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       );
     }
     if ((result.exitCode ?? 0) !== 0 || result.errorMessage) {
+      await chatRunsSvc.finalizeRun(runId, {
+        status: "failed",
+        error: result.errorMessage ?? "Chat adapter execution failed",
+        errorCode: "chat_adapter_failed",
+        resultJson: {
+          exitCode: result.exitCode ?? null,
+          partialBody: finalPartialBody,
+        },
+      });
       throw new ChatAssistantStreamError(
         result.errorMessage ?? "Chat adapter execution failed",
         finalPartialBody,
@@ -461,6 +504,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     try {
       reply = parseCompletedAssistantReply(raw, resultSentinel, { requireSentinel: true });
     } catch (error) {
+      await chatRunsSvc.finalizeRun(runId, {
+        status: "failed",
+        error: error instanceof Error ? error.message : "Chat adapter returned an invalid final reply",
+        errorCode: "chat_invalid_reply",
+        resultJson: {
+          partialBody: finalPartialBody,
+        },
+      });
       throw new ChatAssistantStreamError(
         error instanceof Error ? error.message : "Chat adapter returned an invalid final reply",
         finalPartialBody,
@@ -478,6 +529,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     if (finalBody && finalBody !== streamedBody) {
       await maybeEmitAssistantDelta(input.onAssistantDelta, finalBody);
     }
+
+    await chatRunsSvc.finalizeRun(runId, {
+      status: "succeeded",
+      resultJson: {
+        outcome: "completed",
+        kind: reply.kind,
+        body: finalBody,
+        generatedAttachmentCount: generatedAttachments.length,
+      },
+      usageJson: result.usage ? { ...result.usage } : null,
+    });
 
     return {
       outcome: "completed",

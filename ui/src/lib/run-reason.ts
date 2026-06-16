@@ -163,6 +163,14 @@ export function describeRunReason(run: RunReasonInput): RunReasonSummary {
     };
   }
 
+  if (run.invocationSource === "chat") {
+    return {
+      label: "Chat reply",
+      description: "This run produced an assistant reply in chat.",
+      tone: "manual",
+    };
+  }
+
   if (wakeSource === "comment.mention") {
     return {
       label: "Mentioned",

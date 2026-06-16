@@ -2,6 +2,7 @@ import { index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-o
 import { agents } from "./agents.js";
 import { approvals } from "./approvals.js";
 import { chatConversations } from "./chat_conversations.js";
+import { heartbeatRuns } from "./heartbeat_runs.js";
 import { organizations } from "./organizations.js";
 
 export const chatMessages = pgTable(
@@ -16,6 +17,7 @@ export const chatMessages = pgTable(
     body: text("body").notNull(),
     structuredPayload: jsonb("structured_payload").$type<Record<string, unknown> | null>(),
     approvalId: uuid("approval_id").references(() => approvals.id, { onDelete: "set null" }),
+    runId: uuid("run_id").references(() => heartbeatRuns.id, { onDelete: "set null" }),
     replyingAgentId: uuid("replying_agent_id").references(() => agents.id, { onDelete: "set null" }),
     /** User+assistant pairs that share a logical "turn" (for edit/regenerate variants). */
     chatTurnId: uuid("chat_turn_id"),
@@ -35,5 +37,6 @@ export const chatMessages = pgTable(
       table.createdAt,
     ),
     approvalIdx: index("chat_messages_approval_idx").on(table.approvalId),
+    runIdx: index("chat_messages_run_idx").on(table.runId),
   }),
 );

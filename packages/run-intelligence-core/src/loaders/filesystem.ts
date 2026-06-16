@@ -84,6 +84,7 @@ export function loadFilesystemRunDetail(input: {
     stderrExcerpt: null,
     errorCode: null,
     externalRunId: null,
+    chatConversationId: null,
     processPid: null,
     processStartedAt: null,
     retryOfRunId: null,

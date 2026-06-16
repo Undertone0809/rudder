@@ -84,6 +84,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     chatReplyingAgentId,
     assertCanConvertIssueProposal,
     persistAssistantReply,
+    linkChatRunMessages,
     attachGeneratedFilesToPartialMessage,
     persistPartialAssistantMessage,
     writeStreamEvent,
@@ -154,6 +155,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     let modelTurnInput: unknown;
     let assistantProgressMessage: ChatMessage | null = null;
     let assistantProgressMessageId: string | null = null;
+    let activeChatRunId: string | null = null;
     let assistantDraftBody = "";
     const persistStreamProgress = async (
       progressConversation: ChatConversation,
@@ -165,6 +167,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         status: "streaming" as const,
         body: assistantDraftBody,
         transcript,
+        runId: activeChatRunId ?? undefined,
         replyingAgentId,
       };
       if (assistantProgressMessage) {
@@ -182,6 +185,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         status: "streaming",
         body: assistantDraftBody,
         transcript,
+        runId: activeChatRunId ?? null,
         replyingAgentId,
         chatTurnId: turnContextForPartial.chatTurnId,
         turnVariant: turnContextForPartial.turnVariant,
@@ -270,6 +274,13 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
+              userMessageId: userMessage.id,
+              chatTurnId: turnContextForPartial.chatTurnId,
+              turnVariant: turnContextForPartial.turnVariant,
+              stream: true,
+              onRunCreated: (runId: string) => {
+                activeChatRunId = runId;
+              },
               abortSignal: abortController.signal,
               onInvocationMeta: async (meta: AgentRuntimeInvocationMeta) => {
                 modelTurnInput = modelTurnInputFromInvocationMeta(meta);
@@ -322,7 +333,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                 transcript,
                 streamed.replyingAgentId,
                 assistantProgressMessageId,
+                activeChatRunId,
               );
+              await linkChatRunMessages(assistantInput.conversation, activeChatRunId, stoppedMessage ? [stoppedMessage] : []);
               if (stoppedMessage) {
                 await logChatMessagesAdded(assistantInput.conversation, [stoppedMessage], {
                   actorType: "system",
@@ -358,7 +371,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               transcript,
               streamed.replyingAgentId,
               assistantProgressMessageId,
+              activeChatRunId,
             );
+            await linkChatRunMessages(assistantInput.conversation, activeChatRunId, createdMessages);
             finalChatOutput = streamed.reply.body;
             await logChatMessagesAdded(assistantInput.conversation, createdMessages, {
               actorType: "system",
@@ -443,7 +458,13 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         transcript,
         failedReplyingAgentId,
         assistantProgressMessageId,
+        activeChatRunId,
       ).catch(() => null);
+      await linkChatRunMessages(
+        assistantConversationForPartial ?? (conversation as ChatConversation),
+        activeChatRunId,
+        failedMessage ? [failedMessage as ChatMessage] : [],
+      ).catch(() => {});
       failedMessage = await attachGeneratedFilesToPartialMessage(
         assistantConversationForPartial ?? (conversation as ChatConversation),
         failedMessage as ChatMessage | null,

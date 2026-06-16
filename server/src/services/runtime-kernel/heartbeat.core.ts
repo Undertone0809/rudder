@@ -89,6 +89,7 @@ export const heartbeatRunListColumns = {
   stderrExcerpt: sql<string | null>`NULL`.as("stderrExcerpt"),
   errorCode: heartbeatRuns.errorCode,
   externalRunId: heartbeatRuns.externalRunId,
+  chatConversationId: heartbeatRuns.chatConversationId,
   processPid: heartbeatRuns.processPid,
   processStartedAt: heartbeatRuns.processStartedAt,
   retryOfRunId: heartbeatRuns.retryOfRunId,

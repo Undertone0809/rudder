@@ -241,6 +241,7 @@ async function serializeRunRow(
       stderrExcerpt: row.stderrExcerpt,
       errorCode: row.errorCode,
       externalRunId: row.externalRunId,
+      chatConversationId: row.chatConversationId,
       processPid: row.processPid,
       processStartedAt: row.processStartedAt,
       retryOfRunId: row.retryOfRunId,
@@ -298,6 +299,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
       stderrExcerpt: heartbeatRuns.stderrExcerpt,
       errorCode: heartbeatRuns.errorCode,
       externalRunId: heartbeatRuns.externalRunId,
+      chatConversationId: heartbeatRuns.chatConversationId,
       processPid: heartbeatRuns.processPid,
       processStartedAt: heartbeatRuns.processStartedAt,
       retryOfRunId: heartbeatRuns.retryOfRunId,
@@ -392,6 +394,7 @@ async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
       stderrExcerpt: heartbeatRuns.stderrExcerpt,
       errorCode: heartbeatRuns.errorCode,
       externalRunId: heartbeatRuns.externalRunId,
+      chatConversationId: heartbeatRuns.chatConversationId,
       processPid: heartbeatRuns.processPid,
       processStartedAt: heartbeatRuns.processStartedAt,
       retryOfRunId: heartbeatRuns.retryOfRunId,
@@ -493,9 +496,10 @@ export async function getObservedRunDetail(db: Db, runId: string): Promise<Obser
   ]);
   if (!observedRun) return null;
 
-  const logContent = await loadRunLogContent(observedRun.run).catch(() => "");
+  const run = { ...observedRun.run, chatConversationId: observedRun.run.chatConversationId ?? null };
+  const logContent = await loadRunLogContent(run).catch(() => "");
   return observedRunFromFilesystem({
-    run: observedRun.run,
+    run,
     agentName: observedRun.agentName,
     orgName: observedRun.orgName,
     issue: observedRun.issue,

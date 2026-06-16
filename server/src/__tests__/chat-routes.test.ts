@@ -103,6 +103,10 @@ const mockChatAssistantService = vi.hoisted(() => ({
   streamChatAssistantReply: vi.fn(),
 }));
 
+const mockChatAgentRuns = vi.hoisted(() => ({
+  linkAssistantMessage: vi.fn(),
+}));
+
 const mockStorage = vi.hoisted(() => ({
   putFile: vi.fn(),
   deleteObject: vi.fn(),
@@ -150,6 +154,10 @@ vi.mock("../services/chat-assistant.js", () => ({
       ? candidate.partialBody
       : "";
   },
+}));
+
+vi.mock("../services/chat-agent-runs.js", () => ({
+  chatAgentRunService: () => mockChatAgentRuns,
 }));
 
 vi.mock("../langfuse.js", () => ({
@@ -288,6 +296,7 @@ describe("chat routes", () => {
     });
     mockChatAssistantService.enrichConversation.mockImplementation(async (conversation) => conversation);
     mockChatAssistantService.enrichConversations.mockImplementation(async (conversations) => conversations);
+    mockChatAgentRuns.linkAssistantMessage.mockResolvedValue(null);
     mockChatAssistantService.getChatAssistantAvailability.mockResolvedValue({
       available: true,
       sourceType: "agent",
@@ -1923,16 +1932,19 @@ describe("chat routes", () => {
       error: null,
     });
     mockChatAssistantService.enrichConversation.mockImplementationOnce(async () => conversation);
-    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
-      outcome: "completed",
-      partialBody: "Working on it",
-      replyingAgentId: "agent-1",
-      reply: {
-        kind: "message",
-        body: "Working on it",
-        structuredPayload: null,
+    mockChatAssistantService.streamChatAssistantReply.mockImplementationOnce(async (input) => {
+      await input.onRunCreated?.("chat-run-1");
+      return {
+        outcome: "completed",
+        partialBody: "Working on it",
         replyingAgentId: "agent-1",
-      },
+        reply: {
+          kind: "message",
+          body: "Working on it",
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
     });
 
     const res = await request(createApp())
@@ -1947,8 +1959,10 @@ describe("chat routes", () => {
         role: "assistant",
         kind: "message",
         replyingAgentId: "agent-1",
+        runId: "chat-run-1",
       }),
     );
+    expect(mockChatAgentRuns.linkAssistantMessage).toHaveBeenCalledWith("chat-run-1", "chat-1", "message-assistant");
   });
 
   it("records the runtime instruction into Langfuse chat-turn input when adapter metadata is available", async () => {
@@ -2062,6 +2076,7 @@ describe("chat routes", () => {
     mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
     mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
     mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onRunCreated?.("chat-run-stream-1");
       await input.onInvocationMeta?.({
         agentRuntimeType: "codex_local",
         command: "codex",
@@ -2158,6 +2173,7 @@ describe("chat routes", () => {
         status: "streaming",
         body: "",
         replyingAgentId: "agent-1",
+        runId: "chat-run-stream-1",
         transcript: expect.any(Array),
       }),
     );
@@ -2169,12 +2185,14 @@ describe("chat routes", () => {
         status: "completed",
         body: "Streaming reply",
         replyingAgentId: "agent-1",
+        runId: "chat-run-stream-1",
         transcript: [
           expect.objectContaining({ kind: "thinking", text: "Inspecting current request" }),
           expect.objectContaining({ kind: "tool_call", name: "read_file" }),
         ],
       }),
     );
+    expect(mockChatAgentRuns.linkAssistantMessage).toHaveBeenCalledWith("chat-run-stream-1", "chat-1", "message-assistant");
     expect(mockEmitExecutionTranscriptTree).toHaveBeenCalledWith(expect.objectContaining({
       fallbackResult: {
         output: "Streaming reply",

@@ -70,7 +70,12 @@ export interface GenerateChatAssistantReplyInput {
 }
 
 export interface StreamChatAssistantReplyInput extends GenerateChatAssistantReplyInput {
+  userMessageId?: string | null;
+  chatTurnId?: string | null;
+  turnVariant?: number | null;
+  stream?: boolean;
   abortSignal?: AbortSignal;
+  onRunCreated?: (runId: string) => Promise<void> | void;
   onAssistantDelta?: (delta: string) => Promise<void> | void;
   onAssistantState?: (state: "streaming" | "finalizing" | "stopped") => Promise<void> | void;
   onInvocationMeta?: (meta: AgentRuntimeInvocationMeta) => Promise<void> | void;

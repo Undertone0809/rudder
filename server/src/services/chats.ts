@@ -928,6 +928,7 @@ export function chatService(db: Db) {
             body: chatMessages.body,
             structuredPayload: structuredPayloadWithoutTranscriptSql(),
             approvalId: chatMessages.approvalId,
+            runId: chatMessages.runId,
             replyingAgentId: chatMessages.replyingAgentId,
             chatTurnId: chatMessages.chatTurnId,
             turnVariant: chatMessages.turnVariant,
@@ -1097,6 +1098,7 @@ export function chatService(db: Db) {
         structuredPayload?: Record<string, unknown> | null;
         transcript?: ChatStreamTranscriptEntry[];
         approvalId?: string | null;
+        runId?: string | null;
         replyingAgentId?: string | null;
         chatTurnId?: string | null;
         turnVariant?: number;
@@ -1119,6 +1121,7 @@ export function chatService(db: Db) {
             input.transcript ?? [],
           ),
           approvalId: input.approvalId ?? null,
+          runId: input.runId ?? null,
           replyingAgentId: input.replyingAgentId ?? null,
           chatTurnId: input.chatTurnId ?? null,
           turnVariant: input.turnVariant ?? 0,
@@ -1142,6 +1145,7 @@ export function chatService(db: Db) {
         structuredPayload?: Record<string, unknown> | null;
         transcript?: ChatStreamTranscriptEntry[];
         approvalId?: string | null;
+        runId?: string | null;
         replyingAgentId?: string | null;
       },
     ) {
@@ -1186,10 +1190,11 @@ export function chatService(db: Db) {
                 input.transcript !== undefined
                   ? input.transcript
                   : chatTranscriptFromPayload(existing.structuredPayload),
-              ),
+          ),
             }
             : {}),
           ...(input.approvalId !== undefined ? { approvalId: input.approvalId } : {}),
+          ...(input.runId !== undefined ? { runId: input.runId } : {}),
           ...(input.replyingAgentId !== undefined ? { replyingAgentId: input.replyingAgentId } : {}),
           updatedAt: now,
         })

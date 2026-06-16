@@ -66,6 +66,13 @@ const mockRunContextService = vi.hoisted(() => ({
   buildSceneContext: vi.fn(),
 }));
 
+const mockChatAgentRuns = vi.hoisted(() => ({
+  createRun: vi.fn(),
+  appendAdapterInvoke: vi.fn(),
+  appendTranscriptEntry: vi.fn(),
+  finalizeRun: vi.fn(),
+}));
+
 vi.mock("../agent-runtimes/index.js", () => ({
   findServerAdapter: mockFindServerAdapter,
 }));
@@ -76,6 +83,10 @@ vi.mock("../services/agents.js", () => ({
 
 vi.mock("../services/agent-run-context.js", () => ({
   agentRunContextService: () => mockRunContextService,
+}));
+
+vi.mock("../services/chat-agent-runs.js", () => ({
+  chatAgentRunService: () => mockChatAgentRuns,
 }));
 
 const { chatAssistantService } = await import("../services/chat-assistant.js");
@@ -357,6 +368,15 @@ describe("chatAssistantService operator profile prompt injection", () => {
       warnings: [],
     });
     mockRunContextService.buildSceneContext.mockResolvedValue(makeSceneContext());
+    mockChatAgentRuns.createRun.mockResolvedValue({
+      id: "chat-run-1",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "running",
+    });
+    mockChatAgentRuns.appendAdapterInvoke.mockResolvedValue(undefined);
+    mockChatAgentRuns.appendTranscriptEntry.mockResolvedValue(undefined);
+    mockChatAgentRuns.finalizeRun.mockResolvedValue(undefined);
     mockAdapter.execute.mockImplementation(async (ctx) => ({
       summary: assistantSummary(ctx, "Clarify the goal first."),
       resultJson: null,

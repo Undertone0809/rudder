@@ -29,6 +29,7 @@ import {
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { assertTimeZone } from "../services/automations.scheduler.js";
+import { chatAgentRunService } from "../services/chat-agent-runs.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   chatAssistantService,
@@ -74,6 +75,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
   const goalsSvc = goalService(db);
   const access = accessService(db);
   const assistantSvc = chatAssistantService(db, storage);
+  const chatRunsSvc = chatAgentRunService(db);
   const operatorProfiles = operatorProfileService(db);
   const heartbeat = heartbeatService(db);
   const productIntelligence = productIntelligenceService(db);
@@ -724,6 +726,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
     transcript: TranscriptEntry[] = [],
     replyingAgentId = assistantReply.replyingAgentId ?? chatReplyingAgentId(conversation),
     existingMessageId?: string | null,
+    runId?: string | null,
   ) {
     const createdMessages: ChatMessage[] = [];
     const { chatTurnId, turnVariant } = turnContext;
@@ -780,6 +783,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
           structuredPayload: input.structuredPayload ?? null,
           transcript,
           approvalId: input.approvalId ?? null,
+          runId: runId ?? undefined,
           replyingAgentId,
         });
         if (updated) return updated as ChatMessage;
@@ -792,6 +796,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         structuredPayload: input.structuredPayload ?? null,
         transcript,
         approvalId: input.approvalId ?? null,
+        runId: runId ?? null,
         replyingAgentId,
         chatTurnId,
         turnVariant,
@@ -1110,6 +1115,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
     transcript: TranscriptEntry[] = [],
     replyingAgentId = chatReplyingAgentId(conversation),
     existingMessageId?: string | null,
+    runId?: string | null,
   ) {
     const trimmed = body.trim();
     const fallbackBody = status === "stopped"
@@ -1125,6 +1131,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         status,
         body: durableBody,
         transcript,
+        runId: runId ?? undefined,
         replyingAgentId,
       });
       if (updated) return updated as ChatMessage;
@@ -1136,6 +1143,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
       status,
       body: durableBody,
       transcript,
+      runId: runId ?? null,
       replyingAgentId,
       chatTurnId,
       turnVariant,
@@ -1150,6 +1158,18 @@ export function chatRoutes(db: Db, storage: StorageService) {
     if (res.writableEnded || res.destroyed) return false;
     res.write(`${JSON.stringify(event)}\n`);
     return true;
+  }
+
+  async function linkChatRunMessages(
+    conversation: ChatConversation,
+    runId: string | null | undefined,
+    messages: ChatMessage[],
+  ) {
+    if (!runId) return;
+    const assistantMessages = messages.filter((message) => message.role === "assistant");
+    for (const message of assistantMessages) {
+      await chatRunsSvc.linkAssistantMessage(runId, conversation.id, message.id);
+    }
   }
 
   router.get("/orgs/:orgId/chats", async (req, res) => {
@@ -1415,6 +1435,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         userMessageId: userMessage.id,
       };
       let currentChatTraceInput = buildChatTraceInput(traceInputBase);
+      let activeChatRunId: string | null = null;
       const persistedAssistantMessages = await withChatObservation(
         chatObservation,
         {
@@ -1433,6 +1454,13 @@ export function chatRoutes(db: Db, storage: StorageService) {
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
+              userMessageId: userMessage.id,
+              chatTurnId: turnContext.chatTurnId,
+              turnVariant: turnContext.turnVariant,
+              stream: false,
+              onRunCreated: (runId) => {
+                activeChatRunId = runId;
+              },
               onInvocationMeta: async (meta) => {
                 modelTurnInput = modelTurnInputFromInvocationMeta(meta);
                 currentChatTraceInput = buildChatTraceInput(traceInputBase, meta);
@@ -1462,7 +1490,10 @@ export function chatRoutes(db: Db, storage: StorageService) {
               turnContext,
               transcript,
               streamed.replyingAgentId,
+              null,
+              activeChatRunId,
             );
+            await linkChatRunMessages(assistantInput.conversation, activeChatRunId, created);
             finalChatOutput = streamed.reply.body;
             await logChatMessagesAdded(assistantInput.conversation, created, {
               actorType: "system",
@@ -1595,6 +1626,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
     chatReplyingAgentId,
     assertCanConvertIssueProposal,
     persistAssistantReply,
+    linkChatRunMessages,
     attachGeneratedFilesToPartialMessage,
     persistPartialAssistantMessage,
     writeStreamEvent,

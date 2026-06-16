@@ -58,6 +58,7 @@ export interface HeartbeatRun {
   stderrExcerpt: string | null;
   errorCode: string | null;
   externalRunId: string | null;
+  chatConversationId?: string | null;
   processPid: number | null;
   processStartedAt: Date | null;
   retryOfRunId: string | null;

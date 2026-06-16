@@ -58,6 +58,7 @@ const sourceLabels: Record<HeartbeatInvocationSource, string> = {
   review: "Review",
   on_demand: "Manual",
   automation: "Automation",
+  chat: "Chat",
 };
 
 const contextLabels: Record<RunFilterContext, string> = {

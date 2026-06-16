@@ -1,6 +1,8 @@
-import { type AnyPgColumn, bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { type AnyPgColumn, bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agentWakeupRequests } from "./agent_wakeup_requests.js";
 import { agents } from "./agents.js";
+import { chatConversations } from "./chat_conversations.js";
 import { organizations } from "./organizations.js";
 
 export const heartbeatRuns = pgTable(
@@ -31,6 +33,9 @@ export const heartbeatRuns = pgTable(
     stderrExcerpt: text("stderr_excerpt"),
     errorCode: text("error_code"),
     externalRunId: text("external_run_id"),
+    chatConversationId: uuid("chat_conversation_id").references((): AnyPgColumn => chatConversations.id, {
+      onDelete: "set null",
+    }),
     processPid: integer("process_pid"),
     processStartedAt: timestamp("process_started_at", { withTimezone: true }),
     retryOfRunId: uuid("retry_of_run_id").references((): AnyPgColumn => heartbeatRuns.id, {
@@ -52,5 +57,14 @@ export const heartbeatRuns = pgTable(
       table.status,
       table.updatedAt,
     ),
+    companyChatConversationStatusUpdatedIdx: index("heartbeat_runs_company_chat_conversation_status_updated_idx").on(
+      table.orgId,
+      table.chatConversationId,
+      table.status,
+      table.updatedAt,
+    ),
+    activeChatConversationUniqueIdx: uniqueIndex("heartbeat_runs_active_chat_conversation_uq")
+      .on(table.orgId, table.chatConversationId)
+      .where(sql`${table.chatConversationId} is not null and ${table.status} in ('queued', 'running')`),
   }),
 );

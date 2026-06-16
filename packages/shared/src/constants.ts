@@ -452,10 +452,18 @@ export const HEARTBEAT_INVOCATION_SOURCES = [
   "review",
   "on_demand",
   "automation",
+  "chat",
 ] as const;
 export type HeartbeatInvocationSource = (typeof HEARTBEAT_INVOCATION_SOURCES)[number];
 
-export const WAKEUP_TRIGGER_DETAILS = ["manual", "ping", "callback", "system"] as const;
+export const WAKEUP_TRIGGER_DETAILS = [
+  "manual",
+  "ping",
+  "callback",
+  "system",
+  "chat_assistant_reply",
+  "chat_assistant_reply_stream",
+] as const;
 export type WakeupTriggerDetail = (typeof WAKEUP_TRIGGER_DETAILS)[number];
 
 export const WAKEUP_REQUEST_STATUSES = [
