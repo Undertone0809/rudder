@@ -30,7 +30,7 @@ describe("adapter model listing", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("loads codex models dynamically and merges fallback options", async () => {
+  it("keeps codex local model options aligned with the Codex app menu", async () => {
     process.env.OPENAI_API_KEY = "sk-test";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
@@ -38,6 +38,7 @@ describe("adapter model listing", () => {
         data: [
           { id: "gpt-5-pro" },
           { id: "gpt-5" },
+          { id: "o3" },
         ],
       }),
     } as Response);
@@ -45,10 +46,15 @@ describe("adapter model listing", () => {
     const first = await listAgentRuntimeModels("codex_local");
     const second = await listAgentRuntimeModels("codex_local");
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(first).toEqual(second);
-    expect(first.some((model) => model.id === "gpt-5-pro")).toBe(true);
-    expect(first.some((model) => model.id === "codex-mini-latest")).toBe(true);
+    expect(first).toEqual(codexFallbackModels);
+    expect(first.map((model) => model.id)).toEqual([
+      "gpt-5.5",
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.3-codex-spark",
+    ]);
   });
 
   it("falls back to static codex models when OpenAI model discovery fails", async () => {

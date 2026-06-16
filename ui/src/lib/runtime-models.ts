@@ -15,6 +15,10 @@ export function resolveRuntimeModels(
   agentRuntimeType: string,
   ...modelLists: Array<readonly AgentRuntimeModel[] | null | undefined>
 ): AgentRuntimeModel[] {
+  if (agentRuntimeType === "codex_local") {
+    return [...codexLocalModels];
+  }
+
   const candidates = [
     ...modelLists.flatMap((models) => models ?? []),
     ...(FALLBACK_MODELS_BY_RUNTIME[agentRuntimeType] ?? []),
