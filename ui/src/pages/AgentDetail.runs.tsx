@@ -42,6 +42,7 @@ import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
 import { cn, formatTokens, relativeTime } from "../lib/utils";
 import { asNonEmptyString, asRecord, formatCompactTokenLabel, runMetrics, runStatusIcons, useRunDurationNow } from "./AgentDetail.helpers";
 import {
+  appendRunSearchParams,
   applyRunFilters,
   applyRunSort,
   hasRunFilters,
@@ -65,6 +66,7 @@ export function getRunListSummary(run: HeartbeatRun): string {
 
 export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelected: boolean; agentId: string }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { pushToast } = useToast();
   const statusInfo = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
   const StatusIcon = statusInfo.icon;
@@ -72,7 +74,10 @@ export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; i
   const summary = getRunListSummary(run);
   const runLabel = run.id.slice(0, 8);
   const runReason = describeRunReason(run);
-  const destination = isSelected ? `/agents/${agentId}/runs` : `/agents/${agentId}/runs/${run.id}`;
+  const destination = appendRunSearchParams(
+    isSelected ? `/agents/${agentId}/runs` : `/agents/${agentId}/runs/${run.id}`,
+    searchParams,
+  );
   const isActive = run.status === "running" || run.status === "queued";
   const now = useRunDurationNow(isActive);
   const durationLabel = formatRunDurationLabel(run, now) ?? relativeTime(run.createdAt);
@@ -203,10 +208,10 @@ export function RunsTab({
   const activeFilterChips = runFilterChips(filterState);
   const filtersActive = hasRunFilters(filterState);
   const updateRunFilters = (patch: Parameters<typeof writeRunFilterState>[1]) => {
-    setSearchParams(writeRunFilterState(searchParams, patch), { replace: true });
+    setSearchParams((current) => writeRunFilterState(current, patch), { replace: true });
   };
   const clearRunFilters = () => {
-    setSearchParams(writeRunFilterState(searchParams, {
+    setSearchParams((current) => writeRunFilterState(current, {
       view: "all",
       q: "",
       statuses: [],
@@ -245,7 +250,7 @@ export function RunsTab({
         <div className="space-y-3 min-w-0 overflow-x-hidden">
           {toolbar}
           <Link
-            to={`/agents/${agentRouteId}/runs`}
+            to={appendRunSearchParams(`/agents/${agentRouteId}/runs`, searchParams)}
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors no-underline"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
@@ -352,6 +357,7 @@ function RunListEmptyState({ message }: { message: string }) {
 export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: HeartbeatRun; agentRouteId: string; agentRuntimeType: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { confirm } = useDialog();
   const { data: hydratedRun } = useQuery({
     queryKey: queryKeys.runDetail(initialRun.id),
@@ -379,7 +385,7 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
     mutationFn: async () => retryHeartbeatRun(run),
     onSuccess: (newRun) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.orgId, run.agentId) });
-      navigate(`/agents/${agentRouteId}/runs/${newRun.id}`);
+      navigate(appendRunSearchParams(`/agents/${agentRouteId}/runs/${newRun.id}`, searchParams));
     },
   });
 
@@ -609,7 +615,7 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
                 <div className="font-medium text-foreground">Recovery</div>
                 <div className="text-muted-foreground">
                   From run{" "}
-                  <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${recoveryOriginalRunId}`}>
+                  <Link className="underline underline-offset-2" to={appendRunSearchParams(`/agents/${run.agentId}/runs/${recoveryOriginalRunId}`, searchParams)}>
                     {recoveryOriginalRunId}
                   </Link>
                 </div>
@@ -630,14 +636,14 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
                 <div className="font-medium text-foreground">Passive follow-up</div>
                 <div className="text-muted-foreground">
                   Origin run{" "}
-                  <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${passiveFollowupOriginRunId}`}>
+                  <Link className="underline underline-offset-2" to={appendRunSearchParams(`/agents/${run.agentId}/runs/${passiveFollowupOriginRunId}`, searchParams)}>
                     {passiveFollowupOriginRunId}
                   </Link>
                 </div>
                 {passiveFollowupPreviousRunId && (
                   <div className="text-muted-foreground">
                     Previous run{" "}
-                    <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${passiveFollowupPreviousRunId}`}>
+                    <Link className="underline underline-offset-2" to={appendRunSearchParams(`/agents/${run.agentId}/runs/${passiveFollowupPreviousRunId}`, searchParams)}>
                       {passiveFollowupPreviousRunId}
                     </Link>
                   </div>

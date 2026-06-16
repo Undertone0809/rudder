@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import type { HeartbeatInvocationSource, HeartbeatRun, HeartbeatRunStatus } from "@rudderhq/shared";
 import { HEARTBEAT_INVOCATION_SOURCES, HEARTBEAT_RUN_STATUSES } from "@rudderhq/shared";
 import { ArrowDownUp, Filter, Search, SlidersHorizontal, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { asNonEmptyString, asRecord, formatCompactTokenLabel, readInvocationSkillList, runMetrics } from "./AgentDetail.helpers";
 
 export type RunFilterView = "all" | "active" | "failed" | "issue" | "retries" | "expensive";
@@ -105,6 +105,19 @@ const validContexts = new Set<RunFilterContext>(Object.keys(contextLabels) as Ru
 const validDates = new Set<RunFilterDatePreset>(Object.keys(dateLabels) as RunFilterDatePreset[]);
 const validCosts = new Set<RunFilterCostPreset>(Object.keys(costLabels) as RunFilterCostPreset[]);
 const validSorts = new Set<RunSortKey>(Object.keys(sortLabels) as RunSortKey[]);
+const RUN_SEARCH_PARAM_KEYS = [
+  "runView",
+  "runQ",
+  "runStatus",
+  "runSource",
+  "runContext",
+  "runSkill",
+  "runCost",
+  "runDate",
+  "runFrom",
+  "runTo",
+  "runSort",
+] as const;
 
 const ACTIVE_STATUSES: HeartbeatRunStatus[] = ["queued", "running"];
 const HIGH_TOKEN_THRESHOLD = 500_000;
@@ -367,6 +380,17 @@ export function writeRunFilterState(searchParams: URLSearchParams, patch: RunFil
   return next;
 }
 
+export function appendRunSearchParams(path: string, searchParams: URLSearchParams) {
+  const runSearchParams = new URLSearchParams();
+  for (const key of RUN_SEARCH_PARAM_KEYS) {
+    for (const value of searchParams.getAll(key)) {
+      runSearchParams.append(key, value);
+    }
+  }
+  const query = runSearchParams.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 export function hasRunFilters(state: RunFilterState) {
   return countActiveRunFilters(state) > 0;
 }
@@ -492,6 +516,11 @@ export function RunFiltersToolbar({
   const activeSortLabel = sortLabels[state.sort] ?? sortLabels.newest;
   const activeSortField = runSortField(state.sort);
   const activeSortDir = runSortDir(state.sort);
+  const [customRangeDraft, setCustomRangeDraft] = useState({
+    customFrom: state.customFrom,
+    customTo: state.customTo,
+  });
+  const customRangeDraftRef = useRef(customRangeDraft);
   const [sortOpen, setSortOpen] = useState(false);
   const statusCounts = useMemo(() => {
     const counts = new Map<HeartbeatRunStatus, number>();
@@ -500,6 +529,17 @@ export function RunFiltersToolbar({
     return counts;
   }, [runs]);
   const skillOptions = useMemo(() => runSkillOptions(runs), [runs]);
+  useEffect(() => {
+    const nextDraft = { customFrom: state.customFrom, customTo: state.customTo };
+    customRangeDraftRef.current = nextDraft;
+    setCustomRangeDraft(nextDraft);
+  }, [state.customFrom, state.customTo]);
+  const updateCustomRange = (patch: Pick<RunFilterParamPatch, "customFrom" | "customTo">) => {
+    const nextDraft = { ...customRangeDraftRef.current, ...patch };
+    customRangeDraftRef.current = nextDraft;
+    setCustomRangeDraft(nextDraft);
+    onChange({ date: "custom", customFrom: nextDraft.customFrom, customTo: nextDraft.customTo });
+  };
 
   return (
     <div className="pointer-events-none sticky top-2 z-20 mb-3 flex justify-end">
@@ -666,8 +706,8 @@ export function RunFiltersToolbar({
                         <Input
                           type="datetime-local"
                           aria-label="Custom run start time"
-                          value={state.customFrom}
-                          onChange={(event) => onChange({ date: "custom", customFrom: event.target.value })}
+                          value={customRangeDraft.customFrom}
+                          onChange={(event) => updateCustomRange({ customFrom: event.target.value })}
                           className="h-7 px-2 text-xs"
                         />
                       </label>
@@ -676,8 +716,8 @@ export function RunFiltersToolbar({
                         <Input
                           type="datetime-local"
                           aria-label="Custom run end time"
-                          value={state.customTo}
-                          onChange={(event) => onChange({ date: "custom", customTo: event.target.value })}
+                          value={customRangeDraft.customTo}
+                          onChange={(event) => updateCustomRange({ customTo: event.target.value })}
                           className="h-7 px-2 text-xs"
                         />
                       </label>

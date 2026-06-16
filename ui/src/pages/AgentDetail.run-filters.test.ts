@@ -5,6 +5,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it } from "vitest";
 import {
+  appendRunSearchParams,
   applyRunFilters,
   applyRunSort,
   parseRunFilterState,
@@ -141,6 +142,15 @@ describe("agent run filters", () => {
     expect(next.get("runDate")).toBeNull();
     expect(next.get("runFrom")).toBeNull();
     expect(next.get("runTo")).toBeNull();
+  });
+
+  it("keeps only run filter query params on run navigation destinations", () => {
+    const searchParams = new URLSearchParams("tab=runs&runStatus=failed&runSkill=build-advisor&runSort=duration_desc&panel=details");
+
+    expect(appendRunSearchParams("/agents/agent-1/runs/run-2", searchParams)).toBe(
+      "/agents/agent-1/runs/run-2?runStatus=failed&runSkill=build-advisor&runSort=duration_desc",
+    );
+    expect(appendRunSearchParams("/agents/agent-1/runs", new URLSearchParams())).toBe("/agents/agent-1/runs");
   });
 
   it("filters by status, issue context, retry context, used skill, token cost, and search text", () => {
