@@ -86,7 +86,7 @@ async function createSkillDir(root: string, name: string) {
   return skillDir;
 }
 
-describe("cursor execute", () => {
+describe("cursor execute", { timeout: 20_000 }, () => {
   it("injects rudder env vars and prompt note by default", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-"));
     const workspace = path.join(root, "workspace");

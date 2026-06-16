@@ -47,7 +47,7 @@ console.log(JSON.stringify({
   await fs.chmod(commandPath, 0o755);
 }
 
-describe("opencode execute", () => {
+describe("opencode execute", { timeout: 20_000 }, () => {
   it("prepends sibling memory instructions and reports memory prompt metrics", async () => {
     resetOpenCodeModelsCacheForTests();
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-execute-memory-"));

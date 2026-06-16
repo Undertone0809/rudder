@@ -1,8 +1,6 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorHandler } from "../middleware/index.js";
-import { accessRoutes } from "../routes/access.js";
 
 const mockAccessService = vi.hoisted(() => ({
   hasPermission: vi.fn(),
@@ -73,7 +71,10 @@ function createDbStub() {
   };
 }
 
-function createApp(actor: Record<string, unknown>, db: Record<string, unknown>) {
+async function createApp(actor: Record<string, unknown>, db: Record<string, unknown>) {
+  vi.resetModules();
+  const { errorHandler } = await import("../middleware/index.js");
+  const { accessRoutes } = await import("../routes/access.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -107,7 +108,7 @@ describe("POST /orgs/:orgId/openclaw/invite-prompt", () => {
       orgId: "organization-1",
       role: "engineer",
     });
-    const app = createApp(
+    const app = await createApp(
       {
         type: "agent",
         agentId: "agent-1",
@@ -132,7 +133,7 @@ describe("POST /orgs/:orgId/openclaw/invite-prompt", () => {
       orgId: "organization-1",
       role: "ceo",
     });
-    const app = createApp(
+    const app = await createApp(
       {
         type: "agent",
         agentId: "agent-1",
@@ -155,7 +156,7 @@ describe("POST /orgs/:orgId/openclaw/invite-prompt", () => {
   it("allows board callers with invite permission", async () => {
     const db = createDbStub();
     mockAccessService.canUser.mockResolvedValue(true);
-    const app = createApp(
+    const app = await createApp(
       {
         type: "board",
         userId: "user-1",
@@ -177,7 +178,7 @@ describe("POST /orgs/:orgId/openclaw/invite-prompt", () => {
   it("rejects board callers without invite permission", async () => {
     const db = createDbStub();
     mockAccessService.canUser.mockResolvedValue(false);
-    const app = createApp(
+    const app = await createApp(
       {
         type: "board",
         userId: "user-1",

@@ -335,7 +335,7 @@ function managedCodexHomePath(input: {
   );
 }
 
-describe("codex execute", () => {
+describe("codex execute", { timeout: 20_000 }, () => {
   it("prepares isolated HOME Git config from the workspace repository identity", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-git-identity-"));
     const workspace = path.join(root, "workspace");

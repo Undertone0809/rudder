@@ -724,7 +724,7 @@ describe("IssueDetail", () => {
         kind: "skill",
         name: "build-advisor",
         skillRefLabel: "build-advisor",
-        skillMarkdownTarget: "/workspace/skills/build-advisor/SKILL.md",
+        skillMarkdownTarget: "skill://org/skill-1?ref=build-advisor",
       }),
     ]));
   });

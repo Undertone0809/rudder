@@ -267,7 +267,21 @@ async function waitUntil(assertion: () => void, timeoutMs = 1000) {
 
 describe("chat routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    mockWithExecutionObservation.mockImplementation(async (_context, _input, fn) => fn(null));
+    mockObserveExecutionEvent.mockResolvedValue(null);
+    mockUpdateExecutionObservation.mockResolvedValue(undefined);
+    mockUpdateExecutionTraceIO.mockResolvedValue(undefined);
+    mockEmitExecutionTranscriptTree.mockImplementation(() => ({
+      turnCount: 0,
+      toolCount: 0,
+      eventCount: 0,
+      finalOutput: null,
+      finalModel: null,
+      finalUsage: null,
+      finalSessionId: null,
+      hasError: false,
+    }));
     mockCompanyService.getById.mockResolvedValue({
       id: "organization-1",
       defaultChatIssueCreationMode: "manual_approval",

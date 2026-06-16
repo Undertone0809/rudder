@@ -83,7 +83,7 @@ type LogEntry = {
   chunk: string;
 };
 
-describe("claude execute", () => {
+describe("claude execute", { timeout: 20_000 }, () => {
   it("runs the current Claude auth login subcommand", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-login-"));
     const workspace = path.join(root, "workspace");

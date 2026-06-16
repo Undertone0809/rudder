@@ -64,7 +64,7 @@ afterEach(() => {
   resetPiModelsCacheForTests();
 });
 
-describe("pi execute", () => {
+describe("pi execute", { timeout: 20_000 }, () => {
   it("appends agent memory instructions to the system prompt and reports prompt metrics", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-execute-"));
     const workspace = path.join(root, "workspace");

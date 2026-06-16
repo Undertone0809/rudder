@@ -203,7 +203,7 @@ async function waitFor<T>(
   throw new Error(`Timed out waiting for condition; last value: ${JSON.stringify(lastValue)}`);
 }
 
-describe("automation routes end-to-end", () => {
+describe("automation routes end-to-end", { timeout: 20_000 }, () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";

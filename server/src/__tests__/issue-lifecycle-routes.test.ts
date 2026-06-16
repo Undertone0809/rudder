@@ -185,8 +185,9 @@ async function flushAsyncWork() {
 
 describe("issue lifecycle routes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
+    mockHeartbeatService.reportRunActivity.mockResolvedValue(undefined);
     mockHeartbeatService.getRun.mockImplementation(async (runId: string) =>
       runId === RUN_ID
         ? {
@@ -198,6 +199,7 @@ describe("issue lifecycle routes", () => {
         }
         : null,
     );
+    mockHeartbeatService.wakeup.mockResolvedValue(undefined);
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.findMentionedProjectIds.mockResolvedValue([]);
     mockIssueService.getAncestors.mockResolvedValue([]);
@@ -216,6 +218,7 @@ describe("issue lifecycle routes", () => {
     mockWorkProductService.listForIssue.mockResolvedValue([]);
     mockWorkProductService.remove.mockResolvedValue(null);
     mockWorkProductService.update.mockResolvedValue(null);
+    mockLogActivity.mockResolvedValue(undefined);
     mockIssueService.addComment.mockImplementation(async (_issueId: string, body: string, author: { agentId?: string; userId?: string }) => ({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",

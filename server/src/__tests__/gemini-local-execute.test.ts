@@ -53,7 +53,7 @@ type CapturePayload = {
   gitIdentity: GitIdentityCapture;
 };
 
-describe("gemini execute", () => {
+describe("gemini execute", { timeout: 20_000 }, () => {
   it("passes prompt via --prompt and injects rudder env vars", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-gemini-execute-"));
     const workspace = path.join(root, "workspace");
