@@ -5,6 +5,7 @@ import {
   type OrganizationSkillListItem,
   type OrganizationSkillPublicRefContext,
 } from "@rudderhq/shared";
+import { buildOrganizationSkillReferenceHref } from "./skill-reference";
 
 export interface OrganizationSkillPickerItem extends OrganizationSkillListItem {
   publicRef: string;
@@ -12,29 +13,8 @@ export interface OrganizationSkillPickerItem extends OrganizationSkillListItem {
   markdownTarget: string | null;
 }
 
-function normalizeMarkdownTarget(candidate: string | null | undefined) {
-  if (!candidate) return null;
-  const trimmed = candidate.replace(/\/$/, "");
-  if (trimmed.endsWith("/SKILL.md") || trimmed.toLowerCase().endsWith(".md")) {
-    return trimmed;
-  }
-  return `${trimmed}/SKILL.md`;
-}
-
 export function organizationSkillMarkdownTarget(skill: OrganizationSkillListItem) {
-  const preferSourceLocator = skill.sourceType === "local_path" || skill.sourceType === "catalog";
-  const candidates = preferSourceLocator
-    ? [skill.sourceLocator, skill.sourcePath]
-    : [skill.sourcePath, skill.sourceLocator];
-
-  for (const candidate of candidates) {
-    const normalized = normalizeMarkdownTarget(candidate);
-    if (normalized) {
-      return normalized;
-    }
-  }
-
-  return null;
+  return buildOrganizationSkillReferenceHref(skill.id, skill.slug || skill.key || skill.name);
 }
 
 export function buildOrganizationSkillPickerItems(

@@ -266,7 +266,8 @@ test("issue comment skill mention keeps following typed text outside the token",
     },
   });
   expect(skillRes.ok()).toBe(true);
-  const skill = await skillRes.json() as { key: string; sourceLocator?: string | null; sourcePath?: string | null };
+  const skill = await skillRes.json() as { id: string; key: string; slug: string };
+  const skillTarget = `skill://org/${encodeURIComponent(skill.id)}?ref=${encodeURIComponent(skill.slug)}`;
 
   const syncRes = await page.request.post(`/api/agents/${agent.id}/skills/sync?orgId=${encodeURIComponent(organization.id)}`, {
     data: { desiredSkills: [`org:${skill.key}`] },
@@ -317,7 +318,7 @@ test("issue comment skill mention keeps following typed text outside the token",
   await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
   const copiedMarkdown = await page.evaluate(() => navigator.clipboard.readText());
   expect(copiedMarkdown).toContain(`[${skillSlug}](`);
-  expect(copiedMarkdown).toContain("SKILL.md)");
+  expect(copiedMarkdown).toContain(skillTarget);
   expect(copiedMarkdown).toContain(" 可以这么说");
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
 
@@ -333,7 +334,7 @@ test("issue comment skill mention keeps following typed text outside the token",
   expect(commentResponse.ok()).toBe(true);
   const postedComment = await commentResponse.json() as { body: string };
   expect(postedComment.body).toContain(`[${skillSlug}](`);
-  expect(postedComment.body).toContain("SKILL.md)");
+  expect(postedComment.body).toContain(skillTarget);
   expect(postedComment.body).toContain(" 可以这么说");
 });
 

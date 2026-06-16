@@ -2,6 +2,8 @@ import { Boxes } from "lucide-react";
 import type { CSSProperties } from "react";
 import { buildLucideIconMask } from "./mention-chips";
 
+const SKILL_REFERENCE_SCHEME = "skill://";
+
 export interface ParsedSkillReference {
   href: string;
   label: string;
@@ -41,10 +43,86 @@ function isSkillReferenceLabel(value: string) {
   return /^[a-z0-9._-]+(?:\/[a-z0-9._-]+)*$/iu.test(value);
 }
 
+function encodeSkillPathSegment(value: string) {
+  return encodeURIComponent(value.trim()).replace(/%2F/giu, "%2F");
+}
+
+function appendSkillRefQuery(href: string, ref: string | null | undefined) {
+  const normalizedRef = normalizeSkillReferenceLabel(ref);
+  if (!normalizedRef) return href;
+  const params = new URLSearchParams({ ref: normalizedRef });
+  return `${href}?${params.toString()}`;
+}
+
+export function buildOrganizationSkillReferenceHref(skillId: string, ref?: string | null) {
+  const normalizedSkillId = skillId.trim();
+  return appendSkillRefQuery(`${SKILL_REFERENCE_SCHEME}org/${encodeSkillPathSegment(normalizedSkillId)}`, ref);
+}
+
+export function buildAgentSkillReferenceHref(agentId: string, selectionKey: string, ref?: string | null) {
+  const normalizedAgentId = agentId.trim();
+  const normalizedSelectionKey = selectionKey.trim();
+  return appendSkillRefQuery(
+    `${SKILL_REFERENCE_SCHEME}agent/${encodeSkillPathSegment(normalizedAgentId)}/${encodeSkillPathSegment(normalizedSelectionKey)}`,
+    ref,
+  );
+}
+
+export function buildLocalSkillReferenceHref(source: string, ref?: string | null) {
+  const normalizedSource = stripUrlDecoration(source).replace(/\/SKILL\.md$/u, "").replace(/\/+$/u, "");
+  return appendSkillRefQuery(`${SKILL_REFERENCE_SCHEME}local/${encodeSkillPathSegment(normalizedSource)}`, ref);
+}
+
+export function isSkillReferenceHref(value: string | null | undefined) {
+  return value?.trim().startsWith(SKILL_REFERENCE_SCHEME) ?? false;
+}
+
+function decodeSkillPathSegment(value: string | null | undefined) {
+  const raw = value?.trim() ?? "";
+  if (!raw) return "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function fallbackSkillLabelFromHref(href: string) {
+  if (!isSkillReferenceHref(href)) return "";
+  try {
+    const parsed = new URL(href);
+    const queryRef = normalizeSkillReferenceLabel(parsed.searchParams.get("ref"));
+    if (queryRef && isSkillReferenceLabel(queryRef)) return formatSkillReferenceDisplayLabel(queryRef);
+
+    const pathParts = [parsed.hostname, ...parsed.pathname.split("/")]
+      .map((part) => decodeSkillPathSegment(part))
+      .filter(Boolean);
+    const lastPathPart = pathParts.at(-1) ?? "";
+    return formatSkillReferenceDisplayLabel(lastPathPart);
+  } catch {
+    const withoutScheme = href.slice(SKILL_REFERENCE_SCHEME.length);
+    const withoutQuery = withoutScheme.split("?", 1)[0] ?? withoutScheme;
+    const lastPathPart = withoutQuery.split("/").filter(Boolean).at(-1) ?? "";
+    return formatSkillReferenceDisplayLabel(decodeSkillPathSegment(lastPathPart));
+  }
+}
+
 export function parseSkillReference(href: string | null | undefined, label: string | null | undefined): ParsedSkillReference | null {
   const rawLabel = label?.trim() ?? "";
   const normalizedLabel = normalizeSkillReferenceLabel(rawLabel);
   const normalizedHref = href?.trim() ?? "";
+  if (!normalizedHref) return null;
+  if (isSkillReferenceHref(normalizedHref)) {
+    const displayLabel = normalizedLabel && isSkillReferenceLabel(normalizedLabel)
+      ? formatSkillReferenceDisplayLabel(normalizedLabel)
+      : fallbackSkillLabelFromHref(normalizedHref);
+    if (!displayLabel) return null;
+    return {
+      href: normalizedHref,
+      label: displayLabel,
+    };
+  }
+
   if (!normalizedLabel || !isSkillReferenceLabel(normalizedLabel)) return null;
   if (!rawLabel.startsWith("$") && !isCanonicalSkillMarkdownPath(normalizedHref)) return null;
   if (rawLabel.startsWith("$") && !isMarkdownSkillPath(normalizedHref)) return null;
@@ -67,7 +145,7 @@ export function removeSkillReferenceFromMarkdown(markdown: string, label: string
     : String.raw`(?:[a-z0-9._-]+\/)*${escapeRegExp(normalizedLabel)}`;
 
   const referencePattern = new RegExp(
-    String.raw`\[(?:\$)?${labelPattern}\]\(([^)\n]+(?:\/SKILL\.md|\.md))\)`,
+    String.raw`\[(?:\$)?${labelPattern}\]\(((?:skill:\/\/[^)\n]+)|(?:[^)\n]+(?:\/SKILL\.md|\.md)))\)`,
     "u",
   );
   const nextMarkdown = normalizedMarkdown.replace(referencePattern, "");

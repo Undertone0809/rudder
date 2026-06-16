@@ -195,7 +195,7 @@ export function shouldActivateMilkdownInlineTokenClick(
   return Boolean(activateInlineTokensOnPlainClick || event.metaKey || event.ctrlKey);
 }
 
-const MARKDOWN_LINK_FRAGMENT_RE = /\[([^\]\n]+)]\(([^)\n]+)\)/g;
+const MARKDOWN_LINK_FRAGMENT_RE = /\[([^\]\n]*)]\(([^)\n]+)\)/g;
 
 function unescapeMarkdownLinkDestination(value: string) {
   return value.replace(/\\([\\`*_[\]()#+\-.!{}>|&])/g, "$1").trim();
@@ -480,6 +480,12 @@ export function readCanonicalFragmentMarkdown(fragment: DocumentFragment, option
         return canonicalMarkdownLink(label, href);
       }
     }
+    if (node instanceof HTMLElement) {
+      const tokenHref = node.dataset.skillHref ?? node.dataset.mentionHref ?? "";
+      if (tokenHref && (node.dataset.skillToken === "true" || node.dataset.mentionKind)) {
+        return canonicalMarkdownLink(node.textContent ?? "", tokenHref);
+      }
+    }
     if (node instanceof HTMLElement && node.tagName === "CODE" && !(node.parentElement instanceof HTMLPreElement)) {
       return `\`${escapeInlineCode(node.textContent ?? "")}\``;
     }
@@ -550,6 +556,12 @@ export function readCanonicalFragmentMarkdown(fragment: DocumentFragment, option
 
 function fragmentContainsList(fragment: DocumentFragment) {
   return Boolean(fragment.querySelector("ul, ol, li"));
+}
+
+export function fragmentContainsRudderToken(fragment: DocumentFragment) {
+  return Boolean(fragment.querySelector(
+    "[data-skill-token='true'][data-skill-href], [data-mention-kind][data-mention-href]",
+  ));
 }
 
 function listMarkdownOptionsForSelection(selection: Selection): FragmentMarkdownOptions {
@@ -1432,7 +1444,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         const fragmentMarkdownOptions = listMarkdownOptionsForSelection(selection);
         let canonicalMarkdown = "";
         const selectedRawText = selection.toString();
-        if (!shouldCopySelectionAsMarkdown(selectedRawText)) {
+        if (!shouldCopySelectionAsMarkdown(selectedRawText) && !fragmentContainsRudderToken(selectedFragment)) {
           return;
         }
         const selectedVisibleText = normalizeVisibleCopyText(selectedRawText);

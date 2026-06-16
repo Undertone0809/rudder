@@ -117,7 +117,7 @@ describe("chat-skill-options", () => {
           kind: "skill",
           searchText: "rudder/build-advisor build advisor",
           skillRefLabel: "build-advisor",
-          skillMarkdownTarget: "/workspace/.agents/skills/build-advisor/SKILL.md",
+          skillMarkdownTarget: "skill://org/bundle-build-advisor?ref=build-advisor",
           skillDisplayName: "Build Advisor",
           skillDescription: "Turns vague build feedback into expert diagnosis.",
           skillCategoryLabel: null,

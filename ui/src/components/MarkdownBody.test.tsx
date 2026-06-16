@@ -653,6 +653,39 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain("Old Chat");
   });
 
+  it("renders empty-label entity links from current mention data", () => {
+    markdownMentionsMock.mentions = [
+      {
+        id: "agent:agent-123",
+        name: "Renamed Agent",
+        kind: "agent",
+        agentId: "agent-123",
+        agentIcon: "code",
+      },
+      {
+        id: "issue:issue-789",
+        name: "ZST-789 Renamed issue",
+        kind: "issue",
+        issueId: "issue-789",
+        issueIdentifier: "ZST-789",
+        issueStatus: "in_progress",
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"[](agent://agent-123) [](issue://issue-789)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain(">Renamed Agent</a>");
+    expect(html).toContain(">ZST-789 Renamed issue</a>");
+    expect(html).toContain('href="/issues/issue-789"');
+    expect(html).toContain('data-mention-status="in_progress"');
+  });
+
   it("renders issue mentions as chips that link to the issue route", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -1356,6 +1389,35 @@ describe("MarkdownBody", () => {
     expect(html).toContain('class="rudder-skill-token"');
     expect(html).toContain(">build-advisor</a>");
     expect(html).not.toContain("rudder/build-advisor");
+  });
+
+  it("renders skill protocol references from current skill metadata", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody
+          skillReferences={[
+            {
+              href: "skill://org/skill-1?ref=build-advisor",
+              label: "renamed-advisor",
+              displayName: "Renamed Advisor",
+              description: "Current skill metadata.",
+              categoryLabel: "Org skill",
+              locationLabel: "Organization skills",
+              detailsHref: "/skills/skill-1",
+            },
+          ]}
+        >
+          {"Use [](skill://org/skill-1?ref=build-advisor)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('class="rudder-skill-hover-card scrollbar-auto-hide"');
+    expect(html).toContain("Current skill metadata.");
+    expect(html).toContain('href="/skills/skill-1"');
+    expect(html).toContain(">renamed-advisor</a>");
+    expect(html).not.toContain("build-advisor</a>");
+    expect(html).not.toContain("skill://org/skill-1");
   });
 
   it("renders markdown when agent comments contain escaped newline sequences", () => {

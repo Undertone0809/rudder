@@ -7,7 +7,11 @@ import {
   type OrganizationSkillListItem,
 } from "@rudderhq/shared";
 import { organizationSkillMarkdownTarget } from "./organization-skill-picker";
-import { formatSkillReferenceDisplayLabel } from "./skill-reference";
+import {
+  buildAgentSkillReferenceHref,
+  buildLocalSkillReferenceHref,
+  formatSkillReferenceDisplayLabel,
+} from "./skill-reference";
 
 export interface SkillMentionOption {
   id: string;
@@ -119,7 +123,7 @@ export function buildAgentSkillMentionOptions(params: {
         : organizationSkillKey;
       const markdownTarget = organizationSkill
         ? organizationSkillMarkdownTarget(organizationSkill)
-        : normalizeMarkdownTarget(entry.sourcePath ?? entry.targetPath);
+        : buildAgentSkillReferenceHref(agent.id, entry.selectionKey, organizationSkillKey);
       if (!markdownTarget) continue;
 
       const mentionLabel = organizationSkill?.slug ?? buildSkillMentionLabel(entry, organizationSkillKey);
@@ -146,7 +150,12 @@ export function buildAgentSkillMentionOptions(params: {
     }
 
     const publicRef = buildExternalSkillPublicRef(agent, entry);
-    const markdownTarget = normalizeMarkdownTarget(entry.sourcePath ?? entry.targetPath);
+    const sourceTarget = normalizeMarkdownTarget(entry.sourcePath ?? entry.targetPath);
+    const markdownTarget = entry.sourceClass === "agent_home"
+      ? buildAgentSkillReferenceHref(agent.id, entry.selectionKey, entry.runtimeName ?? entry.key ?? publicRef)
+      : sourceTarget
+        ? buildLocalSkillReferenceHref(sourceTarget, entry.runtimeName ?? entry.key ?? publicRef)
+        : null;
     if (!markdownTarget) continue;
     const mentionLabel = buildSkillMentionLabel(entry, publicRef);
 

@@ -182,7 +182,7 @@ describe("buildAgentSkillMentionOptions", () => {
 
     expect(options.find((option) => option.name === "alpha-test")).toMatchObject({
       skillRefLabel: "alpha-test",
-      skillMarkdownTarget: "/workspace/skills/alpha-test/SKILL.md",
+      skillMarkdownTarget: "skill://org/org-alpha-test?ref=alpha-test",
       skillDisplayName: "Alpha Test",
       skillDetailsHref: "/skills/org-alpha-test",
     });
@@ -191,11 +191,14 @@ describe("buildAgentSkillMentionOptions", () => {
       skillDescription: "Turn vague build feedback into expert diagnosis.",
     });
     expect(options.find((option) => option.name === "agent-helper")).toMatchObject({
-      skillMarkdownTarget: "/workspace/agents/ella/skills/agent-helper/SKILL.md",
+      skillMarkdownTarget: "skill://agent/agent-1/agent%3Aagent-helper?ref=agent-helper",
       skillDisplayName: "agent-helper",
       skillCategoryLabel: "Agent skill",
       skillLocationLabel: "AGENT_HOME/skills",
       skillDetailsHref: null,
+    });
+    expect(options.find((option) => option.name === "global-helper")).toMatchObject({
+      skillMarkdownTarget: "skill://local/%2FUsers%2Ftest%2F.agents%2Fskills%2Fglobal-helper?ref=global-helper",
     });
     expect(options.find((option) => option.name === "global-helper")).toMatchObject({
       skillDisplayName: "global-helper",
@@ -246,7 +249,7 @@ describe("buildAgentSkillMentionOptions", () => {
     expect(options[0]).toMatchObject({
       name: "alpha-test",
       skillRefLabel: "alpha-test",
-      skillMarkdownTarget: "/workspace/skills/alpha-test/SKILL.md",
+      skillMarkdownTarget: "skill://agent/agent-1/org%3Aorganization%2Forg-1%2Falpha-test?ref=organization%2Forg-1%2Falpha-test",
       skillDetailsHref: null,
     });
   });

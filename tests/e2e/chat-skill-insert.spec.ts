@@ -20,7 +20,7 @@ async function createSkill(page: Page, orgId: string, name: string, slug: string
     },
   });
   expect(skillRes.ok()).toBe(true);
-  return skillRes.json() as Promise<{ key: string }>;
+  return skillRes.json() as Promise<{ id: string; key: string; slug: string }>;
 }
 
 async function syncAgentSkills(page: Page, agentId: string, orgId: string, desiredSkills: string[]) {
@@ -105,7 +105,7 @@ test("inserts a skill immediately, keeps it stable on click, and allows continue
   expect(userMessage?.body).toContain("Please review this UI.");
   expect(userMessage?.body).toContain("and keep going.");
   expect(userMessage?.body).toContain(`[${insertedLabel}](`);
-  expect(userMessage?.body).toContain("/build-advisor/SKILL.md)");
+  expect(userMessage?.body).toContain(`skill://org/${skill.id}?ref=${skill.slug}`);
 });
 
 test("backspace removes the full inserted skill token from the composer", async ({ page }) => {

@@ -12,6 +12,7 @@ import {
 } from "@rudderhq/shared";
 import {
   applyMention,
+  fragmentContainsRudderToken,
   hasRudderMarkdownReference,
   imageFilesFromFileList,
   insertMissingRudderTokenBoundarySpaces,
@@ -220,12 +221,14 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     expect(isRudderTokenHref("library-doc://doc-1?t=Spec", "Spec")).toBe(true);
     expect(isRudderTokenHref("library-file://file?p=docs%2Fspec.md&t=spec.md", "spec.md")).toBe(true);
     expect(isRudderTokenHref("skill://writer", "$writer")).toBe(true);
+    expect(isRudderTokenHref("skill://org/skill-1?ref=writer", "")).toBe(true);
     expect(isRudderTokenHref("/workspace/skills/build-advisor/SKILL.md", "$build-advisor")).toBe(true);
     expect(isRudderTokenHref("https://example.com", "Example")).toBe(false);
   });
 
   it("detects pasted canonical Rudder markdown references", () => {
     expect(hasRudderMarkdownReference("[Winter](agent://agent-1?i=bot)")).toBe(true);
+    expect(hasRudderMarkdownReference("[](skill://org/skill-1?ref=build-advisor)")).toBe(true);
     expect(hasRudderMarkdownReference("[docs-proposal.md](library-file://file?p=docs-proposal.md\\&t=docs-proposal.md)")).toBe(true);
     expect(hasRudderMarkdownReference("[skill-creator](/Users/zeeland/rudder/server/resources/bundled-skills/skill-creator/SKILL.md)")).toBe(true);
     expect(hasRudderMarkdownReference("[Example](https://example.com)")).toBe(false);
@@ -569,6 +572,22 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     expect(readCanonicalFragmentMarkdown(fragment)).toBe("Ask [Jade](agent://agent-1) today");
   });
 
+  it("copies selected decorated skill tokens as canonical Markdown", () => {
+    const fragment = document.createDocumentFragment();
+    fragment.append("Use ");
+    const token = document.createElement("span");
+    token.dataset.skillToken = "true";
+    token.dataset.skillHref = "skill://org/skill-1?ref=boundary-skill";
+    token.textContent = "boundary-skill";
+    fragment.append(token);
+    fragment.append(" here");
+
+    expect(fragmentContainsRudderToken(fragment)).toBe(true);
+    expect(readCanonicalFragmentMarkdown(fragment)).toBe(
+      "Use [boundary-skill](skill://org/skill-1?ref=boundary-skill) here",
+    );
+  });
+
   it("copies selected list fragments as valid Markdown bullets", () => {
     const fragment = document.createDocumentFragment();
     const list = document.createElement("ul");
@@ -688,7 +707,7 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     ].join("\n"));
   });
 
-  it("only upgrades multi-line selections to markdown clipboard text", () => {
+  it("only upgrades multi-line text selections to markdown clipboard text", () => {
     expect(shouldCopySelectionAsMarkdown("Ask Jade today")).toBe(false);
     expect(shouldCopySelectionAsMarkdown("Ask Jade today\n")).toBe(false);
     expect(shouldCopySelectionAsMarkdown("Ask Jade today\n\n")).toBe(false);

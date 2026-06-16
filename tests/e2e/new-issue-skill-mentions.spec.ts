@@ -1,12 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { E2E_CODEX_STUB } from "./support/e2e-env";
 
-function organizationSkillMarkdownTarget(skill: { sourceLocator?: string | null; sourcePath?: string | null }) {
-  const candidate = skill.sourceLocator ?? skill.sourcePath ?? null;
-  if (!candidate) return null;
-  return candidate.endsWith("/SKILL.md") || candidate.toLowerCase().endsWith(".md")
-    ? candidate
-    : `${candidate.replace(/\/$/, "")}/SKILL.md`;
+function organizationSkillMarkdownTarget(skill: { id: string; slug: string }) {
+  return `skill://org/${encodeURIComponent(skill.id)}?ref=${encodeURIComponent(skill.slug)}`;
 }
 
 test.describe("New issue skill mentions", () => {
@@ -55,8 +51,8 @@ test.describe("New issue skill mentions", () => {
     });
     expect(skillRes.ok()).toBe(true);
     const skill = await skillRes.json() as {
-      sourceLocator?: string | null;
-      sourcePath?: string | null;
+      id: string;
+      slug: string;
     };
     const skillTarget = organizationSkillMarkdownTarget(skill);
     expect(skillTarget).toBeTruthy();

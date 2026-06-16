@@ -21,12 +21,8 @@ function buildLibraryDirectoryMentionHref(directoryPath: string, title: string) 
   return `library-directory://directory?p=${encodeURIComponent(directoryPath)}`;
 }
 
-function organizationSkillMarkdownTarget(skill: { sourceLocator?: string | null; sourcePath?: string | null }) {
-  const candidate = skill.sourceLocator ?? skill.sourcePath ?? null;
-  if (!candidate) return null;
-  return candidate.endsWith("/SKILL.md") || candidate.toLowerCase().endsWith(".md")
-    ? candidate
-    : `${candidate.replace(/\/$/, "")}/SKILL.md`;
+function organizationSkillMarkdownTarget(skill: { id: string; slug: string }) {
+  return `skill://org/${encodeURIComponent(skill.id)}?ref=${encodeURIComponent(skill.slug)}`;
 }
 
 async function createOrganization(page: Page, name: string) {
@@ -106,8 +102,7 @@ test("chat composer reference tokens navigate to their target pages with a comma
   const skill = await skillRes.json() as {
     id: string;
     key: string;
-    sourceLocator?: string | null;
-    sourcePath?: string | null;
+    slug: string;
   };
   const skillTarget = organizationSkillMarkdownTarget(skill);
   expect(skillTarget).toBeTruthy();

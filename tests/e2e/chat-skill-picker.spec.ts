@@ -4,12 +4,8 @@ import path from "node:path";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { E2E_CODEX_STUB, E2E_HOME } from "./support/e2e-env";
 
-function organizationSkillMarkdownTarget(skill: { sourceLocator?: string | null; sourcePath?: string | null }) {
-  const candidate = skill.sourceLocator ?? skill.sourcePath ?? null;
-  if (!candidate) return null;
-  return candidate.endsWith("/SKILL.md") || candidate.toLowerCase().endsWith(".md")
-    ? candidate
-    : `${candidate.replace(/\/$/, "")}/SKILL.md`;
+function organizationSkillMarkdownTarget(skill: { id: string; slug: string }) {
+  return `skill://org/${encodeURIComponent(skill.id)}?ref=${encodeURIComponent(skill.slug)}`;
 }
 
 async function createSkill(request: APIRequestContext, orgId: string, name: string, slug: string) {

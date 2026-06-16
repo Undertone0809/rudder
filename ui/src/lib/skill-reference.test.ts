@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isMarkdownSkillPath, parseSkillReference, removeSkillReferenceFromMarkdown } from "./skill-reference";
+import {
+  buildAgentSkillReferenceHref,
+  buildLocalSkillReferenceHref,
+  buildOrganizationSkillReferenceHref,
+  isMarkdownSkillPath,
+  parseSkillReference,
+  removeSkillReferenceFromMarkdown,
+} from "./skill-reference";
 
 describe("skill-reference", () => {
   it("recognizes skill markdown targets", () => {
@@ -49,6 +56,23 @@ describe("skill-reference", () => {
     ).toBeNull();
   });
 
+  it("builds and parses skill protocol references without relying on markdown labels", () => {
+    expect(buildOrganizationSkillReferenceHref("skill-123", "build-advisor")).toBe("skill://org/skill-123?ref=build-advisor");
+    expect(buildAgentSkillReferenceHref("agent-1", "agent:helper", "helper")).toBe("skill://agent/agent-1/agent%3Ahelper?ref=helper");
+    expect(buildLocalSkillReferenceHref("/workspace/.agents/skills/local-helper/SKILL.md", "local-helper")).toBe(
+      "skill://local/%2Fworkspace%2F.agents%2Fskills%2Flocal-helper?ref=local-helper",
+    );
+
+    expect(parseSkillReference("skill://org/skill-123?ref=build-advisor", "")).toEqual({
+      href: "skill://org/skill-123?ref=build-advisor",
+      label: "build-advisor",
+    });
+    expect(parseSkillReference("skill://agent/agent-1/agent%3Ahelper?ref=agent-helper", "Old Helper")).toEqual({
+      href: "skill://agent/agent-1/agent%3Ahelper?ref=agent-helper",
+      label: "agent-helper",
+    });
+  });
+
   it("removes a skill reference as a whole markdown token", () => {
     expect(
       removeSkillReferenceFromMarkdown(
@@ -78,6 +102,13 @@ describe("skill-reference", () => {
     expect(
       removeSkillReferenceFromMarkdown(
         "Use this\n\n[rudder/build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md)\u00A0",
+        "build-advisor",
+      ),
+    ).toBe("Use this");
+
+    expect(
+      removeSkillReferenceFromMarkdown(
+        "Use this\n\n[build-advisor](skill://org/skill-123?ref=build-advisor)\u00A0",
         "build-advisor",
       ),
     ).toBe("Use this");

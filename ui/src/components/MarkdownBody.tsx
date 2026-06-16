@@ -9,7 +9,7 @@ import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
 import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
-import { parseSkillReference } from "../lib/skill-reference";
+import { formatSkillReferenceDisplayLabel, parseSkillReference } from "../lib/skill-reference";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { ImagePreviewDialog, type ImagePreviewState } from "./ImagePreviewDialog";
 import { InspectableImage } from "./InspectableImage";
@@ -907,7 +907,8 @@ export function MarkdownBody({
           if (mention.kind === "agent") return agentMentionById.get(mention.agentId)?.name ?? fallbackMentionLabel;
           if (mention.kind === "project") return projectMentionById.get(mention.projectId)?.name ?? fallbackMentionLabel;
           if (mention.kind === "issue") {
-            return mention.commentId ? fallbackMentionLabel : issueMentionById.get(mention.issueId)?.name ?? fallbackMentionLabel;
+            const currentIssueName = issueMentionById.get(mention.issueId)?.name ?? fallbackMentionLabel;
+            return mention.commentId ? fallbackMentionLabel || currentIssueName : currentIssueName;
           }
           if (mention.kind === "chat") return chatMentionById.get(mention.conversationId)?.name ?? fallbackMentionLabel;
           if (mention.kind === "library_doc") return libraryDocMentionById.get(mention.documentId)?.name ?? fallbackMentionLabel;
@@ -953,8 +954,9 @@ export function MarkdownBody({
           skillPreviewByHref.get(normalizeSkillReferenceLookupKey(skillReference.href))
           ?? skillPreviewByLabel.get(normalizeSkillReferenceLookupKey(skillReference.label))
           ?? null;
+        const skillLabel = formatSkillReferenceDisplayLabel(preview?.label) || skillReference.label;
         return (
-          <SkillReferenceToken label={skillReference.label} preview={preview} />
+          <SkillReferenceToken label={skillLabel} preview={preview} />
         );
       }
       const linkLabel = flattenText(linkChildren);

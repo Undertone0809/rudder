@@ -82,11 +82,11 @@ describe("organization-skill-picker", () => {
       "rudder/build-advisor",
     ]);
     expect(items.map((item) => item.markdownTarget)).toEqual([
-      "/workspace/skills/alpha-test/SKILL.md",
-      "https://github.com/acme/repo/blob/main/skills/beta-test/SKILL.md",
-      "/workspace/.agents/skills/build-advisor/SKILL.md",
+      "skill://org/alpha?ref=alpha-test",
+      "skill://org/beta?ref=beta-test",
+      "skill://org/bundle?ref=build-advisor",
     ]);
-    expect(organizationSkillMarkdownTarget(items[0]!)).toBe("/workspace/skills/alpha-test/SKILL.md");
+    expect(organizationSkillMarkdownTarget(items[0]!)).toBe("skill://org/alpha?ref=alpha-test");
   });
 
   it("prefers the real source locator over managed root display paths", () => {
@@ -102,7 +102,7 @@ describe("organization-skill-picker", () => {
       sourcePath: "/workspace/skills",
     });
 
-    expect(organizationSkillMarkdownTarget(item)).toBe("/workspace/skills/alpha-test/SKILL.md");
+    expect(organizationSkillMarkdownTarget(item)).toBe("skill://org/managed-alpha?ref=alpha-test");
   });
 
   it("filters by public ref, name, slug, and source metadata", () => {
@@ -202,11 +202,11 @@ describe("organization-skill-picker", () => {
   });
 
   it("appends unique skill references to the draft", () => {
-    const alpha = "[org/acme/builder/alpha-test](/workspace/skills/alpha-test/SKILL.md)";
-    const beta = "[rudder/build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md)";
+    const alpha = "[alpha-test](skill://org/alpha?ref=alpha-test)";
+    const beta = "[build-advisor](skill://org/bundle?ref=build-advisor)";
 
     expect(
       appendSkillReferencesToDraft("Use these skills", [alpha, beta, alpha, ""]),
-    ).toBe("Use these skills [org/acme/builder/alpha-test](/workspace/skills/alpha-test/SKILL.md) [rudder/build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md)\u00A0");
+    ).toBe("Use these skills [alpha-test](skill://org/alpha?ref=alpha-test) [build-advisor](skill://org/bundle?ref=build-advisor)\u00A0");
   });
 });
