@@ -80,7 +80,11 @@ import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
-import { MilkdownMarkdownEditor } from "./MilkdownMarkdownEditor";
+import {
+  MilkdownMarkdownEditor,
+  readCanonicalFragmentMarkdown,
+  shouldCopySelectionAsMarkdown,
+} from "./MilkdownMarkdownEditor";
 import {
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
@@ -360,6 +364,35 @@ function canonicalMarkdownFromFragment(fragment: DocumentFragment) {
   };
 
   return Array.from(fragment.childNodes).map(read).join("");
+}
+
+function normalizeVisibleCopyText(value: string) {
+  return value
+    .replace(/\u200B/g, "")
+    .replace(/\u00A0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function readEditorSelectionMarkdown(
+  selection: Selection,
+  editable: HTMLElement,
+  sourceMarkdown: string,
+  options: { plainText: boolean },
+) {
+  const selectedText = selection.toString();
+  if (!shouldCopySelectionAsMarkdown(selectedText)) return "";
+
+  const selectedVisibleText = normalizeVisibleCopyText(selectedText);
+  const fullVisibleText = normalizeVisibleCopyText(editable.innerText ?? editable.textContent ?? "");
+  if (selectedVisibleText && selectedVisibleText === fullVisibleText) {
+    return sourceMarkdown;
+  }
+
+  const fragment = selection.getRangeAt(0).cloneContents();
+  return options.plainText
+    ? canonicalMarkdownFromFragment(fragment)
+    : readCanonicalFragmentMarkdown(fragment);
 }
 
 function tokenMarkdownIdentity(token: Pick<AtomicInlineTokenElement, "href" | "kind" | "label">) {
@@ -1531,7 +1564,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       if (!(editable instanceof HTMLElement)) return;
       if (!editable.contains(selection.anchorNode) || !editable.contains(selection.focusNode)) return;
 
-      const canonicalText = canonicalMarkdownFromFragment(selection.getRangeAt(0).cloneContents());
+      const canonicalText = readEditorSelectionMarkdown(selection, editable, latestValueRef.current, { plainText });
       if (!canonicalText) return;
       event.clipboardData?.setData("text/plain", canonicalText);
       event.preventDefault();
@@ -1945,7 +1978,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
             && editable.contains(selection.anchorNode)
             && editable.contains(selection.focusNode)
           ) {
-            const canonicalText = canonicalMarkdownFromFragment(selection.getRangeAt(0).cloneContents());
+            const canonicalText = readEditorSelectionMarkdown(selection, editable, latestValueRef.current, { plainText });
             if (canonicalText) {
               e.preventDefault();
               e.stopPropagation();
@@ -2094,14 +2127,13 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         stopAtomicInlineTokenEvent(event);
       }}
       onCopyCapture={(event) => {
-        if (!plainText) return;
         const selection = window.getSelection();
         if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
         const editable = containerRef.current?.querySelector('[contenteditable="true"]');
         if (!(editable instanceof HTMLElement)) return;
         if (!editable.contains(selection.anchorNode) || !editable.contains(selection.focusNode)) return;
 
-        const canonicalText = canonicalMarkdownFromFragment(selection.getRangeAt(0).cloneContents());
+        const canonicalText = readEditorSelectionMarkdown(selection, editable, latestValueRef.current, { plainText });
         if (!canonicalText) return;
         event.clipboardData.setData("text/plain", canonicalText);
         event.preventDefault();

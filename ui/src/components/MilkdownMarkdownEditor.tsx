@@ -1436,7 +1436,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           return;
         }
         const selectedVisibleText = normalizeVisibleCopyText(selectedRawText);
-        const fullVisibleText = normalizeVisibleCopyText(editable.innerText);
+        const fullVisibleText = normalizeVisibleCopyText(editable.innerText ?? editable.textContent ?? "");
         if (selectedVisibleText && selectedVisibleText === fullVisibleText) {
           canonicalMarkdown = latestValueRef.current;
         }

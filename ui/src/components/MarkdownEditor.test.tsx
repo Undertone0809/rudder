@@ -1046,7 +1046,7 @@ describe("MarkdownEditor", () => {
       preventScroll: true,
     });
 
-    const copyData = {
+    const singleLineCopyData = {
       setData: vi.fn(),
     };
     const range = document.createRange();
@@ -1054,16 +1054,68 @@ describe("MarkdownEditor", () => {
     selection?.removeAllRanges();
     selection?.addRange(range);
 
+    const singleLineCopyEvent = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(singleLineCopyEvent, "clipboardData", {
+      value: singleLineCopyData,
+    });
+    editable!.dispatchEvent(singleLineCopyEvent);
+
+    expect(singleLineCopyData.setData).not.toHaveBeenCalled();
+    expect(singleLineCopyEvent.defaultPrevented).toBe(false);
+  });
+
+  it("copies multi-line plain text composer selections as markdown", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value={[
+            "Follow up with [Orion (Product Release Agent)](agent://agent-1) ",
+            "Review [ZST-644](issue://issue-644)",
+          ].join("\n")}
+          onChange={vi.fn()}
+          plainText
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await flushAnimationFrames();
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editable!);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const copyData = {
+      setData: vi.fn(),
+    };
     const copyEvent = new Event("copy", { bubbles: true, cancelable: true });
     Object.defineProperty(copyEvent, "clipboardData", {
       value: copyData,
     });
     editable!.dispatchEvent(copyEvent);
 
-    expect(copyData.setData).toHaveBeenCalled();
-    const copiedPlainText = copyData.setData.mock.calls.at(-1)?.[1] as string;
-    expect(copiedPlainText).toContain("asadsad. [Orion (Product Release Agent)](agent://agent-1) ");
-    expect(copiedPlainText).not.toContain("\u200B");
+    expect(copyData.setData).toHaveBeenCalledWith(
+      "text/plain",
+      [
+        "Follow up with [Orion (Product Release Agent)](agent://agent-1) ",
+        "Review [ZST-644](issue://issue-644)",
+      ].join("\n"),
+    );
+    expect(copyEvent.defaultPrevented).toBe(true);
   });
 
   it("replaces only the active repeated mention query", async () => {
