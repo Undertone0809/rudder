@@ -82,6 +82,56 @@ test.describe("Issue detail Library UX", () => {
 
   });
 
+  test("keeps Library document markdown links inside the running app", async ({ page }) => {
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Library-Doc-SPA-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const targetDocRes = await page.request.post(`/api/orgs/${organization.id}/library/documents`, {
+      data: {
+        title: "Target Library doc",
+        format: "markdown",
+        body: "# Target Library doc\n\nReached without reloading the app shell.",
+      },
+    });
+    expect(targetDocRes.ok()).toBe(true);
+    const targetDoc = await targetDocRes.json() as { id: string };
+
+    const sourceDocRes = await page.request.post(`/api/orgs/${organization.id}/library/documents`, {
+      data: {
+        title: "Source Library doc",
+        format: "markdown",
+        body: `# Source Library doc\n\nOpen [Target Library doc](/library?doc=${targetDoc.id}).`,
+      },
+    });
+    expect(sourceDocRes.ok()).toBe(true);
+    const sourceDoc = await sourceDocRes.json() as { id: string };
+
+    await page.goto(`/${organization.issuePrefix}/library?doc=${sourceDoc.id}`);
+    await expect(page.getByTestId("org-workspaces-legacy-document").getByRole("heading", {
+      name: "Source Library doc",
+    }).first()).toBeVisible();
+    await page.evaluate(() => {
+      (window as Window & { __rudderSpaSentinel?: string }).__rudderSpaSentinel = "still-mounted";
+    });
+
+    const link = page.getByRole("link", { name: "Target Library doc" }).first();
+    await expect(link).toHaveAttribute("href", `/${organization.issuePrefix}/library?doc=${targetDoc.id}`);
+    await link.click();
+
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?doc=${targetDoc.id}$`));
+    await expect.poll(() => page.evaluate(() => (
+      window as Window & { __rudderSpaSentinel?: string }
+    ).__rudderSpaSentinel)).toBe("still-mounted");
+    await expect(page.getByTestId("org-workspaces-legacy-document")).toContainText(
+      "Reached without reloading the app shell.",
+    );
+  });
+
   test("attaches files from the Library file tree", async ({ page }) => {
     await page.goto("/");
 

@@ -690,6 +690,52 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain("library-file://file");
   });
 
+  it("prefixes ordinary internal app links and navigates without document reload", () => {
+    window.history.pushState({}, "", "/ZST/library?doc=old-doc");
+    const popstate = vi.fn();
+    window.addEventListener("popstate", popstate);
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"Open [Library doc](/library?doc=doc-123)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("/ZST/library?doc=doc-123");
+    const clickResult = link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+
+    expect(clickResult).toBe(false);
+    expect(window.location.pathname).toBe("/ZST/library");
+    expect(window.location.search).toBe("?doc=doc-123");
+    expect(popstate).toHaveBeenCalledTimes(1);
+    window.removeEventListener("popstate", popstate);
+  });
+
+  it("navigates library mention chips without relying on caller click handlers", () => {
+    window.history.pushState({}, "", "/ZST/issues/ZST-559");
+    const popstate = vi.fn();
+    window.addEventListener("popstate", popstate);
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[Product principles](${buildLibraryDocMentionHref("doc-123", "Product principles")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a.rudder-mention-chip");
+    expect(link?.getAttribute("href")).toBe("/ZST/library?doc=doc-123");
+    const clickResult = link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+
+    expect(clickResult).toBe(false);
+    expect(window.location.pathname).toBe("/ZST/library");
+    expect(window.location.search).toBe("?doc=doc-123");
+    expect(popstate).toHaveBeenCalledTimes(1);
+    window.removeEventListener("popstate", popstate);
+  });
+
   it("renders issue mentions with status metadata using the issue status icon", () => {
     markdownMentionsMock.mentions = [{
       id: "issue:issue-789",

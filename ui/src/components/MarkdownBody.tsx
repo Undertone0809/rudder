@@ -247,6 +247,11 @@ function isBareMarkdownUrlLabel(label: string) {
   return /^(?:https?:\/\/|www\.|\/\/)/iu.test(normalizedLabel);
 }
 
+function isAbsoluteMarkdownHref(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.startsWith("//") || /^[a-z][a-z\d+.-]*:/iu.test(trimmed);
+}
+
 function formatWebsiteLinkDetail(url: URL) {
   const path = `${url.pathname}${url.search}${url.hash}`.replace(/^\/+/, "");
   if (!path) return null;
@@ -264,6 +269,55 @@ function websiteLinkPresentation(url: URL, label: string) {
     return { primary: trimmedLabel, detail: host };
   }
   return { primary: host, detail: formatWebsiteLinkDetail(url) };
+}
+
+const APP_ROUTE_FIRST_SEGMENTS = new Set([
+  "agents",
+  "automations",
+  "dashboard",
+  "goals",
+  "inbox",
+  "issues",
+  "library",
+  "messenger",
+  "organization",
+  "projects",
+  "settings",
+  "skills",
+]);
+
+function isPlainPrimaryClick(event: MouseEvent<HTMLAnchorElement>) {
+  return event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+}
+
+function internalAppRouteFromHref(href: string, organizationPrefix: string | null | undefined) {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const parsed = new URL(href, window.location.href);
+    if (parsed.origin !== window.location.origin) return null;
+
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    const firstRouteSegment = segments[0] && APP_ROUTE_FIRST_SEGMENTS.has(segments[0])
+      ? segments[0]
+      : segments[1] && APP_ROUTE_FIRST_SEGMENTS.has(segments[1])
+        ? segments[1]
+        : null;
+    if (!firstRouteSegment) return null;
+
+    return applyOrganizationPrefix(`${parsed.pathname}${parsed.search}${parsed.hash}`, organizationPrefix);
+  } catch {
+    return null;
+  }
+}
+
+function navigateInternalAppRoute(route: string) {
+  if (typeof window === "undefined") return;
+  const currentRoute = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (route === currentRoute) return;
+
+  window.history.pushState(window.history.state, "", route);
+  window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
 }
 
 const websiteLogoSources = [
@@ -822,6 +876,19 @@ export function MarkdownBody({
     event.clipboardData.setData("text/plain", markdownSource);
     event.preventDefault();
   };
+  const handleMarkdownLinkClick = (event: MouseEvent<HTMLAnchorElement>, href: string, label: string) => {
+    const handled = onLinkClick?.({ event, href, label });
+    if (handled) {
+      event.preventDefault();
+      return;
+    }
+    if (event.defaultPrevented || !isPlainPrimaryClick(event)) return;
+
+    const internalRoute = internalAppRouteFromHref(href, organizationPrefix);
+    if (!internalRoute) return;
+    event.preventDefault();
+    navigateInternalAppRoute(internalRoute);
+  };
   const handleImageInspect = (image: HTMLImageElement) => {
     if (!enableImagePreview) return;
     const src = image.currentSrc || image.src;
@@ -963,9 +1030,7 @@ export function MarkdownBody({
             style={mentionChipInlineStyle(mention)}
             {...markdownSourceAttributes(node)}
             onClick={(event) => {
-              if (!onLinkClick) return;
-              const handled = onLinkClick({ event, href: targetHref, label: mentionLabel });
-              if (handled) event.preventDefault();
+              handleMarkdownLinkClick(event, targetHref, mentionLabel);
             }}
           >
             {mention.kind === "issue" && mention.status ? (
@@ -996,6 +1061,8 @@ export function MarkdownBody({
       const websiteUrl = websiteUrlFromMarkdownHref(href);
       const isBareUrlLink = isExternal && isBareMarkdownUrlLabel(linkLabel);
       const websitePresentation = websiteUrl ? websiteLinkPresentation(websiteUrl, linkLabel) : null;
+      const internalHref = href ? internalAppRouteFromHref(href, organizationPrefix) : null;
+      const renderedHref = internalHref && !isAbsoluteMarkdownHref(href) ? internalHref : href;
       if (websiteUrl && websitePresentation) {
         return (
           <a
@@ -1006,9 +1073,8 @@ export function MarkdownBody({
             className="rudder-link-chip rudder-link-chip--website"
             {...markdownSourceAttributes(node)}
             onClick={(event) => {
-              if (!href || !onLinkClick) return;
-              const handled = onLinkClick({ event, href, label: linkLabel });
-              if (handled) event.preventDefault();
+              if (!href) return;
+              handleMarkdownLinkClick(event, href, linkLabel);
             }}
           >
             <WebsiteLinkIcon url={websiteUrl} />
@@ -1021,15 +1087,14 @@ export function MarkdownBody({
       }
       return (
         <a
-          href={href}
+          href={renderedHref}
           target={isExternal ? "_blank" : undefined}
           rel={isExternal ? "noreferrer noopener" : "noreferrer"}
           title={isBareUrlLink ? href : undefined}
           {...markdownSourceAttributes(node)}
           onClick={(event) => {
-            if (!href || !onLinkClick) return;
-            const handled = onLinkClick({ event, href, label: linkLabel });
-            if (handled) event.preventDefault();
+            if (!href) return;
+            handleMarkdownLinkClick(event, internalHref ?? href, linkLabel);
           }}
         >
           {linkChildren}
