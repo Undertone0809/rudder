@@ -463,7 +463,7 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("Recent");
   });
 
-  it("renders custom groups with pinned threads first and group entries sorted by latest activity", () => {
+  it("renders custom groups with pinned threads first and group entries in persisted order", () => {
     localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
     chatList = [];
     customGroupList = [
@@ -559,7 +559,9 @@ describe("MessengerContextSidebar", () => {
 
     expect(html.indexOf("Pinned")).toBeLessThan(html.indexOf("Deep work"));
     expect(html.indexOf("Pinned grouped chat")).toBeLessThan(html.indexOf("Deep work"));
-    expect(html.indexOf("Newer grouped chat")).toBeLessThan(html.indexOf("Older grouped chat"));
+    expect(html.indexOf("Older grouped chat")).toBeLessThan(html.indexOf("Newer grouped chat"));
+    expect(html).toContain('aria-label="Reorder Older grouped chat"');
+    expect(html).toContain('aria-label="Reorder Newer grouped chat"');
     expect(html).toContain(">D</span>");
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["messenger", "org-1", "groups"],

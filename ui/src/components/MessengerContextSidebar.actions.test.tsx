@@ -14,6 +14,10 @@ const mockUpdateThreadUserState = vi.hoisted(() => vi.fn());
 const mockCreateCustomGroup = vi.hoisted(() => vi.fn());
 const mockAssignCustomGroupEntry = vi.hoisted(() => vi.fn());
 const mockListCustomGroups = vi.hoisted(() => vi.fn());
+const mockUpdateCustomGroup = vi.hoisted(() => vi.fn());
+const mockDeleteCustomGroup = vi.hoisted(() => vi.fn());
+const mockReorderCustomGroups = vi.hoisted(() => vi.fn());
+const mockReorderCustomGroupEntries = vi.hoisted(() => vi.fn());
 const mockUpdateConversation = vi.hoisted(() => vi.fn());
 const mockRemove = vi.hoisted(() => vi.fn());
 const mockStopMessageStream = vi.hoisted(() => vi.fn());
@@ -76,7 +80,12 @@ vi.mock("@/api/messenger", () => ({
     updateThreadUserState: mockUpdateThreadUserState,
     listCustomGroups: mockListCustomGroups,
     createCustomGroup: mockCreateCustomGroup,
+    updateCustomGroup: mockUpdateCustomGroup,
+    deleteCustomGroup: mockDeleteCustomGroup,
+    reorderCustomGroups: mockReorderCustomGroups,
     assignCustomGroupEntry: mockAssignCustomGroupEntry,
+    removeCustomGroupEntry: vi.fn(),
+    reorderCustomGroupEntries: mockReorderCustomGroupEntries,
   },
 }));
 
@@ -257,6 +266,12 @@ function installLocalStorage(initial: Record<string, string> = {}) {
   return { getItem, setItem, store };
 }
 
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 describe("MessengerContextSidebar chat actions", () => {
   beforeEach(() => {
     activeGeneratingChatIds = new Set();
@@ -344,6 +359,10 @@ describe("MessengerContextSidebar chat actions", () => {
     mockCreateCustomGroup.mockClear();
     mockAssignCustomGroupEntry.mockClear();
     mockListCustomGroups.mockClear();
+    mockUpdateCustomGroup.mockClear();
+    mockDeleteCustomGroup.mockClear();
+    mockReorderCustomGroups.mockClear();
+    mockReorderCustomGroupEntries.mockClear();
     mockUpdateConversation.mockClear();
     invalidateQueries.mockClear();
     setQueryData.mockClear();
@@ -545,10 +564,6 @@ describe("MessengerContextSidebar chat actions", () => {
 
   it("creates a custom group from a latest activity chat action and switches to custom mode", async () => {
     const storage = installLocalStorage();
-    const prompt = vi.spyOn(window, "prompt");
-    prompt
-      .mockReturnValueOnce("Deep work")
-      .mockReturnValueOnce("D");
 
     renderSidebar();
 
@@ -558,6 +573,26 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(newGroup).toBeTruthy();
     await act(async () => {
       newGroup?.click();
+    });
+
+    const editor = document.querySelector('[data-testid="messenger-custom-group-editor"]');
+    expect(editor).toBeTruthy();
+    const nameInput = editor?.querySelector<HTMLInputElement>('input[aria-label="Group name"]');
+    const iconButton = Array.from(editor?.querySelectorAll("button") ?? [])
+      .find((button) => button.getAttribute("aria-label") === "Use D group icon") as HTMLButtonElement | undefined;
+    const submitButton = Array.from(editor?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent === "Create") as HTMLButtonElement | undefined;
+
+    expect(nameInput).toBeTruthy();
+    expect(iconButton).toBeTruthy();
+    expect(submitButton).toBeTruthy();
+    await act(async () => {
+      setInputValue(nameInput!, "Deep work");
+      iconButton?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      submitButton?.click();
       await Promise.resolve();
       await Promise.resolve();
     });
