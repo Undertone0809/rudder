@@ -97,7 +97,12 @@ logs, or pasted prior messages.
 
 When the user says a skill "needs optimization", "should be hardened", "always
 does the wrong thing", "I have to ask this every time", or explicitly asks to
-use `skill-optimizer`, classify the turn as skill optimization. In that case:
+use `skill-optimizer`, classify the turn as skill optimization. Also classify
+the turn this way when the user attaches or links a specific `SKILL.md` and the
+language clearly makes that skill artifact the object being optimized, such as
+"这个 skill 需要优化", "优化这个 router skill", "fix this skill", "改 SKILL.md",
+or "补 eval". This holds even if the evidence attached to the request is a UI,
+release, run, or docs problem. In that case:
 
 - route to `skill-optimizer` as the primary owner
 - treat the named skill as the target artifact, not as the workflow to execute
@@ -112,6 +117,19 @@ skill-optimizer" and attaches a screenshot where the prior assistant proposed
 route is `skill_optimization -> skill-optimizer`. Do not generate UI mockups or
 recommend the design skills unless the user separately asks to continue the UI
 task.
+
+Example: if the user says "这个 router 对 UI 问题的路由有问题，优化下
+[$development-lifecycle-router-maintainer](.../SKILL.md)" and attaches a
+screenshot of the UI issue, the route is still
+`skill_optimization -> skill-optimizer` with this router as the target
+artifact. Treat the UI screenshot as evidence of the routing failure or
+recurring annoyance, not as permission to start a UI polish implementation.
+
+Counterexample: if the user says "继续优化这个 UI，按
+[$development-lifecycle-router-maintainer](.../SKILL.md) 走 review gate" or
+"UI 有问题，用这个 router 走完整流程", the UI is the object being optimized and
+the router is only the lifecycle policy. Continue the UI route and do not patch
+this router unless the user separately asks to optimize the skill.
 
 ## Core Rule
 
