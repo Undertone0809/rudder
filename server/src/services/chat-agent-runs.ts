@@ -216,6 +216,7 @@ export function chatAgentRunService(db: Db) {
       .set({ runId, updatedAt: new Date() })
       .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
       .returning();
+    if (!message) return null;
 
     const contextSnapshot = {
       ...((run.contextSnapshot ?? {}) as Record<string, unknown>),

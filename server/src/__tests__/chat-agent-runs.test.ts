@@ -194,6 +194,13 @@ describe("chatAgentRunService", () => {
       linkedProjectId: null,
     });
 
+    await expect(svc.linkAssistantMessage(secondRun.id, conversationId, randomUUID())).resolves.toBeNull();
+    const eventsBeforeLink = await db
+      .select()
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, secondRun.id));
+    expect(eventsBeforeLink.some((event) => event.eventType === "chat.message_linked")).toBe(false);
+
     await db.insert(chatMessages).values({
       id: messageId,
       orgId,

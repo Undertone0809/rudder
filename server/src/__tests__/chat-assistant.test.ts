@@ -1206,6 +1206,66 @@ describe("chatAssistantService operator profile prompt injection", () => {
     }));
   });
 
+  it("finalizes a chat run when setup fails after creation so the conversation can retry immediately", async () => {
+    const svc = chatAssistantService({} as any);
+    let activeRunId: string | null = null;
+    let runSequence = 0;
+
+    mockRunContextService.buildSceneContext.mockResolvedValueOnce(makeSceneContext({
+      agentHome: "",
+    }));
+    mockChatAgentRuns.createRun.mockImplementation(async () => {
+      if (activeRunId) {
+        throw new Error("A chat assistant run is already active for this conversation");
+      }
+      runSequence += 1;
+      activeRunId = `chat-run-${runSequence}`;
+      return {
+        id: activeRunId,
+        orgId: "organization-1",
+        agentId: "agent-1",
+        status: "running",
+      };
+    });
+    mockChatAgentRuns.finalizeRun.mockImplementation(async (runId) => {
+      if (activeRunId === runId) {
+        activeRunId = null;
+      }
+      return undefined;
+    });
+
+    await expect(svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    })).rejects.toThrow("managed agent_home path is missing");
+
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "managed_workspace_configuration_error",
+      }),
+    );
+
+    const result = await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    expect(result.body).toBe("Clarify the goal first.");
+    expect(mockChatAgentRuns.createRun).toHaveBeenCalledTimes(2);
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-2",
+      expect.objectContaining({ status: "succeeded" }),
+    );
+  });
+
   it("uses provider-aware model fallbacks for the selected chat agent runtime", async () => {
     const fallbackAdapter = {
       type: "claude_local",
