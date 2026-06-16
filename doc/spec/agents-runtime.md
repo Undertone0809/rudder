@@ -178,21 +178,25 @@ Runs with no project context receive no resource prompt by default.
 
 ### 4.5 Prompt Assembly Order
 
-The effective prompt/context is assembled in this order:
+The stable agent instruction stack is assembled in this order:
 
-1. adapter/runtime bootstrap and native instruction loading
-2. enabled skills for the selected agent/runtime
-3. scene-level invariant prompt sections
-4. conditional scene sections such as plan mode or operator profile
-5. selected project metadata, if any
-6. project-attached resources, if any
-7. wake-source task/comment/recovery context
+1. Rudder agent operating contract
+2. agent contract/instructions entry file
+3. agent soul/persona instructions
+4. agent tool notes
+5. agent memory instructions
+6. project-attached resources and assigned automation context, if any
+7. current time
+8. Rudder Heartbeat Instruction, only for heartbeat scene runs
 
 The exact final prompt varies by adapter because local CLIs have different
 native instruction and resume mechanisms. The policy above is the product
-contract: broad org knowledge is discoverable, project-attached knowledge is
-default context, and high-churn task state stays in wake/context sections rather
-than stable instructions.
+contract for Rudder-injected agent instructions: broad org knowledge is
+discoverable, project-attached knowledge and assigned automations are loaded
+before the run timestamp, heartbeat-specific instructions are appended only
+after the stable stack when a heartbeat wakes the agent, and high-churn
+task/comment/recovery state stays in wake/context sections rather than stable
+instructions.
 
 ## 5. Session resume behavior
 

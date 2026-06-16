@@ -14,6 +14,7 @@ import {
   joinPromptSections,
   loadAgentInstructionsPrefix,
   parseObject,
+  prepareAgentInstructionRuntimeContext,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeMaintainerOnlySkillSymlinks,
@@ -408,9 +409,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const resolvedInstructionsFilePath = instructionsFilePath
     ? path.resolve(cwd, instructionsFilePath)
     : "";
+  const instructionRuntimeContext = prepareAgentInstructionRuntimeContext(context as Record<string, unknown>);
   const loadedInstructions = await loadAgentInstructionsPrefix({
     instructionsFilePath: resolvedInstructionsFilePath,
     includeHeartbeatInstructions: runtimeScene === "heartbeat",
+    contextSectionsBeforeCurrentTime: instructionRuntimeContext.contextSectionsBeforeCurrentTime,
     onLog,
   });
   const systemPromptExtension = loadedInstructions.prefix
@@ -454,7 +457,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       source: context.wakeSource ?? "on_demand",
       wakeReason: context.wakeReason ?? null,
     },
-    context,
+    context: instructionRuntimeContext.promptContext,
     // Issue and comment context for enriched prompts
     issue: context.issue ?? null,
     comment: context.comment ?? null,

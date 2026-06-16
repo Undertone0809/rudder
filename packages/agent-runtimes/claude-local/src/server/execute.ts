@@ -16,6 +16,7 @@ import {
   loadAgentInstructionsPrefix,
   parseJson,
   parseObject,
+  prepareAgentInstructionRuntimeContext,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   renderTemplate,
@@ -505,9 +506,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       description: entry.description ?? null,
     }));
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
+  const instructionRuntimeContext = prepareAgentInstructionRuntimeContext(context as Record<string, unknown>);
   const loadedInstructions = await loadAgentInstructionsPrefix({
     instructionsFilePath,
     includeHeartbeatInstructions: runtimeScene === "heartbeat",
+    contextSectionsBeforeCurrentTime: instructionRuntimeContext.contextSectionsBeforeCurrentTime,
     onLog,
     warningStream: "stderr",
   });
@@ -593,7 +596,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       source: context.wakeSource ?? "on_demand",
       wakeReason: context.wakeReason ?? null,
     },
-    context,
+    context: instructionRuntimeContext.promptContext,
     // Issue and comment context for enriched prompts
     issue: context.issue ?? null,
     comment: context.comment ?? null,

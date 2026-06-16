@@ -1265,11 +1265,15 @@ describe("codex execute", () => {
     const commandPath = path.join(root, "codex");
     const capturePath = path.join(root, "capture.json");
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const soulPath = path.join(root, "instructions", "SOUL.md");
+    const toolsPath = path.join(root, "instructions", "TOOLS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
     const heartbeatPath = path.join(root, "instructions", "HEARTBEAT.md");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
+    await fs.writeFile(soulPath, "# Agent Soul\n", "utf8");
+    await fs.writeFile(toolsPath, "# Agent Tools\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Keep updates concise.\n", "utf8");
     await fs.writeFile(heartbeatPath, "# Heartbeat\n\n- Check assigned issues.\n", "utf8");
     await writeFakeCodexCommand(commandPath);
@@ -1306,9 +1310,21 @@ describe("codex execute", () => {
             desiredSkills: ["rudder/rudder"],
           },
           instructionsFilePath: instructionsPath,
-          promptTemplate: "Follow the rudder heartbeat.",
+          promptTemplate: [
+            "{{context.rudderWorkspace.orgResourcesPrompt}}",
+            "{{context.rudderWorkspace.resourcesPrompt}}",
+            "{{context.rudderResourcesPrompt}}",
+            "Follow the rudder heartbeat.",
+          ].join("\n"),
         },
-        context: { rudderScene: "heartbeat" },
+        context: {
+          rudderScene: "heartbeat",
+          rudderResourcesPrompt: "## Your Current Automations\n\n- Daily inbox review",
+          rudderWorkspace: {
+            orgResourcesPrompt: "## Your Current Automations\n\n- Daily inbox review",
+            resourcesPrompt: "## Your Current Automations\n\n- Daily inbox review",
+          },
+        },
         authToken: "run-jwt-token",
         onLog: async () => {},
         onMeta: async (meta) => {
@@ -1322,9 +1338,21 @@ describe("codex execute", () => {
       expect(result.errorMessage).toBeNull();
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.prompt).toContain("# Agent Instructions");
+      expect(capture.prompt).toContain("# Agent Soul");
+      expect(capture.prompt).toContain("# Agent Tools");
       expect(capture.prompt).toContain("# Tacit Memory");
+      expect(capture.prompt).toContain("## Your Current Automations");
+      expect(capture.prompt.match(/## Your Current Automations/g)).toHaveLength(1);
       expect(capture.prompt).toContain("# Rudder Heartbeat Instruction");
       expect(capture.prompt).not.toContain("# Heartbeat\n\n- Check assigned issues.");
+      expect(capture.prompt.indexOf("# Agent Instructions")).toBeLessThan(capture.prompt.indexOf("# Agent Soul"));
+      expect(capture.prompt.indexOf("# Agent Soul")).toBeLessThan(capture.prompt.indexOf("# Agent Tools"));
+      expect(capture.prompt.indexOf("# Agent Tools")).toBeLessThan(capture.prompt.indexOf("# Tacit Memory"));
+      expect(capture.prompt.indexOf("# Tacit Memory")).toBeLessThan(capture.prompt.indexOf("## Your Current Automations"));
+      expect(capture.prompt.indexOf("## Your Current Automations")).toBeLessThan(capture.prompt.indexOf("## Current Time"));
+      expect(capture.prompt.indexOf("## Current Time")).toBeLessThan(
+        capture.prompt.indexOf("# Rudder Heartbeat Instruction"),
+      );
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(commandNotes).toContain("Loaded Rudder heartbeat instructions from runtime code");
       expect(commandNotes).not.toContain("Loaded supplemental agent heartbeat notes from $AGENT_HOME/instructions/HEARTBEAT.md");

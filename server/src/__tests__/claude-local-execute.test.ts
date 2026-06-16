@@ -135,10 +135,14 @@ describe("claude execute", () => {
     const commandPath = path.join(root, "claude");
     const capturePath = path.join(root, "capture.json");
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const soulPath = path.join(root, "instructions", "SOUL.md");
+    const toolsPath = path.join(root, "instructions", "TOOLS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
+    await fs.writeFile(soulPath, "# Agent Soul\n", "utf8");
+    await fs.writeFile(toolsPath, "# Agent Tools\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer concise status.\n", "utf8");
     await writeFakeClaudeCommand(commandPath);
 
@@ -173,11 +177,15 @@ describe("claude execute", () => {
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {
+          rudderScene: "heartbeat",
+          rudderResourcesPrompt: "## Your Current Automations\n\n- Daily Claude review",
           rudderWorkspace: {
             orgWorkspaceRoot: path.join(root, "org-workspace"),
             orgSkillsDir: path.join(root, "org-workspace", "skills"),
             projectLibraryRoot: path.join(root, "org-workspace", "projects", "product"),
             projectLibraryRelativePath: "projects/product",
+            resourcesPrompt: "## Your Current Automations\n\n- Daily Claude review",
+            orgResourcesPrompt: "## Your Current Automations\n\n- Daily Claude review",
           },
         },
         authToken: "run-jwt-token",
@@ -212,8 +220,21 @@ describe("claude execute", () => {
         gitIdentity: GitIdentityCapture;
       };
       expectPreparedGitConfigCapture(capture);
-      expect(capture.appendedSystemPrompt).toContain("# Agent Instructions");
-      expect(capture.appendedSystemPrompt).toContain("# Tacit Memory");
+      expect(capture.appendedSystemPrompt).not.toBeNull();
+      const systemPrompt = capture.appendedSystemPrompt ?? "";
+      expect(systemPrompt).toContain("# Agent Instructions");
+      expect(systemPrompt).toContain("# Agent Soul");
+      expect(systemPrompt).toContain("# Agent Tools");
+      expect(systemPrompt).toContain("# Tacit Memory");
+      expect(systemPrompt).toContain("## Your Current Automations");
+      expect(systemPrompt).toContain("# Rudder Heartbeat Instruction");
+      expect(systemPrompt.match(/## Your Current Automations/g)).toHaveLength(1);
+      expect(systemPrompt.indexOf("# Agent Instructions")).toBeLessThan(systemPrompt.indexOf("# Agent Soul"));
+      expect(systemPrompt.indexOf("# Agent Soul")).toBeLessThan(systemPrompt.indexOf("# Agent Tools"));
+      expect(systemPrompt.indexOf("# Agent Tools")).toBeLessThan(systemPrompt.indexOf("# Tacit Memory"));
+      expect(systemPrompt.indexOf("# Tacit Memory")).toBeLessThan(systemPrompt.indexOf("## Your Current Automations"));
+      expect(systemPrompt.indexOf("## Your Current Automations")).toBeLessThan(systemPrompt.indexOf("## Current Time"));
+      expect(systemPrompt.indexOf("## Current Time")).toBeLessThan(systemPrompt.indexOf("# Rudder Heartbeat Instruction"));
       expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_ROOT");
       expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_PATH");
     } finally {

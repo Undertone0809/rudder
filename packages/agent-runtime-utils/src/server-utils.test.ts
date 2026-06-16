@@ -7,6 +7,7 @@ import {
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
   resolveLocalOperatorHome,
+  prepareAgentInstructionRuntimeContext,
   syncLocalCliCredentialHomeEntries,
   loadAgentInstructionsPrefix,
   renderTemplate,
@@ -535,6 +536,111 @@ describe("loadAgentInstructionsPrefix", () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("appends runtime heartbeat instructions after the stable agent instruction stack", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-heartbeat-order-"));
+    const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Agent Contract\n", "utf8");
+    await fs.writeFile(path.join(root, "instructions", "SOUL.md"), "# Agent Soul\n", "utf8");
+    await fs.writeFile(path.join(root, "instructions", "TOOLS.md"), "# Agent Tools\n", "utf8");
+    await fs.writeFile(path.join(root, "instructions", "MEMORY.md"), "# Agent Memory\n", "utf8");
+
+    try {
+      const instructionContext = prepareAgentInstructionRuntimeContext({
+        rudderWorkspace: {
+          orgResourcesPrompt: "## Your Current Automations\n\n- Morning review",
+          resourcesPrompt: "## Your Current Automations\n\n- Morning review",
+        },
+      });
+      const loaded = await loadAgentInstructionsPrefix({
+        instructionsFilePath: instructionsPath,
+        includeHeartbeatInstructions: true,
+        contextSectionsBeforeCurrentTime: instructionContext.contextSectionsBeforeCurrentTime,
+        currentTime: new Date("2026-06-16T09:10:11.000Z"),
+        onLog: async () => {},
+      });
+
+      const operatingContractIndex = loaded.prefix.indexOf("# Rudder Agent Operating Contract");
+      const agentContractIndex = loaded.prefix.indexOf("# Agent Contract");
+      const soulIndex = loaded.prefix.indexOf("# Agent Soul");
+      const toolsIndex = loaded.prefix.indexOf("# Agent Tools");
+      const memoryIndex = loaded.prefix.indexOf("# Agent Memory");
+      const automationsIndex = loaded.prefix.indexOf("## Your Current Automations");
+      const currentTimeIndex = loaded.prefix.indexOf("## Current Time");
+      const heartbeatIndex = loaded.prefix.indexOf("# Rudder Heartbeat Instruction");
+
+      expect(operatingContractIndex).toBeGreaterThanOrEqual(0);
+      expect(agentContractIndex).toBeGreaterThan(operatingContractIndex);
+      expect(soulIndex).toBeGreaterThan(agentContractIndex);
+      expect(toolsIndex).toBeGreaterThan(soulIndex);
+      expect(memoryIndex).toBeGreaterThan(toolsIndex);
+      expect(automationsIndex).toBeGreaterThan(memoryIndex);
+      expect(currentTimeIndex).toBeGreaterThan(automationsIndex);
+      expect(heartbeatIndex).toBeGreaterThan(currentTimeIndex);
+      expect(loaded.prefix).toMatch(/# Rudder Heartbeat Instruction[\s\S]*runtime\.$/);
+      expect(renderTemplate(
+        "{{context.rudderWorkspace.orgResourcesPrompt}}",
+        { context: instructionContext.promptContext },
+      )).toBe("");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("moves all documented resource prompt aliases into the stable instruction stack", async () => {
+    const canonicalPrompt = "## Your Current Automations\n\n- Canonical";
+    const topLevelOnly = prepareAgentInstructionRuntimeContext({
+      rudderResourcesPrompt: canonicalPrompt,
+    });
+    expect(topLevelOnly.contextSectionsBeforeCurrentTime).toEqual([canonicalPrompt]);
+    expect(renderTemplate("{{context.rudderResourcesPrompt}}", { context: topLevelOnly.promptContext })).toBe("");
+
+    const resourcesOnly = prepareAgentInstructionRuntimeContext({
+      rudderWorkspace: {
+        resourcesPrompt: canonicalPrompt,
+      },
+    });
+    expect(resourcesOnly.contextSectionsBeforeCurrentTime).toEqual([canonicalPrompt]);
+    expect(renderTemplate(
+      "{{context.rudderWorkspace.resourcesPrompt}}",
+      { context: resourcesOnly.promptContext },
+    )).toBe("");
+
+    const legacyOnly = prepareAgentInstructionRuntimeContext({
+      rudderWorkspace: {
+        orgResourcesPrompt: canonicalPrompt,
+      },
+    });
+    expect(legacyOnly.contextSectionsBeforeCurrentTime).toEqual([canonicalPrompt]);
+    expect(renderTemplate(
+      "{{context.rudderWorkspace.orgResourcesPrompt}}",
+      { context: legacyOnly.promptContext },
+    )).toBe("");
+  });
+
+  it("prefers canonical resourcesPrompt and only clears matching resource prompt aliases", async () => {
+    const canonicalPrompt = "## Project Context Resources\n\n- Canonical library context";
+    const legacyPrompt = "## Legacy Resources\n\n- Legacy fallback";
+    const prepared = prepareAgentInstructionRuntimeContext({
+      rudderResourcesPrompt: canonicalPrompt,
+      rudderWorkspace: {
+        resourcesPrompt: canonicalPrompt,
+        orgResourcesPrompt: legacyPrompt,
+      },
+    });
+
+    expect(prepared.contextSectionsBeforeCurrentTime).toEqual([canonicalPrompt]);
+    expect(renderTemplate("{{context.rudderResourcesPrompt}}", { context: prepared.promptContext })).toBe("");
+    expect(renderTemplate(
+      "{{context.rudderWorkspace.resourcesPrompt}}",
+      { context: prepared.promptContext },
+    )).toBe("");
+    expect(renderTemplate(
+      "{{context.rudderWorkspace.orgResourcesPrompt}}",
+      { context: prepared.promptContext },
+    )).toBe(legacyPrompt);
   });
 
   it("ignores HEARTBEAT.md when it is the entry file outside heartbeat runs", async () => {
