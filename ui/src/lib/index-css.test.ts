@@ -122,9 +122,13 @@ describe("index.css motion rules", () => {
     const skillHoverCard = cssBlock(".rudder-skill-hover-card");
     const rowValue = cssBlock(".rudder-entity-preview-row-value");
     const rowValueText = cssBlock(".rudder-entity-preview-row-value-text");
+    const previewCard = cssBlock(".rudder-entity-preview-card");
     const summary =
       indexCss.match(/\n\.rudder-entity-preview-summary \{[^}]*overflow-y: auto[^}]*\n\}/)?.[0] ?? "";
+    const summaryLinks = cssBlock(".rudder-entity-preview-summary :where(a)");
 
+    expect(previewCard).toContain("background: var(--popover)");
+    expect(previewCard).toContain("isolation: isolate");
     expect(skillHoverCard).toContain("width: min(24rem, calc(100vw - 2rem))");
     expect(skillHoverCard).toContain("overflow-y: auto");
     expect(skillHoverCard).toContain("overflow-wrap: anywhere");
@@ -133,6 +137,9 @@ describe("index.css motion rules", () => {
     expect(rowValueText).toContain("-webkit-line-clamp: 2");
     expect(summary).toContain("overflow-y: auto");
     expect(summary).toContain("overflow-wrap: anywhere");
+    expect(summary).toContain("background:");
+    expect(summary).toContain("border:");
+    expect(summaryLinks).toContain("color: var(--rudder-doc-link)");
     expect(summary).not.toContain("-webkit-line-clamp");
   });
 

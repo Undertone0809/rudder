@@ -1234,6 +1234,37 @@ describe("MarkdownBody", () => {
     const summary = card?.querySelector(".rudder-entity-preview-summary");
     expect(summary?.classList.contains("scrollbar-auto-hide")).toBe(true);
     expect(summary?.textContent).toContain("Date: 2026-06-16 Status: Proposed Owner: Wesley");
+    const summaryLink = summary?.querySelector("a");
+    expect(summaryLink?.textContent).toBe("Rudder chat: /doc 产品逻辑文档优化");
+    expect(summaryLink?.getAttribute("href")).toBe("/messenger/chat/097c434b-b681-4609-8625-000000000000");
+    expect(summary?.textContent).not.toContain("chat://097c434b-b681-4609-8625-000000000000");
+  });
+
+  it("renders unsafe Library preview summary links as inert text", async () => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", "org-1");
+    entityPreviewApiMocks.readWorkspaceFile.mockResolvedValue({
+      filePath: "projects/rudder/proposals/unsafe-summary.md",
+      content: "Do not run [unsafe link](javascript:alert(1)) inside a hover card.",
+      contentType: "text/markdown",
+      previewKind: "text",
+      truncated: false,
+      message: null,
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[unsafe-summary.md](${buildLibraryFileMentionHref("projects/rudder/proposals/unsafe-summary.md", "unsafe-summary.md")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await focusPreviewLink(container.querySelector("a.rudder-mention-chip"));
+
+    const summary = document.body.querySelector(".rudder-entity-preview-summary");
+    expect(summary?.textContent).toContain("unsafe link");
+    expect(summary?.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(summary?.querySelector("a")?.textContent).not.toBe("unsafe link");
   });
 
   it("reuses cached agent previews across repeated rendered mention chips", async () => {

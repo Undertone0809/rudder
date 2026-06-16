@@ -14,7 +14,8 @@ import { issuesApi } from "../api/issues";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
-import type { ParsedMentionChip } from "../lib/mention-chips";
+import { mentionChipNavigationPath, parseMentionChipHref, type ParsedMentionChip } from "../lib/mention-chips";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
 import { formatPriorityLabel } from "../lib/priorities";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentAvatar";
@@ -515,15 +516,46 @@ function PreviewHeader({ preview }: { preview: EntityPreview }) {
 }
 
 const previewMarkdownComponents: Components = {
-  a: ({ node: _node, href, children, ...props }) => (
-    <a {...props} href={href} target={href?.startsWith("http") ? "_blank" : undefined} rel="noreferrer">
-      {children}
-    </a>
-  ),
+  a: ({ node: _node, href, children, ...props }) => {
+    const safeHref = previewSummaryLinkHref(href);
+    if (!safeHref) return <span>{children}</span>;
+    return (
+      <a {...props} href={safeHref} target={safeHref.startsWith("http") ? "_blank" : undefined} rel="noreferrer">
+        {children}
+      </a>
+    );
+  },
   img: ({ node: _node, src, alt, ...props }) => (
     <img {...props} src={src ?? ""} alt={alt ?? ""} loading="lazy" />
   ),
 };
+
+function currentOrganizationPrefixFromLocation(): string | null {
+  if (typeof window === "undefined") return null;
+  return extractOrganizationPrefixFromPath(window.location.pathname);
+}
+
+function previewSummaryLinkHref(href: string | null | undefined) {
+  const trimmed = href?.trim();
+  if (!trimmed) return null;
+
+  const mention = parseMentionChipHref(trimmed);
+  if (mention) {
+    return applyOrganizationPrefix(mentionChipNavigationPath(mention), currentOrganizationPrefixFromLocation());
+  }
+
+  if (trimmed.startsWith("/") || trimmed.startsWith("#")) return trimmed;
+  if (!/^[a-z][a-z\d+.-]*:/iu.test(trimmed) && !trimmed.startsWith("//")) return trimmed;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return trimmed;
+  } catch {
+    return null;
+  }
+
+  return null;
+}
 
 function IssueCommentPreviewBody({ body }: { body: string }) {
   const scrollRef = useScrollbarActivityRef();
@@ -543,9 +575,11 @@ function IssueCommentPreviewBody({ body }: { body: string }) {
 function PreviewSummary({ summary }: { summary: string }) {
   const scrollRef = useScrollbarActivityRef();
   return (
-    <span ref={scrollRef} className="rudder-entity-preview-summary scrollbar-auto-hide">
-      {summary}
-    </span>
+    <div ref={scrollRef} className="rudder-entity-preview-summary scrollbar-auto-hide">
+      <Markdown remarkPlugins={[remarkGfm]} components={previewMarkdownComponents} urlTransform={(url) => url}>
+        {summary}
+      </Markdown>
+    </div>
   );
 }
 

@@ -3242,15 +3242,19 @@ a.rudder-skill-token::before {
 }
 
 .rudder-entity-preview-card {
+  position: relative;
+  isolation: isolate;
   display: block;
   width: min(32rem, calc(100vw - 2rem));
   max-width: calc(100vw - 2rem);
   max-height: min(32rem, calc(100vh - 3rem));
-  padding: 0.7rem;
-  border: 1px solid color-mix(in oklab, var(--border) 74%, transparent);
+  padding: 0.78rem;
+  border: 1px solid color-mix(in oklab, var(--border) 86%, transparent);
   border-radius: 8px;
-  background: color-mix(in oklab, var(--popover) 96%, var(--background) 4%);
-  box-shadow: 0 14px 34px color-mix(in oklab, var(--foreground) 14%, transparent);
+  background: var(--popover);
+  box-shadow:
+    0 22px 54px color-mix(in oklab, var(--foreground) 18%, transparent),
+    0 0 0 1px color-mix(in oklab, var(--background) 72%, transparent);
   color: var(--foreground);
   font-size: 0.75rem;
   line-height: 1.45;
@@ -3260,8 +3264,8 @@ a.rudder-skill-token::before {
 }
 
 .rudder-entity-preview-card .rudder-tooltip-arrow {
-  background: color-mix(in oklab, var(--popover) 96%, var(--background) 4%);
-  fill: color-mix(in oklab, var(--popover) 96%, var(--background) 4%);
+  background: var(--popover);
+  fill: var(--popover);
 }
 
 .rudder-entity-preview-card--loading {
@@ -3391,11 +3395,39 @@ a.rudder-skill-token::before {
 .rudder-entity-preview-summary {
   display: block;
   max-height: min(7rem, calc(100vh - 14rem));
-  margin: 0.65rem 0 0;
+  margin: 0.7rem 0 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 0.2rem;
+  padding: 0.55rem 0.62rem;
+  border: 1px solid color-mix(in oklab, var(--border) 58%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--muted) 36%, var(--popover) 64%);
+  color: color-mix(in oklab, var(--foreground) 86%, var(--muted-foreground) 14%);
+  font-size: 0.74rem;
+  line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.rudder-entity-preview-summary :where(p, ul, ol, blockquote, pre) {
+  margin: 0.38rem 0 0;
+}
+
+.rudder-entity-preview-summary :where(p, ul, ol, blockquote, pre):first-child {
+  margin-top: 0;
+}
+
+.rudder-entity-preview-summary :where(ul, ol) {
+  padding-left: 1rem;
+}
+
+.rudder-entity-preview-summary :where(a) {
+  color: var(--rudder-doc-link);
+  font-weight: 560;
+  text-decoration: none;
+}
+
+.rudder-entity-preview-summary :where(a:hover) {
+  text-decoration: underline;
 }
 
 .rudder-entity-preview-comment-body {
