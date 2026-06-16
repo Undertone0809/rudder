@@ -108,6 +108,9 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuSeparator: () => <div role="separator" />,
   DropdownMenuRadioGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuRadioItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuSub: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuSubContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
 }));
 
 vi.mock("@/lib/router", () => ({

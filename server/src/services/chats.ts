@@ -646,6 +646,23 @@ export function chatService(db: Db) {
     return hydrateConversationSummaries(rows, userId);
   }
 
+  async function listSummariesByIds(orgId: string, conversationIds: string[], userId?: string | null) {
+    const uniqueConversationIds = [...new Set(conversationIds.filter((id) => id.trim().length > 0))];
+    if (uniqueConversationIds.length === 0) return [];
+
+    const rows = await db
+      .select()
+      .from(chatConversations)
+      .where(
+        and(
+          eq(chatConversations.orgId, orgId),
+          eq(chatConversations.status, "active"),
+          inArray(chatConversations.id, uniqueConversationIds),
+        ),
+      );
+    return hydrateConversationSummaries(rows, userId);
+  }
+
   async function getById(id: string, userId?: string | null) {
       const row = await db
         .select()
@@ -1852,6 +1869,7 @@ export function chatService(db: Db) {
     list,
     listSummaries,
     listPinnedSummaries,
+    listSummariesByIds,
     getById,
     create,
     update,

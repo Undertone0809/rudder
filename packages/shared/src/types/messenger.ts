@@ -20,6 +20,40 @@ export interface MessengerThreadUserState {
   updatedAt: Date;
 }
 
+export interface MessengerCustomGroup {
+  id: string;
+  orgId: string;
+  userId: string;
+  name: string;
+  sortOrder: number;
+  collapsed: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface MessengerCustomGroupEntry {
+  id: string;
+  orgId: string;
+  userId: string;
+  groupId: string;
+  threadKey: string;
+  sortOrder: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface MessengerCustomGroupHydratedEntry extends MessengerCustomGroupEntry {
+  thread: MessengerThreadSummary;
+}
+
+export interface MessengerCustomGroupWithEntries extends MessengerCustomGroup {
+  entries: MessengerCustomGroupHydratedEntry[];
+}
+
+export interface MessengerCustomGroupsResponse {
+  groups: MessengerCustomGroupWithEntries[];
+}
+
 export interface IssueFollow {
   id: string;
   orgId: string;

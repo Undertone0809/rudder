@@ -46,6 +46,7 @@ export { issues } from "./issues.js";
 export { joinRequests } from "./join_requests.js";
 export { labels } from "./labels.js";
 export { libraryEntries } from "./library_entries.js";
+export { messengerCustomGroupEntries, messengerCustomGroups } from "./messenger_custom_groups.js";
 export { messengerThreadUserStates } from "./messenger_thread_user_states.js";
 export { operatorProfiles } from "./operator_profiles.js";
 export { organizationIntelligenceProfiles } from "./organization_intelligence_profiles.js";
