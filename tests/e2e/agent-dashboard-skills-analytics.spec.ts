@@ -34,8 +34,10 @@ function formatDayTitle(dateKey: string): string {
   });
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function visibleSkillDayIndex(dateKey: string): number {
+  const firstVisibleDateKey = utcDateKey(makeUtcDate(6, 0));
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Math.round((Date.parse(`${dateKey}T00:00:00.000Z`) - Date.parse(`${firstVisibleDateKey}T00:00:00.000Z`)) / dayMs);
 }
 
 test.describe("Agent dashboard skills analytics", () => {
@@ -202,33 +204,36 @@ test.describe("Agent dashboard skills analytics", () => {
     await expect(page.getByRole("button", { name: "1M" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Custom/ })).toBeVisible();
     await expect(mainContent.getByText("Skill usage per run for Last 7 days. Hover a day to inspect the breakdown.")).toBeVisible();
-    await expect(mainContent.getByText("Run Triggers")).toBeVisible();
-    const triggerDistribution = mainContent.getByRole("button", { name: /Run trigger distribution: 3 runs across 3 triggers/ });
-    await expect(triggerDistribution).toBeVisible();
-    await expect(triggerDistribution.getByText("Heartbeat")).toBeVisible();
-    await expect(triggerDistribution.getByText("Mentioned")).toBeVisible();
-    await expect(triggerDistribution.getByText("Task assigned")).toBeVisible();
     await expect(mainContent.getByText("4 skill uses")).toBeVisible();
     await expect(mainContent.getByText("2 runs with skill usage")).toBeVisible();
-    await expect(mainContent.getByText("Skill Usage Distribution")).toBeVisible();
-    await expect(mainContent.getByText("Skill Usage Timeline")).toBeVisible();
-    await expect(mainContent.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "100%" })).toBeVisible();
-    await expect(mainContent.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "4" })).toBeVisible();
-    const distributionPie = mainContent.getByRole("button", { name: /Skill usage distribution: 4 skill uses across 3 skills/ });
-    await expect(distributionPie).toBeVisible();
-    await distributionPie.hover();
-    await expect(page.getByText("Skill usage distribution")).toBeVisible();
+    await expect(mainContent.getByText("Skill Usage Distribution")).toHaveCount(0);
+    await expect(mainContent.getByText("Skill Usage Timeline")).toHaveCount(0);
+
+    const usageChart = mainContent.locator('[data-testid="skills-usage-area-chart"]');
+    await expect(usageChart).toBeVisible();
+    await expect(usageChart.getByRole("heading", { name: "Skills used", exact: true })).toBeVisible();
+    await expect(usageChart.getByRole("img", { name: /Skill usage area chart: 4 skill uses across 2 runs/ })).toBeVisible();
+    await expect(usageChart.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "4" })).toBeVisible();
+    await expect(usageChart.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "0" })).toBeVisible();
+    await expect(usageChart.locator("svg path")).toHaveCount(4);
+    await expect(usageChart.locator("svg path").first()).toHaveAttribute("d", /\S/);
+    await expect(usageChart.getByText("build-advisor")).toBeVisible();
+    await expect(usageChart.getByText("screenshot")).toBeVisible();
+    await expect(usageChart.getByText("pua")).toBeVisible();
+
+    const recentDayColumn = usageChart.locator("button").nth(visibleSkillDayIndex(recentDateKey));
+    await expect(recentDayColumn).toBeVisible();
+    await recentDayColumn.hover();
+    await expect(page.getByText(formatDayTitle(recentDateKey)).first()).toBeVisible();
     await expect(page.getByText("4 skill uses across 2 runs").first()).toBeVisible();
     await expect(page.getByText("build-advisor").first()).toBeVisible();
     await expect(page.getByText("screenshot").first()).toBeVisible();
     await expect(page.getByText("pua").first()).toBeVisible();
+    await expect(page.getByText("Total").first()).toBeVisible();
     await expect(page.getByText("unused-requested")).toHaveCount(0);
     await expect(page.getByText("Prompt requested")).toHaveCount(0);
     await expect(page.getByText("Loaded only")).toHaveCount(0);
     await page.keyboard.press("Escape");
-
-    const recentDayColumn = mainContent.getByLabel(new RegExp(`${escapeRegExp(formatDayTitle(recentDateKey))}: 4 skill uses across 2 runs`));
-    await expect(recentDayColumn).toBeVisible();
 
     await mainContent.screenshot({
       path: testInfo.outputPath("agent-dashboard-skills-analytics.png"),
@@ -372,28 +377,38 @@ test.describe("Agent dashboard skills analytics", () => {
     });
 
     const mainContent = page.locator("#main-content");
-    await expect(mainContent.getByRole("heading", { name: "Skills" })).toBeVisible();
+    await expect(mainContent.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
     await expect(mainContent.getByText("Skill usage per run for Last 7 days across all agents. Hover a day to inspect the breakdown.")).toBeVisible();
     await expect(mainContent.getByText("4 skill uses")).toBeVisible();
     await expect(mainContent.getByText("2 runs with skill usage")).toBeVisible();
-    await expect(mainContent.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "100%" })).toBeVisible();
-    await expect(mainContent.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "4" })).toBeVisible();
+    await expect(mainContent.getByText("Skill Usage Distribution")).toHaveCount(0);
+    await expect(mainContent.getByText("Skill Usage Timeline")).toHaveCount(0);
 
-    const distributionPie = mainContent.getByRole("button", { name: /Skill usage distribution: 4 skill uses across 3 skills/ });
-    await expect(distributionPie).toBeVisible();
-    await distributionPie.hover();
-    await expect(page.getByText("Skill usage distribution")).toBeVisible();
+    const usageChart = mainContent.locator('[data-testid="skills-usage-area-chart"]');
+    await expect(usageChart).toBeVisible();
+    await expect(usageChart.getByRole("heading", { name: "Skills used", exact: true })).toBeVisible();
+    await expect(usageChart.getByRole("img", { name: /Skill usage area chart: 4 skill uses across 2 runs/ })).toBeVisible();
+    await expect(usageChart.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "4" })).toBeVisible();
+    await expect(usageChart.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "0" })).toBeVisible();
+    await expect(usageChart.locator("svg path")).toHaveCount(4);
+    await expect(usageChart.locator("svg path").first()).toHaveAttribute("d", /\S/);
+    await expect(usageChart.getByText("build-advisor")).toBeVisible();
+    await expect(usageChart.getByText("screenshot")).toBeVisible();
+    await expect(usageChart.getByText("deep-research")).toBeVisible();
+
+    const recentDayColumn = usageChart.locator("button").nth(visibleSkillDayIndex(recentDateKey));
+    await expect(recentDayColumn).toBeVisible();
+    await recentDayColumn.hover();
+    await expect(page.getByText(formatDayTitle(recentDateKey)).first()).toBeVisible();
     await expect(page.getByText("4 skill uses across 2 runs").first()).toBeVisible();
     await expect(page.getByText("build-advisor").first()).toBeVisible();
     await expect(page.getByText("screenshot").first()).toBeVisible();
     await expect(page.getByText("deep-research").first()).toBeVisible();
+    await expect(page.getByText("Total").first()).toBeVisible();
     await expect(page.getByText("unused-requested")).toHaveCount(0);
     await expect(page.getByText("Prompt requested")).toHaveCount(0);
     await expect(page.getByText("Loaded only")).toHaveCount(0);
     await page.keyboard.press("Escape");
-
-    const recentDayColumn = mainContent.getByLabel(new RegExp(`${escapeRegExp(formatDayTitle(recentDateKey))}: 4 skill uses across 2 runs`));
-    await expect(recentDayColumn).toBeVisible();
 
     await mainContent.screenshot({
       path: testInfo.outputPath("dashboard-skills-analytics.png"),
