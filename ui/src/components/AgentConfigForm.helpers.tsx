@@ -161,7 +161,7 @@ export function defaultCommandForRuntime(agentRuntimeType: string) {
   if (agentRuntimeType === "codex_local") return "codex";
   if (agentRuntimeType === "gemini_local") return "gemini";
   if (agentRuntimeType === "pi_local") return "pi";
-  if (agentRuntimeType === "cursor") return "agent";
+  if (agentRuntimeType === "cursor") return "cursor-agent";
   if (agentRuntimeType === "opencode_local") return "opencode";
   return "claude";
 }
@@ -285,4 +285,3 @@ export function filterRuntimeEnvironmentDisplayChecks(
 }
 
 /* ---- Form ---- */
-

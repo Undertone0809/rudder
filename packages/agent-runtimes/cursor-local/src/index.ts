@@ -67,7 +67,7 @@ Core fields:
 - model (string, optional): Cursor model id (for example auto or gpt-5.3-codex)
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
 - mode (string, optional): Cursor execution mode passed as --mode (plan|ask). Leave unset for normal autonomous runs.
-- command (string, optional): defaults to "agent"
+- command (string, optional): defaults to "cursor-agent"
 - extraArgs (string[], optional): additional CLI args
 - env (object, optional): KEY=VALUE environment variables
 
@@ -76,7 +76,7 @@ Operational fields:
 - graceSec (number, optional): SIGTERM grace period in seconds
 
 Notes:
-- Runs are executed with: agent -p --output-format stream-json ...
+- Runs are executed with: cursor-agent -p --output-format stream-json ...
 - Prompts are piped to Cursor via stdin.
 - Sessions are resumed with --resume when stored session cwd matches current cwd.
 - Rudder realizes only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page.

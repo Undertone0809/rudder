@@ -19,6 +19,8 @@ import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 import { detectGeminiAuthRequired, detectGeminiQuotaExhausted, parseGeminiJsonl } from "./parse.js";
 import { firstNonEmptyLine } from "./utils.js";
 
+const DEFAULT_GEMINI_HELLO_PROBE_TIMEOUT_SEC = 45;
+
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
   if (checks.some((check) => check.level === "warn")) return "warn";
@@ -135,7 +137,10 @@ export async function testEnvironment(
       const model = asString(config.model, DEFAULT_GEMINI_LOCAL_MODEL).trim();
       const approvalMode = asString(config.approvalMode, asBoolean(config.yolo, false) ? "yolo" : "default");
       const sandbox = asBoolean(config.sandbox, false);
-      const helloProbeTimeoutSec = Math.max(1, asNumber(config.helloProbeTimeoutSec, 10));
+      const helloProbeTimeoutSec = Math.max(
+        1,
+        asNumber(config.helloProbeTimeoutSec, DEFAULT_GEMINI_HELLO_PROBE_TIMEOUT_SEC),
+      );
       const extraArgs = (() => {
         const fromExtraArgs = asStringArray(config.extraArgs);
         if (fromExtraArgs.length > 0) return fromExtraArgs;

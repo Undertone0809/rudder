@@ -250,7 +250,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     context,
   );
   const runtimeScene = asString(context.rudderScene, "");
-  const command = asString(config.command, "agent");
+  const command = asString(config.command, "cursor-agent");
   const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
   const mode = normalizeMode(asString(config.mode, ""));
 
