@@ -43,7 +43,8 @@ From: {{comment.authorLabel}} ({{comment.authorKind}})
 {{comment.body}}
 
 Please review the comment above and respond or take action as appropriate.
-A mention-triggered comment wake is a request for attention or collaboration, not an automatic transfer of issue ownership. Plain structured agent links such as \`agent://agent-id\` are reference-only. Only checkout or self-assign when the comment explicitly asks you to take ownership and the normal issue workflow allows it.`;
+A mention-triggered comment wake is a request for attention or collaboration, not an automatic transfer of issue ownership. Plain structured agent links such as \`agent://agent-id\` are reference-only. Only checkout or self-assign when the comment explicitly asks you to take ownership and the normal issue workflow allows it.
+If the issue is not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, strictly respond to the comment's content instead of broadening the wake into issue execution. For example, answer questions, acknowledge corrections, explain status, or handle only the narrow action explicitly requested by the comment.`;
 
 export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). There is a new comment on an issue you own.
 
@@ -287,7 +288,7 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "",
   "Write these as normal Markdown links, not inside code spans or code blocks, unless you are literally documenting the syntax.",
   "",
-  "Mention-triggered comment wakes arrive with `RUDDER_WAKE_COMMENT_ID`; read that wake comment before acting. Issue comments can wake an agent only with an explicit wake-intent agent link serialized as `agent://agent-id?intent=wake`. Plain structured links such as `agent://agent-id` are reference-only links for rendering and navigation, and plain text agent names are not wake requests. Use wake-intent links only when you intentionally want to wake another agent for attention or collaboration; omit the wake intent for ordinary references. Mentioning an agent requests attention or collaboration; it does not transfer issue ownership unless the comment also makes an explicit handoff and normal checkout rules allow it.",
+  "Mention-triggered comment wakes arrive with `RUDDER_WAKE_COMMENT_ID`; read that wake comment before acting. Issue comments can wake an agent only with an explicit wake-intent agent link serialized as `agent://agent-id?intent=wake`. Plain structured links such as `agent://agent-id` are reference-only links for rendering and navigation, and plain text agent names are not wake requests. Use wake-intent links only when you intentionally want to wake another agent for attention or collaboration; omit the wake intent for ordinary references. Mentioning an agent requests attention or collaboration; it does not transfer issue ownership unless the comment also makes an explicit handoff and normal checkout rules allow it. If a comment wakes you on an issue not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, strictly respond to the comment's content instead of turning the wake into issue execution; answer questions, acknowledge corrections, explain status, or handle only the narrow action the comment explicitly requests.",
   "",
   "When an issue comment, done comment, or blocker comment cites visual evidence from a local screenshot/image path, attach the image with the Rudder CLI `--image <path>` option instead of leaving only the filesystem path in the text.",
   "",
@@ -320,7 +321,7 @@ export const RUDDER_AGENT_HEARTBEAT_INSTRUCTION = [
   "1. Identify yourself and inspect wake context, including `RUDDER_TASK_ID`, `RUDDER_WAKE_REASON`, `RUDDER_WAKE_COMMENT_ID`, and `RUDDER_APPROVAL_ID` when present.",
   "2. Handle approval follow-up first: read the approval and linked issues, then close resolved work or comment on what remains.",
   "3. Inspect your Rudder inbox. Prioritize reviewer rows in `in_review` or `blocked`, then assignee `in_progress`, then assignee `todo`. Do not look for unassigned work.",
-  "4. For mention wakes, read the wake comment before acting. Mentions request attention; they do not transfer ownership unless the comment explicitly says so.",
+  "4. For mention wakes, read the wake comment before acting. Mentions request attention; they do not transfer ownership unless the comment explicitly says so. If the issue is not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, respond to the comment itself instead of executing the whole issue.",
   "5. Checkout before doing assignee task work. A `409` means another agent owns the task; do not retry it.",
   "6. Load compact issue context, do one bounded useful chunk, and preserve evidence.",
   "7. Before exiting active work, leave exactly one durable signal: progress, done, blocked, explicit handoff, or structured review decision.",

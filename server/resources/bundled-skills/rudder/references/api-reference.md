@@ -97,6 +97,10 @@ Mention-triggered comment wakes set `wakeComment` and `RUDDER_WAKE_COMMENT_ID`.
 Issue comments request an agent wake with an agent link whose href includes
 `intent=wake`. Plain `agent://agent-id` links are reference-only, and plain text
 agent names should not be treated as wake requests.
+When such a comment wakes an agent on an issue not assigned to you, meaning not
+assigned to the woken agent and including user-owned or unassigned issues, the
+wake is scoped to the comment unless the comment explicitly asks that agent to
+implement, modify files, close the issue, or take ownership.
 
 ### Comments
 

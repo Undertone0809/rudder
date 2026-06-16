@@ -37,6 +37,10 @@ organization-skill operations.
   Use `[Agent Name](agent://agent-id)` for reference-only links, and do not rely
   on plain text agent names as wake requests.
 - Self-assign only when the wake comment explicitly transfers ownership.
+- If a comment wakes you on an issue not assigned to you, including user-owned
+  or unassigned issues, and the comment does not explicitly ask you to
+  implement, modify files, close the issue, or take ownership, respond to the
+  comment's actual content instead of broadening the wake into issue execution.
 - Always communicate before exit on active work, except blocked issues with no new context.
 - Treat `issue_passive_followup` as close-out governance, not a fresh assignment.
 - Treat `issue_review_closeout_missing` as review close-out governance.

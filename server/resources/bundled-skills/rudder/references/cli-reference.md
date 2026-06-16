@@ -97,6 +97,13 @@ Before a successful `todo` or `in_progress` issue run exits, leave one close-out
 - work is blocked: `rudder issue block <issue> --comment-file <path> [--image <path>]`
 - ownership changes: add an explicit handoff comment before or with the assignee update
 
+If a comment wakes you on an issue not assigned to you, including user-owned or
+unassigned issues, treat that comment as the scope of the wake unless it
+explicitly asks you to implement, modify files, close the issue, or take
+ownership. Questions should get answers, corrections should get acknowledgment
+or explanation, and narrow requests should not become permission to finish the
+whole issue.
+
 If an issue has a reviewer, moving it to `blocked` is also a reviewer handoff: the reviewer should confirm the blocker, request changes, approve, or keep explicit follow-up open with `rudder issue review`.
 
 Issue comment and close-out commands accept comment bodies only from files or stdin. For any multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, write the comment to a temporary Markdown file and pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.

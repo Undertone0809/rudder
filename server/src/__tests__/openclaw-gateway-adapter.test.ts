@@ -460,6 +460,10 @@ describe("openclaw gateway adapter execute", () => {
       expect(String(payload?.message ?? "")).toContain("RUDDER_RUN_ID=run-123");
       expect(String(payload?.message ?? "")).toContain("RUDDER_TASK_ID=task-123");
       expect(String(payload?.message ?? "")).toContain("GET /api/approvals/{approvalId}/issues");
+      expect(String(payload?.message ?? "")).toContain("If the issue is not assigned to you, including user-owned or unassigned issues");
+      expect(String(payload?.message ?? "")).toContain("respond to the comment itself");
+      expect(String(payload?.message ?? "")).toContain("Do not checkout or execute the whole issue in that branch.");
+      expect(String(payload?.message ?? "")).toContain("If issueId exists and you own the issue");
       expect(String(payload?.message ?? "")).toContain("reviewDecision");
       expect(String(payload?.message ?? "")).toContain("Do not leave only a free-form accept/reject comment.");
 
