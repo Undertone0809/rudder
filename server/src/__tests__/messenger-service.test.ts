@@ -17,6 +17,8 @@ import {
   issueFollows,
   issues,
   joinRequests,
+  messengerCustomGroupEntries,
+  messengerCustomGroups,
   messengerThreadUserStates,
   organizations,
   projects,
@@ -129,6 +131,8 @@ describe("messengerService and issue follows", () => {
 
   afterEach(async () => {
     await db.delete(issueFollows);
+    await db.delete(messengerCustomGroupEntries);
+    await db.delete(messengerCustomGroups);
     await db.delete(messengerThreadUserStates);
     await db.delete(chatMessages);
     await db.delete(chatConversations);
@@ -253,6 +257,83 @@ describe("messengerService and issue follows", () => {
     });
     expect(firstPage.items.map((item) => item.threadKey)).toContain(`chat:${conversationIds[44]}`);
     expect(secondPage.items.map((item) => item.threadKey)).not.toContain(`chat:${conversationIds[44]}`);
+  });
+
+  it("hydrates custom group entries outside the current Messenger thread summary page", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-custom-groups";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Custom Groups Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Custom Groups Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const baseTime = Date.parse("2026-05-04T12:00:00.000Z");
+    const conversationIds = Array.from({ length: 8 }, () => randomUUID());
+    await db.insert(chatConversations).values(
+      conversationIds.map((conversationId, index) => {
+        const activityAt = new Date(baseTime - index * 60_000);
+        return {
+          id: conversationId,
+          orgId,
+          title: `Grouped chat ${index + 1}`,
+          summary: `Summary ${index + 1}`,
+          issueCreationMode: "manual_approval" as const,
+          planMode: false,
+          createdByUserId: userId,
+          lastMessageAt: activityAt,
+          createdAt: activityAt,
+          updatedAt: activityAt,
+        };
+      }),
+    );
+
+    const firstPage = await messengerSvc.listThreadSummaryPage(orgId, userId, { limit: 3 });
+    expect(firstPage.items.map((item) => item.threadKey)).not.toContain(`chat:${conversationIds[7]}`);
+
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Deep work");
+    await messengerSvc.assignThreadToCustomGroup(orgId, userId, group!.id, `chat:${conversationIds[7]}`);
+
+    const customGroups = await messengerSvc.listCustomGroups(orgId, userId);
+    expect(customGroups.groups).toHaveLength(1);
+    expect(customGroups.groups[0]?.entries.map((entry) => entry.thread.threadKey)).toEqual([
+      `chat:${conversationIds[7]}`,
+    ]);
+    expect(customGroups.groups[0]?.entries[0]?.thread.title).toBe("Grouped chat 8");
+  });
+
+  it("omits and prunes stale custom group entries during hydration", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-custom-group-stale";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Custom Group Stale Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Custom Group Stale Org"),
+      issuePrefix: `G${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Archive");
+    await db.insert(messengerCustomGroupEntries).values({
+      orgId,
+      userId,
+      groupId: group!.id,
+      threadKey: `chat:${randomUUID()}`,
+      sortOrder: 0,
+    });
+
+    const customGroups = await messengerSvc.listCustomGroups(orgId, userId);
+    const remainingEntries = await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(eq(messengerCustomGroupEntries.orgId, orgId));
+
+    expect(customGroups.groups[0]?.entries).toEqual([]);
+    expect(remainingEntries).toHaveLength(0);
   });
 
   it("persists follows and includes followed plus assigned issues in the Messenger issues thread", async () => {

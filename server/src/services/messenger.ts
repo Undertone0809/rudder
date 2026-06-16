@@ -10,6 +10,8 @@ import {
   issueFollows,
   issues,
   joinRequests,
+  messengerCustomGroupEntries,
+  messengerCustomGroups,
   messengerThreadUserStates,
   projects
 } from "@rudderhq/db";
@@ -23,6 +25,8 @@ import {
   type JoinRequest,
   type MessengerApprovalThreadItem,
   type MessengerBudgetThreadItem,
+  type MessengerCustomGroupHydratedEntry,
+  type MessengerCustomGroupsResponse,
   type MessengerHeartbeatRunThreadItem,
   type MessengerIssueThreadItem,
   type MessengerJoinRequestThreadItem,
@@ -33,8 +37,8 @@ import {
   type MessengerThreadSummary,
   type MessengerThreadSummaryPage
 } from "@rudderhq/shared";
-import { and, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
-import { conflict } from "../errors.js";
+import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { badRequest, conflict, notFound } from "../errors.js";
 import { redactEventPayload } from "../redaction.js";
 import { budgetService } from "./budgets.js";
 import { chatService } from "./chats.js";
@@ -978,6 +982,262 @@ export function messengerService(db: Db) {
   const budgetsSvc = budgetService(db);
 
   const issueActionSqlList = sql.join(ISSUE_ACTIVITY_ACTIONS.map((action) => sql`${action}`), sql`, `);
+
+  function chatConversationIdFromThreadKey(threadKey: string) {
+    return threadKey.startsWith("chat:") ? threadKey.slice("chat:".length) : null;
+  }
+
+  async function getCustomGroupOrThrow(orgId: string, userId: string, groupId: string) {
+    const [group] = await db
+      .select()
+      .from(messengerCustomGroups)
+      .where(and(
+        eq(messengerCustomGroups.orgId, orgId),
+        eq(messengerCustomGroups.userId, userId),
+        eq(messengerCustomGroups.id, groupId),
+      ))
+      .limit(1);
+    if (!group) throw notFound("Messenger custom group not found");
+    return group;
+  }
+
+  async function ensureChatThreadCanBeGrouped(orgId: string, userId: string, threadKey: string) {
+    const conversationId = chatConversationIdFromThreadKey(threadKey);
+    if (!conversationId) {
+      throw badRequest("Only chat threads can be added to custom Messenger groups");
+    }
+    const conversations = await chatsSvc.listSummariesByIds(orgId, [conversationId], userId);
+    if (conversations.length === 0) {
+      throw notFound("Messenger chat thread not found");
+    }
+  }
+
+  async function listCustomGroups(orgId: string, userId: string): Promise<MessengerCustomGroupsResponse> {
+    const [groups, entries] = await Promise.all([
+      db
+        .select()
+        .from(messengerCustomGroups)
+        .where(and(eq(messengerCustomGroups.orgId, orgId), eq(messengerCustomGroups.userId, userId)))
+        .orderBy(asc(messengerCustomGroups.sortOrder), asc(messengerCustomGroups.createdAt)),
+      db
+        .select()
+        .from(messengerCustomGroupEntries)
+        .where(and(eq(messengerCustomGroupEntries.orgId, orgId), eq(messengerCustomGroupEntries.userId, userId)))
+        .orderBy(asc(messengerCustomGroupEntries.sortOrder), asc(messengerCustomGroupEntries.createdAt)),
+    ]);
+
+    const chatThreadKeys = entries
+      .map((entry) => entry.threadKey)
+      .filter((threadKey) => Boolean(chatConversationIdFromThreadKey(threadKey)));
+    const conversationIds = chatThreadKeys
+      .map((threadKey) => chatConversationIdFromThreadKey(threadKey))
+      .filter((id): id is string => Boolean(id));
+    const conversations = await chatsSvc.listSummariesByIds(orgId, conversationIds, userId);
+    const summaryByThreadKey = new Map(conversations.map((conversation) => {
+      const summary = chatSummary(conversation);
+      return [summary.threadKey, summary] as const;
+    }));
+
+    const staleEntryIds: string[] = [];
+    const entriesByGroupId = new Map<string, MessengerCustomGroupHydratedEntry[]>();
+    for (const entry of entries) {
+      const summary = summaryByThreadKey.get(entry.threadKey);
+      if (!summary) {
+        staleEntryIds.push(entry.id);
+        continue;
+      }
+      const hydratedEntry = {
+        ...entry,
+        thread: summary,
+      } satisfies MessengerCustomGroupHydratedEntry;
+      const groupEntries = entriesByGroupId.get(entry.groupId);
+      if (groupEntries) groupEntries.push(hydratedEntry);
+      else entriesByGroupId.set(entry.groupId, [hydratedEntry]);
+    }
+
+    if (staleEntryIds.length > 0) {
+      await db
+        .delete(messengerCustomGroupEntries)
+        .where(inArray(messengerCustomGroupEntries.id, staleEntryIds));
+    }
+
+    return {
+      groups: groups.map((group) => ({
+        ...group,
+        entries: entriesByGroupId.get(group.id) ?? [],
+      })),
+    };
+  }
+
+  async function createCustomGroup(orgId: string, userId: string, name: string) {
+    const [lastGroup] = await db
+      .select({ sortOrder: messengerCustomGroups.sortOrder })
+      .from(messengerCustomGroups)
+      .where(and(eq(messengerCustomGroups.orgId, orgId), eq(messengerCustomGroups.userId, userId)))
+      .orderBy(desc(messengerCustomGroups.sortOrder))
+      .limit(1);
+    const now = new Date();
+    const [group] = await db
+      .insert(messengerCustomGroups)
+      .values({
+        orgId,
+        userId,
+        name,
+        sortOrder: (lastGroup?.sortOrder ?? -1) + 1,
+        updatedAt: now,
+      })
+      .returning();
+    return group;
+  }
+
+  async function updateCustomGroup(
+    orgId: string,
+    userId: string,
+    groupId: string,
+    patch: { name?: string; collapsed?: boolean; sortOrder?: number },
+  ) {
+    await getCustomGroupOrThrow(orgId, userId, groupId);
+    const [group] = await db
+      .update(messengerCustomGroups)
+      .set({
+        ...patch,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(messengerCustomGroups.orgId, orgId),
+        eq(messengerCustomGroups.userId, userId),
+        eq(messengerCustomGroups.id, groupId),
+      ))
+      .returning();
+    return group;
+  }
+
+  async function deleteCustomGroup(orgId: string, userId: string, groupId: string) {
+    await getCustomGroupOrThrow(orgId, userId, groupId);
+    const [group] = await db
+      .delete(messengerCustomGroups)
+      .where(and(
+        eq(messengerCustomGroups.orgId, orgId),
+        eq(messengerCustomGroups.userId, userId),
+        eq(messengerCustomGroups.id, groupId),
+      ))
+      .returning();
+    return group;
+  }
+
+  async function reorderCustomGroups(orgId: string, userId: string, groupIds: string[]) {
+    const uniqueGroupIds = [...new Set(groupIds)];
+    if (uniqueGroupIds.length === 0) return listCustomGroups(orgId, userId);
+    const ownedGroups = await db
+      .select({ id: messengerCustomGroups.id })
+      .from(messengerCustomGroups)
+      .where(and(
+        eq(messengerCustomGroups.orgId, orgId),
+        eq(messengerCustomGroups.userId, userId),
+        inArray(messengerCustomGroups.id, uniqueGroupIds),
+      ));
+    if (ownedGroups.length !== uniqueGroupIds.length) {
+      throw notFound("Messenger custom group not found");
+    }
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      for (const [index, groupId] of uniqueGroupIds.entries()) {
+        await tx
+          .update(messengerCustomGroups)
+          .set({ sortOrder: index, updatedAt: now })
+          .where(and(
+            eq(messengerCustomGroups.orgId, orgId),
+            eq(messengerCustomGroups.userId, userId),
+            eq(messengerCustomGroups.id, groupId),
+          ));
+      }
+    });
+    return listCustomGroups(orgId, userId);
+  }
+
+  async function assignThreadToCustomGroup(orgId: string, userId: string, groupId: string, threadKey: string) {
+    await getCustomGroupOrThrow(orgId, userId, groupId);
+    await ensureChatThreadCanBeGrouped(orgId, userId, threadKey);
+    const [lastEntry] = await db
+      .select({ sortOrder: messengerCustomGroupEntries.sortOrder })
+      .from(messengerCustomGroupEntries)
+      .where(and(
+        eq(messengerCustomGroupEntries.orgId, orgId),
+        eq(messengerCustomGroupEntries.userId, userId),
+        eq(messengerCustomGroupEntries.groupId, groupId),
+      ))
+      .orderBy(desc(messengerCustomGroupEntries.sortOrder))
+      .limit(1);
+    const now = new Date();
+    const [entry] = await db
+      .insert(messengerCustomGroupEntries)
+      .values({
+        orgId,
+        userId,
+        groupId,
+        threadKey,
+        sortOrder: (lastEntry?.sortOrder ?? -1) + 1,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          messengerCustomGroupEntries.orgId,
+          messengerCustomGroupEntries.userId,
+          messengerCustomGroupEntries.threadKey,
+        ],
+        set: {
+          groupId,
+          sortOrder: (lastEntry?.sortOrder ?? -1) + 1,
+          updatedAt: now,
+        },
+      })
+      .returning();
+    return entry;
+  }
+
+  async function removeThreadFromCustomGroups(orgId: string, userId: string, threadKey: string) {
+    await db
+      .delete(messengerCustomGroupEntries)
+      .where(and(
+        eq(messengerCustomGroupEntries.orgId, orgId),
+        eq(messengerCustomGroupEntries.userId, userId),
+        eq(messengerCustomGroupEntries.threadKey, threadKey),
+      ));
+    return { threadKey };
+  }
+
+  async function reorderCustomGroupEntries(orgId: string, userId: string, groupId: string, threadKeys: string[]) {
+    await getCustomGroupOrThrow(orgId, userId, groupId);
+    const entries = await db
+      .select()
+      .from(messengerCustomGroupEntries)
+      .where(and(
+        eq(messengerCustomGroupEntries.orgId, orgId),
+        eq(messengerCustomGroupEntries.userId, userId),
+        eq(messengerCustomGroupEntries.groupId, groupId),
+      ))
+      .orderBy(asc(messengerCustomGroupEntries.sortOrder), asc(messengerCustomGroupEntries.createdAt));
+    const entryByThreadKey = new Map(entries.map((entry) => [entry.threadKey, entry]));
+    const orderedKeys = [
+      ...threadKeys.filter((threadKey) => entryByThreadKey.has(threadKey)),
+      ...entries.map((entry) => entry.threadKey).filter((threadKey) => !threadKeys.includes(threadKey)),
+    ];
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      for (const [index, threadKey] of orderedKeys.entries()) {
+        await tx
+          .update(messengerCustomGroupEntries)
+          .set({ sortOrder: index, updatedAt: now })
+          .where(and(
+            eq(messengerCustomGroupEntries.orgId, orgId),
+            eq(messengerCustomGroupEntries.userId, userId),
+            eq(messengerCustomGroupEntries.groupId, groupId),
+            eq(messengerCustomGroupEntries.threadKey, threadKey),
+          ));
+      }
+    });
+    return listCustomGroups(orgId, userId);
+  }
 
   function issueEntryRowsQuery(orgId: string, userId: string, tail = sql``) {
     const lowSignalContentOnlyActivity = issueLowSignalContentOnlyActivitySql("activity_row");
@@ -2215,6 +2475,14 @@ export function messengerService(db: Db) {
   }
 
   return {
+    listCustomGroups,
+    createCustomGroup,
+    updateCustomGroup,
+    deleteCustomGroup,
+    reorderCustomGroups,
+    assignThreadToCustomGroup,
+    removeThreadFromCustomGroups,
+    reorderCustomGroupEntries,
     listThreadSummaries,
     listThreadSummaryPage,
     getChatThread,

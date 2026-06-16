@@ -19,19 +19,23 @@ export {
 } from "./adapter-skills.js";
 export {
   addChatMessageSchema,
+  assignMessengerCustomGroupEntrySchema,
   chatAskUserOptionSchema,
   chatAskUserQuestionSchema, chatAskUserRequestFromStructuredPayload, chatAskUserRequestSchema, chatAutomationCreateFromStructuredPayload, chatAutomationCreateSchema, chatContextEntityTypeSchema, chatConversationStatusSchema,
   chatIssueCreationModeSchema, chatIssueProposalFromStructuredPayload, chatMessageKindSchema, chatMessageRoleSchema, chatOperationProposalSchema, chatRichReferenceSchema, chatRichReferencesFromStructuredPayload, chatRichReferencesSchema, convertChatToIssueSchema, createChatAttachmentMetadataSchema, createChatContextLinkSchema,
-  createChatConversationSchema, resolveChatOperationProposalSchema, sanitizeChatStructuredPayload, setChatProjectContextSchema,
+  createChatConversationSchema, createMessengerCustomGroupSchema, reorderMessengerCustomGroupEntriesSchema, reorderMessengerCustomGroupsSchema, resolveChatOperationProposalSchema, sanitizeChatStructuredPayload, setChatProjectContextSchema,
   updateChatConversationSchema,
   updateChatConversationUserStateSchema,
+  updateMessengerCustomGroupSchema,
   updateMessengerThreadUserStateSchema, type AddChatMessage,
+  type AssignMessengerCustomGroupEntry,
   type ChatAskUserOption,
   type ChatAskUserQuestion,
   type ChatAskUserRequest, type ChatAutomationCreate, type ChatOperationProposal, type ChatRichReference, type ConvertChatToIssue, type CreateChatAttachmentMetadata, type CreateChatContextLink,
-  type CreateChatConversation, type ResolveChatOperationProposal, type SetChatProjectContext,
+  type CreateChatConversation, type CreateMessengerCustomGroup, type ReorderMessengerCustomGroupEntries, type ReorderMessengerCustomGroups, type ResolveChatOperationProposal, type SetChatProjectContext,
   type UpdateChatConversation,
   type UpdateChatConversationUserState,
+  type UpdateMessengerCustomGroup,
   type UpdateMessengerThreadUserState
 } from "./chat.js";
 export {

@@ -276,6 +276,28 @@ export const updateMessengerThreadUserStateSchema = z.object({
   pinned: z.boolean().optional(),
 });
 
+export const createMessengerCustomGroupSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+});
+
+export const updateMessengerCustomGroupSchema = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  collapsed: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+export const reorderMessengerCustomGroupsSchema = z.object({
+  groupIds: z.array(z.string().uuid()).max(200),
+});
+
+export const assignMessengerCustomGroupEntrySchema = z.object({
+  threadKey: z.string().trim().min(1).max(240),
+});
+
+export const reorderMessengerCustomGroupEntriesSchema = z.object({
+  threadKeys: z.array(z.string().trim().min(1).max(240)).max(500),
+});
+
 export type ChatConversationStatus = z.infer<typeof chatConversationStatusSchema>;
 export type ChatIssueCreationMode = z.infer<typeof chatIssueCreationModeSchema>;
 export type ChatMessageRole = z.infer<typeof chatMessageRoleSchema>;
@@ -288,6 +310,11 @@ export type SetChatProjectContext = z.infer<typeof setChatProjectContextSchema>;
 export type UpdateChatConversation = z.infer<typeof updateChatConversationSchema>;
 export type AddChatMessage = z.infer<typeof addChatMessageSchema>;
 export type UpdateMessengerThreadUserState = z.infer<typeof updateMessengerThreadUserStateSchema>;
+export type CreateMessengerCustomGroup = z.infer<typeof createMessengerCustomGroupSchema>;
+export type UpdateMessengerCustomGroup = z.infer<typeof updateMessengerCustomGroupSchema>;
+export type ReorderMessengerCustomGroups = z.infer<typeof reorderMessengerCustomGroupsSchema>;
+export type AssignMessengerCustomGroupEntry = z.infer<typeof assignMessengerCustomGroupEntrySchema>;
+export type ReorderMessengerCustomGroupEntries = z.infer<typeof reorderMessengerCustomGroupEntriesSchema>;
 export type ChatAskUserOption = z.infer<typeof chatAskUserOptionSchema>;
 export type ChatAskUserQuestion = z.infer<typeof chatAskUserQuestionSchema>;
 export type ChatAskUserRequest = z.infer<typeof chatAskUserRequestSchema>;

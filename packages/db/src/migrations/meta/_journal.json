@@ -617,6 +617,13 @@
       "when": 1781268744845,
       "tag": "0087_fixed_white_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1781621826992,
+      "tag": "0088_curly_sue_storm",
+      "breakpoints": true
     }
   ]
 }

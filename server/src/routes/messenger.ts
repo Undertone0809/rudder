@@ -1,6 +1,11 @@
 import type { Db } from "@rudderhq/db";
 import {
   MESSENGER_SYSTEM_THREAD_KINDS,
+  assignMessengerCustomGroupEntrySchema,
+  createMessengerCustomGroupSchema,
+  reorderMessengerCustomGroupEntriesSchema,
+  reorderMessengerCustomGroupsSchema,
+  updateMessengerCustomGroupSchema,
   updateMessengerThreadUserStateSchema,
   type MessengerSystemThreadKind,
 } from "@rudderhq/shared";
@@ -34,6 +39,82 @@ function parseThreadKey(threadKey: string) {
 export function messengerRoutes(db: Db) {
   const router = Router();
   const svc = messengerService(db);
+
+  router.get("/orgs/:orgId/messenger/groups", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const userId = boardUserId(req);
+    res.json(await svc.listCustomGroups(orgId, userId));
+  });
+
+  router.post(
+    "/orgs/:orgId/messenger/groups",
+    validate(createMessengerCustomGroupSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      res.status(201).json(await svc.createCustomGroup(orgId, userId, req.body.name));
+    },
+  );
+
+  router.patch(
+    "/orgs/:orgId/messenger/groups/reorder",
+    validate(reorderMessengerCustomGroupsSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      res.json(await svc.reorderCustomGroups(orgId, userId, req.body.groupIds));
+    },
+  );
+
+  router.patch(
+    "/orgs/:orgId/messenger/groups/:groupId",
+    validate(updateMessengerCustomGroupSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      res.json(await svc.updateCustomGroup(orgId, userId, req.params.groupId as string, req.body));
+    },
+  );
+
+  router.delete("/orgs/:orgId/messenger/groups/:groupId", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const userId = boardUserId(req);
+    res.json(await svc.deleteCustomGroup(orgId, userId, req.params.groupId as string));
+  });
+
+  router.post(
+    "/orgs/:orgId/messenger/groups/:groupId/entries",
+    validate(assignMessengerCustomGroupEntrySchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      res.status(201).json(await svc.assignThreadToCustomGroup(orgId, userId, req.params.groupId as string, req.body.threadKey));
+    },
+  );
+
+  router.patch(
+    "/orgs/:orgId/messenger/groups/:groupId/entries/reorder",
+    validate(reorderMessengerCustomGroupEntriesSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      res.json(await svc.reorderCustomGroupEntries(orgId, userId, req.params.groupId as string, req.body.threadKeys));
+    },
+  );
+
+  router.delete("/orgs/:orgId/messenger/groups/entries/:threadKey", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const userId = boardUserId(req);
+    res.json(await svc.removeThreadFromCustomGroups(orgId, userId, req.params.threadKey as string));
+  });
 
   router.get("/orgs/:orgId/messenger/threads", async (req, res) => {
     const orgId = req.params.orgId as string;
