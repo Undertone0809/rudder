@@ -103,9 +103,60 @@ describe("SkillsUsageChart", () => {
       ],
     })} />);
 
-    expect(container.textContent).toContain("Skill Usage Timeline");
+    expect(container.querySelector('[data-testid="skills-usage-area-chart"]')).toBeTruthy();
+    expect(container.textContent).toContain("Skills used");
     expect(container.textContent).not.toContain("Prompt requested");
     expect(container.textContent).not.toContain("Loaded only");
+  });
+
+  it("renders skill usage as a stacked area timeline with legend entries", () => {
+    const container = render(<SkillsUsageChart analytics={buildSkillAnalytics({
+      totalCount: 7,
+      totalRunsWithSkills: 2,
+      skills: [
+        {
+          key: "skill-a",
+          label: "Skill A",
+          count: 5,
+          evidence: "used",
+          evidenceCounts: { used: 5, requested: 0, loaded: 0 },
+        },
+        {
+          key: "skill-b",
+          label: "Skill B",
+          count: 2,
+          evidence: "used",
+          evidenceCounts: { used: 2, requested: 0, loaded: 0 },
+        },
+      ],
+      days: [
+        {
+          date: "2026-05-11",
+          totalCount: 5,
+          runCount: 1,
+          evidenceCounts: { used: 5, requested: 0, loaded: 0 },
+          skills: [
+            { key: "skill-a", label: "Skill A", count: 5, evidence: "used", evidenceCounts: { used: 5, requested: 0, loaded: 0 } },
+          ],
+        },
+        {
+          date: "2026-05-12",
+          totalCount: 2,
+          runCount: 1,
+          evidenceCounts: { used: 2, requested: 0, loaded: 0 },
+          skills: [
+            { key: "skill-b", label: "Skill B", count: 2, evidence: "used", evidenceCounts: { used: 2, requested: 0, loaded: 0 } },
+          ],
+        },
+      ],
+    })} />);
+
+    expect(container.querySelector('[data-testid="skills-usage-area-chart"]')).toBeTruthy();
+    expect(container.querySelector("svg")).toBeTruthy();
+    expect(container.querySelectorAll("path").length).toBeGreaterThanOrEqual(2);
+    expect(container.textContent).toContain("7");
+    expect(container.textContent).toContain("Skill A");
+    expect(container.textContent).toContain("Skill B");
   });
 });
 

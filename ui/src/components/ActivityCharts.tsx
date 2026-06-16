@@ -301,6 +301,9 @@ const skillsPalette = [
 
 const otherSkillsColor = "#737373";
 const minimumRunsForSkillEvidenceChart = 2;
+const skillTooltipRowCap = 8;
+const skillAreaSeriesCap = 9;
+const otherSkillsKey = "__other__";
 
 const triggerPalette = [
   "#2563eb",
@@ -333,125 +336,70 @@ function formatPercent(value: number, total: number): string {
   return `${percent.toFixed(1)}%`;
 }
 
-function SkillChartPanel({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="min-w-0 rounded-lg border border-border p-4">
-      <div>
-        <h4 className="text-xs font-medium text-muted-foreground">{title}</h4>
-        {subtitle ? (
-          <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground/60">{subtitle}</p>
-        ) : null}
-      </div>
-      <div className="mt-4">{children}</div>
-    </div>
-  );
+function buildTooltipSegments(
+  day: AgentSkillAnalytics["days"][number],
+  colorBySkillKey: Map<string, string>,
+) {
+  return [...day.skills]
+    .sort((left, right) => right.count - left.count)
+    .slice(0, skillTooltipRowCap)
+    .map((entry) => ({
+      key: entry.key,
+      label: entry.label,
+      count: entry.count,
+      color: colorBySkillKey.get(entry.key) ?? otherSkillsColor,
+    }));
 }
 
-function SkillDistributionPie({
-  analytics,
-  colorBySkillKey,
-}: {
-  analytics: AgentSkillAnalytics;
-  colorBySkillKey: Map<string, string>;
-}) {
-  const topSkills = analytics.skills.slice(0, 7);
-  const otherCount = analytics.skills.slice(7).reduce((sum, skill) => sum + skill.count, 0);
-  const segments = [
-    ...topSkills.map((skill) => ({
-      key: skill.key,
-      label: skill.label,
-      count: skill.count,
-      color: colorBySkillKey.get(skill.key) ?? otherSkillsColor,
-    })),
-    ...(otherCount > 0
-      ? [{
-        key: "__other__",
-        label: "Other skills",
-        count: otherCount,
-        color: otherSkillsColor,
-      }]
-      : []),
-  ];
+type SkillAreaSeries = {
+  key: string;
+  label: string;
+  color: string;
+  values: number[];
+};
 
-  let cursor = 0;
-  const gradientStops = segments.map((segment) => {
-    const start = cursor;
-    const end = cursor + (segment.count / analytics.totalCount) * 360;
-    cursor = end;
-    return `${segment.color} ${start}deg ${end}deg`;
+function buildSkillAreaSeries(
+  analytics: AgentSkillAnalytics,
+  colorBySkillKey: Map<string, string>,
+): SkillAreaSeries[] {
+  const topSkills = analytics.skills.slice(0, skillAreaSeriesCap);
+  const series = topSkills.map((skill) => ({
+    key: skill.key,
+    label: skill.label,
+    color: colorBySkillKey.get(skill.key) ?? otherSkillsColor,
+    values: analytics.days.map((day) => day.skills.find((entry) => entry.key === skill.key)?.count ?? 0),
+  }));
+  const otherValues = analytics.days.map((day) => {
+    const topKeys = new Set(topSkills.map((skill) => skill.key));
+    return day.skills.reduce((sum, entry) => topKeys.has(entry.key) ? sum : sum + entry.count, 0);
   });
-
-  const gradient = gradientStops.length > 0
-    ? `conic-gradient(${gradientStops.join(", ")})`
-    : "var(--muted)";
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          aria-label={`Skill usage distribution: ${formatSkillUseCount(analytics.totalCount)} across ${analytics.skills.length} skills`}
-          className="mx-auto flex w-full max-w-[12rem] appearance-none items-center justify-center rounded-full bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        >
-          <span
-            aria-hidden="true"
-            className="relative aspect-square w-full rounded-full border border-border/70 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]"
-            style={{ background: gradient }}
-          >
-            <span className="absolute inset-[24%] rounded-full border border-border/70 bg-background" />
-            <span className="absolute inset-0 flex flex-col items-center justify-center text-center">
-              <span className="text-lg font-semibold tabular-nums text-foreground">{analytics.skills.length}</span>
-              <span className="text-[10px] text-muted-foreground">skills</span>
-            </span>
-          </span>
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="min-w-[220px] px-3 py-2">
-        <div className="space-y-2">
-          <div className="border-b border-background/15 pb-2">
-            <div className="font-medium text-background">Skill usage distribution</div>
-            <div className="text-[11px] text-background/70">
-              {formatSkillUseCount(analytics.totalCount)} across {analytics.totalRunsWithSkills} run{analytics.totalRunsWithSkills === 1 ? "" : "s"}
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            {segments.map((segment) => (
-              <TooltipMetricRow
-                key={segment.key}
-                color={segment.color}
-                label={segment.label}
-                value={`${segment.count} · ${formatPercent(segment.count, analytics.totalCount)}`}
-              />
-            ))}
-          </div>
-        </div>
-      </TooltipContent>
-    </Tooltip>
-  );
+  if (otherValues.some((value) => value > 0)) {
+    series.push({
+      key: otherSkillsKey,
+      label: "Other",
+      color: otherSkillsColor,
+      values: otherValues,
+    });
+  }
+  return series;
 }
 
-function SkillDistributionPanel({
-  analytics,
-  colorBySkillKey,
-}: {
-  analytics: AgentSkillAnalytics;
-  colorBySkillKey: Map<string, string>;
-}) {
-  return (
-    <div className="flex h-full min-h-48 items-center justify-center">
-      <div className="w-full">
-        <SkillDistributionPie analytics={analytics} colorBySkillKey={colorBySkillKey} />
-      </div>
-    </div>
-  );
+function buildSkillAreaPath(points: Array<{ x: number; top: number; bottom: number }>): string {
+  if (points.length === 0) return "";
+  const topPath = points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.top.toFixed(2)}`)
+    .join(" ");
+  const bottomPath = [...points]
+    .reverse()
+    .map((point) => `L ${point.x.toFixed(2)} ${point.bottom.toFixed(2)}`)
+    .join(" ");
+  return `${topPath} ${bottomPath} Z`;
+}
+
+function buildSkillLinePath(points: Array<{ x: number; y: number }>): string {
+  return points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .join(" ");
 }
 
 /* ---- Chart Components ---- */
@@ -979,88 +927,161 @@ export function SkillsUsageChart({
   const colorBySkillKey = new Map(
     analytics.skills.map((skill, index) => [skill.key, skillsPalette[index % skillsPalette.length]!]),
   );
+  const series = buildSkillAreaSeries(analytics, colorBySkillKey);
+  const chartWidth = 1000;
+  const chartHeight = 260;
+  const xForIndex = (index: number) => {
+    if (days.length <= 1) return 0;
+    return (index / (days.length - 1)) * chartWidth;
+  };
+  const yForValue = (value: number) => chartHeight - (value / maxValue) * chartHeight;
+  const stackedSeries = series.map((item, seriesIndex) => {
+    const lowerValues = days.map((_, dayIndex) =>
+      series
+        .slice(0, seriesIndex)
+        .reduce((sum, previous) => sum + previous.values[dayIndex]!, 0),
+    );
+    const points = days.map((_, dayIndex) => {
+      const bottomValue = lowerValues[dayIndex]!;
+      const topValue = bottomValue + item.values[dayIndex]!;
+      return {
+        x: xForIndex(dayIndex),
+        top: yForValue(topValue),
+        bottom: yForValue(bottomValue),
+      };
+    });
+    return { ...item, points };
+  });
+  const totalLinePoints = days.map((day, index) => ({
+    x: xForIndex(index),
+    y: yForValue(day.totalCount),
+  }));
+  const ticks = buildCountScale(maxValue);
+  const gridTicks = ticks.filter((tick) => tick.value > 0);
+  const keyIndexes = new Set<number>([
+    0,
+    Math.floor((days.length - 1) / 2),
+    days.length - 1,
+  ]);
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div className="grid gap-3 lg:grid-cols-[minmax(12rem,0.7fr)_minmax(0,3fr)]">
-        <SkillChartPanel title="Skill Usage Distribution" subtitle="Which skills were used most in this window.">
-          <SkillDistributionPanel analytics={analytics} colorBySkillKey={colorBySkillKey} />
-        </SkillChartPanel>
-
-        <SkillChartPanel title="Skill Usage Timeline" subtitle={`Daily skill usage over the last ${analytics.windowDays} day${analytics.windowDays === 1 ? "" : "s"}.`}>
-          <div className="dashboard-chart-motion">
-            <ScaledBarChartFrame
-              days={days.map((day) => day.date)}
-              ticks={buildCountScale(maxValue)}
-              heightClassName="h-36"
-            >
-              {days.map((day, index) => {
-                const heightPct = (day.totalCount / maxValue) * 100;
-                const topSkills = day.skills.slice(0, 6);
-                const otherCount = day.skills.slice(6).reduce((sum, skill) => sum + skill.count, 0);
-                const title =
-                  day.totalCount > 0
-                    ? `${formatSkillUseCount(day.totalCount)} across ${day.runCount} run${day.runCount === 1 ? "" : "s"}`
-                    : "No skill usage";
-
-                return (
-                  <ChartColumnTooltip
-                    key={day.date}
-                    day={day.date}
-                    title={title}
-                    details={
-                      <>
-                        <TooltipMetricRow label="Skill uses" value={day.totalCount} />
-                        <TooltipMetricRow label="Runs with skill usage" value={day.runCount} />
-                        {topSkills.map((skill) => (
-                          <TooltipMetricRow
-                            key={`${day.date}:${skill.key}`}
-                            color={colorBySkillKey.get(skill.key)}
-                            label={skill.label}
-                            value={skill.count}
-                          />
-                        ))}
-                        {otherCount > 0 ? (
-                          <TooltipMetricRow
-                            color={otherSkillsColor}
-                            label="Other skills"
-                            value={otherCount}
-                          />
-                        ) : null}
-                      </>
-                    }
-                    empty={day.totalCount === 0}
-                    trigger={
-                      <div className="flex h-full flex-col justify-end">
-                        {day.totalCount > 0 ? (
-                          <div
-                            className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
-                            style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
-                          >
-                            {day.skills.map((skill) => (
-                              <div
+      <div className="space-y-4 rounded-lg border border-border p-4" data-testid="skills-usage-area-chart">
+        <div>
+          <h4 className="text-sm font-medium text-foreground">Skills used</h4>
+          <div className="mt-1 text-3xl font-medium tracking-normal text-foreground tabular-nums">
+            {analytics.totalCount.toLocaleString()}
+          </div>
+        </div>
+        <div className="dashboard-chart-motion">
+          <div className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-2">
+            <ChartScaleLabels ticks={ticks} heightClassName="h-56" />
+            <div className="relative min-w-0 h-56">
+              <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+                {gridTicks.map((tick) => (
+                  <span
+                    key={`${tick.value}:${tick.label}`}
+                    className="absolute left-0 right-0 border-t border-dashed border-border/45"
+                    style={{ bottom: `${tick.position * 100}%` }}
+                  />
+                ))}
+              </div>
+              <svg
+                className="absolute inset-0 h-full w-full overflow-visible"
+                viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                preserveAspectRatio="none"
+                role="img"
+                aria-label={`Skill usage area chart: ${formatSkillUseCount(analytics.totalCount)} across ${analytics.totalRunsWithSkills} runs`}
+              >
+                {stackedSeries.map((item) => (
+                  <path
+                    key={item.key}
+                    d={buildSkillAreaPath(item.points)}
+                    fill={item.color}
+                    fillOpacity={0.84}
+                    stroke="rgba(255,255,255,0.72)"
+                    strokeWidth={1}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+                <path
+                  d={buildSkillLinePath(totalLinePoints)}
+                  fill="none"
+                  stroke="hsl(var(--muted-foreground))"
+                  strokeDasharray="4 4"
+                  strokeOpacity={0.75}
+                  strokeWidth={1}
+                  vectorEffect="non-scaling-stroke"
+                />
+              </svg>
+              <div className="absolute inset-0 z-10 flex" aria-hidden="true">
+                {days.map((day) => {
+                  const tooltipSegments = buildTooltipSegments(day, colorBySkillKey);
+                  const tooltipOtherCount = day.skills
+                    .slice(skillTooltipRowCap)
+                    .reduce((sum, skill) => sum + skill.count, 0);
+                  return (
+                    <Tooltip key={day.date}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={`${formatDayTitle(day.date)}: ${day.totalCount} skill uses`}
+                          className="h-full min-w-0 flex-1 cursor-crosshair appearance-none border-0 bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="min-w-[260px] px-3 py-2">
+                        <div className="space-y-2">
+                          <div className="border-b border-background/15 pb-2">
+                            <div className="font-medium text-background">{formatDayTitle(day.date)}</div>
+                            <div className="text-[11px] text-background/70">
+                              {formatSkillUseCount(day.totalCount)} across {day.runCount} run{day.runCount === 1 ? "" : "s"}
+                            </div>
+                          </div>
+                          <div className="space-y-1.5">
+                            {tooltipSegments.map((skill) => (
+                              <TooltipMetricRow
                                 key={`${day.date}:${skill.key}`}
-                                style={{
-                                  flex: skill.count,
-                                  backgroundColor: colorBySkillKey.get(skill.key) ?? otherSkillsColor,
-                                }}
+                                color={skill.color}
+                                label={skill.label}
+                                value={skill.count}
                               />
                             ))}
+                            {tooltipOtherCount > 0 ? (
+                              <TooltipMetricRow
+                                color={otherSkillsColor}
+                                label="Other"
+                                value={tooltipOtherCount}
+                              />
+                            ) : null}
+                            <TooltipMetricRow label="Total" value={day.totalCount} />
                           </div>
-                        ) : (
-                          <div
-                            className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
-                            style={{ ...chartColumnMotionStyle(index), height: 2 }}
-                          />
-                        )}
-                      </div>
-                    }
-                  />
-                );
-              })}
-            </ScaledBarChartFrame>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </div>
+            </div>
           </div>
-        </SkillChartPanel>
+          <div className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-2">
+            <div aria-hidden="true" />
+            <div className="relative mt-2 flex text-[11px] text-muted-foreground">
+              {days.map((day, index) => (
+                <div key={day.date} className="flex-1 text-center">
+                  {keyIndexes.has(index) ? formatDayLabel(day.date) : ""}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap justify-center gap-x-5 gap-y-3 text-xs text-muted-foreground">
+            {series.map((item) => (
+              <span key={item.key} className="inline-flex min-w-0 items-center gap-2">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+                <span className="truncate">{item.label}</span>
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
     </TooltipProvider>
   );
