@@ -81,8 +81,6 @@ interface CommentThreadProps {
   escapeBackWhenEmpty?: boolean;
 }
 
-const DRAFT_DEBOUNCE_MS = 800;
-
 export function shouldOfferReopen(issueStatus?: string) {
   return issueStatus === "done";
 }
@@ -855,7 +853,6 @@ export function CommentThread({
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
-  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const lastHandledCommentHashRef = useRef<string | null>(null);
@@ -950,6 +947,11 @@ export function CommentThread({
       }))
   ), [mentions]);
 
+  const updateBody = useCallback((nextBody: string) => {
+    setBody(nextBody);
+    if (draftKey) saveDraft(draftKey, nextBody);
+  }, [draftKey]);
+
   const agentMentions = useMemo<MarkdownAgentMentionPreview[]>(() => (
     mentions
       .filter((mention) => mention.kind === "agent" && mention.agentId)
@@ -966,16 +968,7 @@ export function CommentThread({
   }, [draftKey]);
 
   useEffect(() => {
-    if (!draftKey) return;
-    if (draftTimer.current) clearTimeout(draftTimer.current);
-    draftTimer.current = setTimeout(() => {
-      saveDraft(draftKey, body);
-    }, DRAFT_DEBOUNCE_MS);
-  }, [body, draftKey]);
-
-  useEffect(() => {
     return () => {
-      if (draftTimer.current) clearTimeout(draftTimer.current);
       if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     };
   }, []);
@@ -1064,7 +1057,7 @@ export function CommentThread({
     setSubmitting(true);
     try {
       await onAdd(trimmed, reopenRequested);
-      setBody("");
+      updateBody("");
       if (draftKey) clearDraft(draftKey);
       setReopen(canReopen);
     } finally {
@@ -1087,7 +1080,11 @@ export function CommentThread({
             : `[${safeName}](${url})`);
         }
         const markdown = snippets.join("\n\n");
-        setBody((prev) => prev ? `${prev}\n\n${markdown}` : markdown);
+        setBody((prev) => {
+          const nextBody = prev ? `${prev}\n\n${markdown}` : markdown;
+          if (draftKey) saveDraft(draftKey, nextBody);
+          return nextBody;
+        });
       } else if (onAttachImage) {
         for (const file of files) {
           await onAttachImage(file);
@@ -1143,7 +1140,7 @@ export function CommentThread({
           ref={editorRef}
           engine="milkdown"
           value={body}
-          onChange={setBody}
+          onChange={updateBody}
           placeholder="Leave a comment..."
           mentions={mentions}
           agentMentionIntent="wake"

@@ -52,6 +52,7 @@ vi.mock("./MarkdownEditor", async () => {
             aria-label={placeholder ?? "Markdown editor"}
             data-agent-mention-intent={agentMentionIntent ?? ""}
             onChange={(event) => onChange?.(event.currentTarget.value)}
+            onInput={(event) => onChange?.(event.currentTarget.value)}
             value={value ?? ""}
           />
         );
@@ -205,6 +206,7 @@ describe("CommentThread", () => {
     document.body.innerHTML = "";
     mockConfirm.mockReset();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -302,6 +304,46 @@ describe("CommentThread", () => {
       ].join("\n"),
       undefined,
     ));
+  });
+
+  it("persists and restores the comment draft across thread unmounts", () => {
+    const draftKey = "rudder:test-issue-comment-draft";
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    });
+
+    let container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          draftKey={draftKey}
+          onAdd={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    change(container.querySelector('textarea[aria-label="Leave a comment..."]'), "Unsent issue comment");
+    expect(storage.get(draftKey)).toBe("Unsent issue comment");
+
+    cleanupFn?.();
+    cleanupFn = null;
+    expect(storage.get(draftKey)).toBe("Unsent issue comment");
+
+    container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          draftKey={draftKey}
+          onAdd={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect((container.querySelector('textarea[aria-label="Leave a comment..."]') as HTMLTextAreaElement | null)?.value)
+      .toBe("Unsent issue comment");
   });
 
   it("passes skill mention metadata into rendered comments", () => {
