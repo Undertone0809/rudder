@@ -2,7 +2,7 @@ import { isValidElement, useCallback, useEffect, useId, useRef, useState, type C
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { buildAgentMentionHref } from "@rudderhq/shared";
-import { Check, Copy, Globe2 } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
@@ -226,22 +226,6 @@ function isExternalMarkdownHref(value: string | null | undefined) {
   }
 }
 
-function websiteUrlFromMarkdownHref(value: string | null | undefined) {
-  const trimmed = value?.trim() ?? "";
-  if (!trimmed) return null;
-  const candidate = trimmed.startsWith("//")
-    ? `${typeof window === "undefined" ? "https:" : window.location.protocol}${trimmed}`
-    : trimmed;
-  try {
-    const parsed = new URL(candidate);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    if (typeof window !== "undefined" && parsed.origin === window.location.origin) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
 function isBareMarkdownUrlLabel(label: string) {
   const normalizedLabel = label.trim();
   return /^(?:https?:\/\/|www\.|\/\/)/iu.test(normalizedLabel);
@@ -250,25 +234,6 @@ function isBareMarkdownUrlLabel(label: string) {
 function isAbsoluteMarkdownHref(value: string | null | undefined) {
   const trimmed = value?.trim() ?? "";
   return trimmed.startsWith("//") || /^[a-z][a-z\d+.-]*:/iu.test(trimmed);
-}
-
-function formatWebsiteLinkDetail(url: URL) {
-  const path = `${url.pathname}${url.search}${url.hash}`.replace(/^\/+/, "");
-  if (!path) return null;
-  try {
-    return decodeURI(path);
-  } catch {
-    return path;
-  }
-}
-
-function websiteLinkPresentation(url: URL, label: string) {
-  const trimmedLabel = label.trim();
-  const host = url.hostname.replace(/^www\./iu, "");
-  if (trimmedLabel && !isBareMarkdownUrlLabel(trimmedLabel)) {
-    return { primary: trimmedLabel, detail: host };
-  }
-  return { primary: host, detail: formatWebsiteLinkDetail(url) };
 }
 
 const APP_ROUTE_FIRST_SEGMENTS = new Set([
@@ -318,70 +283,6 @@ function navigateInternalAppRoute(route: string) {
 
   window.history.pushState(window.history.state, "", route);
   window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
-}
-
-const websiteLogoSources = [
-  {
-    hosts: ["rudder.zeeland.studio", "doc.rudder.zeeland.studio"],
-    src: "/rudder-logo.png",
-    className: null,
-  },
-  {
-    hosts: ["openai.com", "chatgpt.com"],
-    src: "/brands/openai-logo.svg",
-    className: "dark:invert",
-  },
-  {
-    hosts: ["anthropic.com", "claude.ai"],
-    src: "/brands/claude-logo.svg",
-    className: null,
-  },
-  {
-    hosts: ["gemini.google.com", "ai.google.dev"],
-    src: "/brands/google-gemini-logo.svg",
-    className: null,
-  },
-  {
-    hosts: ["cursor.com"],
-    src: "/brands/cursor-logo.svg",
-    className: "dark:invert",
-  },
-  {
-    hosts: ["opencode.ai"],
-    src: "/brands/opencode-logo-light-square.svg",
-    className: null,
-  },
-  {
-    hosts: ["pi.ai", "pi.dev"],
-    src: "/brands/pi-logo.svg",
-    className: null,
-  },
-] as const;
-
-function hostnameMatchesWebsiteLogo(hostname: string, candidate: string) {
-  return hostname === candidate || hostname.endsWith(`.${candidate}`);
-}
-
-function websiteLogoForUrl(url: URL) {
-  const hostname = url.hostname.replace(/^www\./iu, "").toLowerCase();
-  return websiteLogoSources.find((source) => (
-    source.hosts.some((candidate) => hostnameMatchesWebsiteLogo(hostname, candidate))
-  )) ?? null;
-}
-
-function WebsiteLinkIcon({ url }: { url: URL }) {
-  const logo = websiteLogoForUrl(url);
-  if (logo) {
-    return (
-      <img
-        src={logo.src}
-        alt=""
-        className={cn("rudder-link-chip-icon rudder-link-chip-logo h-3.5 w-3.5 shrink-0", logo.className)}
-        aria-hidden="true"
-      />
-    );
-  }
-  return <Globe2 className="rudder-link-chip-icon h-3.5 w-3.5 shrink-0" aria-hidden="true" />;
 }
 
 function extractMermaidSource(children: ReactNode): string | null {
@@ -1058,33 +959,9 @@ export function MarkdownBody({
       }
       const linkLabel = flattenText(linkChildren);
       const isExternal = isExternalMarkdownHref(href);
-      const websiteUrl = websiteUrlFromMarkdownHref(href);
       const isBareUrlLink = isExternal && isBareMarkdownUrlLabel(linkLabel);
-      const websitePresentation = websiteUrl ? websiteLinkPresentation(websiteUrl, linkLabel) : null;
       const internalHref = href ? internalAppRouteFromHref(href, organizationPrefix) : null;
       const renderedHref = internalHref && !isAbsoluteMarkdownHref(href) ? internalHref : href;
-      if (websiteUrl && websitePresentation) {
-        return (
-          <a
-            href={href}
-            target="_blank"
-            rel="noreferrer noopener"
-            title={href}
-            className="rudder-link-chip rudder-link-chip--website"
-            {...markdownSourceAttributes(node)}
-            onClick={(event) => {
-              if (!href) return;
-              handleMarkdownLinkClick(event, href, linkLabel);
-            }}
-          >
-            <WebsiteLinkIcon url={websiteUrl} />
-            <span className="rudder-link-chip-domain">{websitePresentation.primary}</span>
-            {websitePresentation.detail ? (
-              <span className="rudder-link-chip-detail">{websitePresentation.detail}</span>
-            ) : null}
-          </a>
-        );
-      }
       return (
         <a
           href={renderedHref}

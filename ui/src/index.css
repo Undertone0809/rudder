@@ -3067,58 +3067,6 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   color: color-mix(in oklab, var(--foreground) 64%, #58a6ff 36%);
 }
 
-.rudder-markdown a.rudder-link-chip {
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
-  gap: 0.35rem;
-  vertical-align: baseline;
-  border: 1px solid color-mix(in oklab, var(--border-soft) 78%, currentColor 16%);
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--surface-elevated) 86%, currentColor 7%);
-  padding: 0.12rem 0.48rem;
-  color: color-mix(in oklab, var(--foreground) 72%, #0969da 28%);
-  text-decoration: none;
-  box-shadow: inset 0 1px 0 color-mix(in oklab, white 38%, transparent);
-}
-
-.rudder-markdown a.rudder-link-chip:hover {
-  background: color-mix(in oklab, var(--surface-active) 84%, currentColor 8%);
-  color: color-mix(in oklab, var(--foreground) 60%, #0969da 40%);
-  text-decoration: none;
-}
-
-.rudder-markdown .rudder-link-chip-icon {
-  color: color-mix(in oklab, currentColor 76%, var(--muted-foreground) 24%);
-}
-
-.rudder-markdown a.rudder-link-chip img.rudder-link-chip-logo {
-  display: block;
-  margin: 0;
-  border-radius: 3px;
-  box-shadow: none;
-  object-fit: contain;
-}
-
-.rudder-markdown .rudder-link-chip-domain,
-.rudder-markdown .rudder-link-chip-detail {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rudder-markdown .rudder-link-chip-domain {
-  max-width: 16rem;
-  font-weight: 650;
-}
-
-.rudder-markdown .rudder-link-chip-detail {
-  max-width: 20rem;
-  color: var(--muted-foreground);
-  font-weight: 500;
-}
-
 .rudder-mdxeditor-content .rudder-skill-token,
 .rudder-milkdown-content .rudder-skill-token,
 .rudder-markdown .rudder-skill-token,

@@ -1456,7 +1456,7 @@ describe("MarkdownBody", () => {
     }));
   });
 
-  it("renders external markdown links with safe new-window attributes", () => {
+  it("renders external markdown links as ordinary blue text links with safe new-window attributes", () => {
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
@@ -1465,17 +1465,19 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    const link = container.querySelector("a.rudder-link-chip--website");
+    const link = container.querySelector("a");
     expect(link?.getAttribute("href")).toBe("https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/");
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.getAttribute("rel")).toBe("noreferrer noopener");
-    expect(link?.querySelector("svg.rudder-link-chip-icon")).toBeTruthy();
+    expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
+    expect(link?.textContent).toBe("the guide");
+    expect(link?.querySelector(".rudder-link-chip-icon")).toBeNull();
     expect(link?.querySelector(".rudder-link-chip-logo")).toBeNull();
-    expect(link?.querySelector(".rudder-link-chip-domain")?.textContent).toBe("the guide");
-    expect(link?.querySelector(".rudder-link-chip-detail")?.textContent).toBe("gingiris.github.io");
+    expect(link?.querySelector(".rudder-link-chip-domain")).toBeNull();
+    expect(link?.querySelector(".rudder-link-chip-detail")).toBeNull();
   });
 
-  it("uses recognized website logos inside external link chips", () => {
+  it("does not wrap recognized website links in logo chips", () => {
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
@@ -1484,12 +1486,11 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    const link = container.querySelector("a.rudder-link-chip--website");
-    const logo = link?.querySelector("img.rudder-link-chip-logo");
-    expect(logo?.getAttribute("src")).toBe("/rudder-logo.png");
-    expect(link?.querySelector("svg.rudder-link-chip-icon")).toBeNull();
-    expect(link?.querySelector(".rudder-link-chip-domain")?.textContent).toBe("Rudder docs");
-    expect(link?.querySelector(".rudder-link-chip-detail")?.textContent).toBe("doc.rudder.zeeland.studio");
+    const link = container.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("https://doc.rudder.zeeland.studio");
+    expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
+    expect(link?.textContent).toBe("Rudder docs");
+    expect(link?.querySelector(".rudder-link-chip-logo")).toBeNull();
   });
 
   it("keeps same-origin absolute markdown links in the current window", () => {
@@ -1507,7 +1508,7 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("target")).toBeNull();
   });
 
-  it("renders bare long website URLs as compact link chips", () => {
+  it("renders bare long website URLs as ordinary links", () => {
     const url = "https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/";
     const container = render(
       <ThemeProvider>
@@ -1515,15 +1516,14 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    const link = container.querySelector("a.rudder-link-chip--website");
+    const link = container.querySelector("a");
     expect(link?.getAttribute("href")).toBe(url);
     expect(link?.getAttribute("title")).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
-    expect(link?.querySelector("svg.rudder-link-chip-icon")).toBeTruthy();
+    expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
+    expect(link?.querySelector(".rudder-link-chip-icon")).toBeNull();
     expect(link?.querySelector(".rudder-link-chip-logo")).toBeNull();
-    expect(link?.querySelector(".rudder-link-chip-domain")?.textContent).toBe("gingiris.github.io");
-    expect(link?.querySelector(".rudder-link-chip-detail")?.textContent).toBe("growth-tools/blog/2026/04/02/github-readme-template-guide/");
-    expect(link?.textContent).not.toContain("https://");
+    expect(link?.textContent).toBe(url);
   });
 
   it("wraps markdown tables in a horizontal scroll boundary", () => {
