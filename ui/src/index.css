@@ -3211,7 +3211,10 @@ a.rudder-skill-token::before {
   z-index: 60;
   top: calc(100% + 0.38rem);
   left: 50%;
-  width: min(20rem, calc(100vw - 2rem));
+  width: min(24rem, calc(100vw - 2rem));
+  max-height: min(22rem, calc(100vh - 3rem));
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   padding: 0.85rem;
   border: 1px solid color-mix(in oklab, var(--border) 74%, transparent);
   border-radius: 8px;
@@ -3246,7 +3249,7 @@ a.rudder-skill-token::before {
 
 .rudder-entity-preview-card {
   display: block;
-  width: min(26rem, calc(100vw - 2rem));
+  width: min(32rem, calc(100vw - 2rem));
   max-width: calc(100vw - 2rem);
   max-height: min(32rem, calc(100vh - 3rem));
   padding: 0.7rem;
@@ -3260,6 +3263,11 @@ a.rudder-skill-token::before {
   overflow: hidden;
   text-align: left;
   white-space: normal;
+}
+
+.rudder-entity-preview-card .rudder-tooltip-arrow {
+  background: color-mix(in oklab, var(--popover) 96%, var(--background) 4%);
+  fill: color-mix(in oklab, var(--popover) 96%, var(--background) 4%);
 }
 
 .rudder-entity-preview-card--loading {
@@ -3366,7 +3374,16 @@ a.rudder-skill-token::before {
   margin: 0;
   color: var(--foreground);
   font-weight: 500;
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.rudder-entity-preview-row-value-text {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .rudder-entity-preview-row-value [data-slot="issue-status-icon"] {
@@ -3378,11 +3395,13 @@ a.rudder-skill-token::before {
 }
 
 .rudder-entity-preview-summary {
-  display: -webkit-box;
-  margin: 0.55rem 0 0;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  display: block;
+  max-height: min(7rem, calc(100vh - 14rem));
+  margin: 0.65rem 0 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.2rem;
+  overflow-wrap: anywhere;
 }
 
 .rudder-entity-preview-comment-body {

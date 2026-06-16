@@ -452,7 +452,7 @@ function PreviewRows({ rows }: { rows: PreviewRow[] }) {
           <span className="rudder-entity-preview-row-label">{row.label}</span>
           <span className="rudder-entity-preview-row-value">
             <PreviewRowIcon row={row} />
-            <span className="min-w-0 truncate">{row.value}</span>
+            <span className="rudder-entity-preview-row-value-text">{row.value}</span>
           </span>
         </span>
       ))}
@@ -540,13 +540,22 @@ function IssueCommentPreviewBody({ body }: { body: string }) {
   );
 }
 
+function PreviewSummary({ summary }: { summary: string }) {
+  const scrollRef = useScrollbarActivityRef();
+  return (
+    <span ref={scrollRef} className="rudder-entity-preview-summary scrollbar-auto-hide">
+      {summary}
+    </span>
+  );
+}
+
 function PreviewContent({ preview }: { preview: EntityPreview }) {
   if (preview.kind === "agent") {
     return (
       <>
         <PreviewHeader preview={preview} />
         <PreviewRows rows={[{ label: "Status", value: preview.status }]} />
-        {preview.summary ? <span className="rudder-entity-preview-summary">{preview.summary}</span> : null}
+        {preview.summary ? <PreviewSummary summary={preview.summary} /> : null}
       </>
     );
   }
@@ -556,7 +565,7 @@ function PreviewContent({ preview }: { preview: EntityPreview }) {
       <>
         <PreviewHeader preview={preview} />
         {preview.body ? <IssueCommentPreviewBody body={preview.body} /> : null}
-        {preview.summary ? <span className="rudder-entity-preview-summary">{preview.summary}</span> : null}
+        {preview.summary ? <PreviewSummary summary={preview.summary} /> : null}
       </>
     );
   }
@@ -565,7 +574,7 @@ function PreviewContent({ preview }: { preview: EntityPreview }) {
     <>
       <PreviewHeader preview={preview} />
       <PreviewRows rows={preview.rows} />
-      {preview.summary ? <span className="rudder-entity-preview-summary">{preview.summary}</span> : null}
+      {preview.summary ? <PreviewSummary summary={preview.summary} /> : null}
     </>
   );
 }

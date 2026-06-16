@@ -1,3 +1,4 @@
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { skillTokenIconInlineStyle } from "@/lib/skill-reference";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, Boxes } from "lucide-react";
@@ -24,6 +25,7 @@ export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps
   const locationLabel = preview?.locationLabel?.trim() || null;
   const detailsHref = preview?.detailsHref?.trim() || null;
   const hasPreview = Boolean(description || categoryLabel || locationLabel || detailsHref);
+  const hoverCardScrollRef = useScrollbarActivityRef();
   const tokenContent = detailsHref ? (
     <a
       className="rudder-skill-token"
@@ -50,13 +52,13 @@ export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps
     <span className={cn("rudder-skill-token-wrap", hasPreview && "rudder-skill-token-wrap--preview")}>
       {tokenContent}
       {hasPreview ? (
-        <span className="rudder-skill-hover-card" role="tooltip">
+        <span ref={hoverCardScrollRef} className="rudder-skill-hover-card scrollbar-auto-hide" role="tooltip">
           <span className="flex items-start gap-3">
             <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[#2f80ed]/10 text-[#2f80ed]">
               <Boxes className="h-4 w-4" aria-hidden />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-foreground">{displayName}</span>
+              <span className="block break-words text-sm font-medium leading-5 text-foreground">{displayName}</span>
               {(categoryLabel || locationLabel) ? (
                 <span className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
                   {categoryLabel ? (
@@ -65,7 +67,7 @@ export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps
                     </span>
                   ) : null}
                   {locationLabel ? (
-                    <span className="min-w-0 truncate text-[11px] leading-none text-muted-foreground">
+                    <span className="min-w-0 break-all text-[11px] leading-4 text-muted-foreground">
                       {locationLabel}
                     </span>
                   ) : null}

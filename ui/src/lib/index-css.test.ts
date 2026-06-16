@@ -104,15 +104,36 @@ describe("index.css motion rules", () => {
 
   it("keeps issue comment hover previews tall, scrollable, and image-aware", () => {
     const previewCard = cssBlock(".rudder-entity-preview-card");
+    const previewArrow = cssBlock(".rudder-entity-preview-card .rudder-tooltip-arrow");
     const commentBody = cssBlock(".rudder-entity-preview-comment-body");
     const commentImage = cssBlock(".rudder-entity-preview-comment-body :where(img)");
 
-    expect(previewCard).toContain("width: min(26rem, calc(100vw - 2rem))");
+    expect(previewCard).toContain("width: min(32rem, calc(100vw - 2rem))");
     expect(previewCard).toContain("max-height: min(32rem, calc(100vh - 3rem))");
+    expect(previewArrow).toContain("background:");
+    expect(previewArrow).toContain("fill:");
     expect(commentBody).toContain("max-height: min(24rem, calc(100vh - 10rem))");
     expect(commentBody).toContain("overflow-y: auto");
     expect(commentImage).toContain("object-fit: contain");
     expect(commentImage).toContain("max-height: 11rem");
+  });
+
+  it("keeps entity and skill hover card text readable instead of single-line clipped", () => {
+    const skillHoverCard = cssBlock(".rudder-skill-hover-card");
+    const rowValue = cssBlock(".rudder-entity-preview-row-value");
+    const rowValueText = cssBlock(".rudder-entity-preview-row-value-text");
+    const summary =
+      indexCss.match(/\n\.rudder-entity-preview-summary \{[^}]*overflow-y: auto[^}]*\n\}/)?.[0] ?? "";
+
+    expect(skillHoverCard).toContain("width: min(24rem, calc(100vw - 2rem))");
+    expect(skillHoverCard).toContain("overflow-y: auto");
+    expect(skillHoverCard).toContain("overflow-wrap: anywhere");
+    expect(rowValue).toContain("white-space: normal");
+    expect(rowValueText).toContain("overflow-wrap: anywhere");
+    expect(rowValueText).toContain("-webkit-line-clamp: 2");
+    expect(summary).toContain("overflow-y: auto");
+    expect(summary).toContain("overflow-wrap: anywhere");
+    expect(summary).not.toContain("-webkit-line-clamp");
   });
 
   it("keeps glass popovers above utility backgrounds", () => {

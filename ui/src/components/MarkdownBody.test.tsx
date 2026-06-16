@@ -1168,6 +1168,41 @@ describe("MarkdownBody", () => {
     expect(document.body.textContent).toContain("Rudder coordinates agent work loops.");
   });
 
+  it("renders long Library file hover cards with readable rows and summary content", async () => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", "org-1");
+    const longPath = "projects/rudder/proposals/2026-06-16-guarded-product-feature-registry.md";
+    entityPreviewApiMocks.readWorkspaceFile.mockResolvedValue({
+      filePath: longPath,
+      content: "Date: 2026-06-16 Status: Proposed Owner: Wesley Source: [Rudder chat: /doc 产品逻辑文档优化](chat://097c434b-b681-4609-8625-000000000000)",
+      contentType: "text/markdown",
+      previewKind: "text",
+      truncated: false,
+      message: null,
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[2026-06-16-guarded-product-feature-registry.md](${buildLibraryFileMentionHref(longPath, "2026-06-16-guarded-product-feature-registry.md")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await focusPreviewLink(container.querySelector("a.rudder-mention-chip"));
+
+    const card = document.body.querySelector(".rudder-entity-preview-card");
+    expect(card?.textContent).toContain("Library file");
+    expect(card?.textContent).toContain("2026-06-16-guarded-product-feature-registry.md");
+    const rows = Array.from(card?.querySelectorAll(".rudder-entity-preview-row") ?? []);
+    const pathRow = rows.find((row) => row.querySelector(".rudder-entity-preview-row-label")?.textContent === "Path");
+    const pathValue = pathRow?.querySelector(".rudder-entity-preview-row-value-text");
+    expect(pathValue?.textContent).toBe(longPath);
+    expect(pathValue?.classList.contains("truncate")).toBe(false);
+    const summary = card?.querySelector(".rudder-entity-preview-summary");
+    expect(summary?.classList.contains("scrollbar-auto-hide")).toBe(true);
+    expect(summary?.textContent).toContain("Date: 2026-06-16 Status: Proposed Owner: Wesley");
+  });
+
   it("reuses cached agent previews across repeated rendered mention chips", async () => {
     window.localStorage.setItem("rudder.selectedOrganizationId", "org-1");
     entityPreviewApiMocks.getAgent.mockResolvedValue({
@@ -1313,7 +1348,7 @@ describe("MarkdownBody", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain('class="rudder-skill-hover-card"');
+    expect(html).toContain('class="rudder-skill-hover-card scrollbar-auto-hide"');
     expect(html).toContain("Global skill");
     expect(html).toContain("~/.agents/skills");
     expect(html).toContain("Turn vague build feedback into expert diagnosis.");
