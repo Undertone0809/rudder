@@ -3067,6 +3067,52 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   color: color-mix(in oklab, var(--foreground) 64%, #58a6ff 36%);
 }
 
+.rudder-markdown a.rudder-website-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--rudder-doc-link);
+  font-weight: 520;
+  line-height: inherit;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+
+.rudder-markdown a.rudder-website-link:hover {
+  background: transparent;
+  color: var(--rudder-doc-link-hover);
+  text-decoration: none;
+}
+
+.rudder-website-link-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.24em;
+  color: currentColor;
+  vertical-align: -0.12em;
+}
+
+.rudder-website-link-logo {
+  display: inline-block;
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+.rudder-website-link-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rudder-markdown a.rudder-website-link:hover .rudder-website-link-label {
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
+
 .rudder-mdxeditor-content .rudder-skill-token,
 .rudder-milkdown-content .rudder-skill-token,
 .rudder-markdown .rudder-skill-token,

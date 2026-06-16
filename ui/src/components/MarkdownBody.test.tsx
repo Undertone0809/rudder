@@ -1518,7 +1518,7 @@ describe("MarkdownBody", () => {
     }));
   });
 
-  it("renders external markdown links as ordinary blue text links with safe new-window attributes", () => {
+  it("renders external markdown links as ordinary icon-leading blue text links with safe new-window attributes", () => {
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
@@ -1533,13 +1533,31 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("rel")).toBe("noreferrer noopener");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
     expect(link?.textContent).toBe("the guide");
-    expect(link?.querySelector(".rudder-link-chip-icon")).toBeNull();
-    expect(link?.querySelector(".rudder-link-chip-logo")).toBeNull();
+    expect(link?.querySelector("svg.rudder-website-link-icon")?.getAttribute("aria-hidden")).toBe("true");
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    expect(link?.querySelector(".rudder-website-link-label")?.textContent).toBe("the guide");
     expect(link?.querySelector(".rudder-link-chip-domain")).toBeNull();
     expect(link?.querySelector(".rudder-link-chip-detail")).toBeNull();
   });
 
-  it("does not wrap recognized website links in logo chips", () => {
+  it("renders recognized website icons without wrapping links in chips", () => {
+    const githubContainer = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"Read [GitHub traffic](https://github.com/Undertone0809/rudder/graphs/traffic)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const githubLink = githubContainer.querySelector("a");
+    expect(githubLink?.getAttribute("href")).toBe("https://github.com/Undertone0809/rudder/graphs/traffic");
+    expect(githubLink?.classList.contains("rudder-link-chip--website")).toBe(false);
+    expect(githubLink?.querySelector("[data-website-icon='github']")).toBeTruthy();
+    expect(githubLink?.querySelector(".rudder-website-link-label")?.textContent).toBe("GitHub traffic");
+
+    cleanupFn?.();
+    cleanupFn = null;
+
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
@@ -1552,7 +1570,7 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("href")).toBe("https://doc.rudder.zeeland.studio");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
     expect(link?.textContent).toBe("Rudder docs");
-    expect(link?.querySelector(".rudder-link-chip-logo")).toBeNull();
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("/rudder-logo.png");
   });
 
   it("keeps same-origin absolute markdown links in the current window", () => {
@@ -1583,8 +1601,7 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("title")).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
-    expect(link?.querySelector(".rudder-link-chip-icon")).toBeNull();
-    expect(link?.querySelector(".rudder-link-chip-logo")).toBeNull();
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
     expect(link?.textContent).toBe(url);
   });
 

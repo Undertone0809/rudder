@@ -134,30 +134,49 @@ test.describe("UI Lab", () => {
     await expect(page.getByText("/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/projects/rudder/proposals", { exact: false })).toBeVisible();
   });
 
-  test("renders Markdown website links as icon chips", async ({ page }) => {
+  test("renders Markdown website links as inline icon-leading text", async ({ page }) => {
     const organization = await createUiLabOrganization(page);
 
     await page.goto(`/${organization.issuePrefix}/ui-lab`);
     await page.getByRole("button", { name: /Common Components/ }).click();
 
-    const websiteLinkChip = page.locator("a.rudder-link-chip--website").filter({ hasText: "Rudder docs" });
-    const fallbackLinkChip = page.locator("a.rudder-link-chip--website").filter({ hasText: "reference guide" });
-    await expect(websiteLinkChip).toBeVisible();
-    await expect(fallbackLinkChip).toBeVisible();
-    await expect(websiteLinkChip).toHaveAttribute("href", "https://doc.rudder.zeeland.studio");
-    await expect(websiteLinkChip).toHaveAttribute("target", "_blank");
-    await expect(websiteLinkChip.locator("img.rudder-link-chip-logo")).toHaveAttribute("src", "/rudder-logo.png");
-    await expect(websiteLinkChip.locator(".rudder-link-chip-domain")).toHaveText("Rudder docs");
-    await expect(websiteLinkChip.locator(".rudder-link-chip-detail")).toHaveText("doc.rudder.zeeland.studio");
-    await expect(fallbackLinkChip.locator("svg.rudder-link-chip-icon")).toBeVisible();
+    const websiteLink = page.locator("a.rudder-website-link").filter({ hasText: "Rudder docs" });
+    const fallbackLink = page.locator("a.rudder-website-link").filter({ hasText: "reference guide" });
+    await expect(websiteLink).toBeVisible();
+    await expect(fallbackLink).toBeVisible();
+    await expect(websiteLink).toHaveAttribute("href", "https://doc.rudder.zeeland.studio");
+    await expect(websiteLink).toHaveAttribute("target", "_blank");
+    await expect(websiteLink.locator("img.rudder-website-link-logo")).toHaveAttribute("src", "/rudder-logo.png");
+    await expect(websiteLink.locator(".rudder-website-link-label")).toHaveText("Rudder docs");
+    await expect(fallbackLink.locator('[data-website-icon="generic"]')).toBeVisible();
+    await expect(fallbackLink.locator(".rudder-website-link-label")).toHaveText("reference guide");
+    await expect(page.locator("a.rudder-link-chip--website")).toHaveCount(0);
+    await expect(websiteLink.locator(".rudder-link-chip-domain")).toHaveCount(0);
+    await expect(websiteLink.locator(".rudder-link-chip-detail")).toHaveCount(0);
 
-    const [brandedHeight, fallbackHeight] = await Promise.all([
-      websiteLinkChip.evaluate((chip) => chip.getBoundingClientRect().height),
-      fallbackLinkChip.evaluate((chip) => chip.getBoundingClientRect().height),
-    ]);
-    expect(brandedHeight).toBeLessThanOrEqual(32);
-    expect(fallbackHeight).toBeLessThanOrEqual(32);
-    expect(Math.abs(brandedHeight - fallbackHeight)).toBeLessThanOrEqual(2);
+    const render = await websiteLink.evaluate((link) => {
+      const style = window.getComputedStyle(link);
+      const icon = link.querySelector(".rudder-website-link-icon");
+      const iconStyle = icon ? window.getComputedStyle(icon) : null;
+      return {
+        backgroundImage: style.backgroundImage,
+        borderTopWidth: style.borderTopWidth,
+        borderRadius: style.borderRadius,
+        display: style.display,
+        iconDisplay: iconStyle?.display,
+        paddingInlineEnd: style.paddingInlineEnd,
+        paddingInlineStart: style.paddingInlineStart,
+      };
+    });
+    expect(render).toMatchObject({
+      backgroundImage: "none",
+      borderTopWidth: "0px",
+      borderRadius: "0px",
+      display: "inline",
+      iconDisplay: "inline-block",
+      paddingInlineEnd: "0px",
+      paddingInlineStart: "0px",
+    });
   });
 
   test("shows a hover copy action on command terminal transcript details", async ({ page, context }) => {
