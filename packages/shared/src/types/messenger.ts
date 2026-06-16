@@ -25,6 +25,7 @@ export interface MessengerCustomGroup {
   orgId: string;
   userId: string;
   name: string;
+  icon: string | null;
   sortOrder: number;
   collapsed: boolean;
   createdAt: Date;

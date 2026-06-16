@@ -70,9 +70,9 @@ export const messengerApi = {
     api.get<MessengerThreadDetailResponse<MessengerEvent>>(`/orgs/${orgId}/messenger/system/${threadKind}`),
   listCustomGroups: (orgId: string) =>
     api.get<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups`),
-  createCustomGroup: (orgId: string, data: { name: string }) =>
+  createCustomGroup: (orgId: string, data: { name: string; icon?: string | null }) =>
     api.post<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups`, data),
-  updateCustomGroup: (orgId: string, groupId: string, data: { name?: string; collapsed?: boolean; sortOrder?: number }) =>
+  updateCustomGroup: (orgId: string, groupId: string, data: { name?: string; icon?: string | null; collapsed?: boolean; sortOrder?: number }) =>
     api.patch<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups/${groupId}`, data),
   deleteCustomGroup: (orgId: string, groupId: string) =>
     api.delete<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups/${groupId}`),

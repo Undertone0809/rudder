@@ -1069,7 +1069,7 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function createCustomGroup(orgId: string, userId: string, name: string) {
+  async function createCustomGroup(orgId: string, userId: string, name: string, icon: string | null = null) {
     const [lastGroup] = await db
       .select({ sortOrder: messengerCustomGroups.sortOrder })
       .from(messengerCustomGroups)
@@ -1083,6 +1083,7 @@ export function messengerService(db: Db) {
         orgId,
         userId,
         name,
+        icon,
         sortOrder: (lastGroup?.sortOrder ?? -1) + 1,
         updatedAt: now,
       })
@@ -1094,7 +1095,7 @@ export function messengerService(db: Db) {
     orgId: string,
     userId: string,
     groupId: string,
-    patch: { name?: string; collapsed?: boolean; sortOrder?: number },
+    patch: { name?: string; icon?: string | null; collapsed?: boolean; sortOrder?: number },
   ) {
     await getCustomGroupOrThrow(orgId, userId, groupId);
     const [group] = await db

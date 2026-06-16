@@ -11,6 +11,9 @@ import { MessengerContextSidebar } from "./MessengerContextSidebar";
 
 const mockUpdateUserState = vi.hoisted(() => vi.fn());
 const mockUpdateThreadUserState = vi.hoisted(() => vi.fn());
+const mockCreateCustomGroup = vi.hoisted(() => vi.fn());
+const mockAssignCustomGroupEntry = vi.hoisted(() => vi.fn());
+const mockListCustomGroups = vi.hoisted(() => vi.fn());
 const mockUpdateConversation = vi.hoisted(() => vi.fn());
 const mockRemove = vi.hoisted(() => vi.fn());
 const mockStopMessageStream = vi.hoisted(() => vi.fn());
@@ -27,6 +30,7 @@ let messengerModel: any;
 let messengerRoute: any;
 let chatList: any[];
 let agentList: any[];
+let customGroupList: any[];
 let activeGeneratingChatIds: Set<string>;
 let cleanupFn: (() => void) | null = null;
 let clipboardWriteText: ReturnType<typeof vi.fn>;
@@ -34,13 +38,13 @@ let clipboardWriteText: ReturnType<typeof vi.fn>;
 vi.mock("@tanstack/react-query", () => ({
   useMutation: (options: {
     mutationFn: (variables: any) => Promise<any>;
-    onSuccess?: (data: any) => Promise<void> | void;
+    onSuccess?: (data: any, variables: any) => Promise<void> | void;
     onError?: (error: unknown, variables: any) => Promise<void> | void;
   }) => ({
     mutate: vi.fn(async (variables: any) => {
       try {
         const result = await options.mutationFn(variables);
-        await options.onSuccess?.(result);
+        await options.onSuccess?.(result, variables);
       } catch (error) {
         await options.onError?.(error, variables);
       }
@@ -52,6 +56,7 @@ vi.mock("@tanstack/react-query", () => ({
     if (options.enabled === false) return { data: undefined };
     const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
     if (queryKey[0] === "agents") return { data: agentList };
+    if (queryKey[0] === "messenger" && queryKey[2] === "groups") return { data: { groups: customGroupList } };
     return { data: chatList };
   },
 }));
@@ -69,6 +74,9 @@ vi.mock("@/api/messenger", () => ({
   messengerApi: {
     markThreadRead: mockMarkThreadRead,
     updateThreadUserState: mockUpdateThreadUserState,
+    listCustomGroups: mockListCustomGroups,
+    createCustomGroup: mockCreateCustomGroup,
+    assignCustomGroupEntry: mockAssignCustomGroupEntry,
   },
 }));
 
@@ -254,6 +262,7 @@ describe("MessengerContextSidebar chat actions", () => {
     activeGeneratingChatIds = new Set();
     messengerRoute = { kind: "root" };
     chatList = [baseConversation()];
+    customGroupList = [];
     agentList = [
       {
         id: "agent-1",
@@ -286,6 +295,28 @@ describe("MessengerContextSidebar chat actions", () => {
     mockStopMessageStream.mockResolvedValue({ stopped: true });
     mockMarkThreadRead.mockResolvedValue({ threadKey: "issue:issue-1", lastReadAt: "2026-04-11T09:40:00.000Z" });
     mockUpdateThreadUserState.mockResolvedValue({ threadKey: "issue:issue-1", pinned: true });
+    mockCreateCustomGroup.mockResolvedValue({
+      id: "group-1",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Deep work",
+      icon: "D",
+      sortOrder: 0,
+      collapsed: false,
+      createdAt: "2026-04-11T09:40:00.000Z",
+      updatedAt: "2026-04-11T09:40:00.000Z",
+    });
+    mockAssignCustomGroupEntry.mockResolvedValue({
+      id: "entry-1",
+      orgId: "org-1",
+      userId: "local-board",
+      groupId: "group-1",
+      threadKey: "chat:chat-1",
+      sortOrder: 0,
+      createdAt: "2026-04-11T09:40:00.000Z",
+      updatedAt: "2026-04-11T09:40:00.000Z",
+    });
+    mockListCustomGroups.mockResolvedValue({ groups: [] });
     mockConfirm.mockResolvedValue(true);
     Object.defineProperty(window, "localStorage", {
       configurable: true,
@@ -310,6 +341,9 @@ describe("MessengerContextSidebar chat actions", () => {
     mockConfirm.mockClear();
     mockMarkThreadRead.mockClear();
     mockUpdateThreadUserState.mockClear();
+    mockCreateCustomGroup.mockClear();
+    mockAssignCustomGroupEntry.mockClear();
+    mockListCustomGroups.mockClear();
     mockUpdateConversation.mockClear();
     invalidateQueries.mockClear();
     setQueryData.mockClear();
@@ -507,6 +541,31 @@ describe("MessengerContextSidebar chat actions", () => {
     });
 
     expect(clipboardWriteText).toHaveBeenCalledWith("[Planning thread](chat://chat-1)");
+  });
+
+  it("creates a custom group from a latest activity chat action and switches to custom mode", async () => {
+    const storage = installLocalStorage();
+    const prompt = vi.spyOn(window, "prompt");
+    prompt
+      .mockReturnValueOnce("Deep work")
+      .mockReturnValueOnce("D");
+
+    renderSidebar();
+
+    const newGroup = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("New group")) as HTMLButtonElement | undefined;
+
+    expect(newGroup).toBeTruthy();
+    await act(async () => {
+      newGroup?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateCustomGroup).toHaveBeenCalledWith("org-1", { name: "Deep work", icon: "D" });
+    expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "chat:chat-1");
+    expect(storage.setItem).toHaveBeenCalledWith("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "custom" }));
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "groups"] });
   });
 
   it("deletes a chat thread from the actions menu", async () => {
