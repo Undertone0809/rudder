@@ -1,10 +1,15 @@
+import { agentsApi } from "@/api/agents";
 import { organizationsApi } from "@/api/orgs";
 import { secretsApi } from "@/api/secrets";
-import { RuntimeProviderCard } from "@/components/AgentConfigForm.environment";
+import { AdapterEnvironmentError, AdapterEnvironmentResult, RuntimeProviderCard } from "@/components/AgentConfigForm.environment";
 import {
+  type RuntimeEnvironmentStatus,
+  type RuntimeEnvironmentTestItemResult,
+  type RuntimeEnvironmentTestTarget,
   defaultConfigForRuntime,
   defaultFallbackItem,
   defaultModelForRuntime,
+  formatRuntimeEnvironmentLabel,
   normalizeModelFallbacksForEditor,
   primaryModelFallbackKey,
   runtimeProviderItemClassName,
@@ -107,6 +112,34 @@ function updateFallbackModels(draft: ProfileDraft, nextFallbacks: ModelFallbackC
   };
 }
 
+function buildRuntimeEnvironmentTestTargets(
+  draft: ProfileDraft,
+  model: string,
+  fallbacks: ModelFallbackConfig[],
+): RuntimeEnvironmentTestTarget[] {
+  const primaryConfig: Record<string, unknown> = { ...draft.agentRuntimeConfig, model };
+  delete primaryConfig.modelFallbacks;
+  return [
+    {
+      key: "primary",
+      title: "Primary",
+      runtimeType: draft.agentRuntimeType,
+      model,
+      config: primaryConfig,
+    },
+    ...fallbacks.map((fallback, index) => ({
+      key: `fallback-${index}`,
+      title: `Fallback ${index + 1}`,
+      runtimeType: fallback.agentRuntimeType,
+      model: fallback.model,
+      config: {
+        ...(fallback.config ?? {}),
+        ...(fallback.model ? { model: fallback.model } : {}),
+      },
+    })),
+  ];
+}
+
 function sameDraft(left: ProfileDraft | null | undefined, right: ProfileDraft | null | undefined) {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
@@ -134,6 +167,40 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.organizations.intelligenceProfiles(orgId) });
+    },
+  });
+  const [runtimeEnvironmentResults, setRuntimeEnvironmentResults] = useState<
+    Partial<Record<OrganizationIntelligenceProfilePurpose, RuntimeEnvironmentTestItemResult[]>>
+  >({});
+  const testRuntimeChain = useMutation({
+    mutationFn: async ({
+      purpose,
+      targets,
+    }: {
+      purpose: OrganizationIntelligenceProfilePurpose;
+      targets: RuntimeEnvironmentTestTarget[];
+    }) => {
+      const results: RuntimeEnvironmentTestItemResult[] = [];
+      for (const target of targets) {
+        try {
+          const result = await agentsApi.testEnvironment(orgId, target.runtimeType, {
+            agentRuntimeConfig: target.config,
+          });
+          results.push({ ...target, result });
+        } catch (error) {
+          results.push({
+            ...target,
+            error: error instanceof Error ? error : new Error(String(error)),
+          });
+        }
+      }
+      return { purpose, results };
+    },
+    onSuccess: ({ purpose, results }) => {
+      setRuntimeEnvironmentResults((current) => ({
+        ...current,
+        [purpose]: results,
+      }));
     },
   });
 
@@ -182,6 +249,17 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
           const fallbacks = fallbackModels(draft);
           const dirty = !draft.exists || !sameDraft(draft, serverDrafts[purpose]);
           const primaryConfig = { ...draft.agentRuntimeConfig, model };
+          const testTargets = buildRuntimeEnvironmentTestTargets(draft, model, fallbacks);
+          const testResults = runtimeEnvironmentResults[purpose] ?? [];
+          const testResultsByKey = new Map(testResults.map((item) => [item.key, item]));
+          const isTestingRuntimeChain = testRuntimeChain.isPending && testRuntimeChain.variables?.purpose === purpose;
+          const runtimeEnvironmentStatusFor = (key: string): RuntimeEnvironmentStatus | undefined => {
+            if (isTestingRuntimeChain) return "testing";
+            const item = testResultsByKey.get(key);
+            if (!item) return undefined;
+            if (item.error) return "error";
+            return item.result?.status;
+          };
           return (
             <div
               key={purpose}
@@ -194,6 +272,16 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                   <div className="text-xs text-muted-foreground">{copy.description}</div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2.5 text-xs"
+                    disabled={testRuntimeChain.isPending}
+                    onClick={() => testRuntimeChain.mutate({ purpose, targets: testTargets })}
+                  >
+                    {isTestingRuntimeChain ? "Testing runtime chain..." : "Test runtime chain"}
+                  </Button>
                   <span className={cn(
                     "rounded-full border px-2 py-0.5 text-[11px] font-medium",
                     draft.exists && draft.status === "configured"
@@ -213,6 +301,27 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                   </Button>
                 </div>
               </div>
+
+              {testResults.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground">Runtime chain environment</div>
+                  {testResults.map((item) =>
+                    item.result ? (
+                      <AdapterEnvironmentResult
+                        key={item.key}
+                        result={item.result}
+                        label={formatRuntimeEnvironmentLabel(item)}
+                      />
+                    ) : (
+                      <AdapterEnvironmentError
+                        key={item.key}
+                        label={formatRuntimeEnvironmentLabel(item)}
+                        message={item.error?.message ?? "Environment test failed"}
+                      />
+                    ),
+                  )}
+                </div>
+              ) : null}
 
               <div className={runtimeProviderRailClassName}>
                 <RuntimeProviderCard
@@ -269,6 +378,7 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                       },
                     }));
                   }}
+                  environmentStatus={runtimeEnvironmentStatusFor("primary")}
                 />
 
                 {fallbacks.map((fallback, index) => (
@@ -332,6 +442,7 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                       };
                       setDraft(purpose, (current) => updateFallbackModels(current, next));
                     }}
+                    environmentStatus={runtimeEnvironmentStatusFor(`fallback-${index}`)}
                   />
                 ))}
 
