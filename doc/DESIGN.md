@@ -412,6 +412,35 @@ Rules:
 - align actions consistently
 - avoid wrapping simple fields into tall stacked cells unless necessary
 
+### 12.1 Data-Heavy Surfaces
+
+Large operational surfaces must feel continuous, not fragile. A page that works
+only when the fixture has ten rows is not a finished Rudder surface.
+
+Rules:
+
+- First paint should show the current working context quickly: shell, filters,
+  selected scope, and a meaningful loading state before long data arrives.
+- Do not make users pay the cost of every issue, run, activity entry, comment,
+  conversation, or resource just to inspect the first screen.
+- Use paginated, incremental, or virtualized lists when a surface can grow with
+  organization activity.
+- Keep filtering, sorting, active scope, and scroll position stable across
+  refreshes, polling, mutation responses, and "load more" interactions.
+- When appending data near the bottom of a list, preserve visual continuity so
+  the user does not lose their place or see the page jump back to the top.
+- Loading more records should not replace the whole surface with a global
+  spinner. Prefer row skeletons, inline progress, or a quiet footer affordance.
+- Reset pagination only when the user's query scope changes, such as filter,
+  sort, date window, organization, agent, project, or search text.
+- Use counts carefully. Label current-window counts differently from filtered
+  or organization-wide totals.
+- If a dense page needs both a list and detail inspection, prefer a split
+  surface or on-demand detail query over embedding every detail payload in the
+  list response.
+- Empty states on data-heavy pages must appear only after the relevant query
+  scope has loaded. Do not flash "empty" while the first page is still pending.
+
 ## 13. Empty States
 
 Empty states should orient and trigger action, nothing more.

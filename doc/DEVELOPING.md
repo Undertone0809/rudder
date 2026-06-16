@@ -60,6 +60,51 @@ Prompt authoring rule of thumb:
   resources are the default run/chat context, while org resources stay queryable
   through the control plane when an agent needs broader background
 
+## Data Volume and Render Performance
+
+Treat production-shaped data volume as a development constraint from the start,
+not as a late polish pass. Rudder is an operational control plane; pages must
+stay usable when an organization has many issues, runs, comments, agents,
+resources, conversations, or activity entries.
+
+Default engineering rules:
+
+- Do not design new screens or API clients around loading an unbounded
+  organization-wide dataset into the browser.
+- New list, timeline, search, activity, run, transcript, chat, and resource
+  endpoints should expose explicit limits, stable ordering, and cursor or
+  offset pagination unless there is a documented reason the result set is
+  provably bounded.
+- Server-side filters should be the source of truth for narrowing large
+  datasets. Client-side filtering is acceptable only for the current loaded
+  page, small fixed option sets, or local presentation concerns.
+- Refresh and polling paths should update the current window of data without
+  resetting pagination, scroll position, active filters, or selected records
+  unless the user explicitly changes scope.
+- Prefer incremental loading, "load more", virtualization, or split detail
+  queries over shipping hidden bulk payloads and hiding the cost with a
+  spinner.
+- Empty, loading, and partial states must distinguish "not loaded yet" from
+  "loaded and empty" so dense pages do not flash misleading empty states.
+- Keep query keys and cache invalidation scoped to the actor, organization,
+  filters, cursor, date window, and selected entity that define the visible
+  data. Avoid invalidating an entire page when a narrow row or detail panel can
+  be refreshed.
+- When adding aggregates, counts, or charts, define whether the value comes
+  from the current page, the filtered server result, or the entire organization
+  dataset. Do not let a paginated list imply a global count unless the API
+  returns one intentionally.
+- Any user-visible workflow whose correctness depends on data volume, scroll
+  continuation, date windows, filters, or async refresh needs E2E coverage with
+  enough records to exercise that behavior.
+- For performance work, record the workload shape, baseline measurement, and
+  post-change measurement. A faster implementation without a named workload is
+  not enough evidence.
+
+Reviewers should challenge any new data surface that fetches "everything",
+resets the user's place during refresh, or proves only a tiny happy-path
+fixture when the real workflow depends on long lists.
+
 ## Plan Docs
 
 Repo `doc/plans/` is contributor decision memory, not just scratch writing.
@@ -249,8 +294,10 @@ smallest happy-path fixture renders. When a workflow depends on database aggrega
 organization boundaries, permission checks, persisted state, async runtime state, or external process
 results, include representative corner cases in the E2E suite. If a production failure was caused by
 scale, boundary values, or a partial dependency failure, add a production-shaped regression case for
-that failure mode. Use lower-level tests only when the E2E version would be too expensive or
-impossible, and document that tradeoff in the hand-off.
+that failure mode. For list or timeline workflows, include the pagination, filtering, scrolling,
+or refresh behavior that protects the user from loading an unbounded dataset. Use lower-level tests
+only when the E2E version would be too expensive or impossible, and document that tradeoff in the
+hand-off.
 
 Useful variants:
 
