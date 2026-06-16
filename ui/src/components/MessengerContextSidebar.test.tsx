@@ -13,6 +13,7 @@ let messengerRoute: any;
 let messengerModelOptions: any[];
 let chatList: any[];
 let agentList: any[];
+let customGroupList: any[];
 let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
 let activeGeneratingChatIds: Set<string>;
@@ -25,6 +26,7 @@ vi.mock("@tanstack/react-query", () => ({
     if (options.enabled === false) return { data: undefined };
     const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
     if (queryKey[0] === "agents") return { data: agentList };
+    if (queryKey[0] === "messenger" && queryKey[2] === "groups") return { data: { groups: customGroupList } };
     return { data: chatList };
   },
 }));
@@ -139,6 +141,7 @@ describe("MessengerContextSidebar", () => {
         contextLinks: [],
       },
     ];
+    customGroupList = [];
     agentList = [
       {
         id: "agent-1",
@@ -458,6 +461,110 @@ describe("MessengerContextSidebar", () => {
     );
     expect(html).toContain("Today");
     expect(html).toContain("Recent");
+  });
+
+  it("renders custom groups with pinned threads first and group entries sorted by latest activity", () => {
+    localStorageValues["rudder.messengerThreadOrganizationByOrg"] = JSON.stringify({ "org-1": "custom" });
+    chatList = [];
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Deep work",
+        icon: "D",
+        sortOrder: 0,
+        collapsed: false,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        entries: [
+          {
+            id: "entry-older",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "group-1",
+            threadKey: "chat:older-grouped",
+            sortOrder: 0,
+            createdAt: "2026-04-11T08:00:00.000Z",
+            updatedAt: "2026-04-11T08:00:00.000Z",
+            thread: {
+              threadKey: "chat:older-grouped",
+              kind: "chat",
+              title: "Older grouped chat",
+              preview: "Older.",
+              subtitle: null,
+              href: "/messenger/chat/older-grouped",
+              latestActivityAt: "2026-04-11T08:00:00.000Z",
+              lastReadAt: null,
+              unreadCount: 0,
+              needsAttention: false,
+              isPinned: false,
+            },
+          },
+          {
+            id: "entry-newer",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "group-1",
+            threadKey: "chat:newer-grouped",
+            sortOrder: 1,
+            createdAt: "2026-04-11T08:00:00.000Z",
+            updatedAt: "2026-04-11T08:00:00.000Z",
+            thread: {
+              threadKey: "chat:newer-grouped",
+              kind: "chat",
+              title: "Newer grouped chat",
+              preview: "Newer.",
+              subtitle: null,
+              href: "/messenger/chat/newer-grouped",
+              latestActivityAt: "2026-04-11T09:55:00.000Z",
+              lastReadAt: null,
+              unreadCount: 0,
+              needsAttention: false,
+              isPinned: false,
+            },
+          },
+          {
+            id: "entry-pinned",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "group-1",
+            threadKey: "chat:pinned-grouped",
+            sortOrder: 2,
+            createdAt: "2026-04-11T08:00:00.000Z",
+            updatedAt: "2026-04-11T08:00:00.000Z",
+            thread: {
+              threadKey: "chat:pinned-grouped",
+              kind: "chat",
+              title: "Pinned grouped chat",
+              preview: "Pinned.",
+              subtitle: null,
+              href: "/messenger/chat/pinned-grouped",
+              latestActivityAt: "2026-04-11T07:30:00.000Z",
+              lastReadAt: null,
+              unreadCount: 0,
+              needsAttention: false,
+              isPinned: true,
+            },
+          },
+        ],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.indexOf("Pinned")).toBeLessThan(html.indexOf("Deep work"));
+    expect(html.indexOf("Pinned grouped chat")).toBeLessThan(html.indexOf("Deep work"));
+    expect(html.indexOf("Newer grouped chat")).toBeLessThan(html.indexOf("Older grouped chat"));
+    expect(html).toContain(">D</span>");
+    expect(queryOptions).toContainEqual(expect.objectContaining({
+      queryKey: ["messenger", "org-1", "groups"],
+      enabled: true,
+    }));
   });
 
   it("promotes pinned split issue rows with pinned chats in latest activity mode", () => {

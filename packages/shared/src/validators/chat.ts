@@ -278,10 +278,12 @@ export const updateMessengerThreadUserStateSchema = z.object({
 
 export const createMessengerCustomGroupSchema = z.object({
   name: z.string().trim().min(1).max(80),
+  icon: z.string().trim().min(1).max(24).optional().nullable(),
 });
 
 export const updateMessengerCustomGroupSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
+  icon: z.string().trim().min(1).max(24).optional().nullable(),
   collapsed: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
 });

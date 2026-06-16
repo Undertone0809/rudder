@@ -1,0 +1,1 @@
+ALTER TABLE "messenger_custom_groups" ADD COLUMN "icon" text;

@@ -54,7 +54,7 @@ export function messengerRoutes(db: Db) {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
       const userId = boardUserId(req);
-      res.status(201).json(await svc.createCustomGroup(orgId, userId, req.body.name));
+      res.status(201).json(await svc.createCustomGroup(orgId, userId, req.body.name, req.body.icon ?? null));
     },
   );
 

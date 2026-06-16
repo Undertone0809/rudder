@@ -8,6 +8,7 @@ export const messengerCustomGroups = pgTable(
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
     userId: text("user_id").notNull(),
     name: text("name").notNull(),
+    icon: text("icon"),
     sortOrder: integer("sort_order").notNull().default(0),
     collapsed: boolean("collapsed").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
