@@ -16,6 +16,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { prefetchChatConversation } from "@/lib/chat-prefetch";
 import { displayChatTitle } from "@/lib/chat-title";
+import { renameMessengerChatInCache } from "@/lib/messenger-query-cache";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
 import { cn, relativeTime } from "@/lib/utils";
@@ -205,6 +206,9 @@ export function SidebarChatSessions() {
       setRenamingConversationId((current) => (current === conversation.id ? null : current));
       await refreshChatList(conversation.id);
     },
+    onError: async (_error, variables) => {
+      await refreshChatList(variables.chatId);
+    },
   });
 
   const updateUserStateMutation = useMutation({
@@ -221,6 +225,10 @@ export function SidebarChatSessions() {
       setRenamingConversationId(null);
       return;
     }
+    if (selectedOrganizationId) {
+      renameMessengerChatInCache(queryClient, selectedOrganizationId, renamingConversationId, trimmed);
+    }
+    setRenamingConversationId(null);
     updateConversationMutation.mutate({
       chatId: renamingConversationId,
       data: { title: trimmed },

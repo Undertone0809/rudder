@@ -30,6 +30,7 @@ import {
   markMessengerChatPinnedInCache,
   markMessengerThreadPinnedInCache,
   markMessengerThreadReadInCache,
+  renameMessengerChatInCache,
 } from "@/lib/messenger-query-cache";
 import {
   getUnhandledMessengerUnreadScrollRequestId,
@@ -2198,6 +2199,10 @@ export function MessengerContextSidebar() {
       setRenamingConversationId(null);
       return;
     }
+    if (model.selectedOrganizationId) {
+      renameMessengerChatInCache(queryClient, model.selectedOrganizationId, renamingConversationId, trimmed);
+    }
+    setRenamingConversationId(null);
     updateConversationMutation.mutate({
       chatId: renamingConversationId,
       data: { title: trimmed },

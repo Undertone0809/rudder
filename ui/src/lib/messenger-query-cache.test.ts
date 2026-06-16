@@ -10,6 +10,7 @@ import {
   markMessengerChatReadInCache,
   markMessengerThreadPinnedInCache,
   markMessengerThreadReadInCache,
+  renameMessengerChatInCache,
   upsertMessengerThreadSummaryQueries,
 } from "./messenger-query-cache";
 
@@ -172,6 +173,42 @@ describe("Messenger optimistic action cache helpers", () => {
     expect(queryClient.getQueryData<{
       pages: Array<{ items: MessengerThreadSummary[] }>;
     }>(queryKeys.messenger.threadPages(orgId, false))?.pages[0]?.items[0]?.isPinned).toBe(true);
+  });
+
+  it("renames a chat across conversation and Messenger thread caches immediately", () => {
+    const queryClient = new QueryClient();
+    const orgId = "org-1";
+    const chat = conversation({ id: "chat-1", orgId, title: "Old planning title" });
+    const chatThread = thread({ threadKey: "chat:chat-1", title: "Old planning title" });
+    const otherThread = thread({ threadKey: "chat:chat-2", title: "Other chat" });
+
+    queryClient.setQueryData(queryKeys.chats.detail("chat-1"), chat);
+    queryClient.setQueryData(queryKeys.chats.list(orgId, "active"), [chat]);
+    queryClient.setQueryData(queryKeys.chats.list(orgId, "all"), [chat]);
+    queryClient.setQueryData(queryKeys.messenger.threads(orgId), [chatThread, otherThread]);
+    queryClient.setQueryData(queryKeys.messenger.threadPages(orgId, true), {
+      pages: [{ items: [chatThread, otherThread], pageInfo: { limit: 40, nextCursor: null, hasMore: false } }],
+      pageParams: [null],
+    });
+    queryClient.setQueryData(queryKeys.messenger.threadPreview(orgId), {
+      items: [chatThread],
+      pageInfo: { limit: 10, nextCursor: null, hasMore: false },
+    });
+
+    renameMessengerChatInCache(queryClient, orgId, "chat-1", "New planning title");
+
+    expect(queryClient.getQueryData<ChatConversation>(queryKeys.chats.detail("chat-1"))?.title).toBe("New planning title");
+    expect(queryClient.getQueryData<ChatConversation[]>(queryKeys.chats.list(orgId, "active"))?.[0]?.title).toBe("New planning title");
+    expect(queryClient.getQueryData<ChatConversation[]>(queryKeys.chats.list(orgId, "all"))?.[0]?.title).toBe("New planning title");
+    expect(queryClient.getQueryData<MessengerThreadSummary[]>(queryKeys.messenger.threads(orgId))?.map((item) => item.title))
+      .toEqual(["New planning title", "Other chat"]);
+    expect(queryClient.getQueryData<{
+      pages: Array<{ items: MessengerThreadSummary[] }>;
+    }>(queryKeys.messenger.threadPages(orgId, true))?.pages[0]?.items.map((item) => item.title))
+      .toEqual(["New planning title", "Other chat"]);
+    expect(queryClient.getQueryData<{
+      items: MessengerThreadSummary[];
+    }>(queryKeys.messenger.threadPreview(orgId))?.items[0]?.title).toBe("New planning title");
   });
 
   it("archives a chat by removing it from active Messenger caches while preserving all-chat history", () => {

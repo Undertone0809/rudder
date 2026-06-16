@@ -378,6 +378,35 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockUpdateConversation).toHaveBeenCalledWith("chat-1", { status: "archived" });
   });
 
+  it("optimistically renames a chat across cached Messenger views before the update request resolves", async () => {
+    renderSidebar();
+
+    const rename = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Rename") as HTMLButtonElement | undefined;
+
+    expect(rename).toBeTruthy();
+    await act(async () => {
+      rename?.click();
+    });
+
+    const input = document.querySelector<HTMLInputElement>("input");
+    expect(input).toBeTruthy();
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(input!, "Renamed from sidebar");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(setQueryData).toHaveBeenCalledWith(["chats", "detail", "chat-1"], expect.any(Function));
+    expect(setQueryData).toHaveBeenCalledWith(["chats", "org-1", "active"], expect.any(Function));
+    expect(setQueryData).toHaveBeenCalledWith(["messenger", "org-1", "threads"], expect.any(Function));
+    expect(setQueriesData).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "threads", "pages"] }, expect.any(Function));
+    expect(setQueryData.mock.invocationCallOrder[0]).toBeLessThan(mockUpdateConversation.mock.invocationCallOrder[0]);
+    expect(mockUpdateConversation).toHaveBeenCalledWith("chat-1", { title: "Renamed from sidebar" });
+  });
+
   it("optimistically pins a split issue thread before the Messenger user-state request resolves", async () => {
     chatList = [];
     messengerModel = {

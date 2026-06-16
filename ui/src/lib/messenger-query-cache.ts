@@ -90,6 +90,14 @@ function markThreadPinned(summary: MessengerThreadSummary, threadKey: string, pi
   };
 }
 
+function renameThread(summary: MessengerThreadSummary, threadKey: string, title: string) {
+  if (summary.threadKey !== threadKey) return summary;
+  return {
+    ...summary,
+    title,
+  };
+}
+
 function markThreadPageDataRead(
   current: MessengerThreadPageData | undefined,
   threadKey: string,
@@ -146,6 +154,13 @@ function markChatConversationPinned(conversation: ChatConversation, pinned: bool
   return {
     ...conversation,
     isPinned: pinned,
+  };
+}
+
+function renameChatConversation(conversation: ChatConversation, title: string): ChatConversation {
+  return {
+    ...conversation,
+    title,
   };
 }
 
@@ -223,6 +238,40 @@ export function markMessengerChatPinnedInCache(
   }
 
   markMessengerThreadPinnedInCache(queryClient, orgId, `chat:${conversationId}`, pinned);
+}
+
+export function renameMessengerChatInCache(
+  queryClient: QueryClient,
+  orgId: string,
+  conversationId: string,
+  title: string,
+) {
+  queryClient.setQueryData<ChatConversation>(
+    queryKeys.chats.detail(conversationId),
+    (current) => current ? renameChatConversation(current, title) : current,
+  );
+  for (const status of ["active", "resolved", "archived", "all"] as const) {
+    queryClient.setQueryData<ChatConversation[]>(
+      queryKeys.chats.list(orgId, status),
+      (current) => current?.map((item) =>
+        item.id === conversationId ? renameChatConversation(item, title) : item,
+      ) ?? current,
+    );
+  }
+
+  const threadKey = `chat:${conversationId}`;
+  queryClient.setQueryData<MessengerThreadSummary[]>(
+    queryKeys.messenger.threads(orgId),
+    (current) => current?.map((summary) => renameThread(summary, threadKey, title)) ?? current,
+  );
+  queryClient.setQueriesData<MessengerThreadPageData>(
+    { queryKey: queryKeys.messenger.threadPages(orgId) },
+    (current) => updateThreadPageData(current, (summary) => renameThread(summary, threadKey, title)),
+  );
+  queryClient.setQueryData<MessengerThreadPreviewData>(
+    queryKeys.messenger.threadPreview(orgId),
+    (current) => updateThreadPreviewData(current, (summary) => renameThread(summary, threadKey, title)),
+  );
 }
 
 export function archiveMessengerChatInCache(
