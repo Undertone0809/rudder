@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
 test.describe("Agent detail issues tab", () => {
-  test("opens the issue board filtered to issues where the agent participates", async ({ page }) => {
+  test("opens the issue board with the selected agent as the assignee filter", async ({ page }) => {
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
         name: `Agent-Issues-Tab-${Date.now()}`,
@@ -78,9 +78,9 @@ test.describe("Agent detail issues tab", () => {
 
     await page.getByRole("tab", { name: "Issues" }).click();
 
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues\\?participantAgentId=${agent.id}$`));
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues\\?assignee=${agent.id}$`));
     await expect(page.getByText("Assigned issue from agent tab")).toBeVisible();
-    await expect(page.getByText("Review issue from agent tab")).toBeVisible();
+    await expect(page.getByText("Review issue from agent tab")).toHaveCount(0);
     await expect(page.getByText("Unrelated issue outside agent tab")).toHaveCount(0);
   });
 });

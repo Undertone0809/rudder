@@ -234,9 +234,9 @@ export function issueUrl(issue: { id: string; identifier?: string | null }): str
   return `/issues/${issue.identifier ?? issue.id}`;
 }
 
-/** Build an issues-board URL scoped to every issue where the agent participates. */
+/** Build an issues-board URL with the visible assignee filter scoped to the agent. */
 export function agentIssuesUrl(agentId: string): string {
-  return `/issues?participantAgentId=${encodeURIComponent(agentId)}`;
+  return `/issues?assignee=${encodeURIComponent(agentId)}`;
 }
 
 /** Build an agent route URL using the short URL key when available. */

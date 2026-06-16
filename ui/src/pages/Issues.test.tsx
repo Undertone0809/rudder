@@ -176,6 +176,17 @@ afterEach(() => {
 });
 
 describe("Issues agent participant scope", () => {
+  it("opens the board with the assignee agent filter from the URL", () => {
+    mockState.search = "?assignee=agent-1";
+
+    renderIssues();
+
+    expect(document.querySelector("[data-testid='issues-list']")).toBeTruthy();
+    expect(mockState.issuesListProps).toMatchObject({
+      initialAssignees: ["agent-1"],
+    });
+  });
+
   it("opens the board with the participant agent filter and isolated view state", () => {
     mockState.search = "?participantAgentId=agent-1";
 

@@ -21,9 +21,9 @@ describe("formatTokens", () => {
 });
 
 describe("agentIssuesUrl", () => {
-  it("builds an issue board URL filtered to the participating agent", () => {
-    expect(agentIssuesUrl("agent-123")).toBe("/issues?participantAgentId=agent-123");
-    expect(agentIssuesUrl("agent/with space")).toBe("/issues?participantAgentId=agent%2Fwith%20space");
+  it("builds an issue board URL filtered to the assigned agent", () => {
+    expect(agentIssuesUrl("agent-123")).toBe("/issues?assignee=agent-123");
+    expect(agentIssuesUrl("agent/with space")).toBe("/issues?assignee=agent%2Fwith%20space");
   });
 });
 
