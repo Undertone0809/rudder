@@ -255,7 +255,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function renderSidebar(activePath?: string) {
+function renderSidebar(activePath?: string, props?: Parameters<typeof OrganizationWorkspaceFilesSidebar>[0]) {
   if (activePath) {
     mockState.searchParams = `path=${encodeURIComponent(activePath)}`;
   }
@@ -264,7 +264,7 @@ function renderSidebar(activePath?: string) {
   let root: Root | null = null;
   act(() => {
     root = createRoot(container);
-    root.render(<OrganizationWorkspaceFilesSidebar />);
+    root.render(<OrganizationWorkspaceFilesSidebar {...props} />);
   });
   cleanupFn = () => root?.unmount();
 }
@@ -315,6 +315,24 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(header?.querySelector("h2")).toBeNull();
     expect(document.querySelector("[data-testid='org-workspaces-sidebar-launcher']")).not.toBeNull();
     expect(listWorkspaceLaunchTargets).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the optional Library sidebar collapse control in the sidebar header", () => {
+    const onCollapseSidebar = vi.fn();
+
+    renderSidebar(undefined, { onCollapseSidebar });
+
+    const collapseButton = document.querySelector<HTMLButtonElement>(
+      "[data-testid='org-workspaces-hide-sidebar-button']",
+    );
+    expect(collapseButton).not.toBeNull();
+    expect(collapseButton?.getAttribute("aria-label")).toBe("Hide Library sidebar");
+
+    act(() => {
+      collapseButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onCollapseSidebar).toHaveBeenCalledTimes(1);
   });
 
   it("offers installed IDE choices from the file Open in editor submenu", async () => {

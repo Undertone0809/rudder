@@ -858,6 +858,35 @@ test.describe("Workspace shell", () => {
     }).toBe(0);
   });
 
+  test("hides and reveals the Library sidebar from the left-edge handle", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Library-Sidebar-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await gotoOrganizationPath(page, organization, "/library");
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library$`));
+
+    await expect(page.getByTestId("workspace-main-header")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-sidebar")).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-show-sidebar-button")).toHaveCount(0);
+
+    await page.getByTestId("org-workspaces-hide-sidebar-button").click();
+
+    await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByTestId("org-workspaces-show-sidebar-button")).toBeVisible();
+    await expect(page.getByTestId("workspace-main-header")).toHaveCount(0);
+
+    await page.getByTestId("org-workspaces-show-sidebar-button").click();
+
+    await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "false");
+    await expect(page.getByTestId("workspace-sidebar")).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-show-sidebar-button")).toHaveCount(0);
+  });
+
   test("surfaces Library in the shared three-column shell", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

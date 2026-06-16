@@ -1016,6 +1016,7 @@ export function NewIssueDialog() {
   const isCreatingOrRedirecting = createIssue.isPending || Boolean(redirectingIssueRef);
   const hasIssueTitle = title.trim().length > 0;
   const labelPickerScrollRef = useScrollbarActivityRef();
+  const descriptionScrollRef = useScrollbarActivityRef();
   const isSubIssueDraft = Boolean(newIssueDefaults.parentId);
   const parentIssueSnapshot = newIssueDefaults.parentIssue;
   const parentIssueRef =
@@ -1504,7 +1505,9 @@ export function NewIssueDialog() {
 
         {/* Description */}
         <div
-          className="px-4 pb-2 overflow-y-auto min-h-0 border-t border-border/60 pt-3"
+          ref={descriptionScrollRef}
+          data-testid="new-issue-description-scroll"
+          className="scrollbar-auto-hide px-4 pb-2 overflow-y-auto min-h-0 border-t border-border/60 pt-3"
           onDragEnter={handleFileDragEnter}
           onDragOver={handleFileDragOver}
           onDragLeave={handleFileDragLeave}

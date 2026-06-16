@@ -55,6 +55,7 @@ import {
   Loader2,
   MoreHorizontal,
   PackageOpen,
+  PanelLeftClose,
   Pencil,
   Terminal,
   Trash2,
@@ -2138,7 +2139,7 @@ function ProjectResourceDetailPanel({
   );
 }
 
-export function OrganizationWorkspaceFilesSidebar() {
+export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCollapseSidebar?: () => void } = {}) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { pushToast } = useToast();
@@ -2731,6 +2732,24 @@ export function OrganizationWorkspaceFilesSidebar() {
               </TooltipTrigger>
               <TooltipContent>New folder</TooltipContent>
             </Tooltip>
+            {onCollapseSidebar ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={onCollapseSidebar}
+                    aria-label="Hide Library sidebar"
+                    data-testid="org-workspaces-hide-sidebar-button"
+                  >
+                    <PanelLeftClose className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Hide Library sidebar</TooltipContent>
+              </Tooltip>
+            ) : null}
           </div>
         </header>
 

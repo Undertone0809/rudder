@@ -376,6 +376,14 @@ describe("NewIssueDialog", () => {
     expect(html).not.toContain("min-h-[120px]");
   });
 
+  it("auto-hides the description scrollbar until the editor is scrolled", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain('data-testid="new-issue-description-scroll"');
+    expect(html).toContain("scrollbar-auto-hide");
+    expect(html).toContain("overflow-y-auto");
+  });
+
   it("uses caret anchored description mention suggestions", () => {
     renderToStaticMarkup(<NewIssueDialog />);
 

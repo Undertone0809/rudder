@@ -6,7 +6,7 @@ import { useI18n } from "@/context/I18nContext";
 import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookOpen, Settings, X } from "lucide-react";
+import { ArrowLeft, BookOpen, PanelLeftOpen, Settings, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
@@ -881,7 +881,7 @@ export function Layout() {
                 {showDesktopWorkspaceShell ? (
                   <div
                     className={cn(
-                      "flex min-h-0 min-w-0 flex-1",
+                      "relative flex min-h-0 min-w-0 flex-1",
                       "px-[3px] pb-[3px] pt-[1px] md:px-1 md:pb-1 md:pt-0.5",
                     )}
                   >
@@ -902,7 +902,7 @@ export function Layout() {
                           {isWorkspaceBackupsRoute ? (
                             <WorkspaceBackupFilesSidebar />
                           ) : isLibraryRoute ? (
-                            <OrganizationWorkspaceFilesSidebar />
+                            <OrganizationWorkspaceFilesSidebar onCollapseSidebar={() => setSidebarOpen(false)} />
                           ) : (
                             <ThreeColumnContextSidebar />
                           )}
@@ -923,6 +923,24 @@ export function Layout() {
                           <div className="workspace-column-resizer-line" />
                         </div>
                       </>
+                    ) : null}
+                    {isLibraryRoute && !sidebarOpen ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="absolute left-[3px] top-1/2 z-20 h-11 w-7 -translate-y-1/2 rounded-l-none rounded-r-[calc(var(--radius-sm)-1px)] border-l-0 bg-[color:var(--surface-elevated)] text-muted-foreground shadow-[var(--shadow-sm)] hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                            onClick={() => setSidebarOpen(true)}
+                            aria-label="Show Library sidebar"
+                            data-testid="org-workspaces-show-sidebar-button"
+                          >
+                            <PanelLeftOpen className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">Show Library sidebar</TooltipContent>
+                      </Tooltip>
                     ) : null}
                     <div
                       data-testid="workspace-main-card"
