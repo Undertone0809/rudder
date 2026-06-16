@@ -255,34 +255,6 @@
       ]
     },
     {
-      "id": 30,
-      "prompt": "这个 development-lifecycle-router-maintainer 对“UI 有问题，优化下 [SKILL.md]”这种请求的路由有问题，优化下 [$development-lifecycle-router-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md)。截图里是 Issues 页面搜索弹层挡住右侧详情。",
-      "expected_output": "Classifies the turn as skill_optimization, not ordinary UI polish, because the user explicitly says the router skill's routing behavior is the problem and asks to optimize that skill. It routes to skill-optimizer with development-lifecycle-router-maintainer as the target artifact, treats the screenshot as evidence for a routing-boundary failure, and does not start fixing the Issues UI unless the user separately asks for the product UI fix.",
-      "files": [
-        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
-        ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
-      ],
-      "expectations": [
-        "The result gives the explicit router-skill optimization request precedence over the screenshot's UI content.",
-        "The result names skill-optimizer as the primary workflow and the router skill as the target artifact.",
-        "The result treats the Issues UI screenshot as evidence, not as the current implementation target.",
-        "The result extracts the reusable failure class: embedded UI evidence overriding a skill-optimization request.",
-        "The result does not route to rudder-ui-polish-maintainer or edit UI code unless the user separately asks to fix the UI."
-      ]
-    },
-    {
-      "id": 31,
-      "prompt": "继续优化这个 Issues UI，按 [$development-lifecycle-router-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md) 走 lifecycle 和 review gate。",
-      "expected_output": "Does not classify the turn as skill_optimization because the UI is the object being optimized and the linked router skill is only lifecycle policy. It routes to the UI implementation or UI polish workflow with the router's stage and review-gate requirements, and it does not patch SKILL.md or run skill-optimizer.",
-      "files": [],
-      "expectations": [
-        "The result distinguishes the object being optimized from the skill being referenced as process policy.",
-        "The result routes to UI implementation or rudder-ui-polish-maintainer instead of skill-optimizer.",
-        "The result still applies concise lifecycle stage and spawned-reviewer expectations from the router.",
-        "The result does not edit development-lifecycle-router-maintainer/SKILL.md or evals unless the user separately asks to optimize the skill."
-      ]
-    },
-    {
       "id": 7,
       "prompt": "organization-portability 这个文件太大了，一口气做完架构优化，但可以分批 commit，不要一下子来一个很大的 commit。",
       "expected_output": "Routes the long refactor through phased implementation, creates a visible phase checklist, commits coherent phases separately when safe, keeps checkpoint evidence after each phase, and requires spawned reviewers before each phase handoff or final completion.",
