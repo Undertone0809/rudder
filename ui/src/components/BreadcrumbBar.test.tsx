@@ -329,6 +329,13 @@ describe("BreadcrumbBar", () => {
 
     const menu = container.querySelector<HTMLElement>("[role='listbox']#issue-search-menu");
     expect(menu).not.toBeNull();
+    const header = container.querySelector<HTMLElement>(".workspace-main-header");
+    expect(header?.className).toContain("items-start");
+    expect(menu?.getAttribute("data-testid")).toBe("breadcrumb-issue-result-menu");
+    expect(menu?.className).toContain("relative");
+    expect(menu?.className).toContain("xl:-translate-x-[calc(100%+0.5rem)]");
+    expect(menu?.className).toContain("xl:w-[26rem]");
+    expect(menu?.querySelector(".max-h-32")).not.toBeNull();
     expect(menu?.textContent).toContain("ZST-377");
     expect(menu?.textContent).toContain("new issue 时候输入文档持弹窗出来的位置不对");
     expect(menu?.querySelector("[data-slot='issue-status-icon']")?.getAttribute("data-status")).toBe("todo");

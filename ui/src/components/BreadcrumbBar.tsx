@@ -337,7 +337,13 @@ export function BreadcrumbBar({
         className={cn(
           headerSurfaceClass,
           "flex shrink-0 items-center gap-3",
-          variant === "card" ? "h-12 px-4 md:px-4" : "h-14 px-4 md:px-6",
+          variant === "card"
+            ? showIssueResultSearchMenu
+              ? "items-start px-4 py-3 md:px-4"
+              : "h-12 px-4 md:px-4"
+            : showIssueResultSearchMenu
+              ? "items-start px-4 py-3 md:px-6"
+              : "h-14 px-4 md:px-6",
           variant === "shell" && desktopChrome && "h-auto min-h-[calc(3.5rem+var(--desktop-titlebar-top-gap))] pl-[var(--desktop-traffic-lights-offset)] pr-3 pt-[var(--desktop-titlebar-top-gap)] md:pr-4",
           draggableClass,
         )}
@@ -423,13 +429,19 @@ export function BreadcrumbBar({
               {showIssueResultSearchMenu ? (
                 <div
                   id="issue-search-menu"
+                  data-testid="breadcrumb-issue-result-menu"
                   role="listbox"
-                  className="absolute right-0 top-full z-50 mt-2 w-full overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:var(--surface-panel)] py-1 shadow-lg"
+                  className={cn(
+                    "relative z-50 mt-2 w-full overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:var(--surface-panel)] py-1 shadow-lg",
+                    isIssueDetailRoute
+                      ? "xl:w-[26rem] xl:-translate-x-[calc(100%+0.5rem)]"
+                      : null,
+                  )}
                 >
                   {issueSearchFetching ? (
                     <div className="px-3 py-2 text-xs text-muted-foreground">Searching...</div>
                   ) : searchedIssues.length > 0 ? (
-                    <div className="max-h-80 overflow-y-auto scrollbar-auto-hide">
+                    <div className="max-h-32 overflow-y-auto scrollbar-auto-hide">
                       {searchedIssues.slice(0, 8).map((issue) => (
                         <button
                           key={issue.id}
