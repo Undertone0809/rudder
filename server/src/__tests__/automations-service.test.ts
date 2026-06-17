@@ -22,7 +22,7 @@ import {
   projects,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { createHmac, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -490,6 +490,35 @@ describe("automation service live-execution coalescing", () => {
         userId: "board-user",
       },
     ]);
+  });
+
+  it("does not hold the issue follow foreign-key lock while waking the assignee", async () => {
+    const { automation, svc } = await seedFixture({
+      wakeup: async (_agentId, wakeupOpts) => {
+        const issueId =
+          (typeof wakeupOpts.payload?.issueId === "string" && wakeupOpts.payload.issueId) ||
+          (typeof wakeupOpts.contextSnapshot?.issueId === "string" && wakeupOpts.contextSnapshot.issueId) ||
+          null;
+        expect(issueId).toBeTruthy();
+
+        await db.transaction(async (tx) => {
+          await tx.execute(sql`set local lock_timeout = '100ms'`);
+          await tx.execute(sql`select id from ${issues} where ${issues.id} = ${issueId} for update`);
+        });
+        return { id: randomUUID() };
+      },
+    });
+    await svc.update(automation.id, { notifyOnIssueCreated: true }, { userId: "board-user" });
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(run.status).toBe("issue_created");
+    expect(run.linkedIssueId).toBeTruthy();
+    const follows = await db
+      .select()
+      .from(issueFollows)
+      .where(eq(issueFollows.issueId, run.linkedIssueId!));
+    expect(follows.map((follow) => follow.userId)).toEqual(["board-user"]);
   });
 
   it("keeps issue-created notifications pinned to the enabling board user", async () => {

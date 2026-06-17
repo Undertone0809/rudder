@@ -1353,11 +1353,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
             originId: input.automation.id,
             originRunId: createdRun.id,
           });
-          await followAutomationIssueForNotification({
-            automation: input.automation,
-            issueId: createdIssue.id,
-            executor: txDb,
-          });
         } catch (error) {
           const isOpenExecutionConflict =
             !!error &&
@@ -1409,6 +1404,11 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           contextSource: "automation.dispatch",
           requestedByActorType: input.source === "schedule" ? "system" : undefined,
           rethrowOnError: true,
+        });
+        await followAutomationIssueForNotification({
+          automation: input.automation,
+          issueId: createdIssue.id,
+          executor: txDb,
         });
         const updated = await finalizeRun(createdRun.id, {
           status: "issue_created",
