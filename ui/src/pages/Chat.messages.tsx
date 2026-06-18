@@ -548,7 +548,7 @@ export function ProposalCard({
         data-active-surface={actionPending ? "proposal-action" : undefined}
         className={cn(
           "chat-review-block mt-4 max-w-[860px] rounded-[var(--radius-lg)] text-foreground transition-all duration-200",
-          actionPending && "active-surface-ring",
+          actionPending && "chat-review-block--action-pending",
         )}
       >
         <div

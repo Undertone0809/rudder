@@ -211,7 +211,7 @@ function renderProposalCard(
   chat: ChatConversation = conversation({}),
   agents?: Agent[],
   decisionNote = "",
-  extraProps: Partial<Pick<Parameters<typeof ProposalCard>[0], "currentUserId" | "issueProposalOverride" | "onIssueProposalChange">> = {},
+  extraProps: Partial<Pick<Parameters<typeof ProposalCard>[0], "actionPending" | "currentUserId" | "issueProposalOverride" | "onIssueProposalChange">> = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -234,7 +234,7 @@ function renderProposalCard(
             {...extraProps}
             onResolveOperationProposal={vi.fn()}
             onConvertToIssue={vi.fn()}
-            actionPending={false}
+            actionPending={extraProps.actionPending ?? false}
             skillReferences={[]}
           />
         </ThemeProvider>
@@ -540,6 +540,24 @@ describe("ProposalCard", () => {
     expect(html).toContain("Reviewer · CTO");
     expect(html).toContain("Owner");
     expect(html).toContain('data-slot="assignee-label"');
+  });
+
+  it("highlights the proposal review surface while an approval action is pending", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "This should become a reviewed issue.",
+      structuredPayload: {
+        title: "Add proposal action feedback",
+        priority: "medium",
+        description: "Show local progress while Rudder is converting the proposal.",
+      },
+    }), undefined, undefined, "", { actionPending: true });
+
+    const reviewBlockHtml = html.slice(html.indexOf('data-testid="proposal-review-block"'));
+    expect(reviewBlockHtml).toContain('data-active-surface="proposal-action"');
+    expect(reviewBlockHtml).toContain("chat-review-block--action-pending");
+    expect(reviewBlockHtml).not.toContain("active-surface-ring");
   });
 
   it("renders owner and reviewer as editable selectors while issue proposals are pending", () => {

@@ -76,6 +76,8 @@ describe("index.css motion rules", () => {
   });
 
   it("animates the command palette panel boundary while searching", () => {
+    const searchSurface =
+      indexCss.match(/\n\s*\.command-palette-content--searching \{\s*\n\s*--active-surface-ring-width: 2px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const searchRing = cssBlock(".command-palette-content--searching::before");
     const searchHalo = cssBlock(".command-palette-content--searching::after");
     const keyframes = cssBlock("@keyframes command-palette-search-ring");
@@ -94,8 +96,9 @@ describe("index.css motion rules", () => {
     expect(searchHalo).toContain("inset: var(--active-surface-ring-width)");
     expect(searchHalo).toContain("border-radius: var(--active-surface-ring-inner-radius)");
     expect(searchHalo).toContain("background: var(--active-surface-ring-cover)");
+    expect(searchSurface).toContain("--active-surface-ring-width: 2px");
+    expect(searchSurface).toContain("var(--surface-overlay) 96%");
     expect(indexCss).toContain("--active-surface-ring-inner-radius: calc(var(--radius-md) - var(--active-surface-ring-width))");
-    expect(indexCss).toContain("var(--surface-overlay) 96%");
     expect(searchHalo).not.toContain("background: inherit");
     expect(searchHalo).toContain("opacity: 1");
     expect(searchHalo).toContain("box-shadow:");
@@ -105,28 +108,35 @@ describe("index.css motion rules", () => {
 
   it("reuses the rounded boundary animation for active chat and processing surfaces", () => {
     const activeSurface = cssBlock(".active-surface-ring,");
-    const sharedRing = cssBlock(".active-surface-ring::before");
+    const softRing =
+      indexCss.match(/\n\s*\.active-surface-ring::before \{\s*\n\s*inset: -1px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const sharedHalo = cssBlock(".active-surface-ring::after");
+    const softHalo =
+      indexCss.match(/\n\s*\.active-surface-ring::after \{\s*\n\s*box-shadow:[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const reducedMotion =
       indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.active-surface-ring::before[\s\S]*?\n\s*\}/)?.[0] ?? "";
 
     expect(activeSurface).toContain("position: relative");
     expect(activeSurface).toContain("isolation: isolate");
-    expect(sharedRing).toContain("conic-gradient");
-    expect(sharedRing).toContain("from var(--command-palette-search-angle)");
-    expect(sharedRing).toContain("z-index: 0");
-    expect(sharedRing).toContain("border-radius: inherit");
-    expect(sharedRing).not.toContain("mask-composite");
-    expect(sharedRing).not.toContain("border-image:");
-    expect(sharedRing).toContain("animation: command-palette-search-ring 1.35s linear infinite");
-    expect(sharedRing).toContain("pointer-events: none");
+    expect(activeSurface).toContain("--active-surface-ring-width: 1px");
+    expect(activeSurface).toContain("var(--surface-elevated) 96%");
+    expect(activeSurface).toContain("var(--surface-page) 92%");
+    expect(softRing).toContain("conic-gradient");
+    expect(softRing).toContain("from var(--command-palette-search-angle)");
+    expect(softRing).toContain("inset: -1px");
+    expect(softRing).toContain("opacity: 0.68");
+    expect(softRing).toContain("var(--ring) 48%");
+    expect(softRing).not.toContain("var(--ring) 90%");
     expect(sharedHalo).toContain("inset: var(--active-surface-ring-width)");
     expect(sharedHalo).toContain("border-radius: var(--active-surface-ring-inner-radius)");
     expect(sharedHalo).toContain("background: var(--active-surface-ring-cover)");
     expect(indexCss).toContain("--active-surface-ring-cover:");
+    expect(indexCss).toContain('.active-surface-ring[data-active-surface="live-run"]');
+    expect(indexCss).toContain('.active-surface-ring[data-active-surface^="workspace"]');
     expect(sharedHalo).not.toContain("background: inherit");
-    expect(sharedHalo).toContain("opacity: 1");
-    expect(sharedHalo).toContain("box-shadow:");
+    expect(softHalo).toContain("opacity: 0.96");
+    expect(softHalo).toContain("var(--active-surface-accent) 12%");
+    expect(softHalo).toContain("var(--active-surface-accent) 48%");
     expect(reducedMotion).toContain("animation: none");
   });
 
@@ -144,6 +154,45 @@ describe("index.css motion rules", () => {
     expect(composerRing).toContain("opacity: 0.74");
     expect(composerRing).toContain("var(--ring) 54%");
     expect(composerRing).not.toContain("var(--ring) 90%");
+  });
+
+  it("keeps proposal action feedback from colliding with the review block fold", () => {
+    const reviewBlock =
+      indexCss.match(/\n\s*\.chat-review-block \{\s*\n\s*--chat-review-fold-size:[\s\S]*?\n\s*\}/)?.[0] ?? "";
+    const actionPending =
+      indexCss.match(/\n\s*\.chat-review-block--action-pending \{\s*\n\s*--chat-review-action-shadow:[\s\S]*?\n\s*\}/)?.[0] ?? "";
+    const pendingKeyframes = cssBlock("@keyframes chat-review-action-pending-pulse");
+    const reducedMotion =
+      indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.chat-review-block--action-pending[\s\S]*?\n\s*\}/)?.[0] ?? "";
+
+    expect(reviewBlock).toContain("--chat-review-fold-size");
+    expect(indexCss).toContain(".chat-review-block::before");
+    expect(indexCss).toContain(".chat-review-block::after");
+    expect(actionPending).toContain("animation: chat-review-action-pending-pulse 1.6s ease-in-out infinite");
+    expect(actionPending).toContain("border-color: color-mix(in oklab, var(--ring) 34%, var(--border-base))");
+    expect(actionPending).not.toContain("::before");
+    expect(actionPending).not.toContain("::after");
+    expect(pendingKeyframes).toContain("box-shadow:");
+    expect(reducedMotion).toContain("animation: none");
+  });
+
+  it("keeps full-width import processing bars from using the rounded active ring", () => {
+    const importSurface =
+      indexCss.match(/\n\s*\.active-surface-ring:is\(\[data-active-surface="import-preview"\], \[data-active-surface="import-apply"\]\) \{[\s\S]*?\n\s*\}/)?.[0] ?? "";
+    const importRing =
+      indexCss.match(/\n\s*\.active-surface-ring:is\(\[data-active-surface="import-preview"\], \[data-active-surface="import-apply"\]\)::before \{[\s\S]*?\n\s*\}/)?.[0] ?? "";
+    const importCover =
+      indexCss.match(/\n\s*\.active-surface-ring:is\(\[data-active-surface="import-preview"\], \[data-active-surface="import-apply"\]\)::after \{[\s\S]*?\n\s*\}/)?.[0] ?? "";
+
+    expect(importSurface).toContain("--active-surface-ring-width: 0px");
+    expect(importSurface).toContain("border-radius: 0");
+    expect(importSurface).toContain("inset 0 -1px 0");
+    expect(importRing).toContain("content: none");
+    expect(importRing).toContain("animation: none");
+    expect(importCover).toContain("inset: 0");
+    expect(importCover).toContain("border-radius: 0");
+    expect(importCover).toContain("box-shadow: none");
+    expect(importCover).toContain("opacity: 0.62");
   });
 
   it("keeps entity preview metadata labels centered with their value icons", () => {
