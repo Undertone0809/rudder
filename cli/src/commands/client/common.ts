@@ -1,3 +1,4 @@
+import { isUuidLike } from "@rudderhq/shared";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getStoredBoardCredential, loginBoardCli } from "../../client/board-auth.js";
@@ -5,6 +6,8 @@ import { buildCliCommandLabel } from "../../client/command-label.js";
 import { readContext, resolveProfile, type ClientContextProfile } from "../../client/context.js";
 import { ApiRequestError, RudderApiClient } from "../../client/http.js";
 import { readConfig } from "../../config/store.js";
+
+let currentCommandFullIds = false;
 
 export interface BaseClientOptions {
   config?: string;
@@ -17,6 +20,7 @@ export interface BaseClientOptions {
   companyId?: string;
   runId?: string;
   json?: boolean;
+  fullIds?: boolean;
 }
 
 export interface ResolvedClientContext {
@@ -27,6 +31,7 @@ export interface ResolvedClientContext {
   profileName: string;
   profile: ClientContextProfile;
   json: boolean;
+  fullIds: boolean;
 }
 
 export function addCommonClientOptions(command: Command, opts?: { includeCompany?: boolean }): Command {
@@ -38,7 +43,8 @@ export function addCommonClientOptions(command: Command, opts?: { includeCompany
     .option("--api-base <url>", "Base URL for the Rudder API")
     .option("--api-key <token>", "Bearer token for agent-authenticated calls")
     .option("--run-id <id>", "Run ID to attach on mutating agent requests")
-    .option("--json", "Output raw JSON");
+    .option("--json", "Output JSON")
+    .option("--full-ids", "Show full UUIDs in output instead of CLI short IDs");
 
   if (opts?.includeCompany) {
     command.option("-O, --org-id <id>", "Organization ID (overrides context default)");
@@ -81,6 +87,9 @@ export function resolveCommandContext(
     );
   }
 
+  const fullIds = Boolean(options.fullIds);
+  currentCommandFullIds = fullIds;
+
   const api = new RudderApiClient({
     apiBase,
     apiKey,
@@ -112,6 +121,7 @@ export function resolveCommandContext(
     profileName,
     profile,
     json: Boolean(options.json),
+    fullIds,
   };
 }
 
@@ -125,9 +135,14 @@ function canAttemptInteractiveBoardAuth(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
-export function printOutput(data: unknown, opts: { json?: boolean; label?: string } = {}): void {
+export function printOutput(
+  data: unknown,
+  opts: { json?: boolean; label?: string; fullIds?: boolean } = {},
+): void {
+  const outputData = shouldShowFullIds(opts.fullIds) ? data : toCliShortIdOutput(data);
+
   if (opts.json) {
-    const output = JSON.stringify(data, null, 2);
+    const output = JSON.stringify(outputData, null, 2);
     process.stdout.write(output + "\n");
     return;
   }
@@ -136,14 +151,14 @@ export function printOutput(data: unknown, opts: { json?: boolean; label?: strin
     console.log(pc.bold(opts.label));
   }
 
-  if (Array.isArray(data)) {
-    if (data.length === 0) {
+  if (Array.isArray(outputData)) {
+    if (outputData.length === 0) {
       console.log(pc.dim("(empty)"));
       return;
     }
-    for (const item of data) {
+    for (const item of outputData) {
       if (typeof item === "object" && item !== null) {
-        console.log(formatInlineRecord(item as Record<string, unknown>));
+        console.log(formatInlineRecord(item as Record<string, unknown>, { fullIds: true }));
       } else {
         console.log(String(item));
       }
@@ -151,37 +166,150 @@ export function printOutput(data: unknown, opts: { json?: boolean; label?: strin
     return;
   }
 
-  if (typeof data === "object" && data !== null) {
-    console.log(JSON.stringify(data, null, 2));
+  if (typeof outputData === "object" && outputData !== null) {
+    console.log(JSON.stringify(outputData, null, 2));
     return;
   }
 
-  if (data === undefined || data === null) {
+  if (outputData === undefined || outputData === null) {
     console.log(pc.dim("(null)"));
     return;
   }
 
-  console.log(String(data));
+  console.log(String(outputData));
 }
 
-export function formatInlineRecord(record: Record<string, unknown>): string {
+export function formatInlineRecord(
+  record: Record<string, unknown>,
+  opts: { fullIds?: boolean } = {},
+): string {
+  const displayRecord = shouldShowFullIds(opts.fullIds)
+    ? record
+    : (toCliShortIdOutput(record) as Record<string, unknown>);
   const keyOrder = ["identifier", "id", "name", "status", "priority", "title", "action"];
   const seen = new Set<string>();
   const parts: string[] = [];
 
   for (const key of keyOrder) {
-    if (!(key in record)) continue;
-    parts.push(`${key}=${renderValue(record[key])}`);
+    if (!(key in displayRecord)) continue;
+    parts.push(`${key}=${renderValue(displayRecord[key])}`);
     seen.add(key);
   }
 
-  for (const [key, value] of Object.entries(record)) {
+  for (const [key, value] of Object.entries(displayRecord)) {
     if (seen.has(key)) continue;
     if (typeof value === "object") continue;
     parts.push(`${key}=${renderValue(value)}`);
   }
 
   return parts.join(" ");
+}
+
+export function toCliShortIdOutput(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => toCliShortIdOutput(item));
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+
+  const source = value as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  for (const [key, childValue] of Object.entries(source)) {
+    output[key] = shortenCliValueForKey(key, childValue, source);
+  }
+  return output;
+}
+
+function shortenCliValueForKey(key: string, value: unknown, parent: Record<string, unknown>): unknown {
+  if (typeof value === "string" && isCliIdKey(key) && isUuidLike(value)) {
+    return displayIdForCli(key, value, parent);
+  }
+
+  if (Array.isArray(value) && isCliIdListKey(key)) {
+    return value.map((item) =>
+      typeof item === "string" && isUuidLike(item) ? displayIdForCli(singularizeIdListKey(key), item, parent) : toCliShortIdOutput(item),
+    );
+  }
+
+  return toCliShortIdOutput(value);
+}
+
+function displayIdForCli(key: string, uuid: string, parent: Record<string, unknown>): string {
+  if (key === "id") {
+    const directShortRef = readString(parent.shortRef);
+    if (directShortRef) return directShortRef;
+
+    const issueIdentifier = readDirectIssueIdentifier(parent);
+    if (issueIdentifier) return issueIdentifier;
+  }
+
+  if (isAgentIdKey(key, parent)) {
+    return formatTypedShortRef("agent", uuid);
+  }
+
+  if (isIssueCommentIdKey(key)) {
+    return formatTypedShortRef("issue_comment", uuid);
+  }
+
+  if (key === "entityId" && parent.entityType === "issue") {
+    return readIssueIdentifier(parent) ?? shortUuid(uuid);
+  }
+
+  return shortUuid(uuid);
+}
+
+function shouldShowFullIds(explicit?: boolean): boolean {
+  return Boolean((explicit ?? currentCommandFullIds) || process.argv.includes("--full-ids"));
+}
+
+function isCliIdKey(key: string): boolean {
+  return key === "id" || key.endsWith("Id");
+}
+
+function isCliIdListKey(key: string): boolean {
+  return key.endsWith("Ids");
+}
+
+function singularizeIdListKey(key: string): string {
+  return `${key.slice(0, -3)}Id`;
+}
+
+function isAgentIdKey(key: string, parent: Record<string, unknown>): boolean {
+  const lowerKey = key.toLowerCase();
+  return lowerKey.includes("agentid") || (key === "actorId" && parent.actorType === "agent");
+}
+
+function isIssueCommentIdKey(key: string): boolean {
+  return key.toLowerCase().includes("commentid");
+}
+
+function formatTypedShortRef(kind: "agent" | "issue_comment", uuid: string): string {
+  const prefix = kind === "agent" ? "agt" : "cmt";
+  return `${prefix}_${shortUuid(uuid)}`;
+}
+
+function shortUuid(uuid: string): string {
+  return uuid.replace(/-/g, "").slice(0, 8).toLowerCase();
+}
+
+function readIssueIdentifier(parent: Record<string, unknown>): string | null {
+  const direct = readDirectIssueIdentifier(parent);
+  if (direct) return direct;
+
+  const details = parent.details;
+  if (typeof details !== "object" || details === null) return null;
+  const detailsRecord = details as Record<string, unknown>;
+  return readString(detailsRecord.identifier) ?? readString(detailsRecord.issueIdentifier);
+}
+
+function readDirectIssueIdentifier(parent: Record<string, unknown>): string | null {
+  return readString(parent.identifier) ?? readString(parent.issueIdentifier);
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 function renderValue(value: unknown): string {

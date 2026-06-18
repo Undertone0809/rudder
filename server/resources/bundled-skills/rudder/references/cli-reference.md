@@ -5,13 +5,14 @@ Stable CLI contract for agents using the bundled `rudder` skill. Prefer these co
 ## Defaults
 
 - All commands support `--json`.
+- CLI output renders IDs as short IDs by default; add `--full-ids` only when a debugging or compatibility workflow needs raw UUIDs.
 - `--org-id` defaults to `RUDDER_ORG_ID` when relevant.
 - `--run-id` defaults to `RUDDER_RUN_ID` and is attached to mutating requests when available.
 - `issue checkout` defaults `--agent-id` from `RUDDER_AGENT_ID`.
 
 ## JSON Output Contract
 
-`rudder ... --json` commands must write valid JSON to stdout on success. If a command cannot produce the requested JSON, it must exit nonzero and write a diagnostic error to stderr. An exit-0 command with empty stdout is a CLI/runtime defect, not a valid empty result.
+`rudder ... --json` commands must write valid JSON to stdout on success. ID fields in CLI JSON use short display IDs by default; pass `--full-ids` to preserve raw UUIDs. If a command cannot produce the requested JSON, it must exit nonzero and write a diagnostic error to stderr. An exit-0 command with empty stdout is a CLI/runtime defect, not a valid empty result.
 
 Direct API fallback is allowed for heartbeat close-out only when a required CLI command fails diagnostically or returns exit 0 with empty stdout. When using fallback, note the affected command and reason in the issue comment or run notes so the CLI path can be fixed.
 

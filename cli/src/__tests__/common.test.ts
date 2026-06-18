@@ -4,7 +4,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeContext } from "../client/context.js";
 import { ApiRequestError } from "../client/http.js";
-import { handleCommandError, resolveCommandContext } from "../commands/client/common.js";
+import {
+  formatInlineRecord,
+  handleCommandError,
+  printOutput,
+  resolveCommandContext,
+  toCliShortIdOutput,
+} from "../commands/client/common.js";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -170,5 +176,72 @@ describe("resolveCommandContext", () => {
     expect(stderrWrite).toHaveBeenCalledWith(
       expect.stringContaining('"status": 409'),
     );
+  });
+});
+
+describe("CLI short ID output", () => {
+  const activityRow = {
+    id: "b3c85ce0-d7b4-407d-b071-478d6e2d337d",
+    orgId: "87e2f140-3876-4d47-b1e0-71d1bcd772ac",
+    actorType: "agent",
+    actorId: "d573266f-af95-44e6-9303-e903a54662b8",
+    action: "issue.checked_out",
+    entityType: "issue",
+    entityId: "8daeadc9-3ea2-49b6-984a-fc2a4101b59c",
+    agentId: "d573266f-af95-44e6-9303-e903a54662b8",
+    runId: "021814b8-6691-4351-a286-ad33caec1272",
+    details: {
+      agentId: "d573266f-af95-44e6-9303-e903a54662b8",
+      issueIdentifier: "ZST-369",
+      title: "把 chat 整合进 Agent run",
+    },
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shortens UUID fields for CLI-facing JSON by default", () => {
+    expect(toCliShortIdOutput(activityRow)).toEqual({
+      id: "b3c85ce0",
+      orgId: "87e2f140",
+      actorType: "agent",
+      actorId: "agt_d573266f",
+      action: "issue.checked_out",
+      entityType: "issue",
+      entityId: "ZST-369",
+      agentId: "agt_d573266f",
+      runId: "021814b8",
+      details: {
+        agentId: "agt_d573266f",
+        issueIdentifier: "ZST-369",
+        title: "把 chat 整合进 Agent run",
+      },
+    });
+  });
+
+  it("uses short IDs in inline record rendering", () => {
+    expect(formatInlineRecord(activityRow)).toContain("id=b3c85ce0");
+    expect(formatInlineRecord(activityRow)).toContain("actorId=agt_d573266f");
+    expect(formatInlineRecord(activityRow)).toContain("entityId=ZST-369");
+    expect(formatInlineRecord(activityRow)).not.toContain("d573266f-af95-44e6-9303-e903a54662b8");
+  });
+
+  it("preserves full UUID output when requested", () => {
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    printOutput(activityRow, { json: true, fullIds: true });
+
+    const payload = JSON.parse(stdoutWrite.mock.calls.map((call) => String(call[0])).join(""));
+    expect(payload.id).toBe("b3c85ce0-d7b4-407d-b071-478d6e2d337d");
+    expect(payload.agentId).toBe("d573266f-af95-44e6-9303-e903a54662b8");
+  });
+
+  it("preserves full UUIDs in inline record rendering when requested", () => {
+    const output = formatInlineRecord(activityRow, { fullIds: true });
+
+    expect(output).toContain("id=b3c85ce0-d7b4-407d-b071-478d6e2d337d");
+    expect(output).toContain("actorId=d573266f-af95-44e6-9303-e903a54662b8");
+    expect(output).toContain("entityId=8daeadc9-3ea2-49b6-984a-fc2a4101b59c");
   });
 });
