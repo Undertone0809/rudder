@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, type CSSProperties } from "react";
 export { ChatAttachmentList, ChatAttachmentPreviewDialog, ChatFileAttachmentChip, ChatImageAttachmentTile, PendingAttachmentPreview } from "./Chat.attachments";
-export { AskUserAnswerBubble, AskUserHistoryRecord, AskUserPanel, AssistantDraftItem, ChatAssistantAttributionRow, chatIssueApprovalPayloadWithProposalOverride, ChatLongMessageBody, chatMessageHoverBarClass, ChatMessageItem, ChatMessagesLoadingState, ChatSystemMessageBody, issueCreatedSystemMessageParts, LazyStreamTranscriptItem, OptimisticUserDraftItem, ProposalCard, readStructuredPayloadString, StreamTranscriptItem } from "./Chat.messages";
+export { AskUserAnswerBubble, AskUserHistoryRecord, AskUserPanel, AssistantDraftItem, ChatAssistantAttributionRow, chatIssueApprovalPayloadWithProposalOverride, ChatLongMessageBody, chatMessageHoverBarClass, ChatMessageItem, ChatMessagesLoadingState, ChatSystemMessageBody, issueCreatedSystemMessageParts, LazyStreamTranscriptItem, OptimisticUserDraftItem, ProposalCard, readStructuredPayloadString, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, StreamTranscriptItem } from "./Chat.messages";
 
 export type ApprovalAction = "approve" | "reject" | "requestRevision";
 export type AttachmentPreviewState = {

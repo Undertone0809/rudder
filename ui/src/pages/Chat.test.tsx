@@ -51,6 +51,8 @@ import {
   resolveDefaultDraftChatProjectId,
   resolveDraftIssueContext,
   scrollChatMessagesToBottom,
+  shouldAttachApprovalFeedbackSystemMessage,
+  shouldAttachIssueCreatedSystemMessage,
   statusChipClassName,
   withOptimisticOutgoingMessage,
   withOptimisticPlanMode,
@@ -211,7 +213,7 @@ function renderProposalCard(
   chat: ChatConversation = conversation({}),
   agents?: Agent[],
   decisionNote = "",
-  extraProps: Partial<Pick<Parameters<typeof ProposalCard>[0], "actionPending" | "currentUserId" | "issueProposalOverride" | "onIssueProposalChange">> = {},
+  extraProps: Partial<Pick<Parameters<typeof ProposalCard>[0], "actionPending" | "currentUserId" | "issueProposalOverride" | "onIssueProposalChange" | "issueCreatedMessage">> = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -558,6 +560,80 @@ describe("ProposalCard", () => {
     expect(reviewBlockHtml).toContain('data-active-surface="proposal-action"');
     expect(reviewBlockHtml).toContain("chat-review-block--action-pending");
     expect(reviewBlockHtml).not.toContain("active-surface-ring");
+  });
+
+  it("renders approved issue creation as a compact proposal outcome", () => {
+    const issueCreatedMessage = message({
+      id: "system-issue-created",
+      role: "system",
+      kind: "system_event",
+      body: "Created issue ZST-703 from this chat conversation.",
+      structuredPayload: {
+        eventType: "issue_created",
+        issueId: "issue-703",
+        issueIdentifier: "ZST-703",
+        approvalId: "approval-1",
+      },
+      createdAt: new Date("2026-05-07T00:00:02.000Z"),
+    });
+    const approvalFeedbackMessage = message({
+      id: "system-approval-feedback",
+      role: "system",
+      kind: "system_event",
+      body: "Approved with execution feedback:\n\nUse the accepted direction and keep the scope tight.",
+      structuredPayload: {
+        eventType: "approval_feedback",
+        issueId: "issue-703",
+        issueIdentifier: "ZST-703",
+        approvalId: "approval-1",
+        decisionNote: "Use the accepted direction and keep the scope tight.",
+      },
+      createdAt: new Date("2026-05-07T00:00:03.000Z"),
+    });
+    const proposalMessage = message({
+      id: "proposal-1",
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Please review this proposal.",
+      structuredPayload: {
+        title: "Improve proposal outcome UI",
+        priority: "medium",
+        description: "Keep approval receipts attached to the review block.",
+      },
+      approvalId: "approval-1",
+      approval: {
+        id: "approval-1",
+        orgId: "org-1",
+        type: "chat_issue_creation",
+        requestedByAgentId: "agent-1",
+        requestedByUserId: null,
+        status: "approved",
+        payload: {},
+        decisionNote: "Use the accepted direction and keep the scope tight.",
+        decidedByUserId: "board",
+        decidedAt: new Date("2026-05-07T00:01:00.000Z"),
+        createdAt: new Date("2026-05-07T00:00:00.000Z"),
+        updatedAt: new Date("2026-05-07T00:01:00.000Z"),
+      },
+    });
+    const html = renderProposalCard(proposalMessage, undefined, undefined, "", {
+      issueCreatedMessage,
+    });
+
+    expect(shouldAttachIssueCreatedSystemMessage(proposalMessage, issueCreatedMessage)).toBe(true);
+    expect(shouldAttachApprovalFeedbackSystemMessage(proposalMessage, issueCreatedMessage, approvalFeedbackMessage)).toBe(true);
+    expect(html).toContain('data-testid="proposal-review-outcome"');
+    expect(html).toContain('data-testid="proposal-review-receipt"');
+    expect(html).toContain("Approved");
+    expect(html).toContain("Issue ");
+    expect(html).toContain('href="/issues/ZST-703"');
+    expect(html).toContain(">ZST-703</a>");
+    expect(html).toContain(" created");
+    expect(html).toContain("Execution feedback");
+    expect(html).toContain("Use the accepted direction and keep the scope tight.");
+    expect(html).toContain("chat-review-note--approved");
+    expect(html).not.toContain("Created issue ZST-703 from this chat conversation.");
+    expect(html).not.toContain("Approved with execution feedback");
   });
 
   it("renders owner and reviewer as editable selectors while issue proposals are pending", () => {

@@ -353,9 +353,14 @@ test.describe("Chat proposal review block", () => {
     await expect(reviewBlock).toHaveAttribute("data-status", "approved", { timeout: 15_000 });
     await expect(reviewBlock.getByTestId("proposal-review-status")).toContainText("approved");
     await expect(reviewBlock).toContainText("Approved. This proposal has been accepted.");
-    await expect(page.getByText("Approved with execution feedback:")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(approvalFeedback).last()).toBeVisible();
-    const createdIssueLink = page.locator(".chat-system-issue-link").last();
+    const outcome = reviewBlock.getByTestId("proposal-review-outcome");
+    await expect(outcome).toBeVisible({ timeout: 15_000 });
+    await expect(outcome.getByTestId("proposal-review-receipt")).toContainText(/Approved.*Issue .* created/);
+    await expect(outcome).toContainText("Execution feedback");
+    await expect(outcome).toContainText(approvalFeedback);
+    await expect(page.getByText("Approved with execution feedback:")).toHaveCount(0);
+    await expect(page.getByText(/^Created issue .* from this chat conversation\.$/)).toHaveCount(0);
+    const createdIssueLink = outcome.locator(".chat-system-issue-link").last();
     await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
     await expect(createdIssueLink).toHaveAttribute("href", /\/issues\//);
     await expect(page.locator(".chat-composer").last()).toBeVisible();

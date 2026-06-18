@@ -1486,6 +1486,21 @@
       0 14px 28px -26px color-mix(in oklab, rgb(217 119 6) 56%, black);
   }
 
+  .chat-review-note--approved {
+    background: color-mix(in oklab, var(--surface-elevated) 78%, transparent);
+    border-color: color-mix(in oklab, rgb(22 163 74) 16%, var(--border-soft));
+    box-shadow: none;
+  }
+
+  .chat-review-outcome {
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, rgb(22 163 74) 4%, transparent) 0%,
+        color-mix(in oklab, var(--surface-elevated) 66%, transparent) 100%
+      );
+  }
+
   .chat-review-note-icon {
     border: 1px solid color-mix(in oklab, rgb(217 119 6) 36%, var(--border-base));
     background: color-mix(in oklab, rgb(217 119 6) 14%, transparent);

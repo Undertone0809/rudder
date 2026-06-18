@@ -432,6 +432,7 @@ export function ProposalCard({
   actionPending,
   skillReferences,
   onMarkdownLinkClick,
+  issueCreatedMessage,
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
@@ -450,6 +451,7 @@ export function ProposalCard({
   actionPending: boolean;
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
+  issueCreatedMessage?: ChatMessage | null;
 }) {
   const baseIssueProposal = message.kind === "issue_proposal" ? issueProposalFromMessage(message) : null;
   const issueProposal = baseIssueProposal ? (issueProposalOverride ?? baseIssueProposal) : null;
@@ -468,8 +470,18 @@ export function ProposalCard({
   const decisionNoteId = `proposal-review-note-${message.id}`;
   const proposalDetailsId = `proposal-details-${message.id}`;
   const resolvedDecisionNote = message.approval?.decisionNote ?? operationProposalDecisionNoteFromMessage(message);
-  const showReviewControls = showDecisionNote || canConvertDirectly || Boolean(resolvedDecisionNote);
-  const resolvedDecisionNoteLabel = reviewStatus === "revision_requested" ? "Requested changes" : "Decision note";
+  const showReviewControls = showDecisionNote || canConvertDirectly;
+  const issueCreatedParts =
+    reviewStatus === "approved" && issueCreatedMessage
+      ? issueCreatedSystemMessageParts(issueCreatedMessage)
+      : null;
+  const showReviewOutcome = Boolean(issueCreatedParts || (!showDecisionNote && resolvedDecisionNote));
+  const resolvedDecisionNoteLabel =
+    reviewStatus === "revision_requested"
+      ? "Requested changes"
+      : reviewStatus === "approved"
+        ? "Execution feedback"
+        : "Decision note";
   const proposalAssigneeLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "assignee", agents) : null;
   const proposalReviewerLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "reviewer", agents) : null;
   const proposalAssigneeDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "assignee", agents, currentUserId) : null;
@@ -720,6 +732,60 @@ export function ProposalCard({
           </div>
         ) : null}
 
+        {showReviewOutcome ? (
+          <section
+            data-testid="proposal-review-outcome"
+            className="chat-review-outcome border-t border-[color:var(--border-soft)] px-5 py-4"
+          >
+            {issueCreatedParts ? (
+              <div data-testid="proposal-review-receipt" className="flex min-w-0 items-center gap-3">
+                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[color:color-mix(in_oklab,rgb(22_163_74)_13%,var(--surface-elevated))] text-green-700 dark:text-green-300" aria-hidden="true">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                </span>
+                <div className="min-w-0 text-sm leading-6 text-foreground">
+                  <span className="font-medium">Approved</span>
+                  <span className="px-1.5 text-muted-foreground">·</span>
+                  <span className="text-muted-foreground">Issue </span>
+                  <Link
+                    to={`/issues/${issueCreatedParts.issueRef}`}
+                    className="chat-system-issue-link"
+                    aria-label={`Open issue ${issueCreatedParts.issueRef}`}
+                  >
+                    {issueCreatedParts.issueRef}
+                  </Link>
+                  <span className="text-muted-foreground"> created</span>
+                </div>
+              </div>
+            ) : null}
+
+            {!showDecisionNote && resolvedDecisionNote ? (
+              <div
+                className={cn(
+                  "chat-review-note mt-3 rounded-[var(--radius-md)] px-3.5 py-3",
+                  reviewStatus === "revision_requested" && "chat-review-note--revision",
+                  reviewStatus === "approved" && "chat-review-note--approved",
+                )}
+              >
+                <div className="flex min-w-0 items-start gap-3">
+                  {reviewStatus === "revision_requested" ? (
+                    <span className="chat-review-note-icon mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-sm)]" aria-hidden="true">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                    </span>
+                  ) : null}
+                  <div className="min-w-0 flex-1">
+                    <div className="chat-review-note-header text-[11px] font-medium">
+                      {resolvedDecisionNoteLabel}
+                    </div>
+                    <p className="chat-review-note-body mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-foreground/90">
+                      {resolvedDecisionNote}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
         {showReviewControls ? (
           <div className="border-t border-[color:var(--border-soft)] px-5 py-5">
             {showDecisionNote ? (
@@ -751,31 +817,6 @@ export function ProposalCard({
                   />
                 </div>
               </label>
-            ) : null}
-
-            {!showDecisionNote && resolvedDecisionNote ? (
-              <div
-                className={cn(
-                  "chat-review-note mt-1 rounded-[var(--radius-lg)] px-4 py-3",
-                  reviewStatus === "revision_requested" && "chat-review-note--revision",
-                )}
-              >
-                <div className="flex min-w-0 items-start gap-3">
-                  {reviewStatus === "revision_requested" ? (
-                    <span className="chat-review-note-icon mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-sm)]" aria-hidden="true">
-                      <AlertTriangle className="h-3.5 w-3.5" />
-                    </span>
-                  ) : null}
-                  <div className="min-w-0 flex-1">
-                    <div className="chat-review-note-header text-[11px] font-medium">
-                      {resolvedDecisionNoteLabel}
-                    </div>
-                    <p className="chat-review-note-body mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-foreground/90">
-                      {resolvedDecisionNote}
-                    </p>
-                  </div>
-                </div>
-              </div>
             ) : null}
 
             <div className="mt-4 flex flex-wrap gap-2">
@@ -1231,6 +1272,30 @@ export function issueCreatedSystemMessageParts(message: ChatMessage) {
     prefix: message.body.slice(0, issueRefIndex),
     suffix: message.body.slice(issueRefIndex + issueRef.length),
   };
+}
+
+export function shouldAttachIssueCreatedSystemMessage(
+  previous: ChatMessage | null | undefined,
+  current: ChatMessage | null | undefined,
+) {
+  if (!previous || !current) return false;
+  if (previous.kind !== "issue_proposal" || previous.approval?.status !== "approved") return false;
+  return Boolean(issueCreatedSystemMessageParts(current));
+}
+
+export function shouldAttachApprovalFeedbackSystemMessage(
+  proposalMessage: ChatMessage | null | undefined,
+  issueCreatedMessage: ChatMessage | null | undefined,
+  current: ChatMessage | null | undefined,
+) {
+  if (!proposalMessage || !issueCreatedMessage || !current) return false;
+  if (!shouldAttachIssueCreatedSystemMessage(proposalMessage, issueCreatedMessage)) return false;
+  const payload = current.structuredPayload;
+  if (!payload || payload.eventType !== "approval_feedback") return false;
+  const proposalApprovalId = proposalMessage.approval?.id ?? proposalMessage.approvalId ?? null;
+  const feedbackApprovalId = readStructuredPayloadString(payload, "approvalId");
+  if (proposalApprovalId && feedbackApprovalId && proposalApprovalId !== feedbackApprovalId) return false;
+  return Boolean(proposalMessage.approval?.decisionNote ?? readStructuredPayloadString(payload, "decisionNote") ?? current.body.trim());
 }
 
 function automationSourceSystemMessageParts(message: ChatMessage) {
@@ -1896,6 +1961,7 @@ export function ChatMessageItem({
   answered,
   askUserAnswer,
   animateAskUserAnswer,
+  issueCreatedMessage,
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
@@ -1935,6 +2001,7 @@ export function ChatMessageItem({
   answered?: boolean;
   askUserAnswer?: AskUserAnswerRecord | null;
   animateAskUserAnswer?: boolean;
+  issueCreatedMessage?: ChatMessage | null;
   turnBranchControls?: {
     current: number;
     total: number;
@@ -1964,6 +2031,7 @@ export function ChatMessageItem({
         actionPending={actionPending}
         skillReferences={skillReferences}
         onMarkdownLinkClick={onMarkdownLinkClick}
+        issueCreatedMessage={issueCreatedMessage}
       />
     );
   }
