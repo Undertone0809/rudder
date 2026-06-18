@@ -543,7 +543,7 @@ describe("MessengerContextSidebar", () => {
         orgId: "org-1",
         userId: "local-board",
         name: "Deep work",
-        icon: "D",
+        icon: "😀::amber",
         sortOrder: 0,
         collapsed: false,
         createdAt: "2026-04-11T08:00:00.000Z",
@@ -633,7 +633,7 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf("Older grouped chat")).toBeLessThan(html.indexOf("Newer grouped chat"));
     expect(html).not.toContain("Reorder Older grouped chat");
     expect(html).not.toContain("Reorder Newer grouped chat");
-    expect(html).toContain(">D</span>");
+    expect(html).toContain(">😀</span>");
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["messenger", "org-1", "groups"],
       enabled: true,

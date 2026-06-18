@@ -31,6 +31,34 @@ const invalidateQueries = vi.fn();
 const cancelQueries = vi.fn(() => Promise.resolve());
 const setQueryData = vi.fn();
 const setQueriesData = vi.fn();
+const sortableMockState = vi.hoisted(() => ({
+  draggingId: null as string | null,
+  measuredHeight: 96,
+}));
+const mockUseSortable = vi.hoisted(() => vi.fn(({ id }: { id: string | number }) => ({
+  attributes: {},
+  listeners: {},
+  setNodeRef: (node: HTMLElement | null) => {
+    if (!node) return;
+    Object.defineProperty(node, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        bottom: sortableMockState.measuredHeight,
+        height: sortableMockState.measuredHeight,
+        left: 0,
+        right: 320,
+        top: 0,
+        width: 320,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+    });
+  },
+  transform: null,
+  transition: undefined,
+  isDragging: sortableMockState.draggingId === String(id),
+})));
 
 let messengerModel: any;
 let messengerRoute: any;
@@ -104,6 +132,14 @@ vi.mock("@/api/messenger", () => ({
     reorderCustomGroupEntries: mockReorderCustomGroupEntries,
   },
 }));
+
+vi.mock("@dnd-kit/sortable", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/sortable")>();
+  return {
+    ...actual,
+    useSortable: mockUseSortable,
+  };
+});
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -318,6 +354,9 @@ describe("MessengerContextSidebar chat actions", () => {
       },
     ];
     messengerModel = baseModel();
+    sortableMockState.draggingId = null;
+    sortableMockState.measuredHeight = 96;
+    mockUseSortable.mockClear();
     mockUpdateUserState.mockImplementation(async (chatId: string, data: Record<string, unknown>) => ({
       ...baseConversation(),
       id: chatId,
@@ -346,7 +385,7 @@ describe("MessengerContextSidebar chat actions", () => {
       orgId: "org-1",
       userId: "local-board",
       name: "Deep work",
-      icon: "D",
+      icon: "folder",
       sortOrder: 0,
       collapsed: false,
       createdAt: "2026-04-11T09:40:00.000Z",
@@ -692,20 +731,20 @@ describe("MessengerContextSidebar chat actions", () => {
     const editor = document.querySelector('[data-testid="messenger-custom-group-editor"]');
     expect(editor).toBeTruthy();
     const nameInput = editor?.querySelector<HTMLInputElement>('input[aria-label="Group name"]');
-    const iconButton = Array.from(editor?.querySelectorAll("button") ?? [])
-      .find((button) => button.getAttribute("aria-label") === "Use D group icon") as HTMLButtonElement | undefined;
+    const iconButtonLabels = Array.from(editor?.querySelectorAll("button") ?? [])
+      .map((button) => button.getAttribute("aria-label"))
+      .filter((label): label is string => Boolean(label?.endsWith(" group icon")));
     const emojiButton = Array.from(editor?.querySelectorAll("button") ?? [])
       .find((button) => button.getAttribute("aria-label") === "Use 🚀 group emoji") as HTMLButtonElement | undefined;
     const submitButton = Array.from(editor?.querySelectorAll("button") ?? [])
       .find((button) => button.textContent === "Create") as HTMLButtonElement | undefined;
 
     expect(nameInput).toBeTruthy();
-    expect(iconButton).toBeTruthy();
+    expect(iconButtonLabels).toEqual(["Use folder group icon"]);
     expect(emojiButton).toBeTruthy();
     expect(submitButton).toBeTruthy();
     await act(async () => {
       setInputValue(nameInput!, "Deep work");
-      iconButton?.click();
       emojiButton?.click();
       await Promise.resolve();
     });
@@ -728,7 +767,7 @@ describe("MessengerContextSidebar chat actions", () => {
         orgId: "org-1",
         userId: "local-board",
         name: "Deep work",
-        icon: "D::amber",
+        icon: "😀::amber",
         sortOrder: 0,
         collapsed: false,
         createdAt: "2026-04-11T09:40:00.000Z",
@@ -953,6 +992,51 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(projectSection?.textContent).toContain("ISS-1 · Split issue");
     expect(document.querySelector('[data-testid="messenger-thread-section-project-project-1"]')?.textContent).not.toContain("2");
     expect(document.querySelector('[data-testid="messenger-thread-section-system"]')).toBeNull();
+  });
+
+  it("preserves a dragged top-level section height instead of flattening the preview", () => {
+    installLocalStorage({
+      "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "project" }),
+    });
+    sortableMockState.draggingId = "project:project-1";
+    sortableMockState.measuredHeight = 96;
+    chatList = [
+      baseConversation({
+        title: "Roadmap chat",
+        contextLinks: [
+          {
+            entityType: "project",
+            entityId: "project-1",
+            entity: { label: "Operator console" },
+          },
+        ],
+      }),
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:chat-1",
+          kind: "chat",
+          title: "Roadmap chat",
+          preview: "Project conversation",
+          subtitle: null,
+          href: "/messenger/chat/chat-1",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const draggedSection = document.querySelector<HTMLElement>(
+      '[data-testid="messenger-thread-section-project-project-1"]',
+    )?.parentElement;
+    expect(draggedSection?.style.height).toBe("96px");
   });
 
   it("groups chats by selected agent", () => {

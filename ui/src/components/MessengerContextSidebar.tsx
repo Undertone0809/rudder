@@ -117,7 +117,7 @@ const DEFAULT_SPLIT_ISSUE_NOTIFICATIONS = true;
 const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
-const CUSTOM_GROUP_ICON_OPTIONS = ["folder", "D", "W", "P", "A", "S"] as const;
+const CUSTOM_GROUP_ICON_OPTIONS = ["folder"] as const;
 const CUSTOM_GROUP_EMOJI_OPTIONS = ["😀", "🚀", "💡", "🧠", "📌", "✨", "🛠️", "🔥"] as const;
 const CUSTOM_GROUP_COLOR_OPTIONS = ["slate", "teal", "sky", "indigo", "amber", "rose", "red", "orange"] as const;
 type CustomGroupColor = (typeof CUSTOM_GROUP_COLOR_OPTIONS)[number];
@@ -1579,13 +1579,20 @@ function SortableThreadSection({
     transition,
     isDragging,
   } = useSortable({ id });
+  const { measureNow, measuredHeight, setMeasuredNodeRef } = useMeasuredSortableNode(setNodeRef);
+
+  useEffect(() => {
+    if (isDragging) measureNow();
+  }, [isDragging, measureNow]);
 
   return (
     <div
-      ref={setNodeRef}
+      ref={setMeasuredNodeRef}
       style={{
+        height: isDragging && measuredHeight ? measuredHeight : undefined,
         transform: CSS.Transform.toString(transform),
         transition,
+        willChange: isDragging ? "transform" : undefined,
         zIndex: isDragging ? 10 : undefined,
       }}
       className={cn(
@@ -1616,13 +1623,20 @@ function SortableCustomThreadEntry({
     transition,
     isDragging,
   } = useSortable({ id });
+  const { measureNow, measuredHeight, setMeasuredNodeRef } = useMeasuredSortableNode(setNodeRef);
+
+  useEffect(() => {
+    if (isDragging) measureNow();
+  }, [isDragging, measureNow]);
 
   return (
     <div
-      ref={setNodeRef}
+      ref={setMeasuredNodeRef}
       style={{
+        height: isDragging && measuredHeight ? measuredHeight : undefined,
         transform: CSS.Transform.toString(transform),
         transition,
+        willChange: isDragging ? "transform" : undefined,
         zIndex: isDragging ? 20 : undefined,
       }}
       className={cn("touch-none", isDragging && "relative")}
@@ -1630,6 +1644,36 @@ function SortableCustomThreadEntry({
       {children({ attributes, listeners }, isDragging)}
     </div>
   );
+}
+
+function useMeasuredSortableNode(setNodeRef: ReturnType<typeof useSortable>["setNodeRef"]) {
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
+  const updateMeasuredHeight = useCallback((target: HTMLDivElement | null) => {
+    if (!target) return;
+    const nextHeight = Math.round(target.getBoundingClientRect().height);
+    if (nextHeight <= 0) return;
+    setMeasuredHeight((current) => current === nextHeight ? current : nextHeight);
+  }, []);
+  const setMeasuredNodeRef = useCallback((target: HTMLDivElement | null) => {
+    setNodeRef(target);
+    setNode(target);
+    updateMeasuredHeight(target);
+  }, [setNodeRef, updateMeasuredHeight]);
+  const measureNow = useCallback(() => {
+    updateMeasuredHeight(node);
+  }, [node, updateMeasuredHeight]);
+
+  useEffect(() => {
+    if (!node) return undefined;
+    updateMeasuredHeight(node);
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => updateMeasuredHeight(node));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [node, updateMeasuredHeight]);
+
+  return { measureNow, measuredHeight, setMeasuredNodeRef };
 }
 
 type MessengerThreadSummaryItem = ReturnType<typeof useMessengerModel>["threadSummaries"][number];
