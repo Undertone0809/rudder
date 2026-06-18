@@ -7,8 +7,8 @@ export type AgentCliCapabilityCategory =
   | "runs"
   | "approval"
   | "skill"
-  | "library"
-  | "user";
+  | "user"
+  | "library";
 export type AgentCliCapabilityContract = "agent-v1" | "compat";
 
 export interface AgentCliCapability {
@@ -1026,8 +1026,8 @@ const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   runs: "Runs",
   approval: "Approval",
   skill: "Skill",
-  library: "Library",
   user: "User",
+  library: "Library",
 };
 
 export function getAgentCliCapabilities(): AgentCliCapability[] {
