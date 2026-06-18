@@ -136,6 +136,34 @@ test("Library imports a dropped local text file into the target folder", async (
   await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText("README.md", { timeout: 15_000 });
   await expect(page.getByRole("heading", { name: "Dropped README" })).toBeVisible();
 
+  const rootCreateResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST"
+      && response.url().includes(`/api/orgs/${organization.id}/workspace/file`)
+      && response.status() === 201,
+    { timeout: 5_000 },
+  );
+
+  await filesCard.dispatchEvent("drop", {
+    dataTransfer: await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["# Root drop\n\nImported at the library root.\n"], "ROOT-DROP.md", {
+        type: "text/markdown",
+      }));
+      return transfer;
+    }),
+  });
+
+  await rootCreateResponse;
+  await expect(filesCard).toContainText("ROOT-DROP.md");
+  const rootFileRes = await page.request.get(
+    `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent("ROOT-DROP.md")}`,
+  );
+  expect(rootFileRes.ok()).toBe(true);
+  const rootFile = await rootFileRes.json() as { filePath: string; content: string | null };
+  expect(rootFile.filePath).toBe("ROOT-DROP.md");
+  expect(rootFile.content).toContain("Imported at the library root.");
+
   await filesCard.dispatchEvent("drop", {
     dataTransfer: await page.evaluateHandle(() => {
       const transfer = new DataTransfer();
