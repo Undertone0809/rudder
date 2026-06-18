@@ -15,12 +15,13 @@ export function promoteDefaultChatTitle(title: string, body: string) {
 export function displayChatTitle(conversation: {
   title: string;
   summary?: string | null;
+  latestUserMessagePreview?: string | null;
   latestReplyPreview?: string | null;
 }) {
   if (isDefaultChatTitle(conversation.title)) {
     const fallback =
       formatMessengerTitle(conversation.summary, { max: CHAT_TITLE_MAX_LENGTH }) ??
-      formatMessengerTitle(conversation.latestReplyPreview, { max: CHAT_TITLE_MAX_LENGTH });
+      formatMessengerTitle(conversation.latestUserMessagePreview, { max: CHAT_TITLE_MAX_LENGTH });
     if (fallback) return fallback;
   }
 

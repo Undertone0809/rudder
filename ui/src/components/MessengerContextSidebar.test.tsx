@@ -210,6 +210,35 @@ describe("MessengerContextSidebar", () => {
     expect(html).not.toContain("## 需求");
   });
 
+  it("uses thread user-message metadata for default chat titles when full chats are not loaded", () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [{
+        threadKey: "chat:chat-1",
+        kind: "chat",
+        title: "New chat",
+        preview: "Assistant reply should stay a preview only",
+        subtitle: "Assistant reply should stay a preview only",
+        href: "/messenger/chat/chat-1",
+        latestActivityAt: "2026-04-11T09:40:00.000Z",
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: false,
+        metadata: {
+          preferredAgentId: "agent-1",
+          latestUserMessagePreview: "Plan the launch checklist from this chat",
+        },
+      }],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("Plan the launch checklist from this chat");
+    expect(html).not.toContain("Assistant reply should stay a preview only");
+  });
+
   it("renders URL-heavy chat titles as readable compact titles", () => {
     const rawTitle = "&#x20;[https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/] 看一下这个 总结下。";
     chatList = [

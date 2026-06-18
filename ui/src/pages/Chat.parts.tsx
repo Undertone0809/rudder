@@ -473,13 +473,15 @@ export function conversationPreview(conversation: ChatConversation, fallbackPrev
     || "Start the conversation";
 }
 
-export function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestReplyPreview">) {
+export function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestUserMessagePreview" | "latestReplyPreview">) {
   return displayChatTitle(conversation);
 }
 
-function recentConversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary">) {
+function recentConversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestUserMessagePreview">) {
   if (isDefaultChatTitle(conversation.title)) {
-    return formatMessengerPreview(conversation.summary, { max: 80 }) || conversation.title;
+    return formatMessengerPreview(conversation.summary, { max: 80 })
+      || formatMessengerPreview(conversation.latestUserMessagePreview, { max: 80 })
+      || conversation.title;
   }
 
   return formatMessengerPreview(conversation.title, { max: 80 }) || conversation.title;

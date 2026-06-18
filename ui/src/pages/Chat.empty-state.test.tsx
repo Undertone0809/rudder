@@ -195,6 +195,7 @@ describe("ChatEmptyStateRecentConversations", () => {
           chatConversation({
             title: "New chat",
             summary: null,
+            latestUserMessagePreview: "Can this release workflow run from the desktop shell?",
             latestReplyPreview: "Assistant reply should stay hidden.",
           }),
         ]}
@@ -209,7 +210,7 @@ describe("ChatEmptyStateRecentConversations", () => {
     const row = recentSection?.querySelector<HTMLElement>("[data-testid='chat-empty-state-recent-conversation-chat-1']");
     const rowTitle = row?.querySelector<HTMLElement>(".font-medium");
 
-    expect(rowTitle?.textContent).toBe("New chat");
+    expect(rowTitle?.textContent).toBe("Can this release workflow run from the desktop shell?");
     expect(recentSection?.textContent).toContain("Assistant reply should stay hidden.");
   });
 

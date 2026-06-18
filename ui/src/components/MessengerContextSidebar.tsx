@@ -661,7 +661,7 @@ function conversationSubtitle(conversation: ChatConversation) {
   );
 }
 
-function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestReplyPreview">) {
+function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestUserMessagePreview" | "latestReplyPreview">) {
   return displayChatTitle(conversation);
 }
 
@@ -1691,6 +1691,7 @@ function chatConversationForThreadSummary(
   const preferredAgentId = nonEmptyString(metadata.preferredAgentId);
   const routedAgentId = nonEmptyString(metadata.routedAgentId);
   const runtimeAgentId = nonEmptyString(metadata.runtimeAgentId);
+  const latestUserMessagePreview = nonEmptyString(metadata.latestUserMessagePreview);
   const isPinned = typeof thread.isPinned === "boolean" ? thread.isPinned : Boolean(conversation?.isPinned);
   if (conversation) {
     return {
@@ -1717,9 +1718,9 @@ function chatConversationForThreadSummary(
     orgId,
     status: "active",
     title: thread.title,
-    summary: preview,
+    summary: null,
     latestReplyPreview: preview,
-    latestUserMessagePreview: null,
+    latestUserMessagePreview,
     userMessageCount: 0,
     preferredAgentId,
     routedAgentId,

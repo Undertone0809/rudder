@@ -738,16 +738,32 @@ export function chatService(db: Db) {
   }
 
   async function updateDefaultTitle(id: string, title: string) {
-      const [updated] = await db
-        .update(chatConversations)
-        .set({
-          title,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(chatConversations.id, id), eq(chatConversations.title, "New chat")))
-        .returning();
-      if (!updated) return null;
-      return getById(id);
+    const [updated] = await db
+      .update(chatConversations)
+      .set({
+        title,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(chatConversations.id, id), eq(chatConversations.title, "New chat")))
+      .returning();
+    if (!updated) return null;
+    return getById(id);
+  }
+
+  async function replaceSystemGeneratedTitle(id: string, expectedTitle: string, title: string) {
+    const [updated] = await db
+      .update(chatConversations)
+      .set({
+        title,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(chatConversations.id, id),
+        inArray(chatConversations.title, [expectedTitle, "New chat"]),
+      ))
+      .returning();
+    if (!updated) return null;
+    return getById(id);
   }
 
   async function listAttachmentsForConversation(conversationId: string) {
@@ -1884,6 +1900,7 @@ export function chatService(db: Db) {
     create,
     update,
     updateDefaultTitle,
+    replaceSystemGeneratedTitle,
     listAttachmentsForConversation,
     remove,
     resolve,

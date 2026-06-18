@@ -1164,6 +1164,90 @@ describe("messengerService and issue follows", () => {
     expect(conversation?.latestReplyPreview).toBe("Assistant reply is still separately available");
   });
 
+  it("does not replace a manually renamed chat title with an async generated title", async () => {
+    const orgId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Manual Rename Org",
+      urlKey: deriveOrganizationUrlKey("Chat Manual Rename Org"),
+      issuePrefix: `M${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const conversation = await chatSvc.create(orgId, {
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: null,
+    });
+    expect(conversation?.title).toBe("New chat");
+
+    await chatSvc.updateDefaultTitle(conversation!.id, "Plan the release checklist");
+    await chatSvc.update(conversation!.id, { title: "Manual release name" });
+
+    const replaced = await chatSvc.replaceSystemGeneratedTitle(
+      conversation!.id,
+      "Plan the release checklist",
+      "AI release plan",
+    );
+    expect(replaced).toBeNull();
+
+    const stored = await chatSvc.getById(conversation!.id);
+    expect(stored?.title).toBe("Manual release name");
+  });
+
+  it("includes the latest user message preview in Messenger chat thread summaries", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const userId = "board-user-chat-summary-user-preview";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Summary User Preview Org",
+      urlKey: deriveOrganizationUrlKey("Chat Summary User Preview Org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "New chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+      lastMessageAt: new Date("2026-05-01T12:01:00.000Z"),
+      createdAt: new Date("2026-05-01T12:00:00.000Z"),
+      updatedAt: new Date("2026-05-01T12:01:00.000Z"),
+    });
+    await db.insert(chatMessages).values([
+      {
+        orgId,
+        conversationId,
+        role: "user",
+        kind: "message",
+        body: "Plan the launch checklist from this chat",
+        createdAt: new Date("2026-05-01T12:00:00.000Z"),
+        updatedAt: new Date("2026-05-01T12:00:00.000Z"),
+      },
+      {
+        orgId,
+        conversationId,
+        role: "assistant",
+        kind: "message",
+        body: "Assistant reply should stay a preview only",
+        createdAt: new Date("2026-05-01T12:01:00.000Z"),
+        updatedAt: new Date("2026-05-01T12:01:00.000Z"),
+      },
+    ]);
+
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const chatSummary = summaries.find((summary) => summary.threadKey === `chat:${conversationId}`);
+
+    expect(chatSummary?.title).toBe("New chat");
+    expect(chatSummary?.preview).toBe("Assistant reply should stay a preview only");
+    expect(chatSummary?.metadata?.latestUserMessagePreview).toBe("Plan the launch checklist from this chat");
+  });
+
   it("can mark a read chat unread by rewinding to the latest visible incoming message", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();

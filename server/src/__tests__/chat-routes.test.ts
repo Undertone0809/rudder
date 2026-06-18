@@ -50,6 +50,7 @@ const mockChatService = vi.hoisted(() => ({
   createProposalApproval: vi.fn(),
   resolveOperationProposal: vi.fn(),
   updateDefaultTitle: vi.fn(),
+  replaceSystemGeneratedTitle: vi.fn(),
 }));
 
 const mockCompanyService = vi.hoisted(() => ({
@@ -1592,6 +1593,40 @@ describe("chat routes", () => {
     );
   });
 
+  it("persists the first user message as the default title before AI title generation", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Help me debug the release failure");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "I will inspect it.");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockProductIntelligenceService.execute.mockRejectedValueOnce(new Error("Fast Intelligence unavailable"));
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "I will inspect it.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "I will inspect it.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Help me debug the release failure" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith("chat-1", "Help me debug the release failure");
+    await waitUntil(() => {
+      expect(mockProductIntelligenceService.execute).toHaveBeenCalled();
+    });
+    expect(mockChatService.replaceSystemGeneratedTitle).not.toHaveBeenCalled();
+  });
+
   it("generates a new chat title with the organization lightweight model without blocking the assistant reply", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Help me debug the release failure");
@@ -1632,7 +1667,12 @@ describe("chat routes", () => {
         feature: "chat_title",
         prompt: expect.stringContaining("Help me debug the release failure"),
       }));
-      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith("chat-1", "Debug release failure");
+      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith("chat-1", "Help me debug the release failure");
+      expect(mockChatService.replaceSystemGeneratedTitle).toHaveBeenCalledWith(
+        "chat-1",
+        "Help me debug the release failure",
+        "Debug release failure",
+      );
     });
   });
 
@@ -2551,7 +2591,12 @@ describe("chat routes", () => {
         feature: "chat_title",
         prompt: expect.stringContaining("Plan the migration"),
       }));
-      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith("chat-1", "Migration plan");
+      expect(mockChatService.updateDefaultTitle).toHaveBeenCalledWith("chat-1", "Plan the migration");
+      expect(mockChatService.replaceSystemGeneratedTitle).toHaveBeenCalledWith(
+        "chat-1",
+        "Plan the migration",
+        "Migration plan",
+      );
     });
   });
 

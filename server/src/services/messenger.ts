@@ -248,6 +248,7 @@ type ChatSummarySource = Pick<
   | "id"
   | "title"
   | "summary"
+  | "latestUserMessagePreview"
   | "latestReplyPreview"
   | "lastMessageAt"
   | "updatedAt"
@@ -664,6 +665,7 @@ function chatSummary(conversation: ChatSummarySource): MessengerThreadSummary {
       preferredAgentId: conversation.preferredAgentId,
       routedAgentId: conversation.routedAgentId,
       runtimeAgentId: conversation.chatRuntime?.runtimeAgentId ?? null,
+      latestUserMessagePreview: conversation.latestUserMessagePreview,
     },
   };
 }

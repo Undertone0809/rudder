@@ -25,7 +25,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, MoreHorizontal, PencilLine, Pin, PinOff, Plus } from "lucide-react";
 import { useState } from "react";
 
-function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestReplyPreview">): string {
+function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestUserMessagePreview" | "latestReplyPreview">): string {
   return displayChatTitle(conversation);
 }
 

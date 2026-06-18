@@ -234,6 +234,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
     const prompt = buildChatTitlePrompt(body);
     const fallbackTitle = fallbackChatTitleFromBody(body);
     void (async () => {
+      if (fallbackTitle) {
+        await svc.updateDefaultTitle(conversation.id, fallbackTitle);
+      }
       try {
         const result = await productIntelligence.execute({
           orgId: conversation.orgId,
@@ -242,8 +245,12 @@ export function chatRoutes(db: Db, storage: StorageService) {
           prompt,
         });
         const title = sanitizeGeneratedChatTitle(runtimeResultText(result));
-        if (title ?? fallbackTitle) {
-          await svc.updateDefaultTitle(conversation.id, title ?? fallbackTitle!);
+        if (title) {
+          if (fallbackTitle) {
+            await svc.replaceSystemGeneratedTitle(conversation.id, fallbackTitle, title);
+          } else {
+            await svc.updateDefaultTitle(conversation.id, title);
+          }
         }
       } catch (error) {
         logger.warn(
@@ -254,9 +261,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
           },
           "Failed to generate chat title with organization lightweight model",
         );
-        if (fallbackTitle) {
-          await svc.updateDefaultTitle(conversation.id, fallbackTitle);
-        }
       }
     })().catch((error) => {
       logger.warn(

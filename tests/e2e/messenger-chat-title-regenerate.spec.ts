@@ -38,6 +38,18 @@ async function createChat(page: Page, orgId: string, title: string, preferredAge
   return chatRes.json() as Promise<{ id: string; title: string }>;
 }
 
+async function createDefaultTitleChat(page: Page, orgId: string, preferredAgentId: string) {
+  const chatRes = await page.request.post(`/api/orgs/${orgId}/chats`, {
+    data: {
+      preferredAgentId,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    },
+  });
+  expect(chatRes.ok()).toBe(true);
+  return chatRes.json() as Promise<{ id: string; title: string }>;
+}
+
 async function configureFastTitleProfile(page: Page, orgId: string, title = "Generated sidebar title") {
   const profileRes = await page.request.put(`/api/orgs/${orgId}/intelligence-profiles/lightweight`, {
     data: {
@@ -53,6 +65,34 @@ async function configureFastTitleProfile(page: Page, orgId: string, title = "Gen
 }
 
 test.describe("Messenger chat title regeneration", () => {
+  test("uses the first user message as the visible default title", async ({ page }) => {
+    const organization = await createOrganization(page, `Chat-Title-Default-${Date.now()}`);
+    const agent = await createChatAgent(page, organization.id);
+    const chat = await createDefaultTitleChat(page, organization.id, agent.id);
+    const firstUserMessage = "Plan the release checklist from this chat";
+
+    const sendRes = await page.request.post(`/api/chats/${chat.id}/messages`, {
+      data: { body: firstUserMessage },
+    });
+    expect(sendRes.ok()).toBe(true);
+
+    await expect.poll(async () => {
+      const chatRes = await page.request.get(`/api/chats/${chat.id}`);
+      expect(chatRes.ok()).toBe(true);
+      return (await chatRes.json() as { title: string }).title;
+    }).toBe(firstUserMessage);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    const threadRow = page.getByTestId(`messenger-thread-chat-${chat.id}`);
+    await expect(threadRow).toContainText(firstUserMessage, { timeout: 15_000 });
+    await expect(threadRow).not.toContainText("New chat");
+  });
+
   test("shows title regeneration only when Fast Intelligence is configured", async ({ page }) => {
     const organization = await createOrganization(page, `Chat-Title-Regenerate-${Date.now()}`);
     const chat = await createChat(page, organization.id, "Old planning title");
