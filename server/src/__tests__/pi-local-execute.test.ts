@@ -30,6 +30,10 @@ if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify({
     argv: process.argv.slice(2),
     stdin,
+    home: process.env.HOME,
+    userProfile: process.env.USERPROFILE,
+    piCodingAgentDir: process.env.PI_CODING_AGENT_DIR,
+    piCodingAgentSessionDir: process.env.PI_CODING_AGENT_SESSION_DIR,
     rudderEnvKeys: Object.keys(process.env)
       .filter((key) => key.startsWith("RUDDER_"))
       .sort(),
@@ -104,6 +108,10 @@ console.log(JSON.stringify({
 type CapturePayload = {
   argv: string[];
   stdin: string;
+  home: string;
+  userProfile?: string;
+  piCodingAgentDir: string;
+  piCodingAgentSessionDir: string;
   rudderEnvKeys: string[];
   gitIdentity: GitIdentityCapture;
 };
@@ -133,7 +141,9 @@ describe("pi execute", { timeout: 20_000 }, () => {
     let commandNotes: string[] = [];
     let promptMetrics: Record<string, number> = {};
     const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
     process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
     try {
       const result = await execute({
         runId: "run-pi-memory",
@@ -156,6 +166,10 @@ describe("pi execute", { timeout: 20_000 }, () => {
           model: "openai/gpt-test",
           env: {
             ...clearInheritedGitIdentityEnv,
+            HOME: path.join(root, "ignored-config-home"),
+            PI_CODING_AGENT_DIR: path.join(root, "ignored-pi-agent"),
+            PI_CODING_AGENT_SESSION_DIR: path.join(root, "ignored-pi-sessions"),
+            RUDDER_HOME: path.join(root, ".rudder"),
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           instructionsFilePath: instructionsPath,
@@ -185,7 +199,21 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toBeNull();
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expectPreparedGitConfigCapture(capture);
+      const managedPiHome = path.join(
+        root,
+        ".rudder",
+        "instances",
+        "default",
+        "organizations",
+        "organization-1",
+        "pi-home",
+      );
+      expect(capture.home).toBe(root);
+      expect(capture.piCodingAgentDir).toBe(path.join(managedPiHome, ".pi", "agent"));
+      expect(capture.piCodingAgentSessionDir).toBe(path.join(managedPiHome, ".pi", "paperclips"));
       expect(capture.argv).toEqual(expect.arrayContaining(["--print", "--mode", "json"]));
+      expect(capture.argv).toContain("--no-skills");
+      expect(capture.argv).toEqual(expect.arrayContaining(["--skill", path.join(managedPiHome, ".pi", "agent", "skills")]));
       expect(capture.argv).not.toContain("rpc");
       expect(capture.argv.at(-1)).toContain("Follow the rudder heartbeat.");
       expect(capture.stdin).toBe("");
@@ -215,6 +243,8 @@ describe("pi execute", { timeout: 20_000 }, () => {
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

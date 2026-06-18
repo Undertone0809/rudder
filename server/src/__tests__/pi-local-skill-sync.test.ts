@@ -22,6 +22,7 @@ describe("pi local skill sync", () => {
 
   it("reports configured Rudder skills and installs them into the Pi skills home", async () => {
     const home = await makeTempDir("rudder-pi-skill-sync-");
+    const rudderHome = path.join(home, ".rudder");
     cleanupDirs.add(home);
 
     const ctx = {
@@ -31,6 +32,7 @@ describe("pi local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          RUDDER_HOME: rudderHome,
         },
         rudderSkillSync: {
           desiredSkills: [rudderSkillKey],
@@ -45,11 +47,27 @@ describe("pi local skill sync", () => {
 
     const after = await syncPiSkills(ctx, [rudderSkillKey]);
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".pi", "agent", "skills", "rudder"))).isSymbolicLink()).toBe(true);
+    const managedSkillPath = path.join(
+      rudderHome,
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "pi-home",
+      ".pi",
+      "agent",
+      "skills",
+      "rudder",
+    );
+    expect((await fs.lstat(managedSkillPath)).isSymbolicLink()).toBe(true);
+    await expect(fs.lstat(path.join(home, ".pi", "agent", "skills", "rudder"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("removes Rudder-managed symlinks when the desired set is emptied", async () => {
     const home = await makeTempDir("rudder-pi-skill-prune-");
+    const rudderHome = path.join(home, ".rudder");
     cleanupDirs.add(home);
 
     const configuredCtx = {
@@ -59,6 +77,7 @@ describe("pi local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          RUDDER_HOME: rudderHome,
         },
         rudderSkillSync: {
           desiredSkills: [rudderSkillKey],
@@ -73,6 +92,7 @@ describe("pi local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          RUDDER_HOME: rudderHome,
         },
         rudderSkillSync: {
           desiredSkills: [],
@@ -83,7 +103,18 @@ describe("pi local skill sync", () => {
     const after = await syncPiSkills(clearedCtx, []);
     expect(after.desiredSkills).toEqual([]);
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("available");
-    await expect(fs.lstat(path.join(home, ".pi", "agent", "skills", "rudder"))).rejects.toMatchObject({
+    await expect(fs.lstat(path.join(
+      rudderHome,
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "pi-home",
+      ".pi",
+      "agent",
+      "skills",
+      "rudder",
+    ))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
