@@ -11,6 +11,7 @@
     "lint": "node scripts/lint-imports.mjs",
     "lint:changed": "node scripts/lint-imports.mjs --changed",
     "lint:fix": "node scripts/lint-imports.mjs --fix",
+    "architecture:audit": "node scripts/architecture-audit.mjs",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest",
