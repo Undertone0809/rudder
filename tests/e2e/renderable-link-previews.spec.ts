@@ -7,6 +7,11 @@ function buildProjectMentionHref(projectId: string, color?: string | null) {
   return `project://${projectId}`;
 }
 
+function buildAutomationMentionHref(automationId: string, title: string) {
+  void title;
+  return `automation://${automationId}`;
+}
+
 function buildLibraryDocMentionHref(documentId: string, title: string) {
   void title;
   return `library-doc://${documentId}`;
@@ -39,7 +44,7 @@ async function expectPreviewIconFor(link: Locator, selector: string, text: strin
   return card;
 }
 
-test("renderable entity links show hover previews except chat links", async ({ page }) => {
+test("renderable entity links show hover previews except non-previewable links", async ({ page }) => {
   const organization = await createOrganization(page);
 
   const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -67,6 +72,18 @@ test("renderable entity links show hover previews except chat links", async ({ p
   });
   expect(projectRes.ok(), await projectRes.text()).toBe(true);
   const project = await projectRes.json() as { id: string; name: string; color: string | null };
+
+  const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+    data: {
+      title: "Preview automation",
+      description: "Automation preview target from the real automation API.",
+      projectId: project.id,
+      assigneeAgentId: agent.id,
+      priority: "medium",
+    },
+  });
+  expect(automationRes.ok(), await automationRes.text()).toBe(true);
+  const automation = await automationRes.json() as { id: string; title: string };
 
   const targetIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {
@@ -124,6 +141,7 @@ test("renderable entity links show hover previews except chat links", async ({ p
       description: [
         `[${targetIssueRef}](issue://${targetIssue.id})`,
         `[${agent.name}](agent://${agent.id})`,
+        `[${automation.title}](${buildAutomationMentionHref(automation.id, automation.title)})`,
         `[${project.name}](${buildProjectMentionHref(project.id, project.color)})`,
         `[${libraryDoc.title}](${buildLibraryDocMentionHref(libraryDoc.id, libraryDoc.title)})`,
         `[${fileName}](${buildLibraryFileMentionHref(filePath, fileName)})`,
@@ -147,6 +165,7 @@ test("renderable entity links show hover previews except chat links", async ({ p
 
   const issueLink = page.locator('a.rudder-mention-chip[data-mention-kind="issue"]').filter({ hasText: targetIssueRef }).first();
   const agentLink = page.locator('a.rudder-mention-chip[data-mention-kind="agent"]').filter({ hasText: agent.name }).first();
+  const automationLink = page.locator('a.rudder-mention-chip[data-mention-kind="automation"]').filter({ hasText: automation.title }).first();
   const projectLink = page.locator('a.rudder-mention-chip[data-mention-kind="project"]').filter({ hasText: project.name }).first();
   const libraryDocLink = page.locator('a.rudder-mention-chip[data-mention-kind="library_doc"]').filter({ hasText: libraryDoc.title }).first();
   const libraryFileLink = page.locator('a.rudder-mention-chip[data-mention-kind="library_file"]').filter({ hasText: fileName }).first();
@@ -155,6 +174,10 @@ test("renderable entity links show hover previews except chat links", async ({ p
 
   await expectPreviewIconFor(issueLink, '[data-slot="issue-status-icon"][data-status="todo"]', "Issue preview summary from the real issue API.");
   await expectPreviewIconFor(agentLink, ".rudder-entity-preview-main-icon--agent", "Handles entity preview validation.");
+  await expect(automationLink).toBeVisible();
+  expect(await automationLink.evaluate((element) => Boolean(element.closest(".rudder-entity-preview-wrap")))).toBe(false);
+  await automationLink.hover();
+  await expect(page.locator(".rudder-entity-preview-card").filter({ hasText: "Automation preview target" })).toHaveCount(0);
   await expectPreviewIconFor(projectLink, ".rudder-entity-preview-main-icon--project", "Project preview summary from the real project API.");
   await expectPreviewIconFor(libraryDocLink, ".rudder-entity-preview-main-icon--library", "Library document preview summary from the real document API.");
   await expectPreviewFor(libraryFileLink, "Workspace file preview summary from the real workspace API.");
@@ -167,4 +190,7 @@ test("renderable entity links show hover previews except chat links", async ({ p
   expect(await chatLink.evaluate((element) => Boolean(element.closest(".rudder-entity-preview-wrap")))).toBe(false);
   await chatLink.hover();
   await expect(page.locator(".rudder-entity-preview-card").filter({ hasText: "Preview chat should not show" })).toHaveCount(0);
+
+  await automationLink.click();
+  await expect(page).toHaveURL(new RegExp(`/automations/${automation.id}$`));
 });

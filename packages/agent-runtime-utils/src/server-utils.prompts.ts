@@ -292,6 +292,7 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "",
   "- Issues: use `[](issue://<issue-id>)`; include `?c=<comment-id>` when linking to a specific comment.",
   "- Agents: use `[](agent://<agent-id>)` for reference-only links. In issue comments, use `[](agent://<agent-id>?intent=wake)` only when you intentionally want to wake that agent for attention or collaboration.",
+  "- Automations: use `[](automation://<automation-id>)` when citing a Rudder automation.",
   "- Projects: use `[](project://<project-id>)` when citing a Rudder project.",
   "- Chat threads: use `[](chat://<conversation-id>)` when citing a Rudder chat conversation.",
   "- Skills: use `[](skill://<skill-ref>)` when citing a Rudder skill reference. The skill ref may be an org skill, agent skill, bundled Rudder skill, or local-machine skill ref; the UI resolves the display label when metadata is available.",

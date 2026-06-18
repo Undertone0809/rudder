@@ -900,7 +900,7 @@ export function MarkdownBody({
             {mentionLabel}
           </a>
         );
-        if (mention.kind === "chat") return mentionLink;
+        if (mention.kind === "automation" || mention.kind === "chat") return mentionLink;
         return (
           <RudderEntityPreview mention={mention} label={mentionLabel}>
             {mentionLink}

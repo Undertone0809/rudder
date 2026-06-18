@@ -31,7 +31,7 @@ import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
-type PreviewableMention = Exclude<ParsedMentionChip, { kind: "chat" }>;
+type PreviewableMention = Exclude<ParsedMentionChip, { kind: "automation" | "chat" }>;
 
 interface RudderEntityPreviewProps {
   mention: PreviewableMention;

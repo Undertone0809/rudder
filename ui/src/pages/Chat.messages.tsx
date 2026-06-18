@@ -1239,7 +1239,7 @@ export function ChatUserPlainTextBody({
             {mentionLabel}
           </Link>
         );
-        if (mention.kind === "chat") return mentionLink;
+        if (mention.kind === "automation" || mention.kind === "chat") return mentionLink;
         return (
           <RudderEntityPreview key={`${part.href}-${index}`} mention={mention} label={mentionLabel}>
             {mentionLink}

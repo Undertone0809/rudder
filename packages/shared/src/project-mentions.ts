@@ -1,5 +1,6 @@
 export const PROJECT_MENTION_SCHEME = "project://";
 export const AGENT_MENTION_SCHEME = "agent://";
+export const AUTOMATION_MENTION_SCHEME = "automation://";
 export const ISSUE_MENTION_SCHEME = "issue://";
 export const CHAT_MENTION_SCHEME = "chat://";
 export const LIBRARY_DOC_MENTION_SCHEME = "library-doc://";
@@ -9,6 +10,7 @@ export const LIBRARY_DIRECTORY_MENTION_SCHEME = "library-directory://";
 
 const PROJECT_MENTION_LINK_RE = /\[[^\]]*]\((project:\/\/[^)\s]+)\)/gi;
 const AGENT_MENTION_LINK_RE = /\[[^\]]*]\((agent:\/\/[^)\s]+)\)/gi;
+const AUTOMATION_MENTION_LINK_RE = /\[[^\]]*]\((automation:\/\/[^)\s]+)\)/gi;
 const ISSUE_MENTION_LINK_RE = /\[[^\]]*]\((issue:\/\/[^)\s]+)\)/gi;
 const CHAT_MENTION_LINK_RE = /\[[^\]]*]\((chat:\/\/[^)\s]+)\)/gi;
 const LIBRARY_DOC_MENTION_LINK_RE = /\[[^\]]*]\((library-doc:\/\/[^)\s]+)\)/gi;
@@ -26,6 +28,11 @@ export interface ParsedAgentMention {
   agentId: string;
   icon: string | null;
   intent: "reference" | "wake";
+}
+
+export interface ParsedAutomationMention {
+  automationId: string;
+  title: string | null;
 }
 
 export interface ParsedIssueMention {
@@ -126,6 +133,33 @@ export function parseAgentMentionHref(href: string): ParsedAgentMention | null {
     agentId,
     icon: null,
     intent: url.searchParams.get("intent") === "wake" ? "wake" : "reference",
+  };
+}
+
+export function buildAutomationMentionHref(automationId: string, title?: string | null): string {
+  void title;
+  const trimmedAutomationId = automationId.trim();
+  return `${AUTOMATION_MENTION_SCHEME}${trimmedAutomationId}`;
+}
+
+export function parseAutomationMentionHref(href: string): ParsedAutomationMention | null {
+  if (!href.startsWith(AUTOMATION_MENTION_SCHEME)) return null;
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "automation:") return null;
+
+  const automationId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
+  if (!automationId) return null;
+
+  return {
+    automationId,
+    title: null,
   };
 }
 
@@ -354,6 +388,19 @@ export function extractAgentWakeMentionIds(markdown: string): string[] {
   while ((match = re.exec(source)) !== null) {
     const parsed = parseAgentMentionHref(match[1]);
     if (parsed?.intent === "wake") ids.add(parsed.agentId);
+  }
+  return [...ids];
+}
+
+export function extractAutomationMentionIds(markdown: string): string[] {
+  if (!markdown) return [];
+  const ids = new Set<string>();
+  const re = new RegExp(AUTOMATION_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const parsed = parseAutomationMentionHref(match[1]);
+    if (parsed) ids.add(parsed.automationId);
   }
   return [...ids];
 }

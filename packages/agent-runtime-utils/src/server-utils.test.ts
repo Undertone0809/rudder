@@ -370,6 +370,7 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).toContain("[](issue://<issue-id>)");
     expect(loaded.prefix).toContain("[](agent://<agent-id>)");
     expect(loaded.prefix).toContain("[](agent://<agent-id>?intent=wake)");
+    expect(loaded.prefix).toContain("[](automation://<automation-id>)");
     expect(loaded.prefix).toContain("[](project://<project-id>)");
     expect(loaded.prefix).toContain("[](chat://<conversation-id>)");
     expect(loaded.prefix).toContain("[](skill://<skill-ref>)");

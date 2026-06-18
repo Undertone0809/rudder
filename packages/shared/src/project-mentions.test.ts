@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAgentMentionHref,
+  buildAutomationMentionHref,
   buildChatMentionHref,
   buildIssueMentionHref,
   buildLibraryDirectoryMentionHref,
@@ -12,6 +13,7 @@ import {
   buildProjectMentionHref,
   extractAgentMentionIds,
   extractAgentWakeMentionIds,
+  extractAutomationMentionIds,
   extractChatMentionIds,
   extractIssueMentionIds,
   extractLibraryDirectoryMentionPaths,
@@ -20,6 +22,7 @@ import {
   extractLibraryFileMentionPaths,
   extractProjectMentionIds,
   parseAgentMentionHref,
+  parseAutomationMentionHref,
   parseChatMentionHref,
   parseIssueMentionHref,
   parseLibraryDirectoryMentionHref,
@@ -59,6 +62,16 @@ describe("project-mentions", () => {
     });
     expect(extractAgentMentionIds(`[@CodexCoder](${href})`)).toEqual(["agent-123"]);
     expect(extractAgentWakeMentionIds(`[@CodexCoder](${href})`)).toEqual([]);
+  });
+
+  it("builds automation mentions with only the stable automation id", () => {
+    const href = buildAutomationMentionHref("automation-123", "Morning review");
+    expect(href).toBe("automation://automation-123");
+    expect(parseAutomationMentionHref(href)).toEqual({
+      automationId: "automation-123",
+      title: null,
+    });
+    expect(extractAutomationMentionIds(`[@Morning review](${href})`)).toEqual(["automation-123"]);
   });
 
   it("parses legacy agent icon metadata without treating it as identity", () => {
@@ -192,6 +205,8 @@ describe("project-mentions", () => {
       .toEqual(["project-123"]);
     expect(extractAgentMentionIds("```md\n[@Agent](agent://id)\n```\n[@Real](agent://agent-123)"))
       .toEqual(["agent-123"]);
+    expect(extractAutomationMentionIds("`[@Automation](automation://automation-1)` [@Real](automation://automation-2)"))
+      .toEqual(["automation-2"]);
     expect(extractIssueMentionIds("`[@PAP-1](issue://id?r=PAP-1)` [@PAP-2](issue://issue-123?r=PAP-2)"))
       .toEqual(["issue-123"]);
     expect(extractChatMentionIds("`[@Chat](chat://chat-1)` [@Real](chat://chat-2)"))

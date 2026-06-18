@@ -1,4 +1,4 @@
-import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDirectoryMentionHref, parseLibraryDocMentionHref, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
+import { parseAgentMentionHref, parseAutomationMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDirectoryMentionHref, parseLibraryDocMentionHref, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
 import { FileText, Folder } from "lucide-react";
 import type { CSSProperties } from "react";
 import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
@@ -16,6 +16,11 @@ export type ParsedMentionChip =
       projectId: string;
       color: string | null;
       icon: string | null;
+    }
+  | {
+      kind: "automation";
+      automationId: string;
+      title: string | null;
     }
   | {
       kind: "issue";
@@ -74,6 +79,15 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
       projectId: project.projectId,
       color: project.color,
       icon: project.icon ?? null,
+    };
+  }
+
+  const automation = parseAutomationMentionHref(href);
+  if (automation) {
+    return {
+      kind: "automation",
+      automationId: automation.automationId,
+      title: automation.title,
     };
   }
 
@@ -139,6 +153,7 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
 
 export function mentionChipNavigationPath(mention: ParsedMentionChip): string {
   if (mention.kind === "project") return `/projects/${mention.projectId}`;
+  if (mention.kind === "automation") return `/automations/${mention.automationId}`;
   if (mention.kind === "issue") {
     const basePath = `/issues/${mention.ref ?? mention.issueId}`;
     return mention.commentId ? `${basePath}#comment-${encodeURIComponent(mention.commentId)}` : basePath;
@@ -238,6 +253,7 @@ export function clearMentionChipDecoration(element: HTMLElement) {
   element.classList.remove(
     "rudder-mention-chip",
     "rudder-mention-chip--agent",
+    "rudder-mention-chip--automation",
     "rudder-mention-chip--chat",
     "rudder-mention-chip--issue",
     "rudder-mention-chip--library_doc",

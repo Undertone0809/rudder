@@ -91,7 +91,7 @@ import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/documen
 import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { libraryCopy } from "../lib/library-copy";
 import { getCachedLibraryEntryMetadata } from "../lib/library-entry-cache";
-import { parseMentionChipHref } from "../lib/mention-chips";
+import { mentionChipNavigationPath, parseMentionChipHref } from "../lib/mention-chips";
 import { queryKeys } from "../lib/queryKeys";
 import {
   organizationResourceKindLabel,
@@ -5148,20 +5148,7 @@ export function OrganizationWorkspaceBrowser({
       handleSelectFile(parsed.filePath);
       return;
     }
-    const target = parsed.kind === "agent"
-      ? `/agents/${parsed.agentId}`
-      : parsed.kind === "issue"
-        ? `/issues/${parsed.ref ?? parsed.issueId}`
-        : parsed.kind === "chat"
-          ? `/messenger/chat/${parsed.conversationId}`
-        : parsed.kind === "library_doc"
-          ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
-          : parsed.kind === "library_entry"
-            ? `/library?entry=${encodeURIComponent(parsed.entryId)}`
-            : parsed.kind === "library_directory"
-              ? `/library?directory=${encodeURIComponent(parsed.directoryPath)}`
-              : `/projects/${parsed.projectId}`;
-    navigate(target);
+    navigate(mentionChipNavigationPath(parsed));
   };
 
   function handleCloseOtherFileTabs(filePath: string) {

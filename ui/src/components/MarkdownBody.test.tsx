@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDirectoryMentionHref, buildLibraryDocMentionHref, buildLibraryEntryMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -425,6 +425,20 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/messenger/chat/chat-123"');
     expect(html).toContain('data-mention-kind="chat"');
     expect(html).toContain("Launch planning");
+    expect(html).not.toContain("rudder-entity-preview-wrap");
+  });
+
+  it("renders automation mentions as live Automation links without previews", () => {
+    const href = buildAutomationMentionHref("automation-123", "Morning review");
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{`[@Morning review](${href})`}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/automations/automation-123"');
+    expect(html).toContain('data-mention-kind="automation"');
+    expect(html).toContain("Morning review");
     expect(html).not.toContain("rudder-entity-preview-wrap");
   });
 

@@ -1612,7 +1612,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
           continue;
         }
 
-        if (parsed.kind === "chat") {
+        if (parsed.kind === "automation" || parsed.kind === "chat") {
           applyMentionChipDecoration(link, parsed);
           continue;
         }

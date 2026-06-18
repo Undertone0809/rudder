@@ -62,7 +62,7 @@ import { readDesktopShell } from "@/lib/desktop-shell";
 import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom";
 import { resolveLocalFileTarget } from "@/lib/local-file-targets";
 import { buildMarkdownMentionOptions } from "@/lib/markdown-mention-options";
-import { parseMentionChipHref } from "@/lib/mention-chips";
+import { mentionChipNavigationPath, parseMentionChipHref } from "@/lib/mention-chips";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { invalidateMessengerThreadSummaryQueries, markMessengerChatReadInCache, upsertMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
@@ -690,21 +690,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (token.kind === "mention") {
       const parsed = parseMentionChipHref(token.href);
       if (!parsed) return;
-      const target = parsed.kind === "agent"
-        ? `/agents/${parsed.agentId}`
-        : parsed.kind === "issue"
-          ? `/issues/${parsed.ref ?? parsed.issueId}`
-          : parsed.kind === "chat"
-            ? `/messenger/chat/${parsed.conversationId}`
-          : parsed.kind === "library_doc"
-            ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
-            : parsed.kind === "library_entry"
-              ? `/library?entry=${encodeURIComponent(parsed.entryId)}`
-              : parsed.kind === "library_file"
-                ? `/library?path=${encodeURIComponent(parsed.filePath)}`
-                : parsed.kind === "library_directory"
-                  ? `/library?directory=${encodeURIComponent(parsed.directoryPath)}`
-              : `/projects/${parsed.projectId}`;
+      const target = mentionChipNavigationPath(parsed);
       navigate(target);
       return;
     }

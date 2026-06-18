@@ -112,6 +112,34 @@ describe("mention chips", () => {
     expect(element.classList.contains("rudder-mention-chip--chat")).toBe(true);
   });
 
+  it("parses, decorates, and navigates automation mention links", () => {
+    const mention = parseMentionChipHref("automation://automation-123?t=Morning%20review");
+    expect(mention).toEqual({
+      kind: "automation",
+      automationId: "automation-123",
+      title: null,
+    });
+
+    expect(mention ? mentionChipNavigationPath(mention) : null).toBe("/automations/automation-123");
+
+    const element = document.createElement("a");
+    element.textContent = "@Morning review";
+    applyMentionChipDecoration(element, {
+      kind: "automation",
+      automationId: "automation-123",
+      title: "Morning review",
+    });
+
+    expect(element.textContent).toBe("Morning review");
+    expect(element.dataset.mentionKind).toBe("automation");
+    expect(element.classList.contains("rudder-mention-chip--automation")).toBe(true);
+
+    clearMentionChipDecoration(element);
+
+    expect(element.dataset.mentionKind).toBeUndefined();
+    expect(element.classList.contains("rudder-mention-chip--automation")).toBe(false);
+  });
+
   it("parses, decorates, and navigates issue comment mention links", () => {
     const mention = parseMentionChipHref("issue://issue-123?r=RUD-123&c=comment-456");
     expect(mention).toEqual({

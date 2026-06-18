@@ -2400,6 +2400,7 @@ button[draggable="false"] {
 }
 
 .rudder-milkdown-content a[href^="agent://"],
+.rudder-milkdown-content a[href^="automation://"],
 .rudder-milkdown-content a[href^="chat://"],
 .rudder-milkdown-content a[href^="issue://"],
 .rudder-milkdown-content a[href^="project://"],
@@ -2442,6 +2443,15 @@ button[draggable="false"] {
   height: 0.45rem;
   border-radius: 999px;
   background: currentColor;
+}
+
+.rudder-milkdown-content a[href^="automation://"]::before {
+  content: "";
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 1px solid currentColor;
+  border-radius: 0.16rem;
 }
 
 .rudder-milkdown-content a[href^="chat://"]::before {
@@ -2511,6 +2521,7 @@ button[draggable="false"] {
 
 .rudder-milkdown-content :is(
   a[href^="agent://"],
+  a[href^="automation://"],
   a[href^="chat://"],
   a[href^="issue://"],
   a[href^="project://"],
@@ -2539,6 +2550,7 @@ button[draggable="false"] {
 
 .rudder-milkdown-content :is(
   a[href^="agent://"],
+  a[href^="automation://"],
   a[href^="chat://"],
   a[href^="issue://"],
   a[href^="project://"],
@@ -2556,6 +2568,7 @@ button[draggable="false"] {
 
 .rudder-milkdown-content :is(
   a[href^="agent://"],
+  a[href^="automation://"],
   a[href^="chat://"],
   a[href^="issue://"],
   a[href^="project://"],
@@ -2595,6 +2608,13 @@ button[draggable="false"] {
 .rudder-milkdown-content a[href^="issue://"]::before {
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-milkdown-content a[href^="automation://"]::before {
+  border: 0;
+  border-radius: 0;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='2'/%3E%3Cpath d='M16 2v4'/%3E%3Cpath d='M8 2v4'/%3E%3Cpath d='M3 10h18'/%3E%3Cpath d='m9 15 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='2'/%3E%3Cpath d='M16 2v4'/%3E%3Cpath d='M8 2v4'/%3E%3Cpath d='M3 10h18'/%3E%3Cpath d='m9 15 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .rudder-milkdown-content a[href^="chat://"]::before {
