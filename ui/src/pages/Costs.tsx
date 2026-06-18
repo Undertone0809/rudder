@@ -13,7 +13,6 @@ import {
   type CostByProviderModel,
   type CostTrendPoint,
   type CostWindowSpendRow,
-  type FinanceEvent,
   type QuotaWindow,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,7 +27,6 @@ import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { EmptyState } from "../components/EmptyState";
 import { FinanceBillerCard } from "../components/FinanceBillerCard";
 import { FinanceKindCard } from "../components/FinanceKindCard";
-import { FinanceTimelineCard } from "../components/FinanceTimelineCard";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { ProviderQuotaCard } from "../components/ProviderQuotaCard";
@@ -820,16 +818,14 @@ export function Costs() {
       queryKeys.financeSummary(orgId, from || undefined, to || undefined),
       queryKeys.financeByBiller(orgId, from || undefined, to || undefined),
       queryKeys.financeByKind(orgId, from || undefined, to || undefined),
-      queryKeys.financeEvents(orgId, from || undefined, to || undefined, 18),
     ],
     queryFn: async () => {
-      const [summary, byBiller, byKind, events] = await Promise.all([
+      const [summary, byBiller, byKind] = await Promise.all([
         costsApi.financeSummary(orgId, from || undefined, to || undefined),
         costsApi.financeByBiller(orgId, from || undefined, to || undefined),
         costsApi.financeByKind(orgId, from || undefined, to || undefined),
-        costsApi.financeEvents(orgId, from || undefined, to || undefined, 18),
       ]);
-      return { summary, byBiller, byKind, events };
+      return { summary, byBiller, byKind };
     },
     enabled: !!selectedOrganizationId && customReady,
   });
@@ -1154,7 +1150,6 @@ export function Costs() {
       0,
     );
 
-  const topFinanceEvents = (financeData?.events ?? []) as FinanceEvent[];
   const budgetPolicies = budgetData?.policies ?? [];
   const activeBudgetIncidents = budgetData?.activeIncidents ?? [];
   const budgetPoliciesByScope = useMemo(() => ({
@@ -1668,7 +1663,7 @@ export function Costs() {
               />
 
               <div className="grid gap-4 xl:grid-cols-[1.2fr,0.95fr]">
-                <div className="space-y-4">
+                <div>
                   <Card>
                     <CardHeader className="px-5 pt-5 pb-2">
                       <CardTitle className="text-base">By biller</CardTitle>
@@ -1682,7 +1677,6 @@ export function Costs() {
                       )}
                     </CardContent>
                   </Card>
-                  <FinanceTimelineCard rows={topFinanceEvents} />
                 </div>
 
                 <FinanceKindCard rows={financeData?.byKind ?? []} />
