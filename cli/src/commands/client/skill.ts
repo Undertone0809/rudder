@@ -116,8 +116,14 @@ export function registerSkillCommands(program: Command): void {
       .option("--path <path>", "Skill package file path", "SKILL.md")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder skill file <skill-uuid> --path SKILL.md --org-id <org-id>",
-          "rudder skill file <skill-uuid> --path references/usage.md --json",
+          {
+            description: "Read the main skill trigger and workflow instructions:",
+            command: "rudder skill file <skill-uuid> --path SKILL.md --org-id <org-id>",
+          },
+          {
+            description: "Inspect a specific reference file in the skill package:",
+            command: "rudder skill file <skill-uuid> --path references/usage.md --json",
+          },
         ],
         cautions: [
           "Prefer the skill UUID for slashful keys such as local/<hash>/<slug>.",
@@ -147,8 +153,14 @@ export function registerSkillCommands(program: Command): void {
       .requiredOption("--source <source>", "Skill source (local path, URL, or repo ref)")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder skill import --org-id <org-id> --source /abs/path/to/skill --json",
-          "rudder skill list --org-id <org-id> --json",
+          {
+            description: "Import a durable organization-shared skill package:",
+            command: "rudder skill import --org-id <org-id> --source /abs/path/to/skill --json",
+          },
+          {
+            description: "List imported skills afterward to get stable ids:",
+            command: "rudder skill list --org-id <org-id> --json",
+          },
         ],
         cautions: [
           "Import organization-shared skills from durable shared paths, not disposable agent-private work directories.",

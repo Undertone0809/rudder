@@ -367,8 +367,14 @@ export function registerAutomationCommands(program: Command): void {
       .option("--source <source>", "Run source", "manual")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder automation run <automation-id> --payload '{\"manual\":true}' --json",
-          "rudder automation run <automation-id> --trigger-id <trigger-id> --idempotency-key zst-123-smoke",
+          {
+            description: "Run a verified automation manually with an explicit payload:",
+            command: "rudder automation run <automation-id> --payload '{\"manual\":true}' --json",
+          },
+          {
+            description: "Retry a trigger-specific smoke run with duplicate protection:",
+            command: "rudder automation run <automation-id> --trigger-id <trigger-id> --idempotency-key zst-123-smoke",
+          },
         ],
         cautions: [
           "Confirm the automation and trigger target before running; manual runs can create tracked issues or chats.",

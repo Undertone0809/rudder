@@ -559,8 +559,14 @@ export function registerAgentCommands(program: Command): void {
       .argument("<selectionRefs...>", "Skill selection refs to enable")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder agent skills enable <agent-id> rudder/rudder local/abc123/custom-skill",
-          "rudder agent skills enable <agent-id> <selection-ref> --json",
+          {
+            description: "Add skills while preserving the agent's existing enabled set:",
+            command: "rudder agent skills enable <agent-id> rudder/rudder local/abc123/custom-skill",
+          },
+          {
+            description: "Enable one newly created private skill and inspect the resulting snapshot:",
+            command: "rudder agent skills enable <agent-id> <selection-ref> --json",
+          },
         ],
         cautions: [
           "This is additive and preserves existing enabled optional skills.",
@@ -591,8 +597,14 @@ export function registerAgentCommands(program: Command): void {
       )
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder agent skills sync <agent-id> --desired-skills \"rudder/rudder,local/abc123/custom-skill\"",
-          "rudder agent skills sync <agent-id> --desired-skills \"\" --json",
+          {
+            description: "Replace the optional enabled set with an explicitly preserved CSV:",
+            command: "rudder agent skills sync <agent-id> --desired-skills \"rudder/rudder,local/abc123/custom-skill\"",
+          },
+          {
+            description: "Clear optional skills only when that is the intended final state:",
+            command: "rudder agent skills sync <agent-id> --desired-skills \"\" --json",
+          },
         ],
         cautions: [
           "Sync replaces the full optional enabled-skill set; use enable for additive changes.",

@@ -201,12 +201,32 @@ file with `--image <path>` instead of leaving only the local path in the text.
 
 Recommended cases:
 
-```sh
-pnpm rudder issue context ZST-123 --wake-comment-id <comment-id> --json
-pnpm rudder issue checkout ZST-123 --agent-id "$RUDDER_AGENT_ID" --expected-statuses todo,backlog,blocked --json
-pnpm rudder issue comment ZST-123 --body-file ./progress.md --image ./screenshot.png --json
-pnpm rudder issue done ZST-123 --comment-file ./done.md --image ./screenshot.png --json
-```
+- **Wake-context handoff.** Use this at the start of a mentioned or heartbeat
+  run to read the issue, parent/project context, comment cursor, and the exact
+  wake comment that triggered the run. `--json` keeps the payload stable for
+  agent parsing.
+  ```sh
+  pnpm rudder issue context ZST-123 --wake-comment-id <comment-id> --json
+  ```
+- **Governed checkout before work.** Use this before mutating files or status
+  so ownership and expected status are recorded atomically. Do not retry a
+  checkout conflict; inspect the active run instead.
+  ```sh
+  pnpm rudder issue checkout ZST-123 --agent-id "$RUDDER_AGENT_ID" --expected-statuses todo,backlog,blocked --json
+  ```
+- **Progress update with visual evidence.** Use a Markdown file for status,
+  commands, test output, and code spans. Add each local screenshot with
+  `--image` so the board can open it from Rudder rather than relying on a local
+  filesystem path.
+  ```sh
+  pnpm rudder issue comment ZST-123 --body-file ./progress.md --image ./screenshot.png --json
+  ```
+- **Completion with durable validation.** Use this when the issue is ready for
+  review/close-out. Put the change summary, tests run, commit/push status, and
+  any screenshot evidence in the comment file.
+  ```sh
+  pnpm rudder issue done ZST-123 --comment-file ./done.md --image ./screenshot.png --json
+  ```
 
 Bad cases to avoid:
 
@@ -230,12 +250,30 @@ remain scoped to the authenticated organization.
 
 Recommended cases:
 
-```sh
-pnpm rudder project list --org-id <org-id> --json
-pnpm rudder project get rudder-dev --org-id <org-id> --json
-pnpm rudder project create --org-id <org-id> --name "Rudder dev" --status in_progress --lead-agent-id <agent-id> --json
-pnpm rudder project update rudder-dev --org-id <org-id> --status in_progress --json
-```
+- **Find the project before creating more structure.** Use `list` with an
+  explicit organization when a local profile may point at a different org. This
+  avoids creating duplicate projects for an existing workstream.
+  ```sh
+  pnpm rudder project list --org-id <org-id> --json
+  ```
+- **Resolve a shortname under the intended org.** Use `get` before mutating a
+  project by shortname, especially in local trusted runs where multiple
+  profiles or organizations may exist.
+  ```sh
+  pnpm rudder project get rudder-dev --org-id <org-id> --json
+  ```
+- **Create a project container with an owner.** Use this for a new durable
+  workstream after confirming it does not already exist. Include status and
+  lead agent when the project should immediately appear as active work.
+  ```sh
+  pnpm rudder project create --org-id <org-id> --name "Rudder dev" --status in_progress --lead-agent-id <agent-id> --json
+  ```
+- **Update state without changing identity.** Use `update` for lifecycle
+  changes such as moving a project to `in_progress`; keep `--org-id` on
+  shortname-based updates so the target is unambiguous.
+  ```sh
+  pnpm rudder project update rudder-dev --org-id <org-id> --status in_progress --json
+  ```
 
 Bad cases to avoid:
 
@@ -275,12 +313,29 @@ returned by `automation get` or `automation triggers list`.
 
 Recommended cases:
 
-```sh
-pnpm rudder automation list --org-id <org-id> --status active --assignee-agent-id <agent-id> --json
-pnpm rudder automation get <automation-id> --json
-pnpm rudder automation triggers list <automation-id> --json
-pnpm rudder automation run <automation-id> --payload '{"manual":true}' --idempotency-key zst-123-smoke --json
-```
+- **Find active automation owned by an agent.** Use this when checking what
+  scheduled or webhook work an agent currently owns. Filtering prevents stale
+  or paused automations from being mistaken for the live target.
+  ```sh
+  pnpm rudder automation list --org-id <org-id> --status active --assignee-agent-id <agent-id> --json
+  ```
+- **Inspect before mutating or running.** Use `get` to confirm title, output
+  mode, assignee, status, and payload before a manual run or trigger change.
+  Manual runs can create tracked issues or chats.
+  ```sh
+  pnpm rudder automation get <automation-id> --json
+  ```
+- **Verify the trigger id separately.** Use this before updating, deleting, or
+  rotating a trigger secret. Trigger ids and automation ids are different
+  targets.
+  ```sh
+  pnpm rudder automation triggers list <automation-id> --json
+  ```
+- **Manual smoke run with duplicate protection.** Use an idempotency key when
+  retrying or validating an automation so repeated invocations can be detected.
+  ```sh
+  pnpm rudder automation run <automation-id> --payload '{"manual":true}' --idempotency-key zst-123-smoke --json
+  ```
 
 Bad cases to avoid:
 
@@ -316,12 +371,29 @@ another chat assistant reply.
 
 Recommended cases:
 
-```sh
-pnpm rudder chat list --org-id <org-id> --status active --query "release" --json
-pnpm rudder chat read <chat-id> --turn-limit 20 --include-output --json
-pnpm rudder chat send <chat-id> --body "Status: validation is running."
-printf '%s\n' "Longer agent-authored note" | pnpm rudder chat send <chat-id>
-```
+- **Find the right conversation without dumping transcripts.** Use `list` with
+  status and query filters when looking for recent operator context. This
+  returns bounded conversation rows, not full assistant output.
+  ```sh
+  pnpm rudder chat list --org-id <org-id> --status active --query "release" --json
+  ```
+- **Read a bounded page before replying.** Use `read` with a turn limit when
+  answering a follow-up or reconstructing context. Add `--include-output` only
+  when assistant/tool transcript output is relevant.
+  ```sh
+  pnpm rudder chat read <chat-id> --turn-limit 20 --include-output --json
+  ```
+- **Short agent-authored status note.** Use `--body` for a small direct update.
+  It appends an agent message for the operator; it does not create a new user
+  prompt or start another assistant reply.
+  ```sh
+  pnpm rudder chat send <chat-id> --body "Status: validation is running."
+  ```
+- **Longer note from stdin.** Use stdin when the message has multiple lines.
+  `chat send` intentionally does not have `--body-file`.
+  ```sh
+  printf '%s\n' "Longer agent-authored note" | pnpm rudder chat send <chat-id>
+  ```
 
 Bad cases to avoid:
 
@@ -372,12 +444,30 @@ as `rudder runs transcript <run-id> --around-error step-12`.
 
 Recommended cases:
 
-```sh
-pnpm rudder runs list --org-id <org-id> --agent-id <agent-id> --status failed --limit 20 --json
-pnpm rudder runs errors <run-id> --max-chars 4000 --json
-pnpm rudder runs transcript <run-id> --around-error step-12 --context-turns 2
-pnpm rudder runs transcript <run-id> --chronological --turn-limit 30 --include-output
-```
+- **Start a run audit with filters.** Use this to find recent failures for a
+  specific agent or issue. Filtering keeps the evidence set small enough to
+  inspect and cite.
+  ```sh
+  pnpm rudder runs list --org-id <org-id> --agent-id <agent-id> --status failed --limit 20 --json
+  ```
+- **Read the error-first summary.** Use `runs errors` after selecting a run.
+  The output points to the failing step and usually provides the right
+  `runs transcript --around-error` follow-up command.
+  ```sh
+  pnpm rudder runs errors <run-id> --max-chars 4000 --json
+  ```
+- **Inspect just the failing neighborhood.** Use `--around-error` when a tool
+  call or runtime step failed. This avoids scanning a full transcript before
+  you know which context matters.
+  ```sh
+  pnpm rudder runs transcript <run-id> --around-error step-12 --context-turns 2
+  ```
+- **Read a bounded chronological story.** Use this when reconstructing the
+  agent's sequence of decisions, keeping output clipped unless detailed tool
+  output is needed.
+  ```sh
+  pnpm rudder runs transcript <run-id> --chronological --turn-limit 30 --include-output
+  ```
 
 Bad cases to avoid:
 
@@ -438,12 +528,29 @@ pnpm rudder agent local-cli claudecoder --org-id <org-id>
 
 Recommended cases:
 
-```sh
-pnpm rudder agent inbox --json
-pnpm rudder agent get <agent-id-or-shortname> --org-id <org-id> --json
-pnpm rudder agent skills enable <agent-id> rudder/rudder local/abc123/custom-skill --json
-pnpm rudder agent skills sync <agent-id> --desired-skills "rudder/rudder,local/abc123/custom-skill" --json
-```
+- **Check work addressed to the current agent.** Use `agent inbox` to see
+  assignee/reviewer items and active-run state before looking for unassigned
+  work or broad board context.
+  ```sh
+  pnpm rudder agent inbox --json
+  ```
+- **Confirm the target agent profile.** Use `get` before updating identity,
+  skills, or local CLI access. Keep `--org-id` when resolving shortnames.
+  ```sh
+  pnpm rudder agent get <agent-id-or-shortname> --org-id <org-id> --json
+  ```
+- **Add skills without removing existing ones.** Use `skills enable` after
+  creating, copying, or importing a skill when the goal is additive loading for
+  future runs.
+  ```sh
+  pnpm rudder agent skills enable <agent-id> rudder/rudder local/abc123/custom-skill --json
+  ```
+- **Replace the full optional skill set intentionally.** Use `skills sync` only
+  when you have already preserved every desired existing skill in the CSV and
+  want the final enabled set to exactly match it.
+  ```sh
+  pnpm rudder agent skills sync <agent-id> --desired-skills "rudder/rudder,local/abc123/custom-skill" --json
+  ```
 
 Bad cases to avoid:
 
@@ -471,12 +578,27 @@ approval.
 
 Recommended cases:
 
-```sh
-pnpm rudder approval get <approval-id> --json
-pnpm rudder approval issues <approval-id> --json
-pnpm rudder approval approve <approval-id> --decision-note "Reviewed linked issues and accepted." --json
-pnpm rudder approval comment <approval-id> --body-file ./approval-note.md --json
-```
+- **Read the approval payload first.** Use this before deciding so the request
+  type, current status, payload, submitter, and governance state are clear.
+  ```sh
+  pnpm rudder approval get <approval-id> --json
+  ```
+- **Inspect linked work before a decision.** Use this when an approval depends
+  on issue context, implementation status, or review evidence.
+  ```sh
+  pnpm rudder approval issues <approval-id> --json
+  ```
+- **Record a durable approval decision.** Use `approve`, `reject`, or
+  `request-revision` with `--decision-note` when resolving the approval.
+  Comments alone do not change the decision state.
+  ```sh
+  pnpm rudder approval approve <approval-id> --decision-note "Reviewed linked issues and accepted." --json
+  ```
+- **Discuss without deciding.** Use `approval comment` for longer Markdown
+  questions or review notes that should not approve or reject the request.
+  ```sh
+  pnpm rudder approval comment <approval-id> --body-file ./approval-note.md --json
+  ```
 
 Bad cases to avoid:
 
@@ -501,12 +623,29 @@ with `library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"`.
 
 Recommended cases:
 
-```sh
-pnpm rudder library file list projects/rudder --org-id <org-id> --json
-pnpm rudder library file put projects/rudder/proposals/plan.md --body-file ./plan.md --org-id <org-id> --json
-pnpm rudder library file ref projects/rudder/proposals/plan.md --org-id <org-id> --json
-printf '%s\n' "# Note" | pnpm rudder library file put projects/rudder/know-how/note.md --body-file - --org-id <org-id>
-```
+- **Browse a project Library folder.** Use `list` when checking whether a
+  durable proposal, report, or know-how file already exists before creating a
+  new one.
+  ```sh
+  pnpm rudder library file list projects/rudder --org-id <org-id> --json
+  ```
+- **Upload a durable Markdown artifact.** Use `put --body-file` when the run
+  cannot write directly under `$RUDDER_PROJECT_LIBRARY_ROOT` or when uploading
+  from a local scratch file.
+  ```sh
+  pnpm rudder library file put projects/rudder/proposals/plan.md --body-file ./plan.md --org-id <org-id> --json
+  ```
+- **Generate the renderable Markdown link.** Use `file ref` after writing a
+  Library file, then paste the returned `markdownLink` into the issue comment
+  or chat reply.
+  ```sh
+  pnpm rudder library file ref projects/rudder/proposals/plan.md --org-id <org-id> --json
+  ```
+- **Write content from stdin.** Use stdin for small generated notes while still
+  targeting a Library-relative path.
+  ```sh
+  printf '%s\n' "# Note" | pnpm rudder library file put projects/rudder/know-how/note.md --body-file - --org-id <org-id>
+  ```
 
 Bad cases to avoid:
 
@@ -532,12 +671,29 @@ or `agent skills sync` for agent-specific loading.
 
 Recommended cases:
 
-```sh
-pnpm rudder skill list --org-id <org-id> --json
-pnpm rudder skill file <skill-uuid> --path SKILL.md --org-id <org-id> --json
-pnpm rudder skill import --org-id <org-id> --source /abs/shared/path/to/skill --json
-pnpm rudder skill scan-projects --org-id <org-id> --project-ids <project-id> --json
-```
+- **Discover organization skills by stable id.** Use `list` before reading or
+  enabling an organization skill so slashful selection keys are not mistaken
+  for route ids.
+  ```sh
+  pnpm rudder skill list --org-id <org-id> --json
+  ```
+- **Read the actual trigger/workflow instructions.** Use `skill file` for
+  `SKILL.md` or a specific reference file before claiming what a skill does or
+  when it should load.
+  ```sh
+  pnpm rudder skill file <skill-uuid> --path SKILL.md --org-id <org-id> --json
+  ```
+- **Import a shared skill package.** Use this for durable organization-level
+  skills from shared paths, URLs, or repo refs. Importing only registers the
+  package; it does not enable it for agents.
+  ```sh
+  pnpm rudder skill import --org-id <org-id> --source /abs/shared/path/to/skill --json
+  ```
+- **Scan a known project/workspace.** Use this instead of broad local scanning
+  when the target project is known; it keeps discovery bounded and reviewable.
+  ```sh
+  pnpm rudder skill scan-projects --org-id <org-id> --project-ids <project-id> --json
+  ```
 
 Bad cases to avoid:
 

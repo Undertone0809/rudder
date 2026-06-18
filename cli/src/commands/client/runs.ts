@@ -198,8 +198,14 @@ export function registerRunsCommands(program: Command): void {
       .option("--limit <n>", "Maximum rows", "200")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder runs list --org-id <org-id> --agent-id <agent-id> --status failed --limit 20",
-          "rudder runs list --org-id <org-id> --issue-id ZST-123 --used-skill release-maintainer --json",
+          {
+            description: "Find recent failures for one agent before opening transcripts:",
+            command: "rudder runs list --org-id <org-id> --agent-id <agent-id> --status failed --limit 20",
+          },
+          {
+            description: "Collect skill-specific evidence for a linked issue:",
+            command: "rudder runs list --org-id <org-id> --issue-id ZST-123 --used-skill release-maintainer --json",
+          },
         ],
         cautions: [
           "Filter first by org, agent, issue, status, skill, or time; do not start by dumping broad run history.",
@@ -318,8 +324,14 @@ export function registerRunsCommands(program: Command): void {
       .option("--include-outputs", "Alias for --include-output")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder runs transcript <run-id> --around-error step-12 --context-turns 2",
-          "rudder runs transcript <run-id> --chronological --turn-limit 30 --include-output",
+          {
+            description: "Inspect the neighborhood around a failing step:",
+            command: "rudder runs transcript <run-id> --around-error step-12 --context-turns 2",
+          },
+          {
+            description: "Reconstruct a bounded chronological decision trail:",
+            command: "rudder runs transcript <run-id> --chronological --turn-limit 30 --include-output",
+          },
         ],
         cautions: [
           "Human output is compact and clipped by default; use --json only when a script needs the full payload.",
@@ -353,8 +365,14 @@ export function registerRunsCommands(program: Command): void {
       .option("--max-chars <n>", "Maximum output characters per error", "1200")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder runs errors <run-id>",
-          "rudder runs errors <run-id> --max-chars 4000 --json",
+          {
+            description: "Start failed-run investigation with error summaries:",
+            command: "rudder runs errors <run-id>",
+          },
+          {
+            description: "Increase clipped error output for scripts or reports:",
+            command: "rudder runs errors <run-id> --max-chars 4000 --json",
+          },
         ],
         cautions: [
           "Start here for failed runs, then follow the transcript context command returned for the relevant step.",

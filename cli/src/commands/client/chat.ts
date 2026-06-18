@@ -222,8 +222,14 @@ export function registerChatCommands(program: Command): void {
       .option("--max-output-chars <n>", "Maximum transcript output chars for human output", "1200")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder chat read <chat-id> --turn-limit 20 --include-output",
-          "rudder chat read <chat-id> --cursor <nextCursor> --json",
+          {
+            description: "Read a bounded conversation page with transcript output when needed:",
+            command: "rudder chat read <chat-id> --turn-limit 20 --include-output",
+          },
+          {
+            description: "Continue from a stable cursor in scripts:",
+            command: "rudder chat read <chat-id> --cursor <nextCursor> --json",
+          },
         ],
         cautions: [
           "Read bounded pages first; long chats can include large transcript payloads.",
@@ -298,8 +304,14 @@ export function registerChatCommands(program: Command): void {
       .option("--edit-user-message-id <id>", "Regenerate/edit from a prior user message")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder chat send <chat-id> --body \"Status: validation is running\"",
-          "printf '%s\\n' 'Multiline note' | rudder chat send <chat-id>",
+          {
+            description: "Append a short agent-authored status note:",
+            command: "rudder chat send <chat-id> --body \"Status: validation is running\"",
+          },
+          {
+            description: "Send a longer or multiline note through stdin:",
+            command: "printf '%s\\n' 'Multiline note' | rudder chat send <chat-id>",
+          },
         ],
         cautions: [
           "chat send accepts --body or stdin; it does not support --body-file.",

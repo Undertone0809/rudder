@@ -162,8 +162,14 @@ export function registerApprovalCommands(program: Command): void {
       .option("--decided-by-user-id <id>", "Decision actor user ID")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder approval get <approval-id> --json",
-          "rudder approval approve <approval-id> --decision-note \"Approved after reviewing linked issues\" --json",
+          {
+            description: "Read the approval payload before deciding:",
+            command: "rudder approval get <approval-id> --json",
+          },
+          {
+            description: "Record the durable approval decision with concise context:",
+            command: "rudder approval approve <approval-id> --decision-note \"Approved after reviewing linked issues\" --json",
+          },
         ],
         cautions: [
           "Read the approval and linked issues before approving; this is a governed mutation.",
@@ -257,8 +263,14 @@ export function registerApprovalCommands(program: Command): void {
       .option("--body-file <path>", "Read comment body from a file, or '-' for stdin")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder approval comment <approval-id> --body-file ./approval-note.md --json",
-          "printf '%s\\n' 'Need one more linked issue checked.' | rudder approval comment <approval-id> --body-file -",
+          {
+            description: "Add a longer Markdown discussion note without deciding:",
+            command: "rudder approval comment <approval-id> --body-file ./approval-note.md --json",
+          },
+          {
+            description: "Ask a short follow-up from stdin:",
+            command: "printf '%s\\n' 'Need one more linked issue checked.' | rudder approval comment <approval-id> --body-file -",
+          },
         ],
         cautions: [
           "Comments do not approve or reject; use approve/reject/request-revision for the durable decision.",

@@ -92,8 +92,14 @@ export function registerProjectCommands(program: Command): void {
       .option("--color <value>", "Project color or supported gradient token")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder project create --org-id <org-id> --name \"Rudder dev\" --status in_progress --json",
-          "rudder project create --org-id <org-id> --name \"Release\" --goal-id <goal-id> --lead-agent-id <agent-id>",
+          {
+            description: "Create a new active workstream after confirming it does not already exist:",
+            command: "rudder project create --org-id <org-id> --name \"Rudder dev\" --status in_progress --json",
+          },
+          {
+            description: "Create a project tied to a goal and responsible agent:",
+            command: "rudder project create --org-id <org-id> --name \"Release\" --goal-id <goal-id> --lead-agent-id <agent-id>",
+          },
         ],
         cautions: [
           "Project mutations are organization-scoped; pass --org-id when context might be ambiguous.",
@@ -139,8 +145,14 @@ export function registerProjectCommands(program: Command): void {
       .option("--archived-at <iso8601|null>", "Set archivedAt timestamp or literal 'null'")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder project update rudder-dev --org-id <org-id> --status in_progress --json",
-          "rudder project update <project-id> --archived-at null",
+          {
+            description: "Move a known project shortname under the intended org:",
+            command: "rudder project update rudder-dev --org-id <org-id> --status in_progress --json",
+          },
+          {
+            description: "Unarchive a verified project id:",
+            command: "rudder project update <project-id> --archived-at null",
+          },
         ],
         cautions: [
           "Shortname resolution needs the intended organization; include --org-id for cross-org local contexts.",

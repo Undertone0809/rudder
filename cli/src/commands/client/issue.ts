@@ -364,8 +364,14 @@ export function registerIssueCommands(program: Command): void {
       .option("--reopen", "Reopen if issue is done/cancelled")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder issue comment ZST-123 --body-file ./progress.md --image ./screenshot.png --json",
-          "printf '%s\\n' 'Short status' | rudder issue comment ZST-123 --body-file -",
+          {
+            description: "Progress update with attached screenshot evidence:",
+            command: "rudder issue comment ZST-123 --body-file ./progress.md --image ./screenshot.png --json",
+          },
+          {
+            description: "Short stdin status when a separate file is unnecessary:",
+            command: "printf '%s\\n' 'Short status' | rudder issue comment ZST-123 --body-file -",
+          },
         ],
         cautions: [
           "Use --body-file for multiline Markdown; the old --body option is intentionally rejected.",
@@ -409,8 +415,14 @@ export function registerIssueCommands(program: Command): void {
       .option("--comment-file <path>", "Read required review comment from a file, or '-' for stdin")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder issue review ZST-123 --decision request_changes --comment-file ./review.md --json",
-          "rudder issue review ZST-123 --decision approve --comment-file ./review.md",
+          {
+            description: "Return implementation work with durable review feedback:",
+            command: "rudder issue review ZST-123 --decision request_changes --comment-file ./review.md --json",
+          },
+          {
+            description: "Approve after reading the issue evidence and validation:",
+            command: "rudder issue review ZST-123 --decision approve --comment-file ./review.md",
+          },
         ],
         cautions: [
           "Free-form comments are not durable review decisions; use this command for approve/request_changes/etc.",
@@ -477,8 +489,14 @@ export function registerIssueCommands(program: Command): void {
       .option("--image <path>", "Image file to upload and append to the completion comment; may be repeated", collectImagePath, [] as string[])
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder issue done ZST-123 --comment-file ./done.md --image ./screenshot.png --json",
-          "rudder issue done ZST-123 --comment-file - < ./done.md",
+          {
+            description: "Close out with validation summary and visual evidence:",
+            command: "rudder issue done ZST-123 --comment-file ./done.md --image ./screenshot.png --json",
+          },
+          {
+            description: "Read the completion note from stdin in scripts:",
+            command: "rudder issue done ZST-123 --comment-file - < ./done.md",
+          },
         ],
         cautions: [
           "Include validation evidence and commit/push status in the completion comment.",

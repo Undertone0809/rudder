@@ -116,8 +116,14 @@ export function registerLibraryCommands(program: Command): void {
       .argument("<filePath>", "Library file path")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder library file ref projects/rudder/proposals/plan.md --json",
-          "rudder library file ref \"$RUDDER_PROJECT_LIBRARY_PATH/proposals/plan.md\" --json",
+          {
+            description: "Return the renderable Markdown link for a known Library file:",
+            command: "rudder library file ref projects/rudder/proposals/plan.md --json",
+          },
+          {
+            description: "Reference a file under the current project Library path:",
+            command: "rudder library file ref \"$RUDDER_PROJECT_LIBRARY_PATH/proposals/plan.md\" --json",
+          },
         ],
         cautions: [
           "Pass the Library-relative path, not an absolute filesystem path.",
@@ -142,8 +148,14 @@ export function registerLibraryCommands(program: Command): void {
       .option("--body-file <path>", "Read file content from a file, or '-' for stdin")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
-          "rudder library file put projects/rudder/proposals/plan.md --body-file ./plan.md --json",
-          "printf '%s\\n' '# Plan' | rudder library file put projects/rudder/proposals/plan.md --body-file -",
+          {
+            description: "Upload a durable Markdown artifact from a local file:",
+            command: "rudder library file put projects/rudder/proposals/plan.md --body-file ./plan.md --json",
+          },
+          {
+            description: "Write a small generated artifact from stdin:",
+            command: "printf '%s\\n' '# Plan' | rudder library file put projects/rudder/proposals/plan.md --body-file -",
+          },
         ],
         cautions: [
           "Use --body-file for content; the old --body option is intentionally rejected.",
