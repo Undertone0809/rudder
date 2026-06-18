@@ -19,6 +19,7 @@ import {
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeMaintainerOnlySkillSymlinks,
+  renderRudderSkillPromptSection,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -41,6 +42,13 @@ const SHARED_OPENCODE_HOME_ENTRIES = [
   ".local/share/opencode",
   ".cache/opencode",
 ] as const;
+const OPENCODE_PROTECTED_ENV_KEYS = new Set([
+  "AGENT_HOME",
+  "HOME",
+  "RUDDER_AGENT_ROOT",
+  "RUDDER_OPERATOR_HOME",
+  "USERPROFILE",
+]);
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -124,7 +132,7 @@ async function prepareManagedOpenCodeHome(
 
   await onLog(
     "stdout",
-    `[rudder] Using Rudder-managed OpenCode home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Prepared Rudder-managed OpenCode sidecar "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
 }
@@ -257,7 +265,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (workspaceHints.length > 0) env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
 
   for (const [key, value] of Object.entries(envConfig)) {
-    if (typeof value === "string") env[key] = value;
+    if (typeof value === "string" && !OPENCODE_PROTECTED_ENV_KEYS.has(key)) env[key] = value;
   }
   const sourceEnv = { ...process.env, ...env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
@@ -269,7 +277,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     sourceEnv,
     onLog,
   });
-  env.HOME = managedHome;
+  env.HOME = operatorHome;
+  if (process.platform === "win32") env.USERPROFILE = operatorHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -278,8 +287,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   applyGitCredentialHelperPolicyEnv(env);
   const openCodeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredOpenCodeSkillNames = resolveRudderDesiredSkillNames(config, openCodeSkillEntries);
-  const loadedSkills = openCodeSkillEntries
-    .filter((entry) => desiredOpenCodeSkillNames.includes(entry.key))
+  const selectedOpenCodeSkillEntries = openCodeSkillEntries.filter((entry) => desiredOpenCodeSkillNames.includes(entry.key));
+  const rudderSkillsPromptSection = await renderRudderSkillPromptSection({
+    selectedEntries: selectedOpenCodeSkillEntries,
+  });
+  const loadedSkills = selectedOpenCodeSkillEntries
     .map((entry) => ({
       key: entry.key,
       runtimeName: entry.runtimeName,
@@ -289,7 +301,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   await ensureOpenCodeSkillsInjected(
     onLog,
     resolveManagedOpenCodeSkillsDir(managedHome),
-    openCodeSkillEntries,
+    selectedOpenCodeSkillEntries,
     desiredOpenCodeSkillNames,
   );
   const runtimeEnv = Object.fromEntries(
@@ -302,6 +314,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     })).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
   await ensureCommandResolvable(command, cwd, runtimeEnv);
+
+  await onLog(
+    "stdout",
+    `[rudder] Using operator HOME "${operatorHome}" with Rudder enabled skills injected into the prompt.\n`,
+  );
 
   validateOpenCodeModelConfig({ model });
 
@@ -405,6 +422,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
   const prompt = joinPromptSections([
     instructionsPrefix,
+    rudderSkillsPromptSection,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,
@@ -412,6 +430,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    rudderSkillChars: rudderSkillsPromptSection.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
@@ -419,6 +438,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const buildArgs = (resumeSessionId: string | null) => {
     const args = ["run", "--format", "json", "--dir", cwd];
+    if (!extraArgs.includes("--pure")) args.push("--pure");
     if (resumeSessionId) args.push("--session", resumeSessionId);
     if (model) args.push("--model", model);
     if (variant) args.push("--variant", variant);

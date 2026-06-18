@@ -18,6 +18,7 @@ ${gitIdentityCaptureSnippet}
 const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const payload = {
   argv: process.argv.slice(2),
+  home: process.env.HOME || null,
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
     .sort(),
@@ -49,9 +50,17 @@ console.log(JSON.stringify({
 
 type CapturePayload = {
   argv: string[];
+  home: string | null;
   rudderEnvKeys: string[];
   gitIdentity: GitIdentityCapture;
 };
+
+async function createSkillDir(root: string, name: string) {
+  const skillDir = path.join(root, name);
+  await fs.mkdir(skillDir, { recursive: true });
+  await fs.writeFile(path.join(skillDir, "SKILL.md"), `---\nname: ${name}\n---\n\n# ${name}\n`, "utf8");
+  return skillDir;
+}
 
 describe("gemini execute", { timeout: 20_000 }, () => {
   it("passes prompt via --prompt and injects rudder env vars", async () => {
@@ -61,14 +70,19 @@ describe("gemini execute", { timeout: 20_000 }, () => {
     const capturePath = path.join(root, "capture.json");
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
+    const skillsRoot = path.join(root, "skills");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Use concise updates.\n", "utf8");
+    const enabledSkillDir = await createSkillDir(skillsRoot, "enabled-skill");
+    const disabledSkillDir = await createSkillDir(skillsRoot, "disabled-skill");
     await writeFakeGeminiCommand(commandPath);
 
     const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
     process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
 
     let invocationPrompt = "";
     try {
@@ -95,6 +109,13 @@ describe("gemini execute", { timeout: 20_000 }, () => {
             ...clearInheritedGitIdentityEnv,
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
+          rudderRuntimeSkills: [
+            { key: "rudder/enabled-skill", runtimeName: "enabled-skill", source: enabledSkillDir },
+            { key: "rudder/disabled-skill", runtimeName: "disabled-skill", source: disabledSkillDir },
+          ],
+          rudderSkillSync: {
+            desiredSkills: ["rudder/enabled-skill"],
+          },
           instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
@@ -118,6 +139,7 @@ describe("gemini execute", { timeout: 20_000 }, () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expectPreparedGitConfigCapture(capture);
+      expect(capture.home).toBe(root);
       expect(capture.argv).toContain("--output-format");
       expect(capture.argv).toContain("stream-json");
       expect(capture.argv).toContain("--prompt");
@@ -128,6 +150,9 @@ describe("gemini execute", { timeout: 20_000 }, () => {
       const promptArg = promptFlagIndex >= 0 ? capture.argv[promptFlagIndex + 1] : "";
       expect(promptArg).toContain("# Agent Instructions");
       expect(promptArg).toContain("# Tacit Memory");
+      expect(promptArg).toContain("Rudder enabled skills:");
+      expect(promptArg).toContain("## enabled-skill");
+      expect(promptArg).not.toContain("## disabled-skill");
       expect(promptArg).toContain("Follow the rudder heartbeat.");
       expect(promptArg).toContain("Rudder runtime note:");
       expect(capture.rudderEnvKeys).toEqual(
@@ -153,6 +178,11 @@ describe("gemini execute", { timeout: 20_000 }, () => {
         delete process.env.HOME;
       } else {
         process.env.HOME = previousHome;
+      }
+      if (previousOperatorHome === undefined) {
+        delete process.env.RUDDER_OPERATOR_HOME;
+      } else {
+        process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
       }
       await fs.rm(root, { recursive: true, force: true });
     }

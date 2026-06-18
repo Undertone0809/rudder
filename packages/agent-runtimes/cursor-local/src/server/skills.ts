@@ -1,51 +1,67 @@
 import type {
   AgentRuntimeSkillContext,
+  AgentRuntimeSkillEntry,
   AgentRuntimeSkillSnapshot,
 } from "@rudderhq/agent-runtime-utils";
 import {
-  buildPersistentSkillSnapshot,
-  ensureRudderSkillSymlink,
-  readInstalledSkillTargets,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function resolveCursorSkillsHome(config: Record<string, unknown>) {
-  const env =
-    typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
-      ? (config.env as Record<string, unknown>)
-      : {};
-  const configuredHome = asString(env.HOME);
-  const home = configuredHome ? path.resolve(configuredHome) : os.homedir();
-  return path.join(home, ".cursor", "skills");
-}
-
 async function buildCursorSkillSnapshot(config: Record<string, unknown>): Promise<AgentRuntimeSkillSnapshot> {
   const availableEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
+  const availableByKey = new Map(availableEntries.map((entry) => [entry.key, entry]));
   const desiredSkills = resolveRudderDesiredSkillNames(config, availableEntries);
-  const skillsHome = resolveCursorSkillsHome(config);
-  const installed = await readInstalledSkillTargets(skillsHome);
-  return buildPersistentSkillSnapshot({
+  const desiredSet = new Set(desiredSkills);
+  const entries: AgentRuntimeSkillEntry[] = availableEntries.map((entry) => ({
+    key: entry.key,
+    runtimeName: entry.runtimeName,
+    description: entry.description ?? null,
+    desired: desiredSet.has(entry.key),
+    managed: true,
+    state: desiredSet.has(entry.key) ? "configured" : "available",
+    origin: "organization_managed",
+    readOnly: false,
+    sourcePath: entry.source,
+    targetPath: null,
+    detail: desiredSet.has(entry.key)
+      ? "Will be injected into the Cursor run prompt on the next run."
+      : null,
+  }));
+  const warnings: string[] = [];
+
+  for (const desiredSkill of desiredSkills) {
+    if (availableByKey.has(desiredSkill)) continue;
+    warnings.push(`Desired skill "${desiredSkill}" is not available from the Rudder skills directory.`);
+    entries.push({
+      key: desiredSkill,
+      runtimeName: null,
+      desired: true,
+      managed: true,
+      state: "missing",
+      origin: "external_unknown",
+      originLabel: "External or unavailable",
+      readOnly: false,
+      sourcePath: null,
+      targetPath: null,
+      detail: "Rudder cannot find this skill in the local runtime skills directory.",
+    });
+  }
+
+  entries.sort((left, right) => left.key.localeCompare(right.key));
+
+  return {
     agentRuntimeType: "cursor",
-    availableEntries,
+    supported: true,
+    mode: "ephemeral",
     desiredSkills,
-    installed,
-    skillsHome,
-    locationLabel: "~/.cursor/skills",
-    missingDetail: "Configured but not currently linked into the Cursor skills home.",
-    externalConflictDetail: "Skill name is occupied by an external installation.",
-    externalDetail: "Installed outside Rudder management.",
-  });
+    entries,
+    warnings,
+  };
 }
 
 export async function listCursorSkills(ctx: AgentRuntimeSkillContext): Promise<AgentRuntimeSkillSnapshot> {
@@ -54,29 +70,8 @@ export async function listCursorSkills(ctx: AgentRuntimeSkillContext): Promise<A
 
 export async function syncCursorSkills(
   ctx: AgentRuntimeSkillContext,
-  desiredSkills: string[],
+  _desiredSkills: string[],
 ): Promise<AgentRuntimeSkillSnapshot> {
-  const availableEntries = await readRudderRuntimeSkillEntries(ctx.config, __moduleDir);
-  const desiredSet = new Set(desiredSkills);
-  const skillsHome = resolveCursorSkillsHome(ctx.config);
-  await fs.mkdir(skillsHome, { recursive: true });
-  const installed = await readInstalledSkillTargets(skillsHome);
-  const availableByRuntimeName = new Map(availableEntries.map((entry) => [entry.runtimeName, entry]));
-
-  for (const available of availableEntries) {
-    if (!desiredSet.has(available.key)) continue;
-    const target = path.join(skillsHome, available.runtimeName);
-    await ensureRudderSkillSymlink(available.source, target);
-  }
-
-  for (const [name, installedEntry] of installed.entries()) {
-    const available = availableByRuntimeName.get(name);
-    if (!available) continue;
-    if (desiredSet.has(available.key)) continue;
-    if (installedEntry.targetPath !== available.source) continue;
-    await fs.unlink(path.join(skillsHome, name)).catch(() => {});
-  }
-
   return buildCursorSkillSnapshot(ctx.config);
 }
 
