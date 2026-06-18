@@ -41,7 +41,7 @@ import {
   type HeartbeatRun,
   type OrganizationSkillCreateRequest
 } from "@rudderhq/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronRight,
@@ -117,6 +117,7 @@ import {
   sortUnique,
   toggleSkillSelection,
 } from "../lib/agent-skills-state";
+import { resolvePresetDateRange } from "../lib/date-range-cache";
 import { hasBrowserBackStackEntry, shouldHandleDetailEscape } from "../lib/detail-escape";
 import { libraryCopy } from "../lib/library-copy";
 import { findOrganizationByPrefix } from "../lib/organization-routes";
@@ -226,25 +227,11 @@ export function AgentDetail() {
   }, [agent?.id, agent?.instructionsLibraryPath, agentRunPath, canonicalAgentRef, navigate, routeAgentRef]);
 
   const { from, to, customReady } = useMemo(() => {
-    const now = new Date();
-
-    if (datePreset === "custom") {
-      const fromDate = customFrom ? new Date(`${customFrom}T00:00:00`) : null;
-      const toDate = customTo ? new Date(`${customTo}T23:59:59.999`) : null;
-      return {
-        from: fromDate ? fromDate.toISOString() : "",
-        to: toDate ? toDate.toISOString() : "",
-        customReady: !!customFrom && !!customTo,
-      };
-    }
-
-    const days = datePreset === "7d" ? 7 : datePreset === "15d" ? 15 : 30;
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1), 0, 0, 0, 0);
-    return {
-      from: start.toISOString(),
-      to: now.toISOString(),
-      customReady: true,
-    };
+    return resolvePresetDateRange({
+      preset: datePreset,
+      customFrom,
+      customTo,
+    });
   }, [customFrom, customTo, datePreset]);
 
   const chartDays = useMemo(() => {
@@ -285,6 +272,7 @@ export function AgentDetail() {
     ),
     queryFn: () => costsApi.trend(resolvedCompanyId!, from, to, { agentId: resolvedAgentId! }),
     enabled: Boolean(resolvedCompanyId) && Boolean(resolvedAgentId) && needsDashboardData && (datePreset !== "custom" || customReady),
+    placeholderData: keepPreviousData,
   });
 
   const { data: heartbeats, isLoading: isHeartbeatsLoading } = useQuery({

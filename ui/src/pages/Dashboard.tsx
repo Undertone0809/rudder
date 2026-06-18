@@ -1,5 +1,5 @@
 import { Link } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { accessApi } from "../api/access";
 import { activityApi } from "../api/activity";
@@ -18,6 +18,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
+import { floorDateToMinuteIso, resolvePresetDateRange } from "../lib/date-range-cache";
 import { queryKeys } from "../lib/queryKeys";
 
 import { PluginSlotOutlet } from "@/plugins/slots";
@@ -136,7 +137,7 @@ export function Dashboard() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const minuteTickIntervalRef = useRef<number | null>(null);
-  const [minuteTick, setMinuteTick] = useState(() => new Date().toISOString().slice(0, 16));
+  const [minuteTick, setMinuteTick] = useState(() => floorDateToMinuteIso(new Date()));
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
@@ -194,9 +195,9 @@ export function Dashboard() {
     const now = new Date();
     const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
     const timeout = window.setTimeout(() => {
-      setMinuteTick(new Date().toISOString().slice(0, 16));
+      setMinuteTick(floorDateToMinuteIso(new Date()));
       minuteTickIntervalRef.current = window.setInterval(
-        () => setMinuteTick(new Date().toISOString().slice(0, 16)),
+        () => setMinuteTick(floorDateToMinuteIso(new Date())),
         60_000,
       );
     }, msToNextMinute);
@@ -208,25 +209,12 @@ export function Dashboard() {
   }, []);
 
   const { from, to, customReady } = useMemo(() => {
-    const now = new Date();
-
-    if (preset === "custom") {
-      const fromDate = customFrom ? new Date(`${customFrom}T00:00:00`) : null;
-      const toDate = customTo ? new Date(`${customTo}T23:59:59.999`) : null;
-      return {
-        from: fromDate ? fromDate.toISOString() : "",
-        to: toDate ? toDate.toISOString() : "",
-        customReady: !!customFrom && !!customTo,
-      };
-    }
-
-    const days = preset === "7d" ? 7 : preset === "15d" ? 15 : 30;
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1), 0, 0, 0, 0);
-    return {
-      from: start.toISOString(),
-      to: now.toISOString(),
-      customReady: true,
-    };
+    return resolvePresetDateRange({
+      preset,
+      customFrom,
+      customTo,
+      now: new Date(minuteTick),
+    });
   }, [customFrom, customTo, minuteTick, preset]);
 
   const chartDays = useMemo(() => {
@@ -251,17 +239,20 @@ export function Dashboard() {
     queryKey: ["heartbeats", selectedOrganizationId ?? "__none__", "dashboard-range", from, to],
     queryFn: () => heartbeatsApi.list(selectedOrganizationId!, undefined, null, { startDate: from, endDate: to }),
     enabled: Boolean(selectedOrganizationId) && showFilteredSections,
+    placeholderData: keepPreviousData,
   });
 
   const { data: rangeCostSummary, isLoading: rangeCostSummaryLoading } = useQuery({
     queryKey: queryKeys.costs(selectedOrganizationId ?? "__none__", from, to),
     queryFn: () => costsApi.summary(selectedOrganizationId!, from, to),
     enabled: Boolean(selectedOrganizationId) && showFilteredSections,
+    placeholderData: keepPreviousData,
   });
   const { data: rangeCostTrend, isLoading: rangeCostTrendLoading } = useQuery({
     queryKey: queryKeys.costTrend(selectedOrganizationId ?? "__none__", from, to),
     queryFn: () => costsApi.trend(selectedOrganizationId!, from, to),
     enabled: Boolean(selectedOrganizationId) && showFilteredSections,
+    placeholderData: keepPreviousData,
   });
   const hasTokenUsage = (rangeCostSummary?.tokenEventCount ?? 0) > 0;
   const tokenMetricValue = hasTokenUsage && rangeCostSummary ? formatTokens(rangeCostSummary.totalTokens) : "—";

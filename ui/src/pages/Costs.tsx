@@ -15,7 +15,7 @@ import {
   type CostWindowSpendRow,
   type QuotaWindow,
 } from "@rudderhq/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowUpRight, ChevronDown, ChevronRight, Coins, DollarSign, ReceiptText } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { budgetsApi } from "../api/budgets";
@@ -811,6 +811,7 @@ export function Costs() {
       return { summary, byAgent, byProject, byAgentModel };
     },
     enabled: !!selectedOrganizationId && customReady,
+    placeholderData: keepPreviousData,
   });
 
   const { data: financeData, isLoading: financeLoading, error: financeError } = useQuery({
@@ -828,6 +829,7 @@ export function Costs() {
       return { summary, byBiller, byKind };
     },
     enabled: !!selectedOrganizationId && customReady,
+    placeholderData: keepPreviousData,
   });
 
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
@@ -895,8 +897,9 @@ export function Costs() {
         effectiveTrendFilterKind === "project"
             ? { projectId: trendFilterId }
             : undefined,
-      ),
+    ),
     enabled: !!selectedOrganizationId && customReady && effectiveTrendFilterKind !== "agent",
+    placeholderData: keepPreviousData,
   });
 
   const { data: agentTrendData, isLoading: agentTrendLoading, error: agentTrendError } = useQuery({
@@ -918,6 +921,7 @@ export function Costs() {
       return rows;
     },
     enabled: !!selectedOrganizationId && customReady && effectiveTrendFilterKind === "agent" && trendAgentOptions.length > 0,
+    placeholderData: keepPreviousData,
   });
 
   const { data: providerData } = useQuery({
@@ -926,6 +930,7 @@ export function Costs() {
     enabled: !!selectedOrganizationId && customReady && (mainTab === "providers" || mainTab === "billers"),
     refetchInterval: 30_000,
     staleTime: 10_000,
+    placeholderData: keepPreviousData,
   });
 
   const { data: billerData } = useQuery({
@@ -934,6 +939,7 @@ export function Costs() {
     enabled: !!selectedOrganizationId && customReady && mainTab === "billers",
     refetchInterval: 30_000,
     staleTime: 10_000,
+    placeholderData: keepPreviousData,
   });
 
   const { data: weekData } = useQuery({
