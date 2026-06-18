@@ -741,6 +741,23 @@
       );
   }
 
+  .chat-composer.chat-composer--streaming {
+    --active-surface-ring-width: 1px;
+    --active-surface-ring-inner-radius: calc(var(--radius-lg) - var(--active-surface-ring-width));
+    --active-surface-ring-cover:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface-elevated) 99%, transparent) 0%,
+        color-mix(in oklab, var(--surface-elevated) 94%, var(--surface-page)) 100%
+      );
+    border-color: color-mix(in oklab, var(--ring) 42%, var(--border-base));
+    box-shadow:
+      var(--shadow-md),
+      0 0 0 1px color-mix(in oklab, var(--ring) 16%, transparent),
+      0 18px 54px -38px color-mix(in oklab, var(--accent-base) 62%, transparent),
+      inset 0 1px 0 color-mix(in oklab, white 46%, transparent);
+  }
+
   .active-surface-ring::before,
   .command-palette-content--searching::before,
   .chat-composer--streaming::before {
@@ -762,6 +779,22 @@
         border-box;
     opacity: 0.96;
     animation: command-palette-search-ring 1.35s linear infinite;
+  }
+
+  .chat-composer--streaming::before {
+    inset: -1px;
+    border-radius: calc(var(--radius-lg) + 1px);
+    background:
+      conic-gradient(
+          from var(--command-palette-search-angle),
+          transparent 0deg 54deg,
+          color-mix(in oklab, var(--accent-base) 18%, transparent) 86deg,
+          color-mix(in oklab, var(--ring) 54%, transparent) 124deg,
+          color-mix(in oklab, var(--accent-base) 18%, transparent) 164deg,
+          transparent 212deg 360deg
+        )
+        border-box;
+    opacity: 0.74;
   }
 
   .active-surface-ring::after,

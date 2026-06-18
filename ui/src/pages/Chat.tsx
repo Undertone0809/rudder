@@ -917,6 +917,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const hasRecentProjectConversations = allRecentProjectConversations.length > 0;
   const sendButtonMode = newConversationSendInFlight || (activeSendInFlight && (!activeStream || !activeStream.userMessageId)) ? "sending" : activeSendInFlight ? "stop" : "send";
   const sendButtonDisabled = composerUnavailable || sendButtonMode === "sending" || (sendButtonMode === "send" && draft.trim().length === 0);
+  const composerStreaming = Boolean(activeStream) || activeSendInFlight || newConversationSendInFlight;
   useEffect(() => {
     if (!expandedEmptyStatePrompt) { setEmptyStatePromptPanelEntered(false);
       return; } setEmptyStatePromptPanelEntered(false); const frame = requestAnimationFrame(() => { setEmptyStatePromptPanelEntered(true); }); return () => cancelAnimationFrame(frame); }, [expandedEmptyStatePrompt]); useEffect(() => {
@@ -987,6 +988,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   ))} </div> </> )} </> ) : null} </div>, document.body, ); }; const renderComposer = (centered: boolean) => (
     <div ref={composerSurfaceRef} className={cn(
         "chat-composer rounded-[var(--radius-lg)] p-3 transition-all duration-300",
+        composerStreaming && "chat-composer--streaming",
         centered ? "mx-auto w-full max-w-3xl" : "w-full",
       )} >
       <div ref={composerEditorScrollRef} data-testid="chat-composer-editor-scroll" className="chat-composer-editor-scroll scrollbar-auto-hide overflow-y-auto overscroll-contain pr-1" onPasteCapture={handlePendingAttachmentPasteCapture} >

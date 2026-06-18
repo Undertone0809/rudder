@@ -218,6 +218,29 @@ test.describe("Chat streaming", () => {
     await expect(page.getByText(/"kind":"message"/)).toHaveCount(0);
   });
 
+  test("highlights the chat composer boundary while an agent response is streaming", async ({ page }) => {
+    const organization = await createStreamingOrg(page, `Ring-Chat-${Date.now()}`);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+
+    const editor = page.locator(".rudder-mdxeditor-content").first();
+    const composerSurface = page.locator(".chat-composer").first();
+    await expect(editor).toBeVisible({ timeout: 15_000 });
+    await editor.fill("Show the streaming composer ring");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
+    await expect(composerSurface).toHaveClass(/chat-composer--streaming/, { timeout: 15_000 });
+
+    await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
+    await expect(composerSurface).not.toHaveClass(/chat-composer--streaming/, { timeout: 15_000 });
+  });
+
   test("keeps generating when the operator leaves the chat page", async ({ page }) => {
     const organization = await createStreamingOrg(page, `Leave-Chat-${Date.now()}`);
 

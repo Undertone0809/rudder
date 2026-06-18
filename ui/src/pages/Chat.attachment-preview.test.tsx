@@ -725,6 +725,38 @@ describe("Chat route loading", () => {
 });
 
 describe("Chat streaming controls", () => {
+  it("highlights the composer boundary while an agent response is streaming", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "user-message-1",
+          body: "Please draft a plan.",
+          chatTurnId: "turn-1",
+        }),
+      ],
+    };
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    mockState.streamDrafts = {
+      "chat-1": {
+        chatId: "chat-1",
+        userBody: "Please draft a plan.",
+        userCreatedAt: new Date("2026-05-12T09:04:00.000Z"),
+        userMessageId: "user-message-1",
+        chatTurnId: "turn-1",
+        editedFromCreatedAt: null,
+        body: "Working on it...",
+        state: "streaming",
+        createdAt: new Date("2026-05-12T09:04:01.000Z"),
+        transcript: [],
+        replyingAgentId: "agent-1",
+      },
+    };
+
+    const { container } = renderChat();
+
+    expect(container.querySelector(".chat-composer")?.className).toContain("chat-composer--streaming");
+  });
+
   it("notifies the operator after stopping an active response", async () => {
     mockState.messagesByChatId = {
       "chat-1": [

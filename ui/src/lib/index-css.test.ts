@@ -130,6 +130,22 @@ describe("index.css motion rules", () => {
     expect(reducedMotion).toContain("animation: none");
   });
 
+  it("keeps the chat composer streaming ring integrated with the input surface", () => {
+    const composerStreaming =
+      indexCss.match(/\n\s*\.chat-composer\.chat-composer--streaming \{\s*\n\s*--active-surface-ring-width: 1px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
+    const composerRing =
+      indexCss.match(/\n\s*\.chat-composer--streaming::before \{\s*\n\s*inset: -1px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
+
+    expect(composerStreaming).toContain("--active-surface-ring-width: 1px");
+    expect(composerStreaming).toContain("border-color: color-mix(in oklab, var(--ring) 42%, var(--border-base))");
+    expect(composerStreaming).toContain("var(--surface-elevated) 99%");
+    expect(composerStreaming).toContain("inset 0 1px 0");
+    expect(composerRing).toContain("inset: -1px");
+    expect(composerRing).toContain("opacity: 0.74");
+    expect(composerRing).toContain("var(--ring) 54%");
+    expect(composerRing).not.toContain("var(--ring) 90%");
+  });
+
   it("keeps entity preview metadata labels centered with their value icons", () => {
     const previewRow =
       indexCss.match(/\.rudder-entity-preview-row \{[\s\S]*?\n\}/)?.[0] ?? "";
