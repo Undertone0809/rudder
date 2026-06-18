@@ -271,9 +271,9 @@ describe("RunChatContextCard", () => {
     }));
 
     expect(container.textContent).toContain("Open conversation");
-    expect(container.textContent).toContain("Conversation replies");
     expect(container.textContent).toContain("Reply 1");
     expect(container.textContent).toContain("Reply 2");
+    expect(container.textContent).not.toContain("Conversation replies");
     expect(container.textContent).not.toContain("Skill inventory request");
     expect(container.textContent).not.toContain("2 agent replies in this conversation");
     expect(container.textContent).not.toContain("User input");

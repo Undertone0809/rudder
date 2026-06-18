@@ -172,9 +172,9 @@ test.describe("Agent detail chat run context", () => {
     const card = page.getByTestId("run-chat-context-card");
     await expect(card).toBeVisible({ timeout: 15_000 });
     await expect(card.getByRole("link", { name: "Open conversation" })).toBeVisible();
-    await expect(card.getByText("Conversation replies")).toBeVisible();
     await expect(card.getByText("Here is the full list of enabled skills.").first()).toBeVisible();
     await expect(card.getByText("Grouped by source across bundled, user, and project skills.")).toBeVisible();
+    await expect(card.getByText("Conversation replies")).toHaveCount(0);
     await expect(card.getByText("Skill inventory request")).toHaveCount(0);
     await expect(card.getByText("Please list all enabled skills.")).toHaveCount(0);
     await expect(card.getByText("User input")).toHaveCount(0);

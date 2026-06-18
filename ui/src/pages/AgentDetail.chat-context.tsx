@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Link } from "@/lib/router";
 import type { ChatMessage, HeartbeatRun } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
+import { ExternalLink } from "lucide-react";
 import { useMemo } from "react";
 import { chatsApi } from "../api/chats";
 import { queryKeys } from "../lib/queryKeys";
@@ -99,58 +100,71 @@ export function RunChatContextCard({
 
   return (
     <section
-      className="rounded-lg border border-border bg-background/60 p-3"
+      className="rounded-md border border-border/70 bg-background/40 p-2"
       data-testid="run-chat-context-card"
       aria-label="Chat conversation context"
     >
-      <div className="flex justify-end">
-        <Button asChild variant="outline" size="sm" className="h-8 px-3 text-xs">
+      <div className="mb-1 flex justify-end">
+        <Button asChild variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs">
           <Link to={`/messenger/chat/${conversationId}`}>
             Open conversation
+            <ExternalLink aria-hidden="true" className="h-3 w-3" />
           </Link>
         </Button>
       </div>
 
-      <div className="mt-3 text-xs font-medium text-muted-foreground">
-        Conversation replies
-      </div>
-      <div className="mt-2 divide-y divide-border/70 rounded-md border border-border/70">
+      <div className="-mx-2 divide-y divide-border/60">
         {messagesQuery.isLoading ? (
           <div className="px-3 py-2 text-xs text-muted-foreground">
-            Loading conversation replies...
+            Loading replies...
           </div>
         ) : messagesQuery.isError ? (
           <div className="px-3 py-2 text-xs text-muted-foreground">
-            Conversation replies could not be loaded.
+            Replies unavailable.
           </div>
         ) : context.replies.length > 0 ? (
           context.replies.map((reply, index) => (
             <Link
               key={reply.id}
               to={`/agents/${reply.replyingAgentId ?? agentRouteId}/runs/${reply.runId}`}
+              aria-current={reply.isCurrentRun ? "page" : undefined}
               className={cn(
-                "block px-3 py-2 text-xs text-inherit no-underline transition-colors hover:bg-accent/20",
-                reply.isCurrentRun && "bg-accent/30",
+                "group relative block px-3 py-2.5 pl-4 text-xs text-inherit no-underline transition-colors hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0",
+                reply.isCurrentRun && "bg-accent/15",
               )}
             >
+              <span
+                className={cn(
+                  "absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full transition-colors",
+                  reply.isCurrentRun ? "bg-primary/70" : "bg-transparent group-hover:bg-border",
+                )}
+              />
               <div className="flex items-center justify-between gap-3">
-                <span className="font-medium">
-                  Reply {index + 1}
-                  {reply.isCurrentRun ? " · current run" : ""}
-                  {reply.isSuperseded ? " · edited branch" : ""}
+                <span className="flex min-w-0 items-center gap-1.5 font-medium">
+                  <span>Reply {index + 1}</span>
+                  {reply.isCurrentRun ? (
+                    <span className="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-primary">
+                      Current
+                    </span>
+                  ) : null}
+                  {reply.isSuperseded ? (
+                    <span className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground">
+                      Edited
+                    </span>
+                  ) : null}
                 </span>
                 <span className="shrink-0 text-muted-foreground">
                   {relativeTime(reply.createdAt)}
                 </span>
               </div>
-              <div className="mt-1 line-clamp-2 text-muted-foreground">
+              <div className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground transition-colors group-hover:text-foreground/80">
                 {previewText(reply.body, "Empty assistant reply")}
               </div>
             </Link>
           ))
         ) : (
           <div className="px-3 py-2 text-xs text-muted-foreground">
-            No run-backed replies are linked to this conversation yet.
+            No replies yet.
           </div>
         )}
       </div>
