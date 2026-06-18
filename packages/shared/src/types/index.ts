@@ -18,11 +18,6 @@ export type {
   AgentSkillTelemetryEvidenceCounts
 } from "./adapter-skills.js";
 export type {
-  Agent,
-  AgentAccessState,
-  AgentChainOfCommandEntry, AgentConfigRevision, AgentDetail, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentKeyCreated, AgentPermissions, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus
-} from "./agent.js";
-export type {
   AgentIntegration,
   AgentIntegrationBindingToken,
   AgentIntegrationChatBinding,
@@ -30,6 +25,11 @@ export type {
   AgentIntegrationOutboundMessage,
   AgentIntegrationUserBinding
 } from "./agent-integration.js";
+export type {
+  Agent,
+  AgentAccessState,
+  AgentChainOfCommandEntry, AgentConfigRevision, AgentDetail, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentKeyCreated, AgentPermissions, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus
+} from "./agent.js";
 export type { Approval, ApprovalComment, IssueLinkedApproval } from "./approval.js";
 export type { AssetImage } from "./asset.js";
 export type {

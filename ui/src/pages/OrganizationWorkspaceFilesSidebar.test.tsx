@@ -565,7 +565,8 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     const skillsRootMenu = openEntryMenu("skills");
     expect(skillsRootMenu?.textContent).toContain("Copy link");
     expect(skillsRootMenu?.textContent).toContain("Copy absolute path");
-    expect(skillsRootMenu?.textContent).toContain("New file");
+    expect(skillsRootMenu?.textContent).not.toContain("New file");
+    expect(skillsRootMenu?.textContent).not.toContain("New folder");
     expect(skillsRootMenu?.textContent).not.toContain("Delete");
     expect(skillsRootMenu?.textContent).not.toContain("Rename");
 

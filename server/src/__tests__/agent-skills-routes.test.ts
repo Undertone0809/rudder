@@ -65,6 +65,24 @@ const mockAdapter = vi.hoisted(() => ({
   syncSkills: vi.fn(),
 }));
 
+const mockEnsureOpenCodeModelConfiguredAndAvailable = vi.hoisted(() => vi.fn(async (input: { model?: unknown }) => {
+  const model = typeof input.model === "string" ? input.model.trim() : "";
+  const [provider, modelId] = model.split("/", 2).map((part) => part.trim());
+  if (!provider || !modelId) {
+    throw new Error("OpenCode requires `agentRuntimeConfig.model` in provider/model format.");
+  }
+  return [];
+}));
+
+const mockEnsurePiModelConfiguredAndAvailable = vi.hoisted(() => vi.fn(async (input: { model?: unknown }) => {
+  const model = typeof input.model === "string" ? input.model.trim() : "";
+  const [provider, modelId] = model.split("/", 2).map((part) => part.trim());
+  if (!provider || !modelId) {
+    throw new Error("Pi requires `agentRuntimeConfig.model` in provider/model format.");
+  }
+  return [];
+}));
+
 vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
   agentInstructionsService: () => mockAgentInstructionsService,
@@ -90,6 +108,14 @@ vi.mock("../services/index.js", () => ({
 vi.mock("../agent-runtimes/index.js", () => ({
   findServerAdapter: vi.fn(() => mockAdapter),
   listAgentRuntimeModels: vi.fn(),
+}));
+
+vi.mock("@rudderhq/agent-runtime-opencode-local/server", () => ({
+  ensureOpenCodeModelConfiguredAndAvailable: mockEnsureOpenCodeModelConfiguredAndAvailable,
+}));
+
+vi.mock("@rudderhq/agent-runtime-pi-local/server", () => ({
+  ensurePiModelConfiguredAndAvailable: mockEnsurePiModelConfiguredAndAvailable,
 }));
 
 function createDb(requireBoardApprovalForNewAgents = false) {

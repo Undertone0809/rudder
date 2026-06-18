@@ -1,5 +1,5 @@
 export {
-  AGENT_AVATAR_BACKGROUND_PRESET_IDS, AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX, AGENT_ICON_NAMES, AGENT_INTEGRATION_CHAT_TYPES, AGENT_INTEGRATION_DROP_REASONS, AGENT_INTEGRATION_OUTBOUND_STATUSES, AGENT_INTEGRATION_PROVIDER_REGIONS, AGENT_INTEGRATION_PROVIDERS, AGENT_INTEGRATION_STATUSES, AGENT_INTEGRATION_TRANSPORTS, AGENT_ROLES,
+  AGENT_AVATAR_BACKGROUND_PRESET_IDS, AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX, AGENT_ICON_NAMES, AGENT_INTEGRATION_CHAT_TYPES, AGENT_INTEGRATION_DROP_REASONS, AGENT_INTEGRATION_OUTBOUND_STATUSES, AGENT_INTEGRATION_PROVIDERS, AGENT_INTEGRATION_PROVIDER_REGIONS, AGENT_INTEGRATION_STATUSES, AGENT_INTEGRATION_TRANSPORTS, AGENT_ROLES,
   AGENT_ROLE_LABELS, AGENT_RUNTIME_TYPES, AGENT_RUN_CONCURRENCY_DEFAULT, AGENT_RUN_CONCURRENCY_MAX, AGENT_RUN_CONCURRENCY_MIN, AGENT_STATUSES, APPROVAL_STATUSES, APPROVAL_TYPES, AUTH_BASE_URL_MODES, AUTOMATION_CATCH_UP_POLICIES, AUTOMATION_CONCURRENCY_POLICIES, AUTOMATION_OUTPUT_MODES, AUTOMATION_RUN_SOURCES, AUTOMATION_RUN_STATUSES, AUTOMATION_STATUSES, AUTOMATION_TRIGGER_KINDS,
   AUTOMATION_TRIGGER_SIGNING_MODES, BILLING_TYPES, BUDGET_INCIDENT_RESOLUTION_ACTIONS, BUDGET_INCIDENT_STATUSES, BUDGET_METRICS, BUDGET_SCOPE_TYPES, BUDGET_THRESHOLD_TYPES, BUDGET_WINDOW_KINDS, CALENDAR_EVENT_KINDS,
   CALENDAR_EVENT_STATUSES, CALENDAR_OWNER_TYPES, CALENDAR_SOURCE_MODES, CALENDAR_SOURCE_STATUSES, CALENDAR_SOURCE_TYPES, CALENDAR_VISIBILITIES, CHAT_CONTEXT_ENTITY_TYPES, CHAT_CONVERSATION_STATUSES,
@@ -35,8 +35,7 @@ export {
 
 export type {
   ActivityEvent, Agent,
-  AgentAccessState, AgentIntegration, AgentIntegrationBindingToken, AgentIntegrationChatBinding, AgentIntegrationInboundAudit, AgentIntegrationOutboundMessage, AgentIntegrationUserBinding,
-  AgentChainOfCommandEntry, AgentConfigRevision, AgentDetail, AgentEnvConfig, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentKeyCreated, AgentPermissions, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus, AgentRuntimeState, AgentSkillAnalytics, AgentSkillAnalyticsDay, AgentSkillAnalyticsSkillTotal, AgentSkillEntry, AgentSkillOrigin, AgentSkillSnapshot, AgentSkillSourceClass, AgentSkillState, AgentSkillSyncMode, AgentSkillSyncRequest,
+  AgentAccessState, AgentChainOfCommandEntry, AgentConfigRevision, AgentDetail, AgentEnvConfig, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentIntegration, AgentIntegrationBindingToken, AgentIntegrationChatBinding, AgentIntegrationInboundAudit, AgentIntegrationOutboundMessage, AgentIntegrationUserBinding, AgentKeyCreated, AgentPermissions, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus, AgentRuntimeState, AgentSkillAnalytics, AgentSkillAnalyticsDay, AgentSkillAnalyticsSkillTotal, AgentSkillEntry, AgentSkillOrigin, AgentSkillSnapshot, AgentSkillSourceClass, AgentSkillState, AgentSkillSyncMode, AgentSkillSyncRequest,
   AgentSkillTelemetryEvidence,
   AgentSkillTelemetryEvidenceCounts, AgentTaskSession,
   AgentWakeupRequest, Approval,

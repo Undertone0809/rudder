@@ -73,9 +73,21 @@ describe("adapter model listing", () => {
     expect(first).toEqual(codexFallbackModels);
     expect(first.map((model) => model.id)).toEqual([
       "gpt-5.5",
+      "gpt-5.5-codex",
+      "gpt-5.5-fast",
+      "gpt-5.5-flex",
       "gpt-5.4",
+      "gpt-5.4-codex",
       "gpt-5.4-mini",
+      "gpt-5.4-nano",
+      "gpt-5.3-codex",
       "gpt-5.3-codex-spark",
+      "gpt-5.2-codex",
+      "gpt-5.1-codex",
+      "gpt-5.1-codex-max",
+      "gpt-5.1-codex-mini",
+      "gpt-5-codex",
+      "codex-mini-latest",
     ]);
   });
 

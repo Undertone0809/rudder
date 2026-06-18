@@ -1,21 +1,21 @@
-import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
-  resolveLocalOperatorHome,
-  prepareAgentInstructionRuntimeContext,
-  syncLocalCliCredentialHomeEntries,
   loadAgentInstructionsPrefix,
+  prepareAgentInstructionRuntimeContext,
   renderTemplate,
+  resolveLocalOperatorHome,
   RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
   RUDDER_AGENT_OPERATING_CONTRACT,
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
+  syncLocalCliCredentialHomeEntries,
 } from "./server-utils.js";
 
 const ORIGINAL_HOME = process.env.HOME;
