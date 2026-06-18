@@ -76,6 +76,7 @@ import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, typ
 import { PageSkeleton } from "../components/PageSkeleton";
 import { ProjectIcon } from "../components/ProjectIdentity";
 import { ResourceLocatorField } from "../components/ResourceLocatorField";
+import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEditor } from "../components/WorkspaceCodeEditor";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
@@ -131,8 +132,10 @@ const WORKSPACE_TEXT_IMPORT_FILE_EXTENSIONS = new Set([
   ".htm",
   ".js",
   ".json",
+  ".jsonl",
   ".jsx",
   ".log",
+  ".py",
   ".toml",
   ".ts",
   ".tsx",
@@ -540,6 +543,8 @@ function displayWorkspaceDocumentKind(filePath: string | null) {
       return "MDX";
     case ".json":
       return "JSON";
+    case ".jsonl":
+      return "JSONL";
     case ".csv":
       return "CSV";
     case ".html":
@@ -4706,6 +4711,7 @@ export function OrganizationWorkspaceBrowser({
   const selectedCsvParseResult = selectedFileUsesCsvEditor
     ? parseWorkspaceCsvContent(selectedEditorContent)
     : null;
+  const selectedFileUsesCodeEditor = isWorkspaceCodeFilePath(selectedFilePath);
   const selectedCsvShape = selectedCsvParseResult
     ? normalizeWorkspaceCsvRows(selectedCsvParseResult.rows)
     : null;
@@ -4744,7 +4750,9 @@ export function OrganizationWorkspaceBrowser({
         `${selectedCsvShape.columnCount.toLocaleString()} ${selectedCsvShape.columnCount === 1 ? "column" : "columns"}`,
       ]
     : [
-        displayWorkspaceDocumentKind(selectedFilePath),
+        selectedFileUsesCodeEditor
+          ? getWorkspaceCodeLanguageLabel(selectedFilePath)
+          : displayWorkspaceDocumentKind(selectedFilePath),
         formatWorkspaceWordCount(selectedDocumentWordCount),
       ];
   const selectedSaveStatus = saveWorkspaceFile.isError
@@ -5642,6 +5650,15 @@ export function OrganizationWorkspaceBrowser({
                         ) : null}
                       </div>
                     </div>
+                  ) : selectedFileUsesCodeEditor ? (
+                    <WorkspaceCodeEditor
+                      data-testid="org-workspaces-editor-textarea"
+                      filePath={selectedFilePath}
+                      value={selectedEditorContent}
+                      onChange={(nextContent) => handleMarkdownDraftChange(selectedFilePath, nextContent)}
+                      scrollRef={setEditorScrollElementRef}
+                      ariaLabel="Library code editor"
+                    />
                   ) : (
                     <textarea
                       data-testid="org-workspaces-editor-textarea"

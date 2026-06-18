@@ -93,6 +93,13 @@ vi.mock("@tanstack/react-query", () => ({
             entityType: "organization_workspace",
           },
           {
+            name: "evals.json",
+            displayLabel: "evals.json",
+            path: "artifacts/chat-ui-review/evals.json",
+            isDirectory: false,
+            entityType: "organization_workspace",
+          },
+          {
             name: "README.md",
             displayLabel: "README.md",
             path: "artifacts/chat-ui-review/README.md",
@@ -145,6 +152,19 @@ vi.mock("@tanstack/react-query", () => ({
             filePath,
             content: "<!doctype html><html><body><h1>Rendered proposal</h1><p>HTML output.</p></body></html>",
             contentType: "text/html",
+            previewKind: "text",
+            truncated: false,
+          },
+          isLoading: false,
+          error: null,
+        };
+      }
+      if (String(filePath).endsWith(".json")) {
+        return {
+          data: {
+            filePath,
+            content: "{\n  \"skill_name\": \"debug-run-transcript\",\n  \"evals\": [\n    { \"id\": 0, \"prompt\": \"Debug failed run\" }\n  ]\n}\n",
+            contentType: "application/json",
             previewKind: "text",
             truncated: false,
           },
@@ -853,6 +873,22 @@ describe("OrganizationWorkspaces scroll regions", () => {
     const statusBar = document.querySelector("[data-testid='org-workspaces-editor-status-bar']");
     expect(statusBar?.textContent).toContain("Markdown");
     expect(statusBar?.textContent).toMatch(/\d+ words?/);
+    expect(statusBar?.textContent).toContain("Saved");
+  });
+
+  it("renders common code and data files with a syntax-highlighted editor", () => {
+    mockState.searchParams = "path=artifacts/chat-ui-review/evals.json";
+    renderWorkspacesPage();
+
+    const editor = document.querySelector<HTMLElement>("[data-testid='org-workspaces-editor-textarea']");
+    expect(editor).not.toBeNull();
+    expect(editor?.tagName).toBe("DIV");
+    expect(editor?.getAttribute("data-workspace-code-language")).toBe("JSON");
+    expect(editor?.querySelector(".cm-editor")).not.toBeNull();
+    expect(editor?.textContent).toContain("skill_name");
+
+    const statusBar = document.querySelector("[data-testid='org-workspaces-editor-status-bar']");
+    expect(statusBar?.textContent).toContain("JSON");
     expect(statusBar?.textContent).toContain("Saved");
   });
 
