@@ -135,7 +135,6 @@ const baseProfiles: OrganizationIntelligenceProfile[] = [
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {
       model: "gpt-5.4-mini",
-      modelReasoningEffort: "low",
       modelFallbacks: [
         {
           agentRuntimeType: "claude_local",
@@ -159,8 +158,7 @@ const baseProfiles: OrganizationIntelligenceProfile[] = [
     purpose: "reasoning",
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {
-      model: "gpt-5.4",
-      modelReasoningEffort: "medium",
+      model: "gpt-5.4-mini",
     },
     status: "configured",
     lastError: null,
@@ -258,7 +256,6 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
     expect(agentsApi.testEnvironment).toHaveBeenNthCalledWith(1, "org-1", "codex_local", {
       agentRuntimeConfig: {
         model: "gpt-5.4-mini",
-        modelReasoningEffort: "low",
       },
     });
     expect(agentsApi.testEnvironment).toHaveBeenNthCalledWith(2, "org-1", "claude_local", {
@@ -270,6 +267,41 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
     expect(fastProfile?.textContent).toContain("Runtime chain environment");
     expect(fastProfile?.textContent).toContain("Primary · Codex (local) · gpt-5.4-mini: Passed");
     expect(fastProfile?.textContent).toContain("Fallback 1 · Claude (local) · claude-sonnet-4-5: Passed");
+
+    rendered.cleanup();
+  });
+
+  it("defaults new Codex intelligence profiles to mini model with automatic thinking effort", async () => {
+    profiles = [];
+    const rendered = await renderComponent();
+    await vi.waitFor(() => {
+      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
+    });
+
+    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
+    const smartProfile = rendered.host.querySelector('[data-testid="intelligence-profile-reasoning"]')!;
+
+    expect(fastProfile.textContent).toContain("Primary gpt-5.4-mini");
+    expect(smartProfile.textContent).toContain("Primary gpt-5.4-mini");
+    expect(smartProfile.textContent).not.toContain("Primary gpt-5.4 ");
+
+    const createButton = Array.from(smartProfile.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Create"));
+
+    await act(async () => {
+      createButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(organizationsApi.updateIntelligenceProfile).toHaveBeenCalledWith("org-1", "reasoning", {
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: expect.not.objectContaining({
+        modelReasoningEffort: expect.anything(),
+      }),
+      status: "disabled",
+    });
 
     rendered.cleanup();
   });
@@ -322,7 +354,6 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
       agentRuntimeType: "codex_local",
       agentRuntimeConfig: {
         model: "gpt-5.4-mini",
-        modelReasoningEffort: "low",
         modelFallbacks: [
           {
             agentRuntimeType: "claude_local",
@@ -390,7 +421,7 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
 
     expect(agentsApi.testEnvironment).toHaveBeenCalledTimes(2);
     expect(smartProfile.textContent).toContain("Runtime chain environment");
-    expect(smartProfile.textContent).toContain("Primary · Codex (local) · gpt-5.4: Passed");
+    expect(smartProfile.textContent).toContain("Primary · Codex (local) · gpt-5.4-mini: Passed");
 
     firstProbe.resolve(passedResult());
     await act(async () => {

@@ -51,25 +51,39 @@ const profileCopy: Record<OrganizationIntelligenceProfilePurpose, {
     label: "Fast",
     description: "Titles, short summaries, classification",
     defaultModel: "gpt-5.4-mini",
-    defaultReasoning: "low",
+    defaultReasoning: "",
   },
   reasoning: {
     label: "Smart",
     description: "Issue AI search, reranking, complex summaries",
-    defaultModel: "gpt-5.4",
-    defaultReasoning: "medium",
+    defaultModel: "gpt-5.4-mini",
+    defaultReasoning: "",
   },
 };
 
 const purposes: OrganizationIntelligenceProfilePurpose[] = ["lightweight", "reasoning"];
 const providerHint = "Provider used by this organization intelligence profile.";
 
-function defaultDraft(purpose: OrganizationIntelligenceProfilePurpose): ProfileDraft {
-  const config = {
-    ...defaultConfigForRuntime("codex_local"),
+function defaultConfigForProfileRuntime(
+  purpose: OrganizationIntelligenceProfilePurpose,
+  agentRuntimeType: string,
+): Record<string, unknown> {
+  const config = defaultConfigForRuntime(agentRuntimeType);
+  if (agentRuntimeType !== "codex_local") return config;
+  const base = { ...config };
+  delete base.modelReasoningEffort;
+  delete base.reasoningEffort;
+  return {
+    ...base,
     model: profileCopy[purpose].defaultModel,
-    modelReasoningEffort: profileCopy[purpose].defaultReasoning,
+    ...(profileCopy[purpose].defaultReasoning
+      ? { modelReasoningEffort: profileCopy[purpose].defaultReasoning }
+      : {}),
   };
+}
+
+function defaultDraft(purpose: OrganizationIntelligenceProfilePurpose): ProfileDraft {
+  const config = defaultConfigForProfileRuntime(purpose, "codex_local");
   return {
     purpose,
     exists: false,
@@ -501,7 +515,7 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                       ...draft,
                       agentRuntimeType: nextRuntimeType,
                       agentRuntimeConfig: {
-                        ...defaultConfigForRuntime(nextRuntimeType),
+                        ...defaultConfigForProfileRuntime(purpose, nextRuntimeType),
                         modelFallbacks: [],
                       },
                       status: "disabled",

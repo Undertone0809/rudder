@@ -26,8 +26,7 @@ const AGENT_ONLY_CONFIG_KEYS = new Set([
   "cwd",
 ]);
 
-const DEFAULT_CODEX_FAST_MODEL = "gpt-5.4-mini";
-const DEFAULT_CODEX_SMART_MODEL = "gpt-5.4";
+const DEFAULT_CODEX_INTELLIGENCE_MODEL = "gpt-5.4-mini";
 
 function toProfile(row: typeof organizationIntelligenceProfiles.$inferSelect): OrganizationIntelligenceProfile {
   return {
@@ -71,16 +70,18 @@ export function sanitizeConfigForProductIntelligence(config: Record<string, unkn
 }
 
 export function buildIntelligenceProfileConfigWithPurposeDefaults(
-  purpose: OrganizationIntelligenceProfilePurpose,
+  _purpose: OrganizationIntelligenceProfilePurpose,
   agentRuntimeType: string,
   sourceConfig: Record<string, unknown>,
 ): Record<string, unknown> {
   const base = sanitizeConfigForProductIntelligence(sourceConfig);
   if (agentRuntimeType === "codex_local") {
+    const config = { ...base };
+    delete config.modelReasoningEffort;
+    delete config.reasoningEffort;
     return {
-      ...base,
-      model: purpose === "lightweight" ? DEFAULT_CODEX_FAST_MODEL : DEFAULT_CODEX_SMART_MODEL,
-      modelReasoningEffort: purpose === "lightweight" ? "low" : "medium",
+      ...config,
+      model: DEFAULT_CODEX_INTELLIGENCE_MODEL,
     };
   }
 

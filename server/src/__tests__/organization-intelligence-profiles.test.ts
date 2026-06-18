@@ -64,7 +64,6 @@ describe("organization intelligence profiles", () => {
     ).toEqual({
       command: "codex",
       model: "gpt-5.4-mini",
-      modelReasoningEffort: "low",
       env: { OPENAI_API_KEY: { type: "secret_ref", secretId: "secret-1" } },
     });
 
@@ -72,8 +71,7 @@ describe("organization intelligence profiles", () => {
       buildIntelligenceProfileConfigWithPurposeDefaults("reasoning", "codex_local", sourceConfig),
     ).toEqual({
       command: "codex",
-      model: "gpt-5.4",
-      modelReasoningEffort: "medium",
+      model: "gpt-5.4-mini",
       env: { OPENAI_API_KEY: { type: "secret_ref", secretId: "secret-1" } },
     });
   });
@@ -126,6 +124,16 @@ describe("organization intelligence profiles", () => {
 
     expect(created).toHaveLength(2);
     expect(created.every((profile) => profile.status === "disabled")).toBe(true);
+    expect(created.map((profile) => profile.agentRuntimeConfig)).toEqual([
+      {
+        command: "codex",
+        model: "gpt-5.4-mini",
+      },
+      {
+        command: "codex",
+        model: "gpt-5.4-mini",
+      },
+    ]);
     expect(insertedValues.every((values) => values.status === "disabled")).toBe(true);
     expect(conflictSets.every((set) => set.status === "disabled")).toBe(true);
   });
