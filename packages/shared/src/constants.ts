@@ -145,8 +145,38 @@ export type IssueStatus = (typeof ISSUE_STATUSES)[number];
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 
-export const ISSUE_ORIGIN_KINDS = ["manual", "automation_execution"] as const;
+export const ISSUE_ORIGIN_KINDS = ["manual", "automation_execution", "agent_integration"] as const;
 export type IssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
+
+export const AGENT_INTEGRATION_PROVIDERS = ["feishu"] as const;
+export type AgentIntegrationProvider = (typeof AGENT_INTEGRATION_PROVIDERS)[number];
+
+export const AGENT_INTEGRATION_STATUSES = ["active", "revoked", "error"] as const;
+export type AgentIntegrationStatus = (typeof AGENT_INTEGRATION_STATUSES)[number];
+
+export const AGENT_INTEGRATION_TRANSPORTS = ["long_connection", "webhook"] as const;
+export type AgentIntegrationTransport = (typeof AGENT_INTEGRATION_TRANSPORTS)[number];
+
+export const AGENT_INTEGRATION_PROVIDER_REGIONS = ["feishu_cn", "lark_global"] as const;
+export type AgentIntegrationProviderRegion = (typeof AGENT_INTEGRATION_PROVIDER_REGIONS)[number];
+
+export const AGENT_INTEGRATION_CHAT_TYPES = ["p2p", "group"] as const;
+export type AgentIntegrationChatType = (typeof AGENT_INTEGRATION_CHAT_TYPES)[number];
+
+export const AGENT_INTEGRATION_DROP_REASONS = [
+  "unbound_user",
+  "non_org_member",
+  "not_addressed_in_group",
+  "duplicate",
+  "revoked_installation",
+  "invalid_event",
+  "agent_unavailable",
+  "unsupported_message_type",
+] as const;
+export type AgentIntegrationDropReason = (typeof AGENT_INTEGRATION_DROP_REASONS)[number];
+
+export const AGENT_INTEGRATION_OUTBOUND_STATUSES = ["pending", "streaming", "final", "error"] as const;
+export type AgentIntegrationOutboundStatus = (typeof AGENT_INTEGRATION_OUTBOUND_STATUSES)[number];
 
 export const CALENDAR_SOURCE_TYPES = ["rudder_local", "google_calendar", "agent_work", "system"] as const;
 export type CalendarSourceType = (typeof CALENDAR_SOURCE_TYPES)[number];

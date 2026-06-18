@@ -76,6 +76,18 @@ export {
 } from "./agent.js";
 
 export {
+  agentIntegrationChatTypeSchema,
+  agentIntegrationDropReasonSchema,
+  agentIntegrationOutboundStatusSchema,
+  agentIntegrationProviderRegionSchema,
+  agentIntegrationProviderSchema,
+  agentIntegrationStatusSchema,
+  agentIntegrationTransportSchema,
+  createAgentIntegrationSchema,
+  type CreateAgentIntegration
+} from "./agent-integration.js";
+
+export {
   createProjectSchema, projectExecutionWorkspacePolicySchema, updateProjectSchema, type CreateProject, type ProjectExecutionWorkspacePolicy, type UpdateProject
 } from "./project.js";
 

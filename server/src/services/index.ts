@@ -3,6 +3,7 @@ export { accessService } from "./access.js";
 export { logActivity, type LogActivityInput } from "./activity-log.js";
 export { activityService, type ActivityFilters } from "./activity.js";
 export { agentEnabledSkillsService } from "./agent-enabled-skills.js";
+export { agentIntegrationService } from "./integrations/agent-integrations.js";
 export { agentInstructionsService, syncInstructionsBundleConfigFromFilePath } from "./agent-instructions.js";
 export { agentService, deduplicateAgentName } from "./agents.js";
 export { approvalService } from "./approvals.js";
