@@ -1,3 +1,4 @@
+import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { defaultValueCtx, Editor, editorViewCtx, rootCtx } from "@milkdown/kit/core";
@@ -918,6 +919,20 @@ function BrowserPortal({ children }: { children: ReactNode }) {
   return typeof document === "undefined" ? <>{children}</> : createPortal(children, document.body);
 }
 
+function getMilkdownPreviewImageName(image: HTMLImageElement) {
+  const alt = image.alt.trim();
+  if (alt) return alt;
+
+  const src = image.currentSrc || image.src;
+  try {
+    const parsed = new URL(src, window.location.href);
+    const basename = parsed.pathname.split("/").filter(Boolean).at(-1);
+    return basename ? decodeURIComponent(basename) : "Image preview";
+  } catch {
+    return "Image preview";
+  }
+}
+
 export function isMilkdownEditableUnexpectedlyBlank(
   editable: HTMLElement | null,
   expectedMarkdown: string,
@@ -989,6 +1004,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   const mentionIndexRef = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const mentionMenuRef = useScrollbarActivityRef();
   const translatedPlaceholder = useMemo(
     () => (placeholder ? translateLegacyString(locale, placeholder) : undefined),
@@ -1516,6 +1532,23 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         if (!navigationPath) return;
         window.location.assign(navigationPath);
       }}
+      onDoubleClickCapture={(event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const image = target.closest("img");
+        if (!(image instanceof HTMLImageElement) || !image.src) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setImagePreview({
+          alt: image.alt,
+          name: getMilkdownPreviewImageName(image),
+          src: image.currentSrc || image.src,
+          naturalSize:
+            image.naturalWidth > 0 && image.naturalHeight > 0
+              ? { width: image.naturalWidth, height: image.naturalHeight }
+              : null,
+        });
+      }}
       onKeyUpCapture={checkMention}
       onMouseUpCapture={checkMention}
       onPasteCapture={(event) => {
@@ -1725,6 +1758,14 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           </div>
         </BrowserPortal>
       ) : null}
+      <ImagePreviewDialog
+        preview={imagePreview}
+        testId="markdown-editor-image-preview-dialog"
+        titleFallback="Image preview"
+        onOpenChange={(open) => {
+          if (!open) setImagePreview(null);
+        }}
+      />
     </div>
   );
 });
