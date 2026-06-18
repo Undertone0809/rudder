@@ -5689,6 +5689,33 @@ export function OrganizationWorkspaceBrowser({
                     className="max-h-full max-w-full rounded-md object-contain shadow-sm"
                   />
                 </div>
+              ) : selectedFileDetail?.previewKind === "pdf" && selectedFileDetail.contentPath ? (
+                <div
+                  ref={setEditorScrollElementRef}
+                  data-testid="org-workspaces-pdf-preview-scroll"
+                  className="scrollbar-auto-hide flex h-full min-h-[420px] flex-col overflow-hidden bg-[color:var(--surface-page)]"
+                >
+                  <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[color:var(--surface-elevated)] px-4 py-2">
+                    <div className="min-w-0 truncate text-xs text-muted-foreground">
+                      PDF preview
+                    </div>
+                    <a
+                      href={selectedFileDetail.contentPath}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-[4px] px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      Open
+                    </a>
+                  </div>
+                  <iframe
+                    data-testid="org-workspaces-pdf-preview"
+                    title={selectedFilePath ?? "Workspace PDF preview"}
+                    src={selectedFileDetail.contentPath}
+                    referrerPolicy="no-referrer"
+                    className="block min-h-[420px] w-full flex-1 border-0 bg-white"
+                  />
+                </div>
               ) : selectedFileDetail?.content ? (
                 <div
                   ref={setEditorScrollElementRef}

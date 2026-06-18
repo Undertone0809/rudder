@@ -590,8 +590,9 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
     assertAgentLibraryProjectPath(req, filePath, "file");
     const workspaceFile = await workspaceBrowser.readAttachmentFile(orgId, filePath);
-    if (!workspaceFile.contentType.toLowerCase().startsWith("image/")) {
-      res.status(415).json({ error: "Workspace file is not an image preview" });
+    const normalizedContentType = workspaceFile.contentType.toLowerCase();
+    if (!normalizedContentType.startsWith("image/") && normalizedContentType !== "application/pdf") {
+      res.status(415).json({ error: "Workspace file is not an inline preview" });
       return;
     }
 

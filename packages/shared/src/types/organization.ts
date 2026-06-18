@@ -47,7 +47,7 @@ export interface OrganizationWorkspaceFileDetail {
   rootExists: boolean;
   content: string | null;
   contentType: string | null;
-  previewKind: "text" | "image" | "binary";
+  previewKind: "text" | "image" | "pdf" | "binary";
   contentPath: string | null;
   message: string | null;
   truncated: boolean;

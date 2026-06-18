@@ -239,6 +239,40 @@ describe("organization workspace browser", () => {
     expect(detail.contentPath).toContain("path=projects%2Fcosts%2Fcost-trend.png");
   });
 
+  it("returns inline preview metadata for PDF files", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser PDF Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser PDF Org"),
+      issuePrefix: "WBP",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const pdfPath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "reports", "brief.pdf");
+    await fs.mkdir(path.dirname(pdfPath), { recursive: true });
+    await fs.writeFile(pdfPath, Buffer.from("%PDF-1.7\n%rudder-test\n", "utf8"));
+
+    const detail = await workspaceBrowser.readFile(orgId, "projects/reports/brief.pdf");
+
+    expect(detail).toEqual(expect.objectContaining({
+      filePath: "projects/reports/brief.pdf",
+      rootExists: true,
+      content: null,
+      contentType: "application/pdf",
+      previewKind: "pdf",
+      message: null,
+      truncated: false,
+    }));
+    expect(detail.contentPath).toContain(`/api/orgs/${orgId}/workspace/file/content?`);
+    expect(detail.contentPath).toContain("path=projects%2Freports%2Fbrief.pdf");
+  });
+
   it("keeps non-image binary files out of inline preview", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);

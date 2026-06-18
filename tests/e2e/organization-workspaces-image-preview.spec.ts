@@ -8,6 +8,32 @@ const ONE_BY_ONE_PNG = Buffer.from(
   "base64",
 );
 
+function createSimplePdf() {
+  const stream = "BT /F1 18 Tf 36 96 Td (Rudder PDF preview) Tj /F1 10 Tf 0 -24 Td (Rendered in Library.) Tj ET";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(body, "utf8"));
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(body, "utf8");
+  body += `xref\n0 ${objects.length + 1}\n`;
+  body += "0000000000 65535 f \n";
+  for (const offset of offsets.slice(1)) {
+    body += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  body += `trailer << /Root 1 0 R /Size ${objects.length + 1} >>\n`;
+  body += `startxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(body, "utf8");
+}
+
 const resolveOrganizationWorkspaceRoot = resolveE2EOrganizationWorkspaceRoot;
 
 async function selectOrganization(page: Page, orgId: string) {
@@ -47,6 +73,48 @@ test.describe("Organization workspaces image preview", () => {
     );
     await expect(preview).toHaveJSProperty("naturalWidth", 1);
     await expect(preview).toHaveJSProperty("naturalHeight", 1);
+  });
+
+  test("renders PDF files inline in the workspace browser", async ({ page, request }) => {
+    const organizationRes = await request.post("/api/orgs", {
+      data: {
+        name: `Organization-Workspaces-PDF-Preview-${Date.now()}`,
+      },
+    });
+    expect(organizationRes.ok()).toBe(true);
+    const organization = await organizationRes.json() as { id: string; issuePrefix: string };
+
+    const pdfFilePath = "reports/brief.pdf";
+    const fileRes = await request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: pdfFilePath,
+        content: createSimplePdf().toString("utf8"),
+      },
+    });
+    expect(fileRes.ok()).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(pdfFilePath)}`);
+
+    await expect(page.getByText(pdfFilePath)).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText("brief.pdf", { timeout: 15_000 });
+    await expect(page.getByText("Binary files are not previewed")).toHaveCount(0);
+
+    const preview = page.getByTestId("org-workspaces-pdf-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toHaveAttribute(
+      "src",
+      new RegExp(`/api/orgs/${organization.id}/workspace/file/content\\?path=reports%2Fbrief\\.pdf`),
+    );
+    const contentResponse = await request.get(`/api/orgs/${organization.id}/workspace/file/content?path=${encodeURIComponent(pdfFilePath)}`);
+    expect(contentResponse.ok()).toBe(true);
+    expect(contentResponse.headers()["content-type"]).toBe("application/pdf");
+    await expect(page.getByRole("link", { name: "Open" })).toHaveAttribute(
+      "href",
+      new RegExp(`/api/orgs/${organization.id}/workspace/file/content\\?path=reports%2Fbrief\\.pdf`),
+    );
+    await page.waitForTimeout(1_000);
+    await page.screenshot({ path: "/tmp/rudder-pdf-preview-proof.png", fullPage: false });
   });
 
   test("renders html files inline in the workspace browser", async ({ page, request }) => {

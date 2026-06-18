@@ -335,6 +335,7 @@ function workspaceFileSummary(file: OrganizationWorkspaceFileDetail) {
     return firstMarkdownParagraph(file.content) ?? (file.truncated ? "Text preview is truncated." : null);
   }
   if (file.previewKind === "image") return "Image file.";
+  if (file.previewKind === "pdf") return "PDF file.";
   return file.message ?? "Preview is not available for this file type.";
 }
 

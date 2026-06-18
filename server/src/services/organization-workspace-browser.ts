@@ -213,9 +213,14 @@ function getWorkspaceFileContentType(filePath: string, buffer?: Buffer) {
 }
 
 const WORKSPACE_IMAGE_CONTENT_TYPE_VALUES = new Set(WORKSPACE_IMAGE_CONTENT_TYPES.values());
+const WORKSPACE_PDF_CONTENT_TYPE = "application/pdf";
 
 function isWorkspaceImageContentType(contentType: string | null | undefined) {
   return typeof contentType === "string" && WORKSPACE_IMAGE_CONTENT_TYPE_VALUES.has(contentType.toLowerCase());
+}
+
+function isWorkspacePdfContentType(contentType: string | null | undefined) {
+  return typeof contentType === "string" && contentType.toLowerCase() === WORKSPACE_PDF_CONTENT_TYPE;
 }
 
 function getWorkspaceFileContentPath(orgId: string, normalizedPath: string) {
@@ -225,6 +230,7 @@ function getWorkspaceFileContentPath(orgId: string, normalizedPath: string) {
 
 function getWorkspaceFilePreviewKind(contentType: string, buffer: Buffer): OrganizationWorkspaceFileDetail["previewKind"] {
   if (isWorkspaceImageContentType(contentType)) return "image";
+  if (isWorkspacePdfContentType(contentType)) return "pdf";
   return hasBinaryBytes(buffer) ? "binary" : "text";
 }
 
@@ -463,7 +469,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const contentType = getWorkspaceFileContentType(normalizedPath || resolvedTarget, buffer) ?? "application/octet-stream";
       const previewKind = getWorkspaceFilePreviewKind(contentType, buffer);
       const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, normalizedPath);
-      if (previewKind === "image") {
+      if (previewKind === "image" || previewKind === "pdf") {
         return {
           source: root.source,
           rootPath: resolvedRoot,
