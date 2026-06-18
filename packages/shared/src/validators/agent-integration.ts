@@ -32,6 +32,10 @@ export const createAgentIntegrationSchema = z.object({
 
 export type CreateAgentIntegration = z.infer<typeof createAgentIntegrationSchema>;
 
+export const connectAgentIntegrationSchema = createAgentIntegrationSchema.omit({ agentId: true });
+
+export type ConnectAgentIntegration = z.infer<typeof connectAgentIntegrationSchema>;
+
 const feishuEventHeaderSchema = z.object({
   event_id: z.string().min(1).optional(),
   app_id: z.string().min(1).optional(),

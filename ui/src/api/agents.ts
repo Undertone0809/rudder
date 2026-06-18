@@ -13,6 +13,7 @@ import type {
   AgentSkillSnapshot,
   AgentTaskSession,
   Approval,
+  ConnectAgentIntegration,
   HeartbeatRun,
   OrganizationSkillCreateRequest,
 } from "@rudderhq/shared";
@@ -110,6 +111,8 @@ export const agentsApi = {
     api.get<Record<string, unknown>>(agentPath(id, orgId, "/configuration")),
   listIntegrations: (id: string, orgId?: string) =>
     api.get<AgentIntegrationSummary[]>(agentPath(id, orgId, "/integrations")),
+  connectIntegration: (id: string, data: ConnectAgentIntegration, orgId?: string) =>
+    api.post<AgentIntegrationSummary>(agentPath(id, orgId, "/integrations"), data),
   revokeIntegration: (id: string, integrationId: string, orgId?: string) =>
     api.delete<AgentIntegrationSummary>(
       agentPath(id, orgId, `/integrations/${encodeURIComponent(integrationId)}`),

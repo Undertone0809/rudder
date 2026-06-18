@@ -12,6 +12,7 @@ import { agents as agentsTable, organizations } from "@rudderhq/db";
 import {
   agentSkillEnableSchema,
   agentSkillSyncSchema,
+  connectAgentIntegrationSchema,
   deriveAgentUrlKey,
   isUuidLike,
   organizationSkillCreateSchema,
@@ -41,7 +42,6 @@ import {
 import {
   accessService,
   agentInstructionsService,
-  agentIntegrationService,
   agentService,
   approvalService,
   budgetService,
@@ -55,7 +55,7 @@ import {
   workspaceOperationService
 } from "../services/index.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
-import { summarizeAgentIntegration } from "../services/integrations/agent-integrations.js";
+import { agentIntegrationService, summarizeAgentIntegration } from "../services/integrations/agent-integrations.js";
 import type { StorageService } from "../storage/types.js";
 import { registerAgentManagementRoutes } from "./agents.management-routes.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
@@ -1309,6 +1309,21 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     }
     await assertCanReadAgent(req, agent);
     res.json(await integrationsSvc.listForAgent(agent.orgId, agent.id));
+  });
+
+  router.post("/agents/:id/integrations", validate(connectAgentIntegrationSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanUpdateAgent(req, agent);
+    const integration = await integrationsSvc.create(agent.orgId, {
+      ...req.body,
+      agentId: agent.id,
+    });
+    res.status(201).json(summarizeAgentIntegration(integration));
   });
 
   router.delete("/agents/:id/integrations/:integrationId", async (req, res) => {

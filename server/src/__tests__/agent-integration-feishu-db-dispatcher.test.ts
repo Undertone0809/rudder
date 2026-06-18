@@ -41,6 +41,11 @@ import {
   dispatchFeishuInboundMessage,
   type FeishuInboundMessage,
 } from "../services/integrations/feishu/inbound-dispatcher.js";
+import {
+  feishuIntegrationRuntimeService,
+  type FeishuLongConnectionClient,
+  type FeishuOutboundSender,
+} from "../services/integrations/feishu/runtime.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -271,7 +276,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       });
     }
 
-    return { orgId, agentId, integrationId, userId };
+    return { orgId, agentId, integrationId, secretId, userId };
   }
 
   it("resolves Feishu callback verification credentials from the active integration secret", async () => {
@@ -440,6 +445,176 @@ describe("Feishu inbound dispatcher DB deps", () => {
       status: "pending",
     });
     await expect(db.select().from(agentIntegrationInboundDedup)).resolves.toHaveLength(1);
+  });
+
+  it("sends a real outbound binding-required response from long-connection events", async () => {
+    const seeded = await seedIntegration({
+      bindUser: false,
+      credentialValue: JSON.stringify({ tenantAccessToken: "tenant-token" }),
+    });
+    const sent: Array<{ chatId: string; text: string }> = [];
+    const sender: FeishuOutboundSender = {
+      sendText: async (input) => {
+        sent.push({ chatId: input.chatId, text: input.text });
+        return { messageId: "om_binding_response" };
+      },
+    };
+    const runtime = feishuIntegrationRuntimeService(db, { sender });
+
+    const result = await runtime.handleEvent(
+      {
+        id: seeded.integrationId,
+        orgId: seeded.orgId,
+        agentId: seeded.agentId,
+        providerRegion: "feishu_cn",
+        appCredentialSecretId: seeded.secretId,
+        externalAppId: "cli_a_feishu_app",
+        externalBotOpenId: "ou_bot",
+      },
+      { tenantAccessToken: "tenant-token" },
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_binding_required",
+        messageId: "om_binding_required",
+        chatId: "oc_chat",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "hello",
+      },
+    );
+
+    expect(result).toEqual({ status: "binding_required" });
+    expect(sent).toEqual([
+      {
+        chatId: "oc_chat",
+        text: expect.stringContaining("not bound"),
+      },
+    ]);
+    const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
+    expect(outbound).toMatchObject({
+      orgId: seeded.orgId,
+      integrationId: seeded.integrationId,
+      externalChatId: "oc_chat",
+      externalMessageId: "om_binding_response",
+      status: "final",
+    });
+  });
+
+  it("starts a Feishu long-connection client and dispatches inbound events through the runtime", async () => {
+    const seeded = await seedIntegration({
+      bindUser: false,
+      credentialValue: JSON.stringify({ tenantAccessToken: "tenant-token", websocketUrl: "wss://example.invalid" }),
+    });
+    const sent: Array<{ chatId: string; text: string }> = [];
+    let onEvent: ((payload: Record<string, unknown>) => Promise<void>) | null = null;
+    const sender: FeishuOutboundSender = {
+      sendText: async (input) => {
+        sent.push({ chatId: input.chatId, text: input.text });
+        return { messageId: "om_ws_response" };
+      },
+    };
+    const client: FeishuLongConnectionClient = {
+      start: async (input) => {
+        expect(input.integration.id).toBe(seeded.integrationId);
+        expect(input.credential.websocketUrl).toBe("wss://example.invalid");
+        onEvent = input.onEvent;
+        return { stop: () => {} };
+      },
+    };
+    const runtime = feishuIntegrationRuntimeService(db, { sender, client });
+
+    await expect(runtime.start()).resolves.toEqual({ started: 1 });
+    await onEvent?.({
+      appId: "cli_a_feishu_app",
+      botOpenId: "ou_bot",
+      eventId: "event_ws_binding",
+      messageId: "om_ws_binding",
+      chatId: "oc_ws",
+      chatType: "p2p",
+      senderOpenId: "ou_sender",
+      body: "hello from websocket",
+    });
+
+    expect(sent).toEqual([{ chatId: "oc_ws", text: expect.stringContaining("not bound") }]);
+    await expect(db.select().from(agentIntegrationBindingTokens)).resolves.toHaveLength(1);
+    const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
+    expect(outbound).toMatchObject({
+      externalChatId: "oc_ws",
+      externalMessageId: "om_ws_response",
+      status: "final",
+    });
+  });
+
+  it("sends the accepted assistant reply back to Feishu and patches the pending outbound record", async () => {
+    const seeded = await seedIntegration({
+      credentialValue: JSON.stringify({ tenantAccessToken: "tenant-token" }),
+    });
+    const sent: Array<{ chatId: string; text: string }> = [];
+    const sender: FeishuOutboundSender = {
+      sendText: async (input) => {
+        sent.push({ chatId: input.chatId, text: input.text });
+        return { messageId: "om_agent_reply" };
+      },
+    };
+    const runtime = feishuIntegrationRuntimeService(db, {
+      sender,
+      assistant: {
+        streamChatAssistantReply: async () => {
+          return {
+            outcome: "completed",
+            partialBody: "Agent accepted this request.",
+            replyingAgentId: seeded.agentId,
+            reply: {
+              kind: "message",
+              body: "Agent accepted this request.",
+              structuredPayload: null,
+              replyingAgentId: seeded.agentId,
+            },
+          };
+        },
+      },
+    });
+
+    const result = await runtime.handleEvent(
+      {
+        id: seeded.integrationId,
+        orgId: seeded.orgId,
+        agentId: seeded.agentId,
+        providerRegion: "feishu_cn",
+        appCredentialSecretId: seeded.secretId,
+        externalAppId: "cli_a_feishu_app",
+        externalBotOpenId: "ou_bot",
+      },
+      { tenantAccessToken: "tenant-token" },
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_accepted_reply",
+        messageId: "om_accepted_reply",
+        chatId: "oc_chat",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "please reply",
+      },
+    );
+
+    expect(result.status).toBe("accepted");
+    expect(sent).toEqual([{ chatId: "oc_chat", text: "Agent accepted this request." }]);
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const outbounds = await db.select().from(agentIntegrationOutboundMessages);
+    expect(outbounds).toHaveLength(1);
+    expect(outbounds[0]).toMatchObject({
+      orgId: seeded.orgId,
+      integrationId: seeded.integrationId,
+      externalChatId: "oc_chat",
+      externalMessageId: "om_agent_reply",
+      status: "final",
+    });
+    expect(outbounds[0]?.chatMessageId).toBe(messages[1]?.id);
   });
 
   it("dedupes repeated messages before appending a second chat message", async () => {

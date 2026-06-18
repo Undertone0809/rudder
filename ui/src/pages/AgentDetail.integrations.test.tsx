@@ -121,6 +121,23 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Connect");
   });
 
+  it("opens a Feishu connection form from the agent detail tab", () => {
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const connectButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Connect"));
+
+    expect(connectButton).toBeTruthy();
+    expect(connectButton?.hasAttribute("disabled")).toBe(false);
+    act(() => {
+      connectButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("Credential secret ID");
+    expect(container.textContent).toContain("App ID");
+    expect(container.textContent).toContain("Bot open ID");
+    expect(container.querySelector("select")?.textContent).toContain("Lark Global");
+  });
+
   it("renders configured Feishu integration metadata and actions", () => {
     const container = render(<AgentIntegrationsTab agent={agent({ integrations: [integration()] })} orgId="org-1" />);
 

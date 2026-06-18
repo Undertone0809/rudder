@@ -3,7 +3,7 @@ import { agentIntegrations, agents } from "@rudderhq/db";
 import type { AgentIntegrationSummary, CreateAgentIntegration } from "@rudderhq/shared";
 import { createAgentIntegrationSchema } from "@rudderhq/shared";
 import { and, desc, eq } from "drizzle-orm";
-import { notFound, unprocessable } from "../../errors.js";
+import { conflict, notFound, unprocessable } from "../../errors.js";
 import { secretService } from "../secrets.js";
 
 export function summarizeAgentIntegration(row: typeof agentIntegrations.$inferSelect): AgentIntegrationSummary {
@@ -66,6 +66,21 @@ export function agentIntegrationService(db: Db) {
       const parsed = createAgentIntegrationSchema.parse(input);
       await assertAgentInOrg(orgId, parsed.agentId);
       await assertSecretInOrg(orgId, parsed.appCredentialSecretId);
+
+      const existing = await db
+        .select()
+        .from(agentIntegrations)
+        .where(
+          and(
+            eq(agentIntegrations.orgId, orgId),
+            eq(agentIntegrations.agentId, parsed.agentId),
+            eq(agentIntegrations.provider, parsed.provider),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
+      if (existing && existing.status === "active") {
+        throw conflict("Agent already has an active integration for this provider");
+      }
 
       return db
         .insert(agentIntegrations)
