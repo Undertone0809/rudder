@@ -13,6 +13,7 @@ import {
   ensureOrganizationWorkspaceLayout,
   ensureProjectLibraryLayout,
 } from "../home-paths.js";
+import { agentStartupContextService } from "./agent-startup-context.js";
 import { organizationSkillService } from "./organization-skills.js";
 import { listProjectResourceAttachments } from "./resource-catalog.js";
 import { secretService } from "./secrets.js";
@@ -57,6 +58,8 @@ type BuildSceneContextInput = {
   agent: AgentRunContextAgent;
   resolvedWorkspace: ResolvedWorkspaceForRun;
   runtimeConfig: Record<string, unknown>;
+  issueId?: string | null;
+  chatConversationId?: string | null;
   executionWorkspace?: {
     cwd: string;
     source: string | null;
@@ -380,6 +383,7 @@ async function resolveProjectLibraryContext(
 export function agentRunContextService(db: Db) {
   const secretsSvc = secretService(db);
   const organizationSkills = organizationSkillService(db);
+  const startupContextSvc = agentStartupContextService(db);
 
   async function prepareRuntimeConfig(input: {
     scene: AgentRunScene;
@@ -662,8 +666,23 @@ export function agentRunContextService(db: Db) {
       input.agent.orgId,
       input.agent.id,
     );
+    const startupContext = await startupContextSvc.buildForRun({
+      orgId: input.agent.orgId,
+      agentId: input.agent.id,
+      agentHome: agentWorkspace.root,
+      memoryDir: agentWorkspace.memoryDir,
+      scene: input.scene,
+      issueId: input.issueId ?? null,
+      projectId: workspaceProjectId,
+      chatConversationId: input.chatConversationId ?? null,
+    });
     const compiledResourcesPrompt =
-      buildCompiledResourcesPrompt(projectResources, agentAutomations);
+      [
+        buildCompiledResourcesPrompt(projectResources, agentAutomations),
+        startupContext.markdown,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
     const rudderWorkspace = {
       cwd: executionWorkspaceCwd,
       source: workspaceSource,
@@ -704,6 +723,8 @@ export function agentRunContextService(db: Db) {
       rudderWorkspaces: input.resolvedWorkspace.workspaceHints,
       rudderRuntimeServiceIntents:
         runtimeServiceIntents.length > 0 ? runtimeServiceIntents : undefined,
+      rudderStartupContext: startupContext,
+      rudderStartupContextMetrics: startupContext.metrics,
     };
   }
 

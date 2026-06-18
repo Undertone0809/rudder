@@ -59,6 +59,7 @@ import {
   productIntelligenceService,
   projectService,
 } from "../services/index.js";
+import { sanitizeStartupContextPromptForPersistence } from "../services/runtime-kernel/heartbeat.core.js";
 import { summarizeRuntimeSkillsForTrace } from "../services/runtime-trace-metadata.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -438,8 +439,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
   }
 
   function modelTurnInputFromInvocationMeta(invocationMeta: AgentRuntimeInvocationMeta) {
-    return typeof invocationMeta.prompt === "string" && invocationMeta.prompt.trim().length > 0
-      ? invocationMeta.prompt
+    const prompt = sanitizeStartupContextPromptForPersistence(invocationMeta.prompt);
+    return typeof prompt === "string" && prompt.trim().length > 0
+      ? prompt
       : undefined;
   }
 
@@ -457,7 +459,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
       userMessageId: input.userMessageId,
       instruction:
         typeof invocationMeta?.prompt === "string" && invocationMeta.prompt.trim().length > 0
-          ? invocationMeta.prompt
+          ? sanitizeStartupContextPromptForPersistence(invocationMeta.prompt)
           : null,
       promptMetrics: invocationMeta?.promptMetrics ?? null,
     };

@@ -307,9 +307,18 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     requestedSkills: promptRequestedSkills,
     loadedSkills: loadedSkillEvidence,
   });
+  const persistentPrompt = sanitizeStartupContextPromptForPersistence(input.meta.prompt);
+  const persistentMeta = {
+    ...input.meta,
+    prompt: persistentPrompt,
+    context: sanitizeStartupContextContextForPersistence(input.meta.context),
+    ...(input.meta.prompt && input.meta.prompt !== persistentPrompt
+      ? { promptSanitizedForPersistence: true }
+      : {}),
+  };
 
   return {
-    ...input.meta,
+    ...persistentMeta,
     ...summarizeRuntimeSkillsForTrace(input.runtimeSkills),
     loadedSkillCount: loadedSkills.length,
     loadedSkillKeys: loadedSkills.map((entry) => entry.key),
@@ -325,6 +334,36 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     skillEvidenceKeys: skillEvidence.skills.map((entry) => entry.key),
     skillEvidenceSkills: skillEvidence.skills,
   } as Record<string, unknown>;
+}
+
+export function sanitizeStartupContextPromptForPersistence(prompt: string | null | undefined) {
+  if (!prompt) return prompt;
+  const heading = "\n## Recent Rudder Context";
+  let start = prompt.indexOf(heading);
+  let headingLength = heading.length;
+  if (start < 0 && prompt.startsWith("## Recent Rudder Context")) {
+    start = 0;
+    headingLength = "## Recent Rudder Context".length;
+  }
+  if (start < 0) return prompt;
+  const nextSection = prompt.indexOf("\n## ", start + headingLength);
+  const replacement = `${start === 0 ? "" : "\n"}## Recent Rudder Context\n\n[startup context omitted from persisted prompt]`;
+  if (nextSection < 0) return `${prompt.slice(0, start)}${replacement}`;
+  return `${prompt.slice(0, start)}${replacement}${prompt.slice(nextSection)}`;
+}
+
+export function sanitizeStartupContextContextForPersistence(context: Record<string, unknown> | null | undefined) {
+  if (!context) return context;
+  const snapshot = JSON.parse(JSON.stringify(context));
+  delete snapshot.rudderResourcesPrompt;
+  if (snapshot.rudderWorkspace && typeof snapshot.rudderWorkspace === "object") {
+    delete snapshot.rudderWorkspace.resourcesPrompt;
+    delete snapshot.rudderWorkspace.orgResourcesPrompt;
+  }
+  if (snapshot.rudderStartupContext && typeof snapshot.rudderStartupContext === "object") {
+    delete snapshot.rudderStartupContext.markdown;
+  }
+  return snapshot as Record<string, unknown>;
 }
 
 export function buildRecentDateKeys(windowDays: number, now: Date): string[] {

@@ -5,11 +5,14 @@ import {
   agentWakeupRequests,
   agents,
   applyPendingMigrations,
+  chatConversations,
+  chatMessages,
   costEvents,
   createDb,
   ensurePostgresDatabase,
   heartbeatRunEvents,
   heartbeatRuns,
+  issues,
   organizationSkills,
   organizations,
 } from "@rudderhq/db";
@@ -229,11 +232,14 @@ describe("heartbeat managed workspace preflight", () => {
   afterEach(async () => {
     await db.delete(agentTaskSessions);
     await db.delete(costEvents);
+    await db.delete(chatMessages);
+    await db.delete(chatConversations);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agentRuntimeState);
     await db.delete(agentWakeupRequests);
     await db.delete(organizationSkills);
+    await db.delete(issues);
     await db.delete(agents);
     await db.delete(organizations);
     if (rudderHome) await fs.rm(rudderHome, { recursive: true, force: true });
@@ -449,6 +455,143 @@ describe("heartbeat managed workspace preflight", () => {
     await waitForCondition(async () => {
       const events = await getRunEvents(run!.id);
       return events.some((event) => event.eventType === "lifecycle" && event.message === "run succeeded");
+    }, 15_000);
+    await waitForCondition(async () => {
+      const updatedAgent = await getAgent(agent.agentId);
+      return updatedAgent?.status === "idle";
+    }, 15_000);
+  }, 25_000);
+
+  it("injects the compact startup context bundle into the heartbeat prompt", async () => {
+    const agent = await seedAgentFixture();
+    const agentHome = resolveDefaultAgentWorkspaceDir(agent.orgId, {
+      id: agent.agentId,
+      orgId: agent.orgId,
+      name: agent.name,
+    });
+    const now = new Date();
+    const todayKey = now.toISOString().slice(0, 10);
+    const yesterday = new Date(now);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const yesterdayKey = yesterday.toISOString().slice(0, 10);
+    const memoryDir = path.join(agentHome, "memory");
+    const commandPath = path.join(rudderHome, "codex");
+    const capturePath = path.join(rudderHome, "codex-startup-context-capture.json");
+    const issueId = randomUUID();
+    const chatId = randomUUID();
+
+    await fs.mkdir(memoryDir, { recursive: true });
+    await fs.writeFile(path.join(memoryDir, `${todayKey}.md`), "- Today startup memory signal\n", "utf8");
+    await fs.writeFile(path.join(memoryDir, `${yesterdayKey}.md`), "- Yesterday startup memory signal\n", "utf8");
+    await writeFakeCodexCommand(commandPath);
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId: agent.orgId,
+      title: "Agent startup memory context",
+      description: "Define bounded startup context for agent runs.",
+      status: "in_review",
+      priority: "high",
+      assigneeAgentId: agent.agentId,
+      identifier: "RD-421",
+    });
+    await db.insert(chatConversations).values({
+      id: chatId,
+      orgId: agent.orgId,
+      title: "Agent run startup memory",
+      summary: "默认装载今天和昨天的 memory md",
+      preferredAgentId: agent.agentId,
+      lastMessageAt: new Date(),
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: agent.orgId,
+      conversationId: chatId,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "默认装载今天和昨天的 memory md",
+    });
+    await db
+      .update(agents)
+      .set({
+        agentRuntimeConfig: {
+          command: commandPath,
+          env: { RUDDER_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Follow the startup context.",
+        },
+      })
+      .where(eq(agents.id, agent.agentId));
+    mockRuntimeAdapter.execute.mockImplementationOnce((ctx) => executeCodexLocal(ctx));
+
+    const run = await heartbeatService(db).wakeup(agent.agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      contextSnapshot: {
+        issueId,
+        taskKey: `issue:${issueId}`,
+        wakeSource: "assignment",
+        wakeReason: "issue_assigned",
+      },
+    });
+
+    expect(run?.id).toBeTruthy();
+    await waitForCondition(async () => {
+      try {
+        await fs.access(capturePath);
+      } catch {
+        return false;
+      }
+      const events = await getRunEvents(run!.id);
+      return events.some((event) => event.eventType === "adapter.invoke");
+    }, 10_000);
+
+    const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { prompt: string };
+    expect(capture.prompt).toContain("## Recent Rudder Context");
+    expect(capture.prompt).toContain(`#### today memory/${todayKey}.md`);
+    expect(capture.prompt).toContain("- Today startup memory signal");
+    expect(capture.prompt).toContain(`#### yesterday memory/${yesterdayKey}.md`);
+    expect(capture.prompt).toContain("- Yesterday startup memory signal");
+    expect(capture.prompt).toContain("1. `RD-421` |||| `in_review` |||| assignee |||| Agent startup memory context |||| Define bounded startup context for agent runs.");
+    expect(capture.prompt).toContain(`1. \`${chatId}\` ||||`);
+    expect(capture.prompt).toContain("Agent run startup memory |||| 默认装载今天和昨天的 memory md");
+    expect(capture.prompt).not.toContain("recent runs");
+
+    const [updatedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run!.id));
+    expect(updatedRun?.contextSnapshot).toMatchObject({
+      rudderStartupContextMetrics: {
+        recentIssuesCount: 1,
+        recentChatsCount: 1,
+      },
+      rudderStartupContext: {
+        sourceRefs: expect.arrayContaining([
+          expect.objectContaining({ kind: "memory", ref: `memory/${todayKey}.md` }),
+          expect.objectContaining({ kind: "memory", ref: `memory/${yesterdayKey}.md` }),
+          expect.objectContaining({ kind: "issue", ref: "RD-421" }),
+          expect.objectContaining({ kind: "chat", ref: chatId }),
+        ]),
+      },
+    });
+    const persistedSnapshot = JSON.stringify(updatedRun?.contextSnapshot ?? {});
+    expect(persistedSnapshot).not.toContain("Today startup memory signal");
+    expect(persistedSnapshot).not.toContain("Yesterday startup memory signal");
+    expect(persistedSnapshot).not.toContain("默认装载今天和昨天的 memory md");
+    const events = await getRunEvents(run!.id);
+    const adapterInvoke = events.find((event) => event.eventType === "adapter.invoke");
+    expect(adapterInvoke?.payload).toMatchObject({
+      promptSanitizedForPersistence: true,
+    });
+    const persistedAdapterPayload = JSON.stringify(adapterInvoke?.payload ?? {});
+    expect(persistedAdapterPayload).toContain("[startup context omitted from persisted prompt]");
+    expect(persistedAdapterPayload).not.toContain("Today startup memory signal");
+    expect(persistedAdapterPayload).not.toContain("Yesterday startup memory signal");
+    expect(persistedAdapterPayload).not.toContain("默认装载今天和昨天的 memory md");
+    await waitForCondition(async () => {
+      const latestEvents = await getRunEvents(run!.id);
+      return latestEvents.some((event) => event.eventType === "lifecycle" && event.message === "run succeeded");
     }, 15_000);
     await waitForCondition(async () => {
       const updatedAgent = await getAgent(agent.agentId);

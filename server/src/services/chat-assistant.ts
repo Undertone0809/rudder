@@ -87,6 +87,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       agent: runtimeSource.runtimeAgent,
       resolvedWorkspace,
       runtimeConfig: config,
+      issueId: input.conversation.primaryIssueId ?? linkedIssueIds[0] ?? null,
+      chatConversationId: input.conversation.id,
     });
 
     return {

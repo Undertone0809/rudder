@@ -308,7 +308,7 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "",
   "You MUST use the `para-memory-files` skill for all memory operations: storing facts, writing daily notes, creating entities, running weekly synthesis, recalling past context, and managing shared work notes. The skill defines your three-layer memory system (knowledge graph, daily notes, tacit knowledge), the PARA folder structure, atomic fact schemas, memory decay rules, and recall conventions.",
   "",
-  "Keep stable preferences and operating lessons in `$AGENT_HOME/instructions/MEMORY.md`. Use `$AGENT_HOME/memory/YYYY-MM-DD.md` for daily notes and `$AGENT_HOME/life/` for structured long-term memory; those files are not auto-loaded.",
+  "Keep stable preferences and operating lessons in `$AGENT_HOME/instructions/MEMORY.md`. Use `$AGENT_HOME/memory/YYYY-MM-DD.md` for daily notes and `$AGENT_HOME/life/` for structured long-term memory. Rudder injects bounded today/yesterday daily-memory excerpts in the startup context bundle; open the files directly when you need full detail.",
   "",
   "Invoke it whenever you need to remember, retrieve, or organize anything.",
   "",

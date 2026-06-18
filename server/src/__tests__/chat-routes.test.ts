@@ -2151,7 +2151,29 @@ describe("chat routes", () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Working on it");
-    const runtimePrompt = "You are Chat Specialist, replying inside Rudder's chat scene.\n\nConversation input:\n{}";
+    const runtimePrompt = [
+      "You are Chat Specialist, replying inside Rudder's chat scene.",
+      "",
+      "## Recent Rudder Context",
+      "",
+      "#### today memory/2026-06-19.md",
+      "- Chat startup memory signal",
+      "",
+      "#### recent chats",
+      "1. `chat-previous` |||| 2026-06-19T00:00:00.000Z |||| Previous |||| private chat snippet",
+      "",
+      "## Conversation input",
+      "{}",
+    ].join("\n");
+    const persistedRuntimePrompt = [
+      "You are Chat Specialist, replying inside Rudder's chat scene.",
+      "",
+      "## Recent Rudder Context",
+      "",
+      "[startup context omitted from persisted prompt]",
+      "## Conversation input",
+      "{}",
+    ].join("\n");
 
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValue([userMessage]);
@@ -2229,7 +2251,7 @@ describe("chat routes", () => {
       expect.objectContaining({
         input: expect.objectContaining({
           body: "Need help",
-          instruction: runtimePrompt,
+          instruction: persistedRuntimePrompt,
           promptMetrics: {
             promptChars: 85,
           },
@@ -2242,9 +2264,15 @@ describe("chat routes", () => {
         subtype: "completed",
         isError: false,
       }),
-      initialTurnInput: runtimePrompt,
+      initialTurnInput: persistedRuntimePrompt,
       transcript: [],
     }));
+    const observationCalls = JSON.stringify(mockUpdateExecutionObservation.mock.calls);
+    const transcriptCalls = JSON.stringify(mockEmitExecutionTranscriptTree.mock.calls);
+    expect(observationCalls).not.toContain("Chat startup memory signal");
+    expect(observationCalls).not.toContain("private chat snippet");
+    expect(transcriptCalls).not.toContain("Chat startup memory signal");
+    expect(transcriptCalls).not.toContain("private chat snippet");
   });
 
   it("streams ack, transcript entries, deltas, and final persisted messages", async () => {

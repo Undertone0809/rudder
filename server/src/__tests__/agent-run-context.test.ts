@@ -38,11 +38,20 @@ vi.mock("../services/organization-skills.js", () => ({
 
 const mockListOrganizationResources = vi.fn();
 const mockListProjectResourceAttachments = vi.fn();
+const mockBuildAgentStartupContext = vi.fn();
 
 vi.mock("../services/resource-catalog.js", () => ({
   listOrganizationResources: (...args: unknown[]) => mockListOrganizationResources(...args),
   listProjectResourceAttachments: (...args: unknown[]) => mockListProjectResourceAttachments(...args),
 }));
+
+vi.mock("../services/agent-startup-context.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/agent-startup-context.js")>();
+  return {
+    ...actual,
+    agentStartupContextService: (...args: unknown[]) => mockBuildAgentStartupContext(...args),
+  };
+});
 
 const { agentRunContextService } = await import("../services/agent-run-context.js");
 
@@ -50,9 +59,32 @@ describe("agentRunContextService buildSceneContext", () => {
   afterEach(() => {
     mockListOrganizationResources.mockReset();
     mockListProjectResourceAttachments.mockReset();
+    mockBuildAgentStartupContext.mockReset();
   });
 
+  function mockEmptyStartupContext() {
+    mockBuildAgentStartupContext.mockReturnValue({
+      buildForRun: vi.fn(async () => ({
+        markdown: "",
+        version: "agent-startup-context/v1",
+        sections: [],
+        sourceRefs: [],
+        metrics: {
+          version: "agent-startup-context/v1",
+          totalChars: 0,
+          limitChars: 12000,
+          recentIssuesCount: 0,
+          recentChatsCount: 0,
+          omittedIssues: 0,
+          omittedChats: 0,
+        },
+        omissions: [],
+      })),
+    });
+  }
+
   it("uses the resolved execution workspace cwd while preserving agent home metadata", async () => {
+    mockEmptyStartupContext();
     const svc = agentRunContextService({} as any);
 
     const context = await svc.buildSceneContext({
@@ -93,6 +125,7 @@ describe("agentRunContextService buildSceneContext", () => {
   });
 
   it("omits the resources prompt when the selected project has no attached resources", async () => {
+    mockEmptyStartupContext();
     mockListOrganizationResources.mockResolvedValue([]);
     mockListProjectResourceAttachments.mockResolvedValue([]);
 
@@ -127,6 +160,7 @@ describe("agentRunContextService buildSceneContext", () => {
   });
 
   it("does not inject structured org catalog resources into the agent run prompt by default", async () => {
+    mockEmptyStartupContext();
     mockListOrganizationResources.mockResolvedValue([
       {
         id: "resource-1",
@@ -172,6 +206,7 @@ describe("agentRunContextService buildSceneContext", () => {
   });
 
   it("appends assigned automation context to the compiled run prompt", async () => {
+    mockEmptyStartupContext();
     const automationOrderBy = vi.fn(async () => [
       {
         id: "automation-1",
@@ -264,7 +299,123 @@ describe("agentRunContextService buildSceneContext", () => {
     expect(mockListProjectResourceAttachments).not.toHaveBeenCalled();
   });
 
+  it("appends compact startup context after curated run resources", async () => {
+    mockListProjectResourceAttachments.mockResolvedValue([
+      {
+        id: "attachment-1",
+        orgId: "organization-1",
+        projectId: "project-1",
+        resourceId: "resource-1",
+        role: "working_set",
+        note: null,
+        sortOrder: 0,
+        resource: {
+          id: "resource-1",
+          orgId: "organization-1",
+          name: "Rudder repo",
+          kind: "directory",
+          sourceType: "library",
+          locator: "projects/product/product-brief.md",
+          description: null,
+          metadata: null,
+          createdAt: new Date("2026-04-16T09:00:00.000Z"),
+          updatedAt: new Date("2026-04-16T09:00:00.000Z"),
+        },
+        createdAt: new Date("2026-04-16T09:00:00.000Z"),
+        updatedAt: new Date("2026-04-16T09:00:00.000Z"),
+      },
+    ]);
+    const buildForRun = vi.fn(async () => ({
+      markdown: [
+        "## Recent Rudder Context",
+        "",
+        "#### today memory/2026-06-19.md",
+        "- Morning calibration",
+        "",
+        "#### yesterday memory/2026-06-18.md",
+        "- Launch context",
+        "",
+        "#### recent issues",
+        "1. `RD-421` |||| `in_review` |||| assignee |||| Agent startup memory context |||| Define bounded startup context.",
+        "",
+        "#### recent chats",
+        "1. `chat_01JY9M2V8Q6Z` |||| 2026-06-19T00:33:00.000Z |||| Agent run startup memory |||| 默认装载今天和昨天的 memory md",
+        "",
+        "#### startup context metadata",
+        "version |||| `agent-startup-context/v1`",
+        "limits |||| 924 / 12000 chars",
+      ].join("\n"),
+      version: "agent-startup-context/v1",
+      sections: ["daily_memory", "recent_issues", "recent_chats"],
+      sourceRefs: [],
+      metrics: {
+        version: "agent-startup-context/v1",
+        totalChars: 924,
+        limitChars: 12000,
+        recentIssuesCount: 1,
+        recentChatsCount: 1,
+        omittedIssues: 0,
+        omittedChats: 0,
+      },
+      omissions: [],
+    }));
+    mockBuildAgentStartupContext.mockReturnValue({ buildForRun });
+
+    const limit = vi.fn(async () => [{ id: "project-1", name: "Product" }]);
+    const where = vi.fn(() => ({ limit }));
+    const from = vi.fn(() => ({ where }));
+    const db = { select: vi.fn(() => ({ from })) } as any;
+    const svc = agentRunContextService(db);
+    const context = await svc.buildSceneContext({
+      scene: "heartbeat",
+      agent: {
+        id: "agent-1",
+        orgId: "organization-1",
+        name: "Builder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      resolvedWorkspace: {
+        cwd: "/tmp/project-workspace",
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: "https://github.com/acme/repo.git",
+        repoRef: "main",
+        workspaceHints: [],
+        warnings: [],
+      },
+      runtimeConfig: {},
+      issueId: "issue-1",
+    });
+
+    expect(context.rudderWorkspace.resourcesPrompt).toContain("## Project Context Resources");
+    expect(context.rudderWorkspace.resourcesPrompt).toContain("## Recent Rudder Context");
+    expect(context.rudderWorkspace.resourcesPrompt.indexOf("## Project Context Resources")).toBeLessThan(
+      context.rudderWorkspace.resourcesPrompt.indexOf("## Recent Rudder Context"),
+    );
+    expect(context.rudderWorkspace.resourcesPrompt).toContain("#### today memory/2026-06-19.md");
+    expect(context.rudderWorkspace.resourcesPrompt).toContain("1. `RD-421` |||| `in_review` |||| assignee");
+    expect(context.rudderWorkspace.resourcesPrompt).toContain("1. `chat_01JY9M2V8Q6Z` |||| 2026-06-19T00:33:00.000Z");
+    expect(context.rudderWorkspace.resourcesPrompt).not.toContain("recent runs");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toBe(context.rudderWorkspace.resourcesPrompt);
+    expect(context.rudderStartupContext).toMatchObject({ version: "agent-startup-context/v1" });
+    expect(context.rudderStartupContextMetrics).toMatchObject({
+      recentIssuesCount: 1,
+      recentChatsCount: 1,
+    });
+    expect(buildForRun).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "organization-1",
+      agentId: "agent-1",
+      memoryDir: "/tmp/agent-home/memory",
+      scene: "heartbeat",
+      issueId: "issue-1",
+      projectId: "project-1",
+    }));
+  });
+
   it("injects attached project resources into the compiled run prompt", async () => {
+    mockEmptyStartupContext();
     mockListOrganizationResources.mockResolvedValue([]);
     mockListProjectResourceAttachments.mockResolvedValue([
       {
@@ -336,6 +487,7 @@ describe("agentRunContextService buildSceneContext", () => {
   });
 
   it("exposes the project Library root for project-scoped local runs", async () => {
+    mockEmptyStartupContext();
     const limit = vi.fn(async () => [{ id: "project-1", name: "Product" }]);
     const where = vi.fn(() => ({ limit }));
     const from = vi.fn(() => ({ where }));
