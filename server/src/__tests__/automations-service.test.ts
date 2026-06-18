@@ -471,7 +471,7 @@ describe("automation service live-execution coalescing", () => {
     expect(follows).toHaveLength(0);
   });
 
-  it("follows the fresh execution issue and surfaces it as unread in Messenger when issue-created notifications are enabled", async () => {
+  it("surfaces a fresh execution issue as unread in Messenger without pinning it when issue-created notifications are enabled", async () => {
     const { agentId, automation, svc, wakeups } = await seedFixture();
     await svc.update(automation.id, { notifyOnIssueCreated: true }, { userId: "board-user" });
 
@@ -487,21 +487,15 @@ describe("automation service live-execution coalescing", () => {
       .select()
       .from(issueFollows)
       .where(eq(issueFollows.issueId, run.linkedIssueId!));
-    expect(follows).toMatchObject([
-      {
-        orgId: automation.orgId,
-        issueId: run.linkedIssueId,
-        userId: "board-user",
-      },
-    ]);
-    const followActivity = await db
+    expect(follows).toHaveLength(0);
+    const notificationActivity = await db
       .select()
       .from(activityLog)
       .where(eq(activityLog.entityId, run.linkedIssueId!));
-    expect(followActivity).toEqual([
+    expect(notificationActivity).toEqual([
       expect.objectContaining({
         orgId: automation.orgId,
-        action: "issue.followed",
+        action: "automation.issue_created_notification",
         entityType: "issue",
         entityId: run.linkedIssueId,
         actorType: "system",
@@ -525,12 +519,12 @@ describe("automation service live-execution coalescing", () => {
     expect(issueItem).toMatchObject({
       issueId: run.linkedIssueId,
       metadata: expect.objectContaining({
-        followed: true,
+        followed: false,
       }),
     });
     expect(issueItem?.title).toContain(automation.title);
-    expect(issueItem?.preview).toBe("Followed");
-    const expectedMessengerPreview = `${issueItem?.title} — Followed`;
+    expect(issueItem?.preview).toBe("Automation created issue");
+    const expectedMessengerPreview = `${issueItem?.title} — Automation created issue`;
     expect(thread.detail.unreadCount).toBe(1);
     expect(thread.detail.needsAttention).toBe(true);
     expect(thread.summary.unreadCount).toBe(1);
@@ -552,7 +546,7 @@ describe("automation service live-execution coalescing", () => {
     await expect(sidebarBadges.countUnreadTouchedIssues(automation.orgId, "board-user")).resolves.toBe(1);
   });
 
-  it("does not hold the issue follow foreign-key lock while waking the assignee", async () => {
+  it("does not hold issue-notification work inside the dispatch transaction while waking the assignee", async () => {
     const { automation, svc } = await seedFixture({
       wakeup: async (_agentId, wakeupOpts) => {
         const issueId =
@@ -578,10 +572,10 @@ describe("automation service live-execution coalescing", () => {
       .select()
       .from(issueFollows)
       .where(eq(issueFollows.issueId, run.linkedIssueId!));
-    expect(follows.map((follow) => follow.userId)).toEqual(["board-user"]);
+    expect(follows).toHaveLength(0);
   });
 
-  it("keeps issue-created notifications pinned to the enabling board user", async () => {
+  it("keeps issue-created notifications targeted to the enabling board user", async () => {
     const { automation, svc } = await seedFixture();
     await svc.update(automation.id, { notifyOnIssueCreated: true }, { userId: "board-user-a" });
     const edited = await svc.update(automation.id, { title: "edited by another board user" }, { userId: "board-user-b" });
@@ -595,7 +589,17 @@ describe("automation service live-execution coalescing", () => {
       .select()
       .from(issueFollows)
       .where(eq(issueFollows.issueId, run.linkedIssueId!));
-    expect(follows.map((follow) => follow.userId)).toEqual(["board-user-a"]);
+    expect(follows).toHaveLength(0);
+    const [notificationActivity] = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.entityId, run.linkedIssueId!));
+    expect(notificationActivity).toMatchObject({
+      action: "automation.issue_created_notification",
+      details: expect.objectContaining({
+        userId: "board-user-a",
+      }),
+    });
   });
 
   it("clears issue-created notifications when switching to chat output", async () => {

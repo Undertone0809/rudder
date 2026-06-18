@@ -303,8 +303,10 @@ describe("issueService.list participantAgentId", () => {
 
   it("keeps automation execution issues out of generic lists unless explicitly requested", async () => {
     const orgId = randomUUID();
+    const userId = "board-user-automation-notified";
     const manualIssueId = randomUUID();
     const automationIssueId = randomUUID();
+    const notifiedAutomationIssueId = randomUUID();
 
     await db.insert(organizations).values({
       id: orgId,
@@ -333,13 +335,43 @@ describe("issueService.list participantAgentId", () => {
         originId: randomUUID(),
         originRunId: randomUUID(),
       },
+      {
+        id: notifiedAutomationIssueId,
+        orgId,
+        title: "Notified automation execution",
+        status: "todo",
+        priority: "medium",
+        originKind: "automation_execution",
+        originId: randomUUID(),
+        originRunId: randomUUID(),
+      },
     ]);
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "system",
+      actorId: "automation-issue-notifier",
+      action: "automation.issue_created_notification",
+      entityType: "issue",
+      entityId: notifiedAutomationIssueId,
+      details: {
+        issueId: notifiedAutomationIssueId,
+        userId,
+        source: "automation.issue_created_notification",
+      },
+    });
 
     const defaultResult = await svc.list(orgId);
     expect(defaultResult.map((issue) => issue.id)).toEqual([manualIssueId]);
 
+    const userResult = await svc.list(orgId, { touchedByUserId: userId });
+    expect(new Set(userResult.map((issue) => issue.id))).toEqual(new Set([manualIssueId, notifiedAutomationIssueId]));
+
     const boardResult = await svc.list(orgId, { includeAutomationExecutions: true });
-    expect(new Set(boardResult.map((issue) => issue.id))).toEqual(new Set([manualIssueId, automationIssueId]));
+    expect(new Set(boardResult.map((issue) => issue.id))).toEqual(new Set([
+      manualIssueId,
+      automationIssueId,
+      notifiedAutomationIssueId,
+    ]));
   });
 
   it("defaults issue search to title and only finds comments when comment search is enabled", async () => {

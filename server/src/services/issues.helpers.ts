@@ -155,6 +155,7 @@ export function touchedByUserCondition(orgId: string, userId: string) {
       OR ${issues.assigneeUserId} = ${userId}
       OR ${issues.reviewerUserId} = ${userId}
       OR ${followedByUserCondition(orgId, userId)}
+      OR ${automationIssueNotifiedToUserCondition(orgId, userId)}
       OR EXISTS (
         SELECT 1
         FROM ${issueReadStates}
@@ -182,6 +183,30 @@ export function followedByUserCondition(orgId: string, userId: string) {
       WHERE ${issueFollows.issueId} = ${issues.id}
         AND ${issueFollows.orgId} = ${orgId}
         AND ${issueFollows.userId} = ${userId}
+    )
+  `;
+}
+
+export function automationIssueNotifiedToUserCondition(orgId: string, userId: string) {
+  return sql<boolean>`
+    EXISTS (
+      SELECT 1
+      FROM ${activityLog}
+      WHERE ${activityLog.orgId} = ${orgId}
+        AND ${activityLog.entityType} = 'issue'
+        AND ${activityLog.entityId} = ${issues.id}::text
+        AND ${activityLog.action} = 'automation.issue_created_notification'
+        AND ${activityLog.details}->>'userId' = ${userId}
+    )
+  `;
+}
+
+export function automationExecutionVisibleToUserCondition(orgId: string, userId: string) {
+  return sql<boolean>`
+    (
+      ${issues.originKind} <> 'automation_execution'
+      OR ${followedByUserCondition(orgId, userId)}
+      OR ${automationIssueNotifiedToUserCondition(orgId, userId)}
     )
   `;
 }

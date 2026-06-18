@@ -241,7 +241,7 @@ describe("LiveUpdatesProvider notification preferences", () => {
     });
   });
 
-  it("refreshes Messenger and sidebar queries without a toast for automation issue follow notifications", () => {
+  it("refreshes Messenger and sidebar queries without a toast for automation issue-created notifications", () => {
     const toasts: unknown[] = [];
     const invalidations: unknown[] = [];
     const queryClient = {
@@ -261,7 +261,7 @@ describe("LiveUpdatesProvider notification preferences", () => {
         payload: {
           entityType: "issue",
           entityId: "issue-1",
-          action: "issue.followed",
+          action: "automation.issue_created_notification",
           actorType: "system",
           actorId: "automation-issue-notifier",
           details: {

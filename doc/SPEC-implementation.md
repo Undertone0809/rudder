@@ -646,9 +646,9 @@ Chat behavior requirements:
 - chat-driven issue creation and lightweight operations reuse the approval system
 - `track_issue` automations create normal issue-backed execution work; when a
   board user enables issue-created notifications, Rudder stores that user as
-  the stable notification recipient and follows newly created automation
-  execution issues for that user, making only those followed execution issues
-  visible in Messenger
+  the stable notification recipient and surfaces newly created automation
+  execution issues in that user's Messenger without pinning or following the
+  issue; only issues the user explicitly follows are pinned
 - `chat_output` automations execute as chat-native runs: Rudder creates or
   reuses the run-owned chat conversation, appends the automation prompt as a
   user message, streams the agent process into a normal assistant message, and
