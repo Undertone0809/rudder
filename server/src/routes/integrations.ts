@@ -2,6 +2,10 @@ import type { Db } from "@rudderhq/db";
 import { mockFeishuInboundEventSchema } from "@rudderhq/shared";
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
+import {
+  hasFeishuCallbackVerificationSignal,
+  verifyFeishuEventCallback,
+} from "../services/integrations/feishu/event-verifier.js";
 import { createFeishuInboundDispatcherDbDeps } from "../services/integrations/feishu/inbound-dispatcher-db.js";
 import { dispatchFeishuInboundMessage } from "../services/integrations/feishu/inbound-dispatcher.js";
 import { normalizeMockFeishuInboundEvent } from "../services/integrations/feishu/inbound-normalizer.js";
@@ -14,6 +18,20 @@ export function integrationRoutes(db: Db) {
     assertBoard(req);
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+
+    if (hasFeishuCallbackVerificationSignal(req.body, req.headers)) {
+      const verification = verifyFeishuEventCallback({
+        body: req.body,
+        headers: req.headers,
+        rawBody: req.rawBody,
+        verificationToken: req.body.mockVerificationToken,
+        encryptKey: req.body.mockEncryptKey,
+      });
+      if (verification.kind === "challenge") {
+        res.status(200).json({ challenge: verification.challenge });
+        return;
+      }
+    }
 
     const event = normalizeMockFeishuInboundEvent(req.body);
     const result = await dispatchFeishuInboundMessage(event, createFeishuInboundDispatcherDbDeps(db, { orgId }));
