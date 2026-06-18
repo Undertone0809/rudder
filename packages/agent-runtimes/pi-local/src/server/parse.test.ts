@@ -20,6 +20,29 @@ describe("parsePiJsonl", () => {
     expect(parsed.finalMessage).toBe("Hello from Pi");
   });
 
+  it("prefers the final agent_end assistant message over the last turn message", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "turn_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "turn ok" }],
+        },
+      }),
+      JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: "task" },
+          { role: "assistant", content: [{ type: "text", text: "final ok" }] },
+        ],
+      }),
+    ].join("\n");
+
+    const parsed = parsePiJsonl(stdout);
+    expect(parsed.messages).toContain("turn ok");
+    expect(parsed.finalMessage).toBe("final ok");
+  });
+
   it("parses streaming text deltas", () => {
     const stdout = [
       JSON.stringify({
