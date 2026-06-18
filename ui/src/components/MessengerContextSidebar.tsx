@@ -81,6 +81,7 @@ import {
   MailOpen,
   MessageSquare,
   MoreHorizontal,
+  Palette,
   PanelLeftClose,
   PencilLine,
   Pin,
@@ -88,6 +89,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  Smile,
   Trash2,
   UserPlus,
   XCircle,
@@ -96,9 +98,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 
 type ThreadOrganizationRule = "latest" | "project" | "agent" | "kind" | "attention" | "custom";
 type MessengerThreadDensity = "comfortable" | "compact";
-type CustomGroupEditorState =
-  | { mode: "create"; threadKey?: string }
-  | { mode: "edit"; group: MessengerCustomGroupWithEntries };
+type CustomGroupEditorState = { mode: "create"; threadKey?: string };
+type CustomGroupRenameState = { group: MessengerCustomGroupWithEntries; name: string };
 
 const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg";
 const THREAD_DENSITY_STORAGE_KEY = "rudder.messengerThreadDensityByOrg";
@@ -543,7 +544,6 @@ function CustomGroupIcon({ icon }: { icon?: string | null }) {
 }
 
 function CustomGroupEditor({
-  state,
   name,
   icon,
   color,
@@ -554,7 +554,6 @@ function CustomGroupEditor({
   onCancel,
   onSubmit,
 }: {
-  state: CustomGroupEditorState;
   name: string;
   icon: string;
   color: CustomGroupColor | null;
@@ -565,8 +564,6 @@ function CustomGroupEditor({
   onCancel: () => void;
   onSubmit: () => void;
 }) {
-  const title = state.mode === "create" ? "New group" : "Edit group";
-  const submitLabel = state.mode === "create" ? "Create" : "Save";
   return (
     <form
       data-testid="messenger-custom-group-editor"
@@ -578,7 +575,7 @@ function CustomGroupEditor({
     >
       <div className="mb-2 flex items-center gap-2">
         <CustomGroupIcon icon={icon} />
-        <div className="min-w-0 flex-1 text-[12px] font-semibold text-foreground">{title}</div>
+        <div className="min-w-0 flex-1 text-[12px] font-semibold text-foreground">New group</div>
       </div>
       <input
         autoFocus
@@ -659,7 +656,60 @@ function CustomGroupEditor({
           disabled={pending || !name.trim()}
           className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] bg-[color:var(--accent-strong)] px-2.5 text-[12px] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {submitLabel}
+          Create
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function CustomGroupRenameForm({
+  name,
+  pending,
+  onNameChange,
+  onCancel,
+  onSubmit,
+}: {
+  name: string;
+  pending: boolean;
+  onNameChange: (value: string) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <form
+      data-testid="messenger-custom-group-rename"
+      className="mx-3 mt-2 rounded-md border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_96%,transparent)] p-2.5 shadow-sm"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <PencilLine className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+        <div className="min-w-0 flex-1 text-[12px] font-semibold text-foreground">Rename group</div>
+      </div>
+      <input
+        autoFocus
+        aria-label="Group name"
+        value={name}
+        onChange={(event) => onNameChange(event.currentTarget.value)}
+        className="h-8 w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:var(--surface-page)] px-2.5 text-[13px] outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+      />
+      <div className="mt-2.5 flex justify-end gap-1.5">
+        <button
+          type="button"
+          className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[12px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={pending || !name.trim()}
+          className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] bg-[color:var(--accent-strong)] px-2.5 text-[12px] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Save
         </button>
       </div>
     </form>
@@ -2007,13 +2057,16 @@ export function MessengerContextSidebar() {
   const unreadScrollCursorRef = useRef<string | null>(null);
   const handledUnreadScrollRequestIdRef = useRef(0);
   const unreadLoadMoreRequestRef = useRef<{ requestId: number; loadedCount: number } | null>(null);
+  const customGroupIconUpdateQueuesRef = useRef<Record<string, Promise<void>>>({});
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [pendingChatRenameTitles, setPendingChatRenameTitles] = useState<Record<string, string>>({});
   const [customGroupEditor, setCustomGroupEditor] = useState<CustomGroupEditorState | null>(null);
+  const [customGroupRename, setCustomGroupRename] = useState<CustomGroupRenameState | null>(null);
   const [customGroupNameDraft, setCustomGroupNameDraft] = useState("");
   const [customGroupIconDraft, setCustomGroupIconDraft] = useState("folder");
   const [customGroupColorDraft, setCustomGroupColorDraft] = useState<CustomGroupColor | null>("amber");
+  const [pendingCustomGroupIcons, setPendingCustomGroupIcons] = useState<Record<string, string | null>>({});
   const [draggingThreadId, setDraggingThreadId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [unreadScrollRequestId, setUnreadScrollRequestId] = useState(0);
@@ -2179,6 +2232,20 @@ export function MessengerContextSidebar() {
     queryFn: () => messengerApi.listCustomGroups(model.selectedOrganizationId!),
     enabled: !!model.selectedOrganizationId,
   });
+  useEffect(() => {
+    if (Object.keys(pendingCustomGroupIcons).length === 0) return;
+    setPendingCustomGroupIcons((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const group of customGroupsQuery.data?.groups ?? []) {
+        if (!(group.id in next)) continue;
+        if (next[group.id] !== group.icon) continue;
+        delete next[group.id];
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [customGroupsQuery.data?.groups, pendingCustomGroupIcons]);
   const conversationsById = useMemo(() => {
     const map = new Map<string, ChatConversation>();
     for (const conversation of chatsQuery.data ?? []) {
@@ -2767,18 +2834,11 @@ export function MessengerContextSidebar() {
   };
 
   const openCreateCustomGroupEditor = (threadKey?: string) => {
+    setCustomGroupRename(null);
     setCustomGroupEditor({ mode: "create", threadKey });
     setCustomGroupNameDraft("");
     setCustomGroupIconDraft("folder");
     setCustomGroupColorDraft("amber");
-  };
-
-  const openEditCustomGroupEditor = (group: MessengerCustomGroupWithEntries) => {
-    const parsedIcon = splitCustomGroupIconValue(group.icon);
-    setCustomGroupEditor({ mode: "edit", group });
-    setCustomGroupNameDraft(group.name);
-    setCustomGroupIconDraft(parsedIcon.glyph);
-    setCustomGroupColorDraft(parsedIcon.color ?? customGroupColorFor(group));
   };
 
   const closeCustomGroupEditor = () => {
@@ -2793,18 +2853,11 @@ export function MessengerContextSidebar() {
     const name = customGroupNameDraft.trim();
     if (!name) return;
     const icon = composeCustomGroupIconValue(customGroupIconDraft, customGroupColorDraft);
-    if (customGroupEditor.mode === "create") {
-      createCustomGroupMutation.mutate({
-        name,
-        icon: icon || null,
-        threadKey: customGroupEditor.threadKey,
-      });
-    } else {
-      updateCustomGroupMutation.mutate({
-        groupId: customGroupEditor.group.id,
-        data: { name, icon: icon || null },
-      });
-    }
+    createCustomGroupMutation.mutate({
+      name,
+      icon: icon || null,
+      threadKey: customGroupEditor.threadKey,
+    });
     closeCustomGroupEditor();
   };
 
@@ -2812,8 +2865,66 @@ export function MessengerContextSidebar() {
     openCreateCustomGroupEditor(threadKey);
   };
 
-  const handleEditCustomGroup = (group: MessengerCustomGroupWithEntries) => {
-    openEditCustomGroupEditor(group);
+  const handleRenameCustomGroup = (group: MessengerCustomGroupWithEntries) => {
+    setCustomGroupEditor(null);
+    setCustomGroupRename({ group, name: group.name });
+  };
+
+  const closeCustomGroupRename = () => {
+    setCustomGroupRename(null);
+  };
+
+  const submitCustomGroupRename = () => {
+    if (!customGroupRename) return;
+    const name = customGroupRename.name.trim();
+    if (!name) return;
+    updateCustomGroupMutation.mutate({
+      groupId: customGroupRename.group.id,
+      data: { name },
+    });
+    closeCustomGroupRename();
+  };
+
+  const queueCustomGroupIconUpdate = (groupId: string, icon: string | null) => {
+    const orgId = model.selectedOrganizationId;
+    if (!orgId) return;
+    const previous = customGroupIconUpdateQueuesRef.current[groupId] ?? Promise.resolve();
+    const update = previous.catch(() => undefined).then(async () => {
+      try {
+        await messengerApi.updateCustomGroup(orgId, groupId, { icon });
+        await refreshCustomGroups();
+      } catch (error) {
+        setPendingCustomGroupIcons((current) => {
+          if (current[groupId] !== icon) return current;
+          const nextPending = { ...current };
+          delete nextPending[groupId];
+          return nextPending;
+        });
+      }
+    });
+    const queued = update.finally(() => {
+      if (customGroupIconUpdateQueuesRef.current[groupId] === queued) {
+        delete customGroupIconUpdateQueuesRef.current[groupId];
+      }
+    });
+    customGroupIconUpdateQueuesRef.current[groupId] = queued;
+  };
+
+  const updateCustomGroupIcon = (group: MessengerCustomGroupWithEntries, glyph: string) => {
+    const currentIcon = pendingCustomGroupIcons[group.id] ?? group.icon;
+    const parsedIcon = splitCustomGroupIconValue(currentIcon);
+    const color = parsedIcon.color ?? customGroupColorFor(group);
+    const icon = composeCustomGroupIconValue(glyph, color) || null;
+    setPendingCustomGroupIcons((current) => ({ ...current, [group.id]: icon }));
+    queueCustomGroupIconUpdate(group.id, icon);
+  };
+
+  const updateCustomGroupColor = (group: MessengerCustomGroupWithEntries, color: CustomGroupColor | null) => {
+    const currentIcon = pendingCustomGroupIcons[group.id] ?? group.icon;
+    const parsedIcon = splitCustomGroupIconValue(currentIcon);
+    const icon = composeCustomGroupIconValue(parsedIcon.glyph, color) || null;
+    setPendingCustomGroupIcons((current) => ({ ...current, [group.id]: icon }));
+    queueCustomGroupIconUpdate(group.id, icon);
   };
 
   const handleSeparateCustomGroup = async (group: MessengerCustomGroupWithEntries) => {
@@ -3074,10 +3185,55 @@ export function MessengerContextSidebar() {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="surface-overlay text-foreground">
-                <DropdownMenuItem onClick={() => handleEditCustomGroup(customGroup)}>
+                <DropdownMenuItem onClick={() => handleRenameCustomGroup(customGroup)}>
                   <PencilLine className="h-4 w-4" />
-                  Edit group
+                  Rename...
                 </DropdownMenuItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Smile className="h-4 w-4" />
+                    Change icon
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="surface-overlay text-foreground">
+                    {CUSTOM_GROUP_ICON_OPTIONS.map((option) => (
+                      <DropdownMenuItem key={option} onClick={() => updateCustomGroupIcon(customGroup, option)}>
+                        <CustomGroupIcon icon={option} />
+                        Folder
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    {CUSTOM_GROUP_EMOJI_OPTIONS.map((option) => (
+                      <DropdownMenuItem key={option} onClick={() => updateCustomGroupIcon(customGroup, option)}>
+                        <span className="inline-flex h-4 w-4 items-center justify-center text-[14px] leading-none" aria-hidden>
+                          {option}
+                        </span>
+                        {option}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Palette className="h-4 w-4" />
+                    Pick color
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="surface-overlay text-foreground">
+                    {CUSTOM_GROUP_COLOR_OPTIONS.map((option) => {
+                      const tone = CUSTOM_GROUP_TONES[option];
+                      return (
+                        <DropdownMenuItem key={option} onClick={() => updateCustomGroupColor(customGroup, option)}>
+                          <span
+                            className="inline-flex h-3.5 w-3.5 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)]"
+                            style={{ backgroundColor: tone.swatch }}
+                            aria-hidden
+                          />
+                          {option[0].toUpperCase() + option.slice(1)}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => void handleSeparateCustomGroup(customGroup)}>
                   <FolderInput className="h-4 w-4" />
                   Separate tabs
@@ -3085,25 +3241,19 @@ export function MessengerContextSidebar() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {collapsed ? (
-            <div
-              data-testid={sectionContentTestId}
-              className="grid grid-rows-[0fr] opacity-0 transition-[grid-template-rows,opacity] duration-150 ease-out"
-              aria-hidden="true"
-              inert
-            >
-              <div className="min-h-0 overflow-hidden">
-                {sectionBody}
-              </div>
-            </div>
-          ) : (
-            <div
-              data-testid={sectionContentTestId}
-              className="mt-1 block opacity-100 transition-opacity duration-150 ease-out"
-            >
+          <div
+            data-testid={sectionContentTestId}
+            className={cn(
+              "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out",
+              collapsed ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-1 grid-rows-[1fr] opacity-100",
+            )}
+            aria-hidden={collapsed ? "true" : undefined}
+            inert={collapsed ? true : undefined}
+          >
+            <div className="min-h-0 overflow-hidden">
               {sectionBody}
             </div>
-          )}
+          </div>
         </div>
       );
     }
@@ -3159,25 +3309,19 @@ export function MessengerContextSidebar() {
             </div>
           )
         ) : null}
-        {collapsed ? (
-          <div
-            data-testid={sectionContentTestId}
-            className="grid grid-rows-[0fr] opacity-0 transition-[grid-template-rows,opacity] duration-150 ease-out"
-            aria-hidden="true"
-            inert
-          >
-            <div className="min-h-0 overflow-hidden">
-              {sectionBody}
-            </div>
-          </div>
-        ) : (
-          <div
-            data-testid={sectionContentTestId}
-            className="block opacity-100 transition-opacity duration-150 ease-out"
-          >
+        <div
+          data-testid={sectionContentTestId}
+          className={cn(
+            "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out",
+            collapsed ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-1 grid-rows-[1fr] opacity-100",
+          )}
+          aria-hidden={collapsed ? "true" : undefined}
+          inert={collapsed ? true : undefined}
+        >
+          <div className="min-h-0 overflow-hidden">
             {sectionBody}
           </div>
-        )}
+        </div>
       </>
     );
   };
@@ -3571,7 +3715,6 @@ export function MessengerContextSidebar() {
       />
       {customGroupEditor ? (
         <CustomGroupEditor
-          state={customGroupEditor}
           name={customGroupNameDraft}
           icon={customGroupIconDraft}
           color={customGroupColorDraft}
@@ -3581,6 +3724,15 @@ export function MessengerContextSidebar() {
           onColorChange={setCustomGroupColorDraft}
           onCancel={closeCustomGroupEditor}
           onSubmit={submitCustomGroupEditor}
+        />
+      ) : null}
+      {customGroupRename ? (
+        <CustomGroupRenameForm
+          name={customGroupRename.name}
+          pending={updateCustomGroupMutation.isPending}
+          onNameChange={(name) => setCustomGroupRename((current) => current ? { ...current, name } : current)}
+          onCancel={closeCustomGroupRename}
+          onSubmit={submitCustomGroupRename}
         />
       ) : null}
       <nav

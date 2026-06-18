@@ -357,6 +357,16 @@ function setInputValue(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("MessengerContextSidebar chat actions", () => {
   beforeEach(() => {
     activeGeneratingChatIds = new Set();
@@ -799,7 +809,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "groups"] });
   });
 
-  it("edits group name, emoji, and color from the group actions menu", async () => {
+  it("renames group and changes icon and color from separate group actions", async () => {
     customGroupList = [
       {
         id: "group-1",
@@ -844,35 +854,24 @@ describe("MessengerContextSidebar chat actions", () => {
     };
     renderSidebar();
 
-    const editGroupButton = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "Edit group") as HTMLButtonElement | undefined;
+    const renameGroupButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Rename...") as HTMLButtonElement | undefined;
 
-    expect(editGroupButton).toBeTruthy();
+    expect(renameGroupButton).toBeTruthy();
     await act(async () => {
-      editGroupButton?.click();
+      renameGroupButton?.click();
       await Promise.resolve();
     });
 
-    const editor = document.querySelector('[data-testid="messenger-custom-group-editor"]');
-    const nameInput = editor?.querySelector<HTMLInputElement>('input[aria-label="Group name"]');
-    const emojiButton = Array.from(editor?.querySelectorAll("button") ?? [])
-      .find((button) => button.getAttribute("aria-label") === "Use 🔥 group emoji") as HTMLButtonElement | undefined;
-    const colorButton = Array.from(editor?.querySelectorAll("button") ?? [])
-      .find((button) => button.getAttribute("aria-label") === "Use teal group color") as HTMLButtonElement | undefined;
-    const saveButton = Array.from(editor?.querySelectorAll("button") ?? [])
+    const renameForm = document.querySelector('[data-testid="messenger-custom-group-rename"]');
+    const nameInput = renameForm?.querySelector<HTMLInputElement>('input[aria-label="Group name"]');
+    const saveButton = Array.from(renameForm?.querySelectorAll("button") ?? [])
       .find((button) => button.textContent === "Save") as HTMLButtonElement | undefined;
 
     expect(nameInput).toBeTruthy();
-    expect(emojiButton).toBeTruthy();
-    expect(colorButton).toBeTruthy();
     expect(saveButton).toBeTruthy();
     await act(async () => {
       setInputValue(nameInput!, "Release Notes");
-      emojiButton?.click();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      colorButton?.click();
       await Promise.resolve();
     });
     await act(async () => {
@@ -883,9 +882,138 @@ describe("MessengerContextSidebar chat actions", () => {
 
     expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "group-1", {
       name: "Release Notes",
+    });
+
+    mockUpdateCustomGroup.mockClear();
+
+    const changeIconTrigger = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Change icon") as HTMLButtonElement | undefined;
+    const emojiButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "🔥🔥") as HTMLButtonElement | undefined;
+
+    expect(changeIconTrigger).toBeTruthy();
+    expect(emojiButton).toBeTruthy();
+    await act(async () => {
+      emojiButton?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "group-1", {
+      icon: "🔥::amber",
+    });
+
+    mockUpdateCustomGroup.mockClear();
+
+    const pickColorTrigger = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Pick color") as HTMLButtonElement | undefined;
+    const colorButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Teal") as HTMLButtonElement | undefined;
+
+    expect(pickColorTrigger).toBeTruthy();
+    expect(colorButton).toBeTruthy();
+    await act(async () => {
+      colorButton?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "group-1", {
       icon: "🔥::teal",
     });
+    expect(document.querySelector('[data-testid="messenger-custom-group-editor"]')).toBeNull();
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "groups"] });
+  });
+
+  it("serializes quick group icon and color changes so the latest combined icon wins", async () => {
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Deep work",
+        icon: "😀::amber",
+        sortOrder: 0,
+        collapsed: false,
+        createdAt: "2026-04-11T09:40:00.000Z",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        entries: [
+          {
+            id: "entry-1",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "group-1",
+            threadKey: "chat:chat-1",
+            sortOrder: 0,
+            createdAt: "2026-04-11T09:40:00.000Z",
+            updatedAt: "2026-04-11T09:40:00.000Z",
+            thread: {
+              threadKey: "chat:chat-1",
+              kind: "chat",
+              title: "Planning thread",
+              preview: "Plan.",
+              subtitle: null,
+              href: "/messenger/chat/chat-1",
+              latestActivityAt: "2026-04-11T09:40:00.000Z",
+              lastReadAt: null,
+              unreadCount: 0,
+              needsAttention: false,
+              isPinned: false,
+            },
+          },
+        ],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [],
+    };
+    const firstUpdate = deferred<any>();
+    mockUpdateCustomGroup.mockImplementationOnce(() => firstUpdate.promise);
+    mockUpdateCustomGroup.mockResolvedValue({
+      id: "group-1",
+      icon: "🔥::teal",
+    });
+    renderSidebar();
+
+    const emojiButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "🔥🔥") as HTMLButtonElement | undefined;
+    const colorButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Teal") as HTMLButtonElement | undefined;
+
+    expect(emojiButton).toBeTruthy();
+    expect(colorButton).toBeTruthy();
+    await act(async () => {
+      emojiButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(1);
+    expect(mockUpdateCustomGroup).toHaveBeenLastCalledWith("org-1", "group-1", {
+      icon: "🔥::amber",
+    });
+
+    await act(async () => {
+      colorButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstUpdate.resolve({
+        id: "group-1",
+        icon: "🔥::amber",
+      });
+      await firstUpdate.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledTimes(2);
+    expect(mockUpdateCustomGroup).toHaveBeenLastCalledWith("org-1", "group-1", {
+      icon: "🔥::teal",
+    });
   });
 
   it("moves a pinned chat into a group when dropped on a grouped chat row", async () => {
@@ -1709,13 +1837,16 @@ describe("MessengerContextSidebar chat actions", () => {
     );
     expect(agentHeader?.getAttribute("aria-expanded")).toBe("true");
     expect(document.querySelector('[data-testid="messenger-thread-section-agent-agent-1-attention-count"]')?.textContent).toBe("1");
+    const agentContent = document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-agent-agent-1-content"]');
+    expect(agentContent?.className).toContain("grid-rows-[1fr]");
+    expect(agentContent?.className).toContain("duration-200");
+    expect(agentContent?.className).toContain("transition-[grid-template-rows,opacity,margin-top]");
 
     await act(async () => {
       agentHeader?.click();
     });
 
     expect(agentHeader?.getAttribute("aria-expanded")).toBe("false");
-    const agentContent = document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-agent-agent-1-content"]');
     expect(agentContent?.getAttribute("aria-hidden")).toBe("true");
     expect(agentContent?.hasAttribute("inert")).toBe(true);
     expect(agentContent?.className).toContain("grid-rows-[0fr]");
@@ -1865,6 +1996,12 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(projectHeader?.getAttribute("aria-expanded")).toBe("true");
     expect(document.querySelector('[data-testid="messenger-thread-section-project-project-1-attention-count"]')?.textContent).toBe("1");
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-1"]')).toBeTruthy();
+    const projectContent = document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-project-project-1-content"]');
+    expect(projectContent).not.toBeNull();
+    if (!projectContent) throw new Error("Expected project content to render");
+    expect(projectContent.className).toContain("grid-rows-[1fr]");
+    expect(projectContent.className).toContain("duration-200");
+    expect(projectContent.className).toContain("transition-[grid-template-rows,opacity,margin-top]");
 
     await act(async () => {
       projectHeader?.click();
@@ -1872,9 +2009,6 @@ describe("MessengerContextSidebar chat actions", () => {
 
     expect(projectHeader?.getAttribute("aria-expanded")).toBe("false");
     expect(document.querySelector('[data-testid="messenger-thread-section-project-project-1-attention-count"]')?.textContent).toBe("1");
-    const projectContent = document.querySelector<HTMLElement>('[data-testid="messenger-thread-section-project-project-1-content"]');
-    expect(projectContent).not.toBeNull();
-    if (!projectContent) throw new Error("Expected project content to render");
     expect(projectContent.getAttribute("aria-hidden")).toBe("true");
     expect(projectContent.hasAttribute("inert")).toBe(true);
     expect(projectContent.className).toContain("grid-rows-[0fr]");
