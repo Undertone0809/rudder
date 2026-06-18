@@ -57,6 +57,7 @@ server/ui-dist/index.html
 .doc-review-cursor
 
 # Playwright
+.playwright-mcp/
 tests/e2e/test-results/
 tests/e2e/playwright-report/
 tests/release-smoke/test-results/
