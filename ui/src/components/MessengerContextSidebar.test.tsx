@@ -407,14 +407,14 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Recent unpinned chat"));
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Issues"));
     expect(html).toContain("Pinned");
-    expect(html).toContain("Default");
+    expect(html).not.toContain("Default");
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["chats", "org-1", "all"],
       enabled: false,
     }));
   });
 
-  it("keeps default latest activity threads sorted by time", () => {
+  it("keeps ungrouped latest activity threads sorted by time without a default header", () => {
     chatList = [];
     messengerModel = {
       ...baseModel(),
@@ -450,16 +450,13 @@ describe("MessengerContextSidebar", () => {
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
-    expect(html.indexOf('data-testid="messenger-thread-section-custom-default"')).toBeLessThan(
-      html.indexOf('data-testid="messenger-thread-chat-today-chat"'),
-    );
     expect(html.indexOf('data-testid="messenger-thread-chat-today-chat"')).toBeLessThan(
       html.indexOf('data-testid="messenger-thread-chat-older-chat"'),
     );
-    expect(html).toContain("Default");
+    expect(html).not.toContain("Default");
   });
 
-  it("keeps untouched latest activity ahead of the manual default order block", () => {
+  it("keeps untouched latest activity ahead of the manual main-list order block", () => {
     chatList = [];
     localStorageValues["rudder.messengerDefaultThreadOrder:org-1:anonymous"] = JSON.stringify([
       "chat:d",
@@ -634,13 +631,79 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf("Pinned")).toBeLessThan(html.indexOf("Deep work"));
     expect(html.indexOf("Pinned grouped chat")).toBeLessThan(html.indexOf("Deep work"));
     expect(html.indexOf("Older grouped chat")).toBeLessThan(html.indexOf("Newer grouped chat"));
-    expect(html).toContain('aria-label="Reorder Older grouped chat"');
-    expect(html).toContain('aria-label="Reorder Newer grouped chat"');
+    expect(html).not.toContain("Reorder Older grouped chat");
+    expect(html).not.toContain("Reorder Newer grouped chat");
     expect(html).toContain(">D</span>");
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["messenger", "org-1", "groups"],
       enabled: true,
     }));
+  });
+
+  it("orders ungrouped rows and group blocks by latest activity until the user moves them", () => {
+    chatList = [];
+    customGroupList = [
+      {
+        id: "group-older",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Older group",
+        icon: "😀::amber",
+        sortOrder: 0,
+        collapsed: false,
+        createdAt: "2026-04-11T08:00:00.000Z",
+        updatedAt: "2026-04-11T08:00:00.000Z",
+        entries: [
+          {
+            id: "entry-older",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "group-older",
+            threadKey: "chat:older-grouped",
+            sortOrder: 0,
+            createdAt: "2026-04-11T08:00:00.000Z",
+            updatedAt: "2026-04-11T08:00:00.000Z",
+            thread: {
+              threadKey: "chat:older-grouped",
+              kind: "chat",
+              title: "Older grouped chat",
+              preview: "Older grouped work.",
+              subtitle: null,
+              href: "/messenger/chat/older-grouped",
+              latestActivityAt: "2026-04-11T08:00:00.000Z",
+              lastReadAt: null,
+              unreadCount: 0,
+              needsAttention: false,
+              isPinned: false,
+            },
+          },
+        ],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:newest-main",
+          kind: "chat",
+          title: "Newest main-list chat",
+          preview: "Newest ungrouped work.",
+          subtitle: null,
+          href: "/messenger/chat/newest-main",
+          latestActivityAt: "2026-04-11T10:00:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.indexOf("Newest main-list chat")).toBeLessThan(html.indexOf("Older group"));
+    expect(html).not.toContain("Default");
+    expect(html).toContain("😀");
   });
 
   it("promotes pinned split issue rows with pinned chats in latest activity mode", () => {
@@ -684,7 +747,7 @@ describe("MessengerContextSidebar", () => {
       html.indexOf('data-testid="messenger-thread-chat-chat-2"'),
     );
     expect(html).toContain("Pinned");
-    expect(html).toContain("Default");
+    expect(html).not.toContain("Default");
     expect(html).toContain('aria-label="Thread actions"');
     expect(html).toContain('data-slot="status-progress-arc"');
   });

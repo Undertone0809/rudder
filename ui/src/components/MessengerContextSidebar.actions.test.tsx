@@ -675,7 +675,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(clipboardWriteText).toHaveBeenCalledWith("[Planning thread](chat://chat-1)");
   });
 
-  it("creates a group from a latest activity chat action while staying in the default thread layout", async () => {
+  it("creates a group from a latest activity chat action while staying in the main thread layout", async () => {
     const storage = installLocalStorage();
 
     renderSidebar();
@@ -694,15 +694,19 @@ describe("MessengerContextSidebar chat actions", () => {
     const nameInput = editor?.querySelector<HTMLInputElement>('input[aria-label="Group name"]');
     const iconButton = Array.from(editor?.querySelectorAll("button") ?? [])
       .find((button) => button.getAttribute("aria-label") === "Use D group icon") as HTMLButtonElement | undefined;
+    const emojiButton = Array.from(editor?.querySelectorAll("button") ?? [])
+      .find((button) => button.getAttribute("aria-label") === "Use 🚀 group emoji") as HTMLButtonElement | undefined;
     const submitButton = Array.from(editor?.querySelectorAll("button") ?? [])
       .find((button) => button.textContent === "Create") as HTMLButtonElement | undefined;
 
     expect(nameInput).toBeTruthy();
     expect(iconButton).toBeTruthy();
+    expect(emojiButton).toBeTruthy();
     expect(submitButton).toBeTruthy();
     await act(async () => {
       setInputValue(nameInput!, "Deep work");
       iconButton?.click();
+      emojiButton?.click();
       await Promise.resolve();
     });
     await act(async () => {
@@ -711,9 +715,98 @@ describe("MessengerContextSidebar chat actions", () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateCustomGroup).toHaveBeenCalledWith("org-1", { name: "Deep work", icon: "D::amber" });
+    expect(mockCreateCustomGroup).toHaveBeenCalledWith("org-1", { name: "Deep work", icon: "🚀::amber" });
     expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "chat:chat-1");
     expect(storage.setItem).toHaveBeenCalledWith("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "latest" }));
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "groups"] });
+  });
+
+  it("edits group name, emoji, and color from the group actions menu", async () => {
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Deep work",
+        icon: "D::amber",
+        sortOrder: 0,
+        collapsed: false,
+        createdAt: "2026-04-11T09:40:00.000Z",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        entries: [
+          {
+            id: "entry-1",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "group-1",
+            threadKey: "chat:chat-1",
+            sortOrder: 0,
+            createdAt: "2026-04-11T09:40:00.000Z",
+            updatedAt: "2026-04-11T09:40:00.000Z",
+            thread: {
+              threadKey: "chat:chat-1",
+              kind: "chat",
+              title: "Planning thread",
+              preview: "Plan.",
+              subtitle: null,
+              href: "/messenger/chat/chat-1",
+              latestActivityAt: "2026-04-11T09:40:00.000Z",
+              lastReadAt: null,
+              unreadCount: 0,
+              needsAttention: false,
+              isPinned: false,
+            },
+          },
+        ],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [],
+    };
+    renderSidebar();
+
+    const editGroupButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Edit group") as HTMLButtonElement | undefined;
+
+    expect(editGroupButton).toBeTruthy();
+    await act(async () => {
+      editGroupButton?.click();
+      await Promise.resolve();
+    });
+
+    const editor = document.querySelector('[data-testid="messenger-custom-group-editor"]');
+    const nameInput = editor?.querySelector<HTMLInputElement>('input[aria-label="Group name"]');
+    const emojiButton = Array.from(editor?.querySelectorAll("button") ?? [])
+      .find((button) => button.getAttribute("aria-label") === "Use 🔥 group emoji") as HTMLButtonElement | undefined;
+    const colorButton = Array.from(editor?.querySelectorAll("button") ?? [])
+      .find((button) => button.getAttribute("aria-label") === "Use teal group color") as HTMLButtonElement | undefined;
+    const saveButton = Array.from(editor?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent === "Save") as HTMLButtonElement | undefined;
+
+    expect(nameInput).toBeTruthy();
+    expect(emojiButton).toBeTruthy();
+    expect(colorButton).toBeTruthy();
+    expect(saveButton).toBeTruthy();
+    await act(async () => {
+      setInputValue(nameInput!, "Release Notes");
+      emojiButton?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      colorButton?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      saveButton?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "group-1", {
+      name: "Release Notes",
+      icon: "🔥::teal",
+    });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "groups"] });
   });
 

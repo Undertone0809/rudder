@@ -92,8 +92,8 @@ async function dragMessengerSectionOver(page: Page, source: Locator, target: Loc
   await page.mouse.up();
 }
 
-async function dragMessengerThreadHandleOver(page: Page, sourceHandle: Locator, target: Locator) {
-  const sourceBox = await sourceHandle.boundingBox();
+async function dragMessengerThreadHandleOver(page: Page, source: Locator, target: Locator) {
+  const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
   if (!sourceBox || !targetBox) {
     throw new Error("Could not resolve Messenger thread drag bounds");
@@ -756,8 +756,8 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId(threadTestId(`chat:${looseChat.id}`))).toBeVisible();
   });
 
-  test("uses default Arc-style Messenger groups without exposing a custom-groups mode", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Default-Groups-${Date.now()}`);
+  test("uses Arc-style Messenger groups without exposing a default group or custom-groups mode", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Arc-Groups-${Date.now()}`);
 
     async function createChat(title: string, summary = `${title} summary`) {
       const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -772,8 +772,8 @@ test.describe("Messenger unified threads contract", () => {
       return res.json() as Promise<{ id: string }>;
     }
 
-    const groupedChat = await createChat("Grouped default tab");
-    const defaultChat = await createChat("Default movable tab");
+    const groupedChat = await createChat("Grouped release tab");
+    const movableChat = await createChat("Movable main-list tab");
     const untouchedChat = await createChat("Untouched latest tab");
     const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
       data: { name: "Deep work", icon: "D::rose" },
@@ -793,12 +793,28 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
 
     const groupSectionId = `messenger-thread-section-custom-group-${group.id}`;
-    const defaultSectionId = "messenger-thread-section-custom-default";
+    const groupLayoutKey = `custom-group:${group.id}`;
     await expect(page.getByTestId(groupSectionId)).toContainText("Deep work", { timeout: 15_000 });
-    await expect(page.getByTestId(defaultSectionId)).toContainText("Default");
-    await expect(page.getByTestId(threadTestId(`chat:${groupedChat.id}`))).toContainText("Grouped default tab");
-    await expect(page.getByTestId(threadTestId(`chat:${defaultChat.id}`))).toContainText("Default movable tab");
+    await expect(page.getByTestId("messenger-thread-section-custom-default")).toHaveCount(0);
+    await expect(page.getByTestId(threadTestId(`chat:${groupedChat.id}`))).toContainText("Grouped release tab");
+    await expect(page.getByTestId(threadTestId(`chat:${movableChat.id}`))).toContainText("Movable main-list tab");
     await expect(page.getByTestId(threadTestId(`chat:${untouchedChat.id}`))).toContainText("Untouched latest tab");
+    await expectTestIdsInDomOrder(page, [
+      threadTestId(`chat:${untouchedChat.id}`),
+      groupSectionId,
+    ]);
+    await dragMessengerSectionOver(
+      page,
+      page.getByTestId(groupSectionId).getByRole("button", { name: /Deep work/ }),
+      page.getByTestId(threadTestId(`chat:${untouchedChat.id}`)),
+    );
+    const persistedMixedLayoutOrder = await page.evaluate((orgId) => {
+      const prefix = `rudder.messengerDefaultThreadOrder:${orgId}:`;
+      const storageKey = Object.keys(window.localStorage).find((key) => key.startsWith(prefix));
+      return storageKey ? JSON.parse(window.localStorage.getItem(storageKey) ?? "[]") as string[] : [];
+    }, organization.id);
+    expect(persistedMixedLayoutOrder).toContain(groupLayoutKey);
+    expect(persistedMixedLayoutOrder.some((key) => key.startsWith("chat:"))).toBe(true);
 
     await page.getByTestId("messenger-thread-organization-trigger").click();
     await expect(page.getByRole("menuitemradio", { name: "Custom groups" })).toHaveCount(0);
@@ -806,7 +822,7 @@ test.describe("Messenger unified threads contract", () => {
 
     await page.getByTestId(groupSectionId).hover();
     await page.getByRole("button", { name: "Group actions" }).click();
-    await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Edit group" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Separate tabs" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
     await page.keyboard.press("Escape");
@@ -817,7 +833,7 @@ test.describe("Messenger unified threads contract", () => {
     );
     await dragMessengerThreadHandleOver(
       page,
-      page.getByTestId(threadTestId(`chat:${defaultChat.id}`)).getByRole("button", { name: "Reorder Default movable tab" }),
+      page.getByTestId(threadTestId(`chat:${movableChat.id}`)),
       page.getByTestId(groupSectionId),
     );
     expect((await moveResponse).ok()).toBe(true);
@@ -826,7 +842,24 @@ test.describe("Messenger unified threads contract", () => {
       expect(groupsRes.ok()).toBe(true);
       const payload = await groupsRes.json() as { groups: Array<{ id: string; entries: Array<{ threadKey: string }> }> };
       return payload.groups.find((candidate) => candidate.id === group.id)?.entries.map((entry) => entry.threadKey) ?? [];
-    }).toContain(`chat:${defaultChat.id}`);
+    }).toContain(`chat:${movableChat.id}`);
+
+    const removeResponse = page.waitForResponse((response) =>
+      response.url().includes(`/api/orgs/${organization.id}/messenger/groups/entries/`) &&
+      response.request().method() === "DELETE",
+    );
+    await dragMessengerThreadHandleOver(
+      page,
+      page.getByTestId(threadTestId(`chat:${movableChat.id}`)),
+      page.getByTestId(threadTestId(`chat:${untouchedChat.id}`)),
+    );
+    expect((await removeResponse).ok()).toBe(true);
+    await expect.poll(async () => {
+      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+      expect(groupsRes.ok()).toBe(true);
+      const payload = await groupsRes.json() as { groups: Array<{ id: string; entries: Array<{ threadKey: string }> }> };
+      return payload.groups.find((candidate) => candidate.id === group.id)?.entries.map((entry) => entry.threadKey) ?? [];
+    }).not.toContain(`chat:${movableChat.id}`);
 
     const separateResponse = page.waitForResponse((response) =>
       response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${group.id}/separate`) &&
@@ -838,24 +871,23 @@ test.describe("Messenger unified threads contract", () => {
     await page.getByRole("dialog").getByRole("button", { name: "Separate tabs" }).click();
     expect((await separateResponse).ok()).toBe(true);
     await expect(page.getByTestId(groupSectionId)).toHaveCount(0);
-    const defaultContent = page.getByTestId("messenger-thread-section-custom-default-content");
-    await expect(defaultContent).toContainText("Grouped default tab");
-    await expect(defaultContent).toContainText("Default movable tab");
-    const firstDefaultRow = defaultContent.locator('[data-testid^="messenger-thread-chat-"]').nth(0);
-    const secondDefaultRow = defaultContent.locator('[data-testid^="messenger-thread-chat-"]').nth(1);
-    await expect(firstDefaultRow).toBeVisible();
-    await expect(secondDefaultRow).toBeVisible();
+    const firstMainRow = page.getByTestId(threadTestId(`chat:${untouchedChat.id}`));
+    const secondMainRow = page.getByTestId(threadTestId(`chat:${movableChat.id}`));
+    await expect(page.getByTestId(threadTestId(`chat:${groupedChat.id}`))).toContainText("Grouped release tab");
+    await expect(secondMainRow).toContainText("Movable main-list tab");
+    await expect(firstMainRow).toBeVisible();
+    await expect(secondMainRow).toBeVisible();
     await dragMessengerThreadHandleOver(
       page,
-      secondDefaultRow.getByRole("button", { name: /^Reorder / }),
-      firstDefaultRow,
+      secondMainRow,
+      firstMainRow,
     );
-    const persistedDefaultOrder = await page.evaluate((orgId) => {
+    const persistedMainListOrder = await page.evaluate((orgId) => {
       const prefix = `rudder.messengerDefaultThreadOrder:${orgId}:`;
       const storageKey = Object.keys(window.localStorage).find((key) => key.startsWith(prefix));
       return storageKey ? JSON.parse(window.localStorage.getItem(storageKey) ?? "[]") as string[] : [];
     }, organization.id);
-    expect(persistedDefaultOrder).toHaveLength(2);
+    expect(persistedMainListOrder.length).toBeGreaterThanOrEqual(2);
   });
 
   test("loads older issue messages on demand instead of rendering the full issue feed", async ({ page }) => {
