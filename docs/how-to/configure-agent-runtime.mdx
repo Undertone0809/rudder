@@ -122,11 +122,12 @@ If discovery returns no models but the custom model is valid for your local prov
 Codex-specific options include web search, sandbox bypass, and subscription cost
 estimation. Enable search only when the agent should use web results during
 runs. Enable sandbox bypass only for trusted local work that needs broader
-filesystem or network access. Turn on **Count subscription usage as cost** when
-you want ChatGPT/Codex subscription-authenticated runs to appear in Rudder as
+filesystem or network access. **Estimate subscription usage cost** is on by
+default, so ChatGPT/Codex subscription-authenticated runs appear in Rudder as
 API-equivalent spend instead of `$0.00`; Rudder estimates that spend from the
 model token usage and the built-in OpenAI/Codex price table. Known-model
-estimates count toward Rudder spend and budget hard stops.
+estimates count toward Rudder spend and budget hard stops. Turn it off only for
+agents whose subscription usage should remain `$0.00`.
 
 Claude Code options include Chrome access, permission behavior, and max turns per run. Keep these tight for routine work; loosen them only when the agent needs that capability.
 

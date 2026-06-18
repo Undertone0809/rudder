@@ -62,7 +62,7 @@ test.describe("Agent configuration advanced options", () => {
     await expect(page.getByText("Command", { exact: true }).first()).toBeHidden();
     await expect(page.getByText("Environment variables", { exact: true }).first()).toBeHidden();
     await expect(page.getByText("Bypass sandbox", { exact: true }).first()).toBeHidden();
-    await expect(page.getByText("Count subscription usage as cost", { exact: true }).first()).toBeHidden();
+    await expect(page.getByText("Estimate subscription usage cost", { exact: true }).first()).toBeHidden();
 
     await advancedButton.click();
 
@@ -71,10 +71,10 @@ test.describe("Agent configuration advanced options", () => {
     await expect(page.getByText("Environment variables", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Bypass sandbox", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("switch", { name: "Enable search", exact: true })).toBeChecked();
-    const countSubscriptionUsageSwitch = page.getByRole("switch", { name: "Count subscription usage as cost", exact: true });
-    await expect(countSubscriptionUsageSwitch).not.toBeChecked();
-    await countSubscriptionUsageSwitch.click();
+    const countSubscriptionUsageSwitch = page.getByRole("switch", { name: "Estimate subscription usage cost", exact: true });
     await expect(countSubscriptionUsageSwitch).toBeChecked();
+    await countSubscriptionUsageSwitch.click();
+    await expect(countSubscriptionUsageSwitch).not.toBeChecked();
 
     await page.getByText("Add fallback model", { exact: true }).click();
     await expect(page.getByText("Fallback 2", { exact: true })).toBeVisible();
@@ -99,7 +99,7 @@ test.describe("Agent configuration advanced options", () => {
       };
       runtimeConfig: { heartbeat?: { maxConcurrentRuns?: number; preflightEnabled?: boolean } };
     };
-    expect(refreshed.agentRuntimeConfig.countSubscriptionUsageAsCost).toBe(true);
+    expect(refreshed.agentRuntimeConfig.countSubscriptionUsageAsCost).toBe(false);
     expect(refreshed.agentRuntimeConfig.modelFallbacks).toEqual([
       { agentRuntimeType: "codex_local", model: "gpt-5.4" },
       expect.objectContaining({

@@ -177,7 +177,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   );
   const command = asString(config.command, "codex");
   const model = asString(config.model, "");
-  const countSubscriptionUsageAsCost = asBoolean(config.countSubscriptionUsageAsCost, false);
+  const countSubscriptionUsageAsCost = asBoolean(config.countSubscriptionUsageAsCost, true);
   const modelReasoningEffort = asString(
     config.modelReasoningEffort,
     asString(config.reasoningEffort, ""),

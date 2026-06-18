@@ -92,10 +92,13 @@ export function buildCodexLocalConfig(v: CreateConfigValues): Record<string, unk
     typeof v.search === "boolean"
       ? v.search
       : DEFAULT_CODEX_LOCAL_SEARCH;
-  ac.countSubscriptionUsageAsCost =
+  const countSubscriptionUsageAsCost =
     typeof v.countSubscriptionUsageAsCost === "boolean"
       ? v.countSubscriptionUsageAsCost
       : DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST;
+  if (countSubscriptionUsageAsCost !== DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST) {
+    ac.countSubscriptionUsageAsCost = countSubscriptionUsageAsCost;
+  }
   ac.dangerouslyBypassApprovalsAndSandbox =
     typeof v.dangerouslyBypassSandbox === "boolean"
       ? v.dangerouslyBypassSandbox

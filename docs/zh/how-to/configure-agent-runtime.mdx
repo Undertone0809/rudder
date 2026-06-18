@@ -83,8 +83,8 @@ Rudder 会另外注入自己的运行规则。对于 Codex，如果 agent 在某
 
 Codex 常见选项里有 web search、sandbox bypass 和订阅用量计费估算。刚开始可以先不改。
 只有 agent 确实需要联网搜索时，再开 search；只有你信任这个 agent，并且它确实需要更宽的文件系统或网络权限时，再开 sandbox bypass。
-如果你希望本地 ChatGPT/Codex 订阅登录产生的用量也在 Rudder 里显示为 API 等价成本，而不是 `$0.00`，打开 **Count subscription usage as cost**。
-Rudder 会根据模型 token 用量和内置 OpenAI/Codex 价格表估算费用；已知模型的估算费用会计入 Rudder spend 和预算 hard stop。
+**Estimate subscription usage cost** 默认开启。本地 ChatGPT/Codex 订阅登录产生的用量会在 Rudder 里显示为 API 等价成本，而不是 `$0.00`。
+Rudder 会根据模型 token 用量和内置 OpenAI/Codex 价格表估算费用；已知模型的估算费用会计入 Rudder spend 和预算 hard stop。只有当某个 agent 的订阅用量仍应保持 `$0.00` 时，才需要关掉它。
 
 Claude Code 常见选项包括 Chrome 访问、权限行为和每次运行最大 turns。日常工作先保持收紧，等你确认 agent 需要这些能力时再放开。
 

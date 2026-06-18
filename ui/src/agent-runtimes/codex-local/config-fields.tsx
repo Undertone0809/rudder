@@ -1,3 +1,4 @@
+import { DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST } from "@rudderhq/agent-runtime-codex-local";
 import {
   DraftInput,
   Field,
@@ -96,7 +97,7 @@ export function CodexLocalConfigFields({
         }
       />
       <ToggleField
-        label="Count subscription usage as cost"
+        label="Estimate subscription usage cost"
         hint={help.countSubscriptionUsageAsCost}
         checked={
           isCreate
@@ -104,7 +105,9 @@ export function CodexLocalConfigFields({
             : eff(
                 "agentRuntimeConfig",
                 "countSubscriptionUsageAsCost",
-                Boolean(config.countSubscriptionUsageAsCost),
+                typeof config.countSubscriptionUsageAsCost === "boolean"
+                  ? Boolean(config.countSubscriptionUsageAsCost)
+                  : DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST,
               )
         }
         onChange={(v) =>

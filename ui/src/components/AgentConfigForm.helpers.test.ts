@@ -13,7 +13,7 @@ import {
   runtimeProviderCredentialLabel,
   runtimeProviderSetupHint,
 } from "../lib/runtime-models";
-import { defaultCommandForRuntime, defaultConfigForRuntime, defaultModelForRuntime } from "./AgentConfigForm.helpers";
+import { createValuesForRuntime, defaultCommandForRuntime, defaultConfigForRuntime, defaultModelForRuntime } from "./AgentConfigForm.helpers";
 
 describe("AgentConfigForm runtime defaults", () => {
   it("uses cursor-agent for new Cursor agents", () => {
@@ -23,9 +23,11 @@ describe("AgentConfigForm runtime defaults", () => {
     });
   });
 
-  it("keeps Codex subscription cost estimation disabled by default", () => {
+  it("keeps Codex subscription cost estimation enabled by default without persisting a per-agent override", () => {
+    expect(createValuesForRuntime("codex_local").countSubscriptionUsageAsCost).toBe(true);
+    expect(defaultConfigForRuntime("codex_local")).not.toHaveProperty("countSubscriptionUsageAsCost");
     expect(defaultConfigForRuntime("codex_local")).toMatchObject({
-      countSubscriptionUsageAsCost: false,
+      model: "gpt-5.5",
     });
   });
 

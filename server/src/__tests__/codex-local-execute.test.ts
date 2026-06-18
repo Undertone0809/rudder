@@ -808,7 +808,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("estimates metered cost for Codex subscription runs when enabled", async () => {
+  it("estimates metered cost for Codex subscription runs by default", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-subscription-cost-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -845,7 +845,6 @@ describe("codex execute", { timeout: 20_000 }, () => {
           command: commandPath,
           cwd: workspace,
           model: "gpt-5.5",
-          countSubscriptionUsageAsCost: true,
           promptTemplate: "Run the task.",
         },
         context: {},
@@ -857,6 +856,66 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.biller).toBe("chatgpt");
       expect(result.billingType).toBe("metered_api");
       expect(result.costUsd).toBeCloseTo(7.1, 6);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousPaperclipHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousPaperclipHome;
+      if (previousOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps Codex subscription runs at zero cost when cost estimation is disabled", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-subscription-cost-disabled-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const operatorHome = path.join(root, "operator-home");
+    const paperclipHome = path.join(root, "rudder-home");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(operatorHome, { recursive: true });
+    await writeUsageCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousPaperclipHome = process.env.RUDDER_HOME;
+    const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
+    process.env.HOME = operatorHome;
+    process.env.RUDDER_HOME = paperclipHome;
+    delete process.env.OPENAI_API_KEY;
+
+    try {
+      const result = await execute({
+        runId: "run-cost-disabled",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "gpt-5.5",
+          countSubscriptionUsageAsCost: false,
+          promptTemplate: "Run the task.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.biller).toBe("chatgpt");
+      expect(result.billingType).toBe("subscription");
+      expect(result.costUsd).toBeNull();
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
