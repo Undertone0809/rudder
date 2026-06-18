@@ -23,6 +23,7 @@ export { heartbeatOrchestrator, heartbeatService } from "./heartbeat.js";
 export { notifyHireApproved, type NotifyHireApprovedInput } from "./hire-hook.js";
 export { instanceSettingsService } from "./instance-settings.js";
 export { agentIntegrationService } from "./integrations/agent-integrations.js";
+export { createFeishuInboundDispatcherDbDeps } from "./integrations/feishu/inbound-dispatcher-db.js";
 export { issueApprovalService } from "./issue-approvals.js";
 export { issueService, type IssueFilters } from "./issues.js";
 export { publishLiveEvent, subscribeCompanyLiveEvents } from "./live-events.js";
