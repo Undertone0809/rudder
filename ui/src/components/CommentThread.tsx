@@ -33,7 +33,7 @@ import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 const COMMENT_HASH_SCROLL_RETRY_DELAYS_MS = [120, 360, 900] as const;
 const COMMENT_SCROLL_CENTER_TOLERANCE_PX = 24;
-const COMMENT_SCROLL_USER_OVERRIDE_TOLERANCE_PX = 8;
+const COMMENT_HASH_SCROLL_CANCEL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
 
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
@@ -458,6 +458,7 @@ const TimelineList = memo(function TimelineList({
   onDelete,
   imageUploadHandler,
   onMarkdownLinkClick,
+  reserveHashScrollEndSpace,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
@@ -475,6 +476,7 @@ const TimelineList = memo(function TimelineList({
   onDelete?: (commentId: string) => Promise<void>;
   imageUploadHandler?: (file: File) => Promise<string>;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
+  reserveHashScrollEndSpace?: boolean;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -906,6 +908,9 @@ const TimelineList = memo(function TimelineList({
           </div>
         );
       })}
+      {reserveHashScrollEndSpace ? (
+        <div aria-hidden="true" className="h-[min(18rem,35vh)]" data-testid="comment-hash-scroll-end-space" />
+      ) : null}
     </div>
   );
 });
@@ -950,8 +955,11 @@ export function CommentThread({
   const pendingScrollAnimationFramesRef = useRef<number[]>([]);
   const pendingScrollRetryTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const lastCommentScrollRef = useRef<{ container: HTMLElement | null; scrollTop: number | null } | null>(null);
+  const pendingScrollCancelCleanupRef = useRef<(() => void) | null>(null);
   const visibleComments = useMemo(() => comments.filter((comment) => !comment.deletedAt), [comments]);
   const currentIssueId = visibleComments[0]?.issueId ?? null;
+  const hashCommentId = commentIdFromIssueCommentHash(location.hash);
+  const reserveHashScrollEndSpace = Boolean(hashCommentId && visibleComments.some((comment) => comment.id === hashCommentId));
 
   const timeline = useMemo<TimelineItem[]>(() => {
     const commentItems: TimelineItem[] = visibleComments.map((comment) => ({
@@ -1071,6 +1079,8 @@ export function CommentThread({
       clearTimeout(timer);
     }
     pendingScrollRetryTimersRef.current = [];
+    pendingScrollCancelCleanupRef.current?.();
+    pendingScrollCancelCleanupRef.current = null;
     lastCommentScrollRef.current = null;
   }, []);
 
@@ -1089,16 +1099,6 @@ export function CommentThread({
     const el = document.getElementById(`comment-${commentId}`);
     if (!el) return false;
 
-    const previousScroll = lastCommentScrollRef.current;
-    if (
-      options.retry &&
-      previousScroll?.container &&
-      previousScroll.scrollTop !== null &&
-      Math.abs(previousScroll.container.scrollTop - previousScroll.scrollTop) > COMMENT_SCROLL_USER_OVERRIDE_TOLERANCE_PX
-    ) {
-      clearPendingCommentScroll();
-      return false;
-    }
     if (options.retry && measureCommentCenterDelta(el) <= COMMENT_SCROLL_CENTER_TOLERANCE_PX) {
       clearPendingCommentScroll();
       return true;
@@ -1174,6 +1174,18 @@ export function CommentThread({
 
     if (scrollToComment(commentId, "auto")) {
       lastHandledCommentHashRef.current = navigationKey;
+      const cancelTarget = lastCommentScrollRef.current?.container ?? window;
+      const cancelPendingScroll = () => {
+        clearPendingCommentScroll();
+      };
+      for (const eventName of COMMENT_HASH_SCROLL_CANCEL_EVENTS) {
+        cancelTarget.addEventListener(eventName, cancelPendingScroll, { passive: true });
+      }
+      pendingScrollCancelCleanupRef.current = () => {
+        for (const eventName of COMMENT_HASH_SCROLL_CANCEL_EVENTS) {
+          cancelTarget.removeEventListener(eventName, cancelPendingScroll);
+        }
+      };
       if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
         const firstFrame = window.requestAnimationFrame(() => {
           const secondFrame = window.requestAnimationFrame(() => {
@@ -1273,6 +1285,7 @@ export function CommentThread({
         onDelete={onDelete}
         imageUploadHandler={imageUploadHandler}
         onMarkdownLinkClick={handleMarkdownLinkClick}
+        reserveHashScrollEndSpace={reserveHashScrollEndSpace}
       />
 
       {liveRunSlot}
