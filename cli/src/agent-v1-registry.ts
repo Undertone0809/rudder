@@ -7,6 +7,7 @@ export type AgentCliCapabilityCategory =
   | "runs"
   | "approval"
   | "skill"
+  | "user"
   | "library";
 export type AgentCliCapabilityContract = "agent-v1" | "compat";
 
@@ -1025,6 +1026,7 @@ const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   runs: "Runs",
   approval: "Approval",
   skill: "Skill",
+  user: "User",
   library: "Library",
 };
 
