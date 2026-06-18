@@ -72,6 +72,8 @@ export const messengerApi = {
     api.get<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups`),
   createCustomGroup: (orgId: string, data: { name: string; icon?: string | null }) =>
     api.post<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups`, data),
+  createCustomGroupWithEntries: (orgId: string, data: { name: string; icon?: string | null; threadKeys: string[] }) =>
+    api.post<MessengerCustomGroupsResponse>(`/orgs/${orgId}/messenger/groups/merge`, data),
   updateCustomGroup: (orgId: string, groupId: string, data: { name?: string; icon?: string | null; collapsed?: boolean; sortOrder?: number }) =>
     api.patch<MessengerCustomGroup>(`/orgs/${orgId}/messenger/groups/${groupId}`, data),
   separateCustomGroup: (orgId: string, groupId: string) =>

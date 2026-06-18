@@ -3,6 +3,7 @@ import {
   MESSENGER_SYSTEM_THREAD_KINDS,
   assignMessengerCustomGroupEntrySchema,
   createMessengerCustomGroupSchema,
+  createMessengerCustomGroupWithEntriesSchema,
   reorderMessengerCustomGroupEntriesSchema,
   reorderMessengerCustomGroupsSchema,
   updateMessengerCustomGroupSchema,
@@ -55,6 +56,17 @@ export function messengerRoutes(db: Db) {
       assertCompanyAccess(req, orgId);
       const userId = boardUserId(req);
       res.status(201).json(await svc.createCustomGroup(orgId, userId, req.body.name, req.body.icon ?? null));
+    },
+  );
+
+  router.post(
+    "/orgs/:orgId/messenger/groups/merge",
+    validate(createMessengerCustomGroupWithEntriesSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      const userId = boardUserId(req);
+      res.status(201).json(await svc.createCustomGroupWithEntries(orgId, userId, req.body.name, req.body.icon ?? null, req.body.threadKeys));
     },
   );
 

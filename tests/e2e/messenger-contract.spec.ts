@@ -890,6 +890,98 @@ test.describe("Messenger unified threads contract", () => {
     expect(persistedMainListOrder.length).toBeGreaterThanOrEqual(2);
   });
 
+  test("moves pinned tabs into groups and merges two loose tabs by dropping one on another", async ({ page }) => {
+    const pageErrors: string[] = [];
+    const consoleErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    const organization = await createOrganization(page, `Messenger-Tab-Merge-${Date.now()}`);
+
+    async function createChat(title: string, summary = `${title} summary`) {
+      const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title,
+          summary,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+        },
+      });
+      expect(res.ok()).toBe(true);
+      return res.json() as Promise<{ id: string }>;
+    }
+
+    const groupedChat = await createChat("Existing grouped tab");
+    const pinnedChat = await createChat("Pinned tab to group");
+    const looseTarget = await createChat("Loose merge target");
+    const looseSource = await createChat("Loose merge source");
+    const pinRes = await page.request.post(`/api/chats/${pinnedChat.id}/user-state`, {
+      data: { pinned: true },
+    });
+    expect(pinRes.ok()).toBe(true);
+    const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Deep work", icon: "😀::teal" },
+    });
+    expect(groupRes.ok()).toBe(true);
+    const group = await groupRes.json() as { id: string };
+    const assignRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups/${group.id}/entries`, {
+      data: { threadKey: `chat:${groupedChat.id}` },
+    });
+    expect(assignRes.ok()).toBe(true);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+
+    const groupSectionId = `messenger-thread-section-custom-group-${group.id}`;
+    await expect(page.getByTestId(groupSectionId)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("messenger-thread-section-custom-pinned-content")).toContainText("Pinned tab to group");
+
+    const pinnedMoveResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${group.id}/entries`) &&
+      response.request().method() === "POST",
+    );
+    await dragMessengerThreadHandleOver(
+      page,
+      page.getByTestId(threadTestId(`chat:${pinnedChat.id}`)),
+      page.getByTestId(threadTestId(`chat:${groupedChat.id}`)),
+    );
+    expect((await pinnedMoveResponse).ok()).toBe(true);
+    await expect.poll(async () => {
+      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+      expect(groupsRes.ok()).toBe(true);
+      const payload = await groupsRes.json() as { groups: Array<{ id: string; entries: Array<{ threadKey: string }> }> };
+      return payload.groups.find((candidate) => candidate.id === group.id)?.entries.map((entry) => entry.threadKey) ?? [];
+    }).toContain(`chat:${pinnedChat.id}`);
+    await expect(page.getByTestId("messenger-thread-section-custom-pinned")).toHaveCount(0);
+    await expect(page.getByTestId(groupSectionId)).toContainText("Pinned tab to group");
+
+    await dragMessengerThreadHandleOver(
+      page,
+      page.getByTestId(threadTestId(`chat:${looseSource.id}`)),
+      page.getByTestId(threadTestId(`chat:${looseTarget.id}`)),
+    );
+    await expect.poll(async () => {
+      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+      expect(groupsRes.ok()).toBe(true);
+      const payload = await groupsRes.json() as { groups: Array<{ id: string; name: string; entries: Array<{ threadKey: string }> }> };
+      return payload.groups
+        .map((candidate) => candidate.entries.map((entry) => entry.threadKey).sort())
+        .some((threadKeys) =>
+          threadKeys.includes(`chat:${looseSource.id}`) &&
+          threadKeys.includes(`chat:${looseTarget.id}`),
+        );
+    }).toBe(true);
+
+    const fatalClientSignals = [...pageErrors, ...consoleErrors]
+      .filter((message) => /removeChild|UI recovery|reload|NotFoundError/i.test(message));
+    expect(fatalClientSignals).toEqual([]);
+  });
+
   test("loads older issue messages on demand instead of rendering the full issue feed", async ({ page }) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);

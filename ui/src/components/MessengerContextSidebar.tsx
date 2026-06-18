@@ -2463,17 +2463,30 @@ export function MessengerContextSidebar() {
   };
 
   const createCustomGroupMutation = useMutation({
-    mutationFn: ({ name, icon }: { name: string; icon: string | null; threadKey?: string; threadKeys?: string[] }) => {
+    mutationFn: async ({ name, icon, threadKey }: { name: string; icon: string | null; threadKey?: string }) => {
       if (!model.selectedOrganizationId) throw new Error("Organization is required to create a Messenger group");
-      return messengerApi.createCustomGroup(model.selectedOrganizationId, { name, icon });
+      const group = await messengerApi.createCustomGroup(model.selectedOrganizationId, { name, icon });
+      if (threadKey) {
+        await messengerApi.assignCustomGroupEntry(model.selectedOrganizationId, group.id, threadKey);
+      }
+      return group;
     },
-    onSuccess: async (group, variables) => {
+    onSuccess: async () => {
       if (model.selectedOrganizationId) {
         handleThreadOrganizationRuleChange("latest");
-        const threadKeys = variables.threadKeys ?? (variables.threadKey ? [variables.threadKey] : []);
-        for (const threadKey of [...new Set(threadKeys)]) {
-          await messengerApi.assignCustomGroupEntry(model.selectedOrganizationId, group.id, threadKey);
-        }
+      }
+      await refreshCustomGroups();
+    },
+  });
+
+  const createCustomGroupWithEntriesMutation = useMutation({
+    mutationFn: ({ name, icon, threadKeys }: { name: string; icon: string | null; threadKeys: string[] }) => {
+      if (!model.selectedOrganizationId) throw new Error("Organization is required to create a Messenger group");
+      return messengerApi.createCustomGroupWithEntries(model.selectedOrganizationId, { name, icon, threadKeys });
+    },
+    onSuccess: async () => {
+      if (model.selectedOrganizationId) {
+        handleThreadOrganizationRuleChange("latest");
       }
       await refreshCustomGroups();
     },
@@ -2593,7 +2606,7 @@ export function MessengerContextSidebar() {
         && overEntry?.thread.kind === "chat"
         && activeThreadKey !== overThreadKey
       ) {
-        createCustomGroupMutation.mutate({
+        createCustomGroupWithEntriesMutation.mutate({
           name: overEntry?.thread.title ? threadDisplayTitle(overEntry.thread.title) : "New group",
           icon: composeCustomGroupIconValue("folder", "amber"),
           threadKeys: [overThreadKey, activeThreadKey],
@@ -2718,7 +2731,7 @@ export function MessengerContextSidebar() {
     if (projectOrderStorageKey) {
       writeProjectOrder(projectOrderStorageKey, nextProjectOrderIds);
     }
-  }, [assignCustomGroupEntryMutation, createCustomGroupMutation, customEntryGroupByThreadKey, defaultThreadOrderKeys, defaultThreadOrderStorageKey, effectiveThreadOrganizationRule, messengerThreadGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey, removeCustomGroupEntryMutation, reorderCustomGroupEntriesMutation, reorderCustomGroupsMutation]);
+  }, [assignCustomGroupEntryMutation, createCustomGroupWithEntriesMutation, customEntryGroupByThreadKey, defaultThreadOrderKeys, defaultThreadOrderStorageKey, effectiveThreadOrganizationRule, messengerThreadGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey, removeCustomGroupEntryMutation, reorderCustomGroupEntriesMutation, reorderCustomGroupsMutation]);
 
   const handleShowMoreThreadSection = (section: OrganizedThreadSection, visibleCount: number) => {
     if (visibleCount < section.entries.length) {
@@ -3562,7 +3575,7 @@ export function MessengerContextSidebar() {
           name={customGroupNameDraft}
           icon={customGroupIconDraft}
           color={customGroupColorDraft}
-          pending={createCustomGroupMutation.isPending || updateCustomGroupMutation.isPending}
+          pending={createCustomGroupMutation.isPending || createCustomGroupWithEntriesMutation.isPending || updateCustomGroupMutation.isPending}
           onNameChange={setCustomGroupNameDraft}
           onIconChange={setCustomGroupIconDraft}
           onColorChange={setCustomGroupColorDraft}

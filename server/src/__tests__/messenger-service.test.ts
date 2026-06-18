@@ -305,6 +305,81 @@ describe("messengerService and issue follows", () => {
     expect(customGroups.groups[0]?.entries[0]?.thread.title).toBe("Grouped chat 8");
   });
 
+  it("creates a custom group with multiple chat entries atomically", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-custom-group-merge";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Custom Group Merge Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Custom Group Merge Org"),
+      issuePrefix: `M${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const conversationIds = [randomUUID(), randomUUID()];
+    await db.insert(chatConversations).values(
+      conversationIds.map((conversationId, index) => ({
+        id: conversationId,
+        orgId,
+        title: `Merged chat ${index + 1}`,
+        summary: `Summary ${index + 1}`,
+        issueCreationMode: "manual_approval" as const,
+        planMode: false,
+        createdByUserId: userId,
+      })),
+    );
+
+    const customGroups = await messengerSvc.createCustomGroupWithEntries(
+      orgId,
+      userId,
+      "Merged group",
+      "folder::amber",
+      conversationIds.map((conversationId) => `chat:${conversationId}`),
+    );
+
+    expect(customGroups.groups).toHaveLength(1);
+    expect(customGroups.groups[0]?.name).toBe("Merged group");
+    expect(customGroups.groups[0]?.entries.map((entry) => entry.threadKey)).toEqual(
+      conversationIds.map((conversationId) => `chat:${conversationId}`),
+    );
+  });
+
+  it("rolls back custom group merge when any thread cannot be grouped", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-custom-group-merge-rollback";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Custom Group Merge Rollback Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Custom Group Merge Rollback Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const conversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Rollback chat",
+      summary: "Summary",
+      issueCreationMode: "manual_approval" as const,
+      planMode: false,
+      createdByUserId: userId,
+    });
+
+    await expect(messengerSvc.createCustomGroupWithEntries(
+      orgId,
+      userId,
+      "Should rollback",
+      "folder::amber",
+      [`chat:${conversationId}`, "issues"],
+    )).rejects.toThrow(/Only chat threads can be added/i);
+
+    const customGroups = await messengerSvc.listCustomGroups(orgId, userId);
+    expect(customGroups.groups).toEqual([]);
+  });
+
   it("omits and prunes stale custom group entries during hydration", async () => {
     const orgId = randomUUID();
     const userId = "board-user-custom-group-stale";

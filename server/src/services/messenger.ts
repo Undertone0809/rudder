@@ -1074,15 +1074,15 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function createCustomGroup(orgId: string, userId: string, name: string, icon: string | null = null) {
-    const [lastGroup] = await db
+  async function createCustomGroupWithClient(client: Pick<Db, "insert" | "select">, orgId: string, userId: string, name: string, icon: string | null = null) {
+    const [lastGroup] = await client
       .select({ sortOrder: messengerCustomGroups.sortOrder })
       .from(messengerCustomGroups)
       .where(and(eq(messengerCustomGroups.orgId, orgId), eq(messengerCustomGroups.userId, userId)))
       .orderBy(desc(messengerCustomGroups.sortOrder))
       .limit(1);
     const now = new Date();
-    const [group] = await db
+    const [group] = await client
       .insert(messengerCustomGroups)
       .values({
         orgId,
@@ -1094,6 +1094,10 @@ export function messengerService(db: Db) {
       })
       .returning();
     return group;
+  }
+
+  async function createCustomGroup(orgId: string, userId: string, name: string, icon: string | null = null) {
+    return createCustomGroupWithClient(db, orgId, userId, name, icon);
   }
 
   async function updateCustomGroup(
@@ -1163,10 +1167,9 @@ export function messengerService(db: Db) {
     return listCustomGroups(orgId, userId);
   }
 
-  async function assignThreadToCustomGroup(orgId: string, userId: string, groupId: string, threadKey: string) {
-    await getCustomGroupOrThrow(orgId, userId, groupId);
+  async function assignThreadToCustomGroupWithClient(client: Pick<Db, "insert" | "select">, orgId: string, userId: string, groupId: string, threadKey: string) {
     await ensureChatThreadCanBeGrouped(orgId, userId, threadKey);
-    const [lastEntry] = await db
+    const [lastEntry] = await client
       .select({ sortOrder: messengerCustomGroupEntries.sortOrder })
       .from(messengerCustomGroupEntries)
       .where(and(
@@ -1177,7 +1180,7 @@ export function messengerService(db: Db) {
       .orderBy(desc(messengerCustomGroupEntries.sortOrder))
       .limit(1);
     const now = new Date();
-    const [entry] = await db
+    const [entry] = await client
       .insert(messengerCustomGroupEntries)
       .values({
         orgId,
@@ -1201,6 +1204,23 @@ export function messengerService(db: Db) {
       })
       .returning();
     return entry;
+  }
+
+  async function assignThreadToCustomGroup(orgId: string, userId: string, groupId: string, threadKey: string) {
+    await getCustomGroupOrThrow(orgId, userId, groupId);
+    return assignThreadToCustomGroupWithClient(db, orgId, userId, groupId, threadKey);
+  }
+
+  async function createCustomGroupWithEntries(orgId: string, userId: string, name: string, icon: string | null, threadKeys: string[]) {
+    const uniqueThreadKeys = [...new Set(threadKeys)];
+    if (uniqueThreadKeys.length === 0) throw badRequest("At least one thread key is required");
+    await db.transaction(async (tx) => {
+      const group = await createCustomGroupWithClient(tx, orgId, userId, name, icon);
+      for (const threadKey of uniqueThreadKeys) {
+        await assignThreadToCustomGroupWithClient(tx, orgId, userId, group.id, threadKey);
+      }
+    });
+    return listCustomGroups(orgId, userId);
   }
 
   async function removeThreadFromCustomGroups(orgId: string, userId: string, threadKey: string) {
@@ -2485,6 +2505,7 @@ export function messengerService(db: Db) {
   return {
     listCustomGroups,
     createCustomGroup,
+    createCustomGroupWithEntries,
     updateCustomGroup,
     separateCustomGroup,
     deleteCustomGroup,

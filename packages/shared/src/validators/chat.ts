@@ -281,6 +281,10 @@ export const createMessengerCustomGroupSchema = z.object({
   icon: z.string().trim().min(1).max(24).optional().nullable(),
 });
 
+export const createMessengerCustomGroupWithEntriesSchema = createMessengerCustomGroupSchema.extend({
+  threadKeys: z.array(z.string().trim().min(1).max(240)).min(1).max(50),
+});
+
 export const updateMessengerCustomGroupSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   icon: z.string().trim().min(1).max(24).optional().nullable(),
@@ -313,6 +317,7 @@ export type UpdateChatConversation = z.infer<typeof updateChatConversationSchema
 export type AddChatMessage = z.infer<typeof addChatMessageSchema>;
 export type UpdateMessengerThreadUserState = z.infer<typeof updateMessengerThreadUserStateSchema>;
 export type CreateMessengerCustomGroup = z.infer<typeof createMessengerCustomGroupSchema>;
+export type CreateMessengerCustomGroupWithEntries = z.infer<typeof createMessengerCustomGroupWithEntriesSchema>;
 export type UpdateMessengerCustomGroup = z.infer<typeof updateMessengerCustomGroupSchema>;
 export type ReorderMessengerCustomGroups = z.infer<typeof reorderMessengerCustomGroupsSchema>;
 export type AssignMessengerCustomGroupEntry = z.infer<typeof assignMessengerCustomGroupEntrySchema>;

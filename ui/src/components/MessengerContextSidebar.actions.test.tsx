@@ -12,6 +12,7 @@ import { MessengerContextSidebar } from "./MessengerContextSidebar";
 const mockUpdateUserState = vi.hoisted(() => vi.fn());
 const mockUpdateThreadUserState = vi.hoisted(() => vi.fn());
 const mockCreateCustomGroup = vi.hoisted(() => vi.fn());
+const mockCreateCustomGroupWithEntries = vi.hoisted(() => vi.fn());
 const mockAssignCustomGroupEntry = vi.hoisted(() => vi.fn());
 const mockListCustomGroups = vi.hoisted(() => vi.fn());
 const mockUpdateCustomGroup = vi.hoisted(() => vi.fn());
@@ -131,6 +132,7 @@ vi.mock("@/api/messenger", () => ({
     updateThreadUserState: mockUpdateThreadUserState,
     listCustomGroups: mockListCustomGroups,
     createCustomGroup: mockCreateCustomGroup,
+    createCustomGroupWithEntries: mockCreateCustomGroupWithEntries,
     updateCustomGroup: mockUpdateCustomGroup,
     separateCustomGroup: mockSeparateCustomGroup,
     reorderCustomGroups: mockReorderCustomGroups,
@@ -426,6 +428,7 @@ describe("MessengerContextSidebar chat actions", () => {
       createdAt: "2026-04-11T09:40:00.000Z",
       updatedAt: "2026-04-11T09:40:00.000Z",
     });
+    mockCreateCustomGroupWithEntries.mockResolvedValue({ groups: [] });
     mockAssignCustomGroupEntry.mockResolvedValue({
       id: "entry-1",
       orgId: "org-1",
@@ -462,6 +465,7 @@ describe("MessengerContextSidebar chat actions", () => {
     mockMarkThreadRead.mockClear();
     mockUpdateThreadUserState.mockClear();
     mockCreateCustomGroup.mockClear();
+    mockCreateCustomGroupWithEntries.mockClear();
     mockAssignCustomGroupEntry.mockClear();
     mockListCustomGroups.mockClear();
     mockUpdateCustomGroup.mockClear();
@@ -1271,9 +1275,12 @@ describe("MessengerContextSidebar chat actions", () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateCustomGroup).toHaveBeenCalledWith("org-1", { name: "Target tab", icon: "folder::amber" });
-    expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "chat:target");
-    expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "chat:source");
+    expect(mockCreateCustomGroupWithEntries).toHaveBeenCalledWith("org-1", {
+      name: "Target tab",
+      icon: "folder::amber",
+      threadKeys: ["chat:target", "chat:source"],
+    });
+    expect(mockAssignCustomGroupEntry).not.toHaveBeenCalled();
   });
 
   it("does not create custom groups from non-chat rows", async () => {
