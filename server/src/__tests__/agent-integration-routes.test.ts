@@ -8,6 +8,7 @@ import { createFeishuCallbackSignature } from "../services/integrations/feishu/e
 const mockDeps = { kind: "feishu-dispatcher-deps" };
 const mockCreateDeps = vi.hoisted(() => vi.fn(() => mockDeps));
 const mockDispatch = vi.hoisted(() => vi.fn());
+const mockResolveSecretValue = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/integrations/feishu/inbound-dispatcher-db.js", () => ({
   createFeishuInboundDispatcherDbDeps: mockCreateDeps,
@@ -17,7 +18,13 @@ vi.mock("../services/integrations/feishu/inbound-dispatcher.js", () => ({
   dispatchFeishuInboundMessage: mockDispatch,
 }));
 
-function createApp(actor: Record<string, unknown>) {
+vi.mock("../services/secrets.js", () => ({
+  secretService: () => ({
+    resolveSecretValue: mockResolveSecretValue,
+  }),
+}));
+
+function createApp(actor: Record<string, unknown>, db: any = createIntegrationLookupDb([])) {
   const app = express();
   app.use(express.json({
     verify: (req, _res, buf) => {
@@ -28,9 +35,19 @@ function createApp(actor: Record<string, unknown>) {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", integrationRoutes({} as any));
+  app.use("/api", integrationRoutes(db));
   app.use(errorHandler);
   return app;
+}
+
+function createIntegrationLookupDb(rows: Array<{ appCredentialSecretId: string }>) {
+  return {
+    select: () => ({
+      from: () => ({
+        where: () => Promise.resolve(rows),
+      }),
+    }),
+  };
 }
 
 const boardActor = {
@@ -44,6 +61,9 @@ const boardActor = {
 describe("integration routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveSecretValue.mockResolvedValue(JSON.stringify({
+      verificationToken: "verification-token",
+    }));
     mockDispatch.mockResolvedValue({
       status: "accepted",
       conversationId: "conversation-1",
@@ -167,6 +187,51 @@ describe("integration routes", () => {
         senderOpenId: "ou_sender",
       });
     expect(crossOrgRes.status).toBe(403);
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("verifies Feishu callbacks with the active integration credential secret before mock body credentials", async () => {
+    const app = createApp(boardActor, createIntegrationLookupDb([
+      { appCredentialSecretId: "11111111-1111-1111-1111-111111111111" },
+    ]));
+
+    const res = await request(app)
+      .post("/api/orgs/org-1/integrations/feishu/mock-inbound")
+      .send({
+        type: "url_verification",
+        appId: "cli_a_app",
+        token: "verification-token",
+        challenge: "challenge-value",
+        mockVerificationToken: "wrong-mock-token",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ challenge: "challenge-value" });
+    expect(mockResolveSecretValue).toHaveBeenCalledWith(
+      "org-1",
+      "11111111-1111-1111-1111-111111111111",
+      "latest",
+    );
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects Feishu callbacks that mismatch the active integration credential secret", async () => {
+    const app = createApp(boardActor, createIntegrationLookupDb([
+      { appCredentialSecretId: "11111111-1111-1111-1111-111111111111" },
+    ]));
+
+    const res = await request(app)
+      .post("/api/orgs/org-1/integrations/feishu/mock-inbound")
+      .send({
+        type: "url_verification",
+        appId: "cli_a_app",
+        token: "wrong-token",
+        challenge: "challenge-value",
+        mockVerificationToken: "wrong-token",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Invalid Feishu callback verification token");
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 

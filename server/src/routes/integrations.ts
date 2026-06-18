@@ -2,6 +2,7 @@ import type { Db } from "@rudderhq/db";
 import { mockFeishuInboundEventSchema } from "@rudderhq/shared";
 import { Router } from "express";
 import { validate } from "../middleware/validate.js";
+import { feishuCallbackCredentialService } from "../services/integrations/feishu/callback-credentials.js";
 import {
   hasFeishuCallbackVerificationSignal,
   verifyFeishuEventCallback,
@@ -13,6 +14,7 @@ import { assertBoard, assertCompanyAccess } from "./authz.js";
 
 export function integrationRoutes(db: Db) {
   const router = Router();
+  const feishuCallbackCredentials = feishuCallbackCredentialService(db);
 
   router.post("/orgs/:orgId/integrations/feishu/mock-inbound", validate(mockFeishuInboundEventSchema), async (req, res) => {
     assertBoard(req);
@@ -20,12 +22,17 @@ export function integrationRoutes(db: Db) {
     assertCompanyAccess(req, orgId);
 
     if (hasFeishuCallbackVerificationSignal(req.body, req.headers)) {
+      const credentials = await feishuCallbackCredentials.resolveForCallback(orgId, req.body)
+        ?? {
+          verificationToken: req.body.mockVerificationToken,
+          encryptKey: req.body.mockEncryptKey,
+        };
       const verification = verifyFeishuEventCallback({
         body: req.body,
         headers: req.headers,
         rawBody: req.rawBody,
-        verificationToken: req.body.mockVerificationToken,
-        encryptKey: req.body.mockEncryptKey,
+        verificationToken: credentials.verificationToken,
+        encryptKey: credentials.encryptKey,
       });
       if (verification.kind === "challenge") {
         res.status(200).json({ challenge: verification.challenge });
