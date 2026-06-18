@@ -45,7 +45,14 @@ function chatTitle(event: FeishuInboundMessage) {
   return `${prefix} ${event.chatId}`.slice(0, 120);
 }
 
-export function createFeishuInboundDispatcherDbDeps(db: Db): AgentIntegrationInboundDispatcherDeps {
+export interface FeishuInboundDispatcherDbOptions {
+  orgId?: string;
+}
+
+export function createFeishuInboundDispatcherDbDeps(
+  db: Db,
+  options: FeishuInboundDispatcherDbOptions = {},
+): AgentIntegrationInboundDispatcherDeps {
   const chats = chatService(db);
   const issues = issueService(db);
   const chatRuns = chatAgentRunService(db);
@@ -57,6 +64,9 @@ export function createFeishuInboundDispatcherDbDeps(db: Db): AgentIntegrationInb
         eq(agentIntegrations.externalAppId, event.appId),
         eq(agentIntegrations.status, "active"),
       ];
+      if (options.orgId) {
+        conditions.push(eq(agentIntegrations.orgId, options.orgId));
+      }
       if (event.botOpenId) {
         conditions.push(
           or(isNull(agentIntegrations.externalBotOpenId), eq(agentIntegrations.externalBotOpenId, event.botOpenId))!,

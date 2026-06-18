@@ -31,3 +31,57 @@ export const createAgentIntegrationSchema = z.object({
 });
 
 export type CreateAgentIntegration = z.infer<typeof createAgentIntegrationSchema>;
+
+const feishuEventHeaderSchema = z.object({
+  event_id: z.string().min(1).optional(),
+  app_id: z.string().min(1).optional(),
+  create_time: z.string().min(1).optional(),
+}).passthrough();
+
+const feishuSenderIdSchema = z.object({
+  open_id: z.string().min(1).optional(),
+  union_id: z.string().min(1).optional(),
+}).passthrough();
+
+const feishuMessageMentionSchema = z.object({
+  key: z.string().optional(),
+  id: feishuSenderIdSchema.optional(),
+}).passthrough();
+
+const feishuMessageSchema = z.object({
+  message_id: z.string().min(1).optional(),
+  chat_id: z.string().min(1).optional(),
+  chat_type: agentIntegrationChatTypeSchema.optional(),
+  message_type: z.string().min(1).optional(),
+  content: z.string().optional(),
+  mentions: z.array(feishuMessageMentionSchema).optional(),
+  parent_id: z.string().min(1).optional().nullable(),
+}).passthrough();
+
+const feishuEventSchema = z.object({
+  sender: z.object({
+    sender_id: feishuSenderIdSchema.optional(),
+  }).passthrough().optional(),
+  message: feishuMessageSchema.optional(),
+}).passthrough();
+
+export const mockFeishuInboundEventSchema = z.object({
+  eventId: z.string().min(1).optional(),
+  appId: z.string().min(1).optional(),
+  botOpenId: z.string().min(1).optional().nullable(),
+  chatId: z.string().min(1).optional(),
+  chatType: agentIntegrationChatTypeSchema.optional(),
+  messageId: z.string().min(1).optional(),
+  senderOpenId: z.string().min(1).optional(),
+  senderUnionId: z.string().min(1).optional().nullable(),
+  body: z.string().optional(),
+  commandBody: z.string().optional(),
+  addressedToBot: z.boolean().optional(),
+  messageType: z.string().min(1).optional(),
+  parentMessageId: z.string().min(1).optional().nullable(),
+  receivedAt: z.string().datetime().optional(),
+  header: feishuEventHeaderSchema.optional(),
+  event: feishuEventSchema.optional(),
+}).passthrough();
+
+export type MockFeishuInboundEvent = z.infer<typeof mockFeishuInboundEventSchema>;
