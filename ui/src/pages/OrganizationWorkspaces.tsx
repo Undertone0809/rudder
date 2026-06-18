@@ -5347,7 +5347,7 @@ export function OrganizationWorkspaceBrowser({
                             "rudder-doc-editor-tab rudder-doc-editor-tab--desktop-no-drag group relative flex min-w-[132px] max-w-[248px] shrink-0 cursor-default items-center border px-1 transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
                             active
                               ? "rudder-doc-editor-tab--active mb-[-1px] h-[var(--rudder-doc-editor-tab-active-height)] overflow-visible rounded-t-[var(--rudder-doc-editor-tab-radius)] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
-                              : "mb-1 h-[var(--rudder-doc-editor-tab-inactive-height)] translate-y-px overflow-hidden rounded-[var(--rudder-doc-editor-tab-radius)] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
+                              : "mb-2 h-[var(--rudder-doc-editor-tab-inactive-height)] translate-y-px overflow-hidden rounded-[var(--rudder-doc-editor-tab-radius)] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--rudder-doc-editor-tab-hover-bg)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
                             active && first && "rudder-doc-editor-tab--first-active",
                             dragging && "opacity-55",
                             dropBefore && !dragging && "rudder-doc-editor-tab--drop-before",
@@ -5386,7 +5386,7 @@ export function OrganizationWorkspaceBrowser({
                         </div>
                       );
                     })}
-                    <div aria-hidden="true" className="rudder-doc-editor-tab-drag-spacer mb-1 h-9 min-w-6 flex-1" />
+                    <div aria-hidden="true" className="rudder-doc-editor-tab-drag-spacer mb-2 h-9 min-w-6 flex-1" />
                   </>
                 </div>
               </div>
