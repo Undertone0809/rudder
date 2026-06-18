@@ -64,3 +64,29 @@ Facts decay in retrieval priority over time so stale info does not crowd out rec
 **Weekly synthesis:** Sort by recency tier, then by access_count within tier. Cold facts drop out of the summary but remain in items.yaml. Accessing a cold fact reheats it.
 
 No deletion. Decay only affects retrieval priority via summary.md curation. The full record always lives in items.yaml.
+
+## Memory Search Result Rules
+
+When broad recall uses file search, results are candidates, not facts. Open the
+candidate file and verify the stored note or YAML item before answering.
+
+Rank candidates with this bias:
+
+- `summary.md` gives the fastest current entity context.
+- `items.yaml` is authoritative for atomic facts; ignore facts with
+  `status: superseded` except to explain history or follow `superseded_by`.
+- Daily notes are authoritative for raw timeline and conversation capture.
+- Newer dated shared work notes usually supersede older shared notes unless the
+  older file explicitly remains active.
+- Multiple matching terms in one file are stronger than one isolated match.
+
+When a fact is used in the final answer, update access metadata when practical:
+
+```yaml
+last_accessed: "YYYY-MM-DD"
+access_count: 1
+```
+
+Answers should cite the memory file path or Rudder-renderable Library reference
+used, state when evidence is weak, and avoid exposing raw private transcript
+text unless the exact wording is necessary and safe.

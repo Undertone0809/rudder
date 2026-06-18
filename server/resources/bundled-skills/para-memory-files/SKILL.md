@@ -166,26 +166,52 @@ Memory does not survive session restarts. Files do.
 - Make a mistake -> document it so future-you does not repeat it.
 - On-disk text files are always better than holding it in temporary context.
 
-## Memory Recall -- Use The Files Directly
+## Memory Recall -- Use File-Based Memory Search
 
 Use the on-disk structure directly. Do not require a semantic index just to
-recall memory.
+recall memory. The files are the source of truth; search is only the triage step
+for locating the right file, then claims must be verified against the stored
+fact or note.
 
 Recall order:
 
 1. If you already know the entity, open `summary.md` first, then `items.yaml`
    only if the summary is insufficient.
 2. For recent events, read today's and nearby `memory/YYYY-MM-DD.md` files.
-3. For unknown keywords or broad recall, use `rg` across `$AGENT_HOME/life/`
-   and `$AGENT_HOME/memory/`.
+3. For broad recall or unknown entity paths, run Memory Search Mode.
+
+### Memory Search Mode
+
+Use this mode when the request sounds like "what do we know about...", "have we
+seen this before...", "what did the user prefer...", or when plain directory
+search would return too many matches.
+
+1. Define the search target in one sentence: subject, likely entity, timeframe,
+   project, and answer shape.
+2. Build 3-6 focused query terms: exact phrase, synonyms, likely entity names,
+   project names, and durable-signal words such as `preference`, `decision`,
+   `lesson`, `handoff`, `constraint`, or `review`.
+3. Search scoped roots separately so results can be ranked by source type:
 
 ```bash
-rg -n "Christmas" "$AGENT_HOME/life" "$AGENT_HOME/memory"
-rg -n "specific phrase" "$AGENT_HOME/life" "$AGENT_HOME/memory"
+rg -n -i "review|handoff|preference" "$AGENT_HOME/life" "$AGENT_HOME/memory"
+rg -n -i "review|handoff|preference" "$RUDDER_PROJECT_LIBRARY_ROOT"
 ```
 
-The files are the source of truth. Search is only a way to locate the right
-file, then verify against the stored fact or note.
+4. Rank candidate files before opening many of them:
+   - entity `summary.md` over `items.yaml` for quick context;
+   - active `items.yaml` facts over superseded facts;
+   - recent daily notes over old daily notes for event recall;
+   - newest dated shared work notes over older notes;
+   - files matching multiple query terms over single-term matches;
+   - paths in the current project or organization over unrelated roots.
+5. Open the top 3-7 candidate files, not every match. Read enough surrounding
+   context to verify the fact, date, status, and source.
+6. Answer from verified memory only. Cite the file paths used, mention conflicts
+   or weak matches, and say when no reliable memory was found.
+
+Do not dump raw `rg` output as the answer. Do not treat a keyword hit as a fact
+until the source file has been opened and checked.
 
 ## Shared Work Notes
 

@@ -126,3 +126,29 @@ Must not:
   memory.
 - Ignore the attachment-driven reinterpretation when forming future task
   context.
+
+### Case: Broad Memory Recall Needs Search Triage
+
+Input:
+
+A user asks: "What do we know about my previous preferences for agent review
+handoffs?" There is no known entity path, and the relevant notes may live across
+life summaries, daily notes, or shared project Library files.
+
+Expected behavior:
+
+- Build a focused memory-search query set from concrete terms, synonyms,
+  likely entities, and date/project hints before reading files.
+- Search the likely memory roots and return a short ranked candidate list
+  grouped by source type, preferring entity `summary.md`, active facts, recent
+  daily notes, and newest shared work notes.
+- Open only the strongest candidate files, verify claims against stored facts
+  or notes, and cite the file paths used.
+- State uncertainty when matches are weak or conflicting.
+
+Must not:
+
+- Dump raw `rg` output as the answer.
+- Read every matching file without ranking.
+- Treat keyword matches as facts before opening and verifying the source file.
+- Ignore newer dated notes or superseded facts when older matches exist.
