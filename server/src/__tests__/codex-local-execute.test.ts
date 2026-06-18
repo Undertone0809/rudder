@@ -868,6 +868,66 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
+  it("keeps unknown Codex subscription models as subscription usage when cost estimation is enabled", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-subscription-unknown-cost-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const operatorHome = path.join(root, "operator-home");
+    const paperclipHome = path.join(root, "rudder-home");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(operatorHome, { recursive: true });
+    await writeUsageCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousPaperclipHome = process.env.RUDDER_HOME;
+    const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
+    process.env.HOME = operatorHome;
+    process.env.RUDDER_HOME = paperclipHome;
+    delete process.env.OPENAI_API_KEY;
+
+    try {
+      const result = await execute({
+        runId: "run-cost-unknown",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "custom-future-codex",
+          countSubscriptionUsageAsCost: true,
+          promptTemplate: "Run the task.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.biller).toBe("chatgpt");
+      expect(result.billingType).toBe("subscription");
+      expect(result.costUsd).toBeNull();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousPaperclipHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousPaperclipHome;
+      if (previousOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("isolates managed CODEX_HOME per agent inside the same organization", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-agent-isolation-"));
     const workspace = path.join(root, "workspace");

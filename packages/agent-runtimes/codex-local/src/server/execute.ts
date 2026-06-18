@@ -162,8 +162,9 @@ function resolveCodexBiller(env: Record<string, string>, billingType: "api" | "s
 function resolveCodexResultBillingType(
   billingType: "api" | "subscription",
   countSubscriptionUsageAsCost: boolean,
+  hasEstimatedCost: boolean,
 ): "api" | "subscription" | "metered_api" {
-  if (billingType === "subscription" && countSubscriptionUsageAsCost) return "metered_api";
+  if (billingType === "subscription" && countSubscriptionUsageAsCost && hasEstimatedCost) return "metered_api";
   return billingType;
 }
 
@@ -648,11 +649,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       stderrLine ||
       `Codex exited with code ${attempt.proc.exitCode ?? -1}`;
 
-    const resultBillingType = resolveCodexResultBillingType(billingType, countSubscriptionUsageAsCost);
     const estimatedCostUsd =
       billingType === "subscription" && countSubscriptionUsageAsCost
         ? estimateCodexCostUsd(model, attempt.parsed.usage)
         : null;
+    const resultBillingType = resolveCodexResultBillingType(
+      billingType,
+      countSubscriptionUsageAsCost,
+      estimatedCostUsd !== null,
+    );
 
     return {
       exitCode: attempt.proc.exitCode,

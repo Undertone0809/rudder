@@ -7,9 +7,21 @@ export const DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST = false;
 
 export const models = [
   { id: DEFAULT_CODEX_LOCAL_MODEL, label: "GPT-5.5" },
+  { id: "gpt-5.5-codex", label: "GPT-5.5-Codex" },
+  { id: "gpt-5.5-fast", label: "GPT-5.5-Fast" },
+  { id: "gpt-5.5-flex", label: "GPT-5.5-Flex" },
   { id: "gpt-5.4", label: "GPT-5.4" },
+  { id: "gpt-5.4-codex", label: "GPT-5.4-Codex" },
   { id: "gpt-5.4-mini", label: "GPT-5.4-Mini" },
+  { id: "gpt-5.4-nano", label: "GPT-5.4-Nano" },
+  { id: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
   { id: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark" },
+  { id: "gpt-5.2-codex", label: "GPT-5.2-Codex" },
+  { id: "gpt-5.1-codex", label: "GPT-5.1-Codex" },
+  { id: "gpt-5.1-codex-max", label: "GPT-5.1-Codex-Max" },
+  { id: "gpt-5.1-codex-mini", label: "GPT-5.1-Codex-Mini" },
+  { id: "gpt-5-codex", label: "GPT-5-Codex" },
+  { id: "codex-mini-latest", label: "Codex Mini Latest" },
 ];
 
 export const agentConfigurationDoc = `# codex_local agent configuration
@@ -24,7 +36,7 @@ Core fields:
 - modelReasoningEffort (string, optional): reasoning effort override (low|medium|high|xhigh) passed via -c model_reasoning_effort=...
 - promptTemplate (string, optional): run prompt template
 - search (boolean, optional, defaults to true on new Codex agents): run codex with --search
-- countSubscriptionUsageAsCost (boolean, optional, defaults to false): when Codex uses local subscription auth, estimate API-equivalent spend from token usage instead of recording subscription runs as $0
+- countSubscriptionUsageAsCost (boolean, optional, defaults to false): when Codex uses local subscription auth, estimate API-equivalent spend from token usage instead of recording subscription runs as $0. Known-model estimates count toward Rudder spend and budget hard stops. Rates are stored per model from the OpenAI/Codex price table used by Vibe Usage; unknown models remain subscription usage until added.
 - dangerouslyBypassApprovalsAndSandbox (boolean, optional): run with bypass flag
 - command (string, optional): defaults to "codex"
 - extraArgs (string[], optional): additional CLI args

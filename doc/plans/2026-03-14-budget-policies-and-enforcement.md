@@ -96,6 +96,14 @@ This keeps the budget system honest:
 - users should not see "spend" rise for usage that did not incur marginal billed cost
 - users should still see the token usage and provider quota state
 
+Codex subscription runs may opt into API-equivalent cost accounting through the
+`countSubscriptionUsageAsCost` runtime config. When that switch is enabled for a
+Codex agent using local subscription auth, Rudder records the run as
+`metered_api` with estimated cents from the OpenAI/Codex token price table, so
+known-model estimates consume Rudder spend and money-budget hard stops. Unknown
+models remain subscription usage until a price is added. Leave the switch off to
+preserve the default `subscription_included` `$0.00` behavior.
+
 ### Soft Alert Versus Hard Stop
 
 Rudder should have two threshold classes:
