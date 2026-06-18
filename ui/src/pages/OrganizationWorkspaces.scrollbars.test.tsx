@@ -905,6 +905,17 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(skillsRow?.querySelector('[data-testid="org-workspaces-skills-root-icon"]')).not.toBeNull();
   });
 
+  it("uses the skills root icon for agent Library skills roots", () => {
+    mockState.searchParams = "directory=agents/wesley/skills";
+    renderWorkspacesPage();
+
+    const agentSkillsRow = document.querySelector('[data-workspace-entry-path="agents/wesley/skills"]') as HTMLElement | null;
+
+    expect(agentSkillsRow).not.toBeNull();
+    expect(agentSkillsRow?.querySelector('[data-testid="org-workspaces-skills-root-icon"]')).not.toBeNull();
+    expect(agentSkillsRow?.querySelector('[data-testid="org-workspaces-skill-folder-icon"]')).toBeNull();
+  });
+
   it("shows read-only organization skills under the Library skills directory without duplicating workspace-backed skills", () => {
     mockState.searchParams = "directory=skills";
     renderWorkspacesPage();

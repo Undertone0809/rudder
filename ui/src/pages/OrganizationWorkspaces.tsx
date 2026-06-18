@@ -653,6 +653,12 @@ function isLibrarySkillPackageFolderPath(path: string) {
     || (segments.length === 4 && segments[0] === "agents" && segments[2] === "skills");
 }
 
+function isLibrarySkillsRootPath(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  return path === "skills"
+    || (segments.length === 3 && segments[0] === "agents" && segments[2] === "skills");
+}
+
 function isWorkspaceBackedOrganizationSkill(skill: Pick<OrganizationSkillListItem, "workspaceEditPath" | "slug">) {
   const editPath = normalizeRequestedPath(skill.workspaceEditPath);
   return Boolean(editPath && editPath.startsWith(`${organizationSkillRootTreePath(skill)}/`));
@@ -1477,7 +1483,7 @@ function WorkspaceTreeNode({
   const isVirtualSkillEntry = Boolean(entry.virtualSkillId);
   const isAgentWorkspace = entry.entityType === "agent_workspace";
   const isAgentsRoot = entry.path === "agents";
-  const isSkillsRoot = entry.path === "skills";
+  const isSkillsRoot = isLibrarySkillsRootPath(entry.path);
   const isSkillPackageFolder = isLibrarySkillPackageFolderPath(entry.path);
   const isProjectLibraryFolder = isProjectLibraryFolderPath(entry.path);
   const isProtectedContainer = isProtectedAgentWorkspaceContainerPath(entry.path);
@@ -1793,7 +1799,7 @@ function WorkspaceTreeNode({
               </span>
             ) : null}
           </button>
-          {isSkillsRoot ? (
+          {entry.path === "skills" ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

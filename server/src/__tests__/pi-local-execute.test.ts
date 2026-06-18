@@ -17,6 +17,7 @@ async function writeFakePiCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
 ${gitIdentityCaptureSnippet}
+const emitJson = (value) => fs.writeSync(1, JSON.stringify(value) + "\\n");
 
 if (process.argv.includes("--list-models")) {
   console.log("provider  model");
@@ -38,35 +39,35 @@ if (capturePath) {
 }
 if (process.env.RUDDER_TEST_PI_REALISTIC_OUTPUT === "1") {
   const bigSignature = "sig_".repeat(3000);
-  console.log(JSON.stringify({ type: "session", version: 3, id: "pi-session-1", timestamp: new Date().toISOString(), cwd: process.cwd() }));
-  console.log(JSON.stringify({ type: "agent_start", signature: bigSignature }));
-  console.log(JSON.stringify({ type: "turn_start" }));
-  console.log(JSON.stringify({
+  emitJson({ type: "session", version: 3, id: "pi-session-1", timestamp: new Date().toISOString(), cwd: process.cwd() });
+  emitJson({ type: "agent_start", signature: bigSignature });
+  emitJson({ type: "turn_start" });
+  emitJson({
     type: "message_update",
     assistantMessageEvent: {
       type: "thinking_delta",
       thinking: "internal reasoning should not be persisted",
       signature: bigSignature
     }
-  }));
-  console.log(JSON.stringify({
+  });
+  emitJson({
     type: "message_update",
     assistantMessageEvent: { type: "text_delta", delta: "streamed " }
-  }));
-  console.log(JSON.stringify({
+  });
+  emitJson({
     type: "tool_execution_start",
     toolCallId: "tool-1",
     toolName: "write",
     args: { path: "output.txt", content: "RUDDER_CAPABILITY_SUM=18", signature: bigSignature }
-  }));
-  console.log(JSON.stringify({
+  });
+  emitJson({
     type: "tool_execution_end",
     toolCallId: "tool-1",
     toolName: "write",
     result: { ok: true, signature: bigSignature },
     isError: false
-  }));
-  console.log(JSON.stringify({
+  });
+  emitJson({
     type: "turn_end",
     message: {
       role: "assistant",
@@ -74,14 +75,14 @@ if (process.env.RUDDER_TEST_PI_REALISTIC_OUTPUT === "1") {
       usage: { input: 10, output: 3, cacheRead: 2, cost: { total: 0.01 } }
     },
     toolResults: [{ toolCallId: "tool-1", content: { ok: true, signature: bigSignature }, isError: false }]
-  }));
-  console.log(JSON.stringify({
+  });
+  emitJson({
     type: "agent_end",
     messages: [
       { role: "user", content: "task" },
       { role: "assistant", content: [{ type: "text", text: "final ok" }], signature: bigSignature }
     ]
-  }));
+  });
   process.exit(0);
 }
 console.log(JSON.stringify({ type: "session", version: 3, id: "pi-session-1", timestamp: new Date().toISOString(), cwd: process.cwd() }));
