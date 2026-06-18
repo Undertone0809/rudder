@@ -432,6 +432,8 @@ describe("index.css motion rules", () => {
     expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-active-height)]");
     expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-inactive-height)]");
     expect(organizationWorkspacesSource).toContain("mb-2 h-[var(--rudder-doc-editor-tab-inactive-height)]");
+    expect(organizationWorkspacesSource).toContain("transition-[box-shadow,opacity,transform]");
+    expect(organizationWorkspacesSource).not.toContain("transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]");
     expect(organizationWorkspacesSource).toContain("hover:bg-[color:var(--rudder-doc-editor-tab-hover-bg)]");
     expect(organizationWorkspacesSource).toContain("rudder-doc-editor-tab-drag-spacer mb-2 h-9");
     expect(organizationWorkspacesSource).toContain("rounded-t-[var(--rudder-doc-editor-tab-radius)]");

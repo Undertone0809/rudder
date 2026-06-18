@@ -5344,7 +5344,7 @@ export function OrganizationWorkspaceBrowser({
                           onDragEnd={handleOpenFileTabDragEnd}
                           onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                           className={cn(
-                            "rudder-doc-editor-tab rudder-doc-editor-tab--desktop-no-drag group relative flex min-w-[132px] max-w-[248px] shrink-0 cursor-default items-center border px-1 transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+                            "rudder-doc-editor-tab rudder-doc-editor-tab--desktop-no-drag group relative flex min-w-[132px] max-w-[248px] shrink-0 cursor-default items-center border px-1 transition-[box-shadow,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
                             active
                               ? "rudder-doc-editor-tab--active mb-[-1px] h-[var(--rudder-doc-editor-tab-active-height)] overflow-visible rounded-t-[var(--rudder-doc-editor-tab-radius)] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
                               : "mb-2 h-[var(--rudder-doc-editor-tab-inactive-height)] translate-y-px overflow-hidden rounded-[var(--rudder-doc-editor-tab-radius)] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--rudder-doc-editor-tab-hover-bg)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
