@@ -609,14 +609,18 @@ function ExportBuildPanel({
   const Icon = ready ? CheckCircle2 : failed ? AlertCircle : canceled || stale ? AlertCircle : Package;
 
   return (
-    <div className={cn(
-      "mx-5 mt-3 rounded-md border px-4 py-3",
-      ready && "border-emerald-500/30 bg-emerald-500/5",
-      failed && "border-destructive/40 bg-destructive/5",
-      canceled && "border-amber-500/30 bg-amber-500/5",
-      stale && !ready && !failed && !canceled && "border-amber-500/30 bg-amber-500/5",
-      active && !stale && "border-border bg-accent/10",
-    )}>
+    <div
+      data-active-surface={active && !stale ? "export-build" : undefined}
+      className={cn(
+        "mx-5 mt-3 rounded-md border px-4 py-3",
+        ready && "border-emerald-500/30 bg-emerald-500/5",
+        failed && "border-destructive/40 bg-destructive/5",
+        canceled && "border-amber-500/30 bg-amber-500/5",
+        stale && !ready && !failed && !canceled && "border-amber-500/30 bg-amber-500/5",
+        active && !stale && "border-border bg-accent/10",
+        active && !stale && "active-surface-ring",
+      )}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

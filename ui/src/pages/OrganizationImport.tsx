@@ -1096,7 +1096,13 @@ export function OrganizationImport() {
   return (
     <div>
       {/* Source form section */}
-      <div className="border-b border-border px-5 py-5 space-y-4">
+      <div
+        data-active-surface={previewMutation.isPending ? "import-preview" : undefined}
+        className={cn(
+          "border-b border-border px-5 py-5 space-y-4",
+          previewMutation.isPending && "active-surface-ring",
+        )}
+      >
         <div>
           <h2 className="text-base font-semibold">Import source</h2>
           <p className="text-xs text-muted-foreground mt-1">
@@ -1247,7 +1253,13 @@ export function OrganizationImport() {
       {importPreview && (
         <>
           {/* Sticky import action bar */}
-          <div className="sticky top-0 z-10 border-b border-border bg-background px-5 py-3">
+          <div
+            data-active-surface={importMutation.isPending ? "import-apply" : undefined}
+            className={cn(
+              "sticky top-0 z-10 border-b border-border bg-background px-5 py-3",
+              importMutation.isPending && "active-surface-ring",
+            )}
+          >
             <div className="flex flex-wrap items-center gap-4 text-sm">
               <span className="font-medium">
                 Import preview

@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
-import { formatDateTime, formatRunElapsedDuration } from "../lib/utils";
+import { cn, formatDateTime, formatRunElapsedDuration } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
 import { Identity } from "./Identity";
 import { StatusBadge } from "./StatusBadge";
@@ -70,6 +70,7 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
   }, [activeRun, issueId, liveRuns]);
 
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({ runs, orgId });
+  const hasActiveRun = runs.some((run) => isRunActive(run.status));
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(orgId ?? "__none__"),
     queryFn: () => agentsApi.list(orgId!),
@@ -95,7 +96,13 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
   if (runs.length === 0) return null;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-cyan-500/25 bg-background/80 shadow-[0_18px_50px_rgba(6,182,212,0.08)]">
+    <div
+      data-active-surface={hasActiveRun ? "live-run" : undefined}
+      className={cn(
+        "overflow-hidden rounded-xl border border-cyan-500/25 bg-background/80 shadow-[0_18px_50px_rgba(6,182,212,0.08)]",
+        hasActiveRun && "active-surface-ring",
+      )}
+    >
       <div className="border-b border-border/60 bg-cyan-500/[0.04] px-4 py-3">
         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">
           Live Runs
