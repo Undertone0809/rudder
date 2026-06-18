@@ -269,7 +269,7 @@ describe("index.css motion rules", () => {
     for (const tokenBlock of [composerMentionTokenBlock, composerSkillTokenBlock]) {
       expect(tokenBlock).toContain("display: inline-block");
       expect(tokenBlock).toContain("min-width: 0");
-      expect(tokenBlock).toContain("max-width: min(38rem, calc(100% - 1rem))");
+      expect(tokenBlock).toContain("max-width: min(15ch, calc(100% - 1rem))");
       expect(tokenBlock).toContain("overflow: hidden");
       expect(tokenBlock).toContain("text-overflow: ellipsis");
       expect(tokenBlock).toContain("white-space: nowrap");
