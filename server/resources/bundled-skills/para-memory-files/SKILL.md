@@ -6,9 +6,10 @@ description: >
   sessions. Covers three memory layers: (1) Knowledge graph in PARA folders
   with atomic YAML facts, (2) Daily notes as raw timeline, (3) Tacit
   knowledge about user patterns. Also handles shared work files, memory decay,
-  weekly synthesis, and file-based recall. Trigger on any memory operation:
-  saving facts, writing daily notes, creating entities, running weekly
-  synthesis, recalling past context, or managing shared work notes.
+  weekly synthesis, Rudder chat conversation capture, and file-based recall.
+  Trigger on any memory operation: saving facts, writing daily notes, creating
+  entities, running weekly synthesis, recalling past context, or managing
+  shared work notes.
 allowed-tools: []
 disable: true
 ---
@@ -68,8 +69,72 @@ For the atomic fact YAML schema and memory decay rules, see [references/schemas.
 
 Raw timeline of events -- the "when" layer.
 
-- Write continuously during conversations.
+- Write continuously during conversations when a memory-worthy signal appears.
 - Extract durable facts to Layer 1 during heartbeats.
+- Treat daily notes as the first capture layer, not the final destination for
+  stable preferences, entity facts, or shared project knowledge.
+
+#### Conversation Capture Policy
+
+Rudder chat conversations are memory sources when they contain durable signal,
+not because every chat line deserves retention. Capture a concise daily-note
+entry when a chat includes any of these:
+
+- User corrections that change how the agent should behave next time.
+- New or changed preferences, constraints, boundaries, or decisions.
+- Issue proposal intent, acceptance criteria, or priority reasoning that is not
+  already explicit in the issue.
+- Automation design rationale, recurring workflow choices, or escalation rules.
+- Project/product/engineering judgment that will affect future work.
+- Attachment or screenshot evidence that changes task interpretation.
+- Reusable execution lessons, setup friction, validation findings, or failure
+  modes that future runs should know.
+
+Do not capture:
+
+- Greetings, thanks, scheduling chatter, or low-signal status updates.
+- Full private chat transcripts. Summarize the durable signal instead.
+- Secrets, tokens, credentials, private keys, session cookies, or auth headers.
+- One-time sensitive context that is not needed for future work.
+- Organization-level facts as private personal memory. Record only the routing
+  decision in the daily note, then promote the fact to shared project knowledge.
+- Speculation, weak inferences, or unverified assumptions as facts.
+
+Recommended daily-note entry format:
+
+```md
+## HH:MM - Chat capture
+
+- Context: conversation or issue reference, project, and why this mattered.
+- User intent: the durable need, correction, preference, or decision.
+- Conclusion/action: what changed or what was done.
+- Reusable lesson: future behavior, command, routing rule, or validation signal.
+- Follow-up/risk: unresolved uncertainty, owner, or promotion target.
+```
+
+Reference the Rudder conversation, issue, or local evidence path when available,
+but keep the note short enough that it can be safely scanned later.
+
+#### Promotion and Routing Rules
+
+Use daily notes as the intake log, then route the information:
+
+- Stable personal operating preferences or recurring user patterns ->
+  `$AGENT_HOME/instructions/MEMORY.md`.
+- Entity facts about people, companies, projects, or resources ->
+  `$AGENT_HOME/life/<para-bucket>/<entity>/items.yaml`.
+- Project proposals, decisions, reusable know-how, and shared work notes ->
+  `$RUDDER_PROJECT_LIBRARY_ROOT` when project context exists, otherwise the
+  relevant path under `$RUDDER_ORG_WORKSPACE_ROOT`.
+- Skill behavior problems or repeated workflow failures -> propose or make a
+  skill patch in the relevant skill package. Do not hide organization-wide
+  behavior fixes only in one agent's personal memory.
+- Secrets or sensitive one-time context -> do not write them to memory; record
+  only a redacted operational lesson if future behavior genuinely depends on it.
+
+During heartbeat synthesis, review recent chat captures and promote anything
+that has become stable, repeated, or shared. Leave the daily note as the audit
+trail even after promotion.
 
 ### Layer 3: Tacit Knowledge (`$AGENT_HOME/instructions/MEMORY.md`)
 
@@ -87,6 +152,8 @@ Memory does not survive session restarts. Files do.
 - "Remember this" -> update `$AGENT_HOME/memory/YYYY-MM-DD.md` or the relevant entity file.
 - Stable user preferences or operating lessons -> update `$AGENT_HOME/instructions/MEMORY.md`.
 - Learn a lesson -> update AGENTS.md, TOOLS.md, or the relevant skill file.
+- Shared project knowledge -> update the project Library or organization
+  workspace, then cite it with a Rudder-renderable link when reporting back.
 - Make a mistake -> document it so future-you does not repeat it.
 - On-disk text files are always better than holding it in temporary context.
 

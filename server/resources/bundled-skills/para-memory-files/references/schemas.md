@@ -17,6 +17,33 @@
   access_count: 0
 ```
 
+## Daily Note Conversation Capture Entry
+
+Daily notes are lightweight chronological logs. Use this structure when a
+Rudder chat contains durable signal worth retaining.
+
+```md
+## HH:MM - Chat capture
+
+- Context: conversation or issue reference, project, and why this mattered.
+- User intent: durable correction, preference, constraint, decision, or task
+  interpretation.
+- Conclusion/action: what changed, what was done, or where it was routed.
+- Reusable lesson: future behavior, command, validation signal, or routing rule.
+- Follow-up/risk: unresolved uncertainty, owner, promotion target, or none.
+```
+
+Keep entries summarized and redacted:
+
+- Do not copy full private transcripts.
+- Do not store secrets, tokens, credentials, private keys, session cookies, or
+  auth headers.
+- Do not turn one-off sensitive context into durable memory unless the future
+  behavioral lesson can be safely stated without the sensitive detail.
+- If the information belongs in shared project knowledge, note the routing
+  decision in the daily note and promote it to the project Library or
+  organization workspace.
+
 ## Memory Decay
 
 Facts decay in retrieval priority over time so stale info does not crowd out recent context.
