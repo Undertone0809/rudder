@@ -2248,7 +2248,7 @@ button[draggable="false"] {
 .rudder-doc-editor-tab-strip {
   position: relative;
   isolation: isolate;
-  --rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px);
+  --rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) + 1px);
   --rudder-doc-editor-tab-inactive-height: 38px;
   --rudder-doc-editor-tab-hover-bg: color-mix(in oklab, var(--surface-active) 86%, var(--foreground) 10%);
   --rudder-doc-editor-tab-radius: var(--desktop-workspace-radius);
@@ -2258,7 +2258,7 @@ button[draggable="false"] {
 .rudder-doc-editor-sidebar-header {
   --rudder-doc-editor-tab-strip-height: 53px;
   --rudder-doc-editor-breadcrumb-height: 32px;
-  --rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px);
+  --rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height);
   --rudder-doc-editor-sidebar-header-content-height: var(--rudder-doc-editor-tab-strip-height);
   height: var(--rudder-doc-editor-sidebar-header-height);
 }
@@ -2274,7 +2274,7 @@ button[draggable="false"] {
 }
 
 .rudder-doc-editor-sidebar-header--tabs-and-breadcrumb {
-  --rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px);
+  --rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height);
   --rudder-doc-editor-sidebar-header-content-height: var(--rudder-doc-editor-tab-strip-height);
 }
 

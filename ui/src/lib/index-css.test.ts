@@ -347,6 +347,16 @@ describe("index.css motion rules", () => {
     expect(rootTokens).toContain("--desktop-content-top-gap: 0.375rem");
   });
 
+  it("keeps the Library sidebar header aligned with the editor tab strip", () => {
+    const sidebarHeader = cssBlock(".rudder-doc-editor-sidebar-header");
+    const tabsAndBreadcrumbHeader = cssBlock(".rudder-doc-editor-sidebar-header--tabs-and-breadcrumb");
+
+    expect(sidebarHeader).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height)");
+    expect(tabsAndBreadcrumbHeader).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height)");
+    expect(sidebarHeader).not.toContain("--rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
+    expect(tabsAndBreadcrumbHeader).not.toContain("--rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
+  });
+
   it("keeps desktop workspace shell and work-card corners aligned", () => {
     const rootTokens = cssBlock(":root");
     const workspaceShell = cssBlock(".workspace-shell");
@@ -398,14 +408,14 @@ describe("index.css motion rules", () => {
     expect(editorSurface).toContain("--rudder-doc-editor-breadcrumb-height: 32px");
     expect(sidebarHeader).toContain("--rudder-doc-editor-tab-strip-height: 53px");
     expect(sidebarHeader).toContain("--rudder-doc-editor-breadcrumb-height: 32px");
-    expect(sidebarHeader).toContain("--rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
+    expect(sidebarHeader).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height)");
     expect(sidebarHeader).toContain("height: var(--rudder-doc-editor-sidebar-header-height)");
     expect(sidebarBreadcrumbOnly).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-breadcrumb-height)");
     expect(sidebarTabsOnly).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height)");
-    expect(sidebarTabsAndBreadcrumb).toContain("--rudder-doc-editor-sidebar-header-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
+    expect(sidebarTabsAndBreadcrumb).toContain("--rudder-doc-editor-sidebar-header-height: var(--rudder-doc-editor-tab-strip-height)");
     expect(sidebarChromeStates).toContain("align-items: flex-start");
     expect(sidebarChromeStates).toContain("padding-top: calc((var(--rudder-doc-editor-sidebar-header-content-height) - 28px) / 2)");
-    expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) - 1px)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) + 1px)");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-inactive-height: 38px");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-hover-bg: color-mix(in oklab, var(--surface-active) 86%, var(--foreground) 10%)");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-radius: var(--desktop-workspace-radius)");

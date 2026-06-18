@@ -44,6 +44,51 @@ async function selectOrganization(page: Page, orgId: string) {
 }
 
 test.describe("Organization workspaces image preview", () => {
+  test("aligns the Library sidebar and active editor tab top edges", async ({ page, request }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    const organizationRes = await request.post("/api/orgs", {
+      data: {
+        name: `Organization-Workspaces-Chrome-Alignment-${Date.now()}`,
+      },
+    });
+    expect(organizationRes.ok()).toBe(true);
+    const organization = await organizationRes.json() as { id: string; issuePrefix: string };
+
+    const jsonFilePath = "artifacts/chat-ui-review/evals.json";
+    const fileRes = await request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: jsonFilePath,
+        content: JSON.stringify({ skill_name: "debug-run-transcript", evals: [] }, null, 2),
+      },
+    });
+    expect(fileRes.ok()).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(jsonFilePath)}`);
+    await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText("evals.json", { timeout: 15_000 });
+
+    const [contextCardBox, mainCardBox, headerBox, tabStripBox, activeTabBox] = await Promise.all([
+      page.getByTestId("workspace-context-card").boundingBox(),
+      page.getByTestId("workspace-main-card").boundingBox(),
+      page.getByTestId("workspace-context-header").boundingBox(),
+      page.getByTestId("org-workspaces-editor-tabs").boundingBox(),
+      page.getByTestId("org-workspaces-editor-tabs").locator(".rudder-doc-editor-tab--active").boundingBox(),
+    ]);
+
+    expect(contextCardBox).not.toBeNull();
+    expect(mainCardBox).not.toBeNull();
+    expect(headerBox).not.toBeNull();
+    expect(tabStripBox).not.toBeNull();
+    expect(activeTabBox).not.toBeNull();
+
+    expect(Math.abs(contextCardBox!.y - mainCardBox!.y)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(contextCardBox!.y - tabStripBox!.y)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(contextCardBox!.y - activeTabBox!.y)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(headerBox!.height - tabStripBox!.height)).toBeLessThanOrEqual(0.5);
+    expect(activeTabBox!.height - tabStripBox!.height).toBeCloseTo(1, 0);
+  });
+
   test("renders image files inline in the workspace browser", async ({ page, request }) => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
