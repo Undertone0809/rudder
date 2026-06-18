@@ -15,10 +15,16 @@ describe("codex local skill sync", () => {
   const rudderSkillKey = "rudder/rudder";
   const cleanupDirs = new Set<string>();
   const originalRudderHome = process.env.RUDDER_HOME;
+  const originalHome = process.env.HOME;
+  const originalCodexHome = process.env.CODEX_HOME;
 
   afterEach(async () => {
     if (originalRudderHome === undefined) delete process.env.RUDDER_HOME;
     else process.env.RUDDER_HOME = originalRudderHome;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = originalCodexHome;
     await Promise.all(Array.from(cleanupDirs).map((dir) => fs.rm(dir, { recursive: true, force: true })));
     cleanupDirs.clear();
   });
@@ -34,6 +40,11 @@ describe("codex local skill sync", () => {
       "agents",
       agentId,
     );
+  }
+
+  async function writeSkill(skillDir: string): Promise<void> {
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), "# External skill\n", "utf8");
   }
 
   it("reports explicitly enabled Rudder skills without promising workspace injection", async () => {
@@ -68,13 +79,22 @@ describe("codex local skill sync", () => {
     );
   });
 
-  it("realizes selected Rudder skills into the managed Codex skills home during sync", async () => {
+  it("realizes selected Rudder skills into the managed Codex skills home and disables external Codex skill roots during sync", async () => {
     const codexHome = await makeTempDir("rudder-codex-skill-prune-");
     const rudderHome = await makeTempDir("rudder-codex-skill-rudder-home-");
+    const operatorHome = await makeTempDir("rudder-codex-skill-operator-home-");
+    const workspace = await makeTempDir("rudder-codex-skill-workspace-");
     const managedCodexHome = managedCodexHomePath(rudderHome, "agent-2");
     cleanupDirs.add(codexHome);
     cleanupDirs.add(rudderHome);
+    cleanupDirs.add(operatorHome);
+    cleanupDirs.add(workspace);
     process.env.RUDDER_HOME = rudderHome;
+    process.env.HOME = operatorHome;
+    delete process.env.CODEX_HOME;
+    await writeSkill(path.join(operatorHome, ".agents", "skills", "home-leak"));
+    await writeSkill(path.join(codexHome, "skills", "shared-leak"));
+    await writeSkill(path.join(workspace, ".agents", "skills", "repo-leak"));
 
     const configuredCtx = {
       agentId: "agent-2",
@@ -84,6 +104,7 @@ describe("codex local skill sync", () => {
         env: {
           CODEX_HOME: codexHome,
         },
+        cwd: workspace,
         rudderSkillSync: {
           desiredSkills: [rudderSkillKey],
         },
@@ -98,7 +119,16 @@ describe("codex local skill sync", () => {
     const configToml = await fs.readFile(path.join(managedCodexHome, "config.toml"), "utf8");
     expect(configToml).toContain("[skills.bundled]");
     expect(configToml).toContain("enabled = false");
-    expect(configToml).not.toContain("[[skills.config]]");
+    expect(configToml).toContain("[[skills.config]]");
+    expect(configToml).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills"))}`);
+    expect(configToml).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills", "home-leak"))}`);
+    expect(configToml).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills", "home-leak", "SKILL.md"))}`);
+    expect(configToml).toContain(`path = ${JSON.stringify(path.join(codexHome, "skills"))}`);
+    expect(configToml).toContain(`path = ${JSON.stringify(path.join(codexHome, "skills", "shared-leak"))}`);
+    expect(configToml).toContain(`path = ${JSON.stringify(path.join(codexHome, "skills", "shared-leak", "SKILL.md"))}`);
+    expect(configToml).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
+    expect(configToml).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills", "repo-leak"))}`);
+    expect(configToml).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills", "repo-leak", "SKILL.md"))}`);
   });
 
   it("does not auto-enable bundled Rudder skills when the desired set is empty", async () => {

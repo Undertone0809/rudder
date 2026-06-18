@@ -17,7 +17,6 @@ import {
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   renderTemplate,
-  resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
   runChildProcess,
   selectPromptTemplate,
@@ -28,9 +27,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isCodexClosedStdinToolSessionError } from "../shared/tool-errors.js";
 import {
+  discoverExternalCodexSkillDisablePaths,
   prepareManagedCodexHome,
   realizeManagedCodexSkillEntries,
   resolveManagedCodexHomeDir,
+  resolveTrustedOperatorHome,
 } from "./codex-home.js";
 import { estimateCodexCostUsd } from "./cost.js";
 import { isCodexUnknownSessionError, parseCodexJsonl } from "./parse.js";
@@ -185,40 +186,6 @@ function envStrings(envConfig: Record<string, unknown>): Record<string, string> 
 function resolveFallbackAgentHome(effectiveCodexHome: string, agentId: string): string {
   const orgRoot = path.dirname(path.dirname(path.dirname(effectiveCodexHome)));
   return path.join(orgRoot, "workspaces", "agents", agentId);
-}
-
-function resolveTrustedOperatorHome(): string {
-  const home =
-    typeof process.env.HOME === "string" && process.env.HOME.trim().length > 0
-      ? path.resolve(process.env.HOME.trim())
-      : null;
-  if (home) return home;
-  return resolveLocalOperatorHome(process.env);
-}
-
-async function discoverExternalCodexSkillDisablePaths(skillRoots: string[]): Promise<string[]> {
-  const disabledPaths = new Set<string>();
-
-  for (const root of skillRoots) {
-    const resolvedRoot = path.resolve(root);
-    disabledPaths.add(resolvedRoot);
-    const rootSkillFile = path.join(resolvedRoot, "SKILL.md");
-    if (await fs.access(rootSkillFile).then(() => true).catch(() => false)) {
-      disabledPaths.add(rootSkillFile);
-    }
-
-    const entries = await fs.readdir(resolvedRoot, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const skillDir = path.join(resolvedRoot, entry.name);
-      const skillFile = path.join(skillDir, "SKILL.md");
-      if (!(await fs.access(skillFile).then(() => true).catch(() => false))) continue;
-      disabledPaths.add(skillDir);
-      disabledPaths.add(skillFile);
-    }
-  }
-
-  return Array.from(disabledPaths).sort((left, right) => left.localeCompare(right));
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {

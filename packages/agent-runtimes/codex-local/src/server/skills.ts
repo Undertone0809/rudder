@@ -10,7 +10,12 @@ import {
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { realizeManagedCodexSkillEntries, resolveManagedCodexHomeDir } from "./codex-home.js";
+import {
+  discoverExternalCodexSkillDisablePaths,
+  realizeManagedCodexSkillEntries,
+  resolveManagedCodexHomeDir,
+  resolveTrustedOperatorHome,
+} from "./codex-home.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -55,19 +60,29 @@ export async function syncCodexSkills(
     typeof ctx.config.env === "object" && ctx.config.env !== null && !Array.isArray(ctx.config.env)
       ? (ctx.config.env as Record<string, unknown>)
       : {};
-  const stringEnv = Object.fromEntries(
-    Object.entries(envConfig).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
-  );
-  const sharedCodexHome =
+  const sharedCodexHomeOverride =
     typeof envConfig.CODEX_HOME === "string" && envConfig.CODEX_HOME.trim().length > 0
       ? path.resolve(envConfig.CODEX_HOME.trim())
       : null;
+  const operatorHome = resolveTrustedOperatorHome();
+  const sharedCodexHome = sharedCodexHomeOverride ?? (
+    typeof process.env.CODEX_HOME === "string" && process.env.CODEX_HOME.trim().length > 0
+      ? path.resolve(process.env.CODEX_HOME.trim())
+      : path.join(operatorHome, ".codex")
+  );
+  const configuredCwd =
+    typeof ctx.config.cwd === "string" && ctx.config.cwd.trim().length > 0
+      ? path.resolve(ctx.config.cwd.trim())
+      : process.cwd();
   const sourceEnv = {
     ...process.env,
-    ...(sharedCodexHome ? { RUDDER_SHARED_CODEX_HOME: sharedCodexHome } : {}),
+    RUDDER_SHARED_CODEX_HOME: sharedCodexHome,
   };
+  const externalCodexSkillPaths = await discoverExternalCodexSkillDisablePaths([
+    path.join(operatorHome, ".agents", "skills"),
+    path.join(sharedCodexHome, "skills"),
+    path.join(configuredCwd, ".agents", "skills"),
+  ]);
   await realizeManagedCodexSkillEntries(
     sourceEnv,
     resolveManagedCodexHomeDir(process.env, ctx.orgId, ctx.agentId),
@@ -75,6 +90,7 @@ export async function syncCodexSkills(
       .filter((entry) => desiredSkills.includes(entry.key))
       .map((entry) => entry.source),
     async () => {},
+    { disabledSkillPaths: externalCodexSkillPaths },
   ).catch(() => {});
   return buildCodexSkillSnapshot(ctx.orgId, ctx.agentId, ctx.config);
 }

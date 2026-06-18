@@ -1,4 +1,5 @@
 import { resolveOrganizationStorageKey, type AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
+import { resolveLocalOperatorHome } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +23,40 @@ const codexHomeMutationLocks = new Map<string, Promise<void>>();
 export type CodexSkillIsolationSurface = {
   disabledSkillPaths: string[];
 };
+
+export function resolveTrustedOperatorHome(env: NodeJS.ProcessEnv = process.env): string {
+  const home =
+    typeof env.HOME === "string" && env.HOME.trim().length > 0
+      ? path.resolve(env.HOME.trim())
+      : null;
+  if (home) return home;
+  return resolveLocalOperatorHome(env);
+}
+
+export async function discoverExternalCodexSkillDisablePaths(skillRoots: string[]): Promise<string[]> {
+  const disabledPaths = new Set<string>();
+
+  for (const root of skillRoots) {
+    const resolvedRoot = path.resolve(root);
+    disabledPaths.add(resolvedRoot);
+    const rootSkillFile = path.join(resolvedRoot, "SKILL.md");
+    if (await fs.access(rootSkillFile).then(() => true).catch(() => false)) {
+      disabledPaths.add(rootSkillFile);
+    }
+
+    const entries = await fs.readdir(resolvedRoot, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillDir = path.join(resolvedRoot, entry.name);
+      const skillFile = path.join(skillDir, "SKILL.md");
+      if (!(await fs.access(skillFile).then(() => true).catch(() => false))) continue;
+      disabledPaths.add(skillDir);
+      disabledPaths.add(skillFile);
+    }
+  }
+
+  return Array.from(disabledPaths).sort((left, right) => left.localeCompare(right));
+}
 
 async function withCodexHomeMutationLock<T>(codexHome: string, fn: () => Promise<T>): Promise<T> {
   const key = path.resolve(codexHome);
