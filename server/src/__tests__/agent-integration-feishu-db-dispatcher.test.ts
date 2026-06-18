@@ -30,6 +30,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { localEncryptedProvider } from "../secrets/local-encrypted-provider.js";
+import { feishuCallbackCredentialService } from "../services/integrations/feishu/callback-credentials.js";
 import { createFeishuInboundDispatcherDbDeps } from "../services/integrations/feishu/inbound-dispatcher-db.js";
 import {
   dispatchFeishuInboundMessage,
@@ -175,12 +177,16 @@ describe("Feishu inbound dispatcher DB deps", () => {
     }
   });
 
-  async function seedIntegration(options: { bindUser?: boolean; member?: boolean } = {}) {
+  async function seedIntegration(options: { bindUser?: boolean; member?: boolean; credentialValue?: string } = {}) {
     const orgId = randomUUID();
     const agentId = randomUUID();
     const secretId = randomUUID();
     const integrationId = randomUUID();
     const userId = `user-${randomUUID()}`;
+    const preparedSecret = await localEncryptedProvider.createVersion({
+      value: options.credentialValue ?? "feishu-app-secret",
+      externalRef: null,
+    });
 
     await db.insert(organizations).values({
       id: orgId,
@@ -205,6 +211,12 @@ describe("Feishu inbound dispatcher DB deps", () => {
       orgId,
       name: "Feishu app credentials",
       provider: "local_encrypted",
+    });
+    await db.insert(organizationSecretVersions).values({
+      secretId,
+      version: 1,
+      material: preparedSecret.material,
+      valueSha256: preparedSecret.valueSha256,
     });
     await db.insert(agentIntegrations).values({
       id: integrationId,
@@ -241,6 +253,22 @@ describe("Feishu inbound dispatcher DB deps", () => {
 
     return { orgId, agentId, integrationId, userId };
   }
+
+  it("resolves Feishu callback verification credentials from the active integration secret", async () => {
+    const seeded = await seedIntegration({
+      credentialValue: JSON.stringify({
+        verificationToken: "callback-token",
+        encryptKey: "callback-encrypt-key",
+      }),
+    });
+
+    await expect(feishuCallbackCredentialService(db).resolveForCallback(seeded.orgId, {
+      appId: "cli_a_feishu_app",
+    })).resolves.toEqual({
+      verificationToken: "callback-token",
+      encryptKey: "callback-encrypt-key",
+    });
+  });
 
   it("creates binding tokens for unbound users without dedup or message body persistence", async () => {
     const seeded = await seedIntegration({ bindUser: false });
