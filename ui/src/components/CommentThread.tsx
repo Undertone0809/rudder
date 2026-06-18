@@ -332,11 +332,13 @@ function CommentActionsMenu({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-          aria-label="Comment actions"
-          title="Comment actions"
+          className={collapsed
+            ? "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-background/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            : "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"}
+          aria-label={collapsed ? "Collapsed comment actions" : "Comment actions"}
+          title={collapsed ? "Collapsed comment actions" : "Comment actions"}
         >
-          <MoreHorizontal className="h-3.5 w-3.5" />
+          {collapsed ? <TerminalSquare className="h-3.5 w-3.5" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40 whitespace-nowrap">
@@ -787,15 +789,24 @@ const TimelineList = memo(function TimelineList({
                 ) : null}
               </div>
             ) : (
-              <div className={`${commentCollapsed ? "mb-0" : "mb-1"} flex items-center justify-between gap-3`}>
-                {authorNode}
-                <span className="flex shrink-0 items-center gap-1.5">
+              <div
+                data-comment-collapsed-header={commentCollapsed ? "true" : undefined}
+                className={commentCollapsed
+                  ? "grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 text-xs"
+                  : "mb-1 flex min-w-0 items-center justify-between gap-3"}
+              >
+                <div className={commentCollapsed ? "flex h-7 min-w-0 items-center" : "min-w-0"}>
+                  {authorNode}
+                </div>
+                <span className={commentCollapsed ? "hidden h-7 shrink-0 items-center sm:inline-flex" : "flex shrink-0 items-center gap-1.5"}>
                   {timestampNode}
                   {isEdited ? (
                     <span className="text-xs text-muted-foreground" title={formatDateTime(comment.updatedAt)}>
                       edited
                     </span>
                   ) : null}
+                </span>
+                <span className={commentCollapsed ? "flex h-7 shrink-0 items-center" : "flex shrink-0 items-center"}>
                   <CommentActionsMenu
                     comment={comment}
                     orgId={orgId}

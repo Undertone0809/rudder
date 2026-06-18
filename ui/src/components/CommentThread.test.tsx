@@ -1029,6 +1029,42 @@ describe("CommentThread", () => {
     expect(commentBlock?.textContent).toContain("run run-1");
   });
 
+  it("keeps collapsed comment headers compact and uses the run icon for actions", async () => {
+    const container = renderInteractive(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-1",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "A long folded comment.",
+              createdAt: new Date("2026-05-07T00:00:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+          onUpdate={async () => undefined}
+          operatorDisplayName="Operator with a very long visible name that must not push controls outside"
+        />
+      </MemoryRouter>,
+    );
+
+    await click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Collapse comment")) ?? null);
+
+    const commentBlock = container.querySelector("#comment-comment-1");
+    const collapsedHeader = commentBlock?.querySelector("[data-comment-collapsed-header]");
+    const actionsButton = commentBlock?.querySelector('button[aria-label="Collapsed comment actions"]');
+
+    expect(collapsedHeader?.className).toContain("grid-cols-[minmax(0,1fr)_auto_auto]");
+    expect(actionsButton?.className).toContain("rounded-full");
+    expect(actionsButton?.innerHTML).toContain("lucide-square-terminal");
+    expect(actionsButton?.innerHTML).not.toContain("lucide-ellipsis");
+  });
+
   it("renders comment editing as a full composer surface with attachment upload", async () => {
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     const upload = vi.fn().mockResolvedValue("/api/attachments/attachment-1/content");

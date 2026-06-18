@@ -136,8 +136,21 @@ test("issue comment actions menu copies content and direct links", async ({ page
   await page.getByRole("menuitem", { name: "Collapse comment" }).click();
   await expect(commentBlock).toHaveAttribute("aria-label", "Collapsed comment");
   await expect(commentBlock).not.toContainText("keep the copied markdown intact");
+  const collapsedActions = commentBlock.getByRole("button", { name: "Collapsed comment actions" });
+  await expect(collapsedActions).toBeVisible();
+  await expect(collapsedActions.locator("svg")).toHaveClass(/lucide-square-terminal/);
+  const collapsedLayout = await commentBlock.evaluate((element) => {
+    const containerRect = element.getBoundingClientRect();
+    const button = element.querySelector('button[aria-label="Collapsed comment actions"]');
+    const buttonRect = button instanceof HTMLElement ? button.getBoundingClientRect() : null;
+    return {
+      containerRight: containerRect.right,
+      buttonRight: buttonRect?.right ?? Number.POSITIVE_INFINITY,
+    };
+  });
+  expect(collapsedLayout.buttonRight).toBeLessThanOrEqual(collapsedLayout.containerRight);
 
-  await commentBlock.getByRole("button", { name: "Comment actions" }).click();
+  await collapsedActions.click();
   await expect(page.getByRole("menuitem", { name: "Expand comment" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Expand comment" }).click();
   await expect(commentBlock).not.toHaveAttribute("aria-label", "Collapsed comment");
