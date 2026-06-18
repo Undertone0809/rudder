@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import type { TranslationKey } from "@/i18n/locales/en";
+import { formatDisplayPath } from "@/lib/display-path";
 import { normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
 import { applyOrganizationPrefix } from "@/lib/organization-routes";
@@ -460,6 +461,9 @@ export function OrganizationSettings() {
     "/workspaces/backups",
     viewedOrganization.issuePrefix,
   );
+  const workspaceRootDisplayPath = workspaceRootQuery.data?.rootPath
+    ? formatDisplayPath(workspaceRootQuery.data.rootPath)
+    : t("organizationSettings.workspace.rootPath.loading");
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -650,9 +654,9 @@ export function OrganizationSettings() {
           >
             <div
               className="overflow-x-auto whitespace-nowrap rounded-md border border-border bg-muted/20 px-2.5 py-2 text-sm font-mono text-muted-foreground"
-              title={workspaceRootQuery.data?.rootPath ?? undefined}
+              title={workspaceRootQuery.data?.rootPath ? workspaceRootDisplayPath : undefined}
             >
-              {workspaceRootQuery.data?.rootPath ?? t("organizationSettings.workspace.rootPath.loading")}
+              {workspaceRootDisplayPath}
             </div>
           </Field>
 
