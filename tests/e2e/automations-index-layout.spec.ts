@@ -141,6 +141,7 @@ test.describe("Automations index layout", () => {
     await expect(page.getByRole("button", { name: /Bug triage/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Daily standup/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Weekly progress report/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Dependency audit/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Advisor review loop/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Create custom automation/ })).toHaveCount(0);
     await expect(page.getByText("Start from scratch")).toHaveCount(0);
@@ -181,7 +182,7 @@ test.describe("Automations index layout", () => {
     });
   });
 
-  test("applies the dependency audit template from the composer header", async ({ page }, testInfo) => {
+  test("applies the documentation check template from the composer header", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
 
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
@@ -201,15 +202,16 @@ test.describe("Automations index layout", () => {
     const templatePicker = page.getByTestId("automation-template-picker");
     await expect(templatePicker).toBeVisible();
     await expect(templatePicker.getByRole("button", { name: /Advisor review loop/ })).toHaveCount(0);
-    await templatePicker.getByRole("button", { name: /Dependency audit/ }).click();
+    await expect(templatePicker.getByRole("button", { name: /Dependency audit/ })).toHaveCount(0);
+    await templatePicker.getByRole("button", { name: /Documentation check/ }).click();
 
-    await expect(page.getByPlaceholder("Automation title")).toHaveValue("Dependency audit");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("Inspect dependency and lockfile changes");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("known vulnerabilities");
-    await expect(page.getByText("Every Tue at 11:00")).toBeVisible();
+    await expect(page.getByPlaceholder("Automation title")).toHaveValue("Documentation check");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("Review merged product or engineering changes");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("documentation tasks");
+    await expect(page.getByText("Every Wed at 14:00")).toBeVisible();
 
     await page.screenshot({
-      path: testInfo.outputPath("automations-dependency-template-composer.png"),
+      path: testInfo.outputPath("automations-documentation-template-composer.png"),
       fullPage: true,
     });
   });

@@ -161,27 +161,6 @@ const automationTemplates: AutomationTemplate[] = [
     },
   },
   {
-    id: "dependency-audit",
-    title: { en: "Dependency audit", "zh-CN": "依赖审计" },
-    summary: { en: "Scan for security and maintenance risks.", "zh-CN": "检查依赖安全和维护风险。" },
-    scheduleCron: "0 11 * * 2",
-    outputMode: "track_issue",
-    description: {
-      en: [
-        "1. Inspect dependency and lockfile changes since the last audit.",
-        "2. Check for known vulnerabilities, deprecated packages, and risky major updates.",
-        "3. Separate urgent fixes from routine maintenance.",
-        "4. Create follow-up issues only when there is a concrete owner and recommended action.",
-      ].join("\n"),
-      "zh-CN": [
-        "1. 检查上次审计后的依赖和 lockfile 变化。",
-        "2. 查找已知漏洞、废弃包和高风险 major 升级。",
-        "3. 区分紧急修复和常规维护。",
-        "4. 只有在 owner 和建议动作明确时创建后续任务。",
-      ].join("\n"),
-    },
-  },
-  {
     id: "documentation-check",
     title: { en: "Documentation check", "zh-CN": "文档检查" },
     summary: { en: "Review recent changes for documentation gaps.", "zh-CN": "检查近期变更对应的文档缺口。" },

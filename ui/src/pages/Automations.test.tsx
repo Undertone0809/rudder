@@ -408,6 +408,7 @@ describe("Automations", () => {
     expect(container.textContent).toContain("Bug triage");
     expect(container.textContent).toContain("Daily standup");
     expect(container.textContent).toContain("Weekly progress report");
+    expect(container.textContent).not.toContain("Dependency audit");
     expect(container.textContent).not.toContain("Create custom automation");
     expect(container.textContent).not.toContain("Start from scratch");
     expect(container.querySelector('[data-testid="automation-template-grid"]')).toBeTruthy();
@@ -474,6 +475,7 @@ describe("Automations", () => {
     expect(container.textContent).toContain("Bug 分诊");
     expect(container.textContent).toContain("日会");
     expect(container.textContent).toContain("周进展报告");
+    expect(container.textContent).not.toContain("依赖审计");
 
     await act(async () => {
       Array.from(container.querySelectorAll("button"))
