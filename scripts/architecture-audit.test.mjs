@@ -40,6 +40,15 @@ function runAudit(root, args = []) {
   });
 }
 
+function writeBaseline(repo, oversizedFiles) {
+  const baselinePath = path.join(repo, "architecture-audit-baseline.json");
+  fs.writeFileSync(
+    baselinePath,
+    `${JSON.stringify({ maxLines: 5, oversizedFiles }, null, 2)}\n`,
+  );
+  return baselinePath;
+}
+
 test("architecture audit reports oversized production files and excludes non-production files", () => {
   const repo = makeFixtureRepo();
 
@@ -70,6 +79,67 @@ test("architecture audit keeps list-like data-volume findings advisory", () => {
       output.advisoryListLikeFiles.map((entry) => entry.path),
       ["server/src/routes/unbounded-list.ts"],
     );
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("architecture audit fails ratchet checks for new or growing oversized files", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    writeLines(path.join(repo, "server", "src", "routes", "NewHugeRoute.ts"), 10, [
+      "export function route() {",
+      "  return [",
+      "    1,",
+      "    2,",
+      "    3,",
+      "    4,",
+      "    5,",
+      "    6,",
+      "  ];",
+      "}",
+    ]);
+    const baselinePath = writeBaseline(repo, [
+      { path: "ui/src/pages/HugePage.tsx", lines: 7 },
+    ]);
+
+    const result = runAudit(repo, ["--baseline", baselinePath, "--fail-on-regression"]);
+    assert.equal(result.status, 1);
+
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.regressions, [
+      {
+        path: "server/src/routes/NewHugeRoute.ts",
+        lines: 10,
+        baselineLines: null,
+        reason: "new oversized file",
+      },
+      {
+        path: "ui/src/pages/HugePage.tsx",
+        lines: 8,
+        baselineLines: 7,
+        reason: "oversized file grew past baseline",
+      },
+    ]);
+  } finally {
+    fs.rmSync(repo, { force: true, recursive: true });
+  }
+});
+
+test("architecture audit accepts oversized files that stay at or below baseline", () => {
+  const repo = makeFixtureRepo();
+
+  try {
+    const baselinePath = writeBaseline(repo, [
+      { path: "ui/src/pages/HugePage.tsx", lines: 8 },
+    ]);
+
+    const result = runAudit(repo, ["--baseline", baselinePath, "--fail-on-regression"]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.regressions, []);
   } finally {
     fs.rmSync(repo, { force: true, recursive: true });
   }
