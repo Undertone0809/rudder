@@ -61,7 +61,6 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { buildChatMentionHref, formatMessengerPreview, formatMessengerTitle, type Agent, type ChatConversation, type MessengerCustomGroupWithEntries } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -124,19 +123,25 @@ type CustomGroupColor = (typeof CUSTOM_GROUP_COLOR_OPTIONS)[number];
 const CUSTOM_GROUP_ICON_SEPARATOR = "::";
 const CUSTOM_GROUP_TONES: Record<CustomGroupColor, {
   bg: string;
+  bgDark: string;
   bgHover: string;
+  bgHoverDark: string;
   border: string;
+  borderDark: string;
   text: string;
+  textDark: string;
+  entryText: string;
+  entryTextDark: string;
   swatch: string;
 }> = {
-  slate: { bg: "#eef1ef", bgHover: "#e0e5e2", border: "#d1d8d3", text: "#26302a", swatch: "#242827" },
-  teal: { bg: "#dff4ed", bgHover: "#ccebe2", border: "#a9d9cc", text: "#126454", swatch: "#08a88a" },
-  sky: { bg: "#dff1fb", bgHover: "#c9e8f8", border: "#a9d7ee", text: "#096287", swatch: "#0c8fca" },
-  indigo: { bg: "#e6e5f8", bgHover: "#d8d6f1", border: "#c1bee6", text: "#4c4695", swatch: "#6259b5" },
-  amber: { bg: "#f5edcf", bgHover: "#ebe0b6", border: "#dccd98", text: "#a06a00", swatch: "#f2a900" },
-  rose: { bg: "#f3d5da", bgHover: "#eac3ca", border: "#dba8b2", text: "#ad4350", swatch: "#df6f83" },
-  red: { bg: "#f0cdd1", bgHover: "#e7bac0", border: "#d59aa3", text: "#bd424d", swatch: "#d24b58" },
-  orange: { bg: "#f4ddce", bgHover: "#edcbb7", border: "#dda98c", text: "#b6562d", swatch: "#ec6c3b" },
+  slate: { bg: "#eef1ef", bgDark: "#313633", bgHover: "#e0e5e2", bgHoverDark: "#3b423e", border: "#d1d8d3", borderDark: "#545d58", text: "#26302a", textDark: "#f0f4f1", entryText: "#26302a", entryTextDark: "#eef2ef", swatch: "#242827" },
+  teal: { bg: "#dff4ed", bgDark: "#143f36", bgHover: "#ccebe2", bgHoverDark: "#185247", border: "#a9d9cc", borderDark: "#2a7668", text: "#126454", textDark: "#d9fff5", entryText: "#173c35", entryTextDark: "#effffb", swatch: "#08a88a" },
+  sky: { bg: "#dff1fb", bgDark: "#13394c", bgHover: "#c9e8f8", bgHoverDark: "#174b64", border: "#a9d7ee", borderDark: "#28708f", text: "#096287", textDark: "#dff7ff", entryText: "#153747", entryTextDark: "#f0fbff", swatch: "#0c8fca" },
+  indigo: { bg: "#e6e5f8", bgDark: "#2d2c58", bgHover: "#d8d6f1", bgHoverDark: "#393873", border: "#c1bee6", borderDark: "#5b58a8", text: "#4c4695", textDark: "#f0efff", entryText: "#302e56", entryTextDark: "#f4f3ff", swatch: "#6259b5" },
+  amber: { bg: "#f7edc2", bgDark: "#4a3914", bgHover: "#eee0a8", bgHoverDark: "#604a18", border: "#deca80", borderDark: "#9b7b2c", text: "#885900", textDark: "#ffeec2", entryText: "#4b3812", entryTextDark: "#fff8e5", swatch: "#f2a900" },
+  rose: { bg: "#f3d5da", bgDark: "#4d252d", bgHover: "#eac3ca", bgHoverDark: "#63303a", border: "#dba8b2", borderDark: "#9b5664", text: "#7f2634", textDark: "#ffe9ee", entryText: "#51242c", entryTextDark: "#fff4f6", swatch: "#df6f83" },
+  red: { bg: "#f0cdd1", bgDark: "#542126", bgHover: "#e7bac0", bgHoverDark: "#6a2a30", border: "#d59aa3", borderDark: "#a34d58", text: "#84242e", textDark: "#ffe8eb", entryText: "#552126", entryTextDark: "#fff1f2", swatch: "#d24b58" },
+  orange: { bg: "#f4ddce", bgDark: "#552e1d", bgHover: "#edcbb7", bgHoverDark: "#6d3b25", border: "#dda98c", borderDark: "#a8623d", text: "#793816", textDark: "#ffeadf", entryText: "#512b1c", entryTextDark: "#fff4ee", swatch: "#ec6c3b" },
 };
 const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
   { value: "latest", label: "Latest activity" },
@@ -162,6 +167,11 @@ function sleep(ms: number) {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, ms);
   });
+}
+
+function sortableTranslateTransform(transform: { x: number; y: number } | null) {
+  if (!transform) return undefined;
+  return `translate3d(${Math.round(transform.x)}px, ${Math.round(transform.y)}px, 0)`;
 }
 
 function escapeMarkdownLinkLabel(value: string) {
@@ -485,9 +495,15 @@ function customGroupStyle(group: Pick<MessengerCustomGroupWithEntries, "id" | "i
   const tone = CUSTOM_GROUP_TONES[customGroupColorFor(group)];
   return {
     "--messenger-group-bg": tone.bg,
+    "--messenger-group-bg-dark": tone.bgDark,
     "--messenger-group-bg-hover": tone.bgHover,
+    "--messenger-group-bg-hover-dark": tone.bgHoverDark,
     "--messenger-group-border": tone.border,
+    "--messenger-group-border-dark": tone.borderDark,
     "--messenger-group-text": tone.text,
+    "--messenger-group-text-dark": tone.textDark,
+    "--messenger-group-entry-text": tone.entryText,
+    "--messenger-group-entry-text-dark": tone.entryTextDark,
   } as CSSProperties;
 }
 
@@ -1150,7 +1166,8 @@ function ChatThreadRow({
         active
           ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
-        dragging && "opacity-80 shadow-sm ring-1 ring-border/70",
+        customGroupId && "text-[color:var(--messenger-group-entry-text)] dark:text-[color:var(--messenger-group-entry-text-dark)]",
+        dragging && "shadow-sm ring-1 ring-border/70",
       )}
     >
       <ChatAgentThreadAvatar
@@ -1193,7 +1210,9 @@ function ChatThreadRow({
                 <div
                   className={cn(
                     "flex items-center gap-2 text-[13px] leading-tight",
-                    conversation.isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/92",
+                    customGroupId
+                      ? conversation.isUnread ? "font-semibold text-current" : "font-medium text-current/88"
+                      : conversation.isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/92",
                   )}
                 >
                   <span className="truncate">{conversationDisplayTitle(conversation)}</span>
@@ -1202,7 +1221,9 @@ function ChatThreadRow({
                   <div
                     className={cn(
                       "mt-0.5 truncate text-[12px]",
-                      conversation.isUnread ? "text-foreground/76" : "text-muted-foreground",
+                      customGroupId
+                        ? conversation.isUnread ? "text-current/78" : "text-current/62"
+                        : conversation.isUnread ? "text-foreground/76" : "text-muted-foreground",
                     )}
                   >
                     {conversationSubtitle(conversation)}
@@ -1579,7 +1600,7 @@ function SortableThreadSection({
     transition,
     isDragging,
   } = useSortable({ id });
-  const { measureNow, measuredHeight, setMeasuredNodeRef } = useMeasuredSortableNode(setNodeRef);
+  const { measureNow, measuredRect, setMeasuredNodeRef } = useMeasuredSortableNode(setNodeRef);
 
   useEffect(() => {
     if (isDragging) measureNow();
@@ -1589,8 +1610,9 @@ function SortableThreadSection({
     <div
       ref={setMeasuredNodeRef}
       style={{
-        height: isDragging && measuredHeight ? measuredHeight : undefined,
-        transform: CSS.Transform.toString(transform),
+        height: isDragging && measuredRect ? measuredRect.height : undefined,
+        width: isDragging && measuredRect ? measuredRect.width : undefined,
+        transform: sortableTranslateTransform(transform),
         transition,
         willChange: isDragging ? "transform" : undefined,
         zIndex: isDragging ? 10 : undefined,
@@ -1623,7 +1645,7 @@ function SortableCustomThreadEntry({
     transition,
     isDragging,
   } = useSortable({ id });
-  const { measureNow, measuredHeight, setMeasuredNodeRef } = useMeasuredSortableNode(setNodeRef);
+  const { measureNow, measuredRect, setMeasuredNodeRef } = useMeasuredSortableNode(setNodeRef);
 
   useEffect(() => {
     if (isDragging) measureNow();
@@ -1633,8 +1655,9 @@ function SortableCustomThreadEntry({
     <div
       ref={setMeasuredNodeRef}
       style={{
-        height: isDragging && measuredHeight ? measuredHeight : undefined,
-        transform: CSS.Transform.toString(transform),
+        height: isDragging && measuredRect ? measuredRect.height : undefined,
+        width: isDragging && measuredRect ? measuredRect.width : undefined,
+        transform: sortableTranslateTransform(transform),
         transition,
         willChange: isDragging ? "transform" : undefined,
         zIndex: isDragging ? 20 : undefined,
@@ -1648,32 +1671,36 @@ function SortableCustomThreadEntry({
 
 function useMeasuredSortableNode(setNodeRef: ReturnType<typeof useSortable>["setNodeRef"]) {
   const [node, setNode] = useState<HTMLDivElement | null>(null);
-  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
-  const updateMeasuredHeight = useCallback((target: HTMLDivElement | null) => {
+  const [measuredRect, setMeasuredRect] = useState<{ height: number; width: number } | null>(null);
+  const updateMeasuredRect = useCallback((target: HTMLDivElement | null) => {
     if (!target) return;
-    const nextHeight = Math.round(target.getBoundingClientRect().height);
-    if (nextHeight <= 0) return;
-    setMeasuredHeight((current) => current === nextHeight ? current : nextHeight);
+    const rect = target.getBoundingClientRect();
+    const nextHeight = Math.round(rect.height);
+    const nextWidth = Math.round(rect.width);
+    if (nextHeight <= 0 || nextWidth <= 0) return;
+    setMeasuredRect((current) => current?.height === nextHeight && current.width === nextWidth
+      ? current
+      : { height: nextHeight, width: nextWidth });
   }, []);
   const setMeasuredNodeRef = useCallback((target: HTMLDivElement | null) => {
     setNodeRef(target);
     setNode(target);
-    updateMeasuredHeight(target);
-  }, [setNodeRef, updateMeasuredHeight]);
+    updateMeasuredRect(target);
+  }, [setNodeRef, updateMeasuredRect]);
   const measureNow = useCallback(() => {
-    updateMeasuredHeight(node);
-  }, [node, updateMeasuredHeight]);
+    updateMeasuredRect(node);
+  }, [node, updateMeasuredRect]);
 
   useEffect(() => {
     if (!node) return undefined;
-    updateMeasuredHeight(node);
+    updateMeasuredRect(node);
     if (typeof ResizeObserver === "undefined") return undefined;
-    const observer = new ResizeObserver(() => updateMeasuredHeight(node));
+    const observer = new ResizeObserver(() => updateMeasuredRect(node));
     observer.observe(node);
     return () => observer.disconnect();
-  }, [node, updateMeasuredHeight]);
+  }, [node, updateMeasuredRect]);
 
-  return { measureNow, measuredHeight, setMeasuredNodeRef };
+  return { measureNow, measuredRect, setMeasuredNodeRef };
 }
 
 type MessengerThreadSummaryItem = ReturnType<typeof useMessengerModel>["threadSummaries"][number];
@@ -2230,7 +2257,7 @@ export function MessengerContextSidebar() {
           key: customGroupSectionKey(group.id),
           label: group.name,
           icon: group.icon,
-          entries: entries.filter((entry) => !isPinnedEntry(entry)),
+          entries,
         } satisfies OrganizedThreadSection;
       });
       const ungroupedEntries = threadSummaries
@@ -2253,7 +2280,9 @@ export function MessengerContextSidebar() {
         ...customEntriesByThreadKey.values(),
         ...ungroupedEntries,
       ]);
-      const pinnedEntries = allCustomEntries.filter(isPinnedEntry).sort(compareThreadEntries);
+      const pinnedEntries = allCustomEntries
+        .filter((entry) => isPinnedEntry(entry) && entry.customGroupId === null)
+        .sort(compareThreadEntries);
       const ungroupedSections = ungroupedEntries
         .filter((entry) => !isPinnedEntry(entry))
         .map((entry) => ({
@@ -2291,13 +2320,13 @@ export function MessengerContextSidebar() {
     const map = new Map<string, string | null>();
     for (const group of customGroups) {
       for (const entry of group.entries) {
-        if (!entry.thread.isPinned) map.set(entry.threadKey, group.id);
+        map.set(entry.threadKey, group.id);
       }
     }
     if (effectiveThreadOrganizationRule === "custom") {
       for (const section of organizedThreadSections) {
         for (const entry of section.entries) {
-          if (!isPinnedEntry(entry) && entry.customGroupId === null) map.set(entry.thread.threadKey, null);
+          if (entry.customGroupId === null) map.set(entry.thread.threadKey, null);
         }
       }
     }
@@ -2434,15 +2463,16 @@ export function MessengerContextSidebar() {
   };
 
   const createCustomGroupMutation = useMutation({
-    mutationFn: ({ name, icon }: { name: string; icon: string | null; threadKey?: string }) => {
+    mutationFn: ({ name, icon }: { name: string; icon: string | null; threadKey?: string; threadKeys?: string[] }) => {
       if (!model.selectedOrganizationId) throw new Error("Organization is required to create a Messenger group");
       return messengerApi.createCustomGroup(model.selectedOrganizationId, { name, icon });
     },
     onSuccess: async (group, variables) => {
       if (model.selectedOrganizationId) {
         handleThreadOrganizationRuleChange("latest");
-        if (variables.threadKey) {
-          await messengerApi.assignCustomGroupEntry(model.selectedOrganizationId, group.id, variables.threadKey);
+        const threadKeys = variables.threadKeys ?? (variables.threadKey ? [variables.threadKey] : []);
+        for (const threadKey of [...new Set(threadKeys)]) {
+          await messengerApi.assignCustomGroupEntry(model.selectedOrganizationId, group.id, threadKey);
         }
       }
       await refreshCustomGroups();
@@ -2543,9 +2573,45 @@ export function MessengerContextSidebar() {
         writeStringList(defaultThreadOrderStorageKey, nextOrderKeys);
       };
       const activeIsThread = customEntryGroupByThreadKey.has(activeThreadKey);
-      const overGroupId = customGroupIdFromSectionKey(overThreadKey) ?? (
-        customEntryGroupByThreadKey.has(overThreadKey) ? customEntryGroupByThreadKey.get(overThreadKey) ?? null : undefined
-      );
+      const overIsThread = customEntryGroupByThreadKey.has(overThreadKey);
+      const overSection = organizedThreadSections.find((section) => section.key === overThreadKey);
+      const activeEntry = organizedThreadSections
+        .flatMap((section) => section.entries)
+        .find((entry) => entry.thread.threadKey === activeThreadKey) ?? null;
+      const overEntry = organizedThreadSections
+        .flatMap((section) => section.entries)
+        .find((entry) => entry.thread.threadKey === overThreadKey) ?? null;
+      const activeGroupId = customEntryGroupByThreadKey.get(activeThreadKey) ?? null;
+      const overEntryGroupId = overIsThread ? customEntryGroupByThreadKey.get(overThreadKey) ?? null : undefined;
+      const overGroupId = customGroupIdFromSectionKey(overThreadKey) ?? overEntryGroupId;
+      if (
+        activeIsThread
+        && overIsThread
+        && activeGroupId === null
+        && overEntryGroupId === null
+        && activeEntry?.thread.kind === "chat"
+        && overEntry?.thread.kind === "chat"
+        && activeThreadKey !== overThreadKey
+      ) {
+        createCustomGroupMutation.mutate({
+          name: overEntry?.thread.title ? threadDisplayTitle(overEntry.thread.title) : "New group",
+          icon: composeCustomGroupIconValue("folder", "amber"),
+          threadKeys: [overThreadKey, activeThreadKey],
+        });
+        return;
+      }
+      if (
+        activeIsThread
+        && overIsThread
+        && activeGroupId
+        && overEntryGroupId === null
+        && activeEntry?.thread.kind === "chat"
+        && overEntry?.thread.kind === "chat"
+        && activeThreadKey !== overThreadKey
+      ) {
+        assignCustomGroupEntryMutation.mutate({ groupId: activeGroupId, threadKey: overThreadKey });
+        return;
+      }
       if (activeIsThread && overGroupId !== undefined) {
         const activeGroupId = customEntryGroupByThreadKey.get(activeThreadKey) ?? null;
         if (activeGroupId !== overGroupId) {
@@ -2565,6 +2631,7 @@ export function MessengerContextSidebar() {
             }
           }
           if (overGroupId) {
+            if (activeEntry?.thread.kind !== "chat") return;
             assignCustomGroupEntryMutation.mutate({ groupId: overGroupId, threadKey: activeThreadKey });
           } else {
             removeCustomGroupEntryMutation.mutate(activeThreadKey);
@@ -2578,8 +2645,6 @@ export function MessengerContextSidebar() {
           return;
         }
       }
-      const activeGroupId = customEntryGroupByThreadKey.get(activeThreadKey);
-      const overEntryGroupId = customEntryGroupByThreadKey.get(overThreadKey);
       if (activeGroupId && overEntryGroupId && activeGroupId === overEntryGroupId) {
         const groupSectionKey = customGroupSectionKey(activeGroupId);
         const section = organizedThreadSections.find((candidate) => candidate.key === groupSectionKey);
@@ -2593,6 +2658,17 @@ export function MessengerContextSidebar() {
           });
         }
         return;
+      }
+      if (
+        !activeIsThread
+        && overEntry?.thread.kind === "chat"
+        && (overSection?.entries.length === 1 || overEntryGroupId === null)
+      ) {
+        const activeGroupId = customGroupIdFromSectionKey(activeThreadKey);
+        if (activeGroupId) {
+          assignCustomGroupEntryMutation.mutate({ groupId: activeGroupId, threadKey: overEntry.thread.threadKey });
+          return;
+        }
       }
     }
 
@@ -2642,7 +2718,7 @@ export function MessengerContextSidebar() {
     if (projectOrderStorageKey) {
       writeProjectOrder(projectOrderStorageKey, nextProjectOrderIds);
     }
-  }, [assignCustomGroupEntryMutation, customEntryGroupByThreadKey, defaultThreadOrderKeys, defaultThreadOrderStorageKey, effectiveThreadOrganizationRule, messengerThreadGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey, removeCustomGroupEntryMutation, reorderCustomGroupEntriesMutation, reorderCustomGroupsMutation]);
+  }, [assignCustomGroupEntryMutation, createCustomGroupMutation, customEntryGroupByThreadKey, defaultThreadOrderKeys, defaultThreadOrderStorageKey, effectiveThreadOrganizationRule, messengerThreadGroupOrderStorageKey, organizedThreadSections, projectOrderIds, projectOrderStorageKey, removeCustomGroupEntryMutation, reorderCustomGroupEntriesMutation, reorderCustomGroupsMutation]);
 
   const handleShowMoreThreadSection = (section: OrganizedThreadSection, visibleCount: number) => {
     if (visibleCount < section.entries.length) {
@@ -2875,12 +2951,13 @@ export function MessengerContextSidebar() {
     const showMoreControl = !collapsed && (hasHiddenLoadedEntries || canFetchMoreForSection || Boolean(model.isFetchingMoreThreadSummaries && canFetchMoreForSection));
     const showCollapseControl = !collapsed && isManagedSection && visibleCount > MANAGED_GROUP_INITIAL_VISIBLE_COUNT;
     const sectionContentTestId = isManagedSection ? `messenger-thread-section-${sanitizeThreadKey(section.key)}-content` : undefined;
+    const isPinnedCustomSection = effectiveThreadOrganizationRule === "custom" && section.key === "custom:pinned";
     const canSortCustomEntries = effectiveThreadOrganizationRule === "custom"
-      && Boolean(customGroup)
-      && visibleEntries.length > 1;
+      && (Boolean(customGroup) || isPinnedCustomSection)
+      && (visibleEntries.length > 1 || isPinnedCustomSection);
     const canDragStandaloneCustomEntry = effectiveThreadOrganizationRule === "custom"
       && !customGroup
-      && section.label === null
+      && (section.label === null || isPinnedCustomSection)
       && visibleEntries.length === 1;
     const renderedEntries = canSortCustomEntries ? (
       <SortableContext
@@ -2943,8 +3020,8 @@ export function MessengerContextSidebar() {
           data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
           data-drag-merge-target={isMergeTarget ? "true" : undefined}
           className={cn(
-            "mx-1.5 rounded-[calc(var(--radius-md)-1px)] border p-1.5 text-[color:var(--messenger-group-text)] shadow-[0_8px_20px_-18px_rgba(15,23,42,0.45)] transition-[background-color,border-color,box-shadow,transform] duration-200 bg-[color:var(--messenger-group-bg)] border-[color:var(--messenger-group-border)] hover:bg-[color:var(--messenger-group-bg-hover)] hover:shadow-[0_12px_24px_-18px_rgba(15,23,42,0.62)]",
-            isMergeTarget && "scale-[1.01] bg-[color:var(--messenger-group-bg-hover)] shadow-[0_16px_30px_-18px_rgba(15,23,42,0.75)] ring-2 ring-[color:color-mix(in_oklab,var(--messenger-group-text)_34%,transparent)]",
+            "mx-1.5 rounded-[calc(var(--radius-md)-1px)] border p-1.5 text-[color:var(--messenger-group-text)] shadow-[0_8px_20px_-18px_rgba(15,23,42,0.45)] transition-[background-color,border-color,box-shadow] duration-200 bg-[color:var(--messenger-group-bg)] border-[color:var(--messenger-group-border)] hover:bg-[color:var(--messenger-group-bg-hover)] hover:shadow-[0_12px_24px_-18px_rgba(15,23,42,0.62)] dark:bg-[color:var(--messenger-group-bg-dark)] dark:text-[color:var(--messenger-group-text-dark)] dark:border-[color:var(--messenger-group-border-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]",
+            isMergeTarget && "bg-[color:var(--messenger-group-bg-hover)] shadow-[0_16px_30px_-18px_rgba(15,23,42,0.75)] ring-2 ring-[color:color-mix(in_oklab,var(--messenger-group-text)_34%,transparent)]",
           )}
           style={customGroupStyle(customGroup)}
         >
