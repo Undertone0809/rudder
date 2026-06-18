@@ -783,7 +783,7 @@
   }
 
   .chat-composer.chat-composer--streaming {
-    --active-surface-ring-width: 1px;
+    --active-surface-ring-width: 2px;
     --active-surface-ring-inner-radius: calc(var(--radius-lg) - var(--active-surface-ring-width));
     --active-surface-ring-cover:
       linear-gradient(
@@ -791,11 +791,11 @@
         color-mix(in oklab, var(--surface-elevated) 99%, transparent) 0%,
         color-mix(in oklab, var(--surface-elevated) 94%, var(--surface-page)) 100%
       );
-    border-color: color-mix(in oklab, var(--ring) 42%, var(--border-base));
+    border-color: color-mix(in oklab, var(--ring) 58%, var(--border-base));
     box-shadow:
       var(--shadow-md),
-      0 0 0 1px color-mix(in oklab, var(--ring) 16%, transparent),
-      0 18px 54px -38px color-mix(in oklab, var(--accent-base) 62%, transparent),
+      0 0 0 1px color-mix(in oklab, var(--ring) 28%, transparent),
+      0 18px 54px -34px color-mix(in oklab, var(--accent-base) 72%, transparent),
       inset 0 1px 0 color-mix(in oklab, white 46%, transparent);
   }
 
@@ -823,19 +823,20 @@
   }
 
   .active-surface-ring::before {
-    inset: -1px;
+    inset: -2px;
     border-radius: inherit;
     background:
       conic-gradient(
           from var(--command-palette-search-angle),
-          transparent 0deg 56deg,
-          color-mix(in oklab, var(--active-surface-accent) 18%, transparent) 88deg,
-          color-mix(in oklab, var(--ring) 48%, transparent) 126deg,
-          color-mix(in oklab, var(--active-surface-accent) 16%, transparent) 166deg,
-          transparent 214deg 360deg
+          transparent 0deg 48deg,
+          color-mix(in oklab, var(--active-surface-accent) 34%, transparent) 82deg,
+          color-mix(in oklab, var(--ring) 92%, transparent) 122deg,
+          color-mix(in oklab, var(--active-surface-accent) 36%, transparent) 166deg,
+          transparent 218deg 360deg
         )
         border-box;
-    opacity: 0.68;
+    opacity: 0.92;
+    filter: drop-shadow(0 0 5px color-mix(in oklab, var(--active-surface-accent) 34%, transparent));
   }
 
   .active-surface-ring:is([data-active-surface="import-preview"], [data-active-surface="import-apply"])::before {
@@ -844,19 +845,20 @@
   }
 
   .chat-composer--streaming::before {
-    inset: -1px;
-    border-radius: calc(var(--radius-lg) + 1px);
+    inset: -2px;
+    border-radius: calc(var(--radius-lg) + 2px);
     background:
       conic-gradient(
           from var(--command-palette-search-angle),
-          transparent 0deg 54deg,
-          color-mix(in oklab, var(--accent-base) 18%, transparent) 86deg,
-          color-mix(in oklab, var(--ring) 54%, transparent) 124deg,
-          color-mix(in oklab, var(--accent-base) 18%, transparent) 164deg,
-          transparent 212deg 360deg
+          transparent 0deg 46deg,
+          color-mix(in oklab, var(--accent-base) 40%, transparent) 78deg,
+          color-mix(in oklab, var(--ring) 96%, white) 118deg,
+          color-mix(in oklab, var(--accent-base) 42%, transparent) 164deg,
+          transparent 218deg 360deg
         )
         border-box;
-    opacity: 0.74;
+    opacity: 1;
+    filter: drop-shadow(0 0 6px color-mix(in oklab, var(--accent-base) 42%, transparent));
   }
 
   .active-surface-ring::after,
@@ -3254,10 +3256,7 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 }
 
 .rudder-markdown a.rudder-website-link {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.24em;
-  max-width: 100%;
+  display: inline;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -3265,7 +3264,7 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   color: var(--rudder-doc-link);
   font-weight: 520;
   line-height: inherit;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   text-decoration: none;
   vertical-align: baseline;
 }
@@ -3278,9 +3277,9 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 
 .rudder-website-link-icon {
   display: inline-block;
-  flex: 0 0 auto;
   width: 1em;
   height: 1em;
+  margin-right: 0.24em;
   color: currentColor;
   vertical-align: -0.12em;
 }

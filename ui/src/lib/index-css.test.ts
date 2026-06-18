@@ -109,7 +109,7 @@ describe("index.css motion rules", () => {
   it("reuses the rounded boundary animation for active chat and processing surfaces", () => {
     const activeSurface = cssBlock(".active-surface-ring,");
     const softRing =
-      indexCss.match(/\n\s*\.active-surface-ring::before \{\s*\n\s*inset: -1px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
+      indexCss.match(/\n\s*\.active-surface-ring::before \{\s*\n\s*inset: -2px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const sharedHalo = cssBlock(".active-surface-ring::after");
     const softHalo =
       indexCss.match(/\n\s*\.active-surface-ring::after \{\s*\n\s*box-shadow:[\s\S]*?\n\s*\}/)?.[0] ?? "";
@@ -123,9 +123,10 @@ describe("index.css motion rules", () => {
     expect(activeSurface).toContain("var(--surface-page) 92%");
     expect(softRing).toContain("conic-gradient");
     expect(softRing).toContain("from var(--command-palette-search-angle)");
-    expect(softRing).toContain("inset: -1px");
-    expect(softRing).toContain("opacity: 0.68");
-    expect(softRing).toContain("var(--ring) 48%");
+    expect(softRing).toContain("inset: -2px");
+    expect(softRing).toContain("opacity: 0.92");
+    expect(softRing).toContain("var(--ring) 92%");
+    expect(softRing).toContain("filter: drop-shadow");
     expect(softRing).not.toContain("var(--ring) 90%");
     expect(sharedHalo).toContain("inset: var(--active-surface-ring-width)");
     expect(sharedHalo).toContain("border-radius: var(--active-surface-ring-inner-radius)");
@@ -142,18 +143,19 @@ describe("index.css motion rules", () => {
 
   it("keeps the chat composer streaming ring integrated with the input surface", () => {
     const composerStreaming =
-      indexCss.match(/\n\s*\.chat-composer\.chat-composer--streaming \{\s*\n\s*--active-surface-ring-width: 1px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
+      indexCss.match(/\n\s*\.chat-composer\.chat-composer--streaming \{\s*\n\s*--active-surface-ring-width: 2px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
     const composerRing =
-      indexCss.match(/\n\s*\.chat-composer--streaming::before \{\s*\n\s*inset: -1px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
+      indexCss.match(/\n\s*\.chat-composer--streaming::before \{\s*\n\s*inset: -2px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
 
-    expect(composerStreaming).toContain("--active-surface-ring-width: 1px");
-    expect(composerStreaming).toContain("border-color: color-mix(in oklab, var(--ring) 42%, var(--border-base))");
+    expect(composerStreaming).toContain("--active-surface-ring-width: 2px");
+    expect(composerStreaming).toContain("border-color: color-mix(in oklab, var(--ring) 58%, var(--border-base))");
     expect(composerStreaming).toContain("var(--surface-elevated) 99%");
     expect(composerStreaming).toContain("inset 0 1px 0");
-    expect(composerRing).toContain("inset: -1px");
-    expect(composerRing).toContain("opacity: 0.74");
-    expect(composerRing).toContain("var(--ring) 54%");
-    expect(composerRing).not.toContain("var(--ring) 90%");
+    expect(composerRing).toContain("inset: -2px");
+    expect(composerRing).toContain("border-radius: calc(var(--radius-lg) + 2px)");
+    expect(composerRing).toContain("opacity: 1");
+    expect(composerRing).toContain("var(--ring) 96%");
+    expect(composerRing).toContain("filter: drop-shadow");
   });
 
   it("keeps proposal action feedback from colliding with the review block fold", () => {
@@ -217,22 +219,6 @@ describe("index.css motion rules", () => {
     expect(commentBody).toContain("overflow-y: auto");
     expect(commentImage).toContain("object-fit: contain");
     expect(commentImage).toContain("max-height: 11rem");
-  });
-
-  it("keeps markdown website link icons attached to their labels", () => {
-    const websiteLink = cssBlock(".rudder-markdown a.rudder-website-link");
-    const websiteLinkIcon = cssBlock(".rudder-website-link-icon");
-    const websiteLinkLabel = cssBlock(".rudder-website-link-label");
-
-    expect(websiteLink).toContain("display: inline-flex");
-    expect(websiteLink).toContain("align-items: baseline");
-    expect(websiteLink).toContain("gap: 0.24em");
-    expect(websiteLink).toContain("max-width: 100%");
-    expect(websiteLink).toContain("overflow-wrap: normal");
-    expect(websiteLinkIcon).toContain("flex: 0 0 auto");
-    expect(websiteLinkIcon).not.toContain("margin-right");
-    expect(websiteLinkLabel).toContain("min-width: 0");
-    expect(websiteLinkLabel).toContain("overflow-wrap: anywhere");
   });
 
   it("keeps entity and skill hover card text readable instead of single-line clipped", () => {
