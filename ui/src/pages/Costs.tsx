@@ -1302,126 +1302,98 @@ export function Costs() {
                 eventCount={financeData?.summary.eventCount ?? 0}
               />
 
-              <div className="grid gap-4 xl:grid-cols-[1.25fr,0.95fr]">
-                <Card>
-                  <CardHeader className="px-5 pt-5 pb-2">
-                    <CardTitle className="text-base">By agent</CardTitle>
-                    <CardDescription>What each agent consumed in the selected period.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-2 px-5 pb-5 pt-2">
-                    {(spendData?.byAgent.length ?? 0) === 0 ? (
-                      <p className="text-sm text-muted-foreground">No cost events yet.</p>
-                    ) : (
-                      spendData?.byAgent.map((row) => {
-                        const modelRows = agentModelRows.get(row.agentId) ?? [];
-                        const isExpanded = expandedAgents.has(row.agentId);
-                        const hasBreakdown = modelRows.length > 0;
-                        return (
-                          <div key={row.agentId} className="rounded-[calc(var(--radius-sm)-1px)] border border-border px-4 py-3">
-                            <div
-                              className={cn("flex items-start justify-between gap-3", hasBreakdown ? "cursor-pointer select-none" : "")}
-                              onClick={() => hasBreakdown && toggleAgent(row.agentId)}
-                            >
-                              <div className="flex min-w-0 items-center gap-2">
-                                {hasBreakdown ? (
-                                  isExpanded
-                                    ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-                                    : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                                ) : (
-                                  <span className="h-3 w-3 shrink-0" />
-                                )}
-                                <AgentIdentity
-                                  name={row.agentName ?? row.agentId}
-                                  icon={row.agentIcon}
-                                  role={row.agentRole}
-                                  size="sm"
-                                />
-                                {row.agentStatus === "terminated" ? <StatusBadge status="terminated" /> : null}
-                              </div>
-                              <div className="text-right text-sm tabular-nums">
-                                <div className="font-medium">{formatCents(row.costCents)}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  in {formatTokens(summarizeTokenUsage(row).promptTokens)} · out {formatTokens(row.outputTokens)}
-                                </div>
-                                {(row.apiRunCount > 0 || row.subscriptionRunCount > 0) ? (
-                                  <div className="text-xs text-muted-foreground">
-                                    {row.apiRunCount > 0 ? `${row.apiRunCount} api` : "0 api"}
-                                    {" · "}
-                                    {row.subscriptionRunCount > 0
-                                      ? `${row.subscriptionRunCount} subscription`
-                                      : "0 subscription"}
-                                  </div>
-                                ) : null}
-                              </div>
+              <Card>
+                <CardHeader className="px-5 pt-5 pb-2">
+                  <CardTitle className="text-base">By agent</CardTitle>
+                  <CardDescription>What each agent consumed in the selected period.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2 px-5 pb-5 pt-2">
+                  {(spendData?.byAgent.length ?? 0) === 0 ? (
+                    <p className="text-sm text-muted-foreground">No cost events yet.</p>
+                  ) : (
+                    spendData?.byAgent.map((row) => {
+                      const modelRows = agentModelRows.get(row.agentId) ?? [];
+                      const isExpanded = expandedAgents.has(row.agentId);
+                      const hasBreakdown = modelRows.length > 0;
+                      return (
+                        <div key={row.agentId} className="rounded-[calc(var(--radius-sm)-1px)] border border-border px-4 py-3">
+                          <div
+                            className={cn("flex items-start justify-between gap-3", hasBreakdown ? "cursor-pointer select-none" : "")}
+                            onClick={() => hasBreakdown && toggleAgent(row.agentId)}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              {hasBreakdown ? (
+                                isExpanded
+                                  ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                  : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                              ) : (
+                                <span className="h-3 w-3 shrink-0" />
+                              )}
+                              <AgentIdentity
+                                name={row.agentName ?? row.agentId}
+                                icon={row.agentIcon}
+                                role={row.agentRole}
+                                size="sm"
+                              />
+                              {row.agentStatus === "terminated" ? <StatusBadge status="terminated" /> : null}
                             </div>
+                            <div className="text-right text-sm tabular-nums">
+                              <div className="font-medium">{formatCents(row.costCents)}</div>
+                              <div className="text-xs text-muted-foreground">
+                                in {formatTokens(summarizeTokenUsage(row).promptTokens)} · out {formatTokens(row.outputTokens)}
+                              </div>
+                              {(row.apiRunCount > 0 || row.subscriptionRunCount > 0) ? (
+                                <div className="text-xs text-muted-foreground">
+                                  {row.apiRunCount > 0 ? `${row.apiRunCount} api` : "0 api"}
+                                  {" · "}
+                                  {row.subscriptionRunCount > 0
+                                    ? `${row.subscriptionRunCount} subscription`
+                                    : "0 subscription"}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
 
-                            {isExpanded && modelRows.length > 0 ? (
-                              <div className="mt-3 space-y-2 border-l border-border pl-4">
-                                {modelRows.map((modelRow) => {
-                                  const sharePct = row.costCents > 0 ? Math.round((modelRow.costCents / row.costCents) * 100) : 0;
-                                  const modelTokenSummary = summarizeTokenUsage(modelRow);
-                                  return (
-                                    <div
-                                      key={`${modelRow.provider}:${modelRow.model}:${modelRow.billingType}`}
-                                      className="flex items-start justify-between gap-3 text-xs"
-                                    >
-                                      <div className="min-w-0">
-                                        <div className="truncate font-medium text-foreground">
-                                          {providerDisplayName(modelRow.provider)}
-                                          <span className="mx-1 text-border">/</span>
-                                          <span className="font-mono">{modelRow.model}</span>
-                                        </div>
-                                        <div className="truncate text-muted-foreground">
-                                          {providerDisplayName(modelRow.biller)} · {billingTypeDisplayName(modelRow.billingType)}
-                                        </div>
+                          {isExpanded && modelRows.length > 0 ? (
+                            <div className="mt-3 space-y-2 border-l border-border pl-4">
+                              {modelRows.map((modelRow) => {
+                                const sharePct = row.costCents > 0 ? Math.round((modelRow.costCents / row.costCents) * 100) : 0;
+                                const modelTokenSummary = summarizeTokenUsage(modelRow);
+                                return (
+                                  <div
+                                    key={`${modelRow.provider}:${modelRow.model}:${modelRow.billingType}`}
+                                    className="flex items-start justify-between gap-3 text-xs"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="truncate font-medium text-foreground">
+                                        {providerDisplayName(modelRow.provider)}
+                                        <span className="mx-1 text-border">/</span>
+                                        <span className="font-mono">{modelRow.model}</span>
                                       </div>
-                                      <div className="text-right tabular-nums">
-                                        <div className="font-medium">
-                                          {formatCents(modelRow.costCents)}
-                                          <span className="ml-1 font-normal text-muted-foreground">({sharePct}%)</span>
-                                        </div>
-                                        <div className="text-muted-foreground">
-                                          {formatTokens(modelTokenSummary.totalTokens)} tok
-                                        </div>
+                                      <div className="truncate text-muted-foreground">
+                                        {providerDisplayName(modelRow.biller)} · {billingTypeDisplayName(modelRow.billingType)}
                                       </div>
                                     </div>
-                                  );
-                                })}
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })
-                    )}
-                  </CardContent>
-                </Card>
-
-                <div className="space-y-4">
-                  <Card>
-                    <CardHeader className="px-5 pt-5 pb-2">
-                      <CardTitle className="text-base">By project</CardTitle>
-                      <CardDescription>Run costs attributed through project-linked issues.</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-2 px-5 pb-5 pt-2">
-                      {(spendData?.byProject.length ?? 0) === 0 ? (
-                        <p className="text-sm text-muted-foreground">No project-attributed run costs yet.</p>
-                      ) : (
-                        spendData?.byProject.map((row, index) => (
-                          <div
-                            key={row.projectId ?? `unattributed-${index}`}
-                            className="flex items-center justify-between gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-border px-3 py-2 text-sm"
-                          >
-                            <span className="truncate">{row.projectName ?? row.projectId ?? "Unattributed"}</span>
-                            <span className="font-medium tabular-nums">{formatCents(row.costCents)}</span>
-                          </div>
-                        ))
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  <FinanceTimelineCard rows={topFinanceEvents.slice(0, 6)} emptyMessage="No finance events yet. Add account-level charges once biller invoices or credits land." />
-                </div>
-              </div>
+                                    <div className="text-right tabular-nums">
+                                      <div className="font-medium">
+                                        {formatCents(modelRow.costCents)}
+                                        <span className="ml-1 font-normal text-muted-foreground">({sharePct}%)</span>
+                                      </div>
+                                      <div className="text-muted-foreground">
+                                        {formatTokens(modelTokenSummary.totalTokens)} tok
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  )}
+                </CardContent>
+              </Card>
             </>
           )}
         </TabsContent>
