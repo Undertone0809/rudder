@@ -15,7 +15,7 @@ test.afterAll(async () => {
 });
 
 test.describe("Agent detail chat run context", () => {
-  test("shows the source conversation, original user input, and aggregated chat replies", async ({ page }) => {
+  test("shows the source conversation action and aggregated chat replies", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Agent-Chat-Run-Context-${Date.now()}` },
     });
@@ -171,12 +171,14 @@ test.describe("Agent detail chat run context", () => {
 
     const card = page.getByTestId("run-chat-context-card");
     await expect(card).toBeVisible({ timeout: 15_000 });
-    await expect(card.getByText("Skill inventory request")).toBeVisible();
-    await expect(card.getByText("2 agent replies in this conversation")).toBeVisible();
-    await expect(card.getByText("Please list all enabled skills.")).toBeVisible();
+    await expect(card.getByRole("link", { name: "Open conversation" })).toBeVisible();
+    await expect(card.getByText("Conversation replies")).toBeVisible();
     await expect(card.getByText("Here is the full list of enabled skills.").first()).toBeVisible();
-    await card.getByRole("button", { name: "Conversation replies" }).click();
     await expect(card.getByText("Grouped by source across bundled, user, and project skills.")).toBeVisible();
+    await expect(card.getByText("Skill inventory request")).toHaveCount(0);
+    await expect(card.getByText("Please list all enabled skills.")).toHaveCount(0);
+    await expect(card.getByText("User input")).toHaveCount(0);
+    await expect(card.getByText("This reply")).toHaveCount(0);
 
     await expect(card.getByRole("link", { name: "Open conversation" })).toHaveAttribute(
       "href",

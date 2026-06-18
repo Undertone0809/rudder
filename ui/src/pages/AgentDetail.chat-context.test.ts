@@ -1,6 +1,83 @@
+// @vitest-environment jsdom
+
 import type { ChatMessage, HeartbeatRun } from "@rudderhq/shared";
-import { describe, expect, it } from "vitest";
-import { buildRunChatContext } from "./AgentDetail.chat-context";
+import type { ReactNode } from "react";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildRunChatContext, RunChatContextCard } from "./AgentDetail.chat-context";
+
+vi.mock("@/lib/router", () => ({
+  Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
+    createElement("a", { href: to, ...props }, children)
+  ),
+}));
+
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
+    if (queryKey.includes("messages")) {
+      return {
+        data: [
+          message({
+            id: "user-current",
+            role: "user",
+            body: "Please list all enabled skills.",
+            runId: null,
+            replyingAgentId: null,
+            chatTurnId: "turn-current",
+            createdAt: new Date("2026-06-17T10:00:00.000Z"),
+          }),
+          message({
+            id: "assistant-current",
+            body: "Here is the full list of enabled skills.",
+            runId: "run-current",
+            chatTurnId: "turn-current",
+            createdAt: new Date("2026-06-17T10:01:00.000Z"),
+          }),
+          message({
+            id: "assistant-next",
+            body: "Grouped by source.",
+            runId: "run-next",
+            replyingAgentId: "agent-2",
+            chatTurnId: "turn-next",
+            createdAt: new Date("2026-06-17T10:06:00.000Z"),
+          }),
+        ],
+        isError: false,
+        isLoading: false,
+      };
+    }
+    return { data: undefined, isError: false, isLoading: false };
+  },
+}));
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+let cleanupFn: (() => void) | null = null;
+
+afterEach(() => {
+  cleanupFn?.();
+  cleanupFn = null;
+  document.body.innerHTML = "";
+});
+
+function render(element: ReactNode) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  cleanupFn = () => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  };
+  act(() => {
+    root.render(element);
+  });
+  return container;
+}
 
 function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
   return {
@@ -183,5 +260,24 @@ describe("buildRunChatContext", () => {
     expect(context.currentReply?.body).toBe("Reply generated for the original prompt.");
     expect(context.replies.map((reply) => reply.id)).toEqual(["assistant-current", "assistant-edited"]);
     expect(context.replies[0]?.isSuperseded).toBe(true);
+  });
+});
+
+describe("RunChatContextCard", () => {
+  it("keeps the chat context compact with only the open action and replies", () => {
+    const container = render(createElement(RunChatContextCard, {
+      run: run({}),
+      agentRouteId: "agent-1",
+    }));
+
+    expect(container.textContent).toContain("Open conversation");
+    expect(container.textContent).toContain("Conversation replies");
+    expect(container.textContent).toContain("Reply 1");
+    expect(container.textContent).toContain("Reply 2");
+    expect(container.textContent).not.toContain("Skill inventory request");
+    expect(container.textContent).not.toContain("2 agent replies in this conversation");
+    expect(container.textContent).not.toContain("User input");
+    expect(container.textContent).not.toContain("This reply");
+    expect(container.textContent).not.toContain("Please list all enabled skills.");
   });
 });
