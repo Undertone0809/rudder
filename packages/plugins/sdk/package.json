@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/plugin-sdk",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Stable public API for Rudder plugins — worker-side context and UI bridge hooks",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/Undertone0809/rudder",
