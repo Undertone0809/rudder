@@ -15,6 +15,7 @@ import { runWorkspaceRoutes } from "../routes/execution-workspaces.js";
 import { goalRoutes } from "../routes/goals.js";
 import { healthRoutes } from "../routes/health.js";
 import { instanceSettingsRoutes } from "../routes/instance-settings.js";
+import { integrationRoutes } from "../routes/integrations.js";
 import { issueRoutes } from "../routes/issues.js";
 import { messengerRoutes } from "../routes/messenger.js";
 import { onboardingRoutes } from "../routes/onboarding.js";
@@ -60,6 +61,7 @@ export function registerApiRoutes(
   api.use(automationRoutes(db));
   api.use(calendarRoutes(db));
   api.use(runWorkspaceRoutes(db));
+  api.use(integrationRoutes(db));
   api.use(goalRoutes(db));
   api.use(approvalRoutes(db));
   api.use(secretRoutes(db));

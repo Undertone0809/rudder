@@ -9,6 +9,7 @@ export { dashboardRoutes } from "./dashboard.js";
 export { goalRoutes } from "./goals.js";
 export { healthRoutes } from "./health.js";
 export { instanceSettingsRoutes } from "./instance-settings.js";
+export { integrationRoutes } from "./integrations.js";
 export { issueRoutes } from "./issues.js";
 export { llmRoutes } from "./llms.js";
 export { messengerRoutes } from "./messenger.js";
