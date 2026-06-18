@@ -1,4 +1,4 @@
-import type { AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
+import { resolveOrganizationStorageKey, type AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -71,14 +71,14 @@ export function resolveManagedCodexHomeDir(
       "instances",
       instanceId,
       "organizations",
-      orgId,
+      resolveOrganizationStorageKey(orgId),
       "codex-home",
       "agents",
       agentId,
     );
   }
   return orgId
-    ? path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "codex-home")
+    ? path.resolve(rudderHome, "instances", instanceId, "organizations", resolveOrganizationStorageKey(orgId), "codex-home")
     : path.resolve(rudderHome, "instances", instanceId, "codex-home");
 }
 

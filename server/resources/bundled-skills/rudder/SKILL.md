@@ -138,7 +138,9 @@ Rules:
 
 Each organization has one system-managed shared workspace root at:
 
-- `~/.rudder/instances/<instance>/organizations/<org-id>/workspaces`
+- `~/.rudder/instances/<instance>/organizations/<org-storage-key>/workspaces`
+
+`<org-storage-key>` is the filesystem-safe storage key for the organization. For UUID-backed organizations it is the Rudder short ID form: the first 12 lowercase hex characters of the UUID with dashes removed. The API and database still use the full organization id.
 
 Important files and conventions:
 

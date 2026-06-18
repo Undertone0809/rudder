@@ -37,7 +37,7 @@ import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 import {
-  pruneOrphanedOrganizationStorage,
+  reconcileOrganizationStorageRoots,
   resolveRudderHomeDir,
   resolveRudderInstanceId,
   resolveRudderInstanceRoot,
@@ -63,6 +63,7 @@ import {
   heartbeatService,
   logActivity,
   reconcilePersistedRuntimeServicesOnStartup,
+  reconcileWorkspaceBackupArtifactStorage,
   workspaceBackupService,
 } from "./services/index.js";
 import { printStartupBanner } from "./startup-banner.js";
@@ -773,9 +774,37 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   const liveOrganizationRows = await db
     .select({ id: organizations.id })
     .from(organizations);
-  const prunedOrganizationStorage = await pruneOrphanedOrganizationStorage(
-    liveOrganizationRows.map((row) => row.id),
+  const liveOrganizationIds = liveOrganizationRows.map((row) => row.id);
+  const organizationStorageReconciliation = await reconcileOrganizationStorageRoots(liveOrganizationIds);
+  const organizationStorageMigrations = organizationStorageReconciliation.migrations;
+  const migratedOrganizationStorage = organizationStorageMigrations.filter((result) => result.migrated);
+  const skippedOrganizationStorageMigrations = organizationStorageMigrations.filter((result) =>
+    result.skippedBecauseTargetExists
   );
+  if (migratedOrganizationStorage.length > 0) {
+    logger.info(
+      {
+        migratedOrganizationStorage: migratedOrganizationStorage.map((result) => ({
+          from: result.legacyRootPath,
+          to: result.canonicalRootPath,
+          mergedIntoExistingTarget: result.mergedIntoExistingTarget,
+        })),
+      },
+      "migrated organization storage root paths",
+    );
+  }
+  if (skippedOrganizationStorageMigrations.length > 0) {
+    logger.warn(
+      {
+        skippedOrganizationStorageMigrations: skippedOrganizationStorageMigrations.map((result) => ({
+          legacyRootPath: result.legacyRootPath,
+          canonicalRootPath: result.canonicalRootPath,
+        })),
+      },
+      "skipped organization storage root migration because target already exists",
+    );
+  }
+  const prunedOrganizationStorage = organizationStorageReconciliation.pruned;
   if (
     prunedOrganizationStorage.removedOrganizationDirNames.length > 0
     || prunedOrganizationStorage.removedLegacyProjectDirNames.length > 0
@@ -788,6 +817,29 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         removedLegacyProjectsRoot: prunedOrganizationStorage.removedLegacyProjectsRoot,
       },
       "reconciled local organization storage on startup",
+    );
+  }
+  const workspaceBackupArtifactReconciliation = await reconcileWorkspaceBackupArtifactStorage(db, liveOrganizationIds);
+  if (workspaceBackupArtifactReconciliation.migrated.length > 0) {
+    logger.info(
+      {
+        migratedWorkspaceBackupArtifacts: workspaceBackupArtifactReconciliation.migrated.map((result) => ({
+          backupId: result.backupId,
+          from: result.from,
+          to: result.to,
+          movedArtifact: result.movedArtifact,
+          updatedArtifact: result.updatedArtifact,
+        })),
+      },
+      "migrated workspace backup artifact paths",
+    );
+  }
+  if (workspaceBackupArtifactReconciliation.skipped.length > 0) {
+    logger.warn(
+      {
+        skippedWorkspaceBackupArtifactMigrations: workspaceBackupArtifactReconciliation.skipped,
+      },
+      "skipped workspace backup artifact path migration",
     );
   }
 

@@ -1,3 +1,9 @@
+import {
+  assertUniqueOrganizationStorageKeys,
+  normalizeOrganizationStoragePathSegment,
+  resolveOrganizationLegacyStorageKey,
+  resolveOrganizationStorageKey,
+} from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -5,7 +11,6 @@ import { type AgentWorkspaceLocator, resolveStoredOrDerivedAgentWorkspaceKey } f
 
 const DEFAULT_INSTANCE_ID = "default";
 const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
-const PATH_SEGMENT_RE = /^[a-zA-Z0-9_-]+$/;
 const FRIENDLY_PATH_SEGMENT_RE = /[^a-zA-Z0-9._-]+/g;
 
 function expandHomePrefix(value: string): string {
@@ -57,7 +62,7 @@ export function resolveDefaultBackupDir(): string {
 }
 
 export function resolveOrganizationRoot(orgId: string): string {
-  const normalizedOrgId = validatePathSegment(orgId, "org id");
+  const normalizedOrgId = resolveOrganizationStorageKey(orgId);
   return path.resolve(
     resolveRudderInstanceRoot(),
     "organizations",
@@ -65,12 +70,17 @@ export function resolveOrganizationRoot(orgId: string): string {
   );
 }
 
+export function resolveLegacyOrganizationRoot(orgId: string): string {
+  const legacyOrgId = resolveOrganizationLegacyStorageKey(orgId);
+  return path.resolve(
+    resolveRudderInstanceRoot(),
+    "organizations",
+    legacyOrgId,
+  );
+}
+
 function validatePathSegment(value: string, label: string): string {
-  const trimmed = value.trim();
-  if (!PATH_SEGMENT_RE.test(trimmed)) {
-    throw new Error(`Invalid ${label} for workspace path '${value}'.`);
-  }
-  return trimmed;
+  return normalizeOrganizationStoragePathSegment(value, label);
 }
 
 function resolveAgentWorkspacePathSegment(agent: string | AgentWorkspaceLocator): string {
@@ -168,6 +178,8 @@ export async function ensureOrganizationWorkspaceLayout(orgId: string): Promise<
   skillsDir: string;
   projectsDir: string;
 }> {
+  await migrateOrganizationStorageRoot(orgId);
+
   const root = resolveOrganizationWorkspaceRoot(orgId);
   const agentsDir = resolveOrganizationAgentsDir(orgId);
   const skillsDir = resolveOrganizationSkillsDir(orgId);
@@ -179,6 +191,99 @@ export async function ensureOrganizationWorkspaceLayout(orgId: string): Promise<
     fs.mkdir(projectsDir, { recursive: true }),
   ]);
   return { root, agentsDir, skillsDir, projectsDir };
+}
+
+export async function migrateOrganizationStorageRoot(orgId: string): Promise<{
+  canonicalRootPath: string;
+  legacyRootPath: string;
+  migrated: boolean;
+  mergedIntoExistingTarget: boolean;
+  skippedBecauseTargetExists: boolean;
+}> {
+  const canonicalRootPath = resolveOrganizationRoot(orgId);
+  const legacyRootPath = resolveLegacyOrganizationRoot(orgId);
+  if (canonicalRootPath === legacyRootPath) {
+    return {
+      canonicalRootPath,
+      legacyRootPath,
+      migrated: false,
+      mergedIntoExistingTarget: false,
+      skippedBecauseTargetExists: false,
+    };
+  }
+
+  const legacyExists = await directoryExists(legacyRootPath);
+  if (!legacyExists) {
+    return {
+      canonicalRootPath,
+      legacyRootPath,
+      migrated: false,
+      mergedIntoExistingTarget: false,
+      skippedBecauseTargetExists: false,
+    };
+  }
+
+  const canonicalExists = await directoryExists(canonicalRootPath);
+  if (canonicalExists) {
+    await assertCanMergeDirectoryContents(legacyRootPath, canonicalRootPath);
+    await mergeDirectoryContents(legacyRootPath, canonicalRootPath);
+    await fs.rmdir(legacyRootPath);
+    return {
+      canonicalRootPath,
+      legacyRootPath,
+      migrated: true,
+      mergedIntoExistingTarget: true,
+      skippedBecauseTargetExists: false,
+    };
+  }
+
+  await fs.mkdir(path.dirname(canonicalRootPath), { recursive: true });
+  try {
+    await fs.rename(legacyRootPath, canonicalRootPath);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+    if (code === "ENOENT") {
+      return {
+        canonicalRootPath,
+        legacyRootPath,
+        migrated: false,
+        mergedIntoExistingTarget: false,
+        skippedBecauseTargetExists: false,
+      };
+    }
+    if (code === "EEXIST") {
+      return {
+        canonicalRootPath,
+        legacyRootPath,
+        migrated: false,
+        mergedIntoExistingTarget: false,
+        skippedBecauseTargetExists: true,
+      };
+    }
+    throw error;
+  }
+
+  return {
+    canonicalRootPath,
+    legacyRootPath,
+    migrated: true,
+    mergedIntoExistingTarget: false,
+    skippedBecauseTargetExists: false,
+  };
+}
+
+export async function reconcileOrganizationStorageRoots(
+  liveOrgIds: readonly string[],
+): Promise<{
+  migrations: Array<Awaited<ReturnType<typeof migrateOrganizationStorageRoot>>>;
+  pruned: Awaited<ReturnType<typeof pruneOrphanedOrganizationStorage>>;
+}> {
+  assertUniqueOrganizationStorageKeys(liveOrgIds);
+  const migrations = await Promise.all(liveOrgIds.map((orgId) => migrateOrganizationStorageRoot(orgId)));
+  const pruned = await pruneOrphanedOrganizationStorage(liveOrgIds);
+  return { migrations, pruned };
 }
 
 export async function ensureProjectLibraryLayout(input: {
@@ -270,17 +375,23 @@ function sanitizeFriendlyPathSegment(value: string | null | undefined, fallback 
 
 export async function removeOrganizationStorage(orgId: string): Promise<{
   organizationRootPath: string;
+  legacyOrganizationRootPath: string;
   legacyProjectsRootPath: string;
 }> {
   const normalizedOrgId = validatePathSegment(orgId, "org id");
   const organizationRootPath = resolveOrganizationRoot(normalizedOrgId);
+  const legacyOrganizationRootPath = resolveLegacyOrganizationRoot(normalizedOrgId);
   const legacyProjectsRootPath = path.resolve(resolveRudderInstanceRoot(), "projects", normalizedOrgId);
+  const removeLegacyOrganizationRoot = legacyOrganizationRootPath === organizationRootPath
+    ? []
+    : [fs.rm(legacyOrganizationRootPath, { recursive: true, force: true })];
   await Promise.all([
     fs.rm(organizationRootPath, { recursive: true, force: true }),
+    ...removeLegacyOrganizationRoot,
     // Best-effort cleanup for legacy pre-org-workspace managed project paths.
     fs.rm(legacyProjectsRootPath, { recursive: true, force: true }),
   ]);
-  return { organizationRootPath, legacyProjectsRootPath };
+  return { organizationRootPath, legacyOrganizationRootPath, legacyProjectsRootPath };
 }
 
 async function listDirectoryNames(rootPath: string): Promise<string[]> {
@@ -309,6 +420,58 @@ async function directoryExists(rootPath: string): Promise<boolean> {
   }
 }
 
+async function lstatIfExists(targetPath: string) {
+  try {
+    return await fs.lstat(targetPath);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): Promise<void> {
+  await fs.mkdir(targetRoot, { recursive: true });
+  const entries = await fs.readdir(sourceRoot, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceRoot, entry.name);
+    const targetPath = path.join(targetRoot, entry.name);
+    const targetStat = await lstatIfExists(targetPath);
+    if (!targetStat) {
+      await fs.rename(sourcePath, targetPath);
+      continue;
+    }
+    if (entry.isDirectory() && targetStat.isDirectory()) {
+      await mergeDirectoryContents(sourcePath, targetPath);
+      await fs.rmdir(sourcePath);
+      continue;
+    }
+    throw new Error(
+      `Cannot migrate organization storage root because '${targetPath}' already exists.`,
+    );
+  }
+}
+
+async function assertCanMergeDirectoryContents(sourceRoot: string, targetRoot: string): Promise<void> {
+  const entries = await fs.readdir(sourceRoot, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceRoot, entry.name);
+    const targetPath = path.join(targetRoot, entry.name);
+    const targetStat = await lstatIfExists(targetPath);
+    if (!targetStat) continue;
+    if (entry.isDirectory() && targetStat.isDirectory()) {
+      await assertCanMergeDirectoryContents(sourcePath, targetPath);
+      continue;
+    }
+    throw new Error(
+      `Cannot migrate organization storage root because '${targetPath}' already exists.`,
+    );
+  }
+}
+
 export async function pruneOrphanedOrganizationStorage(
   liveOrgIds: readonly string[],
 ): Promise<{
@@ -316,7 +479,13 @@ export async function pruneOrphanedOrganizationStorage(
   removedLegacyProjectDirNames: string[];
   removedLegacyProjectsRoot: boolean;
 }> {
-  const liveOrgIdSet = new Set(liveOrgIds.map((orgId) => validatePathSegment(orgId, "org id")));
+  assertUniqueOrganizationStorageKeys(liveOrgIds);
+  const liveOrgIdSet = new Set(
+    liveOrgIds.flatMap((orgId) => [
+      resolveOrganizationStorageKey(orgId),
+      resolveOrganizationLegacyStorageKey(orgId),
+    ]),
+  );
   const organizationRoot = path.resolve(resolveRudderInstanceRoot(), "organizations");
   const legacyProjectsRoot = path.resolve(resolveRudderInstanceRoot(), "projects");
   const organizationDirNames = await listDirectoryNames(organizationRoot);

@@ -1,4 +1,4 @@
-import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { inferOpenAiCompatibleBiller, resolveOrganizationStorageKey, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asBoolean,
@@ -97,7 +97,7 @@ function resolveSharedOpenCodeHomeDir(env: NodeJS.ProcessEnv): string {
 function resolveManagedOpenCodeHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
   const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
   const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "opencode-home");
+  return path.resolve(rudderHome, "instances", instanceId, "organizations", resolveOrganizationStorageKey(orgId), "opencode-home");
 }
 
 function resolveManagedOpenCodeSkillsDir(homeDir: string): string {

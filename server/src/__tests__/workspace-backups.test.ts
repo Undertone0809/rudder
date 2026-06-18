@@ -1,3 +1,4 @@
+import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import {
   agents,
   applyPendingMigrations,
@@ -9,14 +10,14 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
-import { workspaceBackupService } from "../services/workspace-backups.js";
+import { resolveDefaultBackupDir, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
+import { reconcileWorkspaceBackupArtifactStorage, workspaceBackupService } from "../services/workspace-backups.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -58,6 +59,10 @@ async function getAvailablePort(): Promise<number> {
       });
     });
   });
+}
+
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function startTempDatabase() {
@@ -147,6 +152,10 @@ describe("workspace backup service", () => {
     expect(backup.fileCount).toBe(1);
     expect(backup.byteSize).toBeGreaterThan(0);
     expect(backup.expiresAt).not.toBeNull();
+    expect(backup.artifactRef).toContain(path.join("workspaces", resolveOrganizationStorageKey(orgId)));
+    expect(backup.artifactRef).not.toContain(path.join("workspaces", orgId));
+    expect(path.basename(backup.artifactRef)).toContain(`workspace-${resolveOrganizationStorageKey(orgId)}-`);
+    expect(path.basename(backup.artifactRef)).not.toContain(`workspace-${orgId}-`);
 
     const root = await service.listFiles(orgId, backup.id);
     expect(root.entries).toEqual(expect.arrayContaining([
@@ -160,6 +169,93 @@ describe("workspace backup service", () => {
 
     const file = await service.readFile(orgId, backup.id, "projects/roadmap/roadmap.md");
     expect(file.content).toBe("# Roadmap\n");
+  });
+
+  it("migrates legacy full UUID backup artifact paths and metadata to the short storage key", async () => {
+    const orgId = await createOrganization();
+    const storageKey = resolveOrganizationStorageKey(orgId);
+    const backupId = randomUUID();
+    const createdAt = new Date("2026-06-18T08:00:00.000Z");
+    const legacyRootPath = path.join(
+      rudderHome,
+      "instances",
+      "test-instance",
+      "organizations",
+      orgId,
+      "workspaces",
+    );
+    const legacyArtifactRef = path.join(
+      resolveDefaultBackupDir(),
+      "workspaces",
+      orgId,
+      `workspace-${orgId}-20260618-080000-${backupId.slice(0, 8)}.json`,
+    );
+    const artifact = {
+      version: 1,
+      orgId,
+      instanceId: "test-instance",
+      createdAt: createdAt.toISOString(),
+      rootPath: legacyRootPath,
+      entries: [],
+      warnings: [],
+    };
+    const serialized = JSON.stringify(artifact, null, 2);
+    await fs.mkdir(path.dirname(legacyArtifactRef), { recursive: true });
+    await fs.writeFile(legacyArtifactRef, serialized, "utf8");
+    await db.insert(workspaceBackups).values({
+      id: backupId,
+      orgId,
+      status: "succeeded",
+      triggerSource: "manual",
+      artifactProvider: "local_file",
+      artifactRef: legacyArtifactRef,
+      archiveSha256: sha256(serialized),
+      treeSha256: "empty",
+      manifest: {
+        version: 1,
+        orgId,
+        instanceId: "test-instance",
+        rootPath: legacyRootPath,
+        createdAt: createdAt.toISOString(),
+        entryCount: 0,
+        fileCount: 0,
+        byteSize: 0,
+        treeSha256: "empty",
+        activeRunCount: 0,
+        warnings: [],
+      },
+      startedAt: createdAt,
+      finishedAt: createdAt,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const result = await reconcileWorkspaceBackupArtifactStorage(db, [orgId]);
+
+    expect(result.skipped).toEqual([]);
+    expect(result.migrated).toEqual([
+      expect.objectContaining({
+        backupId,
+        orgId,
+        from: legacyArtifactRef,
+        movedArtifact: true,
+        updatedArtifact: true,
+      }),
+    ]);
+    const [row] = await db
+      .select()
+      .from(workspaceBackups)
+      .where(eq(workspaceBackups.id, backupId));
+    expect(row?.artifactRef).toContain(path.join("workspaces", storageKey));
+    expect(row?.artifactRef).not.toContain(path.join("workspaces", orgId));
+    expect(path.basename(row!.artifactRef)).toContain(`workspace-${storageKey}-`);
+    expect(row?.manifest).toEqual(expect.objectContaining({
+      rootPath: resolveOrganizationWorkspaceRoot(orgId),
+    }));
+    await expect(fs.stat(legacyArtifactRef)).rejects.toMatchObject({ code: "ENOENT" });
+    const migratedArtifact = JSON.parse(await fs.readFile(row!.artifactRef, "utf8")) as { rootPath: string };
+    expect(migratedArtifact.rootPath).toBe(resolveOrganizationWorkspaceRoot(orgId));
+    await expect(service.listFiles(orgId, backupId)).resolves.toMatchObject({ entries: [] });
   });
 
   it("skips runtime and cache directories when creating workspace backups", async () => {

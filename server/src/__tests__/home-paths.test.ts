@@ -7,14 +7,19 @@ import {
   ensureAgentWorkspaceLayout,
   ensureOrganizationWorkspaceLayout,
   ensureProjectLibraryLayout,
+  migrateOrganizationStorageRoot,
   pruneOrphanedOrganizationStorage,
+  reconcileOrganizationStorageRoots,
+  removeOrganizationStorage,
   resolveAgentInstructionsDir,
   resolveAgentLifeDir,
   resolveAgentMemoryDir,
   resolveAgentSkillsDir,
   resolveDefaultAgentWorkspaceDir,
+  resolveLegacyOrganizationRoot,
   resolveOrganizationAgentsDir,
   resolveOrganizationProjectsDir,
+  resolveOrganizationRoot,
   resolveOrganizationSkillsDir,
   resolveProjectLibraryDir,
   resolveProjectLibraryRelativePath,
@@ -25,6 +30,8 @@ async function makeTempDir(prefix: string): Promise<string> {
 }
 
 const orgId = "organization-1";
+const uuidOrgId = "87e2f140-3876-4d47-b1e0-71d1bcd772ac";
+const shortUuidOrgId = "87e2f1403876";
 const agentId = "11111111-1111-4111-8111-111111111111";
 const agentName = "Agent One";
 const workspaceKey = buildAgentWorkspaceKey(agentName, agentId);
@@ -87,6 +94,102 @@ describe("home paths", () => {
     await expect(fs.stat(resolveAgentMemoryDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentLifeDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentSkillsDir(orgId, workspaceKey))).resolves.toBeDefined();
+  });
+
+  it("uses short organization ids for UUID-backed workspace roots", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-short-org-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const organization = await ensureOrganizationWorkspaceLayout(uuidOrgId);
+
+    expect(resolveOrganizationRoot(uuidOrgId)).toBe(path.join(
+      rudderHome,
+      "instances",
+      "test-instance",
+      "organizations",
+      shortUuidOrgId,
+    ));
+    expect(organization.root).toBe(path.join(
+      rudderHome,
+      "instances",
+      "test-instance",
+      "organizations",
+      shortUuidOrgId,
+      "workspaces",
+    ));
+    await expect(fs.stat(organization.root)).resolves.toBeDefined();
+  });
+
+  it("migrates a legacy full UUID organization root to the short organization root", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-org-migration-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const legacyRoot = resolveLegacyOrganizationRoot(uuidOrgId);
+    const legacyWorkspaceFile = path.join(legacyRoot, "workspaces", "projects", "demo", "README.md");
+    const legacyRuntimeFile = path.join(legacyRoot, "codex-home", "config.toml");
+    await fs.mkdir(path.dirname(legacyWorkspaceFile), { recursive: true });
+    await fs.mkdir(path.dirname(legacyRuntimeFile), { recursive: true });
+    await fs.writeFile(legacyWorkspaceFile, "# Demo\n", "utf8");
+    await fs.writeFile(legacyRuntimeFile, "model = \"gpt\"\n", "utf8");
+
+    const result = await migrateOrganizationStorageRoot(uuidOrgId);
+
+    expect(result).toMatchObject({
+      canonicalRootPath: resolveOrganizationRoot(uuidOrgId),
+      legacyRootPath: legacyRoot,
+      migrated: true,
+      skippedBecauseTargetExists: false,
+    });
+    await expect(fs.stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(path.join(resolveOrganizationRoot(uuidOrgId), "workspaces", "projects", "demo", "README.md"), "utf8"))
+      .resolves.toBe("# Demo\n");
+    await expect(fs.readFile(path.join(resolveOrganizationRoot(uuidOrgId), "codex-home", "config.toml"), "utf8"))
+      .resolves.toBe("model = \"gpt\"\n");
+  });
+
+  it("merges a legacy organization root into an existing short scaffold", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-org-migration-merge-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const legacyRoot = resolveLegacyOrganizationRoot(uuidOrgId);
+    const canonicalRoot = resolveOrganizationRoot(uuidOrgId);
+    await fs.mkdir(path.join(legacyRoot, "workspaces", "projects", "demo"), { recursive: true });
+    await fs.mkdir(path.join(canonicalRoot, "workspaces", "agents"), { recursive: true });
+    await fs.writeFile(path.join(legacyRoot, "workspaces", "projects", "demo", "README.md"), "# Demo\n", "utf8");
+
+    await expect(migrateOrganizationStorageRoot(uuidOrgId)).resolves.toMatchObject({
+      migrated: true,
+      mergedIntoExistingTarget: true,
+      skippedBecauseTargetExists: false,
+    });
+    await expect(fs.stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(path.join(canonicalRoot, "workspaces", "agents"))).resolves.toBeDefined();
+    await expect(fs.readFile(path.join(canonicalRoot, "workspaces", "projects", "demo", "README.md"), "utf8"))
+      .resolves.toBe("# Demo\n");
+  });
+
+  it("fails migration instead of overwriting conflicting short-root files", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-org-migration-conflict-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const legacyRoot = resolveLegacyOrganizationRoot(uuidOrgId);
+    const canonicalRoot = resolveOrganizationRoot(uuidOrgId);
+    await fs.mkdir(path.join(legacyRoot, "workspaces"), { recursive: true });
+    await fs.mkdir(path.join(canonicalRoot, "workspaces"), { recursive: true });
+    await fs.writeFile(path.join(legacyRoot, "workspaces", "README.md"), "legacy\n", "utf8");
+    await fs.writeFile(path.join(canonicalRoot, "workspaces", "README.md"), "canonical\n", "utf8");
+
+    await expect(migrateOrganizationStorageRoot(uuidOrgId)).rejects.toThrow("Cannot migrate organization storage root");
+    await expect(fs.readFile(path.join(legacyRoot, "workspaces", "README.md"), "utf8")).resolves.toBe("legacy\n");
+    await expect(fs.readFile(path.join(canonicalRoot, "workspaces", "README.md"), "utf8")).resolves.toBe("canonical\n");
   });
 
   it("creates a project Library root with a README anchor", async () => {
@@ -195,5 +298,84 @@ describe("home paths", () => {
     expect(result.removedLegacyProjectDirNames).toEqual([orgId, "orphan-org"]);
     expect(result.removedLegacyProjectsRoot).toBe(true);
     await expect(fs.stat(legacyProjectsRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves live canonical and legacy UUID organization roots while pruning orphaned storage", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-prune-short-org-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const canonicalRoot = resolveOrganizationRoot(uuidOrgId);
+    const legacyRoot = resolveLegacyOrganizationRoot(uuidOrgId);
+    const orphanRoot = path.join(rudderHome, "instances", "test-instance", "organizations", "orphan-org");
+    await fs.mkdir(canonicalRoot, { recursive: true });
+    await fs.mkdir(legacyRoot, { recursive: true });
+    await fs.mkdir(orphanRoot, { recursive: true });
+
+    const result = await pruneOrphanedOrganizationStorage([uuidOrgId]);
+
+    expect(result.removedOrganizationDirNames).toEqual(["orphan-org"]);
+    await expect(fs.stat(canonicalRoot)).resolves.toBeDefined();
+    await expect(fs.stat(legacyRoot)).resolves.toBeDefined();
+    await expect(fs.stat(orphanRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reconciles live organization storage by migrating before pruning orphans", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-reconcile-short-org-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const legacyRoot = resolveLegacyOrganizationRoot(uuidOrgId);
+    const canonicalRoot = resolveOrganizationRoot(uuidOrgId);
+    const orphanRoot = path.join(rudderHome, "instances", "test-instance", "organizations", "orphan-org");
+    await fs.mkdir(path.join(legacyRoot, "workspaces", "projects"), { recursive: true });
+    await fs.writeFile(path.join(legacyRoot, "workspaces", "projects", "plan.md"), "# Plan\n", "utf8");
+    await fs.mkdir(orphanRoot, { recursive: true });
+
+    const result = await reconcileOrganizationStorageRoots([uuidOrgId]);
+
+    expect(result.migrations).toEqual([
+      expect.objectContaining({
+        migrated: true,
+        canonicalRootPath: canonicalRoot,
+        legacyRootPath: legacyRoot,
+      }),
+    ]);
+    expect(result.pruned.removedOrganizationDirNames).toEqual(["orphan-org"]);
+    await expect(fs.stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(path.join(canonicalRoot, "workspaces", "projects", "plan.md"), "utf8"))
+      .resolves.toBe("# Plan\n");
+    await expect(fs.stat(orphanRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses to reconcile colliding organization storage keys", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-reconcile-collision-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    await expect(reconcileOrganizationStorageRoots([
+      "87e2f140-3876-4d47-b1e0-71d1bcd772ac",
+      "87e2f1403876",
+    ])).rejects.toThrow("Organization storage key collision");
+  });
+
+  it("removes both canonical and legacy UUID organization roots", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-remove-short-org-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const canonicalRoot = resolveOrganizationRoot(uuidOrgId);
+    const legacyRoot = resolveLegacyOrganizationRoot(uuidOrgId);
+    await fs.mkdir(canonicalRoot, { recursive: true });
+    await fs.mkdir(legacyRoot, { recursive: true });
+
+    await removeOrganizationStorage(uuidOrgId);
+
+    await expect(fs.stat(canonicalRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

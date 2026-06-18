@@ -62,13 +62,14 @@ pnpm rudder configure --section storage
 
 When a local agent run has no resolved project/session workspace, Rudder falls back to an agent home workspace under the org-scoped instance root:
 
-- `~/.rudder/instances/default/organizations/<org-id>/workspaces/agents/<workspaceKey>`
+- `~/.rudder/instances/default/organizations/<org-storage-key>/workspaces/agents/<workspaceKey>`
 
 This path honors `RUDDER_HOME` and `RUDDER_INSTANCE_ID` in non-default setups.
+For UUID-backed organizations, `<org-storage-key>` is the first 12 lowercase hex characters of the UUID with dashes removed. API and database records still use the full organization id.
 
 For `codex_local`, Rudder also manages a per-agent Codex home under the instance root and seeds it from the shared Codex login/config home (`$CODEX_HOME` or `~/.codex`):
 
-- `~/.rudder/instances/default/organizations/<org-id>/codex-home/agents/<agent-id>`
+- `~/.rudder/instances/default/organizations/<org-storage-key>/codex-home/agents/<agent-id>`
 
 ## Quick Health Checks
 

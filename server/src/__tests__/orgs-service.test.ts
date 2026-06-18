@@ -1,3 +1,4 @@
+import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import {
   activityLog,
   agentConfigRevisions,
@@ -554,7 +555,7 @@ describe("organization service", () => {
           "instances",
           "test-instance",
           "organizations",
-          created.id,
+          resolveOrganizationStorageKey(created.id),
           "workspaces",
         ),
       );

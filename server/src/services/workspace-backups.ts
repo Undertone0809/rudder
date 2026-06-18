@@ -1,4 +1,8 @@
 import {
+  resolveOrganizationLegacyStorageKey,
+  resolveOrganizationStorageKey,
+} from "@rudderhq/agent-runtime-utils";
+import {
   heartbeatRuns,
   workspaceBackups,
   type Db,
@@ -77,6 +81,23 @@ type WorkspaceBackupRow = typeof workspaceBackups.$inferSelect;
 
 type WorkspaceBackupWalkState = {
   byteSize: number;
+};
+
+type WorkspaceBackupArtifactMigration = {
+  backupId: string;
+  orgId: string;
+  from: string;
+  to: string;
+  movedArtifact: boolean;
+  updatedArtifact: boolean;
+};
+
+type WorkspaceBackupArtifactMigrationSkip = {
+  backupId: string;
+  orgId: string;
+  from: string;
+  to: string;
+  reason: string;
 };
 
 function timestamp(date = new Date()) {
@@ -178,6 +199,162 @@ function buildTreeHash(entries: WorkspaceBackupArtifactEntry[]) {
     hash.update("\n");
   }
   return hash.digest("hex");
+}
+
+function resolveMigratedWorkspaceBackupArtifactRef(input: {
+  artifactRef: string;
+  legacyDir: string;
+  canonicalDir: string;
+  legacyStorageKey: string;
+  storageKey: string;
+}): string | null {
+  const artifactRef = path.resolve(input.artifactRef);
+  const legacyDir = path.resolve(input.legacyDir);
+  const relativePath = path.relative(legacyDir, artifactRef);
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) return null;
+  const rewrittenRelativePath = relativePath
+    .split(path.sep)
+    .map((segment) => segment.split(input.legacyStorageKey).join(input.storageKey))
+    .join(path.sep);
+  return path.resolve(input.canonicalDir, rewrittenRelativePath);
+}
+
+function rewriteWorkspaceBackupArtifactRootPath(raw: string, orgId: string): {
+  serialized: string;
+  updated: boolean;
+} {
+  try {
+    const parsed = JSON.parse(raw) as WorkspaceBackupArtifact;
+    if (parsed.version !== ARTIFACT_VERSION || parsed.orgId !== orgId || !Array.isArray(parsed.entries)) {
+      return { serialized: raw, updated: false };
+    }
+    const canonicalRootPath = resolveOrganizationWorkspaceRoot(orgId);
+    if (parsed.rootPath === canonicalRootPath) return { serialized: raw, updated: false };
+    return {
+      serialized: `${JSON.stringify({ ...parsed, rootPath: canonicalRootPath }, null, 2)}\n`,
+      updated: true,
+    };
+  } catch {
+    return { serialized: raw, updated: false };
+  }
+}
+
+function rewriteWorkspaceBackupManifestRootPath(
+  manifest: WorkspaceBackupRow["manifest"],
+  orgId: string,
+): WorkspaceBackupRow["manifest"] {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return manifest;
+  if (!("rootPath" in manifest) || typeof manifest.rootPath !== "string") return manifest;
+  const canonicalRootPath = resolveOrganizationWorkspaceRoot(orgId);
+  if (manifest.rootPath === canonicalRootPath) return manifest;
+  return { ...manifest, rootPath: canonicalRootPath };
+}
+
+async function removeDirectoryIfEmpty(directoryPath: string): Promise<void> {
+  try {
+    await fs.rmdir(directoryPath);
+  } catch (error) {
+    if (
+      typeof error === "object"
+      && error !== null
+      && "code" in error
+      && (error.code === "ENOENT" || error.code === "ENOTEMPTY")
+    ) {
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function reconcileWorkspaceBackupArtifactStorage(
+  db: Db,
+  liveOrgIds: readonly string[],
+): Promise<{
+  migrated: WorkspaceBackupArtifactMigration[];
+  skipped: WorkspaceBackupArtifactMigrationSkip[];
+}> {
+  const migrated: WorkspaceBackupArtifactMigration[] = [];
+  const skipped: WorkspaceBackupArtifactMigrationSkip[] = [];
+
+  for (const orgId of liveOrgIds) {
+    const storageKey = resolveOrganizationStorageKey(orgId);
+    const legacyStorageKey = resolveOrganizationLegacyStorageKey(orgId);
+    if (storageKey === legacyStorageKey) continue;
+
+    const legacyDir = path.resolve(resolveDefaultBackupDir(), "workspaces", legacyStorageKey);
+    const canonicalDir = path.resolve(resolveDefaultBackupDir(), "workspaces", storageKey);
+    const rows = await db
+      .select()
+      .from(workspaceBackups)
+      .where(eq(workspaceBackups.orgId, orgId));
+
+    for (const row of rows) {
+      const nextArtifactRef = resolveMigratedWorkspaceBackupArtifactRef({
+        artifactRef: row.artifactRef,
+        legacyDir,
+        canonicalDir,
+        legacyStorageKey,
+        storageKey,
+      });
+      if (!nextArtifactRef || nextArtifactRef === row.artifactRef) continue;
+
+      const sourceExists = await fileExists(row.artifactRef);
+      const targetExists = await fileExists(nextArtifactRef);
+      let nextArchiveSha256 = row.archiveSha256;
+      let updatedArtifact = false;
+
+      if (sourceExists) {
+        const raw = await fs.readFile(row.artifactRef, "utf8");
+        const rewritten = rewriteWorkspaceBackupArtifactRootPath(raw, orgId);
+        const serialized = rewritten.serialized;
+        updatedArtifact = rewritten.updated;
+        nextArchiveSha256 = sha256Buffer(serialized);
+
+        await fs.mkdir(path.dirname(nextArtifactRef), { recursive: true });
+        if (targetExists) {
+          const existing = await fs.readFile(nextArtifactRef, "utf8");
+          if (existing !== serialized) {
+            skipped.push({
+              backupId: row.id,
+              orgId,
+              from: row.artifactRef,
+              to: nextArtifactRef,
+              reason: "target artifact already exists with different content",
+            });
+            continue;
+          }
+          await fs.rm(row.artifactRef, { force: true });
+        } else {
+          const tempArtifactRef = `${nextArtifactRef}.tmp`;
+          await fs.writeFile(tempArtifactRef, serialized, { encoding: "utf8", mode: 0o600 });
+          await fs.rename(tempArtifactRef, nextArtifactRef);
+          await fs.rm(row.artifactRef, { force: true });
+        }
+      }
+
+      await db
+        .update(workspaceBackups)
+        .set({
+          artifactRef: nextArtifactRef,
+          archiveSha256: nextArchiveSha256,
+          manifest: rewriteWorkspaceBackupManifestRootPath(row.manifest, orgId),
+          updatedAt: new Date(),
+        })
+        .where(eq(workspaceBackups.id, row.id));
+      migrated.push({
+        backupId: row.id,
+        orgId,
+        from: row.artifactRef,
+        to: nextArtifactRef,
+        movedArtifact: sourceExists,
+        updatedArtifact,
+      });
+    }
+
+    await removeDirectoryIfEmpty(legacyDir);
+  }
+
+  return { migrated, skipped };
 }
 
 function directChildrenFromArtifact(
@@ -417,8 +594,9 @@ export function workspaceBackupService(db: Db) {
       const expiresAt = addDays(startedAt, input.retentionDays ?? WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS);
       const backupId = crypto.randomUUID();
       const triggerSource = input.triggerSource ?? "manual";
-      const backupDir = path.resolve(resolveDefaultBackupDir(), "workspaces", input.orgId);
-      const artifactRef = path.resolve(backupDir, `workspace-${input.orgId}-${timestamp(startedAt)}-${backupId.slice(0, 8)}.json`);
+      const organizationStorageKey = resolveOrganizationStorageKey(input.orgId);
+      const backupDir = path.resolve(resolveDefaultBackupDir(), "workspaces", organizationStorageKey);
+      const artifactRef = path.resolve(backupDir, `workspace-${organizationStorageKey}-${timestamp(startedAt)}-${backupId.slice(0, 8)}.json`);
 
       await fs.mkdir(backupDir, { recursive: true });
       const [runningRow] = await db

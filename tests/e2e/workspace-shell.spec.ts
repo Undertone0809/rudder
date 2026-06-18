@@ -1,20 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
+import { resolveE2EOrganizationWorkspaceRoot } from "./support/organization-storage";
 
 test.use({ serviceWorkers: "block" });
 
-function resolveOrganizationWorkspaceRoot(orgId: string) {
-  return path.join(
-    E2E_HOME,
-    "instances",
-    E2E_INSTANCE_ID,
-    "organizations",
-    orgId,
-    "workspaces",
-  );
-}
+const resolveOrganizationWorkspaceRoot = resolveE2EOrganizationWorkspaceRoot;
 
 function normalizeAgentSlug(value: string) {
   const normalized = value
@@ -188,7 +179,7 @@ test.describe("Workspace shell", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
-    const workspaceRoot = resolveOrganizationWorkspaceRoot(organization.id);
+    const workspaceRoot = resolveE2EOrganizationWorkspaceRoot(organization.id);
 
     await expect(async () => fs.stat(path.join(workspaceRoot, "agents"))).toPass();
     await expect(async () => fs.stat(path.join(workspaceRoot, "skills"))).toPass();

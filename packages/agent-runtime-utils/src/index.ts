@@ -12,6 +12,12 @@ export {
   type ModelAttemptSpec
 } from "./model-fallbacks.js";
 export {
+  assertUniqueOrganizationStorageKeys,
+  normalizeOrganizationStoragePathSegment,
+  resolveOrganizationLegacyStorageKey,
+  resolveOrganizationStorageKey
+} from "./organization-storage.js";
+export {
   AGENT_RUNTIME_SESSION_MANAGEMENT,
   LEGACY_SESSIONED_AGENT_RUNTIME_TYPES,
   getAgentRuntimeSessionManagement, hasSessionCompactionThresholds, readSessionCompactionOverride,

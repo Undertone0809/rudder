@@ -1,4 +1,4 @@
-import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { resolveOrganizationStorageKey, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
@@ -119,7 +119,7 @@ function resolveSharedClaudeHomeDir(env: NodeJS.ProcessEnv): string {
 function resolveManagedClaudeHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
   const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
   const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "claude-home");
+  return path.resolve(rudderHome, "instances", instanceId, "organizations", resolveOrganizationStorageKey(orgId), "claude-home");
 }
 
 async function syncClaudeSharedDotdirEntries(sourceHome: string, targetHome: string) {

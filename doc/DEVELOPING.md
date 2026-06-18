@@ -224,8 +224,10 @@ Default disposable profile used by `pnpm dev`:
 - `RUDDER_INSTANCE_ID=dev`
 - embedded PostgreSQL on `54329`
 - data under `~/.rudder/instances/dev/`
-- agent runs start from the per-agent canonical workspace at `~/.rudder/instances/dev/organizations/<org-id>/workspaces/agents/<workspaceKey>`
-- managed organization Library files live under `~/.rudder/instances/dev/organizations/<org-id>/workspaces/`
+- agent runs start from the per-agent canonical workspace at `~/.rudder/instances/dev/organizations/<org-storage-key>/workspaces/agents/<workspaceKey>`
+- managed organization Library files live under `~/.rudder/instances/dev/organizations/<org-storage-key>/workspaces/`
+
+`<org-storage-key>` is the filesystem storage key. For UUID-backed organizations it is the first 12 lowercase hex characters of the UUID with dashes removed; API and database records continue to use the full organization id.
 
 Repo `doc/plans/` remains contributor planning documentation. Rudder-generated project work files should use the relevant project Library folder. In local trusted agent runs, that folder is exposed as `$RUDDER_PROJECT_LIBRARY_ROOT`; `$RUDDER_PROJECT_LIBRARY_PATH` is the Library-relative locator to use when requesting a renderable Rudder reference.
 

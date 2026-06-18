@@ -1,3 +1,4 @@
+import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import {
   activityLog,
   agentApiKeys,
@@ -1200,7 +1201,15 @@ describe("agent CLI e2e", () => {
     const projectLibraryPath = "projects/agent-team";
     const libraryRelativeFile = "agent-team-design.md";
     const libraryFilePath = `${projectLibraryPath}/${libraryRelativeFile}`;
-    const orgWorkspaceRoot = path.join(tempRoot, "rudder-home", "instances", instanceId, "organizations", orgId, "workspaces");
+    const orgWorkspaceRoot = path.join(
+      tempRoot,
+      "rudder-home",
+      "instances",
+      instanceId,
+      "organizations",
+      resolveOrganizationStorageKey(orgId),
+      "workspaces",
+    );
     const projectLibraryRoot = path.join(orgWorkspaceRoot, projectLibraryPath);
     mkdirSync(projectLibraryRoot, { recursive: true });
     writeFileSync(path.join(projectLibraryRoot, libraryRelativeFile), libraryBody, "utf8");

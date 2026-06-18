@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { resolveOrganizationStorageKey } from "../../packages/agent-runtime-utils/src/organization-storage.ts";
 
 async function installDesktopShellStub(page: Page, pickedPath: string) {
   await page.addInitScript((selectedPath) => {
@@ -174,7 +175,7 @@ test.describe("Primary rail create menu", () => {
     expect(created.primaryWorkspace).toBeNull();
     expect(created.codebase.scope).toBe("organization");
     expect(created.codebase.repoUrl).toBeNull();
-    expect(created.codebase.localFolder).toContain(`/organizations/${organization.id}/workspaces`);
+    expect(created.codebase.localFolder).toContain(`/organizations/${resolveOrganizationStorageKey(organization.id)}/workspaces`);
     await expect(page).toHaveURL(
       new RegExp(`/${organization.issuePrefix}/issues\\?projectId=${created.id}$`),
     );

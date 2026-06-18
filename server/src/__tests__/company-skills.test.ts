@@ -1,3 +1,4 @@
+import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -264,7 +265,16 @@ describe("organization skill local scans", () => {
         "Global Only",
       );
       await writeSkillDir(
-        path.join(rudderHome, "instances", "default", "organizations", orgId, "workspaces", "skills", "org-only"),
+        path.join(
+          rudderHome,
+          "instances",
+          "default",
+          "organizations",
+          resolveOrganizationStorageKey(orgId),
+          "workspaces",
+          "skills",
+          "org-only",
+        ),
         "Org Only",
       );
 
@@ -314,7 +324,7 @@ describe("organization skill local scans", () => {
         "instances",
         "default",
         "organizations",
-        orgId,
+        resolveOrganizationStorageKey(orgId),
         "workspaces",
         "skills",
         "org-only",

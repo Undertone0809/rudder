@@ -3,22 +3,14 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createDb, workspaceBackups } from "../../packages/db/src/index.ts";
-import { E2E_DATABASE_URL, E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
+import { E2E_DATABASE_URL } from "./support/e2e-env";
+import { resolveE2EOrganizationWorkspaceRoot } from "./support/organization-storage";
 
 test.use({ serviceWorkers: "block" });
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
-function resolveOrganizationWorkspaceRoot(orgId: string) {
-  return path.join(
-    E2E_HOME,
-    "instances",
-    E2E_INSTANCE_ID,
-    "organizations",
-    orgId,
-    "workspaces",
-  );
-}
+const resolveOrganizationWorkspaceRoot = resolveE2EOrganizationWorkspaceRoot;
 
 async function selectOrganization(page: Page, orgId: string) {
   await page.goto("/");
@@ -63,20 +55,18 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await page.getByRole("button", { name: "roadmap.md" }).click();
   await expect(page.getByText("# Roadmap")).toBeVisible();
 
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("Restore workspace backup");
-    await dialog.accept();
-  });
   await page.getByRole("button", { name: "Restore" }).click();
+  const restoreDialog = page.getByRole("dialog", { name: "Restore workspace backup" });
+  await expect(restoreDialog).toBeVisible();
+  await restoreDialog.getByRole("button", { name: "Restore" }).click();
   await expect.poll(async () => fs.readFile(path.join(workspaceRoot, "plans", "roadmap.md"), "utf8"))
     .toBe("# Roadmap\n");
   await expect(page.getByText("2 backups")).toBeVisible();
 
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("Delete workspace backup");
-    await dialog.accept();
-  });
   await page.getByRole("button", { name: "Delete" }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "Delete workspace backup" });
+  await expect(deleteDialog).toBeVisible();
+  await deleteDialog.getByRole("button", { name: "Delete" }).click();
   await expect(page.getByText("1 backup")).toBeVisible();
   await expect(page.getByTestId("workspace-main-card").getByText("pre restore").first()).toBeVisible();
 });
