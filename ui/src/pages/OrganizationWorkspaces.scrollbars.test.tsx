@@ -108,6 +108,44 @@ vi.mock("@tanstack/react-query", () => ({
             entityType: "organization_workspace",
           },
         ],
+        agents: [
+          {
+            name: "wesley",
+            displayLabel: "Wesley",
+            path: "agents/wesley",
+            isDirectory: true,
+            entityType: "agent_workspace",
+            agentRole: "developer",
+            agentIcon: null,
+          },
+        ],
+        "agents/wesley": [
+          {
+            name: "skills",
+            displayLabel: "skills",
+            path: "agents/wesley/skills",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
+        ],
+        "agents/wesley/skills": [
+          {
+            name: "build-advisor",
+            displayLabel: "build-advisor",
+            path: "agents/wesley/skills/build-advisor",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
+        ],
+        "agents/wesley/skills/build-advisor": [
+          {
+            name: "references",
+            displayLabel: "references",
+            path: "agents/wesley/skills/build-advisor/references",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
+        ],
         projects: [
           {
             name: "rudder-dev",
@@ -888,6 +926,18 @@ describe("OrganizationWorkspaces scroll regions", () => {
 
     const skillRow = document.querySelector('[data-workspace-entry-path="skills/build-advisor"]') as HTMLElement | null;
     const nestedFolderRow = document.querySelector('[data-workspace-entry-path="skills/build-advisor/references"]') as HTMLElement | null;
+
+    expect(skillRow?.querySelector('[data-testid="org-workspaces-skill-folder-icon"]')).not.toBeNull();
+    expect(nestedFolderRow).not.toBeNull();
+    expect(nestedFolderRow?.querySelector('[data-testid="org-workspaces-skill-folder-icon"]')).toBeNull();
+  });
+
+  it("uses skill icons for agent Library skill folders", () => {
+    mockState.searchParams = "directory=agents/wesley/skills/build-advisor";
+    renderWorkspacesPage();
+
+    const skillRow = document.querySelector('[data-workspace-entry-path="agents/wesley/skills/build-advisor"]') as HTMLElement | null;
+    const nestedFolderRow = document.querySelector('[data-workspace-entry-path="agents/wesley/skills/build-advisor/references"]') as HTMLElement | null;
 
     expect(skillRow?.querySelector('[data-testid="org-workspaces-skill-folder-icon"]')).not.toBeNull();
     expect(nestedFolderRow).not.toBeNull();
