@@ -13,6 +13,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { formatExamplesAndCautions } from "./help.js";
 
 interface LibraryFilePutOptions extends BaseClientOptions {
   bodyFile?: string;
@@ -113,6 +114,16 @@ export function registerLibraryCommands(program: Command): void {
       .command("ref")
       .description(getAgentCliCapabilityById("library.file.ref").description)
       .argument("<filePath>", "Library file path")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder library file ref projects/rudder/proposals/plan.md --json",
+          "rudder library file ref \"$RUDDER_PROJECT_LIBRARY_PATH/proposals/plan.md\" --json",
+        ],
+        cautions: [
+          "Pass the Library-relative path, not an absolute filesystem path.",
+          "Use the returned markdownLink in issue comments instead of hand-writing library-entry URLs.",
+        ],
+      }))
       .action(async (filePath: string, opts: BaseClientOptions) => {
         try {
           await printLibraryFileReference(filePath, opts);
@@ -129,6 +140,16 @@ export function registerLibraryCommands(program: Command): void {
       .description(getAgentCliCapabilityById("library.file.put").description)
       .argument("<filePath>", "Library file path")
       .option("--body-file <path>", "Read file content from a file, or '-' for stdin")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder library file put projects/rudder/proposals/plan.md --body-file ./plan.md --json",
+          "printf '%s\\n' '# Plan' | rudder library file put projects/rudder/proposals/plan.md --body-file -",
+        ],
+        cautions: [
+          "Use --body-file for content; the old --body option is intentionally rejected.",
+          "For local trusted runs, prefer writing durable files under the project Library root, then use file ref for the renderable link.",
+        ],
+      }))
       .action(async (filePath: string, opts: LibraryFilePutOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });

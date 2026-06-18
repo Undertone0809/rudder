@@ -12,6 +12,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { formatExamplesAndCautions } from "./help.js";
 
 interface ProjectListOptions extends BaseClientOptions {}
 
@@ -89,6 +90,16 @@ export function registerProjectCommands(program: Command): void {
       .option("--lead-agent-id <id>", "Lead agent ID")
       .option("--target-date <date>", "Target date")
       .option("--color <value>", "Project color or supported gradient token")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder project create --org-id <org-id> --name \"Rudder dev\" --status in_progress --json",
+          "rudder project create --org-id <org-id> --name \"Release\" --goal-id <goal-id> --lead-agent-id <agent-id>",
+        ],
+        cautions: [
+          "Project mutations are organization-scoped; pass --org-id when context might be ambiguous.",
+          "Use existing project IDs/shortnames for updates instead of creating duplicate project containers.",
+        ],
+      }))
       .action(async (opts: ProjectCreateOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });
@@ -126,6 +137,16 @@ export function registerProjectCommands(program: Command): void {
       .option("--target-date <date>", "Target date")
       .option("--color <value>", "Project color or supported gradient token")
       .option("--archived-at <iso8601|null>", "Set archivedAt timestamp or literal 'null'")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder project update rudder-dev --org-id <org-id> --status in_progress --json",
+          "rudder project update <project-id> --archived-at null",
+        ],
+        cautions: [
+          "Shortname resolution needs the intended organization; include --org-id for cross-org local contexts.",
+          "Archiving and unarchiving changes project visibility, so verify the target with project get first.",
+        ],
+      }))
       .action(async (projectRef: string, opts: ProjectUpdateOptions) => {
         try {
           const ctx = resolveCommandContext(opts);

@@ -16,6 +16,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { formatExamplesAndCautions } from "./help.js";
 
 interface ChatListOptions extends BaseClientOptions {
   status?: string;
@@ -219,6 +220,16 @@ export function registerChatCommands(program: Command): void {
       .option("--turn-limit <n>", "Alias for --limit for chat turn snapshots")
       .option("--cursor <cursor>", "Stable message cursor returned in page.nextCursor")
       .option("--max-output-chars <n>", "Maximum transcript output chars for human output", "1200")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder chat read <chat-id> --turn-limit 20 --include-output",
+          "rudder chat read <chat-id> --cursor <nextCursor> --json",
+        ],
+        cautions: [
+          "Read bounded pages first; long chats can include large transcript payloads.",
+          "Use --include-output only when transcript output is needed for diagnosis.",
+        ],
+      }))
       .action(async (chatId: string, opts: ChatReadOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -285,6 +296,16 @@ export function registerChatCommands(program: Command): void {
       .argument("<chatId>", "Chat conversation ID")
       .option("--body <text>", "Message body")
       .option("--edit-user-message-id <id>", "Regenerate/edit from a prior user message")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder chat send <chat-id> --body \"Status: validation is running\"",
+          "printf '%s\\n' 'Multiline note' | rudder chat send <chat-id>",
+        ],
+        cautions: [
+          "chat send accepts --body or stdin; it does not support --body-file.",
+          "Agent-authenticated sends append an agent-authored message and do not start a new assistant reply.",
+        ],
+      }))
       .action(async (chatId: string, opts: ChatSendOptions) => {
         try {
           const ctx = resolveCommandContext(opts);

@@ -19,6 +19,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { formatExamplesAndCautions } from "./help.js";
 
 interface ApprovalListOptions extends BaseClientOptions {
   orgId?: string;
@@ -159,6 +160,16 @@ export function registerApprovalCommands(program: Command): void {
       .argument("<approvalId>", "Approval ID")
       .option("--decision-note <text>", "Decision note")
       .option("--decided-by-user-id <id>", "Decision actor user ID")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder approval get <approval-id> --json",
+          "rudder approval approve <approval-id> --decision-note \"Approved after reviewing linked issues\" --json",
+        ],
+        cautions: [
+          "Read the approval and linked issues before approving; this is a governed mutation.",
+          "approval approve/reject use --decision-note, while approval comment uses --body-file.",
+        ],
+      }))
       .action(async (approvalId: string, opts: ApprovalDecisionOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -244,6 +255,16 @@ export function registerApprovalCommands(program: Command): void {
       .description(getAgentCliCapabilityById("approval.comment").description)
       .argument("<approvalId>", "Approval ID")
       .option("--body-file <path>", "Read comment body from a file, or '-' for stdin")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder approval comment <approval-id> --body-file ./approval-note.md --json",
+          "printf '%s\\n' 'Need one more linked issue checked.' | rudder approval comment <approval-id> --body-file -",
+        ],
+        cautions: [
+          "Comments do not approve or reject; use approve/reject/request-revision for the durable decision.",
+          "Use --body-file for multiline Markdown. Do not pass decision notes here.",
+        ],
+      }))
       .action(async (approvalId: string, opts: ApprovalCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);

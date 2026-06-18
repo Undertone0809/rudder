@@ -119,6 +119,19 @@ pnpm rudder run --data-dir ./tmp/rudder-dev
 pnpm rudder issue list --data-dir ./tmp/rudder-dev
 ```
 
+## Agent-Facing Usage Principles
+
+Prefer explicit context for agent and maintenance work:
+
+- Pass `--org-id <org-id>` on organization-scoped reads and mutations when a local profile could point at the wrong organization.
+- Pass `--json` for scripts, issue close-out evidence, and any command whose output will be parsed by another tool.
+- Use file or stdin body options for multiline Markdown. `issue comment` and `approval comment` use `--body-file`; `issue done`, `issue block`, and `issue review` use `--comment-file`; `chat send` uses `--body` or stdin, not `--body-file`.
+- Attach local screenshots and visual evidence with repeatable `--image <path>` on issue comments/status updates. A comment that only mentions `/tmp/foo.png` is not durable evidence for board users.
+- Keep run attribution intact. Mutating agent-authenticated commands attach `RUDDER_AGENT_ID` and `RUDDER_RUN_ID` when available; if a command reports a run ownership conflict, inspect the issue/run state instead of retrying blindly.
+- Treat approval decisions, automation runs, organization skill imports, agent skill sync, project archive changes, run cancel/retry, and organization deletion as governed or high-impact operations. Read the target first, then mutate.
+- For run investigation, filter first with `runs list`, then use `runs errors` or bounded `runs transcript` reads. Do not start by dumping large run/transcript payloads.
+- Use Library-relative paths such as `projects/rudder/proposals/plan.md` with `library file ref`; do not pass absolute filesystem paths or hand-write `library-entry://` links.
+
 ## Context Profiles
 
 Store local defaults in `~/.rudder/context.json`:
@@ -186,6 +199,22 @@ and screenshot evidence. Pass `-` to read the body from stdin.
 If a comment cites a screenshot path or visual validation artifact, attach that
 file with `--image <path>` instead of leaving only the local path in the text.
 
+Recommended cases:
+
+```sh
+pnpm rudder issue context ZST-123 --wake-comment-id <comment-id> --json
+pnpm rudder issue checkout ZST-123 --agent-id "$RUDDER_AGENT_ID" --expected-statuses todo,backlog,blocked --json
+pnpm rudder issue comment ZST-123 --body-file ./progress.md --image ./screenshot.png --json
+pnpm rudder issue done ZST-123 --comment-file ./done.md --image ./screenshot.png --json
+```
+
+Bad cases to avoid:
+
+- Passing multiline Markdown through a shell argument such as `--body "line1\nline2"`; use `--body-file` or stdin.
+- Citing `/tmp/screenshot.png` in a comment without `--image /tmp/screenshot.png`; board users may not be able to inspect it.
+- Repeating `issue done` after a run ownership conflict; inspect `issue get`, `issue context`, and the active run instead.
+- Leaving a free-form comment like "approved" as a review decision; use `issue review --decision approve|request_changes|needs_followup|blocked`.
+
 ## Project Commands
 
 ```sh
@@ -198,6 +227,21 @@ pnpm rudder project update <project-id-or-shortname> [--org-id <org-id>] [--name
 Project commands are part of the agent-facing CLI contract. Agent-authenticated
 mutating calls attach `RUDDER_AGENT_ID` and `RUDDER_RUN_ID` when available and
 remain scoped to the authenticated organization.
+
+Recommended cases:
+
+```sh
+pnpm rudder project list --org-id <org-id> --json
+pnpm rudder project get rudder-dev --org-id <org-id> --json
+pnpm rudder project create --org-id <org-id> --name "Rudder dev" --status in_progress --lead-agent-id <agent-id> --json
+pnpm rudder project update rudder-dev --org-id <org-id> --status in_progress --json
+```
+
+Bad cases to avoid:
+
+- Resolving a short project name without `--org-id` when multiple profiles or organizations are in play.
+- Creating a new project before checking for the existing project id or shortname.
+- Using `--archived-at` casually; archive changes affect project visibility and should follow a `project get` check.
 
 ## Automation Commands
 
@@ -229,6 +273,22 @@ and also expose the common schedule/webhook/api fields as flags. Create supports
 `schedule`, `webhook`, and `api` trigger kinds; update targets the trigger id
 returned by `automation get` or `automation triggers list`.
 
+Recommended cases:
+
+```sh
+pnpm rudder automation list --org-id <org-id> --status active --assignee-agent-id <agent-id> --json
+pnpm rudder automation get <automation-id> --json
+pnpm rudder automation triggers list <automation-id> --json
+pnpm rudder automation run <automation-id> --payload '{"manual":true}' --idempotency-key zst-123-smoke --json
+```
+
+Bad cases to avoid:
+
+- Running an automation by title or stale clipboard id without first checking `automation get`; manual runs can create tracked issues or chats.
+- Updating or deleting a trigger without verifying whether the id is a trigger id or automation id.
+- Retrying a manual run repeatedly without `--idempotency-key`; duplicate downstream work becomes harder to detect.
+- Passing malformed JSON through `--payload`; validate the object before mutating automation state.
+
 ## Chat Commands
 
 ```sh
@@ -253,6 +313,22 @@ When authenticated as an agent, `chat send` appends a direct agent-authored
 message to the conversation for the operator to read. It does not create an
 operator/user prompt, does not edit prior operator messages, and does not start
 another chat assistant reply.
+
+Recommended cases:
+
+```sh
+pnpm rudder chat list --org-id <org-id> --status active --query "release" --json
+pnpm rudder chat read <chat-id> --turn-limit 20 --include-output --json
+pnpm rudder chat send <chat-id> --body "Status: validation is running."
+printf '%s\n' "Longer agent-authored note" | pnpm rudder chat send <chat-id>
+```
+
+Bad cases to avoid:
+
+- Writing `chat send --body-file ./note.md`; this command supports `--body` or stdin only.
+- Assuming an agent-authenticated `chat send` starts a new assistant generation. It only appends an agent-authored message.
+- Dumping a long chat with unbounded transcript output when a cursor or `--turn-limit` read would answer the question.
+- Editing/regenerating from a user message with `--edit-user-message-id` before reading the current conversation state.
 
 ## Run Debugging Commands
 
@@ -293,6 +369,22 @@ counts, and unclipped entry output for scripts and agents.
 `runs errors` provides the error-first path for failed tool calls, stderr/result
 failures, and runtime failures, including a stable `step-N` context command such
 as `rudder runs transcript <run-id> --around-error step-12`.
+
+Recommended cases:
+
+```sh
+pnpm rudder runs list --org-id <org-id> --agent-id <agent-id> --status failed --limit 20 --json
+pnpm rudder runs errors <run-id> --max-chars 4000 --json
+pnpm rudder runs transcript <run-id> --around-error step-12 --context-turns 2
+pnpm rudder runs transcript <run-id> --chronological --turn-limit 30 --include-output
+```
+
+Bad cases to avoid:
+
+- Starting a run audit with a broad unfiltered `runs list --json`; filter by organization, agent, issue, status, skill, or time first.
+- Expecting `runs list` to act as a projection/summary transcript endpoint. Use `runs errors` or `runs transcript` for details.
+- Using `--json` transcript output when a compact human view is enough; full payloads can include large raw entries.
+- Cancelling or retrying a run without checking whether it belongs to another active issue owner.
 
 ## Agent Commands
 
@@ -344,6 +436,22 @@ pnpm rudder agent local-cli codexcoder --org-id <org-id>
 pnpm rudder agent local-cli claudecoder --org-id <org-id>
 ```
 
+Recommended cases:
+
+```sh
+pnpm rudder agent inbox --json
+pnpm rudder agent get <agent-id-or-shortname> --org-id <org-id> --json
+pnpm rudder agent skills enable <agent-id> rudder/rudder local/abc123/custom-skill --json
+pnpm rudder agent skills sync <agent-id> --desired-skills "rudder/rudder,local/abc123/custom-skill" --json
+```
+
+Bad cases to avoid:
+
+- Treating `agent skills sync` as additive. It replaces the full optional enabled-skill set; use `agent skills enable` for additive changes.
+- Claiming a newly copied private skill will load in future runs before checking the agent skill snapshot and enabling the selection.
+- Printing or pasting broad `RUDDER_*` environment dumps after `agent local-cli`; keep API keys private.
+- Passing explicit avatar/icon payloads to `agent hire` unless the board supplied a supported avatar reference.
+
 ## Approval Commands
 
 ```sh
@@ -356,6 +464,87 @@ pnpm rudder approval request-revision <approval-id> [--decision-note "..."]
 pnpm rudder approval resubmit <approval-id> [--payload '{"...":"..."}']
 pnpm rudder approval comment <approval-id> --body-file ./comment.md
 ```
+
+Approval decisions use `--decision-note` for short decision context. Approval
+comments use `--body-file` for longer Markdown discussion and do not resolve the
+approval.
+
+Recommended cases:
+
+```sh
+pnpm rudder approval get <approval-id> --json
+pnpm rudder approval issues <approval-id> --json
+pnpm rudder approval approve <approval-id> --decision-note "Reviewed linked issues and accepted." --json
+pnpm rudder approval comment <approval-id> --body-file ./approval-note.md --json
+```
+
+Bad cases to avoid:
+
+- Approving or rejecting from the list row alone without reading the approval detail and linked issues.
+- Passing `--body-file` to `approval approve` or `approval reject`; use `--decision-note` for decisions.
+- Leaving only an approval comment like "approved"; comments are not durable approval decisions.
+- Resubmitting with a partial payload before checking whether the route expects the complete revised object.
+
+## Library Commands
+
+```sh
+pnpm rudder library file list [directoryPath] --org-id <org-id>
+pnpm rudder library file get <filePath> --org-id <org-id>
+pnpm rudder library file ref <filePath> --org-id <org-id>
+pnpm rudder library file put <filePath> --body-file ./local.md --org-id <org-id>
+```
+
+`library file ref` returns `markdownLink`; paste that returned Markdown into
+issue comments or chat replies. In local trusted project runs, durable generated
+project files should be written under the project Library root and then cited
+with `library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"`.
+
+Recommended cases:
+
+```sh
+pnpm rudder library file list projects/rudder --org-id <org-id> --json
+pnpm rudder library file put projects/rudder/proposals/plan.md --body-file ./plan.md --org-id <org-id> --json
+pnpm rudder library file ref projects/rudder/proposals/plan.md --org-id <org-id> --json
+printf '%s\n' "# Note" | pnpm rudder library file put projects/rudder/know-how/note.md --body-file - --org-id <org-id>
+```
+
+Bad cases to avoid:
+
+- Passing an absolute local path such as `/Users/me/.../plan.md` to `library file ref`; use the Library-relative path.
+- Hand-writing `library-entry://...` or old `library-file://...` links instead of using the returned `markdownLink`.
+- Treating `/tmp` files as durable project handoff artifacts.
+- Using removed inline content flags; `library file put` requires `--body-file` or stdin.
+
+## Skill Commands
+
+```sh
+pnpm rudder skill list --org-id <org-id>
+pnpm rudder skill get <skill-id> --org-id <org-id>
+pnpm rudder skill file <skill-id> [--path SKILL.md] --org-id <org-id>
+pnpm rudder skill import --org-id <org-id> --source <local-path-or-url-or-repo-ref>
+pnpm rudder skill scan-local --org-id <org-id> [--roots <csv>]
+pnpm rudder skill scan-projects --org-id <org-id> [--project-ids <csv>] [--workspace-ids <csv>]
+```
+
+Organization skills are shared packages. Importing or scanning them does not by
+itself change any agent's enabled skill selections; use `agent skills enable`
+or `agent skills sync` for agent-specific loading.
+
+Recommended cases:
+
+```sh
+pnpm rudder skill list --org-id <org-id> --json
+pnpm rudder skill file <skill-uuid> --path SKILL.md --org-id <org-id> --json
+pnpm rudder skill import --org-id <org-id> --source /abs/shared/path/to/skill --json
+pnpm rudder skill scan-projects --org-id <org-id> --project-ids <project-id> --json
+```
+
+Bad cases to avoid:
+
+- Passing slashful organization skill keys such as `local/<hash>/<slug>` where the route expects a skill id; prefer the UUID returned by `skill list`.
+- Importing an organization skill from an agent-private directory that may disappear.
+- Assuming `skill import` enables the skill for agents. Enable or sync the target agent's skill selections separately.
+- Bulk scanning all local roots when the target project/workspace path is known.
 
 ## Activity Commands
 

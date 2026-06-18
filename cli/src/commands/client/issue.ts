@@ -22,6 +22,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { formatExamplesAndCautions } from "./help.js";
 
 interface IssueBaseOptions extends BaseClientOptions {
   status?: string;
@@ -361,6 +362,16 @@ export function registerIssueCommands(program: Command): void {
       .option("--body-file <path>", "Read comment body from a file, or '-' for stdin")
       .option("--image <path>", "Image file to upload and append to the comment; may be repeated", collectImagePath, [] as string[])
       .option("--reopen", "Reopen if issue is done/cancelled")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder issue comment ZST-123 --body-file ./progress.md --image ./screenshot.png --json",
+          "printf '%s\\n' 'Short status' | rudder issue comment ZST-123 --body-file -",
+        ],
+        cautions: [
+          "Use --body-file for multiline Markdown; the old --body option is intentionally rejected.",
+          "Attach local visual evidence with --image instead of leaving only a filesystem path in the comment.",
+        ],
+      }))
       .action(async (issueId: string, opts: IssueCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -396,6 +407,16 @@ export function registerIssueCommands(program: Command): void {
         "Review decision: approve, request_changes, needs_followup, or blocked",
       )
       .option("--comment-file <path>", "Read required review comment from a file, or '-' for stdin")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder issue review ZST-123 --decision request_changes --comment-file ./review.md --json",
+          "rudder issue review ZST-123 --decision approve --comment-file ./review.md",
+        ],
+        cautions: [
+          "Free-form comments are not durable review decisions; use this command for approve/request_changes/etc.",
+          "Approving an implementation issue can move it to done, so use request_changes when returning it for fixes.",
+        ],
+      }))
       .action(async (issueId: string, opts: IssueReviewOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -454,6 +475,16 @@ export function registerIssueCommands(program: Command): void {
       .argument("<issueId>", "Issue ID")
       .option("--comment-file <path>", "Read required completion comment from a file, or '-' for stdin")
       .option("--image <path>", "Image file to upload and append to the completion comment; may be repeated", collectImagePath, [] as string[])
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder issue done ZST-123 --comment-file ./done.md --image ./screenshot.png --json",
+          "rudder issue done ZST-123 --comment-file - < ./done.md",
+        ],
+        cautions: [
+          "Include validation evidence and commit/push status in the completion comment.",
+          "If the server reports a run ownership conflict, stop and inspect the issue/run instead of retrying blindly.",
+        ],
+      }))
       .action(async (issueId: string, opts: IssueStatusCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);

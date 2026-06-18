@@ -31,6 +31,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { formatExamplesAndCautions } from "./help.js";
 
 interface AgentListOptions extends BaseClientOptions {
   orgId?: string;
@@ -556,6 +557,16 @@ export function registerAgentCommands(program: Command): void {
       .description(getAgentCliCapabilityById("agent.skills.enable").description)
       .argument("<agentId>", "Agent ID")
       .argument("<selectionRefs...>", "Skill selection refs to enable")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder agent skills enable <agent-id> rudder/rudder local/abc123/custom-skill",
+          "rudder agent skills enable <agent-id> <selection-ref> --json",
+        ],
+        cautions: [
+          "This is additive and preserves existing enabled optional skills.",
+          "After creating or copying a private skill, enable it before claiming future runs will load it.",
+        ],
+      }))
       .action(async (agentId: string, selectionRefs: string[], opts: AgentSkillEnableOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -578,6 +589,16 @@ export function registerAgentCommands(program: Command): void {
         "--desired-skills <csv>",
         "Comma-separated desired skill refs (for example rudder/rudder)",
       )
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder agent skills sync <agent-id> --desired-skills \"rudder/rudder,local/abc123/custom-skill\"",
+          "rudder agent skills sync <agent-id> --desired-skills \"\" --json",
+        ],
+        cautions: [
+          "Sync replaces the full optional enabled-skill set; use enable for additive changes.",
+          "Preserve every existing desired skill in the CSV unless you intentionally want to disable it.",
+        ],
+      }))
       .action(async (agentId: string, opts: AgentSkillSyncOptions) => {
         try {
           const ctx = resolveCommandContext(opts);

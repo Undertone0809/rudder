@@ -21,6 +21,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { formatExamplesAndCautions } from "./help.js";
 
 interface AutomationListOptions extends BaseClientOptions {
   status?: string;
@@ -364,6 +365,16 @@ export function registerAutomationCommands(program: Command): void {
       .option("--payload <json>", "Manual run payload JSON")
       .option("--idempotency-key <key>", "Idempotency key")
       .option("--source <source>", "Run source", "manual")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder automation run <automation-id> --payload '{\"manual\":true}' --json",
+          "rudder automation run <automation-id> --trigger-id <trigger-id> --idempotency-key zst-123-smoke",
+        ],
+        cautions: [
+          "Confirm the automation and trigger target before running; manual runs can create tracked issues or chats.",
+          "Use an idempotency key for retried manual invocations so duplicate work is easier to detect.",
+        ],
+      }))
       .action(async (automationId: string, opts: AutomationRunOptions) => {
         try {
           const ctx = resolveCommandContext(opts);

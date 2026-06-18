@@ -19,6 +19,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { formatExamplesAndCautions } from "./help.js";
 
 interface SkillListOptions extends BaseClientOptions {
   orgId?: string;
@@ -113,6 +114,16 @@ export function registerSkillCommands(program: Command): void {
       .argument("<skillId>", "Skill ID")
       .option("-O, --org-id <id>", "Organization ID")
       .option("--path <path>", "Skill package file path", "SKILL.md")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder skill file <skill-uuid> --path SKILL.md --org-id <org-id>",
+          "rudder skill file <skill-uuid> --path references/usage.md --json",
+        ],
+        cautions: [
+          "Prefer the skill UUID for slashful keys such as local/<hash>/<slug>.",
+          "Read SKILL.md before assuming a skill's trigger or workflow behavior.",
+        ],
+      }))
       .action(async (skillId: string, opts: SkillFileOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });
@@ -134,6 +145,16 @@ export function registerSkillCommands(program: Command): void {
       .description(getAgentCliCapabilityById("skill.import").description)
       .option("-O, --org-id <id>", "Organization ID")
       .requiredOption("--source <source>", "Skill source (local path, URL, or repo ref)")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder skill import --org-id <org-id> --source /abs/path/to/skill --json",
+          "rudder skill list --org-id <org-id> --json",
+        ],
+        cautions: [
+          "Import organization-shared skills from durable shared paths, not disposable agent-private work directories.",
+          "Importing a skill does not automatically enable it for every agent; update agent skill selections separately.",
+        ],
+      }))
       .action(async (opts: SkillImportOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });

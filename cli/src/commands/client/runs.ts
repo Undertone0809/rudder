@@ -9,6 +9,7 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { formatExamplesAndCautions } from "./help.js";
 
 interface RunsListOptions extends BaseClientOptions {
   updatedAfter?: string;
@@ -195,6 +196,16 @@ export function registerRunsCommands(program: Command): void {
       .option("--loaded-skill <key-or-name>", "Filter by skill loaded for the run")
       .option("--created-before <iso>", "Only runs created before this timestamp")
       .option("--limit <n>", "Maximum rows", "200")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder runs list --org-id <org-id> --agent-id <agent-id> --status failed --limit 20",
+          "rudder runs list --org-id <org-id> --issue-id ZST-123 --used-skill release-maintainer --json",
+        ],
+        cautions: [
+          "Filter first by org, agent, issue, status, skill, or time; do not start by dumping broad run history.",
+          "Use runs errors or runs transcript for detail instead of expecting list to return full debug payloads.",
+        ],
+      }))
       .action(async (opts: RunsListOptions) => {
         try {
           assertSingleSkillFilter(opts);
@@ -305,6 +316,16 @@ export function registerRunsCommands(program: Command): void {
       .option("--max-output-chars <n>", "Alias for --max-chars")
       .option("--include-output", "Include row output in compact human transcript rows")
       .option("--include-outputs", "Alias for --include-output")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder runs transcript <run-id> --around-error step-12 --context-turns 2",
+          "rudder runs transcript <run-id> --chronological --turn-limit 30 --include-output",
+        ],
+        cautions: [
+          "Human output is compact and clipped by default; use --json only when a script needs the full payload.",
+          "Use --around-error from runs errors when investigating a failure instead of reading the entire run first.",
+        ],
+      }))
       .action(async (runId: string, opts: RunTranscriptOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -330,6 +351,16 @@ export function registerRunsCommands(program: Command): void {
       .description(getAgentCliCapabilityById("runs.errors").description)
       .argument("<runId>", "Run ID or short run ID")
       .option("--max-chars <n>", "Maximum output characters per error", "1200")
+      .addHelpText("after", formatExamplesAndCautions({
+        examples: [
+          "rudder runs errors <run-id>",
+          "rudder runs errors <run-id> --max-chars 4000 --json",
+        ],
+        cautions: [
+          "Start here for failed runs, then follow the transcript context command returned for the relevant step.",
+          "Increase --max-chars deliberately; large tool outputs can be noisy and expensive to inspect.",
+        ],
+      }))
       .action(async (runId: string, opts: RunErrorsOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
