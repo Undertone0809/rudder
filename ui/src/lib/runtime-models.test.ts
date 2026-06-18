@@ -7,12 +7,10 @@ describe("resolveRuntimeModels", () => {
     const models = resolveRuntimeModels("codex_local");
 
     expect(models).toEqual(codexLocalModels);
-    expect(models.map((model) => model.id)).toEqual([
-      DEFAULT_CODEX_LOCAL_MODEL,
-      "gpt-5.4",
-      "gpt-5.4-mini",
-      "gpt-5.3-codex-spark",
-    ]);
+    expect(models[0]?.id).toBe(DEFAULT_CODEX_LOCAL_MODEL);
+    expect(models.map((model) => model.id)).toEqual(codexLocalModels.map((model) => model.id));
+    expect(models.some((model) => model.id === "gpt-5.5-codex")).toBe(true);
+    expect(models.some((model) => model.id === "codex-mini-latest")).toBe(true);
     expect(models.some((model) => model.id === "gpt-5")).toBe(false);
     expect(models.some((model) => model.id === "o3")).toBe(false);
   });

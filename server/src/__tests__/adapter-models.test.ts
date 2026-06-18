@@ -71,12 +71,12 @@ describe("adapter model listing", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(first).toEqual(second);
     expect(first).toEqual(codexFallbackModels);
-    expect(first.map((model) => model.id)).toEqual([
-      "gpt-5.5",
-      "gpt-5.4",
-      "gpt-5.4-mini",
-      "gpt-5.3-codex-spark",
-    ]);
+    expect(first[0]?.id).toBe("gpt-5.5");
+    expect(first.map((model) => model.id)).toEqual(codexFallbackModels.map((model) => model.id));
+    expect(first.some((model) => model.id === "gpt-5.5-codex")).toBe(true);
+    expect(first.some((model) => model.id === "codex-mini-latest")).toBe(true);
+    expect(first.some((model) => model.id === "gpt-5")).toBe(false);
+    expect(first.some((model) => model.id === "o3")).toBe(false);
   });
 
   it("falls back to static codex models when OpenAI model discovery fails", async () => {
