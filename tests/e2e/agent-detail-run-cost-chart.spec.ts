@@ -23,6 +23,85 @@ function makeRunDate(daysAgo: number, hour: number): Date {
 }
 
 test.describe("Agent detail run cost chart", () => {
+  test("updates the cost summary when the dashboard date range changes", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Agent-Cost-Range-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Range Cost Analyst",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const now = new Date();
+    const recentDate = new Date(now.getTime() - 2 * 86_400_000);
+    const olderDate = new Date(now.getTime() - 16 * 86_400_000);
+
+    for (const event of [
+      {
+        inputTokens: 1_000,
+        cachedInputTokens: 200,
+        outputTokens: 300,
+        costCents: 10,
+        occurredAt: recentDate.toISOString(),
+      },
+      {
+        inputTokens: 700,
+        cachedInputTokens: 0,
+        outputTokens: 300,
+        costCents: 20,
+        occurredAt: olderDate.toISOString(),
+      },
+    ]) {
+      const eventRes = await page.request.post(`/api/orgs/${organization.id}/cost-events`, {
+        data: {
+          agentId: agent.id,
+          provider: "openai",
+          biller: "openai",
+          billingType: "metered_api",
+          model: "gpt-5.4",
+          ...event,
+        },
+      });
+      expect(eventRes.ok()).toBe(true);
+    }
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/dashboard`, {
+      waitUntil: "domcontentloaded",
+    });
+
+    const mainContent = page.locator("#main-content");
+    const summary = mainContent.getByTestId("agent-cost-summary");
+    await expect(mainContent.getByRole("heading", { name: "Range Cost Analyst", exact: true })).toBeVisible();
+    await expect(summary).toContainText("1.0k");
+    await expect(summary).toContainText("300");
+    await expect(summary).toContainText("200");
+    await expect(summary).toContainText("$0.10");
+
+    await mainContent.getByRole("button", { name: "1M" }).click();
+    await expect(summary).toContainText("1.7k");
+    await expect(summary).toContainText("600");
+    await expect(summary).toContainText("200");
+    await expect(summary).toContainText("$0.30");
+    await expect(summary).not.toContainText("$0.10");
+  });
+
   test("shows stacked token rows with keyboard tooltip and run navigation", async ({ page, request }) => {
     const orgRes = await request.post("/api/orgs", {
       data: {

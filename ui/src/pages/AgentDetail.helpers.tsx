@@ -15,6 +15,7 @@ import {
   summarizeTokenUsage,
   tokenUsageCacheRatio,
   type AgentSkillEntry,
+  type CostTrendPoint,
   type HeartbeatRun,
   type HeartbeatRunEvent,
   type OrganizationSkillCreateRequest,
@@ -454,6 +455,48 @@ export function runMetrics(run: HeartbeatRun) {
     cost,
     totalTokens: summary.totalTokens,
   };
+}
+
+export function summarizeRunCostUsage(runs: HeartbeatRun[]) {
+  return runs.reduce(
+    (summary, run) => {
+      const metrics = runMetrics(run);
+      summary.promptTokens += metrics.promptTokens;
+      summary.outputTokens += metrics.output;
+      summary.cachedInputTokens += metrics.cached;
+      summary.totalCostCents += Math.round(metrics.cost * 100);
+      summary.hasUsage ||= metrics.cost > 0 || metrics.input > 0 || metrics.output > 0 || metrics.cached > 0;
+      return summary;
+    },
+    {
+      promptTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      totalCostCents: 0,
+      hasUsage: false,
+    },
+  );
+}
+
+export function summarizeCostTrendUsage(rows: CostTrendPoint[]) {
+  return rows.reduce(
+    (summary, row) => {
+      const usage = summarizeTokenUsage(row);
+      summary.promptTokens += usage.promptTokens;
+      summary.outputTokens += usage.outputTokens;
+      summary.cachedInputTokens += usage.cachedInputTokens;
+      summary.totalCostCents += row.costCents;
+      summary.hasUsage ||= row.costCents > 0 || usage.totalTokens > 0;
+      return summary;
+    },
+    {
+      promptTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      totalCostCents: 0,
+      hasUsage: false,
+    },
+  );
 }
 
 export function formatExactTokens(value: number) {

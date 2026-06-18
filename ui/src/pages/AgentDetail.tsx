@@ -38,7 +38,6 @@ import {
   tokenUsageCacheRatio,
   type Agent,
   type AgentDetail as AgentDetailRecord,
-  type AgentRuntimeState,
   type AgentSkillAnalytics,
   type AgentSkillEntry,
   type BudgetPolicySummary,
@@ -153,6 +152,7 @@ import { formatRunDurationLabel, formatRunOccurrenceLabel, formatRunTimingTitle 
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
 import { agentIssuesUrl, agentRouteRef, cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
 import { RunChatContextCard } from "./AgentDetail.chat-context";
+import { summarizeCostTrendUsage } from "./AgentDetail.helpers";
 import {
   appendRunSearchParams,
   applyRunFilters,
@@ -1058,12 +1058,6 @@ export function AgentDetail() {
     navigate(agentRunPath(`/agents/${canonicalAgentRef}/${value}`));
   }, [agent?.id, agent?.instructionsLibraryPath, agentRunPath, canonicalAgentRef, navigate, routeAgentRef]);
 
-  const { data: runtimeState, isLoading: isRuntimeStateLoading } = useQuery({
-    queryKey: queryKeys.agents.runtimeState(resolvedAgentId ?? routeAgentRef),
-    queryFn: () => agentsApi.runtimeState(resolvedAgentId!, resolvedCompanyId ?? undefined),
-    enabled: Boolean(resolvedAgentId) && needsDashboardData,
-  });
-
   const { from, to, customReady } = useMemo(() => {
     const now = new Date();
 
@@ -1431,7 +1425,6 @@ export function AgentDetail() {
     isAgentCostTrendLoading
     || isHeartbeatsLoading
     || isIssuesLoading
-    || isRuntimeStateLoading
   );
   const isRunsContentLoading = needsRunData && isHeartbeatsLoading;
 
@@ -1694,9 +1687,9 @@ export function AgentDetail() {
           agent={agent}
           runs={heartbeats ?? []}
           chartRuns={filteredRuns}
+          costRuns={filteredRuns}
           assignedIssues={assignedIssues}
           chartIssues={filteredAssignedIssues}
-          runtimeState={runtimeState}
           skillAnalytics={skillAnalytics}
           isSkillAnalyticsLoading={isSkillAnalyticsLoading}
           costTrendRows={agentCostTrend ?? []}
@@ -1962,9 +1955,9 @@ function AgentOverview({
   agent,
   runs,
   chartRuns,
+  costRuns,
   assignedIssues,
   chartIssues,
-  runtimeState,
   skillAnalytics,
   isSkillAnalyticsLoading,
   costTrendRows,
@@ -1978,9 +1971,9 @@ function AgentOverview({
   agent: AgentDetailRecord;
   runs: HeartbeatRun[];
   chartRuns: HeartbeatRun[];
+  costRuns: HeartbeatRun[];
   assignedIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
   chartIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
-  runtimeState?: AgentRuntimeState;
   skillAnalytics?: AgentSkillAnalytics;
   isSkillAnalyticsLoading?: boolean;
   costTrendRows: CostTrendPoint[];
@@ -2100,7 +2093,7 @@ function AgentOverview({
       {/* Costs */}
       <div className="space-y-3">
         <h3 className="text-sm font-medium">Costs</h3>
-        <CostsSection runtimeState={runtimeState} runs={runs} agentRouteId={agentRouteId} />
+        <CostsSection runs={costRuns} costTrendRows={costTrendRows} agentRouteId={agentRouteId} />
       </div>
     </div>
   );
@@ -2109,12 +2102,12 @@ function AgentOverview({
 /* ---- Costs Section (inline) ---- */
 
 function CostsSection({
-  runtimeState,
   runs,
+  costTrendRows,
   agentRouteId,
 }: {
-  runtimeState?: AgentRuntimeState;
   runs: HeartbeatRun[];
+  costTrendRows: CostTrendPoint[];
   agentRouteId: string;
 }) {
   const [searchParams] = useSearchParams();
@@ -2129,33 +2122,25 @@ function CostsSection({
   const maxTokens = Math.max(1, ...visibleRuns.map(({ metrics }) => metrics.totalTokens));
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   const axisMidpoint = Math.round(maxTokens / 2);
-  const runtimeTokenSummary = runtimeState
-    ? summarizeTokenUsage({
-        inputTokens: runtimeState.totalInputTokens,
-        cachedInputTokens: runtimeState.totalCachedInputTokens,
-        outputTokens: runtimeState.totalOutputTokens,
-      })
-    : null;
-  const cacheRatio = runtimeState
-    ? formatCacheRatio(runtimeState.totalCachedInputTokens, runtimeState.totalInputTokens)
-    : "—";
+  const costSummary = summarizeCostTrendUsage(costTrendRows);
+  const cacheRatio = formatCacheRatio(costSummary.cachedInputTokens, costSummary.promptTokens);
 
   return (
     <div className="space-y-4">
-      {runtimeState && (
-        <div className="border border-border rounded-lg p-4">
+      {costSummary.hasUsage && (
+        <div className="border border-border rounded-lg p-4" data-testid="agent-cost-summary">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 tabular-nums">
             <div>
               <span className="text-xs text-muted-foreground block">Prompt input</span>
-              <span className="text-lg font-semibold">{formatTokens(runtimeTokenSummary?.promptTokens ?? runtimeState.totalInputTokens)}</span>
+              <span className="text-lg font-semibold">{formatTokens(costSummary.promptTokens)}</span>
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Output tokens</span>
-              <span className="text-lg font-semibold">{formatTokens(runtimeState.totalOutputTokens)}</span>
+              <span className="text-lg font-semibold">{formatTokens(costSummary.outputTokens)}</span>
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Cached input</span>
-              <span className="text-lg font-semibold">{formatTokens(runtimeState.totalCachedInputTokens)}</span>
+              <span className="text-lg font-semibold">{formatTokens(costSummary.cachedInputTokens)}</span>
             </div>
             <div title="Cached input tokens divided by total prompt input tokens.">
               <span className="text-xs text-muted-foreground block">Cache ratio</span>
@@ -2163,7 +2148,7 @@ function CostsSection({
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Total cost</span>
-              <span className="text-lg font-semibold">{formatCents(runtimeState.totalCostCents)}</span>
+              <span className="text-lg font-semibold">{formatCents(costSummary.totalCostCents)}</span>
             </div>
           </div>
         </div>

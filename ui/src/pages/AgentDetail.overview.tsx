@@ -3,9 +3,7 @@ import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Link } from "@/lib/router";
 import {
-  summarizeTokenUsage,
   type AgentDetail as AgentDetailRecord,
-  type AgentRuntimeState,
   type AgentSkillAnalytics,
   type CostTrendPoint,
   type HeartbeatRun
@@ -46,7 +44,7 @@ import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { formatRunDurationLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
 import { agentIssuesUrl, cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime } from "../lib/utils";
-import { formatCacheRatio, formatCompactTokenLabel, formatExactTokenLabel, formatRunCostUsd, runMetrics, runStatusIcons, shouldShowInlineTokenLabel, useRunDurationNow } from "./AgentDetail.helpers";
+import { formatCacheRatio, formatCompactTokenLabel, formatExactTokenLabel, formatRunCostUsd, runMetrics, runStatusIcons, shouldShowInlineTokenLabel, summarizeCostTrendUsage, useRunDurationNow } from "./AgentDetail.helpers";
 import { KeysTab } from "./AgentDetail.keys";
 
 export function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: string }) {
@@ -131,9 +129,9 @@ export function AgentOverview({
   agent,
   runs,
   chartRuns,
+  costRuns,
   assignedIssues,
   chartIssues,
-  runtimeState,
   skillAnalytics,
   costTrendRows,
   agentId,
@@ -146,9 +144,9 @@ export function AgentOverview({
   agent: AgentDetailRecord;
   runs: HeartbeatRun[];
   chartRuns: HeartbeatRun[];
+  costRuns: HeartbeatRun[];
   assignedIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
   chartIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
-  runtimeState?: AgentRuntimeState;
   skillAnalytics?: AgentSkillAnalytics;
   costTrendRows: CostTrendPoint[];
   agentId: string;
@@ -243,7 +241,7 @@ export function AgentOverview({
       {/* Costs */}
       <div className="space-y-3">
         <h3 className="text-sm font-medium">Costs</h3>
-        <CostsSection runtimeState={runtimeState} runs={runs} agentRouteId={agentRouteId} />
+        <CostsSection runs={costRuns} costTrendRows={costTrendRows} agentRouteId={agentRouteId} />
       </div>
     </div>
   );
@@ -252,12 +250,12 @@ export function AgentOverview({
 /* ---- Costs Section (inline) ---- */
 
 export function CostsSection({
-  runtimeState,
   runs,
+  costTrendRows,
   agentRouteId,
 }: {
-  runtimeState?: AgentRuntimeState;
   runs: HeartbeatRun[];
+  costTrendRows: CostTrendPoint[];
   agentRouteId: string;
 }) {
   const { locale } = useI18n();
@@ -271,33 +269,25 @@ export function CostsSection({
   const maxTokens = Math.max(1, ...visibleRuns.map(({ metrics }) => metrics.totalTokens));
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   const axisMidpoint = Math.round(maxTokens / 2);
-  const runtimeTokenSummary = runtimeState
-    ? summarizeTokenUsage({
-        inputTokens: runtimeState.totalInputTokens,
-        cachedInputTokens: runtimeState.totalCachedInputTokens,
-        outputTokens: runtimeState.totalOutputTokens,
-      })
-    : null;
-  const cacheRatio = runtimeState
-    ? formatCacheRatio(runtimeState.totalCachedInputTokens, runtimeState.totalInputTokens)
-    : "—";
+  const costSummary = summarizeCostTrendUsage(costTrendRows);
+  const cacheRatio = formatCacheRatio(costSummary.cachedInputTokens, costSummary.promptTokens);
 
   return (
     <div className="space-y-4">
-      {runtimeState && (
-        <div className="border border-border rounded-lg p-4">
+      {costSummary.hasUsage && (
+        <div className="border border-border rounded-lg p-4" data-testid="agent-cost-summary">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 tabular-nums">
             <div>
               <span className="text-xs text-muted-foreground block">Prompt input</span>
-              <span className="text-lg font-semibold">{formatTokens(runtimeTokenSummary?.promptTokens ?? runtimeState.totalInputTokens)}</span>
+              <span className="text-lg font-semibold">{formatTokens(costSummary.promptTokens)}</span>
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Output tokens</span>
-              <span className="text-lg font-semibold">{formatTokens(runtimeState.totalOutputTokens)}</span>
+              <span className="text-lg font-semibold">{formatTokens(costSummary.outputTokens)}</span>
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Cached input</span>
-              <span className="text-lg font-semibold">{formatTokens(runtimeState.totalCachedInputTokens)}</span>
+              <span className="text-lg font-semibold">{formatTokens(costSummary.cachedInputTokens)}</span>
             </div>
             <div title="Cached input tokens divided by total prompt input tokens.">
               <span className="text-xs text-muted-foreground block">Cache ratio</span>
@@ -305,7 +295,7 @@ export function CostsSection({
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Total cost</span>
-              <span className="text-lg font-semibold">{formatCents(runtimeState.totalCostCents)}</span>
+              <span className="text-lg font-semibold">{formatCents(costSummary.totalCostCents)}</span>
             </div>
           </div>
         </div>
