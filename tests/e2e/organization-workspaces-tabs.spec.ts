@@ -69,6 +69,118 @@ test("Library command-f searches the current editor tab content", async ({ page 
   })).toBe(0);
 });
 
+test("Library imports a dropped local text file into the target folder", async ({ page }) => {
+  const suffix = Date.now();
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Library-Drop-Import-${suffix}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const directoryPath = `drop-target-${suffix}`;
+  const directoryRes = await page.request.post(`/api/orgs/${organization.id}/workspace/directory`, {
+    data: { directoryPath },
+  });
+  expect(directoryRes.ok()).toBe(true);
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/library`);
+  const filesCard = page.getByTestId("org-workspaces-files-card");
+  await expect(filesCard).toBeVisible();
+  const targetFolder = filesCard.getByRole("button", { name: directoryPath, exact: true });
+  await expect(targetFolder).toBeVisible();
+
+  const createResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST"
+      && response.url().includes(`/api/orgs/${organization.id}/workspace/file`)
+      && response.status() === 201,
+    { timeout: 5_000 },
+  );
+
+  await targetFolder.dispatchEvent("dragover", {
+    dataTransfer: await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["# Dropped README\n\nImported through drag and drop.\n"], "README.md", {
+        type: "text/markdown",
+      }));
+      return transfer;
+    }),
+  });
+  await targetFolder.dispatchEvent("drop", {
+    dataTransfer: await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["# Dropped README\n\nImported through drag and drop.\n"], "README.md", {
+        type: "text/markdown",
+      }));
+      return transfer;
+    }),
+  });
+
+  await createResponse;
+  await expect(filesCard).toContainText("README.md");
+  const importedPath = `${directoryPath}/README.md`;
+
+  const fileRes = await page.request.get(
+    `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(importedPath)}`,
+  );
+  expect(fileRes.ok()).toBe(true);
+  const file = await fileRes.json() as { filePath: string; content: string | null };
+  expect(file.filePath).toBe(importedPath);
+  expect(file.content).toContain("Imported through drag and drop.");
+
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(importedPath)}`);
+  await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText("README.md", { timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Dropped README" })).toBeVisible();
+
+  await filesCard.dispatchEvent("drop", {
+    dataTransfer: await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["%PDF-1.7"], "brief.pdf", {
+        type: "application/pdf",
+      }));
+      return transfer;
+    }),
+  });
+  await expect(page.getByText("Only text, Markdown, and code files can be imported.")).toBeVisible();
+
+  const partialCreateResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST"
+      && response.url().includes(`/api/orgs/${organization.id}/workspace/file`)
+      && response.status() === 201,
+    { timeout: 5_000 },
+  );
+
+  await targetFolder.dispatchEvent("drop", {
+    dataTransfer: await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["# Duplicate README\n"], "README.md", {
+        type: "text/markdown",
+      }));
+      transfer.items.add(new File(["# Imported changelog\n\nPartial success stays visible.\n"], "CHANGELOG.md", {
+        type: "text/markdown",
+      }));
+      return transfer;
+    }),
+  });
+
+  await partialCreateResponse;
+  await expect(page.getByText("Imported 1 of 2 files")).toBeVisible();
+
+  const partialPath = `${directoryPath}/CHANGELOG.md`;
+  const partialFileRes = await page.request.get(
+    `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(partialPath)}`,
+  );
+  expect(partialFileRes.ok()).toBe(true);
+  const partialFile = await partialFileRes.json() as { filePath: string; content: string | null };
+  expect(partialFile.filePath).toBe(partialPath);
+  expect(partialFile.content).toContain("Partial success stays visible.");
+});
+
 test("Library markdown file links open as retained editor tabs", async ({ page }) => {
   const suffix = Date.now();
   const orgRes = await page.request.post("/api/orgs", {

@@ -7,7 +7,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useDialog } from "@/context/DialogContext";
-import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath, toOrganizationRelativePath } from "@/lib/organization-routes";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import type { Agent, IssueComment } from "@rudderhq/shared";
 import { buildIssueMentionHref } from "@rudderhq/shared";
@@ -31,6 +31,9 @@ import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
+const COMMENT_HASH_SCROLL_RETRY_DELAYS_MS = [120, 360, 900] as const;
+const COMMENT_SCROLL_CENTER_TOLERANCE_PX = 24;
+const COMMENT_SCROLL_USER_OVERRIDE_TOLERANCE_PX = 8;
 
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
@@ -150,6 +153,61 @@ function shouldSkipRunRowNavigation(target: EventTarget | null): boolean {
   return target instanceof Element
     ? Boolean(target.closest("a, button, [data-run-details]"))
     : false;
+}
+
+function findScrollContainer(element: HTMLElement) {
+  let current = element.parentElement;
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const overflow = `${style.overflow} ${style.overflowY}`;
+    if (/(auto|scroll|overlay)/.test(overflow)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function scrollCommentElementToCenter(element: HTMLElement, behavior: ScrollBehavior) {
+  const container = findScrollContainer(element);
+  if (!container || typeof container.scrollTo !== "function") {
+    element.scrollIntoView({ behavior, block: "center", inline: "nearest" });
+    return { container: null, scrollTop: null };
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const nextTop = container.scrollTop
+    + (elementRect.top - containerRect.top)
+    - ((container.clientHeight - elementRect.height) / 2);
+
+  container.scrollTo({
+    top: Math.max(0, nextTop),
+    behavior,
+  });
+  return {
+    container,
+    scrollTop: Math.max(0, nextTop),
+  };
+}
+
+function measureCommentCenterDelta(element: HTMLElement) {
+  const container = findScrollContainer(element);
+  const elementRect = element.getBoundingClientRect();
+  const elementCenter = elementRect.top + elementRect.height / 2;
+  if (!container) return Math.abs(elementCenter - window.innerHeight / 2);
+
+  const containerRect = container.getBoundingClientRect();
+  return Math.abs(elementCenter - (containerRect.top + containerRect.height / 2));
+}
+
+function rememberMainScrollTopForPath(pathname: string, scrollTop: number | null) {
+  if (scrollTop === null || typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(`workspace-main:${toOrganizationRelativePath(pathname)}`, String(scrollTop));
+  } catch {
+    // Ignore restricted storage; the scroll itself already happened.
+  }
 }
 
 export function extractIssueRouteRefFromPathname(pathname: string) {
@@ -889,6 +947,9 @@ export function CommentThread({
   const navigate = useNavigate();
   const lastHandledCommentHashRef = useRef<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingScrollAnimationFramesRef = useRef<number[]>([]);
+  const pendingScrollRetryTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const lastCommentScrollRef = useRef<{ container: HTMLElement | null; scrollTop: number | null } | null>(null);
   const visibleComments = useMemo(() => comments.filter((comment) => !comment.deletedAt), [comments]);
   const currentIssueId = visibleComments[0]?.issueId ?? null;
 
@@ -999,29 +1060,64 @@ export function CommentThread({
     setBody(loadDraft(draftKey));
   }, [draftKey]);
 
+  const clearPendingCommentScroll = useCallback(() => {
+    if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+      for (const frame of pendingScrollAnimationFramesRef.current) {
+        window.cancelAnimationFrame(frame);
+      }
+    }
+    pendingScrollAnimationFramesRef.current = [];
+    for (const timer of pendingScrollRetryTimersRef.current) {
+      clearTimeout(timer);
+    }
+    pendingScrollRetryTimersRef.current = [];
+    lastCommentScrollRef.current = null;
+  }, []);
+
   useEffect(() => {
     return () => {
+      clearPendingCommentScroll();
       if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     };
-  }, []);
+  }, [clearPendingCommentScroll]);
 
   useEffect(() => {
     setReopen(canReopen);
   }, [canReopen]);
 
-  const scrollToComment = useCallback((commentId: string) => {
+  const scrollToComment = useCallback((commentId: string, behavior: ScrollBehavior = "smooth", options: { retry?: boolean } = {}) => {
     const el = document.getElementById(`comment-${commentId}`);
     if (!el) return false;
 
+    const previousScroll = lastCommentScrollRef.current;
+    if (
+      options.retry &&
+      previousScroll?.container &&
+      previousScroll.scrollTop !== null &&
+      Math.abs(previousScroll.container.scrollTop - previousScroll.scrollTop) > COMMENT_SCROLL_USER_OVERRIDE_TOLERANCE_PX
+    ) {
+      clearPendingCommentScroll();
+      return false;
+    }
+    if (options.retry && measureCommentCenterDelta(el) <= COMMENT_SCROLL_CENTER_TOLERANCE_PX) {
+      clearPendingCommentScroll();
+      return true;
+    }
+
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     setHighlightCommentId(commentId);
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const result = scrollCommentElementToCenter(el, behavior);
+    lastCommentScrollRef.current = {
+      container: result.container,
+      scrollTop: result.scrollTop,
+    };
+    rememberMainScrollTopForPath(location.pathname, result.scrollTop);
     highlightTimerRef.current = setTimeout(() => {
       setHighlightCommentId(null);
       highlightTimerRef.current = null;
     }, 3000);
     return true;
-  }, []);
+  }, [clearPendingCommentScroll, location.pathname]);
 
   const handleMarkdownLinkClick = useCallback<MarkdownLinkClickHandler>(({ event, href }) => {
     if (
@@ -1074,11 +1170,30 @@ export function CommentThread({
     if (!commentId || visibleComments.length === 0) return;
     const navigationKey = `${location.key}:${hash}`;
     if (lastHandledCommentHashRef.current === navigationKey) return;
+    clearPendingCommentScroll();
 
-    if (scrollToComment(commentId)) {
+    if (scrollToComment(commentId, "auto")) {
       lastHandledCommentHashRef.current = navigationKey;
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        const firstFrame = window.requestAnimationFrame(() => {
+          const secondFrame = window.requestAnimationFrame(() => {
+            scrollToComment(commentId, "auto", { retry: true });
+            pendingScrollAnimationFramesRef.current = pendingScrollAnimationFramesRef.current.filter((frame) => frame !== secondFrame);
+          });
+          pendingScrollAnimationFramesRef.current.push(secondFrame);
+          pendingScrollAnimationFramesRef.current = pendingScrollAnimationFramesRef.current.filter((frame) => frame !== firstFrame);
+        });
+        pendingScrollAnimationFramesRef.current.push(firstFrame);
+      }
+      for (const delay of COMMENT_HASH_SCROLL_RETRY_DELAYS_MS) {
+        const timer = setTimeout(() => {
+          scrollToComment(commentId, "auto", { retry: true });
+          pendingScrollRetryTimersRef.current = pendingScrollRetryTimersRef.current.filter((item) => item !== timer);
+        }, delay);
+        pendingScrollRetryTimersRef.current.push(timer);
+      }
     }
-  }, [location.hash, location.key, scrollToComment, visibleComments.length]);
+  }, [clearPendingCommentScroll, location.hash, location.key, scrollToComment, visibleComments.length]);
 
   async function handleSubmit() {
     const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;

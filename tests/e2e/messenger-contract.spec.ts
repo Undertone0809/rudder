@@ -1255,6 +1255,20 @@ test.describe("Messenger unified threads contract", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    await e2eDb.insert(issueComments).values(
+      Array.from({ length: 16 }, (_, index) => {
+        const createdAt = new Date(baseTime + (index + 1) * 12_000);
+        return {
+          id: randomUUID(),
+          orgId: organization.id,
+          issueId: issue.id,
+          authorAgentId: commenterAgentId,
+          body: `Earlier sidebar context ${index + 1}: enough activity to require a precise comment jump.`,
+          createdAt,
+          updatedAt: createdAt,
+        };
+      }),
+    );
     await e2eDb.insert(issueComments).values({
       id: commentId,
       orgId: organization.id,
@@ -1264,6 +1278,20 @@ test.describe("Messenger unified threads contract", () => {
       createdAt: commentAt,
       updatedAt: commentAt,
     });
+    await e2eDb.insert(issueComments).values(
+      Array.from({ length: 8 }, (_, index) => {
+        const createdAt = new Date(commentAt.getTime() + (index + 1) * 12_000);
+        return {
+          id: randomUUID(),
+          orgId: organization.id,
+          issueId: issue.id,
+          authorUserId: currentUserId,
+          body: `Later board note ${index + 1}: this should not replace the agent notification target.`,
+          createdAt,
+          updatedAt: createdAt,
+        };
+      }),
+    );
     await e2eDb.update(chatConversations)
       .set({
         lastMessageAt: new Date(baseTime + 10 * 60_000),
@@ -1362,6 +1390,26 @@ test.describe("Messenger unified threads contract", () => {
     const highlightedComment = page.locator(`#comment-${commentId}`);
     await expect(highlightedComment).toBeVisible({ timeout: 15_000 });
     await expect(highlightedComment).toHaveClass(/bg-primary\/5/);
+    await expect.poll(async () => {
+      return highlightedComment.evaluate((node) => {
+        let scrollContainer = node.parentElement;
+        while (scrollContainer) {
+          const style = window.getComputedStyle(scrollContainer);
+          const overflow = `${style.overflow} ${style.overflowY}`;
+          if (/(auto|scroll|overlay)/.test(overflow) && scrollContainer.scrollHeight > scrollContainer.clientHeight + 1) {
+            break;
+          }
+          scrollContainer = scrollContainer.parentElement;
+        }
+        const rect = node.getBoundingClientRect();
+        const commentCenter = rect.top + rect.height / 2;
+        const containerRect = scrollContainer?.getBoundingClientRect();
+        const containerCenter = containerRect ? containerRect.top + containerRect.height / 2 : window.innerHeight / 2;
+        return Math.round(Math.abs(commentCenter - containerCenter));
+      });
+    }, {
+      message: "target comment should be centered after opening the Messenger issue notification",
+    }).toBeLessThan(180);
     await expect.poll(async () => {
       const rows = await e2eDb
         .select({ lastReadAt: messengerThreadUserStates.lastReadAt })

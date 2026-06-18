@@ -7,7 +7,8 @@ import { InlineEntitySelector, type InlineEntityOption } from "@/components/Inli
 import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorProps, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { PriorityIcon } from "@/components/PriorityIcon";
-import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
+import { RudderEntityPreview } from "@/components/RudderEntityPreview";
+import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TextDots } from "@/components/TextDots";
 import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
@@ -22,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { type ChatStreamDraftState } from "@/context/ChatGenerationContext";
+import { useMarkdownMentions } from "@/context/MarkdownMentionsContext";
 import { agentTitleBadgeLabel } from "@/lib/agent-labels";
 import {
   assigneeValueFromSelection,
@@ -38,7 +40,10 @@ import {
   formatChatProcessDuration,
   lastTranscriptAtMs
 } from "@/lib/chat-process-duration";
+import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "@/lib/mention-chips";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 import { Link } from "@/lib/router";
+import { formatSkillReferenceDisplayLabel, parseSkillReference } from "@/lib/skill-reference";
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import {
@@ -65,7 +70,7 @@ import {
   RotateCcw,
   Sparkles
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, AttachmentPreviewState, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, statusChipClassName } from "./Chat.parts";
 
 export function ChatAssistantAttributionRow({
@@ -540,7 +545,11 @@ export function ProposalCard({
         data-testid="proposal-review-block"
         data-status={reviewStatus ?? "default"}
         data-kind={proposalKind}
-        className="chat-review-block mt-4 max-w-[860px] rounded-[var(--radius-lg)] text-foreground transition-all duration-200"
+        data-active-surface={actionPending ? "proposal-action" : undefined}
+        className={cn(
+          "chat-review-block mt-4 max-w-[860px] rounded-[var(--radius-lg)] text-foreground transition-all duration-200",
+          actionPending && "active-surface-ring",
+        )}
       >
         <div
           className={cn(
@@ -897,6 +906,305 @@ export function ChatLongMessageBody({
           {body}
         </MarkdownBody>
       </div>
+    </div>
+  );
+}
+
+type ChatUserPlainTextPart =
+  | { kind: "text"; text: string }
+  | { kind: "link"; href: string; label: string }
+  | { kind: "mention"; href: string; label: string; mention: ParsedMentionChip }
+  | { kind: "skill"; href: string; label: string };
+
+function currentOrganizationPrefixFromLocation(): string | null {
+  if (typeof window === "undefined") return null;
+  return extractOrganizationPrefixFromPath(window.location.pathname);
+}
+
+function findClosingMarkdownToken(source: string, token: string, fromIndex: number) {
+  const index = source.indexOf(token, fromIndex);
+  return index >= 0 ? index : null;
+}
+
+function findClosingMarkdownParen(source: string, fromIndex: number) {
+  let escaped = false;
+  for (let index = fromIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === ")") return index;
+  }
+  return null;
+}
+
+function unescapeMarkdownLinkLabel(value: string) {
+  return value.replace(/\\([\\[\]])/gu, "$1");
+}
+
+function normalizeBareLinkHref(value: string) {
+  return value.startsWith("www.") ? `https://${value}` : value;
+}
+
+function splitTrailingBareLinkPunctuation(value: string) {
+  const match = value.match(/^(.+?)([),.!?:;]+)?$/u);
+  return {
+    linkText: match?.[1] ?? value,
+    trailing: match?.[2] ?? "",
+  };
+}
+
+function pushLiteralTextParts(parts: ChatUserPlainTextPart[], text: string) {
+  const linkRe = /(?:https?:\/\/|www\.)[^\s<>"']+/giu;
+  let cursor = 0;
+  for (const match of text.matchAll(linkRe)) {
+    const index = match.index ?? 0;
+    const rawMatch = match[0];
+    if (index > cursor) {
+      parts.push({ kind: "text", text: text.slice(cursor, index) });
+    }
+    const { linkText, trailing } = splitTrailingBareLinkPunctuation(rawMatch);
+    if (linkText) {
+      parts.push({ kind: "link", href: normalizeBareLinkHref(linkText), label: linkText });
+    }
+    if (trailing) {
+      parts.push({ kind: "text", text: trailing });
+    }
+    cursor = index + rawMatch.length;
+  }
+  if (cursor < text.length) {
+    parts.push({ kind: "text", text: text.slice(cursor) });
+  }
+}
+
+function isRenderablePlainLinkHref(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("/") || trimmed.startsWith("#")) return true;
+  if (/^(?:https?:\/\/|mailto:|file:\/\/)/iu.test(trimmed)) return true;
+  return !/^[a-z][a-z\d+.-]*:/iu.test(trimmed) && !/[\s<>]/u.test(trimmed);
+}
+
+function renderedPlainLinkHref(href: string, organizationPrefix: string | null | undefined) {
+  if (href.startsWith("/") && !href.startsWith("//")) {
+    return applyOrganizationPrefix(href, organizationPrefix);
+  }
+  return href;
+}
+
+function splitChatUserPlainTextParts(source: string): ChatUserPlainTextPart[] {
+  const parts: ChatUserPlainTextPart[] = [];
+  let cursor = 0;
+  let textStart = 0;
+
+  function pushText(end: number) {
+    if (end > textStart) {
+      pushLiteralTextParts(parts, source.slice(textStart, end));
+    }
+  }
+
+  while (cursor < source.length) {
+    if (source[cursor] !== "[" || source[cursor - 1] === "!") {
+      cursor += 1;
+      continue;
+    }
+
+    const closeBracket = findClosingMarkdownToken(source, "]", cursor + 1);
+    if (closeBracket === null || source[closeBracket + 1] !== "(") {
+      cursor += 1;
+      continue;
+    }
+
+    const closeParen = findClosingMarkdownParen(source, closeBracket + 2);
+    if (closeParen === null) {
+      cursor += 1;
+      continue;
+    }
+
+    const rawLabel = source.slice(cursor + 1, closeBracket);
+    const href = source.slice(closeBracket + 2, closeParen).trim();
+    const label = unescapeMarkdownLinkLabel(rawLabel);
+    const mention = parseMentionChipHref(href);
+    if (mention) {
+      pushText(cursor);
+      parts.push({ kind: "mention", href, label: stripMentionChipLabelPrefix(label), mention });
+      cursor = closeParen + 1;
+      textStart = cursor;
+      continue;
+    }
+
+    const skillReference = parseSkillReference(href, label);
+    if (skillReference) {
+      pushText(cursor);
+      parts.push({ kind: "skill", href: skillReference.href, label: skillReference.label });
+      cursor = closeParen + 1;
+      textStart = cursor;
+      continue;
+    }
+
+    if (isRenderablePlainLinkHref(href)) {
+      pushText(cursor);
+      parts.push({ kind: "link", href, label });
+      cursor = closeParen + 1;
+      textStart = cursor;
+      continue;
+    }
+
+    cursor += 1;
+  }
+
+  pushText(source.length);
+  return parts.length > 0 ? parts : [{ kind: "text", text: source }];
+}
+
+function normalizeSkillReferenceLookupKey(value: string | null | undefined) {
+  return value?.trim().replace(/\/+$/u, "").toLowerCase() ?? "";
+}
+
+function resolvedMentionFromCurrentOptions(mention: ParsedMentionChip, mentions: MentionOption[]): ParsedMentionChip {
+  if (mention.kind === "agent") {
+    const current = mentions.find((option) => option.kind === "agent" && option.agentId === mention.agentId);
+    return { ...mention, icon: current?.agentIcon ?? mention.icon };
+  }
+  if (mention.kind === "project") {
+    const current = mentions.find((option) => option.kind === "project" && option.projectId === mention.projectId);
+    return { ...mention, color: current?.projectColor ?? mention.color, icon: current?.projectIcon ?? mention.icon };
+  }
+  if (mention.kind === "issue") {
+    const current = mentions.find((option) => option.kind === "issue" && option.issueId === mention.issueId);
+    return { ...mention, status: current?.issueStatus ?? mention.status };
+  }
+  return mention;
+}
+
+function resolvedMentionLabel(mention: ParsedMentionChip, fallbackLabel: string, mentions: MentionOption[]) {
+  if (mention.kind === "agent") {
+    return mentions.find((option) => option.kind === "agent" && option.agentId === mention.agentId)?.name ?? fallbackLabel;
+  }
+  if (mention.kind === "project") {
+    return mentions.find((option) => option.kind === "project" && option.projectId === mention.projectId)?.name ?? fallbackLabel;
+  }
+  if (mention.kind === "issue") {
+    const current = mentions.find((option) => option.kind === "issue" && option.issueId === mention.issueId)?.name;
+    return mention.commentId ? fallbackLabel || current || mention.issueId : current ?? fallbackLabel;
+  }
+  if (mention.kind === "chat") {
+    return mentions.find((option) => option.kind === "chat" && option.chatConversationId === mention.conversationId)?.name ?? fallbackLabel;
+  }
+  if (mention.kind === "library_doc") {
+    return mentions.find((option) => option.kind === "library_doc" && option.libraryDocumentId === mention.documentId)?.name ?? fallbackLabel;
+  }
+  if (mention.kind === "library_entry") {
+    return mentions.find((option) => option.kind === "library_file" && option.libraryEntryId === mention.entryId)?.name ?? fallbackLabel;
+  }
+  if (mention.kind === "library_file") {
+    return mentions.find((option) => option.kind === "library_file" && option.libraryFilePath === mention.filePath)?.name ?? fallbackLabel;
+  }
+  if (mention.kind === "library_directory") {
+    return mentions.find((option) => option.kind === "library_directory" && option.libraryDirectoryPath === mention.directoryPath)?.name ?? fallbackLabel;
+  }
+  return fallbackLabel;
+}
+
+export function ChatUserPlainTextBody({
+  body,
+  skillReferences,
+  onMarkdownLinkClick,
+  className,
+}: {
+  body: string;
+  skillReferences: MarkdownSkillReferencePreview[];
+  onMarkdownLinkClick?: MarkdownLinkClickHandler;
+  className?: string;
+}) {
+  const { mentions } = useMarkdownMentions();
+  const organizationPrefix = currentOrganizationPrefixFromLocation();
+  const parts = useMemo(() => splitChatUserPlainTextParts(body), [body]);
+  const skillPreviewByHref = useMemo(
+    () => new Map(
+      (skillReferences ?? [])
+        .map((preview) => [normalizeSkillReferenceLookupKey(preview.href), preview] as const)
+        .filter(([key]) => key.length > 0),
+    ),
+    [skillReferences],
+  );
+  const skillPreviewByLabel = useMemo(
+    () => new Map(
+      (skillReferences ?? [])
+        .map((preview) => [normalizeSkillReferenceLookupKey(preview.label), preview] as const)
+        .filter(([key]) => key.length > 0),
+    ),
+    [skillReferences],
+  );
+  const handlePlainTextLinkClick = (event: ReactMouseEvent<HTMLAnchorElement>, href: string, label: string) => {
+    const handled = onMarkdownLinkClick?.({ event, href, label });
+    if (handled) {
+      event.preventDefault();
+    }
+  };
+
+  return (
+    <div className={cn("min-w-0 whitespace-pre-wrap break-words", className)}>
+      {parts.map((part, index) => {
+        if (part.kind === "text") {
+          return <span key={index}>{part.text}</span>;
+        }
+        if (part.kind === "link") {
+          const href = renderedPlainLinkHref(part.href, organizationPrefix);
+          const isExternal = /^(?:https?:\/\/|mailto:|\/\/)/iu.test(href);
+          return (
+            <a
+              key={`${part.href}-${index}`}
+              href={href}
+              target={isExternal ? "_blank" : undefined}
+              rel={isExternal ? "noreferrer noopener" : "noreferrer"}
+              onClick={(event) => handlePlainTextLinkClick(event, href, part.label)}
+            >
+              {part.label}
+            </a>
+          );
+        }
+        if (part.kind === "skill") {
+          const preview =
+            skillPreviewByHref.get(normalizeSkillReferenceLookupKey(part.href))
+            ?? skillPreviewByLabel.get(normalizeSkillReferenceLookupKey(part.label))
+            ?? null;
+          const skillLabel = formatSkillReferenceDisplayLabel(preview?.label) || part.label;
+          return <SkillReferenceToken key={`${part.href}-${index}`} label={skillLabel} preview={preview} />;
+        }
+
+        const mention = resolvedMentionFromCurrentOptions(part.mention, mentions);
+        const mentionLabel = resolvedMentionLabel(mention, part.label, mentions);
+        const targetHref = applyOrganizationPrefix(mentionChipNavigationPath(mention), organizationPrefix);
+        const mentionLink = (
+          <Link
+            key={`${part.href}-${index}`}
+            to={targetHref}
+            className={cn(
+              "rudder-mention-chip",
+              `rudder-mention-chip--${mention.kind}`,
+              mention.kind === "project" && "rudder-project-mention-chip",
+              mention.kind === "issue" && mention.status && "rudder-mention-chip--with-status-icon",
+            )}
+            data-mention-kind={mention.kind}
+            data-mention-status={mention.kind === "issue" && mention.status ? mention.status : undefined}
+            style={mentionChipInlineStyle(mention)}
+          >
+            {mentionLabel}
+          </Link>
+        );
+        if (mention.kind === "chat") return mentionLink;
+        return (
+          <RudderEntityPreview key={`${part.href}-${index}`} mention={mention} label={mentionLabel}>
+            {mentionLink}
+          </RudderEntityPreview>
+        );
+      })}
     </div>
   );
 }
@@ -1855,7 +2163,7 @@ export function ChatMessageItem({
             data-testid="chat-user-message-bubble"
             className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
           >
-            <ChatLongMessageBody
+            <ChatUserPlainTextBody
               body={message.body}
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}

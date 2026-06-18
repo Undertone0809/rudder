@@ -84,7 +84,7 @@ import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTar
 import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
 import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { libraryCopy } from "../lib/library-copy";
-import { getCachedLibraryEntryMetadata, loadLibraryEntryMetadata } from "../lib/library-entry-cache";
+import { getCachedLibraryEntryMetadata } from "../lib/library-entry-cache";
 import { parseMentionChipHref } from "../lib/mention-chips";
 import { queryKeys } from "../lib/queryKeys";
 import {
@@ -120,6 +120,37 @@ const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
 const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
+const WORKSPACE_TEXT_IMPORT_FILE_EXTENSIONS = new Set([
+  ...WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS,
+  ".css",
+  ".csv",
+  ".html",
+  ".htm",
+  ".js",
+  ".json",
+  ".jsx",
+  ".log",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".xml",
+  ".yaml",
+  ".yml",
+]);
+const WORKSPACE_TEXT_IMPORT_CONTENT_TYPES = new Set([
+  "application/json",
+  "application/javascript",
+  "application/typescript",
+  "application/xml",
+  "application/x-yaml",
+  "text/csv",
+  "text/html",
+  "text/javascript",
+  "text/markdown",
+  "text/plain",
+  "text/xml",
+  "text/yaml",
+]);
 const PROTECTED_AGENT_INSTRUCTIONS_FILE_NAMES = new Set(["HEARTBEAT.MD", "MEMORY.MD", "SOUL.MD", "TOOLS.MD"]);
 const PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES = new Set(["memory", "skills"]);
 const AGENT_MENTION_MARKDOWN_LINK_RE = /\[([^\]]*)]\((agent:\/\/[^)\s]+)\)/g;
@@ -720,6 +751,26 @@ function hasWorkspaceDragPayload(dataTransfer: DataTransfer) {
   return Array.from(dataTransfer.types).includes(WORKSPACE_ENTRY_DND_MIME);
 }
 
+function hasExternalFileDragPayload(dataTransfer: DataTransfer) {
+  return Array.from(dataTransfer.types).includes("Files") || dataTransfer.files.length > 0;
+}
+
+function isWorkspaceTextImportFile(file: File) {
+  const contentType = file.type.toLowerCase().split(";")[0]?.trim() ?? "";
+  if (contentType.startsWith("text/") || WORKSPACE_TEXT_IMPORT_CONTENT_TYPES.has(contentType)) return true;
+  const extension = getWorkspaceFileExtension(file.name);
+  return extension !== null && WORKSPACE_TEXT_IMPORT_FILE_EXTENSIONS.has(extension);
+}
+
+function getWorkspaceImportDropFiles(dataTransfer: DataTransfer) {
+  const files = Array.from(dataTransfer.files);
+  const supported = files.filter((file) => isValidWorkspaceEntryName(file.name) && isWorkspaceTextImportFile(file));
+  return {
+    supported,
+    unsupportedCount: files.length - supported.length,
+  };
+}
+
 function isDraggingOverWorkspaceTreeEntry(event: DragEvent<HTMLElement>) {
   return event.target instanceof HTMLElement && Boolean(event.target.closest(WORKSPACE_TREE_ENTRY_SELECTOR));
 }
@@ -807,6 +858,31 @@ function isValidWorkspaceEntryName(name: string) {
 
 function joinWorkspaceEntryPath(parentPath: string, name: string) {
   return parentPath ? `${parentPath}/${name}` : name;
+}
+
+async function createWorkspaceFilesFromDroppedFiles(
+  orgId: string,
+  destinationDirectoryPath: string,
+  files: File[],
+) {
+  const imported: OrganizationWorkspaceFileDetail[] = [];
+  const failed: Array<{ fileName: string; filePath: string; message: string }> = [];
+  for (const file of files) {
+    const filePath = joinWorkspaceEntryPath(destinationDirectoryPath, file.name);
+    try {
+      imported.push(await organizationsApi.createWorkspaceFile(orgId, {
+        filePath,
+        content: await file.text(),
+      }));
+    } catch (error) {
+      failed.push({
+        fileName: file.name,
+        filePath,
+        message: error instanceof Error ? error.message : "Failed to import file",
+      });
+    }
+  }
+  return { imported, failed };
 }
 
 function joinWorkspacePath(rootPath: string | null, entryPath: string) {
@@ -981,6 +1057,7 @@ function DirectoryChildren({
   onStartRename,
   onStartDelete,
   onMoveEntry,
+  onImportFiles,
   onAddResources,
   onCopyResourceLocator,
   onOpenResource,
@@ -1011,6 +1088,7 @@ function DirectoryChildren({
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
+  onImportFiles: (files: File[], destinationDirectoryPath: string, unsupportedCount?: number) => void;
   onAddResources: (project: Project) => void;
   onCopyResourceLocator: (attachment: ProjectResourceAttachment) => void;
   onOpenResource: (attachment: ProjectResourceAttachment) => void;
@@ -1056,6 +1134,7 @@ function DirectoryChildren({
           onStartRename={onStartRename}
           onStartDelete={onStartDelete}
           onMoveEntry={onMoveEntry}
+          onImportFiles={onImportFiles}
           onAddResources={onAddResources}
           onCopyResourceLocator={onCopyResourceLocator}
           onOpenResource={onOpenResource}
@@ -1092,6 +1171,7 @@ function WorkspaceTreeNode({
   onStartRename,
   onStartDelete,
   onMoveEntry,
+  onImportFiles,
   onAddResources,
   onCopyResourceLocator,
   onOpenResource,
@@ -1122,6 +1202,7 @@ function WorkspaceTreeNode({
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
+  onImportFiles: (files: File[], destinationDirectoryPath: string, unsupportedCount?: number) => void;
   onAddResources: (project: Project) => void;
   onCopyResourceLocator: (attachment: ProjectResourceAttachment) => void;
   onOpenResource: (attachment: ProjectResourceAttachment) => void;
@@ -1171,9 +1252,11 @@ function WorkspaceTreeNode({
     setWorkspaceEntryDragImage(event);
   };
   const handleDragOver = (event: DragEvent<HTMLElement>) => {
-    if (!canDropIntoDirectory || !hasWorkspaceDragPayload(event.dataTransfer)) return;
+    if (!canDropIntoDirectory) return;
+    const hasExternalFiles = hasExternalFileDragPayload(event.dataTransfer);
+    if (!hasWorkspaceDragPayload(event.dataTransfer) && !hasExternalFiles) return;
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    event.dataTransfer.dropEffect = hasExternalFiles ? "copy" : "move";
     setDropActive(true);
   };
   const handleDragLeave = (event: DragEvent<HTMLElement>) => {
@@ -1186,6 +1269,12 @@ function WorkspaceTreeNode({
     event.preventDefault();
     event.stopPropagation();
     setDropActive(false);
+    if (hasExternalFileDragPayload(event.dataTransfer)) {
+      const { supported, unsupportedCount } = getWorkspaceImportDropFiles(event.dataTransfer);
+      onImportFiles(supported, entry.path, unsupportedCount);
+      setExpanded(true);
+      return;
+    }
     const source = parseWorkspaceDragEntry(event);
     if (!source) return;
     if (!canDropWorkspaceEntryIntoDirectory(source, entry.path)) return;
@@ -1461,6 +1550,7 @@ function WorkspaceTreeNode({
               onStartRename={onStartRename}
               onStartDelete={onStartDelete}
               onMoveEntry={onMoveEntry}
+              onImportFiles={onImportFiles}
               onAddResources={onAddResources}
               onCopyResourceLocator={onCopyResourceLocator}
               onOpenResource={onOpenResource}
@@ -2194,7 +2284,6 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
   const [rootDropActive, setRootDropActive] = useState(false);
   const [draggedEntryPath, setDraggedEntryPath] = useState<string | null>(null);
   const [activeEntryPath, setActiveEntryPath] = useState<string | null>(selectedFilePath ?? requestedDirectoryPath);
-  const cachedRequestedEntry = getCachedLibraryEntryMetadata(viewedOrganizationId, requestedEntryId);
 
   const rootQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", ""),
@@ -2204,9 +2293,8 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
   });
   const libraryEntryQuery = useQuery({
     queryKey: queryKeys.organizations.libraryEntry(viewedOrganizationId ?? "__none__", requestedEntryId ?? ""),
-    queryFn: () => loadLibraryEntryMetadata(viewedOrganizationId!, requestedEntryId!),
+    queryFn: () => organizationsApi.getLibraryEntry(viewedOrganizationId!, requestedEntryId!),
     enabled: !!viewedOrganizationId && !!requestedEntryId,
-    initialData: () => cachedRequestedEntry ?? undefined,
     refetchOnWindowFocus: false,
   });
   const projectResourceTree = useProjectResourceTreeGroups(viewedOrganizationId);
@@ -2365,6 +2453,62 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
     onError: (error) => {
       pushToast({
         title: error instanceof Error ? error.message : "Failed to create workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
+  const importWorkspaceFiles = useMutation({
+    mutationFn: async (payload: { files: File[]; destinationDirectoryPath: string; unsupportedCount?: number }) => {
+      requestWorkspaceDraftFlush();
+      const result = await createWorkspaceFilesFromDroppedFiles(
+        viewedOrganizationId!,
+        payload.destinationDirectoryPath,
+        payload.files,
+      );
+      return { ...result, unsupportedCount: payload.unsupportedCount ?? 0 };
+    },
+    onSuccess: ({ imported, failed, unsupportedCount }) => {
+      if (!viewedOrganizationId) return;
+      if (imported.length > 0) {
+        void invalidateWorkspaceBrowser();
+        for (const result of imported) {
+          queryClient.setQueryData(
+            queryKeys.organizations.workspaceFile(viewedOrganizationId, result.filePath),
+            result,
+          );
+        }
+      }
+      const lastResult = imported.at(-1);
+      if (lastResult) {
+        setActiveEntryPath(lastResult.filePath);
+        updateSelectedPath(searchParams, setSearchParams, lastResult.filePath);
+      }
+      const failedSummary = [
+        ...failed.map((failure) => `${failure.fileName}: ${failure.message}`),
+        ...(unsupportedCount > 0 ? [`${unsupportedCount} unsupported file${unsupportedCount === 1 ? "" : "s"}`] : []),
+      ].join(", ");
+      if (imported.length === 0) {
+        pushToast({
+          title: "No files imported",
+          body: failedSummary || "Only text, Markdown, and code files can be imported.",
+          tone: failed.length > 0 ? "error" : "warn",
+        });
+        return;
+      }
+      pushToast({
+        title: failed.length > 0 || unsupportedCount > 0
+          ? `Imported ${imported.length} of ${imported.length + failed.length + unsupportedCount} files`
+          : imported.length === 1 ? "File imported" : `${imported.length} files imported`,
+        body: failedSummary
+          ? `${imported.map((result) => result.filePath).join(", ")}. Failed: ${failedSummary}`
+          : imported.map((result) => result.filePath).join(", "),
+        tone: failed.length > 0 || unsupportedCount > 0 ? "warn" : "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to import files",
         tone: "error",
       });
     },
@@ -2677,14 +2821,29 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
     moveWorkspaceEntry.mutate({ entry, destinationDirectoryPath });
   }
 
+  function handleImportFiles(files: File[], destinationDirectoryPath: string, unsupportedCount = 0) {
+    setRootDropActive(false);
+    if (files.length === 0) {
+      if (unsupportedCount > 0) {
+        pushToast({
+          title: "No files imported",
+          body: "Only text, Markdown, and code files can be imported.",
+          tone: "warn",
+        });
+      }
+      return;
+    }
+    importWorkspaceFiles.mutate({ files, destinationDirectoryPath, unsupportedCount });
+  }
+
   function handleRootDragOver(event: DragEvent<HTMLElement>) {
-    if (!hasWorkspaceDragPayload(event.dataTransfer)) return;
+    if (!hasWorkspaceDragPayload(event.dataTransfer) && !hasExternalFileDragPayload(event.dataTransfer)) return;
     if (isDraggingOverWorkspaceTreeEntry(event)) {
       setRootDropActive(false);
       return;
     }
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    event.dataTransfer.dropEffect = hasExternalFileDragPayload(event.dataTransfer) ? "copy" : "move";
     setRootDropActive(true);
   }
 
@@ -2697,6 +2856,11 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
   function handleRootDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
     setRootDropActive(false);
+    if (hasExternalFileDragPayload(event.dataTransfer)) {
+      const { supported, unsupportedCount } = getWorkspaceImportDropFiles(event.dataTransfer);
+      handleImportFiles(supported, "", unsupportedCount);
+      return;
+    }
     const source = parseWorkspaceDragEntry(event);
     if (!source || !canDropWorkspaceEntryIntoDirectory(source, "")) return;
     handleMoveEntry(source, "");
@@ -2789,9 +2953,11 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
 
         <section
           data-testid="org-workspaces-files-card"
+          data-active-surface={importWorkspaceFiles.isPending ? "workspace-import" : undefined}
           className={cn(
             "flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border transition-colors",
             rootDropActive && "bg-[#2f80ed]/5 ring-1 ring-inset ring-[#2f80ed]/25",
+            importWorkspaceFiles.isPending && "active-surface-ring",
           )}
           onDragOver={handleRootDragOver}
           onDragLeave={handleRootDragLeave}
@@ -2845,6 +3011,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
                       onStartRename={handleStartRename}
                       onStartDelete={handleStartDelete}
                       onMoveEntry={handleMoveEntry}
+                      onImportFiles={handleImportFiles}
                       onAddResources={handleAddProjectResources}
                       onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
                       onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
@@ -3051,9 +3218,8 @@ export function OrganizationWorkspaceBrowser({
   const requestedFilePath = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("path"));
   const requestedResourceAttachmentId = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("resource"));
   const requestedDirectoryPath = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("directory"));
-  const cachedRequestedEntry = getCachedLibraryEntryMetadata(viewedOrganizationId, requestedEntryId);
   const cachedRequestedEntryPath = normalizeRequestedPath(
-    cachedRequestedEntry?.currentPath ?? null,
+    getCachedLibraryEntryMetadata(viewedOrganizationId, requestedEntryId)?.currentPath ?? null,
   );
   const fastRequestedEntryPath = cachedRequestedEntryPath ?? requestedEntryPathHint;
   const initialOpenFileTabState = useMemo(
@@ -3256,9 +3422,8 @@ export function OrganizationWorkspaceBrowser({
   });
   const libraryEntryQuery = useQuery({
     queryKey: queryKeys.organizations.libraryEntry(viewedOrganizationId ?? "__none__", requestedEntryId ?? ""),
-    queryFn: () => loadLibraryEntryMetadata(viewedOrganizationId!, requestedEntryId!),
+    queryFn: () => organizationsApi.getLibraryEntry(viewedOrganizationId!, requestedEntryId!),
     enabled: !!viewedOrganizationId && !!requestedEntryId && !requestedDocumentId,
-    initialData: () => cachedRequestedEntry ?? undefined,
     refetchOnWindowFocus: false,
   });
   const requestedEntryPath = normalizeRequestedPath(
@@ -3856,6 +4021,67 @@ export function OrganizationWorkspaceBrowser({
     },
   });
 
+  const importWorkspaceFiles = useMutation({
+    mutationFn: async (payload: { files: File[]; destinationDirectoryPath: string; unsupportedCount?: number }) => {
+      flushCurrentDraft();
+      const result = await createWorkspaceFilesFromDroppedFiles(
+        viewedOrganizationId!,
+        payload.destinationDirectoryPath,
+        payload.files,
+      );
+      return { ...result, unsupportedCount: payload.unsupportedCount ?? 0 };
+    },
+    onSuccess: ({ imported, failed, unsupportedCount }) => {
+      if (!viewedOrganizationId) return;
+      if (imported.length > 0) {
+        void invalidateWorkspaceBrowser();
+        for (const result of imported) {
+          queryClient.setQueryData(
+            queryKeys.organizations.workspaceFile(viewedOrganizationId, result.filePath),
+            result,
+          );
+        }
+      }
+      const lastResult = imported.at(-1);
+      if (lastResult) {
+        setSelectedFilePath(lastResult.filePath);
+        openWorkspaceFileTab(lastResult.filePath);
+        setDraftFilePath(lastResult.filePath);
+        syncedFileRef.current = { filePath: lastResult.filePath, content: lastResult.content ?? "" };
+        updateSelectedPath(searchParams, setSearchParams, lastResult.filePath);
+        setDraftContent(lastResult.content ?? "");
+        setActiveEntryPath(lastResult.filePath);
+      }
+      const failedSummary = [
+        ...failed.map((failure) => `${failure.fileName}: ${failure.message}`),
+        ...(unsupportedCount > 0 ? [`${unsupportedCount} unsupported file${unsupportedCount === 1 ? "" : "s"}`] : []),
+      ].join(", ");
+      if (imported.length === 0) {
+        pushToast({
+          title: "No files imported",
+          body: failedSummary || "Only text, Markdown, and code files can be imported.",
+          tone: failed.length > 0 ? "error" : "warn",
+        });
+        return;
+      }
+      pushToast({
+        title: failed.length > 0 || unsupportedCount > 0
+          ? `Imported ${imported.length} of ${imported.length + failed.length + unsupportedCount} files`
+          : imported.length === 1 ? "File imported" : `${imported.length} files imported`,
+        body: failedSummary
+          ? `${imported.map((result) => result.filePath).join(", ")}. Failed: ${failedSummary}`
+          : imported.map((result) => result.filePath).join(", "),
+        tone: failed.length > 0 || unsupportedCount > 0 ? "warn" : "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to import files",
+        tone: "error",
+      });
+    },
+  });
+
   const deleteWorkspaceEntry = useMutation({
     mutationFn: (entry: OrganizationWorkspaceFileEntry) =>
       organizationsApi.deleteWorkspaceEntry(viewedOrganizationId!, entry.path),
@@ -4129,10 +4355,8 @@ export function OrganizationWorkspaceBrowser({
   }
 
   const workspace = rootQuery.data ?? {
-    source: "org_root",
     rootExists: true,
     rootPath: "",
-    repoUrl: null,
     directoryPath: "",
     entries: [],
     message: null,
@@ -4646,14 +4870,29 @@ export function OrganizationWorkspaceBrowser({
     moveWorkspaceEntry.mutate({ entry, destinationDirectoryPath });
   }
 
+  function handleImportFiles(files: File[], destinationDirectoryPath: string, unsupportedCount = 0) {
+    setRootDropActive(false);
+    if (files.length === 0) {
+      if (unsupportedCount > 0) {
+        pushToast({
+          title: "No files imported",
+          body: "Only text, Markdown, and code files can be imported.",
+          tone: "warn",
+        });
+      }
+      return;
+    }
+    importWorkspaceFiles.mutate({ files, destinationDirectoryPath, unsupportedCount });
+  }
+
   function handleRootDragOver(event: DragEvent<HTMLElement>) {
-    if (!hasWorkspaceDragPayload(event.dataTransfer)) return;
+    if (!hasWorkspaceDragPayload(event.dataTransfer) && !hasExternalFileDragPayload(event.dataTransfer)) return;
     if (isDraggingOverWorkspaceTreeEntry(event)) {
       setRootDropActive(false);
       return;
     }
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    event.dataTransfer.dropEffect = hasExternalFileDragPayload(event.dataTransfer) ? "copy" : "move";
     setRootDropActive(true);
   }
 
@@ -4666,6 +4905,11 @@ export function OrganizationWorkspaceBrowser({
   function handleRootDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
     setRootDropActive(false);
+    if (hasExternalFileDragPayload(event.dataTransfer)) {
+      const { supported, unsupportedCount } = getWorkspaceImportDropFiles(event.dataTransfer);
+      handleImportFiles(supported, "", unsupportedCount);
+      return;
+    }
     const source = parseWorkspaceDragEntry(event);
     if (!source || !canDropWorkspaceEntryIntoDirectory(source, "")) return;
     handleMoveEntry(source, "");
@@ -4686,9 +4930,11 @@ export function OrganizationWorkspaceBrowser({
           {showInlineFiles ? (
             <section
               data-testid="org-workspaces-files-card"
+              data-active-surface={importWorkspaceFiles.isPending ? "workspace-import" : undefined}
               className={cn(
                 "flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card transition-colors lg:min-h-0 lg:w-[320px] lg:flex-none",
                 rootDropActive && "bg-[#2f80ed]/5 ring-1 ring-inset ring-[#2f80ed]/25",
+                importWorkspaceFiles.isPending && "active-surface-ring",
               )}
               onDragOver={handleRootDragOver}
               onDragLeave={handleRootDragLeave}
@@ -4784,6 +5030,7 @@ export function OrganizationWorkspaceBrowser({
                           onStartRename={handleStartRename}
                           onStartDelete={handleStartDelete}
                           onMoveEntry={handleMoveEntry}
+                          onImportFiles={handleImportFiles}
                           onAddResources={handleAddProjectResources}
                           onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
                           onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
@@ -4804,7 +5051,11 @@ export function OrganizationWorkspaceBrowser({
 
           <section
             data-testid="org-workspaces-editor-card"
-            className="rudder-doc-editor-surface flex min-h-[420px] min-w-0 flex-col bg-transparent lg:min-h-0 lg:flex-1"
+            data-active-surface={saveWorkspaceFile.isPending || uploadWorkspaceImage.isPending ? "workspace-document" : undefined}
+            className={cn(
+              "rudder-doc-editor-surface flex min-h-[420px] min-w-0 flex-col bg-transparent lg:min-h-0 lg:flex-1",
+              (saveWorkspaceFile.isPending || uploadWorkspaceImage.isPending) && "active-surface-ring",
+            )}
           >
             {showWorkspaceFileTabs ? (
               <div

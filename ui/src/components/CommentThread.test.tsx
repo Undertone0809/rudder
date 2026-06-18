@@ -212,6 +212,105 @@ describe("CommentThread", () => {
     })).toBeNull();
   });
 
+  it("centers hash-targeted comments inside the nearest scroll container", () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+
+    HTMLElement.prototype.scrollTo = scrollTo;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if ((this as HTMLElement).dataset.testid === "issue-scroll-container") {
+        return {
+          x: 0,
+          y: 100,
+          top: 100,
+          bottom: 500,
+          left: 0,
+          right: 800,
+          width: 800,
+          height: 400,
+          toJSON: () => ({}),
+        };
+      }
+      if ((this as HTMLElement).id === "comment-comment-2") {
+        return {
+          x: 0,
+          y: 650,
+          top: 650,
+          bottom: 700,
+          left: 0,
+          right: 800,
+          width: 800,
+          height: 50,
+          toJSON: () => ({}),
+        };
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).dataset.testid === "issue-scroll-container" ? 1200 : 100;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).dataset.testid === "issue-scroll-container" ? 400 : 100;
+      },
+    });
+
+    try {
+      renderInteractive(
+        <MemoryRouter initialEntries={["/issues/issue-1#comment-comment-2"]}>
+          <div data-testid="issue-scroll-container" style={{ overflow: "auto" }}>
+            <CommentThread
+              comments={[
+                {
+                  id: "comment-1",
+                  issueId: "issue-1",
+                  orgId: "org-1",
+                  authorUserId: "user-1",
+                  authorAgentId: null,
+                  body: "Earlier comment",
+                  createdAt: new Date("2026-05-07T00:00:00.000Z"),
+                  updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+                },
+                {
+                  id: "comment-2",
+                  issueId: "issue-1",
+                  orgId: "org-1",
+                  authorUserId: "user-1",
+                  authorAgentId: null,
+                  body: "Target comment",
+                  createdAt: new Date("2026-05-07T00:01:00.000Z"),
+                  updatedAt: new Date("2026-05-07T00:01:00.000Z"),
+                },
+              ]}
+              onAdd={async () => undefined}
+            />
+          </div>
+        </MemoryRouter>,
+      );
+
+      expect(scrollTo).toHaveBeenCalledWith({
+        top: 375,
+        behavior: "auto",
+      });
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      }
+      if (originalClientHeight) {
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", originalClientHeight);
+      }
+    }
+  });
+
   beforeEach(() => {
     mockConfirm.mockResolvedValue(true);
   });
