@@ -260,6 +260,30 @@ describe("index.css motion rules", () => {
     expect(summary).not.toContain("-webkit-line-clamp");
   });
 
+  it("caps long inline reference tokens inside chat composers", () => {
+    const composerMentionTokenBlock =
+      indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-mention-chip,[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-project-mention-chip \{[\s\S]*?\n\}/)?.[0] ?? "";
+    const composerSkillTokenBlock =
+      indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-skill-token,[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-skill-token \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    for (const tokenBlock of [composerMentionTokenBlock, composerSkillTokenBlock]) {
+      expect(tokenBlock).toContain("display: inline-block");
+      expect(tokenBlock).toContain("min-width: 0");
+      expect(tokenBlock).toContain("max-width: min(38rem, calc(100% - 1rem))");
+      expect(tokenBlock).toContain("overflow: hidden");
+      expect(tokenBlock).toContain("text-overflow: ellipsis");
+      expect(tokenBlock).toContain("white-space: nowrap");
+    }
+
+    const composerMentionIconBlock =
+      indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-mention-chip::before,[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-project-mention-chip::before \{[\s\S]*?\n\}/)?.[0] ?? "";
+    const composerSkillIconBlock =
+      indexCss.match(/\n\.chat-composer \.rudder-mdxeditor-content \.rudder-skill-token::before,[\s\S]*?\.chat-composer \.rudder-milkdown-content \.rudder-skill-token::before \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(composerMentionIconBlock).toContain("margin-right: 0.28em");
+    expect(composerSkillIconBlock).toContain("margin-right: 0.28em");
+  });
+
   it("keeps glass popovers above utility backgrounds", () => {
     const glassPopover = cssBlock(".glass-popover.glass-popover");
 

@@ -3321,11 +3321,21 @@ a.rudder-skill-token {
   transform: translateY(0);
 }
 
-.chat-composer .rudder-mdxeditor-content .rudder-skill-token {
+.chat-composer .rudder-mdxeditor-content .rudder-skill-token,
+.chat-composer .rudder-milkdown-content .rudder-skill-token {
+  display: inline-block;
+  min-width: 0;
+  max-width: min(38rem, calc(100% - 1rem));
+  overflow: hidden;
+  text-overflow: ellipsis;
   vertical-align: -0.28em;
+  white-space: nowrap;
 }
 
-.chat-composer .rudder-mdxeditor-content .rudder-skill-token::before {
+.chat-composer .rudder-mdxeditor-content .rudder-skill-token::before,
+.chat-composer .rudder-milkdown-content .rudder-skill-token::before {
+  flex: none;
+  margin-right: 0.28em;
   width: 1.28em;
   height: 1.28em;
 }
@@ -4105,7 +4115,10 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
 }
 
 .chat-composer .rudder-mdxeditor-content .rudder-mention-chip::before,
-.chat-composer .rudder-mdxeditor-content .rudder-project-mention-chip::before {
+.chat-composer .rudder-mdxeditor-content .rudder-project-mention-chip::before,
+.chat-composer .rudder-milkdown-content .rudder-mention-chip::before,
+.chat-composer .rudder-milkdown-content .rudder-project-mention-chip::before {
+  margin-right: 0.28em;
   width: 1.28em;
   height: 1.28em;
 }
@@ -4311,8 +4324,16 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
 }
 
 .chat-composer .rudder-mdxeditor-content .rudder-mention-chip,
-.chat-composer .rudder-mdxeditor-content .rudder-project-mention-chip {
+.chat-composer .rudder-mdxeditor-content .rudder-project-mention-chip,
+.chat-composer .rudder-milkdown-content .rudder-mention-chip,
+.chat-composer .rudder-milkdown-content .rudder-project-mention-chip {
+  display: inline-block;
+  min-width: 0;
+  max-width: min(38rem, calc(100% - 1rem));
+  overflow: hidden;
+  text-overflow: ellipsis;
   vertical-align: -0.28em;
+  white-space: nowrap;
 }
 
 .chat-composer .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"] {
