@@ -19,11 +19,13 @@ export function EnvVarEditor({
   secrets,
   onCreateSecret,
   onChange,
+  disabled = false,
 }: {
   value: Record<string, EnvBinding>;
   secrets: OrganizationSecret[];
   onCreateSecret: (name: string, value: string) => Promise<OrganizationSecret>;
   onChange: (env: Record<string, EnvBinding> | undefined) => void;
+  disabled?: boolean;
 }) {
   const { promptText } = useDialog();
   type Row = {
@@ -189,11 +191,13 @@ export function EnvVarEditor({
               className={cn(inputClass, "flex-[2]")}
               placeholder="KEY"
               value={row.key}
+              disabled={disabled}
               onChange={(e) => updateRow(i, { key: e.target.value })}
             />
             <select
               className={cn(inputClass, "flex-[1] bg-background")}
               value={row.source}
+              disabled={disabled}
               onChange={(e) =>
                 updateRow(i, {
                   source: e.target.value === "secret" ? "secret" : "plain",
@@ -209,6 +213,7 @@ export function EnvVarEditor({
                 <select
                   className={cn(inputClass, "flex-[3] bg-background")}
                   value={row.secretId}
+                  disabled={disabled}
                   onChange={(e) => updateRow(i, { secretId: e.target.value })}
                 >
                   <option value="">Select secret...</option>
@@ -222,7 +227,7 @@ export function EnvVarEditor({
                   type="button"
                   className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent/50 transition-colors shrink-0"
                   onClick={() => sealRow(i)}
-                  disabled={!row.key.trim() || !row.plainValue}
+                  disabled={disabled || !row.key.trim() || !row.plainValue}
                   title="Create secret from current plain value"
                 >
                   New
@@ -234,13 +239,14 @@ export function EnvVarEditor({
                   className={cn(inputClass, "flex-[3]")}
                   placeholder="value"
                   value={row.plainValue}
+                  disabled={disabled}
                   onChange={(e) => updateRow(i, { plainValue: e.target.value })}
                 />
                 <button
                   type="button"
                   className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent/50 transition-colors shrink-0"
                   onClick={() => sealRow(i)}
-                  disabled={!row.key.trim() || !row.plainValue}
+                  disabled={disabled || !row.key.trim() || !row.plainValue}
                   title="Store value as secret and replace with reference"
                 >
                   Seal
@@ -251,6 +257,7 @@ export function EnvVarEditor({
               <button
                 type="button"
                 className="shrink-0 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                disabled={disabled}
                 onClick={() => removeRow(i)}
               >
                 <X className="h-3.5 w-3.5" />
@@ -268,4 +275,3 @@ export function EnvVarEditor({
     </div>
   );
 }
-

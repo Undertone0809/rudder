@@ -52,13 +52,16 @@ vi.mock("@/components/AgentConfigForm.environment", () => ({
     title,
     model,
     environmentStatus,
+    disabled,
   }: {
     title: string;
     model: string;
     environmentStatus?: string;
+    disabled?: boolean;
   }) => (
     <div>
       {title} {model} {environmentStatus ? `Env ${environmentStatus}` : ""}
+      <button disabled={disabled}>{title} model control</button>
     </div>
   ),
 }));
@@ -240,10 +243,8 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
     });
 
     const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]');
-    expect(fastProfile?.textContent).toContain("Test runtime chain");
-
     const testButton = Array.from(fastProfile?.querySelectorAll("button") ?? [])
-      .find((button) => button.textContent?.includes("Test runtime chain"));
+      .find((button) => button.getAttribute("aria-label") === "Test runtime chain");
     expect(testButton).toBeTruthy();
 
     await act(async () => {
@@ -282,7 +283,7 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
 
     const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
     const testButton = Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Test runtime chain"));
+      .find((button) => button.getAttribute("aria-label") === "Test runtime chain");
     const enableButton = () => Array.from(fastProfile.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Enable"));
 
@@ -339,7 +340,7 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
     rendered.cleanup();
   });
 
-  it("locks other profiles while an enable flow is testing a chain", async () => {
+  it("keeps other profiles interactive while one enable flow is testing a chain", async () => {
     profiles[0] = { ...profiles[0]!, status: "disabled" };
     profiles[1] = { ...profiles[1]!, status: "disabled" };
     const firstProbe = deferred<AgentRuntimeEnvironmentTestResult>();
@@ -355,8 +356,16 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
     const smartProfile = rendered.host.querySelector('[data-testid="intelligence-profile-reasoning"]')!;
     const fastEnableButton = Array.from(fastProfile.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Enable"));
+    const smartTestButton = Array.from(smartProfile.querySelectorAll("button"))
+      .find((button) => button.getAttribute("aria-label") === "Test runtime chain") as HTMLButtonElement;
     const smartEnableButton = Array.from(smartProfile.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Enable")) as HTMLButtonElement;
+    const smartAddFallbackButton = Array.from(smartProfile.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Add fallback model")) as HTMLButtonElement;
+    const fastAddFallbackButton = Array.from(fastProfile.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Add fallback model")) as HTMLButtonElement;
+    const fastModelControl = Array.from(fastProfile.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Primary model control")) as HTMLButtonElement;
 
     await act(async () => {
       fastEnableButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -366,7 +375,22 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
     });
 
     expect(fastProfile.textContent).toContain("Testing...");
-    expect(smartEnableButton.disabled).toBe(true);
+    expect(fastAddFallbackButton.disabled).toBe(true);
+    expect(fastModelControl.disabled).toBe(true);
+    expect(smartTestButton.disabled).toBe(false);
+    expect(smartEnableButton.disabled).toBe(false);
+    expect(smartAddFallbackButton.disabled).toBe(false);
+
+    await act(async () => {
+      smartTestButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(agentsApi.testEnvironment).toHaveBeenCalledTimes(2);
+    expect(smartProfile.textContent).toContain("Runtime chain environment");
+    expect(smartProfile.textContent).toContain("Primary · Codex (local) · gpt-5.4: Passed");
 
     firstProbe.resolve(passedResult());
     await act(async () => {
@@ -375,6 +399,22 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+
+    rendered.cleanup();
+  });
+
+  it("shows saved state as text instead of a disabled button", async () => {
+    const rendered = await renderComponent();
+    await vi.waitFor(() => {
+      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
+    });
+
+    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
+    expect(fastProfile.textContent).toContain("Saved");
+    const savedButton = Array.from(fastProfile.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Saved");
+
+    expect(savedButton).toBeUndefined();
 
     rendered.cleanup();
   });

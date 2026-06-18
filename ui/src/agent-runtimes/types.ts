@@ -22,6 +22,8 @@ export interface AgentRuntimeConfigFieldsProps {
   models: { id: string; label: string }[];
   /** When true, hides the instructions file path field (e.g. during import where it's set automatically) */
   hideInstructionsFile?: boolean;
+  /** Disable editing while a scoped async operation is using the current config. */
+  disabled?: boolean;
 }
 
 export interface UIAgentRuntimeModule {

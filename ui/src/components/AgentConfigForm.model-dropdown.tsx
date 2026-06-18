@@ -36,6 +36,7 @@ export function ModelDropdown({
   searchPlaceholder = "Search models...",
   emptyMessage = "No models found.",
   triggerTestId,
+  disabled = false,
 }: {
   label: string;
   hint?: string;
@@ -53,6 +54,7 @@ export function ModelDropdown({
   searchPlaceholder?: string;
   emptyMessage?: string;
   triggerTestId?: string;
+  disabled?: boolean;
 }) {
   const [modelSearch, setModelSearch] = useState("");
   const selected = models.find((m) => m.id === value);
@@ -99,8 +101,9 @@ export function ModelDropdown({
   return (
     <Field label={label} hint={hint}>
       <Popover
-        open={open}
+        open={disabled ? false : open}
         onOpenChange={(nextOpen) => {
+          if (disabled) return;
           onOpenChange(nextOpen);
           if (!nextOpen) setModelSearch("");
         }}
@@ -109,6 +112,7 @@ export function ModelDropdown({
           <button
             className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between min-w-0"
             data-testid={triggerTestId}
+            disabled={disabled}
           >
             <span className={cn("truncate text-left", !value && "text-muted-foreground")}>
               {selected
@@ -210,20 +214,27 @@ export function ThinkingEffortDropdown({
   onChange,
   open,
   onOpenChange,
+  disabled = false,
 }: {
   value: string;
   options: ReadonlyArray<{ id: string; label: string }>;
   onChange: (id: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  disabled?: boolean;
 }) {
   const selected = options.find((option) => option.id === value) ?? options[0];
 
   return (
     <Field label="Thinking effort" hint={help.thinkingEffort}>
-      <Popover open={open} onOpenChange={onOpenChange}>
+      <Popover open={disabled ? false : open} onOpenChange={(nextOpen) => {
+        if (!disabled) onOpenChange(nextOpen);
+      }}>
         <PopoverTrigger asChild>
-          <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between">
+          <button
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between"
+            disabled={disabled}
+          >
             <span className={cn(!value && "text-muted-foreground")}>{selected?.label ?? "Auto"}</span>
             <ChevronDown className="h-3 w-3 text-muted-foreground" />
           </button>
