@@ -13,6 +13,7 @@ import { OrganizationWorkspaceFilesSidebar, OrganizationWorkspaces, WorkspaceLau
 const mockState = vi.hoisted(() => ({
   setBreadcrumbs: vi.fn(),
   setHeaderActions: vi.fn(),
+  navigate: vi.fn(),
   pushToast: vi.fn(),
   setSearchParams: vi.fn(),
   uploadImage: vi.fn(),
@@ -122,6 +123,15 @@ vi.mock("@tanstack/react-query", () => ({
             displayLabel: "PROJECT.md",
             path: "projects/rudder-dev/PROJECT.md",
             isDirectory: false,
+            entityType: "organization_workspace",
+          },
+        ],
+        skills: [
+          {
+            name: "build-advisor",
+            displayLabel: "build-advisor",
+            path: "skills/build-advisor",
+            isDirectory: true,
             entityType: "organization_workspace",
           },
         ],
@@ -255,6 +265,75 @@ vi.mock("@tanstack/react-query", () => ({
         error: null,
       };
     }
+    if (key[0] === "organization-skills" && key.length === 2) {
+      return {
+        data: [
+          {
+            id: "skill-rudder",
+            orgId: "org-1",
+            key: "organization/org-1/rudder",
+            slug: "rudder",
+            name: "Bundled Rudder",
+            description: "Rudder operating skill",
+            sourceType: "catalog",
+            sourceLocator: "skills/rudder",
+            sourceRef: null,
+            trustLevel: "markdown_only",
+            compatibility: "compatible",
+            fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+            createdAt: new Date("2026-06-01T00:00:00.000Z"),
+            updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+            attachedAgentCount: 3,
+            editable: false,
+            editableReason: "Bundled skills are read only.",
+            sourceLabel: "Bundled by Rudder",
+            sourceBadge: "rudder",
+            sourcePath: null,
+            workspaceEditPath: null,
+          },
+          {
+            id: "skill-build-advisor",
+            orgId: "org-1",
+            key: "organization/org-1/build-advisor",
+            slug: "build-advisor",
+            name: "Build Advisor",
+            description: "Workspace-backed skill",
+            sourceType: "local_path",
+            sourceLocator: "skills/build-advisor",
+            sourceRef: null,
+            trustLevel: "markdown_only",
+            compatibility: "compatible",
+            fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+            createdAt: new Date("2026-06-01T00:00:00.000Z"),
+            updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+            attachedAgentCount: 1,
+            editable: true,
+            editableReason: null,
+            sourceLabel: "Library",
+            sourceBadge: "local",
+            sourcePath: "/tmp/rudder-org/skills/build-advisor",
+            workspaceEditPath: "skills/build-advisor/SKILL.md",
+          },
+        ],
+        isLoading: false,
+        error: null,
+      };
+    }
+    if (key[0] === "organization-skills" && key[3] === "file") {
+      return {
+        data: {
+          skillId: key[2],
+          path: key[4] ?? "SKILL.md",
+          kind: "skill",
+          content: "# Bundled Rudder\n\nRead-only bundled skill.",
+          language: "markdown",
+          markdown: true,
+          editable: false,
+        },
+        isLoading: false,
+        error: null,
+      };
+    }
     if (key[0] === "projects" && key.length === 2) {
       return {
         data: [
@@ -338,7 +417,7 @@ vi.mock("../api/assets", () => ({
 }));
 
 vi.mock("@/lib/router", () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockState.navigate,
   useSearchParams: () => [
     new URLSearchParams(mockState.searchParams),
     mockState.setSearchParams,
@@ -777,6 +856,79 @@ describe("OrganizationWorkspaces scroll regions", () => {
     expect(skillsRow).not.toBeNull();
     expect(agentsRow?.querySelector('[data-testid="org-workspaces-agents-root-icon"]')).not.toBeNull();
     expect(skillsRow?.querySelector('[data-testid="org-workspaces-skills-root-icon"]')).not.toBeNull();
+  });
+
+  it("shows read-only organization skills under the Library skills directory without duplicating workspace-backed skills", () => {
+    mockState.searchParams = "directory=skills";
+    renderWorkspacesPage();
+
+    const bundledSkillRow = document.querySelector('[data-workspace-entry-path="skills/rudder"]') as HTMLElement | null;
+    const workspaceBackedRows = document.querySelectorAll('[data-workspace-entry-path="skills/build-advisor"]');
+
+    expect(bundledSkillRow).not.toBeNull();
+    expect(bundledSkillRow?.textContent).toContain("Bundled Rudder");
+    expect(workspaceBackedRows).toHaveLength(1);
+  });
+
+  it("opens read-only bundled skill files from the Library skills tree", () => {
+    mockState.searchParams = "skill=skill-rudder&skillFile=SKILL.md";
+    renderWorkspacesPage();
+
+    const readOnlyPanel = document.querySelector("[data-testid='org-workspaces-virtual-skill-readonly']");
+    expect(readOnlyPanel).not.toBeNull();
+    expect(readOnlyPanel?.textContent).toContain("Read-only bundled skill");
+    expect(readOnlyPanel?.textContent).toContain("Bundled skills are read only");
+    expect(document.querySelector("[data-testid='org-workspaces-editor-status-bar']")).toBeNull();
+
+    const breadcrumb = document.querySelector("[data-testid='org-workspaces-path-breadcrumb']");
+    expect(breadcrumb?.textContent).toContain("Bundled Rudder");
+    const skillParentButton = Array.from(breadcrumb?.querySelectorAll("button") ?? []).find(
+      (button) => button.getAttribute("title") === "skills/rudder",
+    );
+    expect(skillParentButton).toBeTruthy();
+
+    act(() => {
+      skillParentButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const nextParams = mockState.setSearchParams.mock.calls.at(-1)?.[0] as URLSearchParams | undefined;
+    expect(nextParams?.get("directory")).toBe("skills/rudder");
+    expect(nextParams?.has("skill")).toBe(false);
+  });
+
+  it("redirects workspace-backed skill deep links to their editable Library file", () => {
+    mockState.searchParams = "skill=skill-build-advisor&skillFile=SKILL.md";
+    renderWorkspacesPage();
+
+    const nextParams = mockState.setSearchParams.mock.calls.at(-1)?.[0] as URLSearchParams | undefined;
+    expect(nextParams?.get("path")).toBe("skills/build-advisor/SKILL.md");
+    expect(nextParams?.has("skill")).toBe(false);
+    expect(nextParams?.has("skillFile")).toBe(false);
+    expect(document.querySelector("[data-testid='org-workspaces-virtual-skill-readonly']")).toBeNull();
+  });
+
+  it("opens an add-skill dialog from the skills row with a prefilled Agent install path", async () => {
+    mockState.searchParams = "directory=skills";
+    renderWorkspacesPage();
+
+    await act(async () => {
+      document.querySelector("[data-testid='org-workspaces-skills-add-button']")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(document.body.textContent).toContain("Add skill to Library");
+    expect(document.body.textContent).toContain("Import or move a skill");
+
+    await act(async () => {
+      document.querySelector("[data-testid='org-workspaces-skill-agent-install-button']")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(mockState.navigate).toHaveBeenCalledWith(expect.stringContaining("/messenger/chat?prefill="));
+    const target = String(mockState.navigate.mock.calls.at(-1)?.[0] ?? "");
+    expect(decodeURIComponent(target)).toContain("Install or import a skill into this Rudder organization");
   });
 
   it("opens Library file tokens inside the current editor tab set", async () => {

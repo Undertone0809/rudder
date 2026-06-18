@@ -29,6 +29,8 @@ import {
   buildLibraryEntryMentionMarkdown,
   buildLibraryFileMentionMarkdown,
   parseAgentMentionHref,
+  type OrganizationSkillFileDetail,
+  type OrganizationSkillListItem,
   type OrganizationWorkspaceFileDetail,
   type OrganizationWorkspaceFileEntry,
   type Project,
@@ -66,6 +68,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { assetsApi } from "../api/assets";
+import { organizationSkillsApi } from "../api/organizationSkills";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { AgentIcon } from "../components/AgentIconPicker";
@@ -122,6 +125,14 @@ const WORKSPACE_HTML_PREVIEW_CSP_META =
   "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'\">";
 const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
 const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
+const SKILL_INSTALL_CHAT_PREFILL = [
+  "Install or import a skill into this Rudder organization.",
+  "",
+  "Source or command:",
+  "<paste a GitHub URL, local path, or skills.sh command here>",
+  "",
+  "After importing, verify it appears in Library / skills and explain whether it is editable or read-only.",
+].join("\n");
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
 const WORKSPACE_TEXT_IMPORT_FILE_EXTENSIONS = new Set([
@@ -591,8 +602,124 @@ function joinYamlFrontmatter(
   return frontmatter === null ? body : `${frontmatter}${frontmatterSeparator || "\n"}${body}`;
 }
 
+type WorkspaceTreeEntry = OrganizationWorkspaceFileEntry & {
+  virtualSkillId?: string;
+  virtualSkillFilePath?: string | null;
+  virtualSkillReadOnlyReason?: string | null;
+  virtualSkillSourceLabel?: string | null;
+};
+
 function displayWorkspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
   return entry.displayLabel?.trim() || entry.name;
+}
+
+function organizationSkillRootTreePath(skill: Pick<OrganizationSkillListItem, "slug">) {
+  return `skills/${skill.slug}`;
+}
+
+function organizationSkillFileTreePath(skill: Pick<OrganizationSkillListItem, "slug">, filePath: string) {
+  return `${organizationSkillRootTreePath(skill)}/${filePath.split("/").filter(Boolean).join("/")}`;
+}
+
+function isWorkspaceBackedOrganizationSkill(skill: Pick<OrganizationSkillListItem, "workspaceEditPath" | "slug">) {
+  const editPath = normalizeRequestedPath(skill.workspaceEditPath);
+  return Boolean(editPath && editPath.startsWith(`${organizationSkillRootTreePath(skill)}/`));
+}
+
+function organizationSkillInventoryPaths(skill: OrganizationSkillListItem) {
+  const paths = skill.fileInventory
+    .map((entry) => normalizeRequestedPath(entry.path))
+    .filter((path): path is string => Boolean(path));
+  return paths.length > 0 ? paths : ["SKILL.md"];
+}
+
+function buildVirtualOrganizationSkillEntries(
+  directoryPath: string,
+  workspaceEntries: OrganizationWorkspaceFileEntry[],
+  organizationSkills: OrganizationSkillListItem[] | undefined,
+): WorkspaceTreeEntry[] {
+  const safeOrganizationSkills = organizationSkills ?? [];
+  const normalizedDirectoryPath = normalizeRequestedPath(directoryPath) ?? "";
+  if (normalizedDirectoryPath === "skills") {
+    const workspacePaths = new Set(workspaceEntries.map((entry) => entry.path));
+    return safeOrganizationSkills
+      .filter((skill) => !isWorkspaceBackedOrganizationSkill(skill))
+      .map((skill): WorkspaceTreeEntry => ({
+        name: skill.slug,
+        displayLabel: skill.name?.trim() || skill.slug,
+        path: organizationSkillRootTreePath(skill),
+        isDirectory: true,
+        virtualSkillId: skill.id,
+        virtualSkillReadOnlyReason: skill.editableReason,
+        virtualSkillSourceLabel: skill.sourceLabel,
+      }))
+      .filter((entry) => !workspacePaths.has(entry.path));
+  }
+
+  const skill = safeOrganizationSkills.find((candidate) => {
+    if (isWorkspaceBackedOrganizationSkill(candidate)) return false;
+    const rootPath = organizationSkillRootTreePath(candidate);
+    return normalizedDirectoryPath === rootPath || normalizedDirectoryPath.startsWith(`${rootPath}/`);
+  });
+  if (!skill) return [];
+
+  const rootPath = organizationSkillRootTreePath(skill);
+  const currentRelativeDirectory = normalizedDirectoryPath === rootPath
+    ? ""
+    : normalizedDirectoryPath.slice(rootPath.length + 1);
+  const entriesByPath = new Map<string, WorkspaceTreeEntry>();
+  for (const filePath of organizationSkillInventoryPaths(skill)) {
+    if (currentRelativeDirectory && filePath !== currentRelativeDirectory && !filePath.startsWith(`${currentRelativeDirectory}/`)) {
+      continue;
+    }
+    const remaining = currentRelativeDirectory ? filePath.slice(currentRelativeDirectory.length + 1) : filePath;
+    const [name] = remaining.split("/");
+    if (!name) continue;
+    const childRelativePath = currentRelativeDirectory ? `${currentRelativeDirectory}/${name}` : name;
+    const isDirectory = remaining.includes("/");
+    const childTreePath = `${rootPath}/${childRelativePath}`;
+    entriesByPath.set(childTreePath, {
+      name,
+      displayLabel: name,
+      path: childTreePath,
+      isDirectory,
+      virtualSkillId: skill.id,
+      virtualSkillFilePath: isDirectory ? null : childRelativePath,
+      virtualSkillReadOnlyReason: skill.editableReason,
+      virtualSkillSourceLabel: skill.sourceLabel,
+    });
+  }
+  return [...entriesByPath.values()].sort((left, right) =>
+    Number(right.isDirectory) - Number(left.isDirectory)
+    || displayWorkspaceEntryLabel(left).localeCompare(displayWorkspaceEntryLabel(right)),
+  );
+}
+
+function mergeWorkspaceAndVirtualSkillEntries(
+  directoryPath: string,
+  workspaceEntries: OrganizationWorkspaceFileEntry[],
+  organizationSkills: OrganizationSkillListItem[] | undefined,
+): WorkspaceTreeEntry[] {
+  const normalizedDirectoryPath = normalizeRequestedPath(directoryPath) ?? "";
+  if (normalizedDirectoryPath === "") {
+    const hasVisibleSkill = (organizationSkills ?? []).some((skill) => !isWorkspaceBackedOrganizationSkill(skill));
+    if (!hasVisibleSkill || workspaceEntries.some((entry) => entry.path === "skills")) return workspaceEntries;
+    return [...workspaceEntries, {
+      name: "skills",
+      displayLabel: "skills",
+      path: "skills",
+      isDirectory: true,
+    }].sort((left, right) =>
+      Number(right.isDirectory) - Number(left.isDirectory)
+      || displayWorkspaceEntryLabel(left).localeCompare(displayWorkspaceEntryLabel(right)),
+    );
+  }
+  const virtualEntries = buildVirtualOrganizationSkillEntries(directoryPath, workspaceEntries, organizationSkills);
+  if (virtualEntries.length === 0) return workspaceEntries;
+  return [...workspaceEntries, ...virtualEntries].sort((left, right) =>
+    Number(right.isDirectory) - Number(left.isDirectory)
+    || displayWorkspaceEntryLabel(left).localeCompare(displayWorkspaceEntryLabel(right)),
+  );
 }
 
 function projectLibraryPath(project: Pick<Project, "urlKey" | "id">) {
@@ -709,7 +836,8 @@ function isProtectedOrganizationSkillsEntryPath(filePath: string) {
 }
 
 function canCreateInsideWorkspaceDirectory(directoryPath: string) {
-  return !isProtectedAgentWorkspaceContainerPath(directoryPath);
+  return !isProtectedAgentWorkspaceContainerPath(directoryPath)
+    && !isProtectedOrganizationSkillsEntryPath(directoryPath);
 }
 
 function canMoveWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
@@ -985,12 +1113,25 @@ function workspacePathBreadcrumb(
   })];
 }
 
+function applyOrganizationSkillBreadcrumbLabels(
+  parts: WorkspacePathBreadcrumbPart[],
+  skill: OrganizationSkillListItem | null,
+) {
+  if (!skill) return parts;
+  const skillRootPath = organizationSkillRootTreePath(skill);
+  return parts.map((part) => (
+    part.path === skillRootPath
+      ? { ...part, label: skill.name?.trim() || skill.slug }
+      : part
+  ));
+}
+
 function focusWorkspaceTreeEntry(entryPath: string | null) {
   if (typeof document === "undefined") return;
   const entry = Array.from(document.querySelectorAll<HTMLElement>(WORKSPACE_TREE_ENTRY_SELECTOR))
     .find((node) => node.dataset.workspaceEntryPath === entryPath);
   if (!entry) return;
-  entry.scrollIntoView({ block: "center" });
+  entry.scrollIntoView?.({ block: "center" });
   const button = entry.querySelector<HTMLButtonElement>("button");
   button?.focus({ preventScroll: true });
 }
@@ -1035,6 +1176,8 @@ function updateSelectedPath(
   else next.delete("path");
   next.delete("entry");
   next.delete("doc");
+  next.delete("skill");
+  next.delete("skillFile");
   if (filePath) next.delete("directory");
   if (filePath) next.delete("resource");
   else next.delete("resource");
@@ -1050,18 +1193,57 @@ function updateSelectedResource(
   next.set("resource", attachmentId);
   next.delete("doc");
   next.delete("path");
+  next.delete("skill");
+  next.delete("skillFile");
   next.delete("directory");
+  setSearchParams(next, { replace: true });
+}
+
+function updateSelectedSkillFile(
+  searchParams: URLSearchParams,
+  setSearchParams: ReturnType<typeof useSearchParams>[1],
+  skillId: string,
+  filePath: string,
+) {
+  const next = new URLSearchParams(searchParams);
+  next.set("skill", skillId);
+  next.set("skillFile", filePath);
+  next.delete("path");
+  next.delete("entry");
+  next.delete("doc");
+  next.delete("directory");
+  next.delete("resource");
+  setSearchParams(next, { replace: true });
+}
+
+function updateSelectedDirectory(
+  searchParams: URLSearchParams,
+  setSearchParams: ReturnType<typeof useSearchParams>[1],
+  directoryPath: string | null,
+) {
+  const next = new URLSearchParams(searchParams);
+  if (directoryPath) next.set("directory", directoryPath);
+  else next.delete("directory");
+  next.delete("path");
+  next.delete("entry");
+  next.delete("doc");
+  next.delete("skill");
+  next.delete("skillFile");
+  next.delete("resource");
   setSearchParams(next, { replace: true });
 }
 
 function DirectoryChildren({
   orgId,
   directoryPath,
+  organizationSkills,
   selectedFilePath,
+  selectedSkillTreePath,
   selectedResourcePath,
   activeEntryPath,
   draggedEntryPath,
   onSelectFile,
+  onSelectSkillFile,
   onSelectResource,
   onFocusEntry,
   onDragStartEntry,
@@ -1079,6 +1261,7 @@ function DirectoryChildren({
   onCopyResourceLocator,
   onOpenResource,
   onUnlinkResource,
+  onOpenSkillAddDialog,
   unlinkingResourceId,
   expandedDirectories,
   workspaceLaunchTargets,
@@ -1088,11 +1271,14 @@ function DirectoryChildren({
 }: {
   orgId: string;
   directoryPath: string;
+  organizationSkills?: OrganizationSkillListItem[];
   selectedFilePath: string | null;
+  selectedSkillTreePath: string | null;
   selectedResourcePath: string | null;
   activeEntryPath: string | null;
   draggedEntryPath: string | null;
   onSelectFile: (filePath: string) => void;
+  onSelectSkillFile?: (skillId: string, filePath: string, treePath: string) => void;
   onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
   onDragStartEntry: (entryPath: string) => void;
@@ -1110,6 +1296,7 @@ function DirectoryChildren({
   onCopyResourceLocator: (attachment: ProjectResourceAttachment) => void;
   onOpenResource: (attachment: ProjectResourceAttachment) => void;
   onUnlinkResource: (project: Project, attachment: ProjectResourceAttachment) => void;
+  onOpenSkillAddDialog?: () => void;
   unlinkingResourceId: string | null;
   expandedDirectories: Set<string>;
   workspaceLaunchTargets: DesktopWorkspaceLaunchTarget[];
@@ -1124,7 +1311,10 @@ function DirectoryChildren({
     refetchOnWindowFocus: false,
   });
 
-  const entries = data?.entries ?? [];
+  const entries = useMemo(
+    () => mergeWorkspaceAndVirtualSkillEntries(directoryPath, data?.entries ?? [], organizationSkills),
+    [data?.entries, directoryPath, organizationSkills],
+  );
   if (entries.length === 0) return null;
 
   return (
@@ -1134,11 +1324,14 @@ function DirectoryChildren({
           key={entry.path}
           orgId={orgId}
           entry={entry}
+          organizationSkills={organizationSkills}
           selectedFilePath={selectedFilePath}
+          selectedSkillTreePath={selectedSkillTreePath}
           selectedResourcePath={selectedResourcePath}
           activeEntryPath={activeEntryPath}
           draggedEntryPath={draggedEntryPath}
           onSelectFile={onSelectFile}
+          onSelectSkillFile={onSelectSkillFile}
           onSelectResource={onSelectResource}
           onFocusEntry={onFocusEntry}
           onDragStartEntry={onDragStartEntry}
@@ -1156,6 +1349,7 @@ function DirectoryChildren({
           onCopyResourceLocator={onCopyResourceLocator}
           onOpenResource={onOpenResource}
           onUnlinkResource={onUnlinkResource}
+          onOpenSkillAddDialog={onOpenSkillAddDialog}
           unlinkingResourceId={unlinkingResourceId}
           expandedDirectories={expandedDirectories}
           workspaceLaunchTargets={workspaceLaunchTargets}
@@ -1171,11 +1365,14 @@ function DirectoryChildren({
 function WorkspaceTreeNode({
   orgId,
   entry,
+  organizationSkills = [],
   selectedFilePath,
+  selectedSkillTreePath = null,
   selectedResourcePath,
   activeEntryPath,
   draggedEntryPath,
   onSelectFile,
+  onSelectSkillFile,
   onSelectResource,
   onFocusEntry,
   onDragStartEntry,
@@ -1193,6 +1390,7 @@ function WorkspaceTreeNode({
   onCopyResourceLocator,
   onOpenResource,
   onUnlinkResource,
+  onOpenSkillAddDialog,
   unlinkingResourceId,
   expandedDirectories,
   workspaceLaunchTargets,
@@ -1201,12 +1399,15 @@ function WorkspaceTreeNode({
   depth = 0,
 }: {
   orgId: string;
-  entry: OrganizationWorkspaceFileEntry;
+  entry: WorkspaceTreeEntry;
+  organizationSkills?: OrganizationSkillListItem[];
   selectedFilePath: string | null;
+  selectedSkillTreePath?: string | null;
   selectedResourcePath: string | null;
   activeEntryPath: string | null;
   draggedEntryPath: string | null;
   onSelectFile: (filePath: string) => void;
+  onSelectSkillFile?: (skillId: string, filePath: string, treePath: string) => void;
   onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
   onDragStartEntry: (entryPath: string) => void;
@@ -1224,6 +1425,7 @@ function WorkspaceTreeNode({
   onCopyResourceLocator: (attachment: ProjectResourceAttachment) => void;
   onOpenResource: (attachment: ProjectResourceAttachment) => void;
   onUnlinkResource: (project: Project, attachment: ProjectResourceAttachment) => void;
+  onOpenSkillAddDialog?: () => void;
   unlinkingResourceId: string | null;
   expandedDirectories: Set<string>;
   workspaceLaunchTargets: DesktopWorkspaceLaunchTarget[];
@@ -1235,21 +1437,24 @@ function WorkspaceTreeNode({
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const primaryLabel = displayWorkspaceEntryLabel(entry);
+  const isVirtualSkillEntry = Boolean(entry.virtualSkillId);
   const isAgentWorkspace = entry.entityType === "agent_workspace";
   const isAgentsRoot = entry.path === "agents";
   const isSkillsRoot = entry.path === "skills";
   const isProjectLibraryFolder = isProjectLibraryFolderPath(entry.path);
   const isProtectedContainer = isProtectedAgentWorkspaceContainerPath(entry.path);
   const projectResourceGroup = projectResourceGroupsByLibraryPath.get(entry.path) ?? null;
-  const canCreateInsideDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
-  const canMoveEntry = canMoveWorkspaceEntry(entry);
-  const canRenameEntry = canRenameWorkspaceEntry(entry);
-  const canDeleteEntry = canDeleteWorkspaceEntry(entry);
-  const canDropIntoDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
+  const canCreateInsideDirectory = !isVirtualSkillEntry && entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
+  const canMoveEntry = !isVirtualSkillEntry && canMoveWorkspaceEntry(entry);
+  const canRenameEntry = !isVirtualSkillEntry && canRenameWorkspaceEntry(entry);
+  const canDeleteEntry = !isVirtualSkillEntry && canDeleteWorkspaceEntry(entry);
+  const canDropIntoDirectory = !isVirtualSkillEntry && entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
   const entryOpenTargets = entry.isDirectory
     ? workspaceLaunchTargets
     : workspaceLaunchTargets.filter(isWorkspaceIdeLaunchTarget);
-  const isActive = activeEntryPath === entry.path || (!activeEntryPath && selectedFilePath === entry.path);
+  const isActive = activeEntryPath === entry.path
+    || selectedSkillTreePath === entry.path
+    || (!activeEntryPath && selectedFilePath === entry.path);
   const isDraggingEntry = draggedEntryPath === entry.path;
   const handleOpenActionMenu = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
@@ -1335,6 +1540,8 @@ function WorkspaceTreeNode({
       onFocusEntry(entry.path);
       if (entry.isDirectory) {
         setExpanded((value) => !value);
+      } else if (entry.virtualSkillId && entry.virtualSkillFilePath) {
+        onSelectSkillFile?.(entry.virtualSkillId, entry.virtualSkillFilePath, entry.path);
       } else {
         onSelectFile(entry.path);
       }
@@ -1543,18 +1750,43 @@ function WorkspaceTreeNode({
               </span>
             ) : null}
           </button>
-          {actionMenu}
+          {isSkillsRoot ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="h-6 w-6 shrink-0 opacity-70 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100 focus-visible:opacity-100"
+                  aria-label="Add skill to Library"
+                  data-testid="org-workspaces-skills-add-button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onOpenSkillAddDialog?.();
+                  }}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Add skill</TooltipContent>
+            </Tooltip>
+          ) : null}
+          {isVirtualSkillEntry ? null : actionMenu}
         </div>
         {expanded ? (
           <>
             <DirectoryChildren
               orgId={orgId}
               directoryPath={entry.path}
+              organizationSkills={organizationSkills}
               selectedFilePath={selectedFilePath}
+              selectedSkillTreePath={selectedSkillTreePath}
               selectedResourcePath={selectedResourcePath}
               activeEntryPath={activeEntryPath}
               draggedEntryPath={draggedEntryPath}
               onSelectFile={onSelectFile}
+              onSelectSkillFile={onSelectSkillFile}
               onSelectResource={onSelectResource}
               onFocusEntry={onFocusEntry}
               onDragStartEntry={onDragStartEntry}
@@ -1572,6 +1804,7 @@ function WorkspaceTreeNode({
               onCopyResourceLocator={onCopyResourceLocator}
               onOpenResource={onOpenResource}
               onUnlinkResource={onUnlinkResource}
+              onOpenSkillAddDialog={onOpenSkillAddDialog}
               unlinkingResourceId={unlinkingResourceId}
               expandedDirectories={expandedDirectories}
               workspaceLaunchTargets={workspaceLaunchTargets}
@@ -1600,7 +1833,7 @@ function WorkspaceTreeNode({
     );
   }
 
-  const isSelected = selectedFilePath === entry.path;
+  const isSelected = selectedFilePath === entry.path || selectedSkillTreePath === entry.path;
   const FileIcon = isWorkspaceImageFilePath(entry.path)
     ? ImageIcon
     : isWorkspaceTextDocumentFilePath(entry.path)
@@ -1633,7 +1866,11 @@ function WorkspaceTreeNode({
           className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
           onClick={() => {
             onFocusEntry(entry.path);
-            onSelectFile(entry.path);
+            if (entry.virtualSkillId && entry.virtualSkillFilePath) {
+              onSelectSkillFile?.(entry.virtualSkillId, entry.virtualSkillFilePath, entry.path);
+            } else {
+              onSelectFile(entry.path);
+            }
           }}
           onFocus={() => onFocusEntry(entry.path)}
           onKeyDown={handleKeyboardNavigation}
@@ -1642,9 +1879,151 @@ function WorkspaceTreeNode({
           <FileIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{primaryLabel}</span>
         </button>
-        {actionMenu}
+        {isVirtualSkillEntry ? null : actionMenu}
       </div>
     </li>
+  );
+}
+
+function SkillLibraryAddDialog({
+  open,
+  orgId,
+  onOpenChange,
+}: {
+  open: boolean;
+  orgId: string | null | undefined;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { pushToast } = useToast();
+  const [sourceDraft, setSourceDraft] = useState("");
+  const sources = sourceDraft
+    .split(/\r?\n/)
+    .map((source) => source.trim())
+    .filter(Boolean);
+
+  const refreshSkills = useCallback(async () => {
+    if (!orgId) return;
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.organizationSkills.list(orgId) }),
+      queryClient.invalidateQueries({ queryKey: ["organizations", orgId, "workspace-files"] }),
+    ]);
+  }, [orgId, queryClient]);
+
+  const importSkills = useMutation({
+    mutationFn: async (payload: { sources: string[] }) => {
+      if (!orgId) throw new Error("Select an organization before importing skills.");
+      return Promise.all(payload.sources.map((source) => organizationSkillsApi.importFromSource(orgId, source)));
+    },
+    onSuccess: (results) => {
+      void refreshSkills();
+      setSourceDraft("");
+      onOpenChange(false);
+      const importedCount = results.reduce((count, result) => count + result.imported.length, 0);
+      pushToast({
+        title: importedCount === 1 ? "Skill imported" : `${importedCount} skills imported`,
+        body: importedCount > 0 ? "The skills list has been refreshed." : "No new skills were imported.",
+        tone: importedCount > 0 ? "success" : "info",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to import skill",
+        tone: "error",
+      });
+    },
+  });
+
+  const scanLocalSkills = useMutation({
+    mutationFn: async () => {
+      if (!orgId) throw new Error("Select an organization before scanning skills.");
+      return organizationSkillsApi.scanLocal(orgId);
+    },
+    onSuccess: (result) => {
+      void refreshSkills();
+      onOpenChange(false);
+      const changedCount = result.imported.length + result.updated.length;
+      pushToast({
+        title: changedCount === 1 ? "Local skill synced" : `${changedCount} local skills synced`,
+        body: result.warnings.length > 0 ? result.warnings.join(", ") : undefined,
+        tone: result.warnings.length > 0 ? "warn" : "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to scan local skills",
+        tone: "error",
+      });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!nextOpen && !importSkills.isPending && !scanLocalSkills.isPending) onOpenChange(false);
+      else if (nextOpen) onOpenChange(true);
+    }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add skill to Library</DialogTitle>
+          <DialogDescription>
+            Import or move a skill into this organization. Workspace-backed skills become editable Library files;
+            bundled or remote skills appear here as read-only references.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <label className="space-y-1.5">
+            <span className="text-xs text-muted-foreground">Skill source, one per line</span>
+            <Textarea
+              value={sourceDraft}
+              onChange={(event) => setSourceDraft(event.target.value)}
+              placeholder="https://github.com/org/repo/tree/main/.agents/skills/example&#10;/Users/me/.agents/skills/example&#10;skills install example"
+              className="min-h-28 resize-y font-mono text-xs"
+              disabled={importSkills.isPending || scanLocalSkills.isPending}
+              autoFocus
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              onClick={() => importSkills.mutate({ sources })}
+              disabled={!orgId || sources.length === 0 || importSkills.isPending || scanLocalSkills.isPending}
+            >
+              {importSkills.isPending ? "Importing..." : "Import skill"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => scanLocalSkills.mutate()}
+              disabled={!orgId || importSkills.isPending || scanLocalSkills.isPending}
+            >
+              {scanLocalSkills.isPending ? "Scanning..." : "Scan local skills"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="org-workspaces-skill-agent-install-button"
+              onClick={() => {
+                onOpenChange(false);
+                navigate(`/messenger/chat?prefill=${encodeURIComponent(SKILL_INSTALL_CHAT_PREFILL)}`);
+              }}
+            >
+              Ask Agent to install
+            </Button>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            disabled={importSkills.isPending || scanLocalSkills.isPending}
+          >
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2506,9 +2885,11 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
   const { viewedOrganizationId } = useViewedOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedEntryId = normalizeRequestedPath(searchParams.get("entry"));
-  const selectedFilePath = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("path"));
-  const selectedResourceAttachmentId = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("resource"));
-  const requestedDirectoryPath = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("directory"));
+  const requestedSkillId = requestedEntryId ? null : normalizeRequestedPath(searchParams.get("skill"));
+  const requestedSkillFilePath = requestedSkillId ? (normalizeRequestedPath(searchParams.get("skillFile")) ?? "SKILL.md") : null;
+  const selectedFilePath = requestedEntryId || requestedSkillId ? null : normalizeRequestedPath(searchParams.get("path"));
+  const selectedResourceAttachmentId = requestedEntryId || requestedSkillId ? null : normalizeRequestedPath(searchParams.get("resource"));
+  const requestedDirectoryPath = requestedEntryId || requestedSkillId ? null : normalizeRequestedPath(searchParams.get("directory"));
   const filesScrollRef = useScrollbarActivityRef("org-workspaces:files-sidebar");
   const [createTarget, setCreateTarget] = useState<{
     parent: OrganizationWorkspaceFileEntry;
@@ -2518,6 +2899,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
   const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
+  const [skillAddDialogOpen, setSkillAddDialogOpen] = useState(false);
   const [rootDropActive, setRootDropActive] = useState(false);
   const [draggedEntryPath, setDraggedEntryPath] = useState<string | null>(null);
   const [activeEntryPath, setActiveEntryPath] = useState<string | null>(selectedFilePath ?? requestedDirectoryPath);
@@ -2534,6 +2916,24 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
     enabled: !!viewedOrganizationId && !!requestedEntryId,
     refetchOnWindowFocus: false,
   });
+  const organizationSkillsQuery = useQuery({
+    queryKey: queryKeys.organizationSkills.list(viewedOrganizationId ?? "__none__"),
+    queryFn: () => organizationSkillsApi.list(viewedOrganizationId!),
+    enabled: !!viewedOrganizationId,
+    refetchOnWindowFocus: false,
+  });
+  const organizationSkills = organizationSkillsQuery.data ?? [];
+  const rootTreeEntries = useMemo(
+    () => mergeWorkspaceAndVirtualSkillEntries("", rootQuery.data?.entries ?? [], organizationSkills),
+    [organizationSkills, rootQuery.data?.entries],
+  );
+  const selectedOrganizationSkill = organizationSkills.find((skill) => skill.id === requestedSkillId) ?? null;
+  const selectedVirtualOrganizationSkill = selectedOrganizationSkill && !isWorkspaceBackedOrganizationSkill(selectedOrganizationSkill)
+    ? selectedOrganizationSkill
+    : null;
+  const selectedSkillTreePath = selectedVirtualOrganizationSkill && requestedSkillFilePath
+    ? organizationSkillFileTreePath(selectedVirtualOrganizationSkill, requestedSkillFilePath)
+    : null;
   const projectResourceTree = useProjectResourceTreeGroups(viewedOrganizationId);
   const selectedProjectResource = useMemo(
     () => findProjectResourceSelection(projectResourceTree.projects, selectedResourceAttachmentId),
@@ -2542,7 +2942,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
   const selectedResourcePath = selectedProjectResource?.path ?? null;
   const storedOpenFileTabState = readStoredWorkspaceOpenFileTabState(viewedOrganizationId);
   const sidebarHasTabStrip = Boolean(selectedFilePath || storedOpenFileTabState.openFilePaths.length > 0);
-  const sidebarHasBreadcrumb = Boolean(selectedFilePath || requestedDirectoryPath);
+  const sidebarHasBreadcrumb = Boolean(selectedFilePath || selectedSkillTreePath || requestedDirectoryPath);
 
   const workspaceRootPath = rootQuery.data?.rootExists ? rootQuery.data.rootPath : null;
   const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
@@ -2556,14 +2956,22 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
   const expandedDirectories = useMemo(
     () => {
       if (selectedFilePath) return parentDirectories(selectedFilePath);
+      if (selectedSkillTreePath) return parentDirectories(selectedSkillTreePath);
       if (selectedResourcePath) return parentDirectories(selectedResourcePath);
       if (requestedDirectoryPath) return directoryAndParentDirectories(requestedDirectoryPath);
       return new Set<string>();
     },
-    [requestedDirectoryPath, selectedFilePath, selectedResourcePath],
+    [requestedDirectoryPath, selectedFilePath, selectedResourcePath, selectedSkillTreePath],
   );
 
   useEffect(() => {
+    if (requestedSkillId && selectedOrganizationSkill && isWorkspaceBackedOrganizationSkill(selectedOrganizationSkill)) {
+      const editablePath = normalizeRequestedPath(selectedOrganizationSkill.workspaceEditPath);
+      if (editablePath) {
+        updateSelectedPath(searchParams, setSearchParams, editablePath);
+      }
+      return;
+    }
     if (requestedEntryId) {
       if (libraryEntryQuery.data?.status === "active" && libraryEntryQuery.data.currentPath) {
         updateSelectedPath(searchParams, setSearchParams, libraryEntryQuery.data.currentPath);
@@ -2573,9 +2981,10 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
       return;
     }
     if (selectedFilePath) setActiveEntryPath(selectedFilePath);
+    else if (selectedSkillTreePath) setActiveEntryPath(selectedSkillTreePath);
     else if (selectedResourcePath) setActiveEntryPath(selectedResourcePath);
     else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
-  }, [libraryEntryQuery.data?.currentPath, requestedDirectoryPath, requestedEntryId, searchParams, selectedFilePath, selectedResourcePath, setSearchParams]);
+  }, [libraryEntryQuery.data?.currentPath, requestedDirectoryPath, requestedEntryId, requestedSkillId, searchParams, selectedFilePath, selectedOrganizationSkill, selectedResourcePath, selectedSkillTreePath, setSearchParams]);
 
   useEffect(() => {
     const clearRootDropState = () => {
@@ -3024,6 +3433,11 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
     updateSelectedPath(searchParams, setSearchParams, filePath);
   }
 
+  function handleSelectSkillFile(skillId: string, filePath: string, treePath: string) {
+    setActiveEntryPath(treePath);
+    updateSelectedSkillFile(searchParams, setSearchParams, skillId, filePath);
+  }
+
   function handleSelectResource(attachmentId: string) {
     updateSelectedResource(searchParams, setSearchParams, attachmentId);
   }
@@ -3216,22 +3630,25 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
                 <div className="px-2 py-3 text-sm text-muted-foreground">
                   {rootQuery.data?.message ?? "The shared Library root is not available on this machine yet."}
                 </div>
-              ) : rootQuery.data.entries.length === 0 ? (
+              ) : rootTreeEntries.length === 0 ? (
                 <div className="px-2 py-3 text-sm text-muted-foreground">
                   {rootQuery.data.message ?? "This folder is empty."}
                 </div>
               ) : (
                 <ul className="space-y-0.5">
-                  {rootQuery.data.entries.map((entry) => (
+                  {rootTreeEntries.map((entry) => (
                     <WorkspaceTreeNode
                       key={entry.path}
                       orgId={viewedOrganizationId}
                       entry={entry}
+                      organizationSkills={organizationSkills}
                       selectedFilePath={selectedFilePath}
+                      selectedSkillTreePath={selectedSkillTreePath}
                       selectedResourcePath={selectedResourcePath}
                       activeEntryPath={activeEntryPath}
                       draggedEntryPath={draggedEntryPath}
                       onSelectFile={handleSelectFile}
+                      onSelectSkillFile={handleSelectSkillFile}
                       onSelectResource={handleSelectResource}
                       onFocusEntry={setActiveEntryPath}
                       onDragStartEntry={setDraggedEntryPath}
@@ -3253,6 +3670,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
                       onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
                       onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
                       onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
+                      onOpenSkillAddDialog={() => setSkillAddDialogOpen(true)}
                       unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                       expandedDirectories={expandedDirectories}
                       workspaceLaunchTargets={workspaceLaunchTargets}
@@ -3421,6 +3839,12 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SkillLibraryAddDialog
+        open={skillAddDialogOpen}
+        orgId={viewedOrganizationId}
+        onOpenChange={setSkillAddDialogOpen}
+      />
     </>
   );
 }
@@ -3451,10 +3875,12 @@ export function OrganizationWorkspaceBrowser({
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedDocumentId = normalizeRequestedPath(searchParams.get("doc"));
   const requestedEntryId = normalizeRequestedPath(searchParams.get("entry"));
+  const requestedSkillId = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("skill"));
+  const requestedSkillFilePath = requestedSkillId ? (normalizeRequestedPath(searchParams.get("skillFile")) ?? "SKILL.md") : null;
   const requestedEntryPathHint = requestedEntryId ? normalizeRequestedPath(searchParams.get("path")) : null;
-  const requestedFilePath = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("path"));
-  const requestedResourceAttachmentId = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("resource"));
-  const requestedDirectoryPath = requestedEntryId || requestedDocumentId ? null : normalizeRequestedPath(searchParams.get("directory"));
+  const requestedFilePath = requestedEntryId || requestedDocumentId || requestedSkillId ? null : normalizeRequestedPath(searchParams.get("path"));
+  const requestedResourceAttachmentId = requestedEntryId || requestedDocumentId || requestedSkillId ? null : normalizeRequestedPath(searchParams.get("resource"));
+  const requestedDirectoryPath = requestedEntryId || requestedDocumentId || requestedSkillId ? null : normalizeRequestedPath(searchParams.get("directory"));
   const cachedRequestedEntryPath = normalizeRequestedPath(
     getCachedLibraryEntryMetadata(viewedOrganizationId, requestedEntryId)?.currentPath ?? null,
   );
@@ -3464,6 +3890,7 @@ export function OrganizationWorkspaceBrowser({
     [viewedOrganizationId],
   );
   const initialSelectedFilePath = requestedDocumentId || requestedResourceAttachmentId || requestedDirectoryPath
+    || requestedSkillId
     ? null
     : fastRequestedEntryPath ?? requestedFilePath ?? initialOpenFileTabState.selectedFilePath;
   const initialSafeSelectedFilePath = isLegacyAgentHeartbeatInstructionPath(initialSelectedFilePath)
@@ -3503,6 +3930,7 @@ export function OrganizationWorkspaceBrowser({
   const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
+  const [skillAddDialogOpen, setSkillAddDialogOpen] = useState(false);
   const [legacyHeartbeatDialogPath, setLegacyHeartbeatDialogPath] = useState<string | null>(
     isLegacyAgentHeartbeatInstructionPath(requestedFilePath) ? requestedFilePath : null,
   );
@@ -3665,6 +4093,20 @@ export function OrganizationWorkspaceBrowser({
     enabled: !!viewedOrganizationId && !!requestedEntryId && !requestedDocumentId,
     refetchOnWindowFocus: false,
   });
+  const organizationSkillsQuery = useQuery({
+    queryKey: queryKeys.organizationSkills.list(viewedOrganizationId ?? "__none__"),
+    queryFn: () => organizationSkillsApi.list(viewedOrganizationId!),
+    enabled: !!viewedOrganizationId && !requestedDocumentId,
+    refetchOnWindowFocus: false,
+  });
+  const organizationSkills = organizationSkillsQuery.data ?? [];
+  const selectedOrganizationSkill = organizationSkills.find((skill) => skill.id === requestedSkillId) ?? null;
+  const selectedVirtualOrganizationSkill = selectedOrganizationSkill && !isWorkspaceBackedOrganizationSkill(selectedOrganizationSkill)
+    ? selectedOrganizationSkill
+    : null;
+  const selectedSkillTreePath = selectedVirtualOrganizationSkill && requestedSkillFilePath
+    ? organizationSkillFileTreePath(selectedVirtualOrganizationSkill, requestedSkillFilePath)
+    : null;
   const requestedEntryPath = normalizeRequestedPath(
     libraryEntryQuery.data?.status === "active"
       ? libraryEntryQuery.data.currentPath
@@ -3682,6 +4124,19 @@ export function OrganizationWorkspaceBrowser({
       setActiveEntryPath(null);
       return;
     }
+    if (requestedSkillId && selectedOrganizationSkill && isWorkspaceBackedOrganizationSkill(selectedOrganizationSkill)) {
+      const editablePath = normalizeRequestedPath(selectedOrganizationSkill.workspaceEditPath);
+      if (editablePath) {
+        updateSelectedPath(searchParams, setSearchParams, editablePath);
+      }
+      return;
+    }
+    if (requestedSkillId) {
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      setActiveEntryPath(selectedSkillTreePath);
+      return;
+    }
     if (requestedEntryId) {
       if (requestedEntryPath) {
         setSelectedFilePath(requestedEntryPath);
@@ -3695,9 +4150,10 @@ export function OrganizationWorkspaceBrowser({
       return;
     }
     if (selectedFilePath) setActiveEntryPath(selectedFilePath);
+    else if (selectedSkillTreePath) setActiveEntryPath(selectedSkillTreePath);
     else if (selectedResourcePath) setActiveEntryPath(selectedResourcePath);
     else if (requestedDirectoryPath) setActiveEntryPath(requestedDirectoryPath);
-  }, [libraryEntryQuery.data?.currentPath, requestedDirectoryPath, requestedDocumentId, requestedEntryId, requestedEntryPath, searchParams, selectedFilePath, selectedResourcePath, setSearchParams]);
+  }, [libraryEntryQuery.data?.currentPath, requestedDirectoryPath, requestedDocumentId, requestedEntryId, requestedEntryPath, requestedSkillId, searchParams, selectedFilePath, selectedOrganizationSkill, selectedResourcePath, selectedSkillTreePath, setSearchParams]);
   const agentWorkspaceEntriesQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", "agents"),
     queryFn: () => organizationsApi.listWorkspaceFiles(viewedOrganizationId!, "agents"),
@@ -3729,6 +4185,16 @@ export function OrganizationWorkspaceBrowser({
     enabled: !!viewedOrganizationId && !!selectedFilePath,
     refetchOnWindowFocus: false,
   });
+  const virtualSkillFileQuery = useQuery({
+    queryKey: queryKeys.organizationSkills.file(
+      viewedOrganizationId ?? "__none__",
+      requestedSkillId ?? "__none__",
+      requestedSkillFilePath ?? "SKILL.md",
+    ),
+    queryFn: () => organizationSkillsApi.file(viewedOrganizationId!, requestedSkillId!, requestedSkillFilePath ?? "SKILL.md"),
+    enabled: !!viewedOrganizationId && !!requestedSkillId && !!selectedVirtualOrganizationSkill,
+    refetchOnWindowFocus: false,
+  });
 
   useEffect(() => {
     draftStateRef.current = { draftContent, draftFilePath };
@@ -3742,6 +4208,11 @@ export function OrganizationWorkspaceBrowser({
       return;
     }
     if (requestedEntryId) {
+      setSelectedFilePath(null);
+      setDraftFilePath(null);
+      return;
+    }
+    if (requestedSkillId) {
       setSelectedFilePath(null);
       setDraftFilePath(null);
       return;
@@ -3776,15 +4247,16 @@ export function OrganizationWorkspaceBrowser({
     requestedEntryId,
     requestedFilePath,
     requestedResourceAttachmentId,
+    requestedSkillId,
     viewedOrganizationId,
   ]);
 
   useEffect(() => {
     if (!viewedOrganizationId) return;
     if (restoredOpenTabsOrgRef.current !== viewedOrganizationId) return;
-    if (requestedDocumentId || requestedEntryId || requestedResourceAttachmentId || requestedDirectoryPath) return;
+    if (requestedDocumentId || requestedEntryId || requestedSkillId || requestedResourceAttachmentId || requestedDirectoryPath) return;
     writeStoredWorkspaceOpenFileTabState(viewedOrganizationId, openFilePaths, selectedFilePath);
-  }, [openFilePaths, requestedDirectoryPath, requestedDocumentId, requestedEntryId, requestedResourceAttachmentId, selectedFilePath, viewedOrganizationId]);
+  }, [openFilePaths, requestedDirectoryPath, requestedDocumentId, requestedEntryId, requestedResourceAttachmentId, requestedSkillId, selectedFilePath, viewedOrganizationId]);
 
   useEffect(() => {
     if (!viewedOrganizationId || restoredOpenTabsOrgRef.current === viewedOrganizationId) return;
@@ -3792,7 +4264,7 @@ export function OrganizationWorkspaceBrowser({
     allowDefaultFileOpenRef.current = true;
     const storedTabState = readStoredWorkspaceOpenFileTabState(viewedOrganizationId);
 
-    if (requestedDocumentId || (requestedEntryId && !requestedEntryPath)) {
+    if (requestedDocumentId || requestedSkillId || (requestedEntryId && !requestedEntryPath)) {
       setOpenFilePaths([]);
       setSelectedFilePath(null);
       setDraftFilePath(null);
@@ -3851,6 +4323,7 @@ export function OrganizationWorkspaceBrowser({
     requestedEntryPath,
     requestedFilePath,
     requestedResourceAttachmentId,
+    requestedSkillId,
     searchParams,
     setSearchParams,
     viewedOrganizationId,
@@ -3859,6 +4332,7 @@ export function OrganizationWorkspaceBrowser({
   useEffect(() => {
     if (requestedDocumentId) return;
     if (requestedEntryId) return;
+    if (requestedSkillId) return;
     if (selectedFilePath) return;
     if (requestedResourceAttachmentId) return;
     if (requestedDirectoryPath) return;
@@ -3876,6 +4350,7 @@ export function OrganizationWorkspaceBrowser({
     requestedDocumentId,
     requestedEntryId,
     requestedResourceAttachmentId,
+    requestedSkillId,
     openFilePaths.length,
     rootQuery.data?.entries,
     searchParams,
@@ -3926,11 +4401,12 @@ export function OrganizationWorkspaceBrowser({
   const expandedDirectories = useMemo(
     () => {
       if (selectedFilePath) return parentDirectories(selectedFilePath);
+      if (selectedSkillTreePath) return parentDirectories(selectedSkillTreePath);
       if (selectedResourcePath) return parentDirectories(selectedResourcePath);
       if (requestedDirectoryPath) return directoryAndParentDirectories(requestedDirectoryPath);
       return new Set<string>();
     },
-    [requestedDirectoryPath, selectedFilePath, selectedResourcePath],
+    [requestedDirectoryPath, selectedFilePath, selectedResourcePath, selectedSkillTreePath],
   );
 
   const saveWorkspaceFile = useMutation({
@@ -4573,7 +5049,7 @@ export function OrganizationWorkspaceBrowser({
     );
   }
 
-  if (rootQuery.isLoading && !selectedFilePath && !requestedEntryPath && !requestedDirectoryPath && !selectedResourcePath) {
+  if (rootQuery.isLoading && !selectedFilePath && !requestedEntryPath && !requestedDirectoryPath && !selectedResourcePath && !requestedSkillId) {
     return <PageSkeleton variant="detail" />;
   }
 
@@ -4600,6 +5076,7 @@ export function OrganizationWorkspaceBrowser({
     entries: [],
     message: null,
   };
+  const workspaceRootTreeEntries = mergeWorkspaceAndVirtualSkillEntries("", workspace.entries, organizationSkills);
 
   const handleSelectFile = (filePath: string) => {
     setTabContextMenu(null);
@@ -4615,6 +5092,15 @@ export function OrganizationWorkspaceBrowser({
     setSelectedFilePath(filePath);
     updateSelectedPath(searchParams, setSearchParams, filePath);
   };
+
+  function handleSelectSkillFile(skillId: string, filePath: string, treePath: string) {
+    setTabContextMenu(null);
+    flushCurrentDraft();
+    setSelectedFilePath(null);
+    setDraftFilePath(null);
+    setActiveEntryPath(treePath);
+    updateSelectedSkillFile(searchParams, setSearchParams, skillId, filePath);
+  }
 
   function handleKeepLegacyHeartbeatFiles() {
     setLegacyHeartbeatDialogPath(null);
@@ -4694,6 +5180,14 @@ export function OrganizationWorkspaceBrowser({
   }
 
   const selectedFileDetail = fileQuery.data;
+  const selectedVirtualSkillFileDetail = selectedVirtualOrganizationSkill
+    ? virtualSkillFileQuery.data as OrganizationSkillFileDetail | undefined
+    : undefined;
+  const selectedVirtualSkillContent = selectedVirtualSkillFileDetail?.content ?? "";
+  const selectedVirtualSkillMarkdownParts = splitYamlFrontmatter(selectedVirtualSkillContent);
+  const selectedVirtualSkillDisplayPath = selectedVirtualOrganizationSkill && selectedVirtualSkillFileDetail
+    ? organizationSkillFileTreePath(selectedVirtualOrganizationSkill, selectedVirtualSkillFileDetail.path)
+    : selectedSkillTreePath;
   const selectedEditorContent = draftFilePath === selectedFilePath
     ? draftContent
     : selectedFileDetail?.content ?? "";
@@ -4730,8 +5224,8 @@ export function OrganizationWorkspaceBrowser({
   const selectedDirectoryPath = !selectedFilePath && !selectedProjectResource
     ? requestedDirectoryPath
     : null;
-  const visibleWorkspaceBreadcrumbPath = selectedFilePath ?? selectedDirectoryPath;
-  const visibleWorkspaceBreadcrumbKind = selectedFilePath ? "file" : "directory";
+  const visibleWorkspaceBreadcrumbPath = selectedFilePath ?? selectedVirtualSkillDisplayPath ?? selectedDirectoryPath;
+  const visibleWorkspaceBreadcrumbKind = selectedFilePath || selectedVirtualSkillDisplayPath ? "file" : "directory";
   const showWorkspaceFileTabs = openFilePaths.length > 0;
   const emptyStateCreateTarget: OrganizationWorkspaceFileEntry = {
     name: selectedDirectoryPath?.split("/").filter(Boolean).at(-1) ?? "",
@@ -4768,6 +5262,8 @@ export function OrganizationWorkspaceBrowser({
     selectedFileDetail?.message ?? "",
     selectedFileDetail?.truncated ? "truncated" : "full",
     selectedEditorContent,
+    selectedVirtualSkillDisplayPath ?? "",
+    selectedVirtualSkillContent,
   ].join(":");
   const canEditSelectedFile = Boolean(
     selectedFilePath
@@ -5261,22 +5757,25 @@ export function OrganizationWorkspaceBrowser({
                 className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto"
               >
                 <div className="px-2 py-2">
-                  {workspace.entries.length === 0 ? (
+                  {workspaceRootTreeEntries.length === 0 ? (
                     <div className="px-2 py-3 text-sm text-muted-foreground">
                       {workspace.message ?? "This folder is empty."}
                     </div>
                   ) : (
                     <ul className="space-y-0.5">
-                      {workspace.entries.map((entry) => (
+                      {workspaceRootTreeEntries.map((entry) => (
                         <WorkspaceTreeNode
                           key={entry.path}
                           orgId={viewedOrganizationId}
                           entry={entry}
+                          organizationSkills={organizationSkills}
                           selectedFilePath={selectedFilePath}
+                          selectedSkillTreePath={selectedSkillTreePath}
                           selectedResourcePath={selectedResourcePath}
                           activeEntryPath={activeEntryPath}
                           draggedEntryPath={draggedEntryPath}
                           onSelectFile={handleSelectFile}
+                          onSelectSkillFile={handleSelectSkillFile}
                           onSelectResource={handleSelectResource}
                           onFocusEntry={setActiveEntryPath}
                           onDragStartEntry={setDraggedEntryPath}
@@ -5298,6 +5797,7 @@ export function OrganizationWorkspaceBrowser({
                           onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
                           onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
                           onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
+                          onOpenSkillAddDialog={() => setSkillAddDialogOpen(true)}
                           unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                           expandedDirectories={expandedDirectories}
                           workspaceLaunchTargets={workspaceLaunchTargets}
@@ -5405,11 +5905,14 @@ export function OrganizationWorkspaceBrowser({
                 className="flex h-[var(--rudder-doc-editor-breadcrumb-height)] shrink-0 items-center gap-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
                 aria-label="File path"
               >
-                {workspacePathBreadcrumb(
-                  visibleWorkspaceBreadcrumbPath,
-                  agentWorkspaceEntryByName,
-                  visibleWorkspaceBreadcrumbKind,
-                  libraryCopy("library", locale),
+                {applyOrganizationSkillBreadcrumbLabels(
+                  workspacePathBreadcrumb(
+                    visibleWorkspaceBreadcrumbPath,
+                    agentWorkspaceEntryByName,
+                    visibleWorkspaceBreadcrumbKind,
+                    libraryCopy("library", locale),
+                  ),
+                  selectedVirtualOrganizationSkill,
                 ).map((part, index, parts) => {
                   const isLast = index === parts.length - 1;
                   return (
@@ -5424,12 +5927,18 @@ export function OrganizationWorkspaceBrowser({
                         title={part.path}
                         onClick={() => {
                           if (part.isFile) {
-                            handleSelectFile(part.path);
+                            if (requestedSkillId && requestedSkillFilePath) {
+                              handleSelectSkillFile(requestedSkillId, requestedSkillFilePath, part.path);
+                            } else {
+                              handleSelectFile(part.path);
+                            }
                           } else if (part.path) {
                             setActiveEntryPath(part.path);
                             focusWorkspaceTreeEntry(part.path);
+                            updateSelectedDirectory(searchParams, setSearchParams, part.path);
                           } else {
                             setActiveEntryPath(null);
+                            updateSelectedDirectory(searchParams, setSearchParams, null);
                           }
                         }}
                       >
@@ -5471,6 +5980,51 @@ export function OrganizationWorkspaceBrowser({
                 <div className="px-4 py-6 text-sm text-muted-foreground">Loading resource...</div>
               ) : requestedResourceAttachmentId ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">{libraryCopy("resourceNotFoundInProjectLibrary", locale)}</div>
+              ) : requestedSkillId ? (
+                virtualSkillFileQuery.isLoading ? (
+                  <div className="px-4 py-6 text-sm text-muted-foreground">Loading skill...</div>
+                ) : virtualSkillFileQuery.error ? (
+                  <div className="px-4 py-6 text-sm text-destructive">
+                    {virtualSkillFileQuery.error instanceof Error
+                      ? virtualSkillFileQuery.error.message
+                      : "This skill file could not be loaded."}
+                  </div>
+                ) : selectedVirtualSkillFileDetail ? (
+                  <div
+                    ref={setEditorScrollElementRef}
+                    data-testid="org-workspaces-virtual-skill-readonly"
+                    className="scrollbar-auto-hide h-full min-h-0 overflow-auto bg-[color:var(--surface-elevated)]"
+                  >
+                    <div className="border-b border-border bg-[color:var(--surface-page)] px-4 py-2 text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">Read-only skill</span>
+                      {selectedOrganizationSkill?.sourceLabel ? (
+                        <>
+                          <span aria-hidden="true"> / </span>
+                          <span>{selectedOrganizationSkill.sourceLabel}</span>
+                        </>
+                      ) : null}
+                      {selectedOrganizationSkill?.editableReason ? (
+                        <>
+                          <span aria-hidden="true"> / </span>
+                          <span>{selectedOrganizationSkill.editableReason}</span>
+                        </>
+                      ) : null}
+                    </div>
+                    {selectedVirtualSkillFileDetail.markdown ? (
+                      <article className="mx-auto min-h-full w-full max-w-[880px] px-8 py-8">
+                        <MarkdownBody className="rudder-library-document-editor text-[15px] leading-7 text-foreground">
+                          {selectedVirtualSkillMarkdownParts.body}
+                        </MarkdownBody>
+                      </article>
+                    ) : (
+                      <pre className="overflow-x-auto px-4 py-4 text-xs leading-6 text-foreground">
+                        <code>{selectedVirtualSkillContent}</code>
+                      </pre>
+                    )}
+                  </div>
+                ) : (
+                  <div className="px-4 py-6 text-sm text-muted-foreground">This skill file is not available.</div>
+                )
               ) : !selectedFilePath ? (
                 <div className="flex h-full min-h-[360px] items-center justify-center px-6 py-10">
                   <div className="flex max-w-md flex-col items-center text-center">
@@ -6016,6 +6570,12 @@ export function OrganizationWorkspaceBrowser({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SkillLibraryAddDialog
+        open={skillAddDialogOpen}
+        orgId={viewedOrganizationId}
+        onOpenChange={setSkillAddDialogOpen}
+      />
     </>
   );
 }
