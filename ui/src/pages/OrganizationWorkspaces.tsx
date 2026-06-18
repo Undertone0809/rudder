@@ -177,11 +177,15 @@ const WORKSPACE_TAB_DND_MIME = "application/x-rudder-workspace-tab";
 const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*,/i;
 const EMBEDDED_IMAGE_DATA_URL_ERROR =
   "Embedded image data URLs are not allowed in Library files. Upload the image and reference the asset URL instead.";
+const WORKSPACE_LAUNCH_TARGET_BRAND_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
+  src: string;
+}>> = {
+  cursor: { src: "/brands/cursor-app-icon.svg" },
+};
 const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
   label: string;
   className: string;
 }>> = {
-  cursor: { label: "C", className: "bg-[#111827] text-white" },
   vscode: { label: "VS", className: "bg-[#0078d4] text-white" },
   windsurf: { label: "W", className: "bg-[#14b8a6] text-white" },
   zed: { label: "Z", className: "bg-[#171717] text-white" },
@@ -252,13 +256,14 @@ export function WorkspaceLaunchTargetIcon({
   target: DesktopWorkspaceLaunchTarget;
   className?: string;
 }) {
-  const [imageFailed, setImageFailed] = useState(false);
+  const [nativeImageFailed, setNativeImageFailed] = useState(false);
+  const [brandImageFailed, setBrandImageFailed] = useState(false);
   const slotClassName = cn(
     "inline-flex h-5 w-5 shrink-0 items-center justify-center",
     className,
   );
 
-  if (target.iconDataUrl && !imageFailed) {
+  if (target.iconDataUrl && !nativeImageFailed) {
     return (
       <span
         aria-hidden="true"
@@ -269,7 +274,27 @@ export function WorkspaceLaunchTargetIcon({
           src={target.iconDataUrl}
           alt=""
           className="h-full w-full object-contain"
-          onError={() => setImageFailed(true)}
+          onError={() => setNativeImageFailed(true)}
+        />
+      </span>
+    );
+  }
+
+  const brandFallback = WORKSPACE_LAUNCH_TARGET_BRAND_FALLBACKS[target.id];
+  if (brandFallback && !brandImageFailed) {
+    return (
+      <span
+        aria-hidden="true"
+        className={slotClassName}
+        data-workspace-launch-target-icon={target.id}
+        data-fallback-icon="true"
+        data-brand-fallback="true"
+      >
+        <img
+          src={brandFallback.src}
+          alt=""
+          className="h-full w-full object-contain"
+          onError={() => setBrandImageFailed(true)}
         />
       </span>
     );

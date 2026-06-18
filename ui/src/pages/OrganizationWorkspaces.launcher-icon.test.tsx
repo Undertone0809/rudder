@@ -113,4 +113,24 @@ describe("WorkspaceLaunchTargetIcon", () => {
     vscode.unmount();
     xcode.unmount();
   });
+
+  it("uses the Cursor brand app icon fallback instead of a letter tile", () => {
+    const { container, unmount } = renderIcon(
+      <WorkspaceLaunchTargetIcon
+        target={{
+          id: "cursor",
+          label: "Cursor",
+          kind: "ide",
+        }}
+      />,
+    );
+
+    const slot = container.querySelector("[data-workspace-launch-target-icon='cursor']");
+    const image = container.querySelector("img");
+    expect(slot?.getAttribute("data-brand-fallback")).toBe("true");
+    expect(image?.getAttribute("src")).toBe("/brands/cursor-app-icon.svg");
+    expect(slot?.textContent).not.toBe("C");
+
+    unmount();
+  });
 });
