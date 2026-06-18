@@ -1,8 +1,8 @@
-# Conversation Capture Evals
+# Conversation and Agent Work Capture Evals
 
 Use these lightweight cases when changing the `para-memory-files` skill's
-Rudder chat capture behavior. They are written for human or agent review, not a
-dedicated automated harness.
+Rudder chat and agent work capture behavior. They are written for human or
+agent review, not a dedicated automated harness.
 
 ### Case: User Corrects Memory Behavior
 
@@ -44,6 +44,29 @@ Must not:
 
 - Record low-signal close-out chatter just because it happened in chat.
 - Promote repeated issue status into personal memory.
+
+### Case: Automation Work Produces Reusable Lesson
+
+Input:
+
+During a scheduled CI patrol automation, the agent discovers that a recurring
+workflow failure should be repaired directly when credentials and local
+reproduction are available, and only escalated when the platform is down or a
+non-substitutable secret is missing.
+
+Expected behavior:
+
+- Write a concise daily-note memory capture that names the automation context,
+  durable escalation rule, action taken, reusable lesson, and follow-up risk.
+- Promote the shared operating rule to the relevant project know-how, skill, or
+  agent instruction when it affects future agents or recurring automations.
+- Keep raw logs, credentials, and noisy command output out of memory.
+
+Must not:
+
+- Ignore the event because it came from automation instead of chat.
+- Store the complete automation transcript or secrets in a personal memory file.
+- Hide an organization-wide automation rule only in one agent's private memory.
 
 ### Case: Low-Signal Chat
 

@@ -6,7 +6,7 @@ description: >
   sessions. Covers three memory layers: (1) Knowledge graph in PARA folders
   with atomic YAML facts, (2) Daily notes as raw timeline, (3) Tacit
   knowledge about user patterns. Also handles shared work files, memory decay,
-  weekly synthesis, Rudder chat conversation capture, and file-based recall.
+  weekly synthesis, Rudder chat and agent work capture, and file-based recall.
   Trigger on any memory operation: saving facts, writing daily notes, creating
   entities, running weekly synthesis, recalling past context, or managing
   shared work notes.
@@ -69,22 +69,27 @@ For the atomic fact YAML schema and memory decay rules, see [references/schemas.
 
 Raw timeline of events -- the "when" layer.
 
-- Write continuously during conversations when a memory-worthy signal appears.
+- Write continuously during conversations and agent work when a
+  memory-worthy signal appears.
 - Extract durable facts to Layer 1 during heartbeats.
 - Treat daily notes as the first capture layer, not the final destination for
   stable preferences, entity facts, or shared project knowledge.
 
-#### Conversation Capture Policy
+#### Conversation and Agent Work Capture Policy
 
-Rudder chat conversations are memory sources when they contain durable signal,
-not because every chat line deserves retention. Capture a concise daily-note
-entry when a chat includes any of these:
+Rudder chat conversations and agent execution events are memory sources when
+they contain durable signal, not because every chat line or routine action
+deserves retention. Capture a concise daily-note entry when a conversation,
+automation, issue run, review, close-out, or other agent work includes any of
+these:
 
 - User corrections that change how the agent should behave next time.
 - New or changed preferences, constraints, boundaries, or decisions.
 - Issue proposal intent, acceptance criteria, or priority reasoning that is not
   already explicit in the issue.
 - Automation design rationale, recurring workflow choices, or escalation rules.
+- Agent work patterns that should be repeatable, such as a better triage path,
+  validation shortcut, environment workaround, review handoff, or runbook step.
 - Project/product/engineering judgment that will affect future work.
 - Attachment or screenshot evidence that changes task interpretation.
 - Reusable execution lessons, setup friction, validation findings, or failure
@@ -93,6 +98,9 @@ entry when a chat includes any of these:
 Do not capture:
 
 - Greetings, thanks, scheduling chatter, or low-signal status updates.
+- Routine issue comments, heartbeat updates, command outputs, close-out
+  summaries, or automation logs that add no new decision, correction, lesson, or
+  reusable evidence beyond the source artifact.
 - Full private chat transcripts. Summarize the durable signal instead.
 - Secrets, tokens, credentials, private keys, session cookies, or auth headers.
 - One-time sensitive context that is not needed for future work.
@@ -103,9 +111,10 @@ Do not capture:
 Recommended daily-note entry format:
 
 ```md
-## HH:MM - Chat capture
+## HH:MM - Memory capture
 
-- Context: conversation or issue reference, project, and why this mattered.
+- Context: conversation, issue, automation, run, or evidence reference; project;
+  and why this mattered.
 - User intent: the durable need, correction, preference, or decision.
 - Conclusion/action: what changed or what was done.
 - Reusable lesson: future behavior, command, routing rule, or validation signal.

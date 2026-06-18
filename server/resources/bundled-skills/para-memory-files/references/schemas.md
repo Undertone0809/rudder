@@ -17,15 +17,17 @@
   access_count: 0
 ```
 
-## Daily Note Conversation Capture Entry
+## Daily Note Conversation and Agent Work Capture Entry
 
 Daily notes are lightweight chronological logs. Use this structure when a
-Rudder chat contains durable signal worth retaining.
+Rudder chat, issue run, automation, review, close-out, or other agent execution
+event contains durable signal worth retaining.
 
 ```md
-## HH:MM - Chat capture
+## HH:MM - Memory capture
 
-- Context: conversation or issue reference, project, and why this mattered.
+- Context: conversation, issue, automation, run, or evidence reference; project;
+  and why this mattered.
 - User intent: durable correction, preference, constraint, decision, or task
   interpretation.
 - Conclusion/action: what changed, what was done, or where it was routed.
@@ -36,6 +38,8 @@ Rudder chat contains durable signal worth retaining.
 Keep entries summarized and redacted:
 
 - Do not copy full private transcripts.
+- Do not copy raw automation logs, command output, or routine close-out text
+  when they add no durable signal beyond the source artifact.
 - Do not store secrets, tokens, credentials, private keys, session cookies, or
   auth headers.
 - Do not turn one-off sensitive context into durable memory unless the future
