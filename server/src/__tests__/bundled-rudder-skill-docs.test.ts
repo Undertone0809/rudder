@@ -29,8 +29,8 @@ describe("bundled rudder skill docs", () => {
     const contents = await readSkillDoc();
 
     expect(contents).toContain("This is the control-plane practice skill for agents working under Rudder");
-    expect(contents).toContain("Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs");
     expect(contents).toContain("Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow");
+    expect(contents).toContain("ownership, checkout, approvals, comments, reviews, Library handoffs, and");
     expect(contents).toContain("## Control-Plane Rails");
     expect(contents).toContain("## Essential Commands");
     expect(contents).toContain("Use `references/cli-reference.md` for the stable command catalog");
