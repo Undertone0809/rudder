@@ -4,6 +4,7 @@ import type {
   AgentDetail,
   AgentInstructionsBundle,
   AgentInstructionsFileDetail,
+  AgentIntegrationSummary,
   AgentKeyCreated,
   AgentRuntimeEnvironmentTestResult,
   AgentRuntimeState,
@@ -107,6 +108,12 @@ export const agentsApi = {
   },
   getConfiguration: (id: string, orgId?: string) =>
     api.get<Record<string, unknown>>(agentPath(id, orgId, "/configuration")),
+  listIntegrations: (id: string, orgId?: string) =>
+    api.get<AgentIntegrationSummary[]>(agentPath(id, orgId, "/integrations")),
+  revokeIntegration: (id: string, integrationId: string, orgId?: string) =>
+    api.delete<AgentIntegrationSummary>(
+      agentPath(id, orgId, `/integrations/${encodeURIComponent(integrationId)}`),
+    ),
   listConfigRevisions: (id: string, orgId?: string) =>
     api.get<AgentConfigRevision[]>(agentPath(id, orgId, "/config-revisions")),
   getConfigRevision: (id: string, revisionId: string, orgId?: string) =>

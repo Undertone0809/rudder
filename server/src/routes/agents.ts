@@ -41,6 +41,7 @@ import {
 import {
   accessService,
   agentInstructionsService,
+  agentIntegrationService,
   agentService,
   approvalService,
   budgetService,
@@ -54,6 +55,7 @@ import {
   workspaceOperationService
 } from "../services/index.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
+import { summarizeAgentIntegration } from "../services/integrations/agent-integrations.js";
 import type { StorageService } from "../storage/types.js";
 import { registerAgentManagementRoutes } from "./agents.management-routes.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
@@ -165,6 +167,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   const svc = agentService(db);
   const assets = assetService(db);
   const access = accessService(db);
+  const integrationsSvc = agentIntegrationService(db);
   const approvalsSvc = approvalService(db);
   const budgets = budgetService(db);
   const heartbeat = heartbeatService(db);
@@ -264,9 +267,10 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>,
     options?: { restricted?: boolean },
   ) {
-    const [chainOfCommand, accessState] = await Promise.all([
+    const [chainOfCommand, accessState, integrations] = await Promise.all([
       svc.getChainOfCommand(agent.id),
       buildAgentAccessState(agent),
+      options?.restricted ? Promise.resolve([]) : integrationsSvc.listForAgent(agent.orgId, agent.id),
     ]);
     const internalAgent = options?.restricted || typeof svc.getInternalById !== "function"
       ? null
@@ -286,6 +290,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       chainOfCommand,
       access: accessState,
       instructionsLibraryPath,
+      ...(options?.restricted ? {} : { integrations }),
     };
   }
 
@@ -1293,6 +1298,34 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     }
     await assertCanReadConfigurations(req, agent.orgId);
     res.json(redactAgentConfiguration(agent));
+  });
+
+  router.get("/agents/:id/integrations", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanReadAgent(req, agent);
+    res.json(await integrationsSvc.listForAgent(agent.orgId, agent.id));
+  });
+
+  router.delete("/agents/:id/integrations/:integrationId", async (req, res) => {
+    const id = req.params.id as string;
+    const integrationId = req.params.integrationId as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanUpdateAgent(req, agent);
+    const revoked = await integrationsSvc.revokeForAgent(agent.orgId, agent.id, integrationId);
+    if (!revoked) {
+      res.status(404).json({ error: "Integration not found" });
+      return;
+    }
+    res.json(summarizeAgentIntegration(revoked));
   });
 
   router.get("/agents/:id/config-revisions", async (req, res) => {

@@ -1,10 +1,22 @@
 import type { Db } from "@rudderhq/db";
 import { agentIntegrations, agents } from "@rudderhq/db";
-import type { CreateAgentIntegration } from "@rudderhq/shared";
+import type { AgentIntegrationSummary, CreateAgentIntegration } from "@rudderhq/shared";
 import { createAgentIntegrationSchema } from "@rudderhq/shared";
 import { and, desc, eq } from "drizzle-orm";
 import { notFound, unprocessable } from "../../errors.js";
 import { secretService } from "../secrets.js";
+
+export function summarizeAgentIntegration(row: typeof agentIntegrations.$inferSelect): AgentIntegrationSummary {
+  const { appCredentialSecretId: _appCredentialSecretId, ...rest } = row;
+  return {
+    ...rest,
+    provider: rest.provider as AgentIntegrationSummary["provider"],
+    status: rest.status as AgentIntegrationSummary["status"],
+    transport: rest.transport as AgentIntegrationSummary["transport"],
+    providerRegion: rest.providerRegion as AgentIntegrationSummary["providerRegion"],
+    hasCredentialSecret: Boolean(_appCredentialSecretId),
+  };
+}
 
 export function agentIntegrationService(db: Db) {
   const secrets = secretService(db);
@@ -34,7 +46,8 @@ export function agentIntegrationService(db: Db) {
         .select()
         .from(agentIntegrations)
         .where(and(eq(agentIntegrations.orgId, orgId), eq(agentIntegrations.agentId, agentId)))
-        .orderBy(desc(agentIntegrations.updatedAt)),
+        .orderBy(desc(agentIntegrations.updatedAt))
+        .then((rows) => rows.map(summarizeAgentIntegration)),
 
     getAgentProvider: (orgId: string, agentId: string, provider: CreateAgentIntegration["provider"]) =>
       db
@@ -82,6 +95,24 @@ export function agentIntegrationService(db: Db) {
           updatedAt: new Date(),
         })
         .where(and(eq(agentIntegrations.orgId, orgId), eq(agentIntegrations.id, integrationId)))
+        .returning()
+        .then((rows) => rows[0] ?? null),
+
+    revokeForAgent: async (orgId: string, agentId: string, integrationId: string) =>
+      db
+        .update(agentIntegrations)
+        .set({
+          status: "revoked",
+          revokedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(agentIntegrations.orgId, orgId),
+            eq(agentIntegrations.agentId, agentId),
+            eq(agentIntegrations.id, integrationId),
+          ),
+        )
         .returning()
         .then((rows) => rows[0] ?? null),
   };

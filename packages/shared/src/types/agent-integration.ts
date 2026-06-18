@@ -28,6 +28,10 @@ export interface AgentIntegration {
   updatedAt: Date;
 }
 
+export type AgentIntegrationSummary = Omit<AgentIntegration, "appCredentialSecretId"> & {
+  hasCredentialSecret: boolean;
+};
+
 export interface AgentIntegrationUserBinding {
   id: string;
   orgId: string;
