@@ -1294,64 +1294,13 @@ export function Costs() {
                 isLoading={effectiveTrendFilterKind === "agent" ? agentTrendLoading : trendLoading}
               />
 
-              <div className="grid gap-4 xl:grid-cols-[1.3fr,1fr]">
-                <Card>
-                  <CardHeader className="px-5 pt-5 pb-2">
-                    <CardTitle className="text-base">Inference ledger</CardTitle>
-                    <CardDescription>
-                      Request-scoped inference spend for the selected period.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4 px-5 pb-5 pt-2">
-                    <div className="flex flex-wrap items-end justify-between gap-3">
-                      <div>
-                        <div className="text-3xl font-semibold tabular-nums">
-                          {formatCents(spendData?.summary.spendCents ?? 0)}
-                        </div>
-                        <div className="mt-1 text-sm text-muted-foreground">
-                          {spendData?.summary.budgetCents && spendData.summary.budgetCents > 0
-                            ? `Budget ${formatCents(spendData.summary.budgetCents)}`
-                            : "Unlimited budget"}
-                        </div>
-                      </div>
-                      <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border px-4 py-3 text-right">
-                        <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">usage</div>
-                        <div className="mt-1 text-lg font-medium tabular-nums">
-                          {formatTokens(inferenceTokenTotal)}
-                        </div>
-                      </div>
-                    </div>
-                    {spendData?.summary.budgetCents && spendData.summary.budgetCents > 0 ? (
-                      <div className="space-y-2">
-                        <div className="h-2 overflow-hidden bg-muted">
-                          <div
-                            className={cn(
-                              "h-full transition-[width,background-color] duration-150",
-                              spendData.summary.utilizationPercent > 90
-                                ? "bg-red-400"
-                                : spendData.summary.utilizationPercent > 70
-                                  ? "bg-yellow-400"
-                                  : "bg-emerald-400",
-                            )}
-                            style={{ width: `${Math.min(100, spendData.summary.utilizationPercent)}%` }}
-                          />
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {spendData.summary.utilizationPercent}% of monthly budget consumed in this range.
-                        </div>
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
-
-                <FinanceSummaryCard
-                  debitCents={financeData?.summary.debitCents ?? 0}
-                  creditCents={financeData?.summary.creditCents ?? 0}
-                  netCents={financeData?.summary.netCents ?? 0}
-                  estimatedDebitCents={financeData?.summary.estimatedDebitCents ?? 0}
-                  eventCount={financeData?.summary.eventCount ?? 0}
-                />
-              </div>
+              <FinanceSummaryCard
+                debitCents={financeData?.summary.debitCents ?? 0}
+                creditCents={financeData?.summary.creditCents ?? 0}
+                netCents={financeData?.summary.netCents ?? 0}
+                estimatedDebitCents={financeData?.summary.estimatedDebitCents ?? 0}
+                eventCount={financeData?.summary.eventCount ?? 0}
+              />
 
               <div className="grid gap-4 xl:grid-cols-[1.25fr,0.95fr]">
                 <Card>
