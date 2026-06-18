@@ -23,6 +23,7 @@ export type {
   AgentIntegrationChatBinding,
   AgentIntegrationInboundAudit,
   AgentIntegrationOutboundMessage,
+  AgentIntegrationSummary,
   AgentIntegrationUserBinding
 } from "./agent-integration.js";
 export type {

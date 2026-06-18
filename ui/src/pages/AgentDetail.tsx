@@ -153,6 +153,7 @@ import {
   useRunDurationNow,
   type AgentDetailView
 } from "./AgentDetail.helpers";
+import { AgentIntegrationsTab } from "./AgentDetail.integrations";
 import {
   appendRunSearchParams
 } from "./AgentDetail.run-filters";
@@ -380,10 +381,12 @@ export function AgentDetail() {
           ? "configuration"
           : activeView === "skills"
             ? "skills"
-            : activeView === "runs"
-              ? "runs"
-              : activeView === "budget"
-                ? "budget"
+            : activeView === "integrations"
+              ? "integrations"
+              : activeView === "runs"
+                ? "runs"
+                : activeView === "budget"
+                  ? "budget"
               : "dashboard";
     if (routeAgentRef !== canonicalAgentRef || urlTab !== canonicalTab) {
       navigate(agentRunPath(`/agents/${canonicalAgentRef}/${canonicalTab}`), { replace: true });
@@ -525,6 +528,8 @@ export function AgentDetail() {
         crumbs.push({ label: "Configuration" });
       // } else if (activeView === "skills") { // TODO: bring back later
       //   crumbs.push({ label: "Skills" });
+      } else if (activeView === "integrations") {
+        crumbs.push({ label: "Integrations" });
       } else if (activeView === "runs") {
         crumbs.push({ label: "Runs" });
       } else if (activeView === "budget") {
@@ -750,6 +755,7 @@ export function AgentDetail() {
                 { value: "configuration", label: "Configuration" },
                 { value: "instructions", label: "Instructions" },
                 { value: "skills", label: "Skills" },
+                { value: "integrations", label: "Integrations" },
                 { value: "runs", label: "Runs" },
                 { value: "issues", label: "Issues" },
                 { value: "budget", label: "Budget" },
@@ -897,6 +903,13 @@ export function AgentDetail() {
 
       {activeView === "skills" && (
         <AgentSkillsTab
+          agent={agent}
+          orgId={resolvedCompanyId ?? undefined}
+        />
+      )}
+
+      {activeView === "integrations" && (
+        <AgentIntegrationsTab
           agent={agent}
           orgId={resolvedCompanyId ?? undefined}
         />

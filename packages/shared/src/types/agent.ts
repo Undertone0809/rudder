@@ -8,6 +8,7 @@ import type {
   OrganizationMembership,
   PrincipalPermissionGrant,
 } from "./access.js";
+import type { AgentIntegrationSummary } from "./agent-integration.js";
 
 export interface AgentPermissions {
   canCreateAgents: boolean;
@@ -89,6 +90,7 @@ export interface AgentDetail extends Agent {
   chainOfCommand: AgentChainOfCommandEntry[];
   access: AgentAccessState;
   instructionsLibraryPath: string | null;
+  integrations?: AgentIntegrationSummary[];
 }
 
 export interface AgentKeyCreated {
