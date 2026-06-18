@@ -12,6 +12,8 @@ const LIST_LIKE_ROUTE_MARKERS =
 
 function parseArgs(argv) {
   const options = {
+    baseline: null,
+    failOnRegression: false,
     json: false,
     maxLines: DEFAULT_MAX_LINES,
     root: process.cwd(),
@@ -23,12 +25,21 @@ function parseArgs(argv) {
       options.json = true;
       continue;
     }
+    if (arg === "--fail-on-regression") {
+      options.failOnRegression = true;
+      continue;
+    }
     if (arg === "--help" || arg === "-h") {
       options.help = true;
       continue;
     }
     if (arg === "--root") {
       options.root = path.resolve(readValue(argv, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg === "--baseline") {
+      options.baseline = path.resolve(readValue(argv, index, arg));
       index += 1;
       continue;
     }
@@ -61,6 +72,8 @@ function printHelp() {
 Options:
   --root <path>        Repository root to scan. Defaults to cwd.
   --max-lines <count>  Oversized file threshold. Defaults to ${DEFAULT_MAX_LINES}.
+  --baseline <path>    JSON baseline with oversizedFiles [{ path, lines }].
+  --fail-on-regression Exit 1 when oversized files are new or grow past baseline.
   --json               Print machine-readable JSON.
   -h, --help           Show this help.
 `);
@@ -92,14 +105,59 @@ function auditArchitecture(options) {
 
   oversizedFiles.sort((left, right) => right.lines - left.lines || left.path.localeCompare(right.path));
   advisoryListLikeFiles.sort((left, right) => left.path.localeCompare(right.path));
+  const baseline = options.baseline ? readBaseline(options.baseline) : null;
+  const regressions = baseline ? findRegressions(oversizedFiles, baseline) : [];
 
   return {
     advisoryListLikeFiles,
+    baselinePath: options.baseline,
     maxLines: options.maxLines,
     oversizedFiles,
+    regressions,
     root,
     scannedFiles: files.length,
   };
+}
+
+function readBaseline(filePath) {
+  const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const entries = Array.isArray(parsed?.oversizedFiles) ? parsed.oversizedFiles : [];
+  const oversizedFileLines = new Map();
+
+  for (const entry of entries) {
+    if (typeof entry?.path !== "string") continue;
+    if (!Number.isInteger(entry.lines) || entry.lines < 1) continue;
+    oversizedFileLines.set(entry.path, entry.lines);
+  }
+
+  return { oversizedFileLines };
+}
+
+function findRegressions(oversizedFiles, baseline) {
+  const regressions = [];
+
+  for (const entry of oversizedFiles) {
+    const baselineLines = baseline.oversizedFileLines.get(entry.path) ?? null;
+    if (baselineLines === null) {
+      regressions.push({
+        path: entry.path,
+        lines: entry.lines,
+        baselineLines,
+        reason: "new oversized file",
+      });
+      continue;
+    }
+    if (entry.lines > baselineLines) {
+      regressions.push({
+        path: entry.path,
+        lines: entry.lines,
+        baselineLines,
+        reason: "oversized file grew past baseline",
+      });
+    }
+  }
+
+  return regressions;
 }
 
 function walkProductionSourceFiles(root) {
@@ -240,7 +298,24 @@ function printTextReport(result) {
   }
 
   console.log("");
-  console.log("Exit status: 0 (advisory only)");
+  if (result.baselinePath) {
+    if (result.regressions.length === 0) {
+      console.log("Baseline regressions: none");
+    } else {
+      console.log("Baseline regressions:");
+      for (const entry of result.regressions) {
+        const baseline = entry.baselineLines === null ? "none" : `${entry.baselineLines} lines`;
+        console.log(`- ${entry.path}: ${entry.lines} lines, baseline ${baseline} (${entry.reason})`);
+      }
+    }
+    console.log("");
+  }
+
+  if (result.regressions.length > 0) {
+    console.log("Exit status: 1 with --fail-on-regression, otherwise 0 (advisory only)");
+  } else {
+    console.log("Exit status: 0 (advisory only)");
+  }
 }
 
 try {
@@ -255,6 +330,9 @@ try {
     console.log(JSON.stringify(result, null, 2));
   } else {
     printTextReport(result);
+  }
+  if (options.failOnRegression && result.regressions.length > 0) {
+    process.exit(1);
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

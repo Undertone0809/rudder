@@ -1,0 +1,85 @@
+{
+  "maxLines": 1500,
+  "oversizedFiles": [
+    {
+      "path": "ui/src/pages/OrganizationWorkspaces.tsx",
+      "lines": 6008
+    },
+    {
+      "path": "ui/src/components/MessengerContextSidebar.tsx",
+      "lines": 3547
+    },
+    {
+      "path": "ui/src/pages/AgentDetail.tsx",
+      "lines": 3389
+    },
+    {
+      "path": "ui/src/pages/IssueDetail.tsx",
+      "lines": 2629
+    },
+    {
+      "path": "ui/src/pages/Chat.messages.tsx",
+      "lines": 2561
+    },
+    {
+      "path": "server/src/services/messenger.ts",
+      "lines": 2505
+    },
+    {
+      "path": "ui/src/components/MarkdownEditor.tsx",
+      "lines": 2412
+    },
+    {
+      "path": "server/src/services/automations.ts",
+      "lines": 2214
+    },
+    {
+      "path": "ui/src/pages/UiLab.tsx",
+      "lines": 2123
+    },
+    {
+      "path": "server/src/services/chats.ts",
+      "lines": 1908
+    },
+    {
+      "path": "ui/src/components/ThreeColumnContextSidebar.tsx",
+      "lines": 1891
+    },
+    {
+      "path": "cli/src/commands/start.ts",
+      "lines": 1848
+    },
+    {
+      "path": "ui/src/components/NewIssueDialog.tsx",
+      "lines": 1832
+    },
+    {
+      "path": "server/src/routes/chats.ts",
+      "lines": 1792
+    },
+    {
+      "path": "ui/src/components/MilkdownMarkdownEditor.tsx",
+      "lines": 1782
+    },
+    {
+      "path": "ui/src/pages/Costs.tsx",
+      "lines": 1669
+    },
+    {
+      "path": "server/src/services/runtime-kernel/heartbeat.ts",
+      "lines": 1687
+    },
+    {
+      "path": "desktop/src/main.ts",
+      "lines": 1562
+    },
+    {
+      "path": "server/src/services/issues.ts",
+      "lines": 1530
+    },
+    {
+      "path": "server/src/services/knowledge-portability/organization-skills.ts",
+      "lines": 1510
+    }
+  ]
+}
