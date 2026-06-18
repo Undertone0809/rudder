@@ -24,12 +24,16 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
+import express from "express";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { errorHandler } from "../middleware/index.js";
+import { integrationRoutes } from "../routes/integrations.js";
 import { localEncryptedProvider } from "../secrets/local-encrypted-provider.js";
 import { feishuCallbackCredentialService } from "../services/integrations/feishu/callback-credentials.js";
 import { createFeishuInboundDispatcherDbDeps } from "../services/integrations/feishu/inbound-dispatcher-db.js";
@@ -134,6 +138,22 @@ function inboundEvent(overrides: Partial<FeishuInboundMessage> = {}): FeishuInbo
     receivedAt: new Date("2026-06-18T08:00:00.000Z"),
     ...overrides,
   };
+}
+
+function createRouteApp(db: ReturnType<typeof createDb>, actor: Record<string, unknown>) {
+  const app = express();
+  app.use(express.json({
+    verify: (req, _res, buf) => {
+      (req as any).rawBody = buf;
+    },
+  }));
+  app.use((req, _res, next) => {
+    (req as any).actor = actor;
+    next();
+  });
+  app.use("/api", integrationRoutes(db));
+  app.use(errorHandler);
+  return app;
 }
 
 describe("Feishu inbound dispatcher DB deps", () => {
@@ -350,6 +370,76 @@ describe("Feishu inbound dispatcher DB deps", () => {
       externalChatId: event.chatId,
       status: "pending",
     });
+  });
+
+  it("drives the mock inbound route through DB-backed Messenger issue run and outbound writes", async () => {
+    const seeded = await seedIntegration();
+    const app = createRouteApp(db, {
+      type: "board",
+      userId: "board-user",
+      orgIds: [seeded.orgId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app)
+      .post(`/api/orgs/${seeded.orgId}/integrations/feishu/mock-inbound`)
+      .send({
+        botOpenId: "ou_bot",
+        header: { event_id: "event_route_e2e", app_id: "cli_a_feishu_app" },
+        event: {
+          sender: { sender_id: { open_id: "ou_sender", union_id: "on_sender" } },
+          message: {
+            message_id: "om_route_e2e",
+            chat_id: "oc_chat",
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "/issue Route Feishu drill\nCreate issue from mock hook." }),
+          },
+        },
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.normalized).toMatchObject({
+      eventId: "event_route_e2e",
+      messageId: "om_route_e2e",
+      chatId: "oc_chat",
+      chatType: "p2p",
+      addressedToBot: true,
+    });
+    expect(res.body.result).toMatchObject({
+      status: "accepted",
+      conversationId: expect.any(String),
+      chatMessageId: expect.any(String),
+      issueId: expect.any(String),
+      runId: expect.any(String),
+    });
+
+    const messages = await db.select().from(chatMessages);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.body).toBe("/issue Route Feishu drill\nCreate issue from mock hook.");
+
+    const [issue] = await db.select().from(issues).where(eq(issues.id, res.body.result.issueId));
+    expect(issue).toMatchObject({
+      title: "Route Feishu drill",
+      originKind: "agent_integration",
+      originId: "feishu:om_route_e2e",
+      assigneeAgentId: seeded.agentId,
+      createdByUserId: seeded.userId,
+    });
+    await expect(db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, res.body.result.runId))).resolves.toHaveLength(1);
+    const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
+    expect(outbound).toMatchObject({
+      orgId: seeded.orgId,
+      integrationId: seeded.integrationId,
+      conversationId: res.body.result.conversationId,
+      chatMessageId: res.body.result.chatMessageId,
+      issueId: res.body.result.issueId,
+      runId: res.body.result.runId,
+      externalChatId: "oc_chat",
+      status: "pending",
+    });
+    await expect(db.select().from(agentIntegrationInboundDedup)).resolves.toHaveLength(1);
   });
 
   it("dedupes repeated messages before appending a second chat message", async () => {
