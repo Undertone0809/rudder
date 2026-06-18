@@ -464,6 +464,27 @@ describe("CommentThread", () => {
       .toBe("Unsent issue comment");
   });
 
+  it("renders a stored comment draft on the initial pass", () => {
+    const draftKey = "rudder:test-initial-issue-comment-draft";
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => key === draftKey ? "Initial issue draft" : null,
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[]}
+          draftKey={draftKey}
+          onAdd={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain("Initial issue draft");
+  });
+
   it("passes skill mention metadata into rendered comments", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

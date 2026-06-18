@@ -934,7 +934,7 @@ export function CommentThread({
   emptyMessage = "No comments or runs yet.",
   escapeBackWhenEmpty = false,
 }: CommentThreadProps) {
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(() => draftKey ? loadDraft(draftKey) : "");
   const canReopen = shouldOfferReopen(issueStatus);
   const [reopen, setReopen] = useState(canReopen);
   const [submitting, setSubmitting] = useState(false);
