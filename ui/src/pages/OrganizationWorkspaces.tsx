@@ -56,6 +56,7 @@ import {
   PackageOpen,
   PanelLeftClose,
   Pencil,
+  Plus,
   Terminal,
   Trash2,
   Unlink,
@@ -91,6 +92,7 @@ import {
   organizationResourceKindLabel,
   organizationResourceSourceTypeLabel,
 } from "../lib/resource-options";
+import { parseWorkspaceCsvContent, serializeWorkspaceCsvRows } from "../lib/workspace-csv";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
 const WORKSPACE_OPEN_FILE_TABS_STORAGE_PREFIX = "rudder.workspace.openFileTabs";
@@ -114,6 +116,7 @@ const WORKSPACE_LAUNCH_TARGET_IDS = [
 ] as const satisfies readonly DesktopWorkspaceLaunchTarget["id"][];
 const WORKSPACE_IMAGE_FILE_EXTENSIONS = new Set([".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
 const WORKSPACE_HTML_FILE_EXTENSIONS = new Set([".html", ".htm"]);
+const WORKSPACE_CSV_FILE_EXTENSIONS = new Set([".csv"]);
 const WORKSPACE_HTML_PREVIEW_CSP_META =
   "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'\">";
 const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
@@ -499,6 +502,15 @@ function isWorkspaceHtmlFilePath(filePath: string | null) {
 
 function isWorkspaceHtmlContentType(contentType: string | null | undefined) {
   return typeof contentType === "string" && contentType.toLowerCase().split(";")[0]?.trim() === "text/html";
+}
+
+function isWorkspaceCsvFilePath(filePath: string | null) {
+  const extension = getWorkspaceFileExtension(filePath);
+  return extension !== null && WORKSPACE_CSV_FILE_EXTENSIONS.has(extension);
+}
+
+function isWorkspaceCsvContentType(contentType: string | null | undefined) {
+  return typeof contentType === "string" && contentType.toLowerCase().split(";")[0]?.trim() === "text/csv";
 }
 
 function buildWorkspaceHtmlPreviewSrcDoc(content: string) {
@@ -1676,6 +1688,226 @@ function LegacyHeartbeatInstructionsDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function normalizeWorkspaceCsvRows(rows: string[][]) {
+  const columnCount = Math.max(1, ...rows.map((row) => row.length));
+  return {
+    columnCount,
+    rows: rows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? "")),
+  };
+}
+
+function CsvWorkspaceEditor({
+  content,
+  filePath,
+  mode,
+  onChange,
+  onModeChange,
+  scrollRef,
+}: {
+  content: string;
+  filePath: string | null;
+  mode: "table" | "source";
+  onChange: (filePath: string | null, content: string) => void;
+  onModeChange: (mode: "table" | "source") => void;
+  scrollRef: (element: HTMLElement | null) => void;
+}) {
+  const parsed = useMemo(() => parseWorkspaceCsvContent(content), [content]);
+  const { rows, columnCount } = useMemo(() => normalizeWorkspaceCsvRows(parsed.rows), [parsed.rows]);
+  const bodyRows = rows.slice(1);
+
+  const commitRows = useCallback((nextRows: string[][]) => {
+    onChange(
+      filePath,
+      serializeWorkspaceCsvRows(nextRows, parsed.lineEnding, parsed.hasTrailingLineBreak),
+    );
+  }, [filePath, onChange, parsed.hasTrailingLineBreak, parsed.lineEnding]);
+
+  const updateCell = useCallback((rowIndex: number, columnIndex: number, value: string) => {
+    const nextRows = parsed.rows.map((row) => [...row]);
+    nextRows[rowIndex] = nextRows[rowIndex] ?? Array.from({ length: columnCount }, () => "");
+    while (nextRows[rowIndex]!.length <= columnIndex) nextRows[rowIndex]!.push("");
+    nextRows[rowIndex]![columnIndex] = value;
+    commitRows(nextRows);
+  }, [columnCount, commitRows, parsed.rows]);
+
+  const addRow = useCallback(() => {
+    commitRows([...rows, Array.from({ length: columnCount }, () => "")]);
+  }, [columnCount, commitRows, rows]);
+
+  const addColumn = useCallback(() => {
+    commitRows(rows.map((row) => [...row, ""]));
+  }, [commitRows, rows]);
+
+  const removeRow = useCallback((rowIndex: number) => {
+    if (rows.length <= 1) {
+      commitRows([Array.from({ length: columnCount }, () => "")]);
+      return;
+    }
+    commitRows(rows.filter((_, index) => index !== rowIndex));
+  }, [columnCount, commitRows, rows]);
+
+  const removeColumn = useCallback((columnIndex: number) => {
+    if (columnCount <= 1) {
+      commitRows(rows.map(() => [""]));
+      return;
+    }
+    commitRows(rows.map((row) => row.filter((_, index) => index !== columnIndex)));
+  }, [columnCount, commitRows, rows]);
+
+  const renderCell = (value: string, rowIndex: number, columnIndex: number, header = false) => (
+    <textarea
+      key={`${rowIndex}:${columnIndex}`}
+      value={value}
+      rows={Math.min(4, Math.max(1, value.split(/\r\n|\r|\n/u).length))}
+      spellCheck={false}
+      aria-label={`CSV cell row ${rowIndex + 1} column ${columnIndex + 1}`}
+      data-testid={`org-workspaces-csv-cell-${rowIndex}-${columnIndex}`}
+      onChange={(event) => updateCell(rowIndex, columnIndex, event.target.value)}
+      className={cn(
+        "block min-h-9 w-full min-w-[12rem] resize-y overflow-auto border-0 bg-transparent px-2.5 py-2 text-sm leading-5 text-foreground outline-none focus:bg-[color:var(--surface-page)] focus:ring-1 focus:ring-inset focus:ring-ring",
+        header ? "font-semibold" : "font-normal",
+      )}
+    />
+  );
+
+  return (
+    <div
+      ref={scrollRef}
+      data-testid="org-workspaces-csv-editor"
+      className="scrollbar-auto-hide flex min-h-[280px] flex-1 flex-col overflow-auto bg-[color:var(--surface-elevated)]"
+    >
+      <div className="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-border bg-[color:var(--surface-page)] px-4 py-2">
+        <div className="min-w-0 truncate text-xs text-muted-foreground">
+          {rows.length.toLocaleString()} {rows.length === 1 ? "row" : "rows"} / {columnCount.toLocaleString()} {columnCount === 1 ? "column" : "columns"}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border bg-[color:var(--surface-elevated)] p-0.5" role="group" aria-label="CSV file mode">
+            <Button
+              type="button"
+              variant={mode === "table" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 rounded-[4px] px-2 text-xs"
+              aria-pressed={mode === "table"}
+              onClick={() => onModeChange("table")}
+            >
+              Table
+            </Button>
+            <Button
+              type="button"
+              variant={mode === "source" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 rounded-[4px] px-2 text-xs"
+              aria-pressed={mode === "source"}
+              onClick={() => onModeChange("source")}
+            >
+              Source
+            </Button>
+          </div>
+          {mode === "table" ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 rounded-[4px] px-2 text-xs"
+                onClick={addColumn}
+                data-testid="org-workspaces-csv-add-column"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Column
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 rounded-[4px] px-2 text-xs"
+                onClick={addRow}
+                data-testid="org-workspaces-csv-add-row"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Row
+              </Button>
+            </>
+          ) : null}
+        </div>
+      </div>
+      {mode === "source" ? (
+        <textarea
+          data-testid="org-workspaces-csv-source-textarea"
+          value={content}
+          onChange={(event) => onChange(filePath, event.target.value)}
+          spellCheck={false}
+          className="block min-h-[280px] flex-1 overflow-auto border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none"
+        />
+      ) : (
+        <div className="min-w-max flex-1 p-4">
+          <table className="border-separate border-spacing-0 text-left" aria-label="CSV editor table">
+            <thead>
+              <tr>
+                <th className="sticky left-0 top-[45px] z-20 h-9 w-12 border-y border-l border-border bg-[color:var(--surface-page)] text-center text-xs font-medium text-muted-foreground">
+                  #
+                </th>
+                {rows[0]?.map((value, columnIndex) => (
+                  <th
+                    key={columnIndex}
+                    className="sticky top-[45px] z-10 min-w-[12rem] border-y border-l border-border bg-[color:var(--surface-page)] align-top last:border-r"
+                  >
+                    <div className="flex min-w-0 items-stretch">
+                      <div className="min-w-0 flex-1">{renderCell(value, 0, columnIndex, true)}</div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="m-1 h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                        aria-label={`Remove CSV column ${columnIndex + 1}`}
+                        onClick={() => removeColumn(columnIndex)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bodyRows.map((row, bodyIndex) => {
+                const rowIndex = bodyIndex + 1;
+                return (
+                  <tr key={rowIndex}>
+                    <th className="sticky left-0 z-10 h-9 w-12 border-b border-l border-border bg-[color:var(--surface-page)] text-center align-middle text-xs font-medium text-muted-foreground">
+                      <div className="flex items-center justify-center gap-1">
+                        <span>{rowIndex + 1}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                          aria-label={`Remove CSV row ${rowIndex + 1}`}
+                          onClick={() => removeRow(rowIndex)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </th>
+                    {row.map((value, columnIndex) => (
+                      <td
+                        key={columnIndex}
+                        className="min-w-[12rem] border-b border-l border-border align-top last:border-r"
+                      >
+                        {renderCell(value, rowIndex, columnIndex)}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3234,6 +3466,7 @@ export function OrganizationWorkspaceBrowser({
     : initialSelectedFilePath;
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialSafeSelectedFilePath);
   const [htmlFileMode, setHtmlFileMode] = useState<"preview" | "source">("preview");
+  const [csvFileMode, setCsvFileMode] = useState<"table" | "source">("table");
   const [openFilePaths, setOpenFilePaths] = useState<string[]>(
     () => normalizeWorkspaceOpenFilePaths([...initialOpenFileTabState.openFilePaths, initialSafeSelectedFilePath])
       .filter((filePath) => !isLegacyAgentHeartbeatInstructionPath(filePath)),
@@ -3314,6 +3547,7 @@ export function OrganizationWorkspaceBrowser({
 
   useEffect(() => {
     setHtmlFileMode("preview");
+    setCsvFileMode("table");
   }, [selectedFilePath]);
 
   useEffect(() => {
@@ -4464,6 +4698,17 @@ export function OrganizationWorkspaceBrowser({
     agentWorkspaceMentionOptions,
   );
   const selectedFileUsesMarkdownEditor = isWorkspaceMarkdownFilePath(selectedFilePath);
+  const selectedFileUsesCsvEditor = Boolean(
+    selectedFileDetail?.content !== null
+    && selectedFileDetail?.previewKind === "text"
+    && (isWorkspaceCsvFilePath(selectedFilePath) || isWorkspaceCsvContentType(selectedFileDetail?.contentType)),
+  );
+  const selectedCsvParseResult = selectedFileUsesCsvEditor
+    ? parseWorkspaceCsvContent(selectedEditorContent)
+    : null;
+  const selectedCsvShape = selectedCsvParseResult
+    ? normalizeWorkspaceCsvRows(selectedCsvParseResult.rows)
+    : null;
   const selectedFileCanRenderHtml = Boolean(
     selectedFileDetail?.content !== null
     && selectedFileDetail?.previewKind === "text"
@@ -4492,6 +4737,16 @@ export function OrganizationWorkspaceBrowser({
   const selectedDocumentWordCount = countWorkspaceDocumentWords(
     selectedFileUsesMarkdownEditor ? selectedMarkdownParts.body : selectedEditorContent,
   );
+  const selectedStatusSegments = selectedFileUsesCsvEditor && selectedCsvShape
+    ? [
+        "CSV",
+        `${selectedCsvShape.rows.length.toLocaleString()} ${selectedCsvShape.rows.length === 1 ? "row" : "rows"}`,
+        `${selectedCsvShape.columnCount.toLocaleString()} ${selectedCsvShape.columnCount === 1 ? "column" : "columns"}`,
+      ]
+    : [
+        displayWorkspaceDocumentKind(selectedFilePath),
+        formatWorkspaceWordCount(selectedDocumentWordCount),
+      ];
   const selectedSaveStatus = saveWorkspaceFile.isError
     ? "Save failed"
     : draftFilePath === selectedFilePath && syncedFileRef.current.filePath === selectedFilePath && draftContent !== syncedFileRef.current.content
@@ -5296,7 +5551,16 @@ export function OrganizationWorkspaceBrowser({
                       {renderHtmlFileModeToggle("source", "bg-[color:var(--surface-elevated)]")}
                     </div>
                   ) : null}
-                  {selectedFileUsesMarkdownEditor ? (
+                  {selectedFileUsesCsvEditor ? (
+                    <CsvWorkspaceEditor
+                      content={selectedEditorContent}
+                      filePath={selectedFilePath}
+                      mode={csvFileMode}
+                      onChange={handleMarkdownDraftChange}
+                      onModeChange={setCsvFileMode}
+                      scrollRef={setEditorScrollElementRef}
+                    />
+                  ) : selectedFileUsesMarkdownEditor ? (
                     <div
                       ref={setEditorScrollElementRef}
                       data-testid="org-workspaces-markdown-editor"
@@ -5393,8 +5657,9 @@ export function OrganizationWorkspaceBrowser({
                     className="flex h-8 shrink-0 items-center justify-between gap-4 border-t border-border bg-[color:var(--surface-page)] px-4 text-xs text-muted-foreground"
                   >
                     <div className="flex min-w-0 items-center gap-4">
-                      <span>{displayWorkspaceDocumentKind(selectedFilePath)}</span>
-                      <span>{formatWorkspaceWordCount(selectedDocumentWordCount)}</span>
+                      {selectedStatusSegments.map((segment) => (
+                        <span key={segment}>{segment}</span>
+                      ))}
                     </div>
                     <div className={cn(
                       "flex shrink-0 items-center gap-1.5",
