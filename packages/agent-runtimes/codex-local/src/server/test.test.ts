@@ -44,6 +44,7 @@ describe("codex testEnvironment", () => {
         config: { cwd: process.cwd() },
       });
 
+      expect(result.status).toBe("pass");
       expect(result.checks.map((check) => check.code)).toContain("codex_hello_probe_passed");
     } finally {
       await rm(tempDir, { recursive: true, force: true });

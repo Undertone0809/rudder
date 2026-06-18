@@ -111,10 +111,10 @@ export async function testEnvironment(
     });
   } else {
     checks.push({
-      code: "codex_openai_api_key_missing",
-      level: "warn",
-      message: "OPENAI_API_KEY is not set. Codex runs may fail until authentication is configured.",
-      hint: "Set OPENAI_API_KEY in adapter env, shell environment, or Codex auth configuration.",
+      code: "codex_openai_api_key_not_set",
+      level: "info",
+      message: "OPENAI_API_KEY is not set; Codex will use local login/session authentication.",
+      hint: "If the hello probe reports authentication failure, set OPENAI_API_KEY or run `codex login`.",
     });
   }
 
