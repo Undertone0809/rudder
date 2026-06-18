@@ -1162,4 +1162,200 @@ describe("activityService.forIssue", () => {
     expect(result.items.map((item) => item.excerpt).join("\n")).not.toContain("Other project");
     expect(result.items.map((item) => item.excerpt).join("\n")).not.toContain("Unscoped approval");
   });
+
+  it("filters user approval activity events by approval project links and requested agent", async () => {
+    const orgId = randomUUID();
+    const userId = "user-1";
+    const targetProjectId = randomUUID();
+    const otherProjectId = randomUUID();
+    const targetIssueId = randomUUID();
+    const otherIssueId = randomUUID();
+    const requestedAgentId = randomUUID();
+    const otherAgentId = randomUUID();
+    const linkedIssueApprovalId = randomUUID();
+    const directProjectApprovalId = randomUUID();
+    const otherProjectApprovalId = randomUUID();
+    const unscopedApprovalId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(projects).values([
+      {
+        id: targetProjectId,
+        orgId,
+        name: "Target project",
+        status: "in_progress",
+      },
+      {
+        id: otherProjectId,
+        orgId,
+        name: "Other project",
+        status: "in_progress",
+      },
+    ]);
+
+    await db.insert(agents).values([
+      {
+        id: requestedAgentId,
+        orgId,
+        name: "Wesley",
+        role: "engineer",
+        status: "running",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: otherAgentId,
+        orgId,
+        name: "Holden",
+        role: "reviewer",
+        status: "running",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+
+    await db.insert(issues).values([
+      {
+        id: targetIssueId,
+        orgId,
+        projectId: targetProjectId,
+        identifier: "RST-1",
+        title: "Target project issue",
+        status: "todo",
+        priority: "high",
+      },
+      {
+        id: otherIssueId,
+        orgId,
+        projectId: otherProjectId,
+        identifier: "RST-2",
+        title: "Other project issue",
+        status: "todo",
+        priority: "high",
+      },
+    ]);
+
+    await db.insert(approvals).values([
+      {
+        id: linkedIssueApprovalId,
+        orgId,
+        type: "command",
+        requestedByAgentId,
+        status: "approved",
+        payload: { issueIds: [targetIssueId] },
+      },
+      {
+        id: directProjectApprovalId,
+        orgId,
+        type: "command",
+        requestedByAgentId,
+        status: "rejected",
+        payload: { projectId: targetProjectId },
+      },
+      {
+        id: otherProjectApprovalId,
+        orgId,
+        type: "command",
+        requestedByAgentId: otherAgentId,
+        status: "approved",
+        payload: { primaryIssueId: otherIssueId },
+      },
+      {
+        id: unscopedApprovalId,
+        orgId,
+        type: "command",
+        requestedByAgentId,
+        status: "approved",
+        payload: {},
+      },
+    ]);
+
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        action: "approval.approved",
+        entityType: "approval",
+        entityId: linkedIssueApprovalId,
+        details: { note: "Approved target approval linked through issueIds." },
+        createdAt: new Date("2026-06-18T04:00:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        action: "approval.rejected",
+        entityType: "approval",
+        entityId: directProjectApprovalId,
+        details: { note: "Rejected direct target project approval." },
+        createdAt: new Date("2026-06-18T04:05:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        action: "approval.approved",
+        entityType: "approval",
+        entityId: otherProjectApprovalId,
+        details: { note: "Other project approval should not appear." },
+        createdAt: new Date("2026-06-18T04:10:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: userId,
+        action: "approval.approved",
+        entityType: "approval",
+        entityId: unscopedApprovalId,
+        details: { note: "Unscoped approval should not appear." },
+        createdAt: new Date("2026-06-18T04:15:00.000Z"),
+      },
+    ]);
+
+    const projectResult = await svc.listUserActivityLedger({
+      orgId,
+      userId,
+      include: ["approvals"],
+      projectId: targetProjectId,
+      limit: 10,
+    });
+
+    expect(projectResult.items.map((item) => item.metadata?.entityId)).toEqual([
+      directProjectApprovalId,
+      linkedIssueApprovalId,
+    ]);
+    expect(projectResult.items.map((item) => item.excerpt).join("\n")).not.toContain("Other project");
+    expect(projectResult.items.map((item) => item.excerpt).join("\n")).not.toContain("Unscoped approval");
+
+    const agentResult = await svc.listUserActivityLedger({
+      orgId,
+      userId,
+      include: ["activity", "approvals"],
+      agentId: requestedAgentId,
+      limit: 10,
+    });
+
+    expect(agentResult.items.map((item) => item.metadata?.entityId)).toEqual([
+      unscopedApprovalId,
+      directProjectApprovalId,
+      linkedIssueApprovalId,
+    ]);
+    expect(agentResult.items.map((item) => item.excerpt).join("\n")).not.toContain("Other project");
+    expect(agentResult.items[0]?.related).toEqual(expect.arrayContaining([
+      { type: "agent", id: requestedAgentId },
+      { type: "approval", id: unscopedApprovalId, label: "command" },
+    ]));
+  });
 });

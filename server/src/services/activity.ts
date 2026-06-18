@@ -224,6 +224,7 @@ function shouldShowOrganizationActivity(event: typeof activityLog.$inferSelect):
 
 export function activityService(db: Db) {
   const issueIdAsText = sql<string>`${issues.id}::text`;
+  const approvalIdAsText = sql<string>`${approvals.id}::text`;
   const conversationIdAsText = sql<string>`${chatConversations.id}::text`;
   const organizationActivityVisibleCondition = and(
     ne(activityLog.action, "issue.read_marked"),
@@ -259,6 +260,32 @@ export function activityService(db: Db) {
     if (filters.since) conditions.push(gte(createdAtColumn, filters.since));
     if (filters.until) conditions.push(lte(createdAtColumn, filters.until));
     return conditions;
+  }
+
+  function approvalLinkedIssueCondition(issueId: string) {
+    return or(
+      sql`${approvals.payload}->>'issueId' = ${issueId}`,
+      sql`${approvals.payload}->>'primaryIssueId' = ${issueId}`,
+      sql`${approvals.payload}->'issueIds' ? ${issueId}`,
+    );
+  }
+
+  function approvalProjectCondition(projectId: string) {
+    return or(
+      sql`${approvals.payload}->>'projectId' = ${projectId}`,
+      sql`exists (
+        select 1
+        from ${issues}
+        where ${issues.orgId} = ${approvals.orgId}
+          and ${issues.projectId} = ${projectId}
+          and ${issues.hiddenAt} is null
+          and (
+            ${issues.id}::text = ${approvals.payload}->>'issueId'
+            or ${issues.id}::text = ${approvals.payload}->>'primaryIssueId'
+            or ${approvals.payload}->'issueIds' ? ${issues.id}::text
+          )
+      )`,
+    );
   }
 
   function withUserActor(userId: string, displayName: string | null | undefined) {
@@ -540,28 +567,10 @@ export function activityService(db: Db) {
         if (cursorSql) conditions.push(cursorSql);
         if (filters.agentId) conditions.push(eq(approvals.requestedByAgentId, filters.agentId));
         if (filters.issueId) {
-          conditions.push(or(
-            sql`${approvals.payload}->>'issueId' = ${filters.issueId}`,
-            sql`${approvals.payload}->>'primaryIssueId' = ${filters.issueId}`,
-            sql`${approvals.payload}->'issueIds' ? ${filters.issueId}`,
-          )!);
+          conditions.push(approvalLinkedIssueCondition(filters.issueId)!);
         }
         if (filters.projectId) {
-          conditions.push(or(
-            sql`${approvals.payload}->>'projectId' = ${filters.projectId}`,
-            sql`exists (
-              select 1
-              from ${issues}
-              where ${issues.orgId} = ${approvals.orgId}
-                and ${issues.projectId} = ${filters.projectId}
-                and ${issues.hiddenAt} is null
-                and (
-                  ${issues.id}::text = ${approvals.payload}->>'issueId'
-                  or ${issues.id}::text = ${approvals.payload}->>'primaryIssueId'
-                  or ${approvals.payload}->'issueIds' ? ${issues.id}::text
-                )
-            )`,
-          )!);
+          conditions.push(approvalProjectCondition(filters.projectId)!);
         }
 
         const rows = await db
@@ -640,15 +649,20 @@ export function activityService(db: Db) {
           conditions.push(or(
             eq(activityLog.agentId, filters.agentId),
             and(eq(activityLog.actorType, "agent"), eq(activityLog.actorId, filters.agentId)),
+            eq(approvals.requestedByAgentId, filters.agentId),
           )!);
         }
         if (filters.issueId) {
-          conditions.push(and(eq(activityLog.entityType, "issue"), eq(activityLog.entityId, filters.issueId))!);
+          conditions.push(or(
+            and(eq(activityLog.entityType, "issue"), eq(activityLog.entityId, filters.issueId)),
+            and(eq(activityLog.entityType, "approval"), approvalLinkedIssueCondition(filters.issueId)!),
+          )!);
         }
         if (filters.projectId) {
           conditions.push(or(
             and(eq(activityLog.entityType, "project"), eq(activityLog.entityId, filters.projectId)),
             eq(issues.projectId, filters.projectId),
+            and(eq(activityLog.entityType, "approval"), approvalProjectCondition(filters.projectId)!),
           )!);
         }
 
@@ -660,6 +674,8 @@ export function activityService(db: Db) {
             issueProjectId: issues.projectId,
             issueGoalId: issues.goalId,
             agentName: agents.name,
+            approvalType: approvals.type,
+            approvalRequestedByAgentId: approvals.requestedByAgentId,
           })
           .from(activityLog)
           .leftJoin(
@@ -669,6 +685,14 @@ export function activityService(db: Db) {
               eq(issues.orgId, activityLog.orgId),
               eq(activityLog.entityId, issueIdAsText),
               isNull(issues.hiddenAt),
+            ),
+          )
+          .leftJoin(
+            approvals,
+            and(
+              eq(activityLog.entityType, sql`'approval'`),
+              eq(approvals.orgId, activityLog.orgId),
+              eq(activityLog.entityId, approvalIdAsText),
             ),
           )
           .leftJoin(
@@ -684,9 +708,13 @@ export function activityService(db: Db) {
 
         for (const row of rows) {
           if (row.event.entityType === "issue" && !row.issueIdentifier && !row.issueTitle) continue;
+          if (row.event.entityType === "approval" && !row.approvalType) continue;
           const details = row.event.details ?? null;
           const related: UserActivityLedgerItem["related"] = [];
           if (row.event.agentId) related.push({ type: "agent", id: row.event.agentId, label: row.agentName });
+          if (row.approvalRequestedByAgentId && row.approvalRequestedByAgentId !== row.event.agentId) {
+            related.push({ type: "agent", id: row.approvalRequestedByAgentId });
+          }
           if (row.event.runId) related.push({ type: "run", id: row.event.runId });
           if (row.event.entityType === "issue") {
             related.push({
@@ -696,7 +724,9 @@ export function activityService(db: Db) {
             });
           }
           if (row.event.entityType === "chat") related.push({ type: "chat", id: row.event.entityId });
-          if (row.event.entityType === "approval") related.push({ type: "approval", id: row.event.entityId });
+          if (row.event.entityType === "approval") {
+            related.push({ type: "approval", id: row.event.entityId, label: row.approvalType });
+          }
           if (row.event.entityType === "project") related.push({ type: "project", id: row.event.entityId });
           if (row.issueProjectId) related.push({ type: "project", id: row.issueProjectId });
           if (row.issueGoalId) related.push({ type: "goal", id: row.issueGoalId });
