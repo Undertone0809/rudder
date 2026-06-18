@@ -69,6 +69,7 @@ const mockBudgetService = vi.hoisted(() => ({
     pendingApprovalCount: 0,
   }),
   upsertPolicy: vi.fn(),
+  deletePolicy: vi.fn(),
   resolveIncident: vi.fn(),
 }));
 
@@ -137,6 +138,7 @@ beforeEach(() => {
     spentMonthlyCents: 0,
   });
   mockBudgetService.upsertPolicy.mockResolvedValue(undefined);
+  mockBudgetService.deletePolicy.mockResolvedValue({ ok: true, policyId: "policy-1" });
 });
 
 describe("cost routes", () => {
@@ -241,6 +243,33 @@ describe("cost routes", () => {
 
     expect(res.status).toBe(403);
     expect(mockCompanyService.update).not.toHaveBeenCalled();
+  });
+
+  it("deletes budget policies for board users inside the organization", async () => {
+    const app = await createApp();
+
+    const res = await request(app)
+      .delete("/api/orgs/organization-1/budgets/policies/policy-1");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, policyId: "policy-1" });
+    expect(mockBudgetService.deletePolicy).toHaveBeenCalledWith("organization-1", "policy-1", "board-user");
+  });
+
+  it("rejects budget policy deletes for board users outside the organization", async () => {
+    const app = await createAppWithActor({
+      type: "board",
+      userId: "board-user",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: ["organization-2"],
+    });
+
+    const res = await request(app)
+      .delete("/api/orgs/organization-1/budgets/policies/policy-1");
+
+    expect(res.status).toBe(403);
+    expect(mockBudgetService.deletePolicy).not.toHaveBeenCalled();
   });
 
   it("rejects agent budget updates for board users outside the agent organization", async () => {

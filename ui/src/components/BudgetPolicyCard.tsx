@@ -8,7 +8,7 @@ import {
   type SemanticTone,
 } from "@/components/ui/semanticTones";
 import type { BudgetPolicySummary } from "@rudderhq/shared";
-import { AlertTriangle, PauseCircle, ShieldAlert, Wallet } from "lucide-react";
+import { AlertTriangle, PauseCircle, ShieldAlert, Trash2, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useI18n } from "../context/I18nContext";
 import { cn, formatCents } from "../lib/utils";
@@ -38,13 +38,17 @@ function statusTone(status: BudgetPolicySummary["status"]): SemanticTone {
 export function BudgetPolicyCard({
   summary,
   onSave,
+  onDelete,
   isSaving,
+  isDeleting,
   compact = false,
   variant = "card",
 }: {
   summary: BudgetPolicySummary;
   onSave?: (amountCents: number) => void;
+  onDelete?: () => void;
   isSaving?: boolean;
+  isDeleting?: boolean;
   compact?: boolean;
   variant?: "card" | "plain";
 }) {
@@ -56,6 +60,7 @@ export function BudgetPolicyCard({
 
   const parsedDraft = parseDollarInput(draftBudget);
   const canSave = typeof parsedDraft === "number" && parsedDraft !== summary.amount && Boolean(onSave);
+  const canDelete = summary.isActive && summary.amount > 0 && Boolean(onDelete);
   const progress = summary.amount > 0 ? Math.min(100, summary.utilizationPercent) : 0;
   const StatusIcon = summary.status === "hard_stop" ? ShieldAlert : summary.status === "warning" ? AlertTriangle : Wallet;
   const isPlain = variant === "plain";
@@ -152,27 +157,44 @@ export function BudgetPolicyCard({
   ) : null;
 
   const saveSection = onSave ? (
-    <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-end", isPlain ? "" : "rounded-xl border border-border/70 bg-background/50 p-3")}>
-      <div className="min-w-0 flex-1">
-        <label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-          Budget (USD)
-        </label>
-        <Input
-          value={draftBudget}
-          onChange={(event) => setDraftBudget(event.target.value)}
-          className="mt-2"
-          inputMode="decimal"
-          placeholder="0.00"
-        />
+    <div className={cn("flex flex-col gap-3", isPlain ? "" : "rounded-xl border border-border/70 bg-background/50 p-3")}>
+      {canDelete ? (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={onDelete}
+            disabled={isSaving || isDeleting}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {isDeleting ? "Deleting..." : "Delete budget"}
+          </Button>
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="min-w-0 flex-1">
+          <label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+            Budget (USD)
+          </label>
+          <Input
+            value={draftBudget}
+            onChange={(event) => setDraftBudget(event.target.value)}
+            className="mt-2"
+            inputMode="decimal"
+            placeholder="0.00"
+          />
+        </div>
+        <Button
+          onClick={() => {
+            if (typeof parsedDraft === "number" && onSave) onSave(parsedDraft);
+          }}
+          disabled={!canSave || isSaving || isDeleting || parsedDraft === null}
+        >
+          {isSaving ? "Saving..." : summary.amount > 0 ? "Update budget" : "Set budget"}
+        </Button>
       </div>
-      <Button
-        onClick={() => {
-          if (typeof parsedDraft === "number" && onSave) onSave(parsedDraft);
-        }}
-        disabled={!canSave || isSaving || parsedDraft === null}
-      >
-        {isSaving ? "Saving..." : summary.amount > 0 ? "Update budget" : "Set budget"}
-      </Button>
     </div>
   ) : null;
 

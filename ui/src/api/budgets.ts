@@ -12,6 +12,10 @@ export const budgetsApi = {
     api.get<BudgetOverview>(`/orgs/${orgId}/budgets/overview`),
   upsertPolicy: (orgId: string, data: BudgetPolicyUpsertInput) =>
     api.post<BudgetPolicySummary>(`/orgs/${orgId}/budgets/policies`, data),
+  deletePolicy: (orgId: string, policyId: string) =>
+    api.delete<{ ok: true; policyId: string }>(
+      `/orgs/${orgId}/budgets/policies/${encodeURIComponent(policyId)}`,
+    ),
   resolveIncident: (orgId: string, incidentId: string, data: BudgetIncidentResolutionInput) =>
     api.post<BudgetIncident>(
       `/orgs/${orgId}/budget-incidents/${encodeURIComponent(incidentId)}/resolve`,

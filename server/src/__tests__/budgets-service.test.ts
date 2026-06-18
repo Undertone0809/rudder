@@ -11,6 +11,11 @@ type SelectResult = unknown[];
 
 function createDbStub(selectResults: SelectResult[]) {
   const pendingSelects = [...selectResults];
+  const makeQueryResult = (rows: unknown[]) => ({
+    then: (resolve: (value: unknown[]) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(rows).then(resolve, reject),
+    returning: vi.fn(async () => rows),
+  });
   const selectWhere = vi.fn(async () => pendingSelects.shift() ?? []);
   const selectThen = vi.fn((resolve: (value: unknown[]) => unknown) => Promise.resolve(resolve(pendingSelects.shift() ?? [])));
   const selectOrderBy = vi.fn(async () => pendingSelects.shift() ?? []);
@@ -32,7 +37,7 @@ function createDbStub(selectResults: SelectResult[]) {
   }));
 
   const updateSet = vi.fn();
-  const updateWhere = vi.fn(async () => pendingUpdates.shift() ?? []);
+  const updateWhere = vi.fn(() => makeQueryResult(pendingUpdates.shift() ?? []));
   const update = vi.fn(() => ({
     set: updateSet.mockImplementation(() => ({
       where: updateWhere,
@@ -41,13 +46,15 @@ function createDbStub(selectResults: SelectResult[]) {
 
   const pendingInserts: unknown[][] = [];
   const pendingUpdates: unknown[][] = [];
+  const db = {
+    select,
+    insert,
+    update,
+    transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback(db)),
+  };
 
   return {
-    db: {
-      select,
-      insert,
-      update,
-    },
+    db,
     queueInsert: (rows: unknown[]) => {
       pendingInserts.push(rows);
     },
@@ -305,6 +312,81 @@ describe("budgetService", () => {
       expect.objectContaining({
         budgetMonthlyCents: 175,
         updatedAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it("deactivates an agent budget policy and resumes a budget-paused agent", async () => {
+    const policy = {
+      id: "policy-1",
+      orgId: "organization-1",
+      scopeType: "agent",
+      scopeId: "agent-1",
+      metric: "billed_cents",
+      windowKind: "calendar_month_utc",
+      amount: 20000,
+      warnPercent: 80,
+      hardStopEnabled: true,
+      notifyEnabled: true,
+      isActive: true,
+      createdByUserId: "board-user",
+      updatedByUserId: "board-user",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const dbStub = createDbStub([
+      [policy],
+      [{ id: "incident-1", approvalId: "approval-1" }],
+    ]);
+    dbStub.queueUpdate([{ ...policy, amount: 0, isActive: false }]);
+
+    const service = budgetService(dbStub.db as any);
+    await service.deletePolicy("organization-1", "policy-1", "board-user");
+
+    expect(dbStub.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 0,
+        isActive: false,
+        updatedByUserId: "board-user",
+        updatedAt: expect.any(Date),
+      }),
+    );
+    expect(dbStub.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        budgetMonthlyCents: 0,
+        updatedAt: expect.any(Date),
+      }),
+    );
+    expect(dbStub.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "idle",
+        pauseReason: null,
+        pausedAt: null,
+        updatedAt: expect.any(Date),
+      }),
+    );
+    expect(dbStub.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "resolved",
+        resolvedAt: expect.any(Date),
+        updatedAt: expect.any(Date),
+      }),
+    );
+    expect(dbStub.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "rejected",
+        decisionNote: "Resolved via budget update",
+        decidedByUserId: "board-user",
+        decidedAt: expect.any(Date),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "budget.policy_deleted",
+        entityType: "budget_policy",
+        entityId: "policy-1",
       }),
     );
   });

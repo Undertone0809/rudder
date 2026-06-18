@@ -257,10 +257,10 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
     });
   }
 
-  async function resumeScopeFromBudget(policy: PolicyRow) {
+  async function resumeScopeFromBudget(policy: PolicyRow, database: Db = db) {
     const now = new Date();
     if (policy.scopeType === "agent") {
-      await db
+      await database
         .update(agents)
         .set({
           status: "idle",
@@ -273,7 +273,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
     }
 
     if (policy.scopeType === "project") {
-      await db
+      await database
         .update(projects)
         .set({
           pauseReason: null,
@@ -284,7 +284,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       return;
     }
 
-    await db
+    await database
       .update(organizations)
       .set({
         status: "active",
@@ -295,8 +295,8 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       .where(and(eq(organizations.id, policy.scopeId), eq(organizations.pauseReason, "budget")));
   }
 
-  async function getPolicyRow(policyId: string) {
-    const policy = await db
+  async function getPolicyRow(policyId: string, database: Db = db) {
+    const policy = await database
       .select()
       .from(budgetPolicies)
       .where(eq(budgetPolicies.id, policyId))
@@ -433,13 +433,14 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
     policyId: string,
     approvalStatus: "approved" | "rejected" | null,
     decidedByUserId: string | null,
+    database: Db = db,
   ) {
-    const openRows = await db
+    const openRows = await database
       .select()
       .from(budgetIncidents)
       .where(and(eq(budgetIncidents.policyId, policyId), eq(budgetIncidents.status, "open")));
 
-    await db
+    await database
       .update(budgetIncidents)
       .set({
         status: "resolved",
@@ -450,7 +451,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
 
     if (!approvalStatus || !decidedByUserId) return;
     for (const row of openRows) {
-      await markApprovalStatus(db, row.approvalId ?? null, approvalStatus, "Resolved via budget update", decidedByUserId);
+      await markApprovalStatus(database, row.approvalId ?? null, approvalStatus, "Resolved via budget update", decidedByUserId);
     }
   }
 
@@ -625,9 +626,85 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       return buildPolicySummary(row);
     },
 
+    deletePolicy: async (
+      orgId: string,
+      policyId: string,
+      actorUserId: string | null,
+    ): Promise<{ ok: true; policyId: string }> => {
+      return db.transaction(async (tx) => {
+        const txDb = tx as unknown as Db;
+        const policy = await getPolicyRow(policyId, txDb);
+        if (policy.orgId !== orgId || !policy.isActive) {
+          throw notFound("Budget policy not found");
+        }
+
+        const now = new Date();
+        const updatedPolicy = await tx
+          .update(budgetPolicies)
+          .set({
+            amount: 0,
+            isActive: false,
+            updatedByUserId: actorUserId,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(budgetPolicies.id, policy.id),
+            eq(budgetPolicies.orgId, orgId),
+            eq(budgetPolicies.isActive, true),
+          ))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+
+        if (!updatedPolicy) {
+          throw notFound("Budget policy not found");
+        }
+
+        if (policy.scopeType === "organization" && policy.windowKind === "calendar_month_utc") {
+          await tx
+            .update(organizations)
+            .set({
+              budgetMonthlyCents: 0,
+              updatedAt: now,
+            })
+            .where(eq(organizations.id, policy.scopeId));
+        }
+
+        if (policy.scopeType === "agent" && policy.windowKind === "calendar_month_utc") {
+          await tx
+            .update(agents)
+            .set({
+              budgetMonthlyCents: 0,
+              updatedAt: now,
+            })
+            .where(eq(agents.id, policy.scopeId));
+        }
+
+        await resumeScopeFromBudget(updatedPolicy, txDb);
+        await resolveOpenIncidentsForPolicy(policy.id, actorUserId ? "rejected" : null, actorUserId, txDb);
+
+        await logActivity(txDb, {
+          orgId,
+          actorType: "user",
+          actorId: actorUserId ?? "board",
+          action: "budget.policy_deleted",
+          entityType: "budget_policy",
+          entityId: policy.id,
+          details: {
+            scopeType: policy.scopeType,
+            scopeId: policy.scopeId,
+            amount: policy.amount,
+            windowKind: policy.windowKind,
+          },
+        });
+
+        return { ok: true, policyId: policy.id };
+      });
+    },
+
     overview: async (orgId: string): Promise<BudgetOverview> => {
       const rows = await listPolicyRows(orgId);
-      const policies = await Promise.all(rows.map((row) => buildPolicySummary(row)));
+      const activeRows = rows.filter((row) => row.isActive);
+      const policies = await Promise.all(activeRows.map((row) => buildPolicySummary(row)));
       const activeIncidentRows = await db
         .select()
         .from(budgetIncidents)

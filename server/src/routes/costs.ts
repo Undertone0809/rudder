@@ -248,6 +248,15 @@ export function costRoutes(db: Db) {
     },
   );
 
+  router.delete("/orgs/:orgId/budgets/policies/:policyId", async (req, res) => {
+    assertBoard(req);
+    const orgId = req.params.orgId as string;
+    const policyId = req.params.policyId as string;
+    assertCompanyAccess(req, orgId);
+    const result = await budgets.deletePolicy(orgId, policyId, req.actor.userId ?? "board");
+    res.json(result);
+  });
+
   router.post(
     "/orgs/:orgId/budget-incidents/:incidentId/resolve",
     validate(resolveBudgetIncidentSchema),

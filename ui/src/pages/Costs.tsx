@@ -34,6 +34,7 @@ import { PageTabBar } from "../components/PageTabBar";
 import { ProviderQuotaCard } from "../components/ProviderQuotaCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { PRESET_KEYS, PRESET_LABELS, useDateRange } from "../hooks/useDateRange";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -699,6 +700,7 @@ function FinanceSummaryCard({
 export function Costs() {
   const { selectedOrganizationId } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { confirm } = useDialog();
   const queryClient = useQueryClient();
 
   const [mainTab, setMainTab] = useState<"overview" | "budgets" | "providers" | "billers" | "finance">("overview");
@@ -754,6 +756,7 @@ export function Costs() {
   const invalidateBudgetViews = () => {
     if (!selectedOrganizationId) return;
     queryClient.invalidateQueries({ queryKey: queryKeys.budgets.overview(selectedOrganizationId) });
+    queryClient.invalidateQueries({ queryKey: ["costs", selectedOrganizationId] });
     queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(selectedOrganizationId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedOrganizationId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(selectedOrganizationId) });
@@ -774,6 +777,23 @@ export function Costs() {
       }),
     onSuccess: invalidateBudgetViews,
   });
+
+  const deletePolicyMutation = useMutation({
+    mutationFn: (policyId: string) => budgetsApi.deletePolicy(orgId, policyId),
+    onSuccess: invalidateBudgetViews,
+  });
+
+  const confirmAndDeletePolicy = useCallback(async (summary: BudgetPolicySummary) => {
+    const confirmed = await confirm({
+      title: `Delete ${summary.scopeName} budget?`,
+      description: "This removes the budget cap and resolves any open budget stop for this scope.",
+      confirmLabel: "Delete budget",
+      cancelLabel: "Cancel",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    deletePolicyMutation.mutate(summary.policyId);
+  }, [confirm, deletePolicyMutation]);
 
   const incidentMutation = useMutation({
     mutationFn: (input: { incidentId: string; action: "keep_paused" | "raise_budget_and_resume"; amount?: number }) =>
@@ -1489,6 +1509,10 @@ export function Costs() {
                             key={summary.policyId}
                             summary={summary}
                             isSaving={policyMutation.isPending}
+                            isDeleting={
+                              deletePolicyMutation.isPending
+                              && deletePolicyMutation.variables === summary.policyId
+                            }
                             onSave={(amount) =>
                               policyMutation.mutate({
                                 scopeType: summary.scopeType,
@@ -1496,6 +1520,9 @@ export function Costs() {
                                 amount,
                                 windowKind: summary.windowKind,
                               })}
+                            onDelete={() => {
+                              void confirmAndDeletePolicy(summary);
+                            }}
                           />
                         ))}
                       </div>
