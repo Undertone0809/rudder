@@ -21,21 +21,8 @@ async function buildCodexSkillSnapshot(
 ): Promise<AgentRuntimeSkillSnapshot> {
   const availableEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredSkills = resolveRudderDesiredSkillNames(config, availableEntries);
-  const envConfig =
-    typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
-      ? (config.env as Record<string, unknown>)
-      : {};
-  const stringEnv = Object.fromEntries(
-    Object.entries(envConfig).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
-  );
-  const configuredCodexHome =
-    typeof envConfig.CODEX_HOME === "string" && envConfig.CODEX_HOME.trim().length > 0
-      ? path.resolve(envConfig.CODEX_HOME.trim())
-      : null;
   const skillsHome = path.join(
-    configuredCodexHome ?? resolveManagedCodexHomeDir({ ...process.env, ...stringEnv }, orgId, agentId),
+    resolveManagedCodexHomeDir(process.env, orgId, agentId),
     "skills",
   );
   const installed = await readInstalledSkillTargets(skillsHome);
@@ -73,17 +60,17 @@ export async function syncCodexSkills(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  const configuredCodexHome =
+  const sharedCodexHome =
     typeof envConfig.CODEX_HOME === "string" && envConfig.CODEX_HOME.trim().length > 0
       ? path.resolve(envConfig.CODEX_HOME.trim())
       : null;
   const sourceEnv = {
     ...process.env,
-    ...stringEnv,
+    ...(sharedCodexHome ? { RUDDER_SHARED_CODEX_HOME: sharedCodexHome } : {}),
   };
   await realizeManagedCodexSkillEntries(
     sourceEnv,
-    configuredCodexHome ?? resolveManagedCodexHomeDir(sourceEnv, ctx.orgId, ctx.agentId),
+    resolveManagedCodexHomeDir(process.env, ctx.orgId, ctx.agentId),
     availableEntries
       .filter((entry) => desiredSkills.includes(entry.key))
       .map((entry) => entry.source),

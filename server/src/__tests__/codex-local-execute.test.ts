@@ -424,7 +424,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
         email: { ok: boolean; stdout: string; stderr: string };
         rudderEnvKeys: string[];
       };
-      expect(capture.home).toBe(path.join(managedCodexHome, "home"));
+      expect(capture.home).toBe(root);
       expect(capture.ident.ok).toBe(true);
       expect(capture.ident.stdout).toContain("Rudder Agent <rudder-agent@example.com>");
       expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_ROOT");
@@ -533,7 +533,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("injects a gh-backed Git credential helper while preserving managed HOME identity guards", async () => {
+  it("uses gh-backed Git credentials from operator HOME while preserving managed Git identity guards", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-git-credential-helper-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -637,8 +637,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
       };
       expect(capture.status).toBe(0);
       expect(capture.stdout).toContain("password=operator-token");
-      expect(capture.home).toBe(path.join(managedCodexHome, "home"));
-      expect(capture.gitConfigGlobal).toBe(path.join(managedCodexHome, "home", ".gitconfig"));
+      expect(capture.home).toBe(operatorHome);
+      expect(capture.gitConfigGlobal).toBe(path.join(managedCodexHome, "git", ".gitconfig"));
       expect(capture.gitConfigCount).toBe("2");
       expect(capture.helperConfig).toEqual(expect.arrayContaining([
         ["GIT_CONFIG_KEY_0", "credential.helper"],
@@ -677,14 +677,20 @@ describe("codex execute", { timeout: 20_000 }, () => {
     await fs.mkdir(hostBin, { recursive: true });
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.join(operatorHome, ".config", "gh"), { recursive: true });
+    await fs.mkdir(path.join(operatorHome, ".agents", "skills", "home-leak"), { recursive: true });
+    await fs.writeFile(path.join(operatorHome, ".agents", "skills", "home-leak", "SKILL.md"), "# Home leak\n", "utf8");
     await fs.writeFile(
       path.join(operatorHome, ".config", "gh", "hosts.yml"),
       "github.com:\n  oauth_token: operator\n",
       "utf8",
     );
     await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.mkdir(path.join(sharedCodexHome, "skills", "shared-leak"), { recursive: true });
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
     await fs.writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
+    await fs.writeFile(path.join(sharedCodexHome, "skills", "shared-leak", "SKILL.md"), "# Shared leak\n", "utf8");
+    await fs.mkdir(path.join(workspace, ".agents", "skills", "repo-leak"), { recursive: true });
+    await fs.writeFile(path.join(workspace, ".agents", "skills", "repo-leak", "SKILL.md"), "# Repo leak\n", "utf8");
     await fs.writeFile(path.join(hostBin, "gh"), "#!/bin/sh\nexit 0\n", "utf8");
     await fs.chmod(path.join(hostBin, "gh"), 0o755);
     await writeFakeCodexCommand(commandPath);
@@ -748,9 +754,9 @@ describe("codex execute", { timeout: 20_000 }, () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.codexHome).toBe(managedCodexHome);
-      expect(capture.home).toBe(path.join(managedCodexHome, "home"));
-      expect(capture.userProfile).toBe(path.join(managedCodexHome, "home"));
-      expect(capture.agentHome).toBe(path.join(managedCodexHome, "home"));
+      expect(capture.home).toBe(operatorHome);
+      expect(capture.userProfile).toBe(process.env.USERPROFILE ?? operatorHome);
+      expect(capture.agentHome).toBe(path.join(paperclipHome, "instances", "default", "organizations", "organization-1", "workspaces", "agents", "agent-1"));
       expect(capture.rudderOperatorHome).toBe(operatorHome);
       expect(capture.pathEnv?.split(":")[0]).not.toBe(path.join(managedCodexHome, "home", ".rudder", "local-cli-shims"));
       expect(capture.codexSkillEntries).toEqual(["rudder"]);
@@ -778,9 +784,17 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfigContents).toContain("enabled = false");
       expect(managedConfigContents).toContain("[features]");
       expect(managedConfigContents).toContain("plugins = false");
-      expect(managedConfigContents).not.toContain("[[skills.config]]");
-      expect((await fs.lstat(managedGh)).isSymbolicLink()).toBe(true);
-      expect(await fs.realpath(managedGh)).toBe(await fs.realpath(path.join(operatorHome, ".config", "gh")));
+      expect(managedConfigContents).toContain("[[skills.config]]");
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills", "home-leak"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills", "home-leak", "SKILL.md"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills", "shared-leak"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills", "shared-leak", "SKILL.md"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills", "repo-leak"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills", "repo-leak", "SKILL.md"))}`);
+      await expect(fs.lstat(managedGh)).rejects.toThrow();
       await expect(fs.lstat(managedGhShim)).rejects.toThrow();
       expect((await fs.lstat(managedSkillLink)).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(managedSkillLink)).toBe(
@@ -1183,7 +1197,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfig).toContain("enabled = false");
       expect(managedConfig).not.toContain('name = "vercel:ai-sdk"');
       expect(managedConfig).not.toContain('path = "/tmp/valid-skill/SKILL.md"');
-      expect(managedConfig).not.toContain("[[skills.config]]");
+      expect(managedConfig).toContain("[[skills.config]]");
+      expect(managedConfig).toContain(`path = ${JSON.stringify(path.join(root, ".agents", "skills"))}`);
+      expect(managedConfig).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
+      expect(managedConfig).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
       expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
       expect(logs).toContainEqual(
         expect.objectContaining({
@@ -2013,7 +2030,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(isolatedConfigContents).toContain("enabled = false");
       expect(isolatedConfigContents).toContain("[features]");
       expect(isolatedConfigContents).toContain("plugins = false");
-      expect(isolatedConfigContents).not.toContain("[[skills.config]]");
+      expect(isolatedConfigContents).toContain("[[skills.config]]");
+      expect(isolatedConfigContents).toContain(`path = ${JSON.stringify(path.join(root, ".agents", "skills"))}`);
+      expect(isolatedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
+      expect(isolatedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
       expect((await fs.lstat(path.join(isolatedCodexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
       await expect(fs.lstat(workspaceSkill)).rejects.toMatchObject({ code: "ENOENT" });
       expect(logs).toContainEqual(
@@ -2427,11 +2447,14 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toBeNull();
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.codexHome).toBe(explicitCodexHome);
+      expect(capture.codexHome).toBe(managedCodexHomePath({
+        rudderHome: paperclipHome,
+        instanceId: "worktree-1",
+      }));
       await expect(fs.lstat(path.join(workspace, ".agents", "skills", "rudder"))).rejects.toMatchObject({
         code: "ENOENT",
       });
-      await expect(fs.lstat(path.join(paperclipHome, "instances", "worktree-1", "codex-home"))).rejects.toThrow();
+      await expect(fs.lstat(path.join(explicitCodexHome, "skills", "rudder"))).rejects.toThrow();
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -2526,7 +2549,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfigContents).toContain("enabled = false");
       expect(managedConfigContents).not.toContain('path = "/tmp/shared-enabled-skill/SKILL.md"');
       expect(managedConfigContents).not.toContain('path = "/tmp/shared-legacy-skill/SKILL.md"');
-      expect(managedConfigContents).not.toContain("[[skills.config]]");
+      expect(managedConfigContents).toContain("[[skills.config]]");
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(root, ".agents", "skills"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(sharedCodexHome, "skills"))}`);
+      expect(managedConfigContents).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
       expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -2616,8 +2642,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toBeNull();
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.home).toBe(agentHome);
-      expect(capture.userProfile).toBe(agentHome);
+      expect(capture.home).toBe(root);
+      expect(capture.userProfile).toBe(process.env.USERPROFILE ?? root);
       expect(capture.agentHome).toBe(agentHome);
       expect(capture.codexSkillEntries).toEqual(["rudder"]);
       await expect(fs.lstat(path.join(managedCodexHome, "skills", "stale-skill"))).rejects.toMatchObject({
