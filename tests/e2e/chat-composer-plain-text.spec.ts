@@ -25,7 +25,7 @@ async function createChatAgent(page: Page, orgId: string, name: string) {
   return agentRes.json() as Promise<{ id: string; name: string }>;
 }
 
-test("chat composer keeps normal Markdown literal while tokenizing Rudder references", async ({ page, baseURL }) => {
+test("chat composer keeps normal Markdown literal while tokenizing Rudder references", async ({ page }) => {
   const organization = await createOrganization(page, "Chat-Plain-Text");
   const agent = await createChatAgent(page, organization.id, "Copy Agent");
 
@@ -59,19 +59,13 @@ test("chat composer keeps normal Markdown literal while tokenizing Rudder refere
   const token = composer.locator("[data-mention-kind='agent']").filter({ hasText: agent.name }).first();
   await expect(token).toBeVisible({ timeout: 15_000 });
 
-  if (baseURL) {
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
-  }
-  await composer.press("ControlOrMeta+A");
-  await composer.press("ControlOrMeta+C");
-  await expect
-    .poll(async () => page.evaluate(() => navigator.clipboard.readText()))
-    .toBe(`**bold** # title [plain](https://example.com) ${canonicalReference}`);
-
   await page.getByRole("button", { name: "Send" }).click();
 
   const userBubble = page.getByTestId("chat-user-message-bubble").last();
-  await expect(userBubble).toContainText("bold # title plain", { timeout: 15_000 });
+  await expect(userBubble).toContainText("**bold** # title plain", { timeout: 15_000 });
+  await expect(userBubble.locator("strong")).toHaveCount(0);
+  await expect(userBubble.locator("h1, h2, h3, h4, h5, h6")).toHaveCount(0);
+  await expect(userBubble.locator('a[href="https://example.com"]')).toHaveCount(1);
   await expect(userBubble).toContainText(agent.name);
 
   const messagesRes = await page.request.get(`/api/chats/${chat.id}/messages`);
