@@ -50,6 +50,7 @@ describe("agent-v1 registry", () => {
       "project.get",
       "project.create",
       "project.update",
+      "user.activity",
       "library.file.list",
       "library.file.get",
       "library.file.ref",

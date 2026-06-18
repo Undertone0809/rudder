@@ -414,6 +414,18 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     attachesRunIdWhenAvailable: true,
   },
   {
+    id: "user.activity",
+    command: "rudder user activity --user me --since today --json",
+    category: "user",
+    description: "Read a user-centered activity ledger with safe excerpts and provenance across chats, issue comments, approval comments, and user actor activity.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
     id: "library.file.list",
     command: "rudder library file list [directory]",
     category: "library",
