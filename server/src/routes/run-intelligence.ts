@@ -6,6 +6,7 @@ import {
 } from "@rudderhq/run-intelligence-core";
 import { Router } from "express";
 import { badRequest, notFound } from "../errors.js";
+import { formatShortRunId } from "../services/heartbeat-run-reference.js";
 import {
   getObservedRun,
   getObservedRunDetail,
@@ -13,7 +14,7 @@ import {
   getObservedRunLog,
   listObservedRuns,
 } from "../services/run-intelligence.js";
-import { assertCompanyAccess } from "./authz.js";
+import { assertCompanyAccess, getAuthorizedOrgScope } from "./authz.js";
 
 function asDateOrNull(value: unknown) {
   if (typeof value !== "string" || value.length === 0) return null;
@@ -172,7 +173,7 @@ function buildRunErrors(detail: ObservedRunDetail, maxChars: number) {
       output: clipText(step.detailText, maxChars),
       transcriptContext: {
         id: stepStableId(step),
-        command: `rudder runs transcript ${detail.run.id} --around-error ${stepStableId(step)}`,
+        command: `rudder runs transcript ${formatShortRunId(detail.run.id)} --around-error ${stepStableId(step)}`,
       },
     }));
 
@@ -224,7 +225,8 @@ export function runIntelligenceRoutes(db: Db) {
 
   router.get("/run-intelligence/runs/:runId", async (req, res) => {
     const runId = req.params.runId as string;
-    const row = await getObservedRun(db, runId);
+    const scope = { orgIds: getAuthorizedOrgScope(req) };
+    const row = await getObservedRun(db, runId, scope);
     if (!row) throw notFound("Heartbeat run not found");
     assertCompanyAccess(req, row.run.orgId);
     res.json(row);
@@ -232,23 +234,26 @@ export function runIntelligenceRoutes(db: Db) {
 
   router.get("/run-intelligence/runs/:runId/events", async (req, res) => {
     const runId = req.params.runId as string;
-    const run = await getObservedRun(db, runId);
+    const scope = { orgIds: getAuthorizedOrgScope(req) };
+    const run = await getObservedRun(db, runId, scope);
     if (!run) throw notFound("Heartbeat run not found");
     assertCompanyAccess(req, run.run.orgId);
-    res.json(await getObservedRunEvents(db, runId));
+    res.json(await getObservedRunEvents(db, runId, scope));
   });
 
   router.get("/run-intelligence/runs/:runId/log", async (req, res) => {
     const runId = req.params.runId as string;
-    const run = await getObservedRun(db, runId);
+    const scope = { orgIds: getAuthorizedOrgScope(req) };
+    const run = await getObservedRun(db, runId, scope);
     if (!run) throw notFound("Heartbeat run not found");
     assertCompanyAccess(req, run.run.orgId);
-    res.json(await getObservedRunLog(db, runId));
+    res.json(await getObservedRunLog(db, runId, scope));
   });
 
   router.get("/run-intelligence/runs/:runId/transcript", async (req, res) => {
     const runId = req.params.runId as string;
-    const detail = await getObservedRunDetail(db, runId);
+    const scope = { orgIds: getAuthorizedOrgScope(req) };
+    const detail = await getObservedRunDetail(db, runId, scope);
     if (!detail) throw notFound("Heartbeat run not found");
     assertCompanyAccess(req, detail.run.orgId);
 
@@ -309,7 +314,8 @@ export function runIntelligenceRoutes(db: Db) {
 
   router.get("/run-intelligence/runs/:runId/errors", async (req, res) => {
     const runId = req.params.runId as string;
-    const detail = await getObservedRunDetail(db, runId);
+    const scope = { orgIds: getAuthorizedOrgScope(req) };
+    const detail = await getObservedRunDetail(db, runId, scope);
     if (!detail) throw notFound("Heartbeat run not found");
     assertCompanyAccess(req, detail.run.orgId);
     const maxChars = asPositiveInteger(req.query.maxChars, 1200, 20000);

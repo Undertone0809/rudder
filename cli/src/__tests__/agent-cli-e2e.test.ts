@@ -322,6 +322,7 @@ async function runCliJson<T>(
         "--config",
         opts.configPath,
         "--json",
+        "--full-ids",
       ],
       {
         cwd: repoRoot,

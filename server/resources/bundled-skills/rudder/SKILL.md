@@ -21,7 +21,7 @@ organization-skill operations.
 
 ## Control-Plane Interface
 
-- Use `rudder ... --json` for normal control-plane work. CLI output renders IDs as short IDs by default; add `--full-ids` only for debugging or compatibility checks that need raw UUIDs.
+- Use `rudder ... --json` for normal control-plane work. CLI output renders IDs as short IDs by default; `rudder runs ...` commands accept short run IDs. Add `--full-ids` only for debugging or compatibility checks that need raw UUIDs.
 - Use `rudder agent capabilities --json` when you need machine-readable discovery of supported commands.
 - Use `references/cli-reference.md` for the stable command catalog.
 - Treat `references/api-reference.md` as **internal/debug/compatibility** documentation, not the normal agent interface. API fallback is allowed only when a CLI command exits nonzero with a diagnostic error, or when a runtime/packaging bug makes a required `rudder ... --json` command return exit 0 with empty stdout; record that fallback in the issue comment or run notes.

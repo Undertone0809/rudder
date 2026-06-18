@@ -203,6 +203,15 @@ describe("run intelligence routes", () => {
     expect(res.status).toBe(403);
   });
 
+  it("passes actor org scope to single-run short ID lookups", async () => {
+    const res = await request(createApp()).get("/api/run-intelligence/runs/609695f1f90a");
+
+    expect(res.status).toBe(200);
+    expect(mockGetObservedRun).toHaveBeenCalledWith(expect.anything(), "609695f1f90a", {
+      orgIds: ["org-1"],
+    });
+  });
+
   it("returns newest-first clipped transcript rows from server-side run detail", async () => {
     const res = await request(createApp())
       .get("/api/run-intelligence/runs/run-1/transcript")
@@ -279,6 +288,35 @@ describe("run intelligence routes", () => {
   });
 
   it("returns first-class run errors with transcript context commands", async () => {
+    mockGetObservedRunDetail.mockResolvedValueOnce({
+      run: {
+        id: "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+        orgId: "org-1",
+        status: "failed",
+        error: "adapter failed",
+        errorCode: "adapter_error",
+        finishedAt: new Date("2026-06-11T00:00:05.000Z"),
+        updatedAt: new Date("2026-06-11T00:00:05.000Z"),
+      },
+      agentName: "Agent",
+      orgName: "Org",
+      issue: null,
+      bundle: {
+        agentRuntimeType: "process",
+        agentConfigRevisionId: null,
+        agentConfigRevisionCreatedAt: null,
+        agentConfigFingerprint: null,
+        runtimeConfigFingerprint: null,
+      },
+      langfuse: null,
+      events: [],
+      logContent: null,
+      logChunks: [],
+      transcript: [
+        { kind: "tool_result", ts: "2026-06-11T00:00:03.000Z", toolUseId: "tool-1", toolName: "exec_command", content: "ERR".repeat(1000), isError: true },
+      ],
+    });
+
     const res = await request(createApp())
       .get("/api/run-intelligence/runs/run-1/errors")
       .query({ maxChars: "25" });
@@ -290,14 +328,14 @@ describe("run intelligence routes", () => {
       summary: "adapter_error",
     });
     expect(res.body.errors[1]).toMatchObject({
-      id: "step-3",
+      id: "step-1",
       type: "tool_result",
       output: {
         clipped: true,
       },
       transcriptContext: {
-        id: "step-3",
-        command: "rudder runs transcript run-1 --around-error step-3",
+        id: "step-1",
+        command: "rudder runs transcript 609695f1f90a --around-error step-1",
       },
     });
   });

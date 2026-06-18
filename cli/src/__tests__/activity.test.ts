@@ -54,14 +54,14 @@ describe("activity command", () => {
     expect(output).not.toContain("8daeadc9-3ea2-49b6-984a-fc2a4101b59c");
     expect(JSON.parse(output)).toEqual([
       expect.objectContaining({
-        id: "b3c85ce0",
-        orgId: "87e2f140",
-        actorId: "agt_d573266f",
+        id: "b3c85ce0d7b4",
+        orgId: "87e2f1403876",
+        actorId: "agt_d573266faf95",
         entityId: "ZST-369",
-        agentId: "agt_d573266f",
-        runId: "021814b8",
+        agentId: "agt_d573266faf95",
+        runId: "021814b86691",
         details: expect.objectContaining({
-          agentId: "agt_d573266f",
+          agentId: "agt_d573266faf95",
         }),
       }),
     ]);

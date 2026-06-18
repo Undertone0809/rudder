@@ -227,7 +227,7 @@ async function runCliJson<T>(args: string[], opts: { apiBase: string; configPath
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      ["cli/node_modules/tsx/dist/cli.mjs", "cli/src/index.ts", ...args, "--api-base", opts.apiBase, "--config", opts.configPath, "--json"],
+      ["cli/node_modules/tsx/dist/cli.mjs", "cli/src/index.ts", ...args, "--api-base", opts.apiBase, "--config", opts.configPath, "--json", "--full-ids"],
       {
         cwd: repoRoot,
         env: createCliEnv(),

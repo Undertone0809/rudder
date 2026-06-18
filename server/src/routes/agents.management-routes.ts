@@ -22,13 +22,14 @@ import { redactCurrentUserValue } from "../log-redaction.js";
 import { validate } from "../middleware/validate.js";
 import { redactEventPayload } from "../redaction.js";
 import { normalizeCreatedAgentAvatarIcon } from "../services/agents.js";
+import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
 import {
   issueService,
   logActivity,
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
 import type { StorageService } from "../storage/types.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
 
 type AgentManagementRouteContext = {
   router: Router;
@@ -1239,7 +1240,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.get("/heartbeat-runs/:runId", async (req, res) => {
-    const runId = req.params.runId as string;
+    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: "Heartbeat run not found" });
@@ -1250,7 +1251,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.post("/heartbeat-runs/:runId/cancel", async (req, res) => {
-    const runId = req.params.runId as string;
+    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const originalRun = await heartbeat.getRun(runId);
     if (!originalRun) {
       throw notFound("Heartbeat run not found");
@@ -1276,7 +1277,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.post("/heartbeat-runs/:runId/retry", async (req, res) => {
-    const runId = req.params.runId as string;
+    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const originalRun = await heartbeat.getRun(runId);
     if (!originalRun) {
       res.status(404).json({ error: "Heartbeat run not found" });
@@ -1308,7 +1309,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.get("/heartbeat-runs/:runId/events", async (req, res) => {
-    const runId = req.params.runId as string;
+    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: "Heartbeat run not found" });
@@ -1330,7 +1331,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.get("/heartbeat-runs/:runId/log", async (req, res) => {
-    const runId = req.params.runId as string;
+    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: "Heartbeat run not found" });
@@ -1350,7 +1351,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.get("/heartbeat-runs/:runId/workspace-operations", async (req, res) => {
-    const runId = req.params.runId as string;
+    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: "Heartbeat run not found" });

@@ -203,26 +203,36 @@ describe("CLI short ID output", () => {
 
   it("shortens UUID fields for CLI-facing JSON by default", () => {
     expect(toCliShortIdOutput(activityRow)).toEqual({
-      id: "b3c85ce0",
-      orgId: "87e2f140",
+      id: "b3c85ce0d7b4",
+      orgId: "87e2f1403876",
       actorType: "agent",
-      actorId: "agt_d573266f",
+      actorId: "agt_d573266faf95",
       action: "issue.checked_out",
       entityType: "issue",
       entityId: "ZST-369",
-      agentId: "agt_d573266f",
-      runId: "021814b8",
+      agentId: "agt_d573266faf95",
+      runId: "021814b86691",
       details: {
-        agentId: "agt_d573266f",
+        agentId: "agt_d573266faf95",
         issueIdentifier: "ZST-369",
         title: "把 chat 整合进 Agent run",
       },
     });
   });
 
+  it("shortens UUIDs embedded in CLI-facing reference strings", () => {
+    const output = toCliShortIdOutput({
+      logRef: "87e2f140-3876-4d47-b1e0-71d1bcd772ac/d573266f-af95-44e6-9303-e903a54662b8/021814b8-6691-4351-a286-ad33caec1272.ndjson",
+    });
+
+    expect(output).toEqual({
+      logRef: "87e2f1403876/d573266faf95/021814b86691.ndjson",
+    });
+  });
+
   it("uses short IDs in inline record rendering", () => {
-    expect(formatInlineRecord(activityRow)).toContain("id=b3c85ce0");
-    expect(formatInlineRecord(activityRow)).toContain("actorId=agt_d573266f");
+    expect(formatInlineRecord(activityRow)).toContain("id=b3c85ce0d7b4");
+    expect(formatInlineRecord(activityRow)).toContain("actorId=agt_d573266faf95");
     expect(formatInlineRecord(activityRow)).toContain("entityId=ZST-369");
     expect(formatInlineRecord(activityRow)).not.toContain("d573266f-af95-44e6-9303-e903a54662b8");
   });

@@ -3,6 +3,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
+import { registerAgentManagementRoutes } from "../routes/agents.management-routes.js";
 
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelRun: vi.fn(),
@@ -77,6 +78,40 @@ function createApp(
   app.use("/api", agentRoutes({} as any));
   app.use(errorHandler);
   return app;
+}
+
+function createManagementApp(db: Record<string, unknown>, actor: Record<string, unknown>) {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    (req as any).actor = actor;
+    next();
+  });
+  const router = express.Router();
+  registerAgentManagementRoutes({
+    router,
+    db,
+    heartbeat: mockHeartbeatService,
+    workspaceOperations: {},
+    getCurrentUserRedactionOptions: vi.fn(async () => ({ censorUsernameInLogs: false })),
+  } as any);
+  app.use("/api", router);
+  app.use(errorHandler);
+  return app;
+}
+
+function createRunIdLookupDb(rows: Array<{ id: string }>) {
+  return {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          orderBy: vi.fn(() => ({
+            limit: vi.fn(async () => rows),
+          })),
+        })),
+      })),
+    })),
+  };
 }
 
 describe("heartbeat run retry route", () => {
@@ -194,6 +229,38 @@ describe("heartbeat run retry route", () => {
         entityId: "run-2",
       }),
     );
+  });
+
+  it("resolves short run IDs within the caller organization scope before retrying", async () => {
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "failed",
+    });
+    mockHeartbeatService.retryRun.mockResolvedValue({
+      id: "retry-run",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "queued",
+      contextSnapshot: {},
+    });
+
+    const res = await request(createManagementApp(createRunIdLookupDb([
+      { id: "609695f1-f90a-4b17-be61-4f0c6fe37c42" },
+    ]), {
+      type: "board",
+      userId: "board-user",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    })).post("/api/heartbeat-runs/609695f1f90a/retry").send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith("609695f1-f90a-4b17-be61-4f0c6fe37c42", {
+      requestedByActorType: "user",
+      requestedByActorId: "board-user",
+    });
   });
 
   it("cancels a run with agent attribution for same-organization agent callers", async () => {

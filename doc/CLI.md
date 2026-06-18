@@ -281,6 +281,8 @@ optimization. It defaults to `--evidence used`, summarizes recent matching runs
 by status, agent, issue, and common errors, then prints follow-up commands such
 as `rudder runs transcript <run-id>` or `rudder runs errors <run-id>`. Pass
 `--json` for a stable object with `{ skill, summary, rows, nextCommands }`.
+Run IDs rendered by the CLI are short IDs by default, and every `runs <run-id>`
+follow-up command accepts those short IDs directly.
 
 `runs transcript` is normalized server-side from persisted run detail and log
 content. Human output is compact, clipped, and newest-first by default; pass

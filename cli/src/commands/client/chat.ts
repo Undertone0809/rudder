@@ -10,6 +10,7 @@ import { Command } from "commander";
 import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
+  formatCliRunId,
   handleCommandError,
   printOutput,
   resolveCommandContext,
@@ -378,15 +379,16 @@ function formatChatSearchResult(row: ChatConversation, maxChars: number) {
 }
 
 function formatChatMessage(row: ChatMessage, maxOutputChars = 1200) {
+  const runId = row.runId ? formatCliRunId(row.runId) : null;
   return {
     id: row.id,
     role: row.role,
     kind: row.kind,
     status: row.status,
-    ...(row.runId ? {
-      runId: row.runId,
-      runCommand: `rudder runs get ${row.runId}`,
-      transcriptCommand: `rudder runs transcript ${row.runId}`,
+    ...(runId ? {
+      runId,
+      runCommand: `rudder runs get ${runId}`,
+      transcriptCommand: `rudder runs transcript ${runId}`,
     } : {}),
     createdAt: row.createdAt,
     body: clip(row.body, 220),
@@ -398,15 +400,16 @@ function formatChatMessage(row: ChatMessage, maxOutputChars = 1200) {
 }
 
 function formatChatTranscriptMessage(row: ChatMessage, maxChars: number) {
+  const runId = row.runId ? formatCliRunId(row.runId) : null;
   const header = {
     id: row.id,
     role: row.role,
     kind: row.kind,
     status: row.status,
-    ...(row.runId ? {
-      runId: row.runId,
-      runCommand: `rudder runs get ${row.runId}`,
-      transcriptCommand: `rudder runs transcript ${row.runId}`,
+    ...(runId ? {
+      runId,
+      runCommand: `rudder runs get ${runId}`,
+      transcriptCommand: `rudder runs transcript ${runId}`,
     } : {}),
     createdAt: row.createdAt,
     body: clip(row.body, 220),

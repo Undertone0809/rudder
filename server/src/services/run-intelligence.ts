@@ -16,6 +16,7 @@ import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { notFound } from "../errors.js";
 import { getExecutionLangfuseLink } from "../langfuse.js";
+import { resolveHeartbeatRunIdReference } from "./heartbeat-run-reference.js";
 import { getRunLogStore } from "./run-log-store.js";
 
 function hashValue(value: unknown) {
@@ -267,7 +268,10 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
   if (input.agentId) conditions.push(eq(heartbeatRuns.agentId, input.agentId));
   if (input.status) conditions.push(eq(heartbeatRuns.status, input.status));
   if (input.runtime) conditions.push(eq(agents.agentRuntimeType, input.runtime));
-  if (input.runIdPrefix) conditions.push(sql`${heartbeatRuns.id}::text ilike ${`${input.runIdPrefix}%`}`);
+  if (input.runIdPrefix) {
+    const runIdPrefix = input.runIdPrefix.replace(/-/g, "").toLowerCase();
+    conditions.push(sql`replace(${heartbeatRuns.id}::text, '-', '') like ${`${runIdPrefix}%`}`);
+  }
   if (input.issueId) conditions.push(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${input.issueId}`);
   if (input.usedSkill) conditions.push(buildSkillExistsCondition("used", input.usedSkill));
   if (input.loadedSkill) conditions.push(buildSkillExistsCondition("loaded", input.loadedSkill));
@@ -457,8 +461,11 @@ export async function listObservedRuns(db: Db, input: ListObservedRunsInput): Pr
   return Promise.all(rows.map((row) => serializeRunRow(row, issueMap, revisionsByAgentId, skillEvidenceMap)));
 }
 
-export async function getObservedRun(db: Db, runId: string): Promise<RunExportRow | null> {
-  const row = await loadRunRowById(db, runId);
+type RunIdResolutionScope = { orgIds?: string[] };
+
+export async function getObservedRun(db: Db, runId: string, scope: RunIdResolutionScope = {}): Promise<RunExportRow | null> {
+  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
+  const row = await loadRunRowById(db, resolvedRunId);
   if (!row) return null;
   const [issueMap, revisionsByAgentId] = await Promise.all([
     loadIssuesForRuns(db, [row]),
@@ -467,32 +474,35 @@ export async function getObservedRun(db: Db, runId: string): Promise<RunExportRo
   return serializeRunRow(row, issueMap, revisionsByAgentId);
 }
 
-export async function getObservedRunEvents(db: Db, runId: string) {
+export async function getObservedRunEvents(db: Db, runId: string, scope: RunIdResolutionScope = {}) {
+  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
   const run = await db
     .select({ id: heartbeatRuns.id })
     .from(heartbeatRuns)
-    .where(eq(heartbeatRuns.id, runId))
+    .where(eq(heartbeatRuns.id, resolvedRunId))
     .limit(1)
     .then((rows) => rows[0] ?? null);
   if (!run) throw notFound("Heartbeat run not found");
-  return loadRunEvents(db, runId);
+  return loadRunEvents(db, resolvedRunId);
 }
 
-export async function getObservedRunLog(db: Db, runId: string) {
+export async function getObservedRunLog(db: Db, runId: string, scope: RunIdResolutionScope = {}) {
+  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
   const run = await db
     .select()
     .from(heartbeatRuns)
-    .where(eq(heartbeatRuns.id, runId))
+    .where(eq(heartbeatRuns.id, resolvedRunId))
     .limit(1)
     .then((rows) => rows[0] ?? null);
   if (!run) throw notFound("Heartbeat run not found");
   return { content: await loadRunLogContent(run) };
 }
 
-export async function getObservedRunDetail(db: Db, runId: string): Promise<ObservedRunDetail | null> {
+export async function getObservedRunDetail(db: Db, runId: string, scope: RunIdResolutionScope = {}): Promise<ObservedRunDetail | null> {
+  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
   const [observedRun, events] = await Promise.all([
-    getObservedRun(db, runId),
-    loadRunEvents(db, runId),
+    getObservedRun(db, resolvedRunId, scope),
+    loadRunEvents(db, resolvedRunId),
   ]);
   if (!observedRun) return null;
 

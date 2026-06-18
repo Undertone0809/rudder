@@ -556,10 +556,11 @@ describe("CLI automation/chat/runs parity", () => {
       "token-1",
     ])).resolves.toBe(0);
 
-    expect(output.stdoutText()).toContain("runId=609695f1");
+    expect(output.stdoutText()).toContain("runId=609695f1f90a");
     expect(output.stdoutText()).not.toContain("runId=609695f1-f90a-4b17-be61-4f0c6fe37c42");
-    expect(output.stdoutText()).toContain("runCommand=rudder runs get 609695f1-f90a-4b17-be61-4f0c6fe37c42");
-    expect(output.stdoutText()).toContain("transcriptCommand=rudder runs transcript 609695f1-f90a-4b17-be61-4f0c6fe37c42");
+    expect(output.stdoutText()).toContain("runCommand=rudder runs get 609695f1f90a");
+    expect(output.stdoutText()).toContain("transcriptCommand=rudder runs transcript 609695f1f90a");
+    expect(output.stdoutText()).not.toContain("609695f1-f90a-4b17-be61-4f0c6fe37c42");
   });
 
   it("sends agent-authored chat messages with agent and run attribution headers", async () => {

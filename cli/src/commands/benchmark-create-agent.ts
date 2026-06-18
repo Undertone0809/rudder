@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import type { BaseClientOptions } from "./client/common.js";
 import {
   addCommonClientOptions,
+  formatCliRunId,
   handleCommandError,
   printOutput,
   resolveCommandContext,
@@ -322,7 +323,7 @@ function buildMarkdownReport(result: StoredCreateAgentBenchmarkResult): string {
     `# Create-Agent Benchmark Report`,
     ``,
     `- Case: \`${result.case.id}\``,
-    `- Run: \`${result.runDetail.run.id}\``,
+    `- Run: \`${formatCliRunId(result.runDetail.run.id)}\``,
     `- Run status: \`${result.runDetail.run.status}\``,
     `- Issue: ${result.issue.identifier ?? result.issue.id}`,
     `- Classification: \`${result.evaluation.finalClassification}\``,

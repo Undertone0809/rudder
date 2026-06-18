@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
+  formatCliRunId,
   handleCommandError,
   printOutput,
   resolveCommandContext,
@@ -239,7 +240,7 @@ export function registerRunsCommands(program: Command): void {
     runs
       .command("get")
       .description(getAgentCliCapabilityById("runs.get").description)
-      .argument("<runId>", "Run ID")
+      .argument("<runId>", "Run ID or short run ID")
       .action(async (runId: string, opts: BaseClientOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -255,7 +256,7 @@ export function registerRunsCommands(program: Command): void {
     runs
       .command("events")
       .description(getAgentCliCapabilityById("runs.events").description)
-      .argument("<runId>", "Run ID")
+      .argument("<runId>", "Run ID or short run ID")
       .action(async (runId: string, opts: BaseClientOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -271,7 +272,7 @@ export function registerRunsCommands(program: Command): void {
     runs
       .command("log")
       .description(getAgentCliCapabilityById("runs.log").description)
-      .argument("<runId>", "Run ID")
+      .argument("<runId>", "Run ID or short run ID")
       .option("--max-chars <n>", "Maximum log characters for human output", "12000")
       .action(async (runId: string, opts: RunLogOptions) => {
         try {
@@ -292,7 +293,7 @@ export function registerRunsCommands(program: Command): void {
     runs
       .command("transcript")
       .description(getAgentCliCapabilityById("runs.transcript").description)
-      .argument("<runId>", "Run ID")
+      .argument("<runId>", "Run ID or short run ID")
       .option("--errors-only", "Show only error transcript rows")
       .option("--around-error <id>", "Show context around a run error id such as step-12")
       .option("--context-turns <n>", "Turns around --around-error", "1")
@@ -327,7 +328,7 @@ export function registerRunsCommands(program: Command): void {
     runs
       .command("errors")
       .description(getAgentCliCapabilityById("runs.errors").description)
-      .argument("<runId>", "Run ID")
+      .argument("<runId>", "Run ID or short run ID")
       .option("--max-chars <n>", "Maximum output characters per error", "1200")
       .action(async (runId: string, opts: RunErrorsOptions) => {
         try {
@@ -348,7 +349,7 @@ export function registerRunsCommands(program: Command): void {
     runs
       .command("cancel")
       .description(getAgentCliCapabilityById("runs.cancel").description)
-      .argument("<runId>", "Run ID")
+      .argument("<runId>", "Run ID or short run ID")
       .action(async (runId: string, opts: BaseClientOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -364,7 +365,7 @@ export function registerRunsCommands(program: Command): void {
     runs
       .command("retry")
       .description(getAgentCliCapabilityById("runs.retry").description)
-      .argument("<runId>", "Run ID")
+      .argument("<runId>", "Run ID or short run ID")
       .action(async (runId: string, opts: BaseClientOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -432,8 +433,9 @@ function buildTranscriptQuery(opts: RunTranscriptOptions, output: { json: boolea
 }
 
 function formatRunListRow(row: RunExportRow) {
+  const runId = formatCliRunId(row.run.id);
   return {
-    id: row.run.id,
+    id: runId,
     status: row.run.status,
     agent: row.agentName ?? row.run.agentId,
     runtime: row.bundle.agentRuntimeType,
@@ -444,7 +446,7 @@ function formatRunListRow(row: RunExportRow) {
     skill: row.skillEvidence?.matchedSkillKey ?? "-",
     langfuse: readLangfuseTraceUrl(row.langfuse) ?? "-",
     error: row.errorSummary ?? "-",
-    next: row.run.status === "failed" ? `rudder runs errors ${row.run.id}` : `rudder runs transcript ${row.run.id}`,
+    next: row.run.status === "failed" ? `rudder runs errors ${runId}` : `rudder runs transcript ${runId}`,
   };
 }
 
@@ -499,10 +501,12 @@ function buildSkillRunReport(skill: string, evidenceType: "used" | "loaded", row
         .slice(0, 5),
     },
     rows,
-    nextCommands: rows.slice(0, 5).map((row) =>
-      row.run.status === "failed"
-        ? `rudder runs errors ${row.run.id}`
-        : `rudder runs transcript ${row.run.id}`),
+    nextCommands: rows.slice(0, 5).map((row) => {
+      const runId = formatCliRunId(row.run.id);
+      return row.run.status === "failed"
+        ? `rudder runs errors ${runId}`
+        : `rudder runs transcript ${runId}`;
+    }),
   };
 }
 
@@ -528,13 +532,14 @@ function formatSkillRunReport(report: SkillRunReport) {
 }
 
 function formatInlineSkillRun(row: RunExportRow) {
+  const runId = formatCliRunId(row.run.id);
   const issue = formatIssueRef(row.issue);
   const label = row.skillEvidence?.matchedSkillLabel && row.skillEvidence.matchedSkillLabel !== row.skillEvidence.matchedSkillKey
     ? ` label=${row.skillEvidence.matchedSkillLabel}`
     : "";
   const langfuse = readLangfuseTraceUrl(row.langfuse);
   return [
-    `id=${row.run.id}`,
+    `id=${runId}`,
     `status=${row.run.status}`,
     `agent=${row.agentName ?? row.run.agentId}`,
     `issue=${issue}`,
@@ -545,7 +550,7 @@ function formatInlineSkillRun(row: RunExportRow) {
     `skill=${row.skillEvidence?.matchedSkillKey ?? "-"}${label}`,
     `langfuse=${langfuse ?? "-"}`,
     `error=${row.errorSummary ?? "-"}`,
-    `next=${row.run.status === "failed" ? `rudder runs errors ${row.run.id}` : `rudder runs transcript ${row.run.id}`}`,
+    `next=${row.run.status === "failed" ? `rudder runs errors ${runId}` : `rudder runs transcript ${runId}`}`,
   ].join(" ");
 }
 

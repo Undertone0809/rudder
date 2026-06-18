@@ -8,6 +8,8 @@ import { ApiRequestError, RudderApiClient } from "../../client/http.js";
 import { readConfig } from "../../config/store.js";
 
 let currentCommandFullIds = false;
+const CLI_SHORT_UUID_LENGTH = 12;
+const UUID_SUBSTRING_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
 
 export interface BaseClientOptions {
   config?: string;
@@ -222,9 +224,17 @@ export function toCliShortIdOutput(value: unknown): unknown {
   return output;
 }
 
+export function formatCliRunId(runId: string): string {
+  return isUuidLike(runId) ? shortUuid(runId) : runId;
+}
+
 function shortenCliValueForKey(key: string, value: unknown, parent: Record<string, unknown>): unknown {
   if (typeof value === "string" && isCliIdKey(key) && isUuidLike(value)) {
     return displayIdForCli(key, value, parent);
+  }
+
+  if (typeof value === "string" && isCliReferenceStringKey(key)) {
+    return value.replace(UUID_SUBSTRING_RE, (uuid) => shortUuid(uuid));
   }
 
   if (Array.isArray(value) && isCliIdListKey(key)) {
@@ -272,6 +282,11 @@ function isCliIdListKey(key: string): boolean {
   return key.endsWith("Ids");
 }
 
+function isCliReferenceStringKey(key: string): boolean {
+  const lowerKey = key.toLowerCase();
+  return lowerKey.endsWith("ref") || lowerKey.endsWith("path");
+}
+
 function singularizeIdListKey(key: string): string {
   return `${key.slice(0, -3)}Id`;
 }
@@ -291,7 +306,7 @@ function formatTypedShortRef(kind: "agent" | "issue_comment", uuid: string): str
 }
 
 function shortUuid(uuid: string): string {
-  return uuid.replace(/-/g, "").slice(0, 8).toLowerCase();
+  return uuid.replace(/-/g, "").slice(0, CLI_SHORT_UUID_LENGTH).toLowerCase();
 }
 
 function readIssueIdentifier(parent: Record<string, unknown>): string | null {

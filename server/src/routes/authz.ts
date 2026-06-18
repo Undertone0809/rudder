@@ -30,6 +30,22 @@ export function assertCompanyAccess(req: Request, orgId: string) {
   }
 }
 
+export function getAuthorizedOrgScope(req: Request): string[] | undefined {
+  if (req.actor.type === "none") {
+    throw unauthorized();
+  }
+  if (req.actor.type === "agent") {
+    if (!req.actor.orgId) {
+      throw unauthorized();
+    }
+    return [req.actor.orgId];
+  }
+  if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) {
+    return undefined;
+  }
+  return req.actor.orgIds ?? [];
+}
+
 export function getActorInfo(req: Request) {
   if (req.actor.type === "none") {
     throw unauthorized();
