@@ -156,7 +156,7 @@ weak path syntax and use it only when preserving old content that has no
 
 ## Git Identity Policy
 
-Local runtime `HOME` is isolated from the operator home. Codex local runs and runtime-created git worktrees are prepared with `user.useConfigOnly=true` so missing identity fails fast instead of producing `*@*.local` commits. If Git reports missing author or committer identity, configure the repository explicitly with `git config user.name <name>` and `git config user.email <safe-email>`; do not unset the guard or accept auto-detected local-host metadata.
+Codex local runs preserve the operator `HOME` for host CLI auth while using managed `CODEX_HOME` and Git sidecars for runtime isolation. Codex local runs and runtime-created git worktrees are prepared with `user.useConfigOnly=true` so missing identity fails fast instead of producing `*@*.local` commits. If Git reports missing author or committer identity, configure the repository explicitly with `git config user.name <name>` and `git config user.email <safe-email>`; do not unset the guard or accept auto-detected local-host metadata.
 
 ## Reviewer Close-Out Signals
 

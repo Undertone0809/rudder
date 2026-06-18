@@ -19,6 +19,10 @@ const MANAGED_CODEX_HOME_PRUNE_TARGETS = [
 ] as const;
 const codexHomeMutationLocks = new Map<string, Promise<void>>();
 
+export type CodexSkillIsolationSurface = {
+  disabledSkillPaths: string[];
+};
+
 async function withCodexHomeMutationLock<T>(codexHome: string, fn: () => Promise<T>): Promise<T> {
   const key = path.resolve(codexHome);
   const previous = codexHomeMutationLocks.get(key) ?? Promise.resolve();
@@ -50,8 +54,14 @@ export async function pathExists(candidate: string): Promise<boolean> {
 export function resolveSharedCodexHomeDir(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  const fromRudderSharedEnv = nonEmpty(env.RUDDER_SHARED_CODEX_HOME);
+  if (fromRudderSharedEnv) return path.resolve(fromRudderSharedEnv);
+
   const fromEnv = nonEmpty(env.CODEX_HOME);
-  return fromEnv ? path.resolve(fromEnv) : path.join(os.homedir(), ".codex");
+  if (fromEnv) return path.resolve(fromEnv);
+
+  const fromHome = nonEmpty(env.HOME);
+  return path.join(fromHome ? path.resolve(fromHome) : os.homedir(), ".codex");
 }
 
 function isWorktreeMode(env: NodeJS.ProcessEnv): boolean {
@@ -130,6 +140,22 @@ function unsupportedCodexServiceTierLine(trimmedLine: string): boolean {
   if (!match) return false;
   const value = (match[1] ?? match[2] ?? match[3] ?? "").trim().toLowerCase();
   return value !== "fast" && value !== "flex";
+}
+
+function renderDisabledCodexSkillConfigEntries(skillPaths: string[]): string {
+  const normalized = Array.from(
+    new Set(skillPaths.map((value) => path.resolve(value))),
+  ).sort((left, right) => left.localeCompare(right));
+
+  if (normalized.length === 0) return "";
+
+  return normalized
+    .map((skillPath) => [
+      "[[skills.config]]",
+      `path = ${JSON.stringify(skillPath)}`,
+      "enabled = false",
+    ].join("\n"))
+    .join("\n\n");
 }
 
 function sanitizeCodexConfigToml(content: string): {
@@ -412,6 +438,7 @@ async function syncManagedCodexConfigToml(
   target: string,
   source: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
+  isolationSurface: CodexSkillIsolationSurface = { disabledSkillPaths: [] },
 ): Promise<void> {
   const existingTarget = await fs.lstat(target).catch(() => null);
   const sourceContent = await fs.readFile(source, "utf8").catch(() => "");
@@ -423,9 +450,10 @@ async function syncManagedCodexConfigToml(
   const sanitized = sanitizeCodexConfigToml(withoutLegacyMarkers);
   const bundledSkillsDisabled = ensureCodexBundledSkillsDisabled(sanitized.content);
   const pluginsDisabled = ensureCodexPluginsDisabled(bundledSkillsDisabled.content);
-  const nextContent = pluginsDisabled.content.replace(/\s+$/u, "").length > 0
-    ? `${pluginsDisabled.content.replace(/\s+$/u, "")}\n`
-    : "";
+  const baseContent = pluginsDisabled.content.replace(/\s+$/u, "");
+  const disabledSkillConfigEntries = renderDisabledCodexSkillConfigEntries(isolationSurface.disabledSkillPaths);
+  const mergedContent = [baseContent, disabledSkillConfigEntries].filter((part) => part.length > 0).join("\n\n");
+  const nextContent = mergedContent.length > 0 ? `${mergedContent}\n` : "";
 
   if (!existingTarget || nextContent !== rawContent) {
     await ensureParentDir(target);
@@ -473,6 +501,13 @@ async function syncManagedCodexConfigToml(
       `[rudder] Forced Codex bundled skills off in ${target} to prevent platform default system skills from loading.\n`,
     );
   }
+
+  if (isolationSurface.disabledSkillPaths.length > 0) {
+    await onLog(
+      "stdout",
+      `[rudder] Disabled ${isolationSurface.disabledSkillPaths.length} external Codex skill path${isolationSurface.disabledSkillPaths.length === 1 ? "" : "s"} in ${target} to keep runtime skills controlled by Rudder.\n`,
+    );
+  }
 }
 
 async function pruneManagedCodexPluginSurface(
@@ -509,6 +544,7 @@ export async function prepareManagedCodexHome(
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId?: string,
   agentId?: string,
+  isolationSurface: CodexSkillIsolationSurface = { disabledSkillPaths: [] },
 ): Promise<string> {
   const targetHome = resolveManagedCodexHomeDir(env, orgId, agentId);
 
@@ -529,7 +565,7 @@ export async function prepareManagedCodexHome(
       const source = path.join(sourceHome, name);
       if (!(await pathExists(source))) continue;
       if (name === "config.toml") {
-        await syncManagedCodexConfigToml(path.join(targetHome, name), source, onLog);
+        await syncManagedCodexConfigToml(path.join(targetHome, name), source, onLog, isolationSurface);
         continue;
       }
       await ensureCopiedFile(path.join(targetHome, name), source);
@@ -611,12 +647,13 @@ export async function realizeManagedCodexSkillEntries(
   codexHome: string,
   skillSources: string[],
   onLog: AgentRuntimeExecutionContext["onLog"],
+  isolationSurface: CodexSkillIsolationSurface = { disabledSkillPaths: [] },
 ): Promise<void> {
   await withCodexHomeMutationLock(codexHome, async () => {
     const sourceHome = resolveSharedCodexHomeDir(env);
     const sourceConfig = path.join(sourceHome, "config.toml");
     const targetConfig = path.join(codexHome, "config.toml");
-    await syncManagedCodexConfigToml(targetConfig, sourceConfig, onLog);
+    await syncManagedCodexConfigToml(targetConfig, sourceConfig, onLog, isolationSurface);
     await syncManagedCodexSkillsHome(codexHome, skillSources, onLog);
   });
 }

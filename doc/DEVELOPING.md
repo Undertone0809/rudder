@@ -261,19 +261,19 @@ runtime descriptor instead of polling only the requested port.
 
 ### Agent Git Identity
 
-Local agent runtimes isolate `HOME`, so Git must not rely on the host user's global `~/.gitconfig`.
-When Rudder prepares Codex local runs, it writes an isolated `$AGENT_HOME/.gitconfig` with
-`user.useConfigOnly=true` and includes the host global Git config when a safe identity can be
-resolved from explicit `GIT_AUTHOR_*` / `GIT_COMMITTER_*`, the workspace repo-local config, or the
-host global config. Runtime-created git worktrees also get repo-local `user.useConfigOnly=true`.
+Local agent runtimes must not rely on Git's hostname fallback identity. Codex local runs preserve the
+operator `HOME` for normal host CLI auth, but write `user.useConfigOnly=true` into a Rudder-owned
+Git config sidecar under the managed `CODEX_HOME` and point Git at it with `GIT_CONFIG_GLOBAL`.
+The sidecar includes the host global Git identity only when a safe identity can be resolved from
+explicit `GIT_AUTHOR_*` / `GIT_COMMITTER_*`, the workspace repo-local config, or the host global
+config. Runtime-created git worktrees also get repo-local `user.useConfigOnly=true`.
 Rudder does not store or inject a separate confirmed Git identity. If no safe identity is available,
 `git commit` fails with Git's auto-detection-disabled error instead of creating a `*@*.local`
 fallback commit.
 
-Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state while keeping child
-`HOME` isolated. Runtime code, scripts, and skills that need operator-owned app state such as `gh`,
-`ssh`, `npm`, or desktop app config should read `RUDDER_OPERATOR_HOME` and only bridge approved
-paths into the managed home; they should not set child `HOME` back to the operator home.
+Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state. Codex local runs keep
+child `HOME` as the operator home and use managed provider sidecars for isolation; other providers
+may still use managed-home fallback until their provider-specific skill isolation path is proven.
 
 Before asking an agent to commit in a new local workspace, set a safe repo-local identity when possible:
 

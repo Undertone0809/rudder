@@ -14,15 +14,34 @@ async function makeTempDir(prefix: string): Promise<string> {
 describe("codex local skill sync", () => {
   const rudderSkillKey = "rudder/rudder";
   const cleanupDirs = new Set<string>();
+  const originalRudderHome = process.env.RUDDER_HOME;
 
   afterEach(async () => {
+    if (originalRudderHome === undefined) delete process.env.RUDDER_HOME;
+    else process.env.RUDDER_HOME = originalRudderHome;
     await Promise.all(Array.from(cleanupDirs).map((dir) => fs.rm(dir, { recursive: true, force: true })));
     cleanupDirs.clear();
   });
 
+  function managedCodexHomePath(rudderHome: string, agentId: string, orgId = "organization-1"): string {
+    return path.join(
+      rudderHome,
+      "instances",
+      "default",
+      "organizations",
+      orgId,
+      "codex-home",
+      "agents",
+      agentId,
+    );
+  }
+
   it("reports explicitly enabled Rudder skills without promising workspace injection", async () => {
     const codexHome = await makeTempDir("rudder-codex-skill-sync-");
+    const rudderHome = await makeTempDir("rudder-codex-skill-rudder-home-");
     cleanupDirs.add(codexHome);
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
 
     const ctx = {
       agentId: "agent-1",
@@ -51,7 +70,11 @@ describe("codex local skill sync", () => {
 
   it("realizes selected Rudder skills into the managed Codex skills home during sync", async () => {
     const codexHome = await makeTempDir("rudder-codex-skill-prune-");
+    const rudderHome = await makeTempDir("rudder-codex-skill-rudder-home-");
+    const managedCodexHome = managedCodexHomePath(rudderHome, "agent-2");
     cleanupDirs.add(codexHome);
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
 
     const configuredCtx = {
       agentId: "agent-2",
@@ -70,8 +93,9 @@ describe("codex local skill sync", () => {
     const after = await syncCodexSkills(configuredCtx, [rudderSkillKey]);
     expect(after.mode).toBe("persistent");
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(codexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
-    const configToml = await fs.readFile(path.join(codexHome, "config.toml"), "utf8");
+    expect((await fs.lstat(path.join(managedCodexHome, "skills", "rudder"))).isSymbolicLink()).toBe(true);
+    await expect(fs.lstat(path.join(codexHome, "skills", "rudder"))).rejects.toThrow();
+    const configToml = await fs.readFile(path.join(managedCodexHome, "config.toml"), "utf8");
     expect(configToml).toContain("[skills.bundled]");
     expect(configToml).toContain("enabled = false");
     expect(configToml).not.toContain("[[skills.config]]");
@@ -79,7 +103,10 @@ describe("codex local skill sync", () => {
 
   it("does not auto-enable bundled Rudder skills when the desired set is empty", async () => {
     const codexHome = await makeTempDir("rudder-codex-skill-required-");
+    const rudderHome = await makeTempDir("rudder-codex-skill-rudder-home-");
     cleanupDirs.add(codexHome);
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
 
     const configuredCtx = {
       agentId: "agent-2",
@@ -102,7 +129,10 @@ describe("codex local skill sync", () => {
 
   it("keeps legacy paperclipSkillSync config compatible", async () => {
     const codexHome = await makeTempDir("rudder-codex-legacy-skill-sync-");
+    const rudderHome = await makeTempDir("rudder-codex-skill-rudder-home-");
     cleanupDirs.add(codexHome);
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
 
     const snapshot = await listCodexSkills({
       agentId: "agent-3",
@@ -127,7 +157,10 @@ describe("codex local skill sync", () => {
 
   it("treats adapter-local Codex skills as unavailable to Rudder-managed enablement", async () => {
     const codexHome = await makeTempDir("rudder-codex-enabled-user-skills-");
+    const rudderHome = await makeTempDir("rudder-codex-skill-rudder-home-");
     cleanupDirs.add(codexHome);
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
 
     const snapshot = await syncCodexSkills({
       agentId: "agent-5",

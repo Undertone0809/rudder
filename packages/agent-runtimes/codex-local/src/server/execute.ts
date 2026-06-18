@@ -8,7 +8,6 @@ import {
   buildRudderEnv,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
-  ensureLocalCliCredentialShimsInPath,
   ensurePathInEnv,
   ensureRudderCliInPath,
   joinPromptSections,
@@ -23,7 +22,6 @@ import {
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
-  syncLocalCliCredentialHomeEntries,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -48,6 +46,14 @@ const CODEX_BENIGN_STDERR_RES = [
 ] as const;
 const CODEX_ANALYTICS_FORBIDDEN_HTML_START_RE =
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_analytics::analytics_client:\s+events failed with status 403 Forbidden:\s+<html>$/i;
+const CODEX_PROTECTED_ENV_KEYS = new Set([
+  "AGENT_HOME",
+  "CODEX_HOME",
+  "HOME",
+  "RUDDER_AGENT_ROOT",
+  "RUDDER_OPERATOR_HOME",
+  "USERPROFILE",
+]);
 
 function isBenignCodexStderrLine(line: string): boolean {
   if (isCodexClosedStdinToolSessionError(line)) return true;
@@ -168,6 +174,53 @@ function resolveCodexResultBillingType(
   return billingType;
 }
 
+function envStrings(envConfig: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(envConfig).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
+
+function resolveFallbackAgentHome(effectiveCodexHome: string, agentId: string): string {
+  const orgRoot = path.dirname(path.dirname(path.dirname(effectiveCodexHome)));
+  return path.join(orgRoot, "workspaces", "agents", agentId);
+}
+
+function resolveTrustedOperatorHome(): string {
+  const home =
+    typeof process.env.HOME === "string" && process.env.HOME.trim().length > 0
+      ? path.resolve(process.env.HOME.trim())
+      : null;
+  if (home) return home;
+  return resolveLocalOperatorHome(process.env);
+}
+
+async function discoverExternalCodexSkillDisablePaths(skillRoots: string[]): Promise<string[]> {
+  const disabledPaths = new Set<string>();
+
+  for (const root of skillRoots) {
+    const resolvedRoot = path.resolve(root);
+    disabledPaths.add(resolvedRoot);
+    const rootSkillFile = path.join(resolvedRoot, "SKILL.md");
+    if (await fs.access(rootSkillFile).then(() => true).catch(() => false)) {
+      disabledPaths.add(rootSkillFile);
+    }
+
+    const entries = await fs.readdir(resolvedRoot, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillDir = path.join(resolvedRoot, entry.name);
+      const skillFile = path.join(skillDir, "SKILL.md");
+      if (!(await fs.access(skillFile).then(() => true).catch(() => false))) continue;
+      disabledPaths.add(skillDir);
+      disabledPaths.add(skillFile);
+    }
+  }
+
+  return Array.from(disabledPaths).sort((left, right) => left.localeCompare(right));
+}
+
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 
@@ -227,36 +280,50 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   const envConfig = parseObject(config.env);
-  const configuredCodexHome =
+  const envConfigStrings = envStrings(envConfig);
+  const sharedCodexHomeOverride =
     typeof envConfig.CODEX_HOME === "string" && envConfig.CODEX_HOME.trim().length > 0
       ? path.resolve(envConfig.CODEX_HOME.trim())
       : null;
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
-  const sourceEnv = {
+  const operatorHome = resolveTrustedOperatorHome();
+  const sharedCodexHome = sharedCodexHomeOverride ?? (
+    typeof process.env.CODEX_HOME === "string" && process.env.CODEX_HOME.trim().length > 0
+      ? path.resolve(process.env.CODEX_HOME.trim())
+      : path.join(operatorHome, ".codex")
+  );
+  const codexTargetEnv = {
     ...process.env,
-    ...Object.fromEntries(
-      Object.entries(envConfig).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
-    ),
+    RUDDER_SHARED_CODEX_HOME: sharedCodexHome,
   };
-  const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const preparedManagedCodexHome =
-    configuredCodexHome ? null : await prepareManagedCodexHome(sourceEnv, onLog, agent.orgId, agent.id);
-  const defaultCodexHome = resolveManagedCodexHomeDir(sourceEnv, agent.orgId, agent.id);
-  const effectiveCodexHome = configuredCodexHome ?? preparedManagedCodexHome ?? defaultCodexHome;
-  await fs.mkdir(effectiveCodexHome, { recursive: true });
-  const isolatedHome = agentHome || path.join(effectiveCodexHome, "home");
-  await fs.mkdir(isolatedHome, { recursive: true });
-  await syncLocalCliCredentialHomeEntries({
-    sourceHome: operatorHome,
-    targetHome: isolatedHome,
+  const externalCodexSkillPaths = await discoverExternalCodexSkillDisablePaths([
+    path.join(operatorHome, ".agents", "skills"),
+    path.join(sharedCodexHome, "skills"),
+    path.join(cwd, ".agents", "skills"),
+  ]);
+  const preparedManagedCodexHome = await prepareManagedCodexHome(
+    codexTargetEnv,
     onLog,
-  });
+    agent.orgId,
+    agent.id,
+    { disabledSkillPaths: externalCodexSkillPaths },
+  );
+  const defaultCodexHome = resolveManagedCodexHomeDir(codexTargetEnv, agent.orgId, agent.id);
+  const effectiveCodexHome = preparedManagedCodexHome ?? defaultCodexHome;
+  await fs.mkdir(effectiveCodexHome, { recursive: true });
+  const effectiveAgentHome = agentHome || resolveFallbackAgentHome(effectiveCodexHome, agent.id);
+  await fs.mkdir(effectiveAgentHome, { recursive: true });
+  const gitSidecarHome = path.join(effectiveCodexHome, "git");
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
-    home: isolatedHome,
-    sourceEnv,
+    home: gitSidecarHome,
+    sourceEnv: {
+      ...process.env,
+      ...envConfigStrings,
+      HOME: operatorHome,
+      USERPROFILE: process.env.USERPROFILE ?? operatorHome,
+      CODEX_HOME: sharedCodexHome,
+    },
     onLog,
   });
   const codexSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
@@ -271,19 +338,20 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }));
   await realizeManagedCodexSkillEntries(
     {
-      ...sourceEnv,
-      CODEX_HOME: effectiveCodexHome,
+      ...codexTargetEnv,
+      CODEX_HOME: sharedCodexHome,
     },
     effectiveCodexHome,
     selectedCodexSkillEntries.map((entry) => entry.source),
     onLog,
+    { disabledSkillPaths: externalCodexSkillPaths },
   );
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.CODEX_HOME = effectiveCodexHome;
-  env.HOME = isolatedHome;
-  env.USERPROFILE = isolatedHome;
+  env.HOME = operatorHome;
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
   env.RUDDER_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -350,10 +418,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (workspaceWorktreePath) {
     env.RUDDER_WORKSPACE_WORKTREE_PATH = workspaceWorktreePath;
   }
-  env.AGENT_HOME = agentHome || isolatedHome;
-  if (agentHome) {
-    env.RUDDER_AGENT_ROOT = agentHome;
-  }
+  env.AGENT_HOME = effectiveAgentHome;
+  env.RUDDER_AGENT_ROOT = effectiveAgentHome;
   if (agentInstructionsDir) {
     env.RUDDER_AGENT_INSTRUCTIONS_DIR = agentInstructionsDir;
   }
@@ -388,10 +454,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     env.RUDDER_RUNTIME_PRIMARY_URL = runtimePrimaryUrl;
   }
   for (const [k, v] of Object.entries(envConfig)) {
-    if (typeof v === "string") env[k] = v;
+    if (typeof v === "string" && !CODEX_PROTECTED_ENV_KEYS.has(k)) env[k] = v;
   }
-  env.HOME = isolatedHome;
-  env.USERPROFILE = isolatedHome;
+  env.CODEX_HOME = effectiveCodexHome;
+  env.HOME = operatorHome;
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.AGENT_HOME = effectiveAgentHome;
+  env.RUDDER_AGENT_ROOT = effectiveAgentHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -404,16 +473,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   );
   const billingType = resolveCodexBillingType(effectiveEnv);
-  const runtimeEnv = await ensureLocalCliCredentialShimsInPath({
-    operatorHome,
-    targetHome: isolatedHome,
-    cwd,
-    env: ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv)),
-    onLog,
-  });
+  const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv));
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
+
+  await onLog(
+    "stdout",
+    `[rudder] Using operator HOME "${operatorHome}" with AGENT_HOME "${effectiveAgentHome}" and isolated CODEX_HOME "${effectiveCodexHome}".\n`,
+  );
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);

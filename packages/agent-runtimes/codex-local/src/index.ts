@@ -54,8 +54,9 @@ Notes:
 - Codex exec automatically applies repo-scoped AGENTS.md instructions from the active workspace. Rudder cannot suppress that discovery in exec mode, so repo AGENTS.md files may still apply even when you only configured an explicit instructionsFilePath.
 - Agent enabled-skill state is controlled only by Rudder's bundled skills plus the selections saved on the agent's Skills page.
 - The codex_local adapter does not materialize skills into repo-scoped ".agents/skills"; it realizes selected skills by linking them into the Rudder-managed \`CODEX_HOME/skills\` directory that Codex discovers at runtime.
-- Unless explicitly overridden in adapter config, Rudder runs Codex with a per-agent managed CODEX_HOME under the active Rudder instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
-- Rudder uses a managed runtime HOME so Codex does not auto-discover unrelated global skills from ~/.agents/skills during agent runs, but bridges common local CLI credential directories (for example gh/ssh/npm/cloud CLIs) into that managed HOME.
-- Rudder prepares a managed Git config for the run, forces user.useConfigOnly=true, and points Git at it with GIT_CONFIG_GLOBAL so commits use the normal repo-local or host Git identity and never fall back to hostname .local authors.
+- Rudder runs Codex with the operator HOME preserved for normal local CLI auth/config, while exporting a per-agent managed CODEX_HOME under the active Rudder instance for Codex runtime state and enabled Rudder skills.
+- Adapter env values for HOME, USERPROFILE, RUDDER_OPERATOR_HOME, AGENT_HOME, RUDDER_AGENT_ROOT, and CODEX_HOME do not override those protected runtime paths in the default Codex execution path.
+- Rudder sanitizes managed CODEX_HOME/config.toml, disables Codex bundled skills/plugins, strips inherited skill registries, and writes disabled external skill-path entries for operator-home, shared-Codex-home, and repo-local skill roots so runtime loading stays controlled by Rudder's enabled skill set.
+- Rudder prepares a managed Git config sidecar for the run, forces user.useConfigOnly=true, and points Git at it with GIT_CONFIG_GLOBAL so commits use the normal repo-local or host Git identity and never fall back to hostname .local authors.
 - When Rudder realizes a workspace/runtime for a run, it injects RUDDER_WORKSPACE_* and RUDDER_RUNTIME_* env vars for agent-side tooling.
 `;

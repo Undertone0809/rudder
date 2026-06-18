@@ -290,10 +290,10 @@ That means:
 - prompt instructions matter
 - configured credentials/env vars are sensitive
 - working directory permissions matter
-- managed local runtime homes must not break normal operator CLI login state;
-  when a runtime uses a managed HOME for skill/session isolation, Rudder bridges
-  common local CLI credential directories such as `gh`, `ssh`, `npm`, Docker,
-  Kubernetes, and cloud CLIs into that managed HOME
+- managed local runtime sidecars must not break normal operator CLI login state.
+  Codex local runs preserve operator `HOME` and isolate skills/session state with
+  managed `CODEX_HOME`; providers that still require managed `HOME` may bridge
+  approved local CLI credential directories only as a legacy fallback.
 - Git author identity is still protected separately: Rudder prepares a managed
   Git config with `user.useConfigOnly=true` and points `GIT_CONFIG_GLOBAL` at it.
   The managed config includes the host global Git config when a safe default
