@@ -139,7 +139,7 @@ test.describe("Automations index layout", () => {
     await expect(emptyState).toBeVisible();
     await expect(templateGrid).toBeVisible();
     await expect(page.getByRole("button", { name: /Bug triage/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Daily standup/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Daily standup review/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Weekly progress report/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Dependency audit/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Advisor review loop/ })).toHaveCount(0);

@@ -406,7 +406,7 @@ describe("Automations", () => {
     expect(container.textContent).toContain("No automations yet");
     expect(container.textContent).not.toContain("Advisor review loop");
     expect(container.textContent).toContain("Bug triage");
-    expect(container.textContent).toContain("Daily standup");
+    expect(container.textContent).toContain("Daily standup review");
     expect(container.textContent).toContain("Weekly progress report");
     expect(container.textContent).not.toContain("Dependency audit");
     expect(container.textContent).not.toContain("Create custom automation");
@@ -441,6 +441,18 @@ describe("Automations", () => {
     expect(document.body.textContent).not.toContain("New chat per run");
     expect(document.body.textContent).toContain("Create");
     expect(runbookInput?.value).toContain("board-tracked work");
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Daily standup review"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(titleInput?.value).toBe("Daily standup review");
+    expect(runbookInput?.value).toContain("Review today's work across issues, comments, chats, and runs");
+    expect(runbookInput?.value).toContain("Recommended next tasks");
+    expect(runbookInput?.value).toContain("Needs my review");
   });
 
   it("opens the composer from the header as a blank prompt input", async () => {
