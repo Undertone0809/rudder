@@ -15,7 +15,7 @@ const mockCreateCustomGroup = vi.hoisted(() => vi.fn());
 const mockAssignCustomGroupEntry = vi.hoisted(() => vi.fn());
 const mockListCustomGroups = vi.hoisted(() => vi.fn());
 const mockUpdateCustomGroup = vi.hoisted(() => vi.fn());
-const mockDeleteCustomGroup = vi.hoisted(() => vi.fn());
+const mockSeparateCustomGroup = vi.hoisted(() => vi.fn());
 const mockReorderCustomGroups = vi.hoisted(() => vi.fn());
 const mockReorderCustomGroupEntries = vi.hoisted(() => vi.fn());
 const mockUpdateConversation = vi.hoisted(() => vi.fn());
@@ -97,7 +97,7 @@ vi.mock("@/api/messenger", () => ({
     listCustomGroups: mockListCustomGroups,
     createCustomGroup: mockCreateCustomGroup,
     updateCustomGroup: mockUpdateCustomGroup,
-    deleteCustomGroup: mockDeleteCustomGroup,
+    separateCustomGroup: mockSeparateCustomGroup,
     reorderCustomGroups: mockReorderCustomGroups,
     assignCustomGroupEntry: mockAssignCustomGroupEntry,
     removeCustomGroupEntry: vi.fn(),
@@ -391,7 +391,7 @@ describe("MessengerContextSidebar chat actions", () => {
     mockAssignCustomGroupEntry.mockClear();
     mockListCustomGroups.mockClear();
     mockUpdateCustomGroup.mockClear();
-    mockDeleteCustomGroup.mockClear();
+    mockSeparateCustomGroup.mockClear();
     mockReorderCustomGroups.mockClear();
     mockReorderCustomGroupEntries.mockClear();
     mockUpdateConversation.mockClear();
@@ -675,13 +675,14 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(clipboardWriteText).toHaveBeenCalledWith("[Planning thread](chat://chat-1)");
   });
 
-  it("creates a custom group from a latest activity chat action and switches to custom mode", async () => {
+  it("creates a group from a latest activity chat action while staying in the default thread layout", async () => {
     const storage = installLocalStorage();
 
     renderSidebar();
 
     const newGroup = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("New group")) as HTMLButtonElement | undefined;
+      .filter((button) => button.textContent?.includes("New group"))
+      .at(-1) as HTMLButtonElement | undefined;
 
     expect(newGroup).toBeTruthy();
     await act(async () => {
@@ -710,9 +711,9 @@ describe("MessengerContextSidebar chat actions", () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateCustomGroup).toHaveBeenCalledWith("org-1", { name: "Deep work", icon: "D" });
+    expect(mockCreateCustomGroup).toHaveBeenCalledWith("org-1", { name: "Deep work", icon: "D::amber" });
     expect(mockAssignCustomGroupEntry).toHaveBeenCalledWith("org-1", "group-1", "chat:chat-1");
-    expect(storage.setItem).toHaveBeenCalledWith("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "custom" }));
+    expect(storage.setItem).toHaveBeenCalledWith("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "latest" }));
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "groups"] });
   });
 

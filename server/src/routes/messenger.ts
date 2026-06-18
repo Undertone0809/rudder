@@ -80,6 +80,13 @@ export function messengerRoutes(db: Db) {
     },
   );
 
+  router.post("/orgs/:orgId/messenger/groups/:groupId/separate", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const userId = boardUserId(req);
+    res.json(await svc.separateCustomGroup(orgId, userId, req.params.groupId as string));
+  });
+
   router.delete("/orgs/:orgId/messenger/groups/:groupId", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);

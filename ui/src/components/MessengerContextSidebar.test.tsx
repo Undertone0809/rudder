@@ -407,14 +407,14 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Recent unpinned chat"));
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Issues"));
     expect(html).toContain("Pinned");
-    expect(html).toContain("Today");
+    expect(html).toContain("Default");
     expect(queryOptions).toContainEqual(expect.objectContaining({
       queryKey: ["chats", "org-1", "all"],
       enabled: false,
     }));
   });
 
-  it("groups latest activity threads from today before older recent threads", () => {
+  it("keeps default latest activity threads sorted by time", () => {
     chatList = [];
     messengerModel = {
       ...baseModel(),
@@ -450,17 +450,91 @@ describe("MessengerContextSidebar", () => {
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
-    expect(html.indexOf('data-testid="messenger-thread-section-today"')).toBeLessThan(
+    expect(html.indexOf('data-testid="messenger-thread-section-custom-default"')).toBeLessThan(
       html.indexOf('data-testid="messenger-thread-chat-today-chat"'),
     );
     expect(html.indexOf('data-testid="messenger-thread-chat-today-chat"')).toBeLessThan(
-      html.indexOf('data-testid="messenger-thread-section-recent"'),
-    );
-    expect(html.indexOf('data-testid="messenger-thread-section-recent"')).toBeLessThan(
       html.indexOf('data-testid="messenger-thread-chat-older-chat"'),
     );
-    expect(html).toContain("Today");
-    expect(html).toContain("Recent");
+    expect(html).toContain("Default");
+  });
+
+  it("keeps untouched latest activity ahead of the manual default order block", () => {
+    chatList = [];
+    localStorageValues["rudder.messengerDefaultThreadOrder:org-1:anonymous"] = JSON.stringify([
+      "chat:d",
+      "chat:b",
+      "chat:c",
+    ]);
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:a",
+          kind: "chat",
+          title: "Untouched newest chat",
+          preview: "Newest activity.",
+          subtitle: null,
+          href: "/messenger/chat/a",
+          latestActivityAt: "2026-04-11T09:59:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "chat:b",
+          kind: "chat",
+          title: "Manual anchor chat",
+          preview: "Dragged range.",
+          subtitle: null,
+          href: "/messenger/chat/b",
+          latestActivityAt: "2026-04-11T09:50:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "chat:c",
+          kind: "chat",
+          title: "Manual shifted chat",
+          preview: "Dragged range.",
+          subtitle: null,
+          href: "/messenger/chat/c",
+          latestActivityAt: "2026-04-11T09:40:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+        {
+          threadKey: "chat:d",
+          kind: "chat",
+          title: "Manual moved chat",
+          preview: "Dragged range.",
+          subtitle: null,
+          href: "/messenger/chat/d",
+          latestActivityAt: "2026-04-11T09:30:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: false,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html.indexOf('data-testid="messenger-thread-chat-a"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-chat-d"'),
+    );
+    expect(html.indexOf('data-testid="messenger-thread-chat-d"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-chat-b"'),
+    );
+    expect(html.indexOf('data-testid="messenger-thread-chat-b"')).toBeLessThan(
+      html.indexOf('data-testid="messenger-thread-chat-c"'),
+    );
   });
 
   it("renders custom groups with pinned threads first and group entries in persisted order", () => {
@@ -610,7 +684,7 @@ describe("MessengerContextSidebar", () => {
       html.indexOf('data-testid="messenger-thread-chat-chat-2"'),
     );
     expect(html).toContain("Pinned");
-    expect(html).toContain("Today");
+    expect(html).toContain("Default");
     expect(html).toContain('aria-label="Thread actions"');
     expect(html).toContain('data-slot="status-progress-arc"');
   });

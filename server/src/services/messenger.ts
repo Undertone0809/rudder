@@ -1116,7 +1116,7 @@ export function messengerService(db: Db) {
     return group;
   }
 
-  async function deleteCustomGroup(orgId: string, userId: string, groupId: string) {
+  async function separateCustomGroup(orgId: string, userId: string, groupId: string) {
     await getCustomGroupOrThrow(orgId, userId, groupId);
     const [group] = await db
       .delete(messengerCustomGroups)
@@ -1128,6 +1128,8 @@ export function messengerService(db: Db) {
       .returning();
     return group;
   }
+
+  const deleteCustomGroup = separateCustomGroup;
 
   async function reorderCustomGroups(orgId: string, userId: string, groupIds: string[]) {
     const uniqueGroupIds = [...new Set(groupIds)];
@@ -2482,6 +2484,7 @@ export function messengerService(db: Db) {
     listCustomGroups,
     createCustomGroup,
     updateCustomGroup,
+    separateCustomGroup,
     deleteCustomGroup,
     reorderCustomGroups,
     assignThreadToCustomGroup,
