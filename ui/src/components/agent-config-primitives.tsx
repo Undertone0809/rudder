@@ -213,6 +213,7 @@ export function CollapsibleSection({
   open,
   onToggle,
   bordered,
+  disabled = false,
   children,
 }: {
   title: string;
@@ -220,6 +221,7 @@ export function CollapsibleSection({
   open: boolean;
   onToggle: () => void;
   bordered?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -228,6 +230,7 @@ export function CollapsibleSection({
         type="button"
         aria-expanded={open}
         className="flex items-center gap-2 w-full px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-accent/30 transition-colors"
+        disabled={disabled}
         onClick={onToggle}
       >
         {open ? <ChevronDown className="h-3 w-3 transition-transform" /> : <ChevronRight className="h-3 w-3 transition-transform" />}

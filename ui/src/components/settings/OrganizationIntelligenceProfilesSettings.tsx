@@ -26,8 +26,8 @@ import type {
   OrganizationSecret,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { FlaskConical, LoaderCircle, Plus } from "lucide-react";
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useState } from "react";
 
 type ProfileDraft = {
   purpose: OrganizationIntelligenceProfilePurpose;
@@ -38,7 +38,6 @@ type ProfileDraft = {
 };
 
 type ActivationState = {
-  purpose: OrganizationIntelligenceProfilePurpose;
   phase: "testing" | "enabling";
 };
 
@@ -211,35 +210,13 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
     }
     return { purpose, results };
   }
-  const saveProfile = useMutation({
-    mutationFn: (draft: ProfileDraft) =>
-      organizationsApi.updateIntelligenceProfile(orgId, draft.purpose, {
-        agentRuntimeType: draft.agentRuntimeType as OrganizationIntelligenceProfile["agentRuntimeType"],
-        agentRuntimeConfig: draft.agentRuntimeConfig,
-        status: draft.status,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.organizations.intelligenceProfiles(orgId) });
-    },
-  });
   const [runtimeEnvironmentResults, setRuntimeEnvironmentResults] = useState<
     Partial<Record<OrganizationIntelligenceProfilePurpose, RuntimeEnvironmentTestItemResult[]>>
   >({});
-  const testRuntimeChain = useMutation({
-    mutationFn: async ({
-      purpose,
-      targets,
-    }: {
-      purpose: OrganizationIntelligenceProfilePurpose;
-      targets: RuntimeEnvironmentTestTarget[];
-    }) => runRuntimeChainTest(purpose, targets),
-    onSuccess: ({ purpose, results }) => {
-      setRuntimeEnvironmentResults((current) => ({
-        ...current,
-        [purpose]: results,
-      }));
-    },
-  });
+  const [testingPurposes, setTestingPurposes] = useState<Set<OrganizationIntelligenceProfilePurpose>>(() => new Set());
+  const [savingPurposes, setSavingPurposes] = useState<Set<OrganizationIntelligenceProfilePurpose>>(() => new Set());
+  const [activationStates, setActivationStates] = useState<Partial<Record<OrganizationIntelligenceProfilePurpose, ActivationState>>>({});
+  const [saveError, setSaveError] = useState<Error | null>(null);
 
   const serverDrafts = useMemo(() => {
     const byPurpose = new Map(
@@ -251,7 +228,6 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
   }, [profilesQuery.data]);
 
   const [drafts, setDrafts] = useState<Record<OrganizationIntelligenceProfilePurpose, ProfileDraft> | null>(null);
-  const [activationState, setActivationState] = useState<ActivationState | null>(null);
   useEffect(() => {
     if (!profilesQuery.data) return;
     setDrafts(serverDrafts);
@@ -275,13 +251,77 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
     });
   }
 
+  function setPurposePending(
+    setter: Dispatch<SetStateAction<Set<OrganizationIntelligenceProfilePurpose>>>,
+    purpose: OrganizationIntelligenceProfilePurpose,
+    pending: boolean,
+  ) {
+    setter((current) => {
+      const next = new Set(current);
+      if (pending) {
+        next.add(purpose);
+      } else {
+        next.delete(purpose);
+      }
+      return next;
+    });
+  }
+
+  function setActivationForPurpose(
+    purpose: OrganizationIntelligenceProfilePurpose,
+    state: ActivationState | null,
+  ) {
+    setActivationStates((current) => {
+      const next = { ...current };
+      if (state) {
+        next[purpose] = state;
+      } else {
+        delete next[purpose];
+      }
+      return next;
+    });
+  }
+
+  async function saveProfileDraft(draft: ProfileDraft) {
+    setPurposePending(setSavingPurposes, draft.purpose, true);
+    setSaveError(null);
+    try {
+      await organizationsApi.updateIntelligenceProfile(orgId, draft.purpose, {
+        agentRuntimeType: draft.agentRuntimeType as OrganizationIntelligenceProfile["agentRuntimeType"],
+        agentRuntimeConfig: draft.agentRuntimeConfig,
+        status: draft.status,
+      });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.organizations.intelligenceProfiles(orgId) });
+    } catch (error) {
+      setSaveError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      setPurposePending(setSavingPurposes, draft.purpose, false);
+    }
+  }
+
+  async function testRuntimeChainForPurpose(
+    purpose: OrganizationIntelligenceProfilePurpose,
+    targets: RuntimeEnvironmentTestTarget[],
+  ) {
+    setPurposePending(setTestingPurposes, purpose, true);
+    try {
+      const tested = await runRuntimeChainTest(purpose, targets);
+      setRuntimeEnvironmentResults((current) => ({
+        ...current,
+        [purpose]: tested.results,
+      }));
+      return tested.results;
+    } finally {
+      setPurposePending(setTestingPurposes, purpose, false);
+    }
+  }
+
   async function enableProfile(
     draft: ProfileDraft,
     targets: RuntimeEnvironmentTestTarget[],
     existingResults: RuntimeEnvironmentTestItemResult[],
   ) {
-    setActivationState({
-      purpose: draft.purpose,
+    setActivationForPurpose(draft.purpose, {
       phase: runtimeChainPassed(targets, existingResults) ? "enabling" : "testing",
     });
     try {
@@ -295,16 +335,15 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
         }));
       }
 
-      setActivationState({
-        purpose: draft.purpose,
+      setActivationForPurpose(draft.purpose, {
         phase: "enabling",
       });
-      await saveProfile.mutateAsync({
+      await saveProfileDraft({
         ...draft,
         status: runtimeChainPassed(targets, results) ? "configured" : "invalid",
       });
     } finally {
-      setActivationState(null);
+      setActivationForPurpose(draft.purpose, null);
     }
   }
 
@@ -329,11 +368,20 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
           const testTargets = buildRuntimeEnvironmentTestTargets(draft, model, fallbacks);
           const testResults = runtimeEnvironmentResults[purpose] ?? [];
           const testResultsByKey = new Map(testResults.map((item) => [item.key, item]));
-          const isTestingRuntimeChain = testRuntimeChain.isPending && testRuntimeChain.variables?.purpose === purpose;
-          const isActivatingAnyProfile = activationState !== null;
-          const isActivatingProfile = activationState?.purpose === purpose;
-          const isActivationTesting = isActivatingProfile && activationState.phase === "testing";
+          const activationState = activationStates[purpose];
+          const isTestingRuntimeChain = testingPurposes.has(purpose);
+          const isSavingProfile = savingPurposes.has(purpose);
+          const isActivatingProfile = activationState !== undefined;
+          const isActivationTesting = activationState?.phase === "testing";
+          const isProfileBusy = isSavingProfile || isTestingRuntimeChain || isActivatingProfile;
           const isEnabled = draft.exists && draft.status === "configured";
+          const primaryActionPendingLabel = isActivationTesting
+            ? "Testing..."
+            : isActivatingProfile
+              ? "Enabling..."
+              : isSavingProfile && isEnabled
+                ? "Saving..."
+                : null;
           const runtimeEnvironmentStatusFor = (key: string): RuntimeEnvironmentStatus | undefined => {
             if (isTestingRuntimeChain || isActivationTesting) return "testing";
             const item = testResultsByKey.get(key);
@@ -352,17 +400,7 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                   <div className="text-sm font-medium">{copy.label}</div>
                   <div className="text-xs text-muted-foreground">{copy.description}</div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2.5 text-xs"
-                    disabled={testRuntimeChain.isPending || isActivatingAnyProfile}
-                    onClick={() => testRuntimeChain.mutate({ purpose, targets: testTargets })}
-                  >
-                    {isTestingRuntimeChain ? "Testing runtime chain..." : "Test runtime chain"}
-                  </Button>
+                <div className="flex items-center gap-2.5">
                   <span className={cn(
                     "rounded-full border px-2 py-0.5 text-[11px] font-medium",
                     draft.exists && draft.status === "configured"
@@ -371,38 +409,59 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                   )}>
                     {profileStatusLabel(draft)}
                   </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-7 px-2.5 text-xs"
-                    disabled={!dirty || saveProfile.isPending || isActivatingAnyProfile}
-                    onClick={() => saveProfile.mutate(draft)}
-                  >
-                    {saveProfile.isPending ? "Saving..." : !draft.exists ? "Create" : dirty ? "Save" : "Saved"}
-                  </Button>
+                  {!dirty ? (
+                    <span className="text-xs text-muted-foreground">Saved</span>
+                  ) : null}
+                  {dirty ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2.5 text-xs"
+                      disabled={isProfileBusy}
+                      onClick={() => void saveProfileDraft(draft)}
+                    >
+                      {isSavingProfile ? "Saving..." : !draft.exists ? "Create" : "Save"}
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
                     variant={isEnabled ? "outline" : "default"}
                     size="sm"
                     className="h-7 px-2.5 text-xs"
-                    disabled={saveProfile.isPending || testRuntimeChain.isPending || isActivatingAnyProfile}
+                    disabled={isSavingProfile || isTestingRuntimeChain || isActivatingProfile}
                     onClick={() => {
                       if (isEnabled) {
-                        saveProfile.mutate({ ...draft, status: "disabled" });
+                        void saveProfileDraft({ ...draft, status: "disabled" });
                         return;
                       }
                       void enableProfile(draft, testTargets, testResults);
                     }}
                   >
-                    {isActivationTesting ? "Testing..." : isActivatingProfile ? "Enabling..." : isEnabled ? "Disable" : "Enable"}
+                    {primaryActionPendingLabel ?? (isEnabled ? "Disable" : "Enable")}
                   </Button>
                 </div>
               </div>
 
-              {testResults.length > 0 ? (
-                <div className="space-y-2">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
                   <div className="text-xs font-medium text-muted-foreground">Runtime chain environment</div>
-                  {testResults.map((item) =>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="h-6 px-2 text-xs"
+                    aria-label="Test runtime chain"
+                    title="Test runtime chain"
+                    disabled={isProfileBusy}
+                    onClick={() => void testRuntimeChainForPurpose(purpose, testTargets)}
+                  >
+                    {isTestingRuntimeChain ? <LoaderCircle className="size-3 animate-spin" /> : <FlaskConical className="size-3" />}
+                    {isTestingRuntimeChain ? "Testing" : "Test"}
+                  </Button>
+                </div>
+                {testResults.length > 0 ? (
+                  testResults.map((item) =>
                     item.result ? (
                       <AdapterEnvironmentResult
                         key={item.key}
@@ -416,9 +475,13 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                         message={item.error?.message ?? "Environment test failed"}
                       />
                     ),
-                  )}
-                </div>
-              ) : null}
+                  )
+                ) : (
+                  <div className="rounded-md border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
+                    Test before enabling to verify the selected runtime and fallbacks.
+                  </div>
+                )}
+              </div>
 
               <div className={runtimeProviderRailClassName}>
                 <RuntimeProviderCard
@@ -480,6 +543,7 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                     }));
                   }}
                   environmentStatus={runtimeEnvironmentStatusFor("primary")}
+                  disabled={isProfileBusy}
                 />
 
                 {fallbacks.map((fallback, index) => (
@@ -557,6 +621,7 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                       }));
                     }}
                     environmentStatus={runtimeEnvironmentStatusFor(`fallback-${index}`)}
+                    disabled={isProfileBusy}
                   />
                 ))}
 
@@ -565,7 +630,9 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                   className={cn(
                     runtimeProviderItemClassName,
                     "min-h-[180px] rounded-lg border border-dashed border-border/80 px-4 py-4 text-left transition-colors hover:border-primary/50 hover:bg-accent/30",
+                    isProfileBusy && "cursor-not-allowed opacity-50 hover:border-border/80 hover:bg-transparent",
                   )}
+                  disabled={isProfileBusy}
                   onClick={() => setDraft(purpose, (current) => ({
                     ...updateFallbackModels(current, [...fallbackModels(current), defaultFallbackItem(current.agentRuntimeType)]),
                     status: "disabled",
@@ -589,9 +656,9 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
           {profilesQuery.error instanceof Error ? profilesQuery.error.message : "Failed to load intelligence profiles."}
         </div>
       ) : null}
-      {saveProfile.isError ? (
+      {saveError ? (
         <div className="text-xs text-destructive">
-          {saveProfile.error instanceof Error ? saveProfile.error.message : "Failed to save intelligence profile."}
+          {saveError.message || "Failed to save intelligence profile."}
         </div>
       ) : null}
     </div>

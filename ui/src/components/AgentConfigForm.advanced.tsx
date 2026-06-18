@@ -45,7 +45,7 @@ export function RuntimeAdvancedOptions({
   availableSecrets: OrganizationSecret[];
   onCreateSecret: (name: string, value: string) => Promise<OrganizationSecret>;
 }) {
-  const { isCreate, values, set, config, eff, mark } = fieldProps;
+  const { isCreate, values, set, config, eff, mark, disabled } = fieldProps;
   const ConfigFields = adapter.ConfigFields;
   return (
     <div className="space-y-3">
@@ -68,6 +68,7 @@ export function RuntimeAdvancedOptions({
           immediate
           className={inputClass}
           placeholder={defaultCommandForRuntime(runtimeType)}
+          disabled={disabled}
         />
       </Field>
       <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
@@ -85,6 +86,7 @@ export function RuntimeAdvancedOptions({
           immediate
           className={inputClass}
           placeholder="e.g. --verbose, --foo=bar"
+          disabled={disabled}
         />
       </Field>
       <Field label="Environment variables" hint={help.envVars}>
@@ -101,6 +103,7 @@ export function RuntimeAdvancedOptions({
               ? set!({ envBindings: env ?? {}, envVars: "" })
               : mark("agentRuntimeConfig", "env", env)
           }
+          disabled={disabled}
         />
       </Field>
       {!isCreate && (
@@ -111,6 +114,7 @@ export function RuntimeAdvancedOptions({
               onCommit={(value) => mark("agentRuntimeConfig", "timeoutSec", value)}
               immediate
               className={inputClass}
+              disabled={disabled}
             />
           </Field>
           <Field label="Interrupt grace period (sec)" hint={help.graceSec}>
@@ -119,6 +123,7 @@ export function RuntimeAdvancedOptions({
               onCommit={(value) => mark("agentRuntimeConfig", "graceSec", value)}
               immediate
               className={inputClass}
+              disabled={disabled}
             />
           </Field>
         </>
@@ -143,14 +148,19 @@ export const ADAPTER_DISPLAY_LIST: { value: string; label: string; comingSoon: b
 export function AdapterTypeDropdown({
   value,
   onChange,
+  disabled = false,
 }: {
   value: string;
   onChange: (type: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between">
+        <button
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between"
+          disabled={disabled}
+        >
           <span className="inline-flex items-center gap-1.5">
             <RuntimeLogoIcon runtimeType={value} />
             <span>{adapterLabels[value] ?? value}</span>
@@ -162,10 +172,10 @@ export function AdapterTypeDropdown({
         {ADAPTER_DISPLAY_LIST.map((item) => (
           <button
             key={item.value}
-            disabled={item.comingSoon}
+            disabled={disabled || item.comingSoon}
             className={cn(
               "flex items-center justify-between w-full px-2 py-1.5 text-sm rounded",
-              item.comingSoon
+              disabled || item.comingSoon
                 ? "opacity-40 cursor-not-allowed"
                 : "hover:bg-accent/50",
               item.value === value && !item.comingSoon && "bg-accent",

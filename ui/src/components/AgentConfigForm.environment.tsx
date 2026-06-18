@@ -148,6 +148,7 @@ export function RuntimeProviderCard({
   createSet,
   environmentStatus,
   triggerTestId,
+  disabled = false,
 }: {
   title: string;
   className?: string;
@@ -171,6 +172,7 @@ export function RuntimeProviderCard({
   createSet?: ((patch: Partial<CreateConfigValues>) => void) | null;
   environmentStatus?: RuntimeEnvironmentStatus;
   triggerTestId?: string;
+  disabled?: boolean;
 }) {
   const [modelOpen, setModelOpen] = useState(false);
   const [thinkingEffortOpen, setThinkingEffortOpen] = useState(false);
@@ -197,13 +199,16 @@ export function RuntimeProviderCard({
     isCreate: Boolean(createValues),
     agentRuntimeType: runtimeType,
     values: createValues ?? null,
-    set: createSet ?? null,
+    set: disabled ? (() => undefined) : createSet ?? null,
     config,
     eff: <T,>(_group: "agentRuntimeConfig", field: string, original: T): T =>
       Object.prototype.hasOwnProperty.call(config, field) ? config[field] as T : original,
-    mark: (_group: "agentRuntimeConfig", field: string, value: unknown) => onConfigFieldChange(field, value),
+    mark: disabled
+      ? (() => undefined)
+      : (_group: "agentRuntimeConfig", field: string, value: unknown) => onConfigFieldChange(field, value),
     models,
     hideInstructionsFile,
+    disabled,
   };
 
   return (
@@ -220,6 +225,7 @@ export function RuntimeProviderCard({
             size="sm"
             className="h-7 px-2 text-muted-foreground hover:text-destructive"
             onClick={onRemove}
+            disabled={disabled}
             aria-label={`Remove ${title}`}
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -229,7 +235,7 @@ export function RuntimeProviderCard({
       <div className="space-y-3">
         {!hideRuntimeType && (
           <Field label={runtimeTypeLabel} hint={runtimeTypeHint}>
-            <AdapterTypeDropdown value={runtimeType} onChange={onRuntimeTypeChange} />
+            <AdapterTypeDropdown value={runtimeType} onChange={onRuntimeTypeChange} disabled={disabled} />
           </Field>
         )}
         <ModelDropdown
@@ -248,6 +254,7 @@ export function RuntimeProviderCard({
           emptyMessage={runtimeModelEmptyMessage(runtimeType)}
           allowCustom
           triggerTestId={triggerTestId}
+          disabled={disabled}
         />
         {shouldShowThinkingEffort(runtimeType) && (
           <>
@@ -265,6 +272,7 @@ export function RuntimeProviderCard({
               }}
               open={thinkingEffortOpen}
               onOpenChange={setThinkingEffortOpen}
+              disabled={disabled}
             />
           </>
         )}
@@ -273,6 +281,7 @@ export function RuntimeProviderCard({
           bordered
           open={advancedOpen}
           onToggle={() => setAdvancedOpen(!advancedOpen)}
+          disabled={disabled}
         >
           <RuntimeAdvancedOptions
             runtimeType={runtimeType}

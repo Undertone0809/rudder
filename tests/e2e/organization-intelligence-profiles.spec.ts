@@ -10,8 +10,17 @@ test.describe("Organization intelligence profiles", () => {
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json() as { issuePrefix: string; id: string };
 
+    let releaseFirstCodexProbe: (() => void) | null = null;
+    const firstCodexProbeStarted = new Promise<void>((resolve) => {
+      releaseFirstCodexProbe = resolve;
+    });
+    let delayedFirstCodexProbe = false;
     await page.route(`**/api/orgs/${organization.id}/adapters/*/test-environment`, async (route) => {
       const runtimeType = route.request().url().match(/\/adapters\/([^/]+)\/test-environment/)?.[1] ?? "unknown";
+      if (runtimeType === "codex_local" && !delayedFirstCodexProbe) {
+        delayedFirstCodexProbe = true;
+        await firstCodexProbeStarted;
+      }
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -105,7 +114,8 @@ test.describe("Organization intelligence profiles", () => {
     expect(profile.agentRuntimeConfig).not.toHaveProperty("cwd");
 
     await expect(fast.getByText("Disabled", { exact: true })).toBeVisible();
-    await expect(fast.getByRole("button", { name: "Saved", exact: true })).toBeDisabled();
+    await expect(fast.getByText("Saved", { exact: true })).toBeVisible();
+    await expect(fast.getByRole("button", { name: "Saved", exact: true })).toHaveCount(0);
     await expect(fast.getByText("Fallback 1", { exact: true })).toBeVisible();
 
     const enableResponse = page.waitForResponse((nextResponse) =>
@@ -126,6 +136,28 @@ test.describe("Organization intelligence profiles", () => {
       ),
     ];
     await fast.getByRole("button", { name: "Enable", exact: true }).click();
+    await expect(fast.getByText("Testing...", { exact: true })).toBeVisible();
+
+    const smart = page.getByTestId("intelligence-profile-reasoning");
+    await expect(smart.getByRole("button", { name: "Test runtime chain", exact: true })).toBeEnabled();
+    await expect(smart.getByRole("button", { name: "Add fallback model", exact: true })).toBeEnabled();
+    const smartTestResponse = page.waitForResponse((nextResponse) => {
+      if (
+        nextResponse.request().method() !== "POST"
+        || !nextResponse.url().includes(`/api/orgs/${organization.id}/adapters/codex_local/test-environment`)
+        || !nextResponse.ok()
+      ) {
+        return false;
+      }
+      const body = nextResponse.request().postDataJSON() as {
+        agentRuntimeConfig?: { model?: string };
+      };
+      return body.agentRuntimeConfig?.model === "gpt-5.4";
+    });
+    await smart.getByRole("button", { name: "Test runtime chain", exact: true }).click();
+    await smartTestResponse;
+    await expect(smart.getByText("Primary · Codex (local) · gpt-5.4: Passed")).toBeVisible();
+    releaseFirstCodexProbe?.();
 
     await Promise.all(testResponses);
     const enabledProfile = await (await enableResponse).json() as { status: string };
