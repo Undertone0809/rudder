@@ -85,12 +85,48 @@ describe("index.css motion rules", () => {
     expect(indexCss).toContain("@property --command-palette-search-angle");
     expect(searchRing).toContain("conic-gradient");
     expect(searchRing).toContain("from var(--command-palette-search-angle)");
-    expect(searchRing).toContain("border-image:");
-    expect(searchRing).toContain("animation: command-palette-search-ring 1.35s linear infinite");
+    expect(searchRing).toContain("z-index: 0");
+    expect(searchRing).toContain("border-radius: inherit");
     expect(searchRing).not.toContain("mask-composite");
+    expect(searchRing).not.toContain("border-image:");
+    expect(searchRing).toContain("animation: command-palette-search-ring 1.35s linear infinite");
     expect(searchRing).toContain("pointer-events: none");
+    expect(searchHalo).toContain("inset: var(--active-surface-ring-width)");
+    expect(searchHalo).toContain("border-radius: var(--active-surface-ring-inner-radius)");
+    expect(searchHalo).toContain("background: var(--active-surface-ring-cover)");
+    expect(indexCss).toContain("--active-surface-ring-inner-radius: calc(var(--radius-md) - var(--active-surface-ring-width))");
+    expect(indexCss).toContain("var(--surface-overlay) 96%");
+    expect(searchHalo).not.toContain("background: inherit");
+    expect(searchHalo).toContain("opacity: 1");
     expect(searchHalo).toContain("box-shadow:");
     expect(keyframes).toContain("--command-palette-search-angle: 360deg");
+    expect(reducedMotion).toContain("animation: none");
+  });
+
+  it("reuses the rounded boundary animation for active chat and processing surfaces", () => {
+    const activeSurface = cssBlock(".active-surface-ring,");
+    const sharedRing = cssBlock(".active-surface-ring::before");
+    const sharedHalo = cssBlock(".active-surface-ring::after");
+    const reducedMotion =
+      indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.active-surface-ring::before[\s\S]*?\n\s*\}/)?.[0] ?? "";
+
+    expect(activeSurface).toContain("position: relative");
+    expect(activeSurface).toContain("isolation: isolate");
+    expect(sharedRing).toContain("conic-gradient");
+    expect(sharedRing).toContain("from var(--command-palette-search-angle)");
+    expect(sharedRing).toContain("z-index: 0");
+    expect(sharedRing).toContain("border-radius: inherit");
+    expect(sharedRing).not.toContain("mask-composite");
+    expect(sharedRing).not.toContain("border-image:");
+    expect(sharedRing).toContain("animation: command-palette-search-ring 1.35s linear infinite");
+    expect(sharedRing).toContain("pointer-events: none");
+    expect(sharedHalo).toContain("inset: var(--active-surface-ring-width)");
+    expect(sharedHalo).toContain("border-radius: var(--active-surface-ring-inner-radius)");
+    expect(sharedHalo).toContain("background: var(--active-surface-ring-cover)");
+    expect(indexCss).toContain("--active-surface-ring-cover:");
+    expect(sharedHalo).not.toContain("background: inherit");
+    expect(sharedHalo).toContain("opacity: 1");
+    expect(sharedHalo).toContain("box-shadow:");
     expect(reducedMotion).toContain("animation: none");
   });
 

@@ -726,38 +726,65 @@
     animation: none !important;
   }
 
-  .command-palette-content--searching::before {
+  .active-surface-ring,
+  .command-palette-content--searching,
+  .chat-composer--streaming {
+    position: relative;
+    isolation: isolate;
+    --active-surface-ring-width: 2px;
+    --active-surface-ring-inner-radius: calc(var(--radius-md) - var(--active-surface-ring-width));
+    --active-surface-ring-cover:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface-overlay) 96%, transparent) 0%,
+        color-mix(in oklab, var(--surface-overlay) 92%, transparent) 100%
+      );
+  }
+
+  .active-surface-ring::before,
+  .command-palette-content--searching::before,
+  .chat-composer--streaming::before {
     content: "";
     position: absolute;
     inset: 0;
-    z-index: 2;
+    z-index: 0;
     pointer-events: none;
     border-radius: inherit;
-    border: 2px solid transparent;
-    border-image:
+    background:
       conic-gradient(
-        from var(--command-palette-search-angle),
-        transparent 0deg 42deg,
-        color-mix(in oklab, var(--accent-base) 34%, transparent) 78deg,
-        color-mix(in oklab, var(--accent-base) 86%, white) 112deg,
-        color-mix(in oklab, var(--ring) 90%, transparent) 146deg,
-        transparent 190deg 360deg
-      ) 1;
+          from var(--command-palette-search-angle),
+          transparent 0deg 42deg,
+          color-mix(in oklab, var(--accent-base) 34%, transparent) 78deg,
+          color-mix(in oklab, var(--accent-base) 86%, white) 112deg,
+          color-mix(in oklab, var(--ring) 90%, transparent) 146deg,
+          transparent 190deg 360deg
+        )
+        border-box;
     opacity: 0.96;
     animation: command-palette-search-ring 1.35s linear infinite;
   }
 
-  .command-palette-content--searching::after {
+  .active-surface-ring::after,
+  .command-palette-content--searching::after,
+  .chat-composer--streaming::after {
     content: "";
     position: absolute;
-    inset: 1px;
+    inset: var(--active-surface-ring-width);
     z-index: 1;
     pointer-events: none;
-    border-radius: inherit;
+    border-radius: var(--active-surface-ring-inner-radius);
+    background: var(--active-surface-ring-cover);
     box-shadow:
       0 0 0 1px color-mix(in oklab, var(--accent-base) 26%, transparent),
       0 0 30px -10px color-mix(in oklab, var(--accent-base) 76%, transparent);
-    opacity: 0.78;
+    opacity: 1;
+  }
+
+  .active-surface-ring > *,
+  .command-palette-content--searching > *,
+  .chat-composer--streaming > * {
+    position: relative;
+    z-index: 2;
   }
 
   @keyframes command-palette-search-ring {
@@ -881,7 +908,9 @@
     .rail-create-menu-content[data-state="closed"],
     .automation-trigger-menu-content[data-state="open"],
     .automation-trigger-menu-content[data-state="closed"],
-    .command-palette-content--searching::before {
+    .active-surface-ring::before,
+    .command-palette-content--searching::before,
+    .chat-composer--streaming::before {
       animation: none;
     }
   }
