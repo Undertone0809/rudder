@@ -38,6 +38,7 @@ import {
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Box,
   Boxes,
   ChevronDown,
   ChevronRight,
@@ -835,6 +836,11 @@ function isProtectedOrganizationSkillsEntryPath(filePath: string) {
   return filePath.split("/").filter(Boolean)[0]?.toLowerCase() === "skills";
 }
 
+function isOrganizationSkillFolderPath(filePath: string) {
+  const segments = filePath.split("/").filter(Boolean);
+  return segments.length === 2 && segments[0]?.toLowerCase() === "skills";
+}
+
 function canCreateInsideWorkspaceDirectory(directoryPath: string) {
   return !isProtectedAgentWorkspaceContainerPath(directoryPath)
     && !isProtectedOrganizationSkillsEntryPath(directoryPath);
@@ -1441,6 +1447,7 @@ function WorkspaceTreeNode({
   const isAgentWorkspace = entry.entityType === "agent_workspace";
   const isAgentsRoot = entry.path === "agents";
   const isSkillsRoot = entry.path === "skills";
+  const isOrganizationSkillFolder = isOrganizationSkillFolderPath(entry.path);
   const isProjectLibraryFolder = isProjectLibraryFolderPath(entry.path);
   const isProtectedContainer = isProtectedAgentWorkspaceContainerPath(entry.path);
   const projectResourceGroup = projectResourceGroupsByLibraryPath.get(entry.path) ?? null;
@@ -1719,6 +1726,11 @@ function WorkspaceTreeNode({
               <Boxes
                 data-testid="org-workspaces-skills-root-icon"
                 className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+              />
+            ) : isOrganizationSkillFolder ? (
+              <Box
+                data-testid="org-workspaces-skill-folder-icon"
+                className="h-3.5 w-3.5 shrink-0 text-[#2f80ed]"
               />
             ) : isProjectLibraryFolder ? (
               projectResourceGroup ? (

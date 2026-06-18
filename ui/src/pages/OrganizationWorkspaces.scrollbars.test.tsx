@@ -135,6 +135,15 @@ vi.mock("@tanstack/react-query", () => ({
             entityType: "organization_workspace",
           },
         ],
+        "skills/build-advisor": [
+          {
+            name: "references",
+            displayLabel: "references",
+            path: "skills/build-advisor/references",
+            isDirectory: true,
+            entityType: "organization_workspace",
+          },
+        ],
       } as const;
       return {
         data: {
@@ -864,10 +873,25 @@ describe("OrganizationWorkspaces scroll regions", () => {
 
     const bundledSkillRow = document.querySelector('[data-workspace-entry-path="skills/rudder"]') as HTMLElement | null;
     const workspaceBackedRows = document.querySelectorAll('[data-workspace-entry-path="skills/build-advisor"]');
+    const workspaceBackedSkillRow = workspaceBackedRows[0] as HTMLElement | undefined;
 
     expect(bundledSkillRow).not.toBeNull();
     expect(bundledSkillRow?.textContent).toContain("Bundled Rudder");
+    expect(bundledSkillRow?.querySelector('[data-testid="org-workspaces-skill-folder-icon"]')).not.toBeNull();
     expect(workspaceBackedRows).toHaveLength(1);
+    expect(workspaceBackedSkillRow?.querySelector('[data-testid="org-workspaces-skill-folder-icon"]')).not.toBeNull();
+  });
+
+  it("keeps nested folders inside skills as regular folders", () => {
+    mockState.searchParams = "directory=skills/build-advisor";
+    renderWorkspacesPage();
+
+    const skillRow = document.querySelector('[data-workspace-entry-path="skills/build-advisor"]') as HTMLElement | null;
+    const nestedFolderRow = document.querySelector('[data-workspace-entry-path="skills/build-advisor/references"]') as HTMLElement | null;
+
+    expect(skillRow?.querySelector('[data-testid="org-workspaces-skill-folder-icon"]')).not.toBeNull();
+    expect(nestedFolderRow).not.toBeNull();
+    expect(nestedFolderRow?.querySelector('[data-testid="org-workspaces-skill-folder-icon"]')).toBeNull();
   });
 
   it("opens read-only bundled skill files from the Library skills tree", () => {
