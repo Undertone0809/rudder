@@ -756,10 +756,11 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
-  it("allows followed automation execution issues into Messenger while hiding unfollowed automation issues", async () => {
+  it("allows followed or notified automation execution issues into Messenger while hiding unrelated automation issues", async () => {
     const orgId = randomUUID();
     const userId = "board-user-automation-follow";
     const followedAutomationIssueId = randomUUID();
+    const notifiedAutomationIssueId = randomUUID();
     const hiddenAutomationIssueId = randomUUID();
     const createdAt = new Date("2026-05-03T12:00:00.000Z");
 
@@ -786,6 +787,19 @@ describe("messengerService and issue follows", () => {
         updatedAt: createdAt,
       },
       {
+        id: notifiedAutomationIssueId,
+        orgId,
+        title: "Notified automation execution",
+        status: "todo",
+        priority: "medium",
+        originKind: "automation_execution",
+        originId: "automation-notified",
+        originRunId: "run-notified",
+        identifier: "AUT-2",
+        createdAt,
+        updatedAt: createdAt,
+      },
+      {
         id: hiddenAutomationIssueId,
         orgId,
         title: "Hidden automation execution",
@@ -794,22 +808,47 @@ describe("messengerService and issue follows", () => {
         originKind: "automation_execution",
         originId: "automation-2",
         originRunId: "run-2",
-        identifier: "AUT-2",
+        identifier: "AUT-3",
         createdAt,
         updatedAt: createdAt,
       },
     ]);
     await issueSvc.followIssue(orgId, followedAutomationIssueId, userId);
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "system",
+      actorId: "automation-issue-notifier",
+      action: "automation.issue_created_notification",
+      entityType: "issue",
+      entityId: notifiedAutomationIssueId,
+      details: {
+        issueId: notifiedAutomationIssueId,
+        userId,
+        source: "automation.issue_created_notification",
+      },
+      createdAt: new Date("2026-05-03T12:01:00.000Z"),
+    });
 
     const thread = await messengerSvc.getIssuesThread(orgId, userId);
     const issueIds = new Set(thread.detail.items.map((item) => item.issueId));
+    const notifiedItem = thread.detail.items.find((item) => item.issueId === notifiedAutomationIssueId);
 
     expect(issueIds.has(followedAutomationIssueId)).toBe(true);
+    expect(issueIds.has(notifiedAutomationIssueId)).toBe(true);
     expect(issueIds.has(hiddenAutomationIssueId)).toBe(false);
-    expect(thread.detail.unreadCount).toBe(1);
-    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(1);
+    expect(notifiedItem).toMatchObject({
+      issueId: notifiedAutomationIssueId,
+      metadata: expect.objectContaining({
+        followed: false,
+      }),
+      preview: "Automation created issue",
+    });
+    expect(thread.detail.unreadCount).toBe(2);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(2);
     const pinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${followedAutomationIssueId}`, true);
     expect(pinnedState).toEqual({ threadKey: `issue:${followedAutomationIssueId}`, pinned: true });
+    const notifiedPinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${notifiedAutomationIssueId}`, true);
+    expect(notifiedPinnedState).toEqual({ threadKey: `issue:${notifiedAutomationIssueId}`, pinned: true });
     await expect(messengerSvc.setThreadPinned(orgId, userId, `issue:${hiddenAutomationIssueId}`, true)).resolves.toBeNull();
   });
 

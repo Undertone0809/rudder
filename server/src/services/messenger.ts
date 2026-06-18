@@ -47,6 +47,7 @@ import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.j
 const ISSUE_ACTIVITY_ACTIONS = [
   "issue.updated",
   "issue.followed",
+  "automation.issue_created_notification",
   "issue.approval_linked",
   "issue.work_product_created",
   "issue.work_product_updated",
@@ -538,6 +539,8 @@ function summarizeIssueActivity(activity: IssueActivityRow, issue: IssueUniverse
     }
     case "issue.followed":
       return "Followed";
+    case "automation.issue_created_notification":
+      return "Automation created issue";
     case "issue.approval_linked":
       return "Approval linked";
     case "issue.work_product_created":
@@ -1298,6 +1301,17 @@ export function messengerService(db: Db) {
         where ${issueFollows.orgId} = ${orgId}
           and ${issueFollows.userId} = ${userId}
           and followed_issue.hidden_at is null
+        union
+        select notification_issue.id as id
+        from ${activityLog} automation_notification_activity
+        inner join ${issues} notification_issue
+          on notification_issue.id = automation_notification_activity.entity_id
+          and notification_issue.org_id = automation_notification_activity.org_id
+        where automation_notification_activity.org_id = ${orgId}
+          and automation_notification_activity.entity_type = 'issue'
+          and automation_notification_activity.action = 'automation.issue_created_notification'
+          and automation_notification_activity.details->>'userId' = ${userId}
+          and notification_issue.hidden_at is null
       ),
       issue_entries as (
         select
@@ -1391,6 +1405,15 @@ export function messengerService(db: Db) {
               where automation_follow_row.org_id = ${orgId}
                 and automation_follow_row.user_id = ${userId}
                 and automation_follow_row.issue_id = issue_row.id
+            )
+            or exists (
+              select 1
+              from ${activityLog} automation_notification_visibility
+              where automation_notification_visibility.org_id = ${orgId}
+                and automation_notification_visibility.entity_type = 'issue'
+                and automation_notification_visibility.entity_id = issue_row.id
+                and automation_notification_visibility.action = 'automation.issue_created_notification'
+                and automation_notification_visibility.details->>'userId' = ${userId}
             )
           )
         left join lateral (

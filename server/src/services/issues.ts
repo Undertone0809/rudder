@@ -43,11 +43,11 @@ import {
   activeRunMapForIssues,
   applyStatusSideEffects,
   assertTransition,
+  automationExecutionVisibleToUserCondition,
   buildSearchSnippet,
   deriveIssueUserContext,
   escapeLikePattern,
   fieldSearchMatch,
-  followedByUserCondition,
   isUniqueConstraintConflict,
   participatedByAgentCondition,
   sameRunLock,
@@ -586,7 +586,7 @@ export function issueService(db: Db) {
       }
       if (!filters?.includeAutomationExecutions && !filters?.originKind && !filters?.originId) {
         conditions.push(contextUserId
-          ? or(ne(issues.originKind, "automation_execution"), followedByUserCondition(orgId, contextUserId))!
+          ? automationExecutionVisibleToUserCondition(orgId, contextUserId)
           : ne(issues.originKind, "automation_execution"));
       }
       conditions.push(isNull(issues.hiddenAt));
@@ -680,7 +680,7 @@ export function issueService(db: Db) {
         eq(issues.orgId, orgId),
         isNull(issues.hiddenAt),
         unreadForUserCondition(orgId, userId),
-        or(ne(issues.originKind, "automation_execution"), followedByUserCondition(orgId, userId))!,
+        automationExecutionVisibleToUserCondition(orgId, userId),
       ];
       if (status) {
         const statuses = status.split(",").map((s) => s.trim()).filter(Boolean);

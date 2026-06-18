@@ -10,7 +10,6 @@ import {
   chatMessages,
   goals,
   heartbeatRuns,
-  issueFollows,
   issues,
   organizationSecrets,
   projects,
@@ -152,28 +151,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     if (parentIssue.orgId !== orgId) throw unprocessable("Parent issue must belong to same organization");
   }
 
-  async function followAutomationIssueForNotification(input: {
-    automation: AutomationRow;
-    issueId: string;
-    executor: Db;
-  }) {
-    if (input.automation.outputMode !== "track_issue" || !input.automation.notifyOnIssueCreated) return;
-    const userId = input.automation.notifyOnIssueCreatedUserId;
-    if (!userId) return;
-    await input.executor
-      .insert(issueFollows)
-      .values({
-        orgId: input.automation.orgId,
-        issueId: input.issueId,
-        userId,
-      })
-      .onConflictDoUpdate({
-        target: [issueFollows.orgId, issueFollows.issueId, issueFollows.userId],
-        set: { createdAt: new Date() },
-      });
-  }
-
-  async function notifyAutomationIssueFollowed(input: {
+  async function notifyAutomationIssueCreated(input: {
     automation: AutomationRow;
     run: typeof automationRuns.$inferSelect;
   }) {
@@ -192,7 +170,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         orgId: input.automation.orgId,
         actorType: "system",
         actorId: "automation-issue-notifier",
-        action: "issue.followed",
+        action: "automation.issue_created_notification",
         entityType: "issue",
         entityId: input.run.linkedIssueId,
         details: {
@@ -206,7 +184,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     } catch (err) {
       logger.warn(
         { err, automationId: input.automation.id, runId: input.run.id, issueId: input.run.linkedIssueId },
-        "failed to publish automation issue follow notification",
+        "failed to publish automation issue-created notification",
       );
     }
   }
@@ -1443,11 +1421,6 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
           requestedByActorType: input.source === "schedule" ? "system" : undefined,
           rethrowOnError: true,
         });
-        await followAutomationIssueForNotification({
-          automation: input.automation,
-          issueId: createdIssue.id,
-          executor: txDb,
-        });
         const updated = await finalizeRun(createdRun.id, {
           status: "issue_created",
           linkedIssueId: createdIssue.id,
@@ -1524,7 +1497,7 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
       }
     }
 
-    await notifyAutomationIssueFollowed({ automation: input.automation, run });
+    await notifyAutomationIssueCreated({ automation: input.automation, run });
 
     if (autoStartChatOutputRuns && input.automation.outputMode === "chat_output" && run.status === "running") {
       void executeChatOutputAutomationRun(run.id).catch((err) => {
