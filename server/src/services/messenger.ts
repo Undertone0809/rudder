@@ -1305,7 +1305,7 @@ export function messengerService(db: Db) {
         select notification_issue.id as id
         from ${activityLog} automation_notification_activity
         inner join ${issues} notification_issue
-          on notification_issue.id = automation_notification_activity.entity_id
+          on automation_notification_activity.entity_id = notification_issue.id::text
           and notification_issue.org_id = automation_notification_activity.org_id
         where automation_notification_activity.org_id = ${orgId}
           and automation_notification_activity.entity_type = 'issue'
@@ -1411,7 +1411,7 @@ export function messengerService(db: Db) {
               from ${activityLog} automation_notification_visibility
               where automation_notification_visibility.org_id = ${orgId}
                 and automation_notification_visibility.entity_type = 'issue'
-                and automation_notification_visibility.entity_id = issue_row.id
+                and automation_notification_visibility.entity_id = issue_row.id::text
                 and automation_notification_visibility.action = 'automation.issue_created_notification'
                 and automation_notification_visibility.details->>'userId' = ${userId}
             )

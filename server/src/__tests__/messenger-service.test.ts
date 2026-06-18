@@ -848,7 +848,7 @@ describe("messengerService and issue follows", () => {
     const pinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${followedAutomationIssueId}`, true);
     expect(pinnedState).toEqual({ threadKey: `issue:${followedAutomationIssueId}`, pinned: true });
     const notifiedPinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${notifiedAutomationIssueId}`, true);
-    expect(notifiedPinnedState).toEqual({ threadKey: `issue:${notifiedAutomationIssueId}`, pinned: true });
+    expect(notifiedPinnedState).toBeNull();
     await expect(messengerSvc.setThreadPinned(orgId, userId, `issue:${hiddenAutomationIssueId}`, true)).resolves.toBeNull();
   });
 

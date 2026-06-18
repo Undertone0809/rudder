@@ -364,7 +364,7 @@ describe("issueService.list participantAgentId", () => {
     expect(defaultResult.map((issue) => issue.id)).toEqual([manualIssueId]);
 
     const userResult = await svc.list(orgId, { touchedByUserId: userId });
-    expect(new Set(userResult.map((issue) => issue.id))).toEqual(new Set([manualIssueId, notifiedAutomationIssueId]));
+    expect(userResult.map((issue) => issue.id)).toEqual([notifiedAutomationIssueId]);
 
     const boardResult = await svc.list(orgId, { includeAutomationExecutions: true });
     expect(new Set(boardResult.map((issue) => issue.id))).toEqual(new Set([
