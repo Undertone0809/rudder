@@ -124,8 +124,8 @@ describe("index.css motion rules", () => {
     expect(softRing).toContain("conic-gradient");
     expect(softRing).toContain("from var(--command-palette-search-angle)");
     expect(softRing).toContain("inset: -2px");
-    expect(softRing).toContain("opacity: 0.92");
-    expect(softRing).toContain("var(--ring) 92%");
+    expect(softRing).toContain("opacity: 0.84");
+    expect(softRing).toContain("var(--ring) 78%");
     expect(softRing).toContain("filter: drop-shadow");
     expect(softRing).not.toContain("var(--ring) 90%");
     expect(sharedHalo).toContain("inset: var(--active-surface-ring-width)");
@@ -148,13 +148,13 @@ describe("index.css motion rules", () => {
       indexCss.match(/\n\s*\.chat-composer--streaming::before \{\s*\n\s*inset: -2px;[\s\S]*?\n\s*\}/)?.[0] ?? "";
 
     expect(composerStreaming).toContain("--active-surface-ring-width: 2px");
-    expect(composerStreaming).toContain("border-color: color-mix(in oklab, var(--ring) 58%, var(--border-base))");
+    expect(composerStreaming).toContain("border-color: color-mix(in oklab, var(--ring) 48%, var(--border-base))");
     expect(composerStreaming).toContain("var(--surface-elevated) 99%");
     expect(composerStreaming).toContain("inset 0 1px 0");
     expect(composerRing).toContain("inset: -2px");
     expect(composerRing).toContain("border-radius: calc(var(--radius-lg) + 2px)");
-    expect(composerRing).toContain("opacity: 1");
-    expect(composerRing).toContain("var(--ring) 96%");
+    expect(composerRing).toContain("opacity: 0.88");
+    expect(composerRing).toContain("var(--ring) 78%");
     expect(composerRing).toContain("filter: drop-shadow");
   });
 
