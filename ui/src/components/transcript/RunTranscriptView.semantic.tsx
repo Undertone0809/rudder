@@ -712,6 +712,9 @@ export function describeToolInvocation(name: string, input: unknown): { category
     return { category: "web_search", label: "Web Search" };
   }
 
+  const namedAction = describeToolNameAction(name);
+  if (namedAction) return namedAction;
+
   const normalized = name.trim().toLowerCase();
   if (/(?:^|[_-])(read|fetch|open|cat)(?:$|[_-])/.test(normalized)) {
     return { category: "read", label: "Read" };
@@ -730,6 +733,42 @@ export function describeToolInvocation(name: string, input: unknown): { category
   }
 
   return { category: "tool", label: humanizeLabel(name) };
+}
+
+export function splitToolNameWords(name: string): string[] {
+  return name
+    .split(/[:/.]+/)
+    .pop()
+    ?.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean) ?? [];
+}
+
+function describeToolNameAction(name: string): { category: TranscriptToolCategory; label: string } | null {
+  const words = splitToolNameWords(name).filter((word) => !["tool", "call", "use", "invocation", "function", "functions"].includes(word));
+  const has = (...candidates: string[]) => words.some((word) => candidates.includes(word));
+
+  if (has("read", "fetch", "open", "cat", "view")) {
+    return { category: "read", label: "Read" };
+  }
+  if (has("edit", "write", "patch", "apply", "replace", "create", "delete", "remove")) {
+    return { category: "edit", label: "Edit" };
+  }
+  if (has("grep", "search", "find", "glob", "match")) {
+    return { category: words.includes("grep") ? "grep" : "search", label: "Search" };
+  }
+  if (has("list", "ls", "tree", "browse")) {
+    return { category: "list", label: "Explore" };
+  }
+  if (has("inspect", "show", "status", "diff", "log", "get")) {
+    return { category: "inspect", label: "Inspect" };
+  }
+
+  return null;
 }
 
 export function summarizeRecord(record: Record<string, unknown>, keys: string[]): string | null {

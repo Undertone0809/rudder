@@ -2039,6 +2039,77 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("spawn_agent");
   });
 
+  it("describes provider tool call class names as operator actions", () => {
+    const cases = [
+      {
+        runtime: "Codex",
+        name: "ReadToolCall",
+        input: { path: "/Users/zeeland/.cursor/skills-cursor/sdk/SKILL.md", limit: 40 },
+        expected: "Use sdk skill",
+      },
+      {
+        runtime: "Cursor",
+        name: "EditToolCall",
+        input: { path: "ui/src/components/transcript/RunTranscriptView.semantic.tsx" },
+        expected: "Edited ui/src/components/transcript/RunTranscriptView.semantic.tsx",
+      },
+      {
+        runtime: "Gemini",
+        name: "SearchToolCall",
+        input: { query: "ReadToolCall", path: "ui/src" },
+        expected: "Searched &quot;ReadToolCall&quot; in ui/src",
+      },
+      {
+        runtime: "OpenCode",
+        name: "ListToolCall",
+        input: { path: "packages/agent-runtimes" },
+        expected: "Explored packages/agent-runtimes",
+      },
+      {
+        runtime: "Pi",
+        name: "WriteFileToolCall",
+        input: { filePath: "doc/DESIGN.md" },
+        expected: "Edited doc/DESIGN.md",
+      },
+      {
+        runtime: "Claude",
+        name: "GlobToolCall",
+        input: { pattern: "ui/src/**/*.tsx" },
+        expected: "Searched &quot;ui/src/**/*.tsx&quot;",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const html = renderToStaticMarkup(
+        <ThemeProvider>
+          <RunTranscriptView
+            density="compact"
+            presentation="chat"
+            entries={[
+              {
+                kind: "tool_call",
+                ts: "2026-03-12T00:00:01.000Z",
+                name: testCase.name,
+                toolUseId: `${testCase.runtime}-tool-1`,
+                input: testCase.input,
+              },
+              {
+                kind: "tool_result",
+                ts: "2026-03-12T00:00:02.000Z",
+                toolUseId: `${testCase.runtime}-tool-1`,
+                content: `${testCase.runtime} tool completed`,
+                isError: false,
+              },
+            ]}
+          />
+        </ThemeProvider>,
+      );
+
+      expect(html).toContain(testCase.expected);
+      expect(html).not.toContain(testCase.name);
+    }
+  });
+
   it("uses semantic action icons for representative transcript categories", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

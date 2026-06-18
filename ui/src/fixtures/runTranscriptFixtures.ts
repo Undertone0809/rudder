@@ -161,7 +161,7 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
   {
     kind: "tool_call",
     ts: "2026-03-11T15:22:26.600Z",
-    name: "read_file",
+    name: "ReadToolCall",
     toolUseId: "skill_fixture_read",
     input: {
       path: "/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md",
