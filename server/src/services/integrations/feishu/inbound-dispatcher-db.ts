@@ -145,14 +145,16 @@ export function createFeishuInboundDispatcherDbDeps(
 
     mintBindingToken: async (integration, event) => {
       const token = createBindingToken();
+      const expiresAt = new Date(Date.now() + BINDING_TOKEN_TTL_MS);
       await db.insert(agentIntegrationBindingTokens).values({
         orgId: integration.orgId,
         integrationId: integration.id,
         tokenHash: hashToken(token),
         externalOpenId: event.senderOpenId,
         externalUnionId: event.senderUnionId,
-        expiresAt: new Date(Date.now() + BINDING_TOKEN_TTL_MS),
+        expiresAt,
       });
+      return { token, expiresAt };
     },
 
     tryInsertDedup: async (integration, event) => {

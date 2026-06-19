@@ -39,6 +39,7 @@ export type ConnectAgentIntegration = z.infer<typeof connectAgentIntegrationSche
 const feishuEventHeaderSchema = z.object({
   event_id: z.string().min(1).optional(),
   app_id: z.string().min(1).optional(),
+  token: z.string().min(1).optional(),
   create_time: z.string().min(1).optional(),
 }).passthrough();
 
@@ -70,6 +71,11 @@ const feishuEventSchema = z.object({
 }).passthrough();
 
 export const mockFeishuInboundEventSchema = z.object({
+  type: z.string().min(1).optional(),
+  token: z.string().min(1).optional(),
+  challenge: z.string().min(1).optional(),
+  mockVerificationToken: z.string().min(1).optional(),
+  mockEncryptKey: z.string().min(1).optional(),
   eventId: z.string().min(1).optional(),
   appId: z.string().min(1).optional(),
   botOpenId: z.string().min(1).optional().nullable(),

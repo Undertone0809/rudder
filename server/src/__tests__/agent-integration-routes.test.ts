@@ -70,6 +70,12 @@ describe("integration routes", () => {
       chatMessageId: "message-1",
       issueId: null,
       runId: "run-1",
+      outbound: {
+        provider: "feishu",
+        externalChatId: "oc_group",
+        externalMessageId: null,
+        text: "已写入 Rudder Messenger，并开始处理。",
+      },
     });
   });
 
@@ -115,6 +121,12 @@ describe("integration routes", () => {
         chatMessageId: "message-1",
         issueId: null,
         runId: "run-1",
+        outbound: {
+          provider: "feishu",
+          externalChatId: "oc_group",
+          externalMessageId: null,
+          text: "已写入 Rudder Messenger，并开始处理。",
+        },
       },
       normalized: {
         eventId: "event-1",

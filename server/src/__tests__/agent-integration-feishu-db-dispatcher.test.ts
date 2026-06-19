@@ -303,8 +303,19 @@ describe("Feishu inbound dispatcher DB deps", () => {
       createFeishuInboundDispatcherDbDeps(db),
     );
 
-    expect(result).toEqual({ status: "binding_required" });
-    await expect(db.select().from(agentIntegrationBindingTokens)).resolves.toHaveLength(1);
+    expect(result.status).toBe("binding_required");
+    if (result.status !== "binding_required") throw new Error("Expected binding_required result");
+    expect(result.bindingToken.token).toMatch(/^rudder_feishu_[a-f0-9]{48}$/);
+    expect(result.outbound).toMatchObject({
+      provider: "feishu",
+      externalChatId: "oc_chat",
+      externalMessageId: null,
+    });
+    expect(result.outbound.text).toContain(result.bindingToken.token);
+    const tokens = await db.select().from(agentIntegrationBindingTokens);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.tokenHash).not.toBe(result.bindingToken.token);
+    expect(tokens[0]?.expiresAt?.getTime()).toBe(result.bindingToken.expiresAt.getTime());
     await expect(db.select().from(agentIntegrationInboundDedup)).resolves.toHaveLength(0);
     await expect(db.select().from(chatMessages)).resolves.toHaveLength(0);
 
@@ -374,6 +385,12 @@ describe("Feishu inbound dispatcher DB deps", () => {
       runId: result.runId,
       externalChatId: event.chatId,
       status: "pending",
+    });
+    expect(result.outbound).toMatchObject({
+      provider: "feishu",
+      externalChatId: event.chatId,
+      externalMessageId: null,
+      text: `已写入 Rudder Messenger，并开始处理（issue=${result.issueId}, run=${result.runId}）。`,
     });
   });
 
@@ -450,7 +467,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
   it("sends a real outbound binding-required response from long-connection events", async () => {
     const seeded = await seedIntegration({
       bindUser: false,
-      credentialValue: JSON.stringify({ tenantAccessToken: "tenant-token" }),
+      credentialValue: JSON.stringify({ appSecret: "feishu-app-secret" }),
     });
     const sent: Array<{ chatId: string; text: string }> = [];
     const sender: FeishuOutboundSender = {
@@ -471,7 +488,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
         externalAppId: "cli_a_feishu_app",
         externalBotOpenId: "ou_bot",
       },
-      { tenantAccessToken: "tenant-token" },
+      { appSecret: "feishu-app-secret" },
       {
         appId: "cli_a_feishu_app",
         botOpenId: "ou_bot",
@@ -505,7 +522,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
   it("starts a Feishu long-connection client and dispatches inbound events through the runtime", async () => {
     const seeded = await seedIntegration({
       bindUser: false,
-      credentialValue: JSON.stringify({ tenantAccessToken: "tenant-token", websocketUrl: "wss://example.invalid" }),
+      credentialValue: JSON.stringify({ appSecret: "feishu-app-secret" }),
     });
     const sent: Array<{ chatId: string; text: string }> = [];
     let onEvent: ((payload: Record<string, unknown>) => Promise<void>) | null = null;
@@ -518,7 +535,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
     const client: FeishuLongConnectionClient = {
       start: async (input) => {
         expect(input.integration.id).toBe(seeded.integrationId);
-        expect(input.credential.websocketUrl).toBe("wss://example.invalid");
+        expect(input.credential.appSecret).toBe("feishu-app-secret");
         onEvent = input.onEvent;
         return { stop: () => {} };
       },
@@ -549,7 +566,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
 
   it("sends the accepted assistant reply back to Feishu and patches the pending outbound record", async () => {
     const seeded = await seedIntegration({
-      credentialValue: JSON.stringify({ tenantAccessToken: "tenant-token" }),
+      credentialValue: JSON.stringify({ appSecret: "feishu-app-secret" }),
     });
     const sent: Array<{ chatId: string; text: string }> = [];
     const sender: FeishuOutboundSender = {
@@ -587,7 +604,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
         externalAppId: "cli_a_feishu_app",
         externalBotOpenId: "ou_bot",
       },
-      { tenantAccessToken: "tenant-token" },
+      { appSecret: "feishu-app-secret" },
       {
         appId: "cli_a_feishu_app",
         botOpenId: "ou_bot",

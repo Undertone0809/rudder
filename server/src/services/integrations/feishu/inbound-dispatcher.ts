@@ -51,6 +51,18 @@ export interface StartedIntegrationRun {
   runId: string;
 }
 
+export interface MintedIntegrationBindingToken {
+  token: string;
+  expiresAt: Date;
+}
+
+export interface FeishuOutboundResponse {
+  provider: "feishu";
+  externalChatId: string;
+  externalMessageId: string | null;
+  text: string;
+}
+
 export interface AgentIntegrationInboundAuditInput {
   orgId: string | null;
   integrationId: string | null;
@@ -72,7 +84,10 @@ export interface AgentIntegrationInboundDispatcherDeps {
     integration: ResolvedAgentIntegration,
     event: FeishuInboundMessage,
   ) => Promise<ResolvedIntegrationUserBinding | null>;
-  mintBindingToken: (integration: ResolvedAgentIntegration, event: FeishuInboundMessage) => Promise<void>;
+  mintBindingToken: (
+    integration: ResolvedAgentIntegration,
+    event: FeishuInboundMessage,
+  ) => Promise<MintedIntegrationBindingToken>;
   tryInsertDedup: (integration: ResolvedAgentIntegration, event: FeishuInboundMessage) => Promise<boolean>;
   ensureChatBinding: (
     integration: ResolvedAgentIntegration,
@@ -113,13 +128,18 @@ export interface AgentIntegrationInboundDispatcherDeps {
 
 export type AgentIntegrationInboundDispatchResult =
   | { status: "dropped"; reason: AgentIntegrationDropReason }
-  | { status: "binding_required" }
+  | {
+    status: "binding_required";
+    bindingToken: MintedIntegrationBindingToken;
+    outbound: FeishuOutboundResponse;
+  }
   | {
     status: "accepted";
     conversationId: string;
     chatMessageId: string;
     issueId: string | null;
     runId: string | null;
+    outbound: FeishuOutboundResponse;
   };
 
 export interface ParsedIntegrationIssueCommand {
@@ -161,9 +181,13 @@ export async function dispatchFeishuInboundMessage(
 
   const binding = await deps.resolveUserBinding(integration, event);
   if (!binding) {
-    await deps.mintBindingToken(integration, event);
+    const bindingToken = await deps.mintBindingToken(integration, event);
     await auditDrop(deps, event, integration, "unbound_user");
-    return { status: "binding_required" };
+    return {
+      status: "binding_required",
+      bindingToken,
+      outbound: createBindingRequiredResponse(event, bindingToken),
+    };
   }
 
   if (!binding.orgMember) {
@@ -197,6 +221,42 @@ export async function dispatchFeishuInboundMessage(
     chatMessageId: message.chatMessageId,
     issueId: issue?.issueId ?? null,
     runId: run?.runId ?? null,
+    outbound: createAcceptedResponse(event, issue, run),
+  };
+}
+
+function createBindingRequiredResponse(
+  event: FeishuInboundMessage,
+  bindingToken: MintedIntegrationBindingToken,
+): FeishuOutboundResponse {
+  return {
+    provider: event.provider,
+    externalChatId: event.chatId,
+    externalMessageId: null,
+    text: [
+      "请先绑定 Rudder 账号后再和这个 Agent 对话。",
+      `绑定口令：${bindingToken.token}`,
+      "口令 15 分钟内有效。绑定完成后请重新发送消息。",
+    ].join("\n"),
+  };
+}
+
+function createAcceptedResponse(
+  event: FeishuInboundMessage,
+  issue: CreatedIntegrationIssue | null,
+  run: StartedIntegrationRun | null,
+): FeishuOutboundResponse {
+  const details = [
+    issue ? `issue=${issue.issueId}` : null,
+    run ? `run=${run.runId}` : null,
+  ].filter(Boolean);
+  return {
+    provider: event.provider,
+    externalChatId: event.chatId,
+    externalMessageId: null,
+    text: details.length > 0
+      ? `已写入 Rudder Messenger，并开始处理（${details.join(", ")}）。`
+      : "已写入 Rudder Messenger，并开始处理。",
   };
 }
 

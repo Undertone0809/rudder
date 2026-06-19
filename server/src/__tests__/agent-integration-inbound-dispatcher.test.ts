@@ -55,6 +55,7 @@ function dispatcherDeps(order: string[] = []): AgentIntegrationInboundDispatcher
     }),
     mintBindingToken: vi.fn(async () => {
       order.push("mintBindingToken");
+      return { token: "rudder_feishu_test_token", expiresAt: new Date("2026-06-18T08:15:00.000Z") };
     }),
     tryInsertDedup: vi.fn(async () => {
       order.push("tryInsertDedup");
@@ -114,7 +115,23 @@ describe("Feishu inbound dispatcher", () => {
 
     const result = await dispatchFeishuInboundMessage(inboundEvent(), deps);
 
-    expect(result).toEqual({ status: "binding_required" });
+    expect(result).toEqual({
+      status: "binding_required",
+      bindingToken: {
+        token: "rudder_feishu_test_token",
+        expiresAt: new Date("2026-06-18T08:15:00.000Z"),
+      },
+      outbound: {
+        provider: "feishu",
+        externalChatId: "chat-1",
+        externalMessageId: null,
+        text: [
+          "请先绑定 Rudder 账号后再和这个 Agent 对话。",
+          "绑定口令：rudder_feishu_test_token",
+          "口令 15 分钟内有效。绑定完成后请重新发送消息。",
+        ].join("\n"),
+      },
+    });
     expect(order).toEqual(["resolveIntegration", "resolveUserBinding", "mintBindingToken", "auditDrop"]);
     expect(deps.auditDrop).toHaveBeenCalledWith(expect.objectContaining({
       dropReason: "unbound_user",
@@ -162,6 +179,12 @@ describe("Feishu inbound dispatcher", () => {
       chatMessageId: "chat-message-1",
       issueId: "issue-1",
       runId: "run-1",
+      outbound: {
+        provider: "feishu",
+        externalChatId: "chat-1",
+        externalMessageId: null,
+        text: "已写入 Rudder Messenger，并开始处理（issue=issue-1, run=run-1）。",
+      },
     });
     expect(order).toEqual([
       "resolveIntegration",
