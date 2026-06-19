@@ -15,6 +15,15 @@ vi.mock("@/lib/router", () => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
+    const state = (globalThis as typeof globalThis & {
+      __runChatContextQueryState?: "loaded" | "loading" | "error";
+    }).__runChatContextQueryState ?? "loaded";
+    if (state === "loading") {
+      return { data: undefined, isError: false, isLoading: true };
+    }
+    if (state === "error") {
+      return { data: undefined, isError: true, isLoading: false };
+    }
     if (queryKey.includes("messages")) {
       return {
         data: [
@@ -60,6 +69,9 @@ let cleanupFn: (() => void) | null = null;
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
+  delete (globalThis as typeof globalThis & {
+    __runChatContextQueryState?: "loaded" | "loading" | "error";
+  }).__runChatContextQueryState;
   document.body.innerHTML = "";
 });
 
@@ -279,5 +291,33 @@ describe("RunChatContextCard", () => {
     expect(container.textContent).not.toContain("User input");
     expect(container.textContent).not.toContain("This reply");
     expect(container.textContent).not.toContain("Please list all enabled skills.");
+  });
+
+  it("renders chat replies as a labeled compact work-object list", () => {
+    const container = render(createElement(RunChatContextCard, {
+      run: run({}),
+      agentRouteId: "agent-1",
+    }));
+
+    const list = container.querySelector("[data-testid='run-chat-context-list']");
+
+    expect(container.textContent).toContain("Chat Replies (2)");
+    expect(list?.className).toContain("border");
+    expect(list?.className).toContain("divide-y");
+  });
+
+  it("does not show a zero reply count while replies are still loading", () => {
+    (globalThis as typeof globalThis & {
+      __runChatContextQueryState?: "loaded" | "loading" | "error";
+    }).__runChatContextQueryState = "loading";
+
+    const container = render(createElement(RunChatContextCard, {
+      run: run({}),
+      agentRouteId: "agent-1",
+    }));
+
+    expect(container.textContent).toContain("Chat Replies");
+    expect(container.textContent).toContain("Loading replies...");
+    expect(container.textContent).not.toContain("Chat Replies (0)");
   });
 });

@@ -98,13 +98,20 @@ export function RunChatContextCard({
 
   if (!conversationId) return null;
 
+  const replyCount = context.replies.length;
+  const replyCountLabel =
+    messagesQuery.isLoading || messagesQuery.isError
+      ? "Chat Replies"
+      : `Chat Replies (${replyCount})`;
+
   return (
     <section
-      className="rounded-md border border-border/70 bg-background/40 p-2"
+      className="space-y-2"
       data-testid="run-chat-context-card"
       aria-label="Chat conversation context"
     >
-      <div className="mb-1 flex justify-end">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-muted-foreground">{replyCountLabel}</span>
         <Button asChild variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs">
           <Link to={`/messenger/chat/${conversationId}`}>
             Open conversation
@@ -113,7 +120,10 @@ export function RunChatContextCard({
         </Button>
       </div>
 
-      <div className="-mx-2 divide-y divide-border/60">
+      <div
+        className="overflow-hidden rounded-lg border border-border divide-y divide-border"
+        data-testid="run-chat-context-list"
+      >
         {messagesQuery.isLoading ? (
           <div className="px-3 py-2 text-xs text-muted-foreground">
             Loading replies...
@@ -129,8 +139,8 @@ export function RunChatContextCard({
               to={`/agents/${reply.replyingAgentId ?? agentRouteId}/runs/${reply.runId}`}
               aria-current={reply.isCurrentRun ? "page" : undefined}
               className={cn(
-                "group relative block px-3 py-2.5 pl-4 text-xs text-inherit no-underline transition-colors hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0",
-                reply.isCurrentRun && "bg-accent/15",
+                "group relative block w-full px-3 py-2 text-left text-xs text-inherit no-underline transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0",
+                reply.isCurrentRun && "bg-accent/10",
               )}
             >
               <span
@@ -140,15 +150,15 @@ export function RunChatContextCard({
                 )}
               />
               <div className="flex items-center justify-between gap-3">
-                <span className="flex min-w-0 items-center gap-1.5 font-medium">
+                <span className="flex min-w-0 items-center gap-2 font-medium">
                   <span>Reply {index + 1}</span>
                   {reply.isCurrentRun ? (
-                    <span className="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-primary">
+                    <span className="rounded-md border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-primary">
                       Current
                     </span>
                   ) : null}
                   {reply.isSuperseded ? (
-                    <span className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground">
+                    <span className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground">
                       Edited
                     </span>
                   ) : null}
@@ -157,7 +167,7 @@ export function RunChatContextCard({
                   {relativeTime(reply.createdAt)}
                 </span>
               </div>
-              <div className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground transition-colors group-hover:text-foreground/80">
+              <div className="mt-1 line-clamp-2 text-[13px] leading-5 text-muted-foreground transition-colors group-hover:text-foreground/80">
                 {previewText(reply.body, "Empty assistant reply")}
               </div>
             </Link>
