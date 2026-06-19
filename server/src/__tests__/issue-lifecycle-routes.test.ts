@@ -19,7 +19,9 @@ const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   getComment: vi.fn(),
   getCommentCursor: vi.fn(),
+  listComments: vi.fn(),
   reorder: vi.fn(),
+  resolveCommentReference: vi.fn(),
   updateComment: vi.fn(),
   deleteComment: vi.fn(),
   update: vi.fn(),
@@ -209,6 +211,8 @@ describe("issue lifecycle routes", () => {
       latestCommentId: null,
       latestCommentAt: null,
     });
+    mockIssueService.listComments.mockResolvedValue([]);
+    mockIssueService.resolveCommentReference.mockImplementation(async (_issueId: string, commentRef: string) => commentRef);
     mockGoalService.getById.mockResolvedValue(null);
     mockGoalService.getDefaultCompanyGoal.mockResolvedValue(null);
     mockProjectService.getById.mockResolvedValue(null);
@@ -1917,6 +1921,107 @@ describe("issue lifecycle routes", () => {
       }),
     }));
     expect(JSON.stringify(activityCall?.[1]?.details)).not.toContain("Original deleted body");
+  });
+
+  it("routes cmt_ issue comment refs through get, edit, delete, and list-after paths", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    const commentId = "aaaaaaaa-0000-4000-8000-000000000001";
+    const commentRef = "cmt_aaaaaaaa";
+    mockIssueService.getById.mockResolvedValue(makeIssue({ id: issueId }));
+    mockIssueService.resolveCommentReference.mockResolvedValue(commentId);
+    mockIssueService.getComment.mockResolvedValue({
+      id: commentId,
+      issueId,
+      orgId: "organization-1",
+      body: "Original comment",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-05-01T00:00:00.000Z"),
+      deletedAt: null,
+      deletedByUserId: null,
+      authorAgentId: null,
+      authorUserId: "local-board",
+      shortRef: commentRef,
+    });
+    mockIssueService.listComments.mockResolvedValue([
+      {
+        id: commentId,
+        issueId,
+        orgId: "organization-1",
+        body: "Original comment",
+        createdAt: new Date("2026-05-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-05-01T00:00:00.000Z"),
+        deletedAt: null,
+        deletedByUserId: null,
+        authorAgentId: null,
+        authorUserId: "local-board",
+        shortRef: commentRef,
+      },
+    ]);
+
+    const getRes = await request(createApp())
+      .get(`/api/issues/${issueId}/comments/${commentRef}`);
+    const listRes = await request(createApp())
+      .get(`/api/issues/${issueId}/comments?after=${commentRef}&order=asc`);
+    const patchRes = await request(createApp())
+      .patch(`/api/issues/${issueId}/comments/${commentRef}`)
+      .send({ body: "Updated via short ref" });
+    const deleteRes = await request(createApp())
+      .delete(`/api/issues/${issueId}/comments/${commentRef}`);
+
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.id).toBe(commentId);
+    expect(listRes.status).toBe(200);
+    expect(listRes.body).toHaveLength(1);
+    expect(patchRes.status).toBe(200);
+    expect(deleteRes.status).toBe(200);
+    expect(mockIssueService.resolveCommentReference).toHaveBeenCalledWith(issueId, commentRef);
+    expect(mockIssueService.listComments).toHaveBeenCalledWith(issueId, {
+      afterCommentId: commentRef,
+      order: "asc",
+      limit: null,
+    });
+    expect(mockIssueService.updateComment).toHaveBeenCalledWith(
+      issueId,
+      commentId,
+      "Updated via short ref",
+      { userId: "local-board" },
+    );
+    expect(mockIssueService.deleteComment).toHaveBeenCalledWith(
+      issueId,
+      commentId,
+      { userId: "local-board", allowAgentAuthored: true },
+    );
+  });
+
+  it("returns route-level errors for missing, ambiguous, cross-issue, and cross-org comment refs", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    mockIssueService.getById.mockResolvedValue(makeIssue({ id: issueId }));
+
+    mockIssueService.resolveCommentReference.mockRejectedValueOnce(new HttpError(404, "Issue comment not found"));
+    const missingRes = await request(createApp())
+      .get(`/api/issues/${issueId}/comments/cmt_ffffffff`);
+    expect(missingRes.status).toBe(404);
+
+    mockIssueService.resolveCommentReference.mockRejectedValueOnce(new HttpError(409, "Issue comment short ref is ambiguous for this issue. Use the comment ID."));
+    const ambiguousRes = await request(createApp())
+      .get(`/api/issues/${issueId}/comments/cmt_aaaaaaaa`);
+    expect(ambiguousRes.status).toBe(409);
+
+    mockIssueService.resolveCommentReference.mockResolvedValueOnce("aaaaaaaa-0000-4000-8000-000000000001");
+    mockIssueService.getComment.mockResolvedValueOnce({
+      id: "aaaaaaaa-0000-4000-8000-000000000001",
+      issueId: "22222222-2222-4222-8222-222222222222",
+      orgId: "organization-1",
+      body: "Other issue",
+    });
+    const crossIssueRes = await request(createApp())
+      .get(`/api/issues/${issueId}/comments/cmt_aaaaaaaa`);
+    expect(crossIssueRes.status).toBe(404);
+
+    mockIssueService.getById.mockResolvedValueOnce(makeIssue({ id: issueId, orgId: "organization-2" }));
+    const crossOrgRes = await request(createApp(createAgentActor()))
+      .get(`/api/issues/${issueId}/comments/cmt_aaaaaaaa`);
+    expect(crossOrgRes.status).toBe(403);
   });
 
   it("rejects agent attempts to edit or delete issue comments", async () => {

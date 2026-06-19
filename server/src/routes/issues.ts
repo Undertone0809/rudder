@@ -618,12 +618,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
         ? req.query.wakeCommentId.trim()
         : null;
 
+    const resolvedWakeCommentId = wakeCommentId
+      ? await svc.resolveCommentReference(issue.id, wakeCommentId)
+      : null;
+
     const [ancestors, project, goal, commentCursor, wakeComment] = await Promise.all([
       svc.getAncestors(issue.id),
       issue.projectId ? projectsSvc.getById(issue.projectId) : null,
       issue.goalId ? goalsSvc.getById(issue.goalId) : null,
       svc.getCommentCursor(issue.id),
-      wakeCommentId ? svc.getComment(wakeCommentId) : null,
+      resolvedWakeCommentId ? svc.getComment(resolvedWakeCommentId) : null,
     ]);
 
     res.json({

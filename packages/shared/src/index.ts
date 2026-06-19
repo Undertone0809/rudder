@@ -207,6 +207,13 @@ export {
 } from "./project-mentions.js";
 export { deriveProjectUrlKey, normalizeProjectUrlKey } from "./project-url-key.js";
 export {
+  isShortRef,
+  parseShortRef,
+  shortRefFor,
+  type ParsedShortRef,
+  type ShortRefKind
+} from "./short-refs.js";
+export {
   ADDITIONAL_CACHED_INPUT_TOKEN_PROVIDERS, cachedInputTokenSemanticsForProvider, hasTokenUsage, summarizeTokenUsage,
   tokenUsageCacheRatio, type CachedInputTokenSemantics,
   type TokenUsageParts,

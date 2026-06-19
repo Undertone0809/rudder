@@ -557,6 +557,13 @@ describe("MarkdownBody", () => {
         agentIcon: "code",
       },
       {
+        id: "agent:agt_d573266f",
+        name: "ShortRef Agent",
+        kind: "agent",
+        agentId: "agt_d573266f",
+        agentIcon: null,
+      },
+      {
         id: "project:project-456",
         name: "Rudder App",
         kind: "project",
@@ -568,7 +575,7 @@ describe("MarkdownBody", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <MarkdownBody>
-          {`[@CodexCoder](${buildAgentMentionHref("agent-123", "code")}) [@Rudder App](${buildProjectMentionHref("project-456", "#336699")})`}
+          {`[@CodexCoder](${buildAgentMentionHref("agent-123", "code")}) [ShortRef Agent](${buildAgentMentionHref("agt_d573266f", null, "wake")}) [@Rudder App](${buildProjectMentionHref("project-456", "#336699")})`}
         </MarkdownBody>
       </ThemeProvider>,
     );
@@ -578,6 +585,9 @@ describe("MarkdownBody", () => {
     expect(html).toContain("--rudder-mention-icon-mask");
     expect(html).toContain(">CodexCoder</a>");
     expect(html).not.toContain(">@CodexCoder</a>");
+    expect(html).toContain('href="/agents/agt_d573266f"');
+    expect(html).toContain(">ShortRef Agent</a>");
+    expect(html).not.toContain("agent://agt_d573266f");
     expect(html).toContain('href="/projects/project-456"');
     expect(html).toContain('data-mention-kind="project"');
     expect(html).toContain("--rudder-mention-project-color:#336699");

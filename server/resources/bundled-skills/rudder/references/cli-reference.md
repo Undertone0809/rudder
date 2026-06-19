@@ -29,11 +29,11 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder agent skills sync <agent-id>` | Sync the desired enabled skill set for an agent. | yes | no | no | attached when available |
 | `rudder issue get <issue>` | Read a full issue by UUID or identifier. | no | no | no | no |
 | `rudder issue search <query> [--org-id <id>]` | Search issues with the server-side issue index across title, identifier, description, and comments. | no | required | no | no |
-| `rudder issue context <issue>` | Read the compact heartbeat context for an issue. | no | no | no | no |
+| `rudder issue context <issue> [--wake-comment-id <comment-id-or-cmt-ref>]` | Read the compact heartbeat context for an issue; wake comments may be addressed by full id or cmt_<uuid-prefix>. | no | no | no | no |
 | `rudder issue checkout <issue>` | Atomically checkout an issue for the current or specified agent. | yes | no | required | attached when available |
 | `rudder issue comment <issue> --body-file <path> [--image <path>]` | Add a comment to an issue, optionally uploading images and appending Markdown image links. | yes | no | no | attached when available |
-| `rudder issue comments list <issue>` | List issue comments, optionally only newer comments after a cursor. | no | no | no | no |
-| `rudder issue comments get <issue> <comment-id>` | Read one issue comment by id. | no | no | no | no |
+| `rudder issue comments list <issue> [--after <comment-id-or-cmt-ref>]` | List issue comments, optionally only newer comments after a full comment id or cmt_<uuid-prefix> with --after. | no | no | no | no |
+| `rudder issue comments get <issue> <comment-id-or-cmt-ref>` | Read one issue comment by full id or cmt_<uuid-prefix> scoped to the issue. | no | no | no | no |
 | `rudder issue update <issue> ... [--comment-file <path>] [--image <path>]` | Apply generic issue updates when workflow commands are not enough, optionally uploading images for the update comment. | yes | no | no | attached when available |
 | `rudder issue review <issue> --decision <decision> --comment-file <path>` | Record a structured reviewer decision with a required comment. | yes | no | no | attached when available |
 | `rudder issue commit <issue> --sha <sha> --message <subject>` | Report a code commit created during issue work as structured issue activity. | yes | no | no | attached when available |
@@ -110,6 +110,8 @@ If an issue has a reviewer, moving it to `blocked` is also a reviewer handoff: t
 
 Issue comment and close-out commands accept comment bodies only from files or stdin. For any multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, write the comment to a temporary Markdown file and pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.
 
+Issue comment responses include `shortRef` when available. `rudder issue comments get <issue> <comment-id-or-cmt-ref>` accepts a full comment UUID or `cmt_<uuid-prefix>`, and `rudder issue comments list <issue> --after <comment-id-or-cmt-ref>` accepts the same forms for the pagination anchor. Use the full UUID when a short ref is ambiguous within the issue.
+
 `--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an issue attachment and appends Markdown image links to the comment text before sending it.
 
 If your issue comment cites a screenshot path or visual validation artifact, attach that file with `--image <path>` instead of leaving only the local path in the text.
@@ -172,7 +174,7 @@ Do not rely on a free-form reject or accept comment as the review outcome. The s
 ## Compatibility Commands
 
 - `rudder agent list --org-id <id>` — List agents for an organization.
-- `rudder agent get <agent-id-or-shortname>` — Read one agent by id or shortname.
+- `rudder agent get <agent-id-or-shortname-or-agt-ref>` — Read one agent by id, shortname, or agt_<uuid-prefix> short ref.
 - `rudder agent hire --org-id <id> --payload <json>` — Create a new hire using the canonical hire workflow.
 - `rudder agent config index` — Read the installed agent runtime configuration index.
 - `rudder agent config doc <agent-runtime-type>` — Read adapter-specific configuration guidance for one runtime.

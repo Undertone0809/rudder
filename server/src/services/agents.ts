@@ -14,6 +14,8 @@ import {
   AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX,
   isUuidLike,
   normalizeAgentUrlKey,
+  parseShortRef,
+  shortRefFor,
 } from "@rudderhq/shared";
 import { and, desc, eq, gte, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -262,6 +264,7 @@ export function agentService(db: Db) {
   function withUrlKey<T extends { id: string; name: string }>(row: T) {
     return {
       ...row,
+      shortRef: shortRefFor("agent", row.id),
       urlKey: normalizeAgentUrlKey(row.name) ?? row.id,
     };
   }
@@ -864,6 +867,21 @@ export function agentService(db: Db) {
           return { agent: null, ambiguous: false } as const;
         }
         return { agent: byId, ambiguous: false } as const;
+      }
+
+      const shortRef = parseShortRef(raw);
+      if (shortRef?.kind === "agent") {
+        const rows = await db.select().from(agents).where(eq(agents.orgId, orgId));
+        const matches = rows
+          .map(normalizeAgentRow)
+          .filter((agent) => isVisibleAgentRow(agent) && agent.id.replace(/-/g, "").toLowerCase().startsWith(shortRef.prefix));
+        if (matches.length === 1) {
+          return { agent: matches[0] ?? null, ambiguous: false } as const;
+        }
+        if (matches.length > 1) {
+          return { agent: null, ambiguous: true } as const;
+        }
+        return { agent: null, ambiguous: false } as const;
       }
 
       const urlKey = normalizeAgentUrlKey(raw);

@@ -81,7 +81,8 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
       return;
     }
     assertCompanyAccess(req, issue.orgId);
-    const comment = await svc.getComment(commentId);
+    const resolvedCommentId = await svc.resolveCommentReference(id, commentId);
+    const comment = await svc.getComment(resolvedCommentId);
     if (!comment || comment.issueId !== id) {
       res.status(404).json({ error: "Comment not found" });
       return;
@@ -101,7 +102,8 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     assertBoard(req);
 
     const actor = getActorInfo(req);
-    const comment = await svc.updateComment(id, commentId, req.body.body, {
+    const resolvedCommentId = await svc.resolveCommentReference(id, commentId);
+    const comment = await svc.updateComment(id, resolvedCommentId, req.body.body, {
       userId: actor.actorId,
     });
 
@@ -136,7 +138,8 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     assertBoard(req);
 
     const actor = getActorInfo(req);
-    const comment = await svc.deleteComment(id, commentId, {
+    const resolvedCommentId = await svc.resolveCommentReference(id, commentId);
+    const comment = await svc.deleteComment(id, resolvedCommentId, {
       userId: actor.actorId,
       allowAgentAuthored: true,
     });

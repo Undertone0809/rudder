@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
 
+function shortRefFor(kind: "agent" | "issue_comment", id: string) {
+  const prefix = kind === "agent" ? "agt" : "cmt";
+  return `${prefix}_${id.replace(/-/g, "").toLowerCase().slice(0, 8)}`;
+}
+
 test("agent-authored issue comments wake peers only with wake-intent agent links", async ({ page }) => {
   const orgRes = await page.request.post("/api/orgs", {
     data: { name: `Issue-Comment-Agent-Wake-${Date.now()}` },
@@ -85,11 +90,14 @@ test("agent-authored issue comments wake peers only with wake-intent agent links
   }).toBe(beforeReferenceOnly);
 
   const wakeCommentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
-    data: { body: `[${targetAgent.name}](agent://${targetAgent.id}?intent=wake) can you check the runtime handoff?` },
+    data: { body: `[${targetAgent.name}](agent://${shortRefFor("agent", targetAgent.id)}?intent=wake) can you check the runtime handoff?` },
     headers: { authorization: `Bearer ${authorKey.token}` },
   });
   expect(wakeCommentRes.ok()).toBe(true);
-  const wakeComment = await wakeCommentRes.json() as { id: string };
+  const wakeComment = await wakeCommentRes.json() as { id: string; body: string; shortRef?: string };
+  expect(wakeComment.body).toContain(`agent://${targetAgent.id}?intent=wake`);
+  expect(wakeComment.body).not.toContain(`agent://${shortRefFor("agent", targetAgent.id)}?intent=wake`);
+  expect(wakeComment.shortRef).toBe(shortRefFor("issue_comment", wakeComment.id));
 
   await expect.poll(async () => {
     const runs = await mentionWakeRuns();
@@ -98,4 +106,12 @@ test("agent-authored issue comments wake peers only with wake-intent agent links
     timeout: 15_000,
     intervals: [250, 500, 1_000],
   }).toBeGreaterThan(0);
+
+  const contextRes = await page.request.get(
+    `/api/issues/${issue.id}/heartbeat-context?wakeCommentId=${encodeURIComponent(shortRefFor("issue_comment", wakeComment.id))}`,
+  );
+  expect(contextRes.ok()).toBe(true);
+  const context = await contextRes.json() as { wakeComment?: { id: string; shortRef?: string } | null };
+  expect(context.wakeComment?.id).toBe(wakeComment.id);
+  expect(context.wakeComment?.shortRef).toBe(shortRefFor("issue_comment", wakeComment.id));
 });

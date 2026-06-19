@@ -8,12 +8,16 @@ import {
   projects
 } from "@rudderhq/db";
 import {
+  buildAgentMentionHref,
   extractAgentWakeMentionIds,
   extractProjectMentionIds,
-  isUuidLike
+  isUuidLike,
+  parseAgentMentionHref,
+  parseShortRef,
+  shortRefFor
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { forbidden, notFound, unprocessable } from "../errors.js";
+import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
@@ -28,13 +32,16 @@ type IssueCommentAttachmentMethodContext = {
 
 export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentMethodContext) {
   const { db, instanceSettings, redactIssueComment } = ctx;
-  function serializeCommentForResponse<T extends { body: string; deletedAt?: Date | string | null }>(
+  function serializeCommentForResponse<T extends { id?: string; body: string; deletedAt?: Date | string | null }>(
     comment: T,
     censorUsernameInLogs: boolean,
-  ): T {
+  ): T & { shortRef?: string } {
     const redacted = redactIssueComment(comment, censorUsernameInLogs);
-    if (!redacted.deletedAt) return redacted;
-    return { ...redacted, body: "" };
+    const withShortRef = "id" in redacted && typeof redacted.id === "string"
+      ? { ...redacted, shortRef: shortRefFor("issue_comment", redacted.id) }
+      : redacted;
+    if (!withShortRef.deletedAt) return withShortRef;
+    return { ...withShortRef, body: "" };
   }
 
   async function getMutableUserComment(issueId: string, commentId: string, userId: string) {
@@ -100,17 +107,101 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
     return { issue, comment };
   }
 
+  function replaceOutsideMarkdownCode(
+    body: string,
+    replace: (segment: string) => string,
+  ): string {
+    return body
+      .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+      .map((segment) => segment.startsWith("`") ? segment : replace(segment))
+      .join("");
+  }
+
+  function resolveAgentShortRefInRows(
+    rows: Array<{ id: string }>,
+    agentRef: string,
+  ): string | null {
+    const shortRef = parseShortRef(agentRef);
+    if (shortRef?.kind !== "agent") return null;
+    const matches = rows.filter((agent) =>
+      agent.id.replace(/-/g, "").toLowerCase().startsWith(shortRef.prefix));
+    if (matches.length > 1) {
+      throw conflict("Agent short ref is ambiguous in this organization. Use the agent ID.");
+    }
+    return matches[0]?.id ?? null;
+  }
+
+  async function canonicalizeAgentWakeMentions(orgId: string, body: string): Promise<string> {
+    const wakeRefs = extractAgentWakeMentionIds(body);
+    if (!wakeRefs.some((ref) => parseShortRef(ref)?.kind === "agent")) return body;
+
+    const rows = await db.select({ id: agents.id }).from(agents).where(eq(agents.orgId, orgId));
+    const resolved = new Map<string, string>();
+    for (const ref of wakeRefs) {
+      const parsed = parseShortRef(ref);
+      if (parsed?.kind !== "agent") continue;
+      const agentId = resolveAgentShortRefInRows(rows, ref);
+      if (!agentId) throw notFound("Agent short ref not found in this organization");
+      resolved.set(parsed.ref, agentId);
+    }
+
+    return replaceOutsideMarkdownCode(body, (segment) =>
+      segment.replace(/(\[[^\]]*]\()(agent:\/\/[^)\s]+)(\))/gi, (match, open: string, href: string, close: string) => {
+        const parsed = parseAgentMentionHref(href);
+        if (parsed?.intent !== "wake") return match;
+        const shortRef = parseShortRef(parsed.agentId);
+        const agentId = shortRef ? resolved.get(shortRef.ref) : null;
+        if (!agentId) return match;
+        return `${open}${buildAgentMentionHref(agentId, null, "wake")}${close}`;
+      }),
+    );
+  }
+
+  async function resolveCommentReference(issueId: string, commentRef: string): Promise<string> {
+    const trimmed = commentRef.trim();
+    if (isUuidLike(trimmed)) {
+      const comment = await db
+        .select({ id: issueComments.id })
+        .from(issueComments)
+        .where(and(eq(issueComments.id, trimmed), eq(issueComments.issueId, issueId), isNull(issueComments.deletedAt)))
+        .then((rows) => rows[0] ?? null);
+      if (!comment) throw notFound("Issue comment not found");
+      return comment.id;
+    }
+
+    const shortRef = parseShortRef(trimmed);
+    if (shortRef?.kind !== "issue_comment") return trimmed;
+
+    const rows = await db
+      .select({ id: issueComments.id })
+      .from(issueComments)
+      .where(and(eq(issueComments.issueId, issueId), isNull(issueComments.deletedAt)));
+    const matches = rows.filter((comment) =>
+      comment.id.replace(/-/g, "").toLowerCase().startsWith(shortRef.prefix));
+    if (matches.length > 1) {
+      throw conflict("Issue comment short ref is ambiguous for this issue. Use the comment ID.");
+    }
+    const match = matches[0];
+    if (!match) throw notFound("Issue comment not found");
+    return match.id;
+  }
+
   return {
     findMentionedAgents: async (orgId: string, body: string) => {
-      const explicitAgentMentionIds = extractAgentWakeMentionIds(body).filter(isUuidLike);
-      if (explicitAgentMentionIds.length === 0) return [];
+      const explicitAgentMentionRefs = extractAgentWakeMentionIds(body);
+      if (explicitAgentMentionRefs.length === 0) return [];
 
       const rows = await db.select({ id: agents.id, name: agents.name })
         .from(agents).where(eq(agents.orgId, orgId));
       const orgAgentIds = new Set(rows.map((agent) => agent.id));
       const resolved = new Set<string>();
-      for (const agentId of explicitAgentMentionIds) {
-        if (orgAgentIds.has(agentId)) resolved.add(agentId);
+      for (const agentRef of explicitAgentMentionRefs) {
+        if (isUuidLike(agentRef)) {
+          if (orgAgentIds.has(agentRef)) resolved.add(agentRef);
+          continue;
+        }
+        const agentId = resolveAgentShortRefInRows(rows, agentRef);
+        if (agentId) resolved.add(agentId);
       }
       return [...resolved];
     },
@@ -176,6 +267,9 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
 
       const conditions = [eq(issueComments.issueId, issueId), isNull(issueComments.deletedAt)];
       if (afterCommentId) {
+        const resolvedAfterCommentId = isUuidLike(afterCommentId)
+          ? afterCommentId
+          : await resolveCommentReference(issueId, afterCommentId);
         const anchor = await db
           .select({
             id: issueComments.id,
@@ -185,7 +279,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           .where(
             and(
               eq(issueComments.issueId, issueId),
-              eq(issueComments.id, afterCommentId),
+              eq(issueComments.id, resolvedAfterCommentId),
               isNull(issueComments.deletedAt),
             ),
           )
@@ -250,6 +344,8 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       };
     },
 
+    resolveCommentReference,
+
     getComment: (commentId: string) =>
       instanceSettings.getGeneral().then(({ censorUsernameInLogs }) =>
         db
@@ -276,7 +372,8 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       const durableBody = actor.agentId
         ? await normalizeLocalLibraryPathMarkdown(body, issue.orgId)
         : body;
-      const redactedBody = redactCurrentUserText(durableBody, currentUserRedactionOptions);
+      const canonicalBody = await canonicalizeAgentWakeMentions(issue.orgId, durableBody);
+      const redactedBody = redactCurrentUserText(canonicalBody, currentUserRedactionOptions);
       const [comment] = await db
         .insert(issueComments)
         .values({
@@ -294,7 +391,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
         .set({ updatedAt: new Date() })
         .where(eq(issues.id, issueId));
 
-      return redactIssueComment(comment, currentUserRedactionOptions.enabled);
+      return serializeCommentForResponse(comment, currentUserRedactionOptions.enabled);
     },
 
     updateComment: async (issueId: string, commentId: string, body: string, actor: { userId: string }) => {
@@ -302,7 +399,8 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       const currentUserRedactionOptions = {
         enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
       };
-      const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
+      const canonicalBody = await canonicalizeAgentWakeMentions(issue.orgId, body);
+      const redactedBody = redactCurrentUserText(canonicalBody, currentUserRedactionOptions);
       const now = new Date();
       const [comment] = await db
         .update(issueComments)

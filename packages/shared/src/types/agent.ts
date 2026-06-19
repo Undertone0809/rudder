@@ -63,6 +63,7 @@ export interface AgentChainOfCommandEntry {
 
 export interface Agent {
   id: string;
+  shortRef?: string;
   orgId: string;
   name: string;
   urlKey: string;

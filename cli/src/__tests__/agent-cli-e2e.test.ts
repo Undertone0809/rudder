@@ -31,6 +31,7 @@ import type {
   OrganizationWorkspaceFileList,
   Project,
 } from "@rudderhq/shared";
+import { shortRefFor } from "@rudderhq/shared";
 import { eq, sql } from "drizzle-orm";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -619,6 +620,26 @@ describe("agent CLI e2e", () => {
     expect(context.commentCursor.totalComments).toBeGreaterThanOrEqual(2);
     expect(context.commentCursor.latestCommentId).toBe(secondCommentId);
 
+    const contextByShortComment = await runCliJson<{
+      issue: { id: string };
+      wakeComment: { id: string; shortRef?: string } | null;
+    }>(["issue", "context", issueId, "--wake-comment-id", shortRefFor("issue_comment", secondCommentId)], {
+      apiBase,
+      configPath,
+      env,
+    });
+    expect(contextByShortComment.issue.id).toBe(issueId);
+    expect(contextByShortComment.wakeComment?.id).toBe(secondCommentId);
+    expect(contextByShortComment.wakeComment?.shortRef).toBe(shortRefFor("issue_comment", secondCommentId));
+
+    const agentByShortRef = await runCliJson<Agent>(["agent", "get", shortRefFor("agent", agentId)], {
+      apiBase,
+      configPath,
+      env,
+    });
+    expect(agentByShortRef.id).toBe(agentId);
+    expect(agentByShortRef.shortRef).toBe(shortRefFor("agent", agentId));
+
     const comments = await runCliJson<IssueComment[]>(
       ["issue", "comments", "list", issueId, "--after", firstCommentId, "--order", "asc"],
       {
@@ -629,6 +650,27 @@ describe("agent CLI e2e", () => {
     );
     expect(comments.map((comment) => comment.id)).toContain(secondCommentId);
     expect(comments.length).toBeGreaterThanOrEqual(1);
+
+    const commentsAfterShortRef = await runCliJson<IssueComment[]>(
+      ["issue", "comments", "list", issueId, "--after", shortRefFor("issue_comment", firstCommentId), "--order", "asc"],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(commentsAfterShortRef.map((comment) => comment.id)).toContain(secondCommentId);
+
+    const commentByShortRef = await runCliJson<IssueComment>(
+      ["issue", "comments", "get", issueId, shortRefFor("issue_comment", secondCommentId)],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(commentByShortRef.id).toBe(secondCommentId);
+    expect(commentByShortRef.shortRef).toBe(shortRefFor("issue_comment", secondCommentId));
 
     const commentSearch = await runCliJson<Issue[]>(["issue", "search", "New requirement landed"], {
       apiBase,

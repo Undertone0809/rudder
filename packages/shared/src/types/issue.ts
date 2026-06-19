@@ -165,6 +165,7 @@ export interface Issue {
 
 export interface IssueComment {
   id: string;
+  shortRef?: string;
   orgId: string;
   issueId: string;
   authorAgentId: string | null;

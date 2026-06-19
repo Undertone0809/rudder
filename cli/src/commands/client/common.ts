@@ -188,7 +188,7 @@ export function formatInlineRecord(
   const displayRecord = shouldShowFullIds(opts.fullIds)
     ? record
     : (toCliShortIdOutput(record) as Record<string, unknown>);
-  const keyOrder = ["identifier", "id", "name", "status", "priority", "title", "action"];
+  const keyOrder = ["identifier", "shortRef", "id", "name", "status", "priority", "title", "action"];
   const seen = new Set<string>();
   const parts: string[] = [];
 
