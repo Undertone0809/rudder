@@ -125,6 +125,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { formatRunDurationLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
+import { skillAnalyticsQueryOptions } from "../lib/skill-analytics-cache";
 import { agentIssuesUrl, agentRouteRef, cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime } from "../lib/utils";
 import {
   compactSkillText,
@@ -261,6 +262,7 @@ export function AgentDetail() {
         : { windowDays: datePreset === "7d" ? 7 : datePreset === "15d" ? 15 : 30 }),
     }),
     enabled: Boolean(resolvedAgentId) && needsDashboardData && (datePreset !== "custom" || customReady),
+    ...skillAnalyticsQueryOptions,
   });
 
   const { data: agentCostTrend, isLoading: isAgentCostTrendLoading } = useQuery({

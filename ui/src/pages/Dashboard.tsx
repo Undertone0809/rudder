@@ -20,6 +20,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { floorDateToMinuteIso, resolvePresetDateRange } from "../lib/date-range-cache";
 import { queryKeys } from "../lib/queryKeys";
+import { skillAnalyticsQueryOptions } from "../lib/skill-analytics-cache";
 
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { summarizeTokenUsage, type Agent, type AgentSkillAnalytics, type Issue } from "@rudderhq/shared";
@@ -280,6 +281,7 @@ export function Dashboard() {
         : { windowDays: preset === "7d" ? 7 : preset === "15d" ? 15 : 30 }),
     }),
     enabled: Boolean(selectedOrganizationId) && showFilteredSections,
+    ...skillAnalyticsQueryOptions,
   });
 
   const visibleSkillAnalytics: AgentSkillAnalytics | null = skillAnalytics && skillAnalytics.totalRunsWithSkills > 0
