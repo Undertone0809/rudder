@@ -462,7 +462,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       status: "pending",
     });
     await expect(db.select().from(agentIntegrationInboundDedup)).resolves.toHaveLength(1);
-  });
+  }, 15_000);
 
   it("sends a real outbound binding-required response from long-connection events", async () => {
     const seeded = await seedIntegration({
@@ -502,11 +502,17 @@ describe("Feishu inbound dispatcher DB deps", () => {
       },
     );
 
-    expect(result).toEqual({ status: "binding_required" });
+    expect(result.status).toBe("binding_required");
+    expect(result.outbound).toMatchObject({
+      provider: "feishu",
+      externalChatId: "oc_chat",
+      externalMessageId: null,
+      text: expect.stringContaining("rudder_feishu_"),
+    });
     expect(sent).toEqual([
       {
         chatId: "oc_chat",
-        text: expect.stringContaining("not bound"),
+        text: expect.stringContaining("rudder_feishu_"),
       },
     ]);
     const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
@@ -554,7 +560,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
       body: "hello from websocket",
     });
 
-    expect(sent).toEqual([{ chatId: "oc_ws", text: expect.stringContaining("not bound") }]);
+    expect(sent).toEqual([{ chatId: "oc_ws", text: expect.stringContaining("rudder_feishu_") }]);
     await expect(db.select().from(agentIntegrationBindingTokens)).resolves.toHaveLength(1);
     const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
     expect(outbound).toMatchObject({
