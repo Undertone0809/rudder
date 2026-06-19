@@ -28,6 +28,7 @@ const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const payload = {
   argv: process.argv.slice(2),
   home: process.env.HOME,
+  userProfile: process.env.USERPROFILE,
   prompt: fs.readFileSync(0, "utf8"),
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
@@ -61,6 +62,7 @@ console.log(JSON.stringify({
 type CapturePayload = {
   argv: string[];
   home: string;
+  userProfile: string;
   prompt: string;
   rudderEnvKeys: string[];
   gitIdentity: GitIdentityCapture;
@@ -109,13 +111,10 @@ describe("cursor execute", { timeout: 20_000 }, () => {
     const capturePath = path.join(root, "capture.json");
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
-    const skillsRoot = path.join(root, "skills");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer direct status updates.\n", "utf8");
-    const enabledSkillDir = await createSkillDir(skillsRoot, "enabled-skill");
-    const disabledSkillDir = await createSkillDir(skillsRoot, "disabled-skill");
     await writeFakeCursorCommand(commandPath);
 
     const restoreEnv = setManagedCursorEnv(root);
@@ -147,13 +146,6 @@ describe("cursor execute", { timeout: 20_000 }, () => {
             ...clearInheritedGitIdentityEnv,
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
-          rudderRuntimeSkills: [
-            { key: "rudder/enabled-skill", runtimeName: "enabled-skill", source: enabledSkillDir },
-            { key: "rudder/disabled-skill", runtimeName: "disabled-skill", source: disabledSkillDir },
-          ],
-          rudderSkillSync: {
-            desiredSkills: ["rudder/enabled-skill"],
-          },
           instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
@@ -180,14 +172,12 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expectPreparedGitConfigCapture(capture);
       expect(capture.home).toBe(root);
+      expect(capture.userProfile).toBe(process.env.USERPROFILE ?? root);
       expect(capture.argv).not.toContain("Follow the rudder heartbeat.");
       expect(capture.argv).not.toContain("--mode");
       expect(capture.argv).not.toContain("ask");
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
-      expect(capture.prompt).toContain("Rudder enabled skills:");
-      expect(capture.prompt).toContain("## enabled-skill");
-      expect(capture.prompt).not.toContain("## disabled-skill");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining([
           "RUDDER_AGENT_ID",
@@ -328,11 +318,13 @@ describe("cursor execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("injects organization-library runtime skills into the Cursor prompt before execution", async () => {
+  it("injects organization-library runtime skills into the Cursor skills home before execution", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-runtime-skill-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");
+    const capturePath = path.join(root, "capture.json");
     const runtimeSkillsRoot = path.join(root, "runtime-skills");
+    const operatorSkillPath = path.join(root, ".cursor", "skills", "operator-skill", "SKILL.md");
     const managedSkillsHome = path.join(
       root,
       ".rudder",
@@ -345,6 +337,8 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       "skills",
     );
     await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(operatorSkillPath), { recursive: true });
+    await fs.writeFile(operatorSkillPath, "---\nname: operator-skill\n---\n", "utf8");
     await writeFakeCursorCommand(commandPath);
 
     const rudderDir = await createSkillDir(runtimeSkillsRoot, "rudder");
@@ -385,6 +379,10 @@ describe("cursor execute", { timeout: 20_000 }, () => {
           rudderSkillSync: {
             desiredSkills: ["ascii-heart"],
           },
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {},
@@ -395,10 +393,17 @@ describe("cursor execute", { timeout: 20_000 }, () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect((await fs.lstat(path.join(managedSkillsHome, "ascii-heart"))).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(path.join(managedSkillsHome, "ascii-heart"))).toBe(
         await fs.realpath(asciiHeartDir),
       );
+      await expect(fs.lstat(path.join(root, ".cursor", "skills", "ascii-heart"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(capture.prompt ?? "").toContain("# Enabled Rudder Skills");
+      expect(capture.prompt ?? "").toContain("## Skill: ascii-heart");
+      expect(capture.prompt ?? "").not.toContain("operator-skill");
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });

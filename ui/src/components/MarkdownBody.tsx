@@ -14,7 +14,6 @@ import { ImagePreviewDialog, type ImagePreviewState } from "./ImagePreviewDialog
 import { InspectableImage } from "./InspectableImage";
 import { RudderEntityPreview } from "./RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "./SkillReferenceToken";
-import { StatusIcon } from "./StatusIcon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 interface MarkdownBodyProps {
@@ -884,7 +883,6 @@ export function MarkdownBody({
               "rudder-mention-chip",
               `rudder-mention-chip--${mention.kind}`,
               mention.kind === "project" && "rudder-project-mention-chip",
-              mention.kind === "issue" && mention.status && "rudder-mention-chip--with-status-icon",
             )}
             data-mention-kind={mention.kind}
             data-mention-status={mention.kind === "issue" && mention.status ? mention.status : undefined}
@@ -894,9 +892,6 @@ export function MarkdownBody({
               handleMarkdownLinkClick(event, targetHref, mentionLabel);
             }}
           >
-            {mention.kind === "issue" && mention.status ? (
-              <StatusIcon status={mention.status} className="h-[1.05em] w-[1.05em]" />
-            ) : null}
             {mentionLabel}
           </a>
         );

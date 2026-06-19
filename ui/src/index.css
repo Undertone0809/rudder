@@ -4280,6 +4280,13 @@ a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-
   display: none;
 }
 
+.rudder-markdown a.rudder-mention-chip[data-mention-kind="issue"]::before {
+  content: none;
+  display: none;
+  mask: none;
+  -webkit-mask: none;
+}
+
 .rudder-markdown a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"]::after {
   content: none;
   display: none;

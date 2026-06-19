@@ -87,7 +87,7 @@ async function expectEditorIssueStatusMention(root: Locator, issueId: string, st
   }
 }
 
-test("issue done mentions render the canonical status icon in comments and editor surfaces", async ({ page }) => {
+test("issue done mentions keep prose links quiet while editor tokens render the canonical status icon", async ({ page }) => {
   const organization = await createOrganization(page);
   const targetIssue = await createIssue(page, organization.id, "Status chip target issue", "done");
   const targetRef = targetIssue.identifier ?? targetIssue.id;
@@ -97,7 +97,11 @@ test("issue done mentions render the canonical status icon in comments and edito
 
   const commentRes = await page.request.post(`/api/issues/${hostIssue.id}/comments`, {
     data: {
-      body: `Rendered comment mention: [${targetRef}](${issueMentionHref})`,
+      body: [
+        "- 自动化 issue 列表正文里已经完成 ",
+        `[${targetRef}](${issueMentionHref})`,
+        "，这里继续显示后续中文 prose，不能被蓝色圆圈勾打断。",
+      ].join(""),
     },
   });
   expect(commentRes.ok(), await commentRes.text()).toBe(true);
@@ -119,7 +123,17 @@ test("issue done mentions render the canonical status icon in comments and edito
   const renderedCommentChip = page.locator(`#comment-${comment.id} a.rudder-mention-chip[data-mention-kind="issue"]`).first();
   await expect(renderedCommentChip).toBeVisible({ timeout: 15_000 });
   await expect(renderedCommentChip).toHaveAttribute("data-mention-status", "done");
-  await expect(renderedCommentChip.locator('[data-slot="issue-status-icon"][data-status="done"] [data-slot="status-done-check"]')).toBeVisible();
+  await expect(renderedCommentChip).not.toHaveClass(/rudder-mention-chip--with-status-icon/);
+  await expect(renderedCommentChip.locator('[data-slot="issue-status-icon"]')).toHaveCount(0);
+  const renderedCommentBeforeStyle = await renderedCommentChip.evaluate((element) => {
+    const style = window.getComputedStyle(element, "::before");
+    return {
+      content: style.content,
+      maskImage: style.getPropertyValue("-webkit-mask-image") || style.getPropertyValue("mask-image"),
+    };
+  });
+  expect(renderedCommentBeforeStyle.content).not.toContain("✓");
+  expect(renderedCommentBeforeStyle.maskImage).toBe("none");
 
   const composer = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').last();
   await expect(composer).toBeVisible({ timeout: 15_000 });

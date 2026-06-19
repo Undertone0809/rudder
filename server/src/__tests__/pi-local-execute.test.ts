@@ -31,10 +31,10 @@ if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify({
     argv: process.argv.slice(2),
     stdin,
-    home: process.env.HOME,
-    userProfile: process.env.USERPROFILE,
-    piCodingAgentDir: process.env.PI_CODING_AGENT_DIR,
-    piCodingAgentSessionDir: process.env.PI_CODING_AGENT_SESSION_DIR,
+    home: process.env.HOME || null,
+    userProfile: process.env.USERPROFILE || null,
+    piCodingAgentDir: process.env.PI_CODING_AGENT_DIR || null,
+    piCodingAgentSessionDir: process.env.PI_CODING_AGENT_SESSION_DIR || null,
     rudderEnvKeys: Object.keys(process.env)
       .filter((key) => key.startsWith("RUDDER_"))
       .sort(),
@@ -109,10 +109,10 @@ console.log(JSON.stringify({
 type CapturePayload = {
   argv: string[];
   stdin: string;
-  home: string;
-  userProfile?: string;
-  piCodingAgentDir: string;
-  piCodingAgentSessionDir: string;
+  home: string | null;
+  userProfile: string | null;
+  piCodingAgentDir: string | null;
+  piCodingAgentSessionDir: string | null;
   rudderEnvKeys: string[];
   gitIdentity: GitIdentityCapture;
 };
@@ -127,12 +127,15 @@ describe("pi execute", { timeout: 20_000 }, () => {
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "pi");
     const capturePath = path.join(root, "capture.json");
+    const operatorSkillPath = path.join(root, ".pi", "agent", "skills", "operator-skill", "SKILL.md");
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
     const soulPath = path.join(root, "instructions", "SOUL.md");
     const toolsPath = path.join(root, "instructions", "TOOLS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
     await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(operatorSkillPath), { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(operatorSkillPath, "---\nname: operator-skill\n---\n", "utf8");
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(soulPath, "# Agent Soul\n", "utf8");
     await fs.writeFile(toolsPath, "# Agent Tools\n", "utf8");
@@ -167,10 +170,6 @@ describe("pi execute", { timeout: 20_000 }, () => {
           model: "openai/gpt-test",
           env: {
             ...clearInheritedGitIdentityEnv,
-            HOME: path.join(root, "ignored-config-home"),
-            PI_CODING_AGENT_DIR: path.join(root, "ignored-pi-agent"),
-            PI_CODING_AGENT_SESSION_DIR: path.join(root, "ignored-pi-sessions"),
-            RUDDER_HOME: path.join(root, ".rudder"),
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           instructionsFilePath: instructionsPath,
@@ -209,13 +208,14 @@ describe("pi execute", { timeout: 20_000 }, () => {
         "organization-1",
         "pi-home",
       );
+      const managedPiAgentDir = path.join(managedPiHome, ".pi", "agent");
       expect(capture.home).toBe(root);
-      expect(capture.piCodingAgentDir).toBe(path.join(managedPiHome, ".pi", "agent"));
+      expect(capture.userProfile).toBe(process.env.USERPROFILE ?? root);
+      expect(capture.piCodingAgentDir).toBe(managedPiAgentDir);
       expect(capture.piCodingAgentSessionDir).toBe(path.join(managedPiHome, ".pi", "paperclips"));
       expect(capture.argv).toEqual(expect.arrayContaining(["--print", "--mode", "json"]));
-      expect(capture.argv).toContain("--no-skills");
-      expect(capture.argv).toEqual(expect.arrayContaining(["--skill", path.join(managedPiHome, ".pi", "agent", "skills")]));
       expect(capture.argv).not.toContain("rpc");
+      expect(capture.argv).toEqual(expect.arrayContaining(["--skill", path.join(managedPiAgentDir, "skills")]));
       expect(capture.argv.at(-1)).toContain("Follow the rudder heartbeat.");
       expect(capture.stdin).toBe("");
       const appendSystemPromptIndex = capture.argv.indexOf("--append-system-prompt");
@@ -241,6 +241,9 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
+      await expect(fs.lstat(path.join(root, ".pi", "agent", "skills", "rudder"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -259,7 +262,9 @@ describe("pi execute", { timeout: 20_000 }, () => {
 
     const logs: string[] = [];
     const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
     process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
     try {
       const result = await execute({
         runId: "run-pi-realistic",
@@ -311,6 +316,8 @@ describe("pi execute", { timeout: 20_000 }, () => {
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

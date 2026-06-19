@@ -18,7 +18,7 @@ Adapter: gemini_local
 Use when:
 - You want Rudder to run the Gemini CLI locally on the host machine
 - You want Gemini chat sessions resumed across heartbeats with --resume
-- You want Rudder skills injected into the run prompt without polluting the global environment
+- You want Rudder skills injected locally without polluting the global environment
 
 Don't use when:
 - You need webhook-style external invocation (use http or openclaw_gateway)
@@ -43,7 +43,7 @@ Operational fields:
 Notes:
 - Runs use positional prompt arguments, not stdin.
 - Sessions resume with --resume when stored session cwd matches the current cwd.
-- Rudder injects only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page into the run prompt.
-- Gemini authentication can use the operator HOME. Rudder enabled skills are delivered through the prompt rather than by relying on Gemini's operator-home native skill discovery.
+- Rudder realizes only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page.
+- Gemini runs keep HOME on the operator home for host CLI auth, use a Rudder-managed GEMINI_CLI_HOME for runtime state, pass an empty --extensions allowlist by default, and do not symlink operator extensions, hooks, settings, or skills into the managed Gemini home.
 - Authentication can use GEMINI_API_KEY / GOOGLE_API_KEY or local Gemini CLI login.
 `;

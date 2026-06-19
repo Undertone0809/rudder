@@ -5,111 +5,100 @@ import {
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
-async function createSkillDir(root: string, name: string) {
-  const skillDir = path.join(root, name);
-  await fs.mkdir(skillDir, { recursive: true });
-  await fs.writeFile(path.join(skillDir, "SKILL.md"), `---\nname: ${name}\n---\n`, "utf8");
-  return skillDir;
-}
-
 describe("gemini local skill sync", () => {
-  it("reports selected Rudder skills as prompt-injected configuration", async () => {
-    const root = await makeTempDir("rudder-gemini-skill-sync-");
-    const operatorSkillHome = path.join(root, ".gemini", "skills");
-    await fs.mkdir(path.join(operatorSkillHome, "operator-skill"), { recursive: true });
-    await fs.writeFile(path.join(operatorSkillHome, "operator-skill", "SKILL.md"), "---\nname: operator-skill\n---\n", "utf8");
+  const rudderSkillKey = "rudder/rudder";
+  const cleanupDirs = new Set<string>();
 
-    try {
-      const ctx = {
-        agentId: "agent-1",
-        orgId: "organization-1",
-        agentRuntimeType: "gemini_local",
-        config: {
-          env: {
-            HOME: root,
-          },
-          rudderSkillSync: {
-            desiredSkills: ["rudder/rudder"],
-          },
-        },
-      } as const;
+  function managedGeminiSkillsHome(home: string, orgId = "organization-1") {
+    return path.join(home, ".rudder", "instances", "default", "organizations", orgId, "gemini-home", ".gemini", "skills");
+  }
 
-      const before = await listGeminiSkills(ctx);
-      expect(before.mode).toBe("ephemeral");
-      expect(before.desiredSkills).toContain("rudder/rudder");
-      expect(before.entries.find((entry) => entry.key === "rudder/rudder")?.state).toBe("configured");
-      expect(before.entries.some((entry) => entry.key === "operator-skill")).toBe(false);
-
-      const after = await syncGeminiSkills(ctx, ["rudder/rudder"]);
-      expect(after.mode).toBe("ephemeral");
-      expect(after.entries.find((entry) => entry.key === "rudder/rudder")?.state).toBe("configured");
-      await expect(fs.lstat(path.join(operatorSkillHome, "rudder"))).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      await fs.rm(root, { recursive: true, force: true });
-    }
+  afterEach(async () => {
+    await Promise.all(Array.from(cleanupDirs).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+    cleanupDirs.clear();
   });
 
-  it("recognizes organization-library runtime skills supplied outside the bundled Rudder directory", async () => {
-    const root = await makeTempDir("rudder-gemini-runtime-skills-");
-    try {
-      const rudderDir = await createSkillDir(root, "rudder");
-      const asciiHeartDir = await createSkillDir(root, "ascii-heart");
+  it("reports configured Rudder skills and installs them into the Gemini skills home", async () => {
+    const home = await makeTempDir("rudder-gemini-skill-sync-");
+    cleanupDirs.add(home);
 
-      const ctx = {
-        agentId: "agent-3",
-        orgId: "organization-1",
-        agentRuntimeType: "gemini_local",
-        config: {
-          rudderRuntimeSkills: [
-            {
-              key: "rudder",
-              runtimeName: "rudder",
-              source: rudderDir,
-            },
-            {
-              key: "ascii-heart",
-              runtimeName: "ascii-heart",
-              source: asciiHeartDir,
-            },
-          ],
-          rudderSkillSync: {
-            desiredSkills: ["ascii-heart"],
-          },
-        },
-      } as const;
-
-      const snapshot = await syncGeminiSkills(ctx, ["ascii-heart"]);
-      expect(snapshot.warnings).toEqual([]);
-      expect(snapshot.desiredSkills).toEqual(["ascii-heart"]);
-      expect(snapshot.entries.find((entry) => entry.key === "ascii-heart")?.state).toBe("configured");
-      expect(snapshot.entries.find((entry) => entry.key === "rudder")?.state).toBe("available");
-    } finally {
-      await fs.rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it("marks unknown desired skills as missing", async () => {
     const ctx = {
-      agentId: "agent-2",
+      agentId: "agent-1",
       orgId: "organization-1",
       agentRuntimeType: "gemini_local",
       config: {
+        env: {
+          HOME: home,
+          RUDDER_HOME: path.join(home, ".rudder"),
+        },
         rudderSkillSync: {
-          desiredSkills: ["operator-only"],
+          desiredSkills: [rudderSkillKey],
         },
       },
     } as const;
 
-    const snapshot = await syncGeminiSkills(ctx, ["operator-only"]);
-    expect(snapshot.entries.find((entry) => entry.key === "operator-only")?.state).toBe("missing");
-    expect(snapshot.warnings).toEqual([
-      'Desired skill "operator-only" is not available from the Rudder skills directory.',
-    ]);
+    const before = await listGeminiSkills(ctx);
+    expect(before.mode).toBe("persistent");
+    expect(before.desiredSkills).toContain(rudderSkillKey);
+    expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("missing");
+
+    const after = await syncGeminiSkills(ctx, [rudderSkillKey]);
+    const installedEntry = after.entries.find((entry) => entry.key === rudderSkillKey);
+    expect(installedEntry?.state).toBe("installed");
+    expect(installedEntry?.targetPath).toContain(managedGeminiSkillsHome(home));
+    expect((await fs.lstat(installedEntry?.targetPath ?? "")).isSymbolicLink()).toBe(true);
+    await expect(fs.lstat(path.join(home, ".gemini", "skills", "rudder"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("removes Rudder-managed symlinks when the desired set is emptied", async () => {
+    const home = await makeTempDir("rudder-gemini-skill-prune-");
+    cleanupDirs.add(home);
+
+    const configuredCtx = {
+      agentId: "agent-2",
+      orgId: "organization-1",
+      agentRuntimeType: "gemini_local",
+      config: {
+        env: {
+          HOME: home,
+          RUDDER_HOME: path.join(home, ".rudder"),
+        },
+        rudderSkillSync: {
+          desiredSkills: [rudderSkillKey],
+        },
+      },
+    } as const;
+
+    await syncGeminiSkills(configuredCtx, [rudderSkillKey]);
+
+    const clearedCtx = {
+      ...configuredCtx,
+      config: {
+        env: {
+          HOME: home,
+          RUDDER_HOME: path.join(home, ".rudder"),
+        },
+        rudderSkillSync: {
+          desiredSkills: [],
+        },
+      },
+    } as const;
+
+    const after = await syncGeminiSkills(clearedCtx, []);
+    expect(after.desiredSkills).toEqual([]);
+    expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("available");
+    const targetPath = after.entries.find((entry) => entry.key === rudderSkillKey)?.targetPath ?? "";
+    expect(targetPath).toContain(managedGeminiSkillsHome(home));
+    await expect(fs.lstat(targetPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

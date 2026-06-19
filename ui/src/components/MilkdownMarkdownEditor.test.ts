@@ -213,6 +213,30 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     expect(visualChip.dataset.mentionStatus).toBe("todo");
   });
 
+  it("refreshes existing issue token status from current mention options", () => {
+    const href = buildIssueMentionHref("issue-1", "R-6");
+    const root = document.createElement("div");
+    root.innerHTML = [
+      `<a href="${href}"`,
+      ' class="rudder-mention-chip rudder-mention-chip--issue"',
+      ' data-mention-kind="issue"',
+      ` data-mention-href="${href}">R-6</a>`,
+    ].join("");
+    const token = root.querySelector("a") as HTMLAnchorElement;
+
+    refreshMilkdownMentionTokenStyles(root, [{
+      id: "issue:issue-1",
+      name: "R-6 改回 AGENT HOME",
+      kind: "issue",
+      issueId: "issue-1",
+      issueIdentifier: "R-6",
+      issueStatus: "blocked",
+    }]);
+
+    expect(token.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
+    expect(token.dataset.mentionStatus).toBe("blocked");
+  });
+
   it("recognizes Rudder mention and skill links as token links", () => {
     expect(isRudderTokenHref("agent://agent-1", "Jade")).toBe(true);
     expect(isRudderTokenHref("issue://issue-1?ref=R-1", "R-1")).toBe(true);

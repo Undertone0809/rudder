@@ -1,4 +1,4 @@
-import { resolveOrganizationStorageKey, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asBoolean,
@@ -19,7 +19,6 @@ import {
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeMaintainerOnlySkillSymlinks,
-  renderRudderSkillPromptSection,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -40,16 +39,23 @@ import {
   isGeminiUnknownSessionError,
   parseGeminiJsonl,
 } from "./parse.js";
+import { resolveManagedGeminiHomeDir } from "./skills.js";
 import { firstNonEmptyLine } from "./utils.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_RUDDER_INSTANCE_ID = "default";
 const GEMINI_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
+  "GEMINI_CLI_HOME",
   "HOME",
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
+]);
+const GEMINI_SHARED_HOME_ALLOWLIST = new Set([
+  "credentials.json",
+  "oauth_creds.json",
+  "token.json",
+  "trustedFolders.json",
 ]);
 
 function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
@@ -123,12 +129,6 @@ function resolveSharedGeminiHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
 
-function resolveManagedGeminiHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
-  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
-  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", resolveOrganizationStorageKey(orgId), "gemini-home");
-}
-
 function resolveManagedGeminiSkillsDir(homeDir: string): string {
   return path.join(homeDir, ".gemini", "skills");
 }
@@ -139,7 +139,7 @@ async function syncGeminiSharedHomeEntries(sourceHome: string, targetHome: strin
   const targetGeminiDir = path.join(targetHome, ".gemini");
   await fs.mkdir(targetGeminiDir, { recursive: true });
   for (const entry of entries) {
-    if (entry.name === "skills") continue;
+    if (!entry.isFile() || !GEMINI_SHARED_HOME_ALLOWLIST.has(entry.name)) continue;
     await ensureSymlink(
       path.join(targetGeminiDir, entry.name),
       path.join(sourceGeminiDir, entry.name),
@@ -153,7 +153,7 @@ async function prepareManagedGeminiHome(
   orgId: string,
 ): Promise<string> {
   const sourceHome = resolveSharedGeminiHomeDir(env);
-  const targetHome = resolveManagedGeminiHomeDir(env, orgId);
+  const targetHome = resolveManagedGeminiHomeDir({ env }, orgId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(resolveManagedGeminiSkillsDir(targetHome), { recursive: true });
@@ -163,7 +163,7 @@ async function prepareManagedGeminiHome(
 
   await onLog(
     "stdout",
-    `[rudder] Prepared Rudder-managed Gemini sidecar "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Using Rudder-managed Gemini home "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
 }
@@ -172,6 +172,11 @@ function geminiSkillsHome(): string {
   return path.join(os.homedir(), ".gemini", "skills");
 }
 
+/**
+ * Inject Rudder skills directly into `~/.gemini/skills/` via symlinks.
+ * This avoids needing GEMINI_CLI_HOME overrides, so the CLI naturally finds
+ * both its auth credentials and the injected skills in the real home directory.
+ */
 async function ensureGeminiSkillsInjected(
   onLog: AgentRuntimeExecutionContext["onLog"],
   skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
@@ -258,16 +263,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   const envConfig = parseObject(config.env);
+  const envConfigStrings = Object.fromEntries(
+    Object.entries(envConfig).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string" && !GEMINI_PROTECTED_ENV_KEYS.has(entry[0]),
+    ),
+  );
   const sourceEnv = {
     ...process.env,
-    ...Object.fromEntries(
-      Object.entries(envConfig).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
-    ),
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedGeminiHome(sourceEnv, onLog, agent.orgId);
+  const managedHome = await prepareManagedGeminiHome({ ...sourceEnv, ...envConfigStrings }, onLog, agent.orgId);
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -277,13 +282,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   const geminiSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredGeminiSkillNames = resolveRudderDesiredSkillNames(config, geminiSkillEntries);
-  const selectedGeminiSkillEntries = geminiSkillEntries.filter((entry) => desiredGeminiSkillNames.includes(entry.key));
-  const rudderSkillsPromptSection = await renderRudderSkillPromptSection({
-    selectedEntries: selectedGeminiSkillEntries,
-  });
   await ensureGeminiSkillsInjected(
     onLog,
-    selectedGeminiSkillEntries,
+    geminiSkillEntries,
     desiredGeminiSkillNames,
     resolveManagedGeminiSkillsDir(managedHome),
   );
@@ -292,6 +293,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.HOME = operatorHome;
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.GEMINI_CLI_HOME = managedHome;
   env.RUDDER_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -345,7 +348,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (typeof value === "string") env[key] = value;
   }
   env.HOME = operatorHome;
-  if (process.platform === "win32") env.USERPROFILE = operatorHome;
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.GEMINI_CLI_HOME = managedHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -368,11 +372,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
-
-  await onLog(
-    "stdout",
-    `[rudder] Using operator HOME "${operatorHome}" with Rudder enabled skills injected into the prompt.\n`,
-  );
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);
@@ -476,7 +475,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const apiAccessNote = renderApiAccessNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
-    rudderSkillsPromptSection,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     rudderEnvNote,
@@ -486,7 +484,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
-    rudderSkillChars: rudderSkillsPromptSection.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     runtimeNoteChars: rudderEnvNote.length + apiAccessNote.length,
@@ -499,6 +496,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (model && model !== DEFAULT_GEMINI_LOCAL_MODEL) args.push("--model", model);
     args.push("--skip-trust");
     args.push("--approval-mode", "yolo");
+    args.push("--extensions", "");
     if (sandbox) {
       args.push("--sandbox");
     } else {

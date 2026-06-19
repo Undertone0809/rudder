@@ -1,4 +1,4 @@
-import { inferOpenAiCompatibleBiller, resolveOrganizationStorageKey, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asBoolean,
@@ -19,7 +19,6 @@ import {
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeMaintainerOnlySkillSymlinks,
-  renderRudderSkillPromptSection,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -34,14 +33,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateOpenCodeModelConfig } from "./models.js";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
+import { resolveManagedOpenCodeHomeDir } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_RUDDER_INSTANCE_ID = "default";
-const SHARED_OPENCODE_HOME_ENTRIES = [
-  ".config/opencode",
-  ".local/share/opencode",
-  ".cache/opencode",
-] as const;
 const OPENCODE_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
@@ -49,6 +43,11 @@ const OPENCODE_PROTECTED_ENV_KEYS = new Set([
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
 ]);
+const SHARED_OPENCODE_HOME_ENTRIES = [
+  ".config/opencode",
+  ".local/share/opencode",
+  ".cache/opencode",
+] as const;
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -102,12 +101,6 @@ function resolveSharedOpenCodeHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
 
-function resolveManagedOpenCodeHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
-  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
-  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", resolveOrganizationStorageKey(orgId), "opencode-home");
-}
-
 function resolveManagedOpenCodeSkillsDir(homeDir: string): string {
   return path.join(homeDir, ".claude", "skills");
 }
@@ -118,7 +111,7 @@ async function prepareManagedOpenCodeHome(
   orgId: string,
 ): Promise<string> {
   const sourceHome = resolveSharedOpenCodeHomeDir(env);
-  const targetHome = resolveManagedOpenCodeHomeDir(env, orgId);
+  const targetHome = resolveManagedOpenCodeHomeDir({ env }, orgId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(targetHome, { recursive: true });
@@ -132,7 +125,7 @@ async function prepareManagedOpenCodeHome(
 
   await onLog(
     "stdout",
-    `[rudder] Prepared Rudder-managed OpenCode sidecar "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Using Rudder-managed OpenCode home "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
 }
@@ -173,6 +166,35 @@ async function ensureOpenCodeSkillsInjected(
       );
     }
   }
+}
+
+async function renderSelectedOpenCodeSkillPrompt(
+  onLog: AgentRuntimeExecutionContext["onLog"],
+  skillsHome: string,
+  skillsEntries: Array<{ key: string; runtimeName: string }>,
+): Promise<string> {
+  const sections: string[] = [];
+  for (const entry of skillsEntries) {
+    const skillPath = path.join(skillsHome, entry.runtimeName, "SKILL.md");
+    const content = await fs.readFile(skillPath, "utf8").catch(async (err) => {
+      await onLog(
+        "stderr",
+        `[rudder] Failed to load OpenCode skill "${entry.key}" from ${skillPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      return "";
+    });
+    if (!content.trim()) continue;
+    sections.push(`## Skill: ${entry.key}\n\n${content.trim()}`);
+  }
+  if (sections.length === 0) return "";
+  return [
+    "# Enabled Rudder Skills",
+    "",
+    "These skill instructions come only from this agent's Rudder Skills enabled selections.",
+    "Do not load OpenCode, Claude-compatible, operator-home, project, bundled, or vendor-default skills unless Rudder enabled them for this agent.",
+    "",
+    sections.join("\n\n"),
+  ].join("\n");
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
@@ -265,11 +287,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (workspaceHints.length > 0) env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
 
   for (const [key, value] of Object.entries(envConfig)) {
-    if (typeof value === "string" && !OPENCODE_PROTECTED_ENV_KEYS.has(key)) env[key] = value;
+    if (OPENCODE_PROTECTED_ENV_KEYS.has(key)) continue;
+    if (typeof value === "string") env[key] = value;
   }
-  const sourceEnv = { ...process.env, ...env };
+  const sourceEnv = { ...process.env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedOpenCodeHome(sourceEnv, onLog, agent.orgId);
+  const managedHome = await prepareManagedOpenCodeHome({ ...sourceEnv, ...env }, onLog, agent.orgId);
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -278,7 +301,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     onLog,
   });
   env.HOME = operatorHome;
-  if (process.platform === "win32") env.USERPROFILE = operatorHome;
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -288,21 +311,25 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const openCodeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredOpenCodeSkillNames = resolveRudderDesiredSkillNames(config, openCodeSkillEntries);
   const selectedOpenCodeSkillEntries = openCodeSkillEntries.filter((entry) => desiredOpenCodeSkillNames.includes(entry.key));
-  const rudderSkillsPromptSection = await renderRudderSkillPromptSection({
-    selectedEntries: selectedOpenCodeSkillEntries,
-  });
-  const loadedSkills = selectedOpenCodeSkillEntries
+  const loadedSkills = openCodeSkillEntries
+    .filter((entry) => desiredOpenCodeSkillNames.includes(entry.key))
     .map((entry) => ({
       key: entry.key,
       runtimeName: entry.runtimeName,
       name: entry.name ?? null,
       description: entry.description ?? null,
     }));
+  const managedOpenCodeSkillsDir = resolveManagedOpenCodeSkillsDir(managedHome);
   await ensureOpenCodeSkillsInjected(
     onLog,
-    resolveManagedOpenCodeSkillsDir(managedHome),
+    managedOpenCodeSkillsDir,
     selectedOpenCodeSkillEntries,
     desiredOpenCodeSkillNames,
+  );
+  const selectedSkillPrompt = await renderSelectedOpenCodeSkillPrompt(
+    onLog,
+    managedOpenCodeSkillsDir,
+    selectedOpenCodeSkillEntries,
   );
   const runtimeEnv = Object.fromEntries(
     Object.entries(await ensureLocalCliCredentialShimsInPath({
@@ -314,11 +341,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     })).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
   await ensureCommandResolvable(command, cwd, runtimeEnv);
-
-  await onLog(
-    "stdout",
-    `[rudder] Using operator HOME "${operatorHome}" with Rudder enabled skills injected into the prompt.\n`,
-  );
 
   validateOpenCodeModelConfig({ model });
 
@@ -422,7 +444,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
   const prompt = joinPromptSections([
     instructionsPrefix,
-    rudderSkillsPromptSection,
+    selectedSkillPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,
@@ -430,15 +452,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
-    rudderSkillChars: rudderSkillsPromptSection.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
 
   const buildArgs = (resumeSessionId: string | null) => {
-    const args = ["run", "--format", "json", "--dir", cwd];
-    if (!extraArgs.includes("--pure")) args.push("--pure");
+    const args = ["run", "--pure", "--format", "json", "--dir", cwd];
     if (resumeSessionId) args.push("--session", resumeSessionId);
     if (model) args.push("--model", model);
     if (variant) args.push("--variant", variant);

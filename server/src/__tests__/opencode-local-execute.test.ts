@@ -25,6 +25,7 @@ const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const payload = {
   argv: process.argv.slice(2),
   home: process.env.HOME || null,
+  userProfile: process.env.USERPROFILE || null,
   prompt: fs.readFileSync(0, "utf8"),
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
@@ -54,7 +55,7 @@ console.log(JSON.stringify({
 async function createSkillDir(root: string, name: string) {
   const skillDir = path.join(root, name);
   await fs.mkdir(skillDir, { recursive: true });
-  await fs.writeFile(path.join(skillDir, "SKILL.md"), `---\nname: ${name}\n---\n\n# ${name}\n`, "utf8");
+  await fs.writeFile(path.join(skillDir, "SKILL.md"), `---\nname: ${name}\n---\n`, "utf8");
   return skillDir;
 }
 
@@ -136,13 +137,10 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     const capturePath = path.join(root, "capture.json");
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
-    const skillsRoot = path.join(root, "skills");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer short handoffs.\n", "utf8");
-    const enabledSkillDir = await createSkillDir(skillsRoot, "enabled-skill");
-    const disabledSkillDir = await createSkillDir(skillsRoot, "disabled-skill");
     await writeFakeOpenCodeCommand(commandPath);
 
     const previousHome = process.env.HOME;
@@ -176,13 +174,6 @@ describe("opencode execute", { timeout: 20_000 }, () => {
             ...clearInheritedGitIdentityEnv,
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
-          rudderRuntimeSkills: [
-            { key: "rudder/enabled-skill", runtimeName: "enabled-skill", source: enabledSkillDir },
-            { key: "rudder/disabled-skill", runtimeName: "disabled-skill", source: disabledSkillDir },
-          ],
-          rudderSkillSync: {
-            desiredSkills: ["rudder/enabled-skill"],
-          },
           instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
@@ -207,20 +198,18 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
         argv: string[];
         home: string | null;
+        userProfile: string | null;
         prompt: string;
         rudderEnvKeys: string[];
         gitIdentity: GitIdentityCapture;
       };
       expectPreparedGitConfigCapture(capture);
       expect(capture.home).toBe(root);
-      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
-      expect(capture.argv).toContain("--pure");
+      expect(capture.userProfile).toBe(process.env.USERPROFILE ?? root);
+      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--pure", "--format", "json", "--dir", workspace]));
       expect(capture.argv).not.toContain("--dangerously-skip-permissions");
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
-      expect(capture.prompt).toContain("Rudder enabled skills:");
-      expect(capture.prompt).toContain("## enabled-skill");
-      expect(capture.prompt).not.toContain("## disabled-skill");
       expect(capture.rudderEnvKeys).toEqual(expect.arrayContaining([
         "RUDDER_PROJECT_LIBRARY_PATH",
         "RUDDER_PROJECT_LIBRARY_ROOT",
@@ -247,7 +236,9 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     await writeFakeOpenCodeCommand(commandPath);
 
     const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
     process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
 
     try {
       await execute({
@@ -282,11 +273,13 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       });
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { argv: string[] };
-      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--pure", "--format", "json", "--dir", workspace]));
       expect(capture.argv).toContain("--dangerously-skip-permissions");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });
@@ -300,7 +293,9 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     await writeFakeOpenCodeCommand(commandPath);
 
     const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
     process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
 
     try {
       const result = await execute({
@@ -340,6 +335,121 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("injects organization-library runtime skills into the OpenCode prompt from the managed sidecar", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-execute-runtime-skill-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    const capturePath = path.join(root, "capture.json");
+    const runtimeSkillsRoot = path.join(root, "runtime-skills");
+    const operatorSkillPath = path.join(root, ".claude", "skills", "operator-skill", "SKILL.md");
+    const managedSkillsHome = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "opencode-home",
+      ".claude",
+      "skills",
+    );
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(operatorSkillPath), { recursive: true });
+    await fs.writeFile(operatorSkillPath, "---\nname: operator-skill\n---\n", "utf8");
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const rudderDir = await createSkillDir(runtimeSkillsRoot, "rudder");
+    const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    const previousRudderHome = process.env.RUDDER_HOME;
+    const previousRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+    process.env.RUDDER_HOME = path.join(root, ".rudder");
+    process.env.RUDDER_INSTANCE_ID = "default";
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-runtime-skill",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          rudderRuntimeSkills: [
+            {
+              name: "rudder",
+              source: rudderDir,
+            },
+            {
+              name: "ascii-heart",
+              source: asciiHeartDir,
+            },
+          ],
+          rudderSkillSync: {
+            desiredSkills: ["ascii-heart"],
+          },
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        argv: string[];
+        home: string | null;
+        prompt: string;
+      };
+      expect(capture.home).toBe(root);
+      expect(capture.argv).toContain("--pure");
+      expect((await fs.lstat(path.join(managedSkillsHome, "ascii-heart"))).isSymbolicLink()).toBe(true);
+      expect(await fs.realpath(path.join(managedSkillsHome, "ascii-heart"))).toBe(
+        await fs.realpath(asciiHeartDir),
+      );
+      await expect(fs.lstat(path.join(root, ".claude", "skills", "ascii-heart"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(capture.prompt).toContain("# Enabled Rudder Skills");
+      expect(capture.prompt).toContain("## Skill: ascii-heart");
+      expect(capture.prompt).not.toContain("operator-skill");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
+      if (previousRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousRudderInstanceId;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

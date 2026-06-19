@@ -41,6 +41,13 @@ import { resolveClaudeDesiredSkillNames } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUDDER_INSTANCE_ID = "default";
+const CLAUDE_PROTECTED_ENV_KEYS = new Set([
+  "AGENT_HOME",
+  "HOME",
+  "RUDDER_AGENT_ROOT",
+  "RUDDER_OPERATOR_HOME",
+  "USERPROFILE",
+]);
 const SHARED_CLAUDE_HOME_ENTRIES = [
   ".claude.json",
   ".config/claude",
@@ -50,14 +57,6 @@ const SHARED_CLAUDE_HOME_ENTRIES = [
 const SHARED_CLAUDE_DOTDIR_ENTRIES = [
   "settings.json",
 ] as const;
-const CLAUDE_PROTECTED_ENV_KEYS = new Set([
-  "AGENT_HOME",
-  "CLAUDE_CONFIG_DIR",
-  "HOME",
-  "RUDDER_AGENT_ROOT",
-  "RUDDER_OPERATOR_HOME",
-  "USERPROFILE",
-]);
 
 /**
  * Create a tmpdir with `.claude/skills/` containing symlinks to skills from
@@ -366,13 +365,14 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   }
 
   for (const [key, value] of Object.entries(envConfig)) {
-    if (typeof value === "string" && !CLAUDE_PROTECTED_ENV_KEYS.has(key)) env[key] = value;
+    if (CLAUDE_PROTECTED_ENV_KEYS.has(key)) continue;
+    if (typeof value === "string") env[key] = value;
   }
 
-  const sourceEnv = { ...process.env, ...env };
+  const sourceEnv = { ...process.env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
   const managedHome = await prepareManagedClaudeHome(
-    sourceEnv,
+    { ...sourceEnv, ...env },
     input.onLog ?? (async () => {}),
     agent.orgId,
   );
@@ -392,8 +392,8 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     env.RUDDER_API_KEY = authToken;
   }
   env.HOME = operatorHome;
-  if (process.platform === "win32") env.USERPROFILE = operatorHome;
-  env.CLAUDE_CONFIG_DIR = path.join(managedHome, ".claude");
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.RUDDER_CLAUDE_HOME = managedHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   applyGitIdentityPreparationEnv(env, preparedGitIdentity);
   applyGitCredentialHelperPolicyEnv(env);
@@ -408,11 +408,6 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
-
-  await (input.onLog ?? (async () => {}))(
-    "stdout",
-    `[rudder] Using operator HOME "${operatorHome}" with isolated CLAUDE_CONFIG_DIR "${env.CLAUDE_CONFIG_DIR}".\n`,
-  );
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);

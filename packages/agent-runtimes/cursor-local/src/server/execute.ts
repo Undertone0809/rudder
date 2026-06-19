@@ -1,4 +1,4 @@
-import { inferOpenAiCompatibleBiller, resolveOrganizationStorageKey, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asNumber,
@@ -18,7 +18,6 @@ import {
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeMaintainerOnlySkillSymlinks,
-  renderRudderSkillPromptSection,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -35,9 +34,9 @@ import { DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
 import { isCursorUnknownSessionError, parseCursorJsonl } from "./parse.js";
+import { resolveManagedCursorHomeDir } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_RUDDER_INSTANCE_ID = "default";
 const CURSOR_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
@@ -139,12 +138,6 @@ function resolveSharedCursorHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
 
-function resolveManagedCursorHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
-  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
-  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", resolveOrganizationStorageKey(orgId), "cursor-home");
-}
-
 function resolveManagedCursorSkillsDir(homeDir: string): string {
   return path.join(homeDir, ".cursor", "skills");
 }
@@ -169,7 +162,7 @@ async function prepareManagedCursorHome(
   orgId: string,
 ): Promise<string> {
   const sourceHome = resolveSharedCursorHomeDir(env);
-  const targetHome = resolveManagedCursorHomeDir(env, orgId);
+  const targetHome = resolveManagedCursorHomeDir({ env }, orgId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(resolveManagedCursorSkillsDir(targetHome), { recursive: true });
@@ -179,7 +172,7 @@ async function prepareManagedCursorHome(
 
   await onLog(
     "stdout",
-    `[rudder] Prepared Rudder-managed Cursor sidecar "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Using Rudder-managed Cursor home "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
 }
@@ -251,6 +244,35 @@ export async function ensureCursorSkillsInjected(
   }
 }
 
+async function renderSelectedCursorSkillPrompt(
+  onLog: AgentRuntimeExecutionContext["onLog"],
+  skillsHome: string,
+  skillsEntries: Array<{ key: string; runtimeName: string }>,
+): Promise<string> {
+  const sections: string[] = [];
+  for (const entry of skillsEntries) {
+    const skillPath = path.join(skillsHome, entry.runtimeName, "SKILL.md");
+    const content = await fs.readFile(skillPath, "utf8").catch(async (err) => {
+      await onLog(
+        "stderr",
+        `[rudder] Failed to load Cursor skill "${entry.key}" from ${skillPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      return "";
+    });
+    if (!content.trim()) continue;
+    sections.push(`## Skill: ${entry.key}\n\n${content.trim()}`);
+  }
+  if (sections.length === 0) return "";
+  return [
+    "# Enabled Rudder Skills",
+    "",
+    "These skill instructions come only from this agent's Rudder Skills enabled selections.",
+    "Do not load Cursor, operator-home, project, bundled, or vendor-default skills unless Rudder enabled them for this agent.",
+    "",
+    sections.join("\n\n"),
+  ].join("\n");
+}
+
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 
@@ -287,16 +309,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   const envConfig = parseObject(config.env);
+  const envConfigStrings = Object.fromEntries(
+    Object.entries(envConfig).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string" && !CURSOR_PROTECTED_ENV_KEYS.has(entry[0]),
+    ),
+  );
   const sourceEnv = {
     ...process.env,
-    ...Object.fromEntries(
-      Object.entries(envConfig).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
-    ),
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedCursorHome(sourceEnv, onLog, agent.orgId);
+  const managedHome = await prepareManagedCursorHome({ ...sourceEnv, ...envConfigStrings }, onLog, agent.orgId);
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -307,17 +329,17 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const cursorSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredCursorSkillNames = resolveRudderDesiredSkillNames(config, cursorSkillEntries);
   const selectedCursorSkillEntries = cursorSkillEntries.filter((entry) => desiredCursorSkillNames.includes(entry.key));
-  const rudderSkillsPromptSection = await renderRudderSkillPromptSection({
-    selectedEntries: selectedCursorSkillEntries,
-  });
+  const managedCursorSkillsDir = resolveManagedCursorSkillsDir(managedHome);
   await ensureCursorSkillsInjected(onLog, {
     skillsEntries: selectedCursorSkillEntries,
-    skillsHome: resolveManagedCursorSkillsDir(managedHome),
+    skillsHome: managedCursorSkillsDir,
   });
+  const selectedSkillPrompt = await renderSelectedCursorSkillPrompt(onLog, managedCursorSkillsDir, selectedCursorSkillEntries);
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.HOME = operatorHome;
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
   env.RUDDER_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -394,7 +416,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (typeof v === "string") env[k] = v;
   }
   env.HOME = operatorHome;
-  if (process.platform === "win32") env.USERPROFILE = operatorHome;
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -425,11 +447,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
-
-  await onLog(
-    "stdout",
-    `[rudder] Using operator HOME "${operatorHome}" with Rudder enabled skills injected into the prompt.\n`,
-  );
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);
@@ -536,7 +553,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const rudderEnvNote = renderRudderEnvNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
-    rudderSkillsPromptSection,
+    selectedSkillPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     rudderEnvNote,
@@ -545,7 +562,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
-    rudderSkillChars: rudderSkillsPromptSection.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     runtimeNoteChars: rudderEnvNote.length,

@@ -821,31 +821,33 @@ describe("MarkdownBody", () => {
     expect(entityPreviewApiMocks.getLibraryEntry).toHaveBeenCalledWith("org-1", "entry-123");
   });
 
-  it("renders issue mentions with status metadata using the issue status icon", () => {
+  it("renders issue mentions with status metadata as prose links without an inline status control", () => {
     markdownMentionsMock.mentions = [{
       id: "issue:issue-789",
       name: "PAP-123 auth flow",
       kind: "issue",
       issueId: "issue-789",
       issueIdentifier: "PAP-123",
-      issueStatus: "in_review",
+      issueStatus: "done",
     }];
 
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <MarkdownBody>
-          {`[@PAP-123 auth flow](${buildIssueMentionHref("issue-789", "PAP-123", null, "in_review")})`}
+          {`- 当前自动化列表里已经完成 [@PAP-123 auth flow](${buildIssueMentionHref("issue-789", "PAP-123", null, "done")})，继续检查后续正文排版。`}
         </MarkdownBody>
       </ThemeProvider>,
     );
 
     expect(html).toContain('href="/issues/issue-789"');
     expect(html).toContain('data-mention-kind="issue"');
-    expect(html).toContain('data-mention-status="in_review"');
+    expect(html).toContain('data-mention-status="done"');
     expect(html).not.toContain('title="Open PAP-123 auth flow"');
-    expect(html).toContain("rudder-mention-chip--with-status-icon");
-    expect(html).toContain('data-slot="issue-status-icon"');
-    expect(html).toContain('data-status="in_review"');
+    expect(html).not.toContain("rudder-mention-chip--with-status-icon");
+    expect(html).not.toContain('data-slot="issue-status-icon"');
+    expect(html).not.toContain('data-status="done"');
+    expect(html).toContain("当前自动化列表里已经完成");
+    expect(html).toContain("继续检查后续正文排版");
   });
 
   it("loads an issue preview from the rendered mention chip on focus", async () => {

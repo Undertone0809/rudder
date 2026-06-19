@@ -271,14 +271,15 @@ Rudder does not store or inject a separate confirmed Git identity. If no safe id
 `git commit` fails with Git's auto-detection-disabled error instead of creating a `*@*.local`
 fallback commit.
 
-Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state. Local AI runtimes keep
-child `HOME` as the operator home so host CLI auth remains available. Provider-specific runtime
-state and Rudder enabled skills are isolated with the strongest supported mechanism for each adapter:
-Codex uses managed `CODEX_HOME`, Claude uses managed `CLAUDE_CONFIG_DIR` plus an ephemeral `--add-dir`,
-Pi uses managed `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` with `--no-skills --skill`, and
-Cursor, Gemini, and OpenCode receive Rudder enabled skills through an explicit prompt section because
-their local CLIs do not currently expose a reliable per-run native skills directory while preserving
-operator `HOME`.
+Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state. Codex, Claude, Pi,
+Gemini, Cursor, and OpenCode local runs keep child `HOME` as the operator home and use
+Rudder-managed provider sidecars for runtime state and selected skills. Runtimes with a verified
+provider allowlist surface use it directly (`CODEX_HOME`, Claude `--add-dir`, Pi `--skill`, and
+Gemini `GEMINI_CLI_HOME` plus `--extensions ""`). OpenCode runs with `--pure` and injects selected
+Rudder `SKILL.md` content through Rudder's prompt path because its CLI does not expose a verified
+skill-directory allowlist. Cursor also uses prompt injection for selected Rudder `SKILL.md` content;
+native Cursor rule/plugin discovery is a known limitation until Cursor exposes a verifiable
+allowlist/disable surface.
 
 Before asking an agent to commit in a new local workspace, set a safe repo-local identity when possible:
 

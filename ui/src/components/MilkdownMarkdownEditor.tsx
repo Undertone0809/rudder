@@ -284,6 +284,19 @@ function applyMentionStyleProperties(element: HTMLElement, mention: ParsedMentio
   }
 }
 
+function applyMentionStatusProperties(element: HTMLElement, mention: ParsedMentionChip) {
+  if (mention.kind === "issue" && mention.status) {
+    element.dataset.mentionStatus = mention.status;
+    element.classList.add("rudder-mention-chip--with-status-icon");
+    return;
+  }
+  if (mention.kind === "issue") {
+    return;
+  }
+  delete element.dataset.mentionStatus;
+  element.classList.remove("rudder-mention-chip--with-status-icon");
+}
+
 function isMilkdownTokenWrapper(element: HTMLElement) {
   return element instanceof HTMLAnchorElement
     && Array.from(element.children).some((child) => (
@@ -321,6 +334,7 @@ export function refreshMilkdownMentionTokenStyles(root: HTMLElement | null, ment
       applyMentionChipDecoration(element, mention);
       element.dataset.mentionHref = href;
     }
+    applyMentionStatusProperties(element, mention);
     applyMentionStyleProperties(element, mention);
   }
 }

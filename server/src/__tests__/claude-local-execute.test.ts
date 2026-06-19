@@ -22,14 +22,11 @@ const addDir = addDirIndex >= 0 ? process.argv[addDirIndex + 1] : null;
 const appendSystemPromptFileIndex = process.argv.indexOf("--append-system-prompt-file");
 const appendSystemPromptFile = appendSystemPromptFileIndex >= 0 ? process.argv[appendSystemPromptFileIndex + 1] : null;
 const addDirSkillsPath = addDir ? path.join(addDir, ".claude", "skills") : null;
-const managedClaudeSettingsPath = process.env.CLAUDE_CONFIG_DIR
-  ? path.join(process.env.CLAUDE_CONFIG_DIR, "settings.json")
+const managedClaudeSettingsPath = process.env.RUDDER_CLAUDE_HOME
+  ? path.join(process.env.RUDDER_CLAUDE_HOME, ".claude", "settings.json")
   : null;
 const payload = {
   argv: process.argv.slice(2),
-  home: process.env.HOME || null,
-  userProfile: process.env.USERPROFILE || null,
-  claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || null,
   prompt: fs.readFileSync(0, "utf8"),
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
@@ -86,6 +83,19 @@ type LogEntry = {
   chunk: string;
 };
 
+function setOperatorHomeForTest(home: string) {
+  const previousHome = process.env.HOME;
+  const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+  process.env.HOME = home;
+  process.env.RUDDER_OPERATOR_HOME = home;
+  return () => {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+    else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+  };
+}
+
 describe("claude execute", { timeout: 20_000 }, () => {
   it("runs the current Claude auth login subcommand", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-login-"));
@@ -95,10 +105,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
     await fs.mkdir(workspace, { recursive: true });
     await writeFakeClaudeCommand(commandPath);
 
-    const previousHome = process.env.HOME;
-    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
-    process.env.HOME = root;
-    process.env.RUDDER_OPERATOR_HOME = root;
+    const restoreEnv = setOperatorHomeForTest(root);
 
     try {
       const result = await runClaudeLogin({
@@ -125,16 +132,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       };
       expect(capture.argv).toEqual(["auth", "login"]);
     } finally {
-      if (previousHome === undefined) {
-        delete process.env.HOME;
-      } else {
-        process.env.HOME = previousHome;
-      }
-      if (previousOperatorHome === undefined) {
-        delete process.env.RUDDER_OPERATOR_HOME;
-      } else {
-        process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
-      }
+      restoreEnv();
       await fs.rm(root, { recursive: true, force: true });
     }
   });
@@ -156,10 +154,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer concise status.\n", "utf8");
     await writeFakeClaudeCommand(commandPath);
 
-    const previousHome = process.env.HOME;
-    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
-    process.env.HOME = root;
-    process.env.RUDDER_OPERATOR_HOME = root;
+    const restoreEnv = setOperatorHomeForTest(root);
 
     try {
       const logs: LogEntry[] = [];
@@ -227,15 +222,11 @@ describe("claude execute", { timeout: 20_000 }, () => {
         }),
       );
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
-        home: string | null;
-        claudeConfigDir: string | null;
         appendedSystemPrompt: string | null;
         rudderEnvKeys: string[];
         gitIdentity: GitIdentityCapture;
       };
       expectPreparedGitConfigCapture(capture);
-      expect(capture.home).toBe(root);
-      expect(capture.claudeConfigDir).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/.claude");
       expect(capture.appendedSystemPrompt).not.toBeNull();
       const systemPrompt = capture.appendedSystemPrompt ?? "";
       expect(systemPrompt).toContain("# Agent Instructions");
@@ -254,16 +245,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_ROOT");
       expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_PATH");
     } finally {
-      if (previousHome === undefined) {
-        delete process.env.HOME;
-      } else {
-        process.env.HOME = previousHome;
-      }
-      if (previousOperatorHome === undefined) {
-        delete process.env.RUDDER_OPERATOR_HOME;
-      } else {
-        process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
-      }
+      restoreEnv();
       await fs.rm(root, { recursive: true, force: true });
     }
   });
@@ -278,10 +260,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
     await fs.writeFile(imagePath, "png-bytes", "utf8");
     await writeFakeClaudeCommand(commandPath);
 
-    const previousHome = process.env.HOME;
-    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
-    process.env.HOME = root;
-    process.env.RUDDER_OPERATOR_HOME = root;
+    const restoreEnv = setOperatorHomeForTest(root);
 
     try {
       let commandNotes: string[] = [];
@@ -340,11 +319,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(capture.prompt).toContain(imagePath);
       expect(commandNotes).toContain("Provided 1 local image attachment path in the prompt for Claude Code inspection.");
     } finally {
-      if (previousHome === undefined) {
-        delete process.env.HOME;
-      } else {
-        process.env.HOME = previousHome;
-      }
+      restoreEnv();
       await fs.rm(root, { recursive: true, force: true });
     }
   });
@@ -360,10 +335,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
     await fs.writeFile(path.join(externalSkillRoot, "SKILL.md"), "---\nname: build-advisor\n---\n", "utf8");
     await writeFakeClaudeCommand(commandPath);
 
-    const previousHome = process.env.HOME;
-    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
-    process.env.HOME = root;
-    process.env.RUDDER_OPERATOR_HOME = root;
+    const restoreEnv = setOperatorHomeForTest(root);
 
     try {
       const result = await execute({
@@ -411,11 +383,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       };
       expect(capture.addDirSkillEntries).toContain("build-advisor");
     } finally {
-      if (previousHome === undefined) {
-        delete process.env.HOME;
-      } else {
-        process.env.HOME = previousHome;
-      }
+      restoreEnv();
       await fs.rm(root, { recursive: true, force: true });
     }
   });
@@ -442,10 +410,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
     await fs.writeFile(path.join(sharedSkillsDir, "user-skill.txt"), "shared skill marker", "utf8");
     await writeFakeClaudeCommand(commandPath);
 
-    const previousHome = process.env.HOME;
-    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
-    process.env.HOME = root;
-    process.env.RUDDER_OPERATOR_HOME = root;
+    const restoreEnv = setOperatorHomeForTest(root);
 
     try {
       const result = await execute({
@@ -479,29 +444,16 @@ describe("claude execute", { timeout: 20_000 }, () => {
 
       expect(result.exitCode).toBe(0);
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
-        home: string | null;
-        claudeConfigDir: string | null;
         managedClaudeSettingsPath: string | null;
         managedClaudeSettings: string | null;
         addDirSkillEntries: string[];
       };
-      expect(capture.home).toBe(root);
-      expect(capture.claudeConfigDir).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/.claude");
       expect(capture.managedClaudeSettingsPath).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/.claude/settings.json");
       expect(capture.managedClaudeSettings).toContain("\"ANTHROPIC_API_KEY\":\"test-key\"");
       expect(capture.managedClaudeSettings).toContain("\"ANTHROPIC_BASE_URL\":\"https://example.invalid/anthropic\"");
       expect(capture.addDirSkillEntries).not.toContain("user-skill.txt");
     } finally {
-      if (previousHome === undefined) {
-        delete process.env.HOME;
-      } else {
-        process.env.HOME = previousHome;
-      }
-      if (previousOperatorHome === undefined) {
-        delete process.env.RUDDER_OPERATOR_HOME;
-      } else {
-        process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
-      }
+      restoreEnv();
       await fs.rm(path.join(root, ".rudder"), { recursive: true, force: true });
       await fs.rm(root, { recursive: true, force: true });
     }

@@ -1,4 +1,4 @@
-import { inferOpenAiCompatibleBiller, resolveOrganizationStorageKey, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asNumber,
@@ -33,11 +33,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
 import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
+import { resolveManagedPiHomeDir } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_RUDDER_INSTANCE_ID = "default";
 const MAX_PI_LOG_TEXT_CHARS = 4_000;
 const MAX_PI_RESULT_STDOUT_BYTES = 64 * 1024;
+const PI_PROTECTED_ENV_KEYS = new Set([
+  "AGENT_HOME",
+  "HOME",
+  "RUDDER_AGENT_ROOT",
+  "RUDDER_OPERATOR_HOME",
+  "USERPROFILE",
+]);
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -243,12 +250,6 @@ function resolveSharedPiHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
 
-function resolveManagedPiHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
-  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
-  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", resolveOrganizationStorageKey(orgId), "pi-home");
-}
-
 function resolvePiRoot(homeDir: string): string {
   return path.join(homeDir, ".pi");
 }
@@ -295,7 +296,7 @@ async function prepareManagedPiHome(
   orgId: string,
 ): Promise<string> {
   const sourceHome = resolveSharedPiHomeDir(env);
-  const targetHome = resolveManagedPiHomeDir(env, orgId);
+  const targetHome = resolveManagedPiHomeDir({ env }, orgId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(resolvePiSkillsDir(targetHome), { recursive: true });
@@ -405,16 +406,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   const envConfig = parseObject(config.env);
+  const envConfigStrings = Object.fromEntries(
+    Object.entries(envConfig).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string" && !PI_PROTECTED_ENV_KEYS.has(entry[0]),
+    ),
+  );
   const sourceEnv = {
     ...process.env,
-    ...Object.fromEntries(
-      Object.entries(envConfig).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
-    ),
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedPiHome(sourceEnv, onLog, agent.orgId);
+  const managedHome = await prepareManagedPiHome({ ...sourceEnv, ...envConfigStrings }, onLog, agent.orgId);
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -438,6 +439,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.HOME = operatorHome;
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.PI_CODING_AGENT_DIR = path.join(managedHome, ".pi", "agent");
+  env.PI_CODING_AGENT_SESSION_DIR = sessionsDir;
   env.RUDDER_RUN_ID = runId;
   
   const wakeTaskId =
@@ -489,17 +493,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (workspaceHints.length > 0) env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
 
   for (const [key, value] of Object.entries(envConfig)) {
-    if (
-      key === "HOME" ||
-      key === "USERPROFILE" ||
-      key === "RUDDER_OPERATOR_HOME" ||
-      key === "PI_CODING_AGENT_DIR" ||
-      key === "PI_CODING_AGENT_SESSION_DIR"
-    ) continue;
+    if (PI_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
   env.HOME = operatorHome;
-  if (process.platform === "win32") env.USERPROFILE = operatorHome;
+  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
   env.PI_CODING_AGENT_DIR = path.join(managedHome, ".pi", "agent");
   env.PI_CODING_AGENT_SESSION_DIR = sessionsDir;
   env.RUDDER_OPERATOR_HOME = operatorHome;
@@ -676,9 +674,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     args.push("--tools", "read,bash,edit,write,grep,find,ls");
     args.push("--session", sessionFile);
 
-    args.push("--no-skills");
-
-    // Add only Rudder-selected skills after disabling Pi's default skill discovery.
+    // Add Rudder skills directory so Pi can load the rudder skill
     args.push("--skill", skillsDir);
 
     if (extraArgs.length > 0) args.push(...extraArgs);

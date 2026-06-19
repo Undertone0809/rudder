@@ -5,7 +5,12 @@ description: Use Rudder control-plane best practices and CLI-backed references f
 
 # Rudder Skill
 
-This is the control-plane practice skill for agents working under Rudder. 
+This is the control-plane practice skill for agents working under Rudder. Rudder
+work is not only "run a command"; it is a governed loop:
+
+```text
+Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+```
 
 Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow for
 timed wakeups, assignment wakes, reviewer wakes, mention wakes, passive

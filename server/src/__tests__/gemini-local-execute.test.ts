@@ -19,6 +19,8 @@ const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const payload = {
   argv: process.argv.slice(2),
   home: process.env.HOME || null,
+  userProfile: process.env.USERPROFILE || null,
+  geminiCliHome: process.env.GEMINI_CLI_HOME || null,
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
     .sort(),
@@ -51,16 +53,11 @@ console.log(JSON.stringify({
 type CapturePayload = {
   argv: string[];
   home: string | null;
+  userProfile: string | null;
+  geminiCliHome: string | null;
   rudderEnvKeys: string[];
   gitIdentity: GitIdentityCapture;
 };
-
-async function createSkillDir(root: string, name: string) {
-  const skillDir = path.join(root, name);
-  await fs.mkdir(skillDir, { recursive: true });
-  await fs.writeFile(path.join(skillDir, "SKILL.md"), `---\nname: ${name}\n---\n\n# ${name}\n`, "utf8");
-  return skillDir;
-}
 
 describe("gemini execute", { timeout: 20_000 }, () => {
   it("passes prompt via --prompt and injects rudder env vars", async () => {
@@ -68,15 +65,25 @@ describe("gemini execute", { timeout: 20_000 }, () => {
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "gemini");
     const capturePath = path.join(root, "capture.json");
+    const operatorSkillPath = path.join(root, ".gemini", "skills", "operator-skill", "SKILL.md");
+    const operatorExtensionPath = path.join(root, ".gemini", "extensions", "operator-extension", "gemini-extension.json");
+    const operatorHookPath = path.join(root, ".gemini", "hooks", "operator-hook.json");
+    const operatorSettingsPath = path.join(root, ".gemini", "settings.json");
+    const operatorCredentialsPath = path.join(root, ".gemini", "oauth_creds.json");
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
-    const skillsRoot = path.join(root, "skills");
     await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(operatorSkillPath), { recursive: true });
+    await fs.mkdir(path.dirname(operatorExtensionPath), { recursive: true });
+    await fs.mkdir(path.dirname(operatorHookPath), { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(operatorSkillPath, "---\nname: operator-skill\n---\n", "utf8");
+    await fs.writeFile(operatorExtensionPath, "{\"name\":\"operator-extension\"}\n", "utf8");
+    await fs.writeFile(operatorHookPath, "{\"name\":\"operator-hook\"}\n", "utf8");
+    await fs.writeFile(operatorSettingsPath, "{\"mcpServers\":{\"operator\":{}}}\n", "utf8");
+    await fs.writeFile(operatorCredentialsPath, "{\"refresh_token\":\"operator\"}\n", "utf8");
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Use concise updates.\n", "utf8");
-    const enabledSkillDir = await createSkillDir(skillsRoot, "enabled-skill");
-    const disabledSkillDir = await createSkillDir(skillsRoot, "disabled-skill");
     await writeFakeGeminiCommand(commandPath);
 
     const previousHome = process.env.HOME;
@@ -109,13 +116,6 @@ describe("gemini execute", { timeout: 20_000 }, () => {
             ...clearInheritedGitIdentityEnv,
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
-          rudderRuntimeSkills: [
-            { key: "rudder/enabled-skill", runtimeName: "enabled-skill", source: enabledSkillDir },
-            { key: "rudder/disabled-skill", runtimeName: "disabled-skill", source: disabledSkillDir },
-          ],
-          rudderSkillSync: {
-            desiredSkills: ["rudder/enabled-skill"],
-          },
           instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
@@ -139,20 +139,30 @@ describe("gemini execute", { timeout: 20_000 }, () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expectPreparedGitConfigCapture(capture);
+      const managedGeminiHome = path.join(
+        root,
+        ".rudder",
+        "instances",
+        "default",
+        "organizations",
+        "organization-1",
+        "gemini-home",
+      );
       expect(capture.home).toBe(root);
+      expect(capture.userProfile).toBe(process.env.USERPROFILE ?? root);
+      expect(capture.geminiCliHome).toBe(managedGeminiHome);
       expect(capture.argv).toContain("--output-format");
       expect(capture.argv).toContain("stream-json");
       expect(capture.argv).toContain("--prompt");
       expect(capture.argv).toContain("--skip-trust");
       expect(capture.argv).toContain("--approval-mode");
       expect(capture.argv).toContain("yolo");
+      expect(capture.argv).toContain("--extensions");
+      expect(capture.argv[capture.argv.indexOf("--extensions") + 1]).toBe("");
       const promptFlagIndex = capture.argv.indexOf("--prompt");
       const promptArg = promptFlagIndex >= 0 ? capture.argv[promptFlagIndex + 1] : "";
       expect(promptArg).toContain("# Agent Instructions");
       expect(promptArg).toContain("# Tacit Memory");
-      expect(promptArg).toContain("Rudder enabled skills:");
-      expect(promptArg).toContain("## enabled-skill");
-      expect(promptArg).not.toContain("## disabled-skill");
       expect(promptArg).toContain("Follow the rudder heartbeat.");
       expect(promptArg).toContain("Rudder runtime note:");
       expect(capture.rudderEnvKeys).toEqual(
@@ -173,6 +183,21 @@ describe("gemini execute", { timeout: 20_000 }, () => {
       expect(invocationPrompt).toContain("run_shell_command");
       expect(invocationPrompt).toContain("rudder agent me --json");
       expect(result.question).toBeNull();
+      await expect(fs.lstat(path.join(root, ".gemini", "skills", "rudder"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(fs.lstat(path.join(managedGeminiHome, ".gemini", "extensions"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(fs.lstat(path.join(managedGeminiHome, ".gemini", "hooks"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(fs.lstat(path.join(managedGeminiHome, ".gemini", "settings.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(await fs.realpath(path.join(managedGeminiHome, ".gemini", "oauth_creds.json"))).toBe(
+        await fs.realpath(operatorCredentialsPath),
+      );
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;
@@ -197,7 +222,9 @@ describe("gemini execute", { timeout: 20_000 }, () => {
     await writeFakeGeminiCommand(commandPath);
 
     const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
     process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
 
     try {
       await execute({
@@ -218,6 +245,8 @@ describe("gemini execute", { timeout: 20_000 }, () => {
       expect(capture.argv).toContain("--skip-trust");
       expect(capture.argv).toContain("--approval-mode");
       expect(capture.argv).toContain("yolo");
+      expect(capture.argv).toContain("--extensions");
+      expect(capture.argv[capture.argv.indexOf("--extensions") + 1]).toBe("");
       expect(capture.argv).not.toContain("--policy");
       expect(capture.argv).not.toContain("--allow-all");
       expect(capture.argv).not.toContain("--allow-read");
@@ -226,6 +255,11 @@ describe("gemini execute", { timeout: 20_000 }, () => {
         delete process.env.HOME;
       } else {
         process.env.HOME = previousHome;
+      }
+      if (previousOperatorHome === undefined) {
+        delete process.env.RUDDER_OPERATOR_HOME;
+      } else {
+        process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
       }
       await fs.rm(root, { recursive: true, force: true });
     }

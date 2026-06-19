@@ -37,9 +37,8 @@ Notes:
 - OpenCode supports multiple providers and models. Use \
   \`opencode models\` to list available options in provider/model format.
 - Rudder requires an explicit \`model\` value for \`opencode_local\` agents.
-- Rudder injects only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page into the run prompt.
-- Runs are executed with: opencode run --format json --dir <cwd> ...
-- Rudder adds --pure by default so OpenCode does not load external plugins unless explicitly overridden by future runtime support.
+- OpenCode CLI currently exposes plugin loading and --pure but no verified skills-directory allowlist. Rudder runs OpenCode with --pure, links selected skills into a Rudder-managed OpenCode sidecar, then injects only those selected SKILL.md files into the prompt. Operator-home Claude/OpenCode skill directories are not used as runtime skill sources.
+- Runs are executed with: opencode run --pure --format json --dir <cwd> ...
 - Sessions are resumed with --session when stored session cwd matches current cwd.
 - dangerouslySkipPermissions is opt-in for OpenCode. New OpenCode agents do not inherit the global Claude-oriented dangerous permission default unless this field is explicitly true.
 - A zero-exit OpenCode run that writes files but emits no final text is marked degraded instead of reported as an empty successful Rudder result.

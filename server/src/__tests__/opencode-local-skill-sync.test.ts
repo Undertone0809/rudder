@@ -22,14 +22,19 @@ describe("opencode local skill sync", () => {
   const rudderSkillKey = "rudder/rudder";
   const cleanupDirs = new Set<string>();
 
+  function managedOpenCodeSkillsHome(home: string, orgId = "organization-1") {
+    return path.join(home, ".rudder", "instances", "default", "organizations", orgId, "opencode-home", ".claude", "skills");
+  }
+
   afterEach(async () => {
     await Promise.all(Array.from(cleanupDirs).map((dir) => fs.rm(dir, { recursive: true, force: true })));
     cleanupDirs.clear();
   });
 
-  it("reports configured Rudder skills for managed runtime injection on the next run", async () => {
+  it("reports configured Rudder skills and installs them into the OpenCode skills sidecar", async () => {
     const home = await makeTempDir("rudder-opencode-skill-sync-");
     cleanupDirs.add(home);
+    await createSkillDir(path.join(home, ".claude", "skills"), "operator-skill");
 
     const ctx = {
       agentId: "agent-1",
@@ -38,6 +43,7 @@ describe("opencode local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          RUDDER_HOME: path.join(home, ".rudder"),
         },
         rudderSkillSync: {
           desiredSkills: [rudderSkillKey],
@@ -46,16 +52,20 @@ describe("opencode local skill sync", () => {
     } as const;
 
     const before = await listOpenCodeSkills(ctx);
-    expect(before.mode).toBe("ephemeral");
+    expect(before.mode).toBe("persistent");
     expect(before.warnings).toEqual([]);
     expect(before.desiredSkills).toContain(rudderSkillKey);
-    expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("configured");
+    expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("missing");
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.description).toContain("CLI-backed references");
     expect(before.entries.find((entry) => entry.key === rudderSkillKey)?.originLabel).toBeUndefined();
+    expect(before.entries.some((entry) => entry.key === "operator-skill")).toBe(false);
 
     const after = await syncOpenCodeSkills(ctx, [rudderSkillKey]);
-    expect(after.mode).toBe("ephemeral");
-    expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("configured");
+    expect(after.mode).toBe("persistent");
+    const installedEntry = after.entries.find((entry) => entry.key === rudderSkillKey);
+    expect(installedEntry?.state).toBe("installed");
+    expect(installedEntry?.targetPath).toBe(path.join(managedOpenCodeSkillsHome(home), "rudder"));
+    expect((await fs.lstat(installedEntry?.targetPath ?? "")).isSymbolicLink()).toBe(true);
     await expect(fs.lstat(path.join(home, ".claude", "skills", "rudder"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -72,6 +82,7 @@ describe("opencode local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          RUDDER_HOME: path.join(home, ".rudder"),
         },
         rudderSkillSync: {
           desiredSkills: [rudderSkillKey],
@@ -84,6 +95,7 @@ describe("opencode local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          RUDDER_HOME: path.join(home, ".rudder"),
         },
         rudderSkillSync: {
           desiredSkills: [],
@@ -94,12 +106,14 @@ describe("opencode local skill sync", () => {
     const after = await syncOpenCodeSkills(clearedCtx, []);
     expect(after.desiredSkills).toEqual([]);
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("available");
-    await expect(fs.lstat(path.join(home, ".claude", "skills", "rudder"))).rejects.toMatchObject({
+    const targetPath = after.entries.find((entry) => entry.key === rudderSkillKey)?.targetPath ?? "";
+    expect(targetPath).toContain(managedOpenCodeSkillsHome(home));
+    await expect(fs.lstat(path.join(managedOpenCodeSkillsHome(home), "rudder"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
 
-  it("does not expose user-installed Claude-compatible skills as OpenCode Rudder entries", async () => {
+  it("does not surface operator-home Claude-compatible skills as runtime enablement entries", async () => {
     const home = await makeTempDir("rudder-opencode-user-skills-");
     cleanupDirs.add(home);
     await createSkillDir(path.join(home, ".claude", "skills"), "build-advisor");
@@ -111,14 +125,15 @@ describe("opencode local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          RUDDER_HOME: path.join(home, ".rudder"),
         },
       },
     });
 
-    expect(snapshot.entries.find((entry) => entry.key === "build-advisor")).toBeUndefined();
+    expect(snapshot.entries.some((entry) => entry.key === "build-advisor")).toBe(false);
   });
 
-  it("marks unknown desired OpenCode skills as missing instead of loading adapter-home skills", async () => {
+  it("treats explicitly enabled operator-home OpenCode skills as unavailable", async () => {
     const home = await makeTempDir("rudder-opencode-enabled-user-skills-");
     cleanupDirs.add(home);
     await createSkillDir(path.join(home, ".claude", "skills"), "build-advisor");
@@ -130,6 +145,7 @@ describe("opencode local skill sync", () => {
       config: {
         env: {
           HOME: home,
+          RUDDER_HOME: path.join(home, ".rudder"),
         },
         rudderSkillSync: {
           desiredSkills: ["build-advisor"],
@@ -137,7 +153,7 @@ describe("opencode local skill sync", () => {
       },
     }, ["build-advisor"]);
 
-    expect(snapshot.warnings).toContain('Desired skill "build-advisor" is not available from the Rudder skills directory.');
+    expect(snapshot.warnings).toEqual(['Desired skill "build-advisor" is not available from the Rudder skills directory.']);
     expect(snapshot.desiredSkills).toContain("build-advisor");
     expect(snapshot.entries).toContainEqual(expect.objectContaining({
       key: "build-advisor",
