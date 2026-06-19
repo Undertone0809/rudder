@@ -5,15 +5,21 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { agentsApi } from "../api/agents";
 import { AgentIntegrationsTab, getFeishuIntegrationState } from "./AgentDetail.integrations";
+
+const mockWindowOpen = vi.fn();
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ initialData }: { initialData?: unknown }) => ({
     data: initialData,
     isLoading: false,
   }),
-  useMutation: () => ({
-    mutate: vi.fn(),
+  useMutation: (options: { mutationFn?: () => Promise<unknown>; onSuccess?: (result: unknown) => void }) => ({
+    mutate: vi.fn(async () => {
+      const result = await options.mutationFn?.();
+      options.onSuccess?.(result);
+    }),
     isPending: false,
   }),
   useQueryClient: () => ({
@@ -27,11 +33,29 @@ vi.mock("../context/ToastContext", () => ({
   }),
 }));
 
+vi.mock("../api/agents", () => ({
+  agentsApi: {
+    integrationSetupUrl: vi.fn().mockResolvedValue({
+      provider: "feishu",
+      providerRegion: "feishu_cn",
+      setupUrl: "https://open.feishu.cn/app?agentId=agent-1",
+      expiresAt: null,
+    }),
+    listIntegrations: vi.fn(),
+    revokeIntegration: vi.fn(),
+  },
+}));
+
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 let cleanupFn: (() => void) | null = null;
+
+Object.defineProperty(window, "open", {
+  configurable: true,
+  value: mockWindowOpen,
+});
 
 afterEach(() => {
   cleanupFn?.();
@@ -119,9 +143,12 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Feishu / Lark");
     expect(container.textContent).toContain("Not configured");
     expect(container.textContent).toContain("Connect");
+    expect(container.textContent).toContain("Open the provider setup page");
+    expect(container.textContent).toContain("Feishu CN");
+    expect(container.textContent).toContain("Lark Global");
   });
 
-  it("opens a Feishu connection form from the agent detail tab", () => {
+  it("opens the Feishu setup URL from the agent detail tab", async () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const connectButton = [...container.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Connect"));
@@ -131,11 +158,19 @@ describe("AgentIntegrationsTab", () => {
     act(() => {
       connectButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
+    await act(async () => {
+      await Promise.resolve();
+    });
 
-    expect(container.textContent).toContain("Credential secret ID");
-    expect(container.textContent).toContain("App ID");
-    expect(container.textContent).toContain("Bot open ID");
-    expect(container.querySelector("select")?.textContent).toContain("Lark Global");
+    expect(agentsApi.integrationSetupUrl).toHaveBeenCalledWith("agent-1", {
+      provider: "feishu",
+      providerRegion: "feishu_cn",
+    }, "org-1");
+    expect(mockWindowOpen).toHaveBeenCalledWith(
+      "https://open.feishu.cn/app?agentId=agent-1",
+      "_blank",
+      "noopener,noreferrer",
+    );
   });
 
   it("renders configured Feishu integration metadata and actions", () => {

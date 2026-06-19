@@ -1,9 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { AgentDetail, AgentIntegrationSummary, ConnectAgentIntegration } from "@rudderhq/shared";
+import type { AgentDetail, AgentIntegrationProviderRegion, AgentIntegrationSummary } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Link2, Plug, ShieldCheck, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ExternalLink, Loader2, Plug, ShieldCheck, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { agentsApi } from "../api/agents";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -62,16 +62,7 @@ interface AgentIntegrationsTabProps {
 export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
-  const [connectOpen, setConnectOpen] = useState(false);
-  const [form, setForm] = useState({
-    appCredentialSecretId: "",
-    externalAppId: "",
-    externalBotOpenId: "",
-    externalTenantKey: "",
-    installerUserId: "",
-    manageUrl: "",
-    providerRegion: "feishu_cn" as ConnectAgentIntegration["providerRegion"],
-  });
+  const [providerRegion, setProviderRegion] = useState<AgentIntegrationProviderRegion>("feishu_cn");
   const integrationsQuery = useQuery({
     queryKey: queryKeys.agents.integrations(agent.id),
     queryFn: () => agentsApi.listIntegrations(agent.id, orgId),
@@ -82,31 +73,26 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const state = getFeishuIntegrationState(feishuIntegration);
   const stateCopy = integrationStateCopy(state);
   const isActive = state === "active";
-  const canSubmit = useMemo(
-    () => form.appCredentialSecretId.trim().length > 0 && form.externalAppId.trim().length > 0,
-    [form.appCredentialSecretId, form.externalAppId],
-  );
-  const connectIntegration = useMutation({
-    mutationFn: () => agentsApi.connectIntegration(agent.id, {
+  const openSetup = useMutation({
+    mutationFn: () => agentsApi.integrationSetupUrl(agent.id, {
       provider: "feishu",
-      transport: "long_connection",
-      providerRegion: form.providerRegion,
-      appCredentialSecretId: form.appCredentialSecretId.trim(),
-      externalAppId: form.externalAppId.trim(),
-      externalBotOpenId: form.externalBotOpenId.trim() || null,
-      externalTenantKey: form.externalTenantKey.trim() || null,
-      installerUserId: form.installerUserId.trim() || null,
-      manageUrl: form.manageUrl.trim() || null,
+      providerRegion,
     }, orgId),
-    onSuccess: async () => {
-      pushToast({ title: "Integration connected", tone: "success" });
-      setConnectOpen(false);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.integrations(agent.id) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
+    onSuccess: (result) => {
+      const opened = window.open(result.setupUrl, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        pushToast({
+          title: "Browser blocked the setup window",
+          body: "Allow pop-ups for Rudder, then try Connect again.",
+          tone: "error",
+        });
+        return;
+      }
+      pushToast({ title: "Opened Feishu / Lark setup", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: "Failed to connect integration",
+        title: "Failed to open integration setup",
         body: error instanceof Error ? error.message : undefined,
         tone: "error",
       });
@@ -174,19 +160,12 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                       value={feishuIntegration.hasCredentialSecret ? "Credential stored" : "Missing credential"}
                     />
                   </dl>
-                ) : connectOpen ? (
-                  <FeishuConnectForm
-                    form={form}
-                    setForm={setForm}
-                    canSubmit={canSubmit}
-                    isPending={connectIntegration.isPending}
-                    onCancel={() => setConnectOpen(false)}
-                    onSubmit={() => connectIntegration.mutate()}
-                  />
                 ) : (
-                  <p className="max-w-2xl text-sm text-muted-foreground">
-                    Feishu is not configured for this agent. Connect an app credential secret and bot identity here.
-                  </p>
+                  <FeishuSetupPrompt
+                    providerRegion={providerRegion}
+                    onProviderRegionChange={setProviderRegion}
+                    disabled={openSetup.isPending}
+                  />
                 )}
               </div>
             </div>
@@ -211,9 +190,9 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                   {revokeIntegration.isPending ? "Disconnecting" : "Disconnect"}
                 </Button>
               ) : (
-                <Button variant="outline" size="sm" onClick={() => setConnectOpen(true)}>
-                  <Link2 className="h-3.5 w-3.5" />
-                  Connect
+                <Button variant="outline" size="sm" onClick={() => openSetup.mutate()} disabled={openSetup.isPending}>
+                  {openSetup.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                  {openSetup.isPending ? "Opening" : "Connect"}
                 </Button>
               )}
             </div>
@@ -224,115 +203,47 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   );
 }
 
-interface FeishuConnectFormProps {
-  form: {
-    appCredentialSecretId: string;
-    externalAppId: string;
-    externalBotOpenId: string;
-    externalTenantKey: string;
-    installerUserId: string;
-    manageUrl: string;
-    providerRegion: ConnectAgentIntegration["providerRegion"];
-  };
-  setForm: React.Dispatch<React.SetStateAction<FeishuConnectFormProps["form"]>>;
-  canSubmit: boolean;
-  isPending: boolean;
-  onCancel: () => void;
-  onSubmit: () => void;
+interface FeishuSetupPromptProps {
+  providerRegion: AgentIntegrationProviderRegion;
+  onProviderRegionChange: (value: AgentIntegrationProviderRegion) => void;
+  disabled: boolean;
 }
 
-function FeishuConnectForm({ form, setForm, canSubmit, isPending, onCancel, onSubmit }: FeishuConnectFormProps) {
+function FeishuSetupPrompt({ providerRegion, onProviderRegionChange, disabled }: FeishuSetupPromptProps) {
   return (
-    <form
-      className="grid max-w-3xl gap-3 rounded-md border border-border bg-muted/30 p-3 text-xs sm:grid-cols-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (canSubmit && !isPending) onSubmit();
-      }}
-    >
-      <label className="grid gap-1">
-        <span className="font-medium text-muted-foreground">Credential secret ID</span>
-        <input
-          className="h-8 rounded-md border border-input bg-background px-2 text-foreground outline-none focus:border-ring"
-          value={form.appCredentialSecretId}
-          onChange={(event) => setForm((current) => ({ ...current, appCredentialSecretId: event.target.value }))}
-          placeholder="organization secret UUID"
-          required
-        />
-      </label>
-      <label className="grid gap-1">
-        <span className="font-medium text-muted-foreground">App ID</span>
-        <input
-          className="h-8 rounded-md border border-input bg-background px-2 text-foreground outline-none focus:border-ring"
-          value={form.externalAppId}
-          onChange={(event) => setForm((current) => ({ ...current, externalAppId: event.target.value }))}
-          placeholder="cli_a..."
-          required
-        />
-      </label>
-      <label className="grid gap-1">
-        <span className="font-medium text-muted-foreground">Region</span>
-        <select
-          className="h-8 rounded-md border border-input bg-background px-2 text-foreground outline-none focus:border-ring"
-          value={form.providerRegion}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              providerRegion: event.target.value as ConnectAgentIntegration["providerRegion"],
-            }))}
+    <div className="space-y-3">
+      <p className="max-w-2xl text-sm text-muted-foreground">
+        Open the provider setup page to configure the app and callback for this agent.
+      </p>
+      <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+        <button
+          type="button"
+          className={cn(
+            "h-7 rounded px-2.5 text-xs font-medium transition-colors",
+            providerRegion === "feishu_cn"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+          disabled={disabled}
+          onClick={() => onProviderRegionChange("feishu_cn")}
         >
-          <option value="feishu_cn">Feishu CN</option>
-          <option value="lark_global">Lark Global</option>
-        </select>
-      </label>
-      <label className="grid gap-1">
-        <span className="font-medium text-muted-foreground">Bot open ID</span>
-        <input
-          className="h-8 rounded-md border border-input bg-background px-2 text-foreground outline-none focus:border-ring"
-          value={form.externalBotOpenId}
-          onChange={(event) => setForm((current) => ({ ...current, externalBotOpenId: event.target.value }))}
-          placeholder="optional"
-        />
-      </label>
-      <label className="grid gap-1">
-        <span className="font-medium text-muted-foreground">Tenant key</span>
-        <input
-          className="h-8 rounded-md border border-input bg-background px-2 text-foreground outline-none focus:border-ring"
-          value={form.externalTenantKey}
-          onChange={(event) => setForm((current) => ({ ...current, externalTenantKey: event.target.value }))}
-          placeholder="optional"
-        />
-      </label>
-      <label className="grid gap-1">
-        <span className="font-medium text-muted-foreground">Installer user</span>
-        <input
-          className="h-8 rounded-md border border-input bg-background px-2 text-foreground outline-none focus:border-ring"
-          value={form.installerUserId}
-          onChange={(event) => setForm((current) => ({ ...current, installerUserId: event.target.value }))}
-          placeholder="optional"
-        />
-      </label>
-      <label className="grid gap-1 sm:col-span-2">
-        <span className="font-medium text-muted-foreground">Manage URL</span>
-        <input
-          className="h-8 rounded-md border border-input bg-background px-2 text-foreground outline-none focus:border-ring"
-          value={form.manageUrl}
-          onChange={(event) => setForm((current) => ({ ...current, manageUrl: event.target.value }))}
-          placeholder="optional"
-          type="url"
-        />
-      </label>
-      <div className="flex items-center gap-2 sm:col-span-2">
-        <Button type="submit" size="sm" disabled={!canSubmit || isPending}>
-          <Link2 className="h-3.5 w-3.5" />
-          {isPending ? "Connecting" : "Connect"}
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
-          <X className="h-3.5 w-3.5" />
-          Cancel
-        </Button>
+          Feishu CN
+        </button>
+        <button
+          type="button"
+          className={cn(
+            "h-7 rounded px-2.5 text-xs font-medium transition-colors",
+            providerRegion === "lark_global"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+          disabled={disabled}
+          onClick={() => onProviderRegionChange("lark_global")}
+        >
+          Lark Global
+        </button>
       </div>
-    </form>
+    </div>
   );
 }
 

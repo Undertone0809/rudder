@@ -4,6 +4,7 @@ import type {
   AgentDetail,
   AgentInstructionsBundle,
   AgentInstructionsFileDetail,
+  AgentIntegrationSetupUrl,
   AgentIntegrationSummary,
   AgentKeyCreated,
   AgentRuntimeEnvironmentTestResult,
@@ -113,6 +114,17 @@ export const agentsApi = {
     api.get<AgentIntegrationSummary[]>(agentPath(id, orgId, "/integrations")),
   connectIntegration: (id: string, data: ConnectAgentIntegration, orgId?: string) =>
     api.post<AgentIntegrationSummary>(agentPath(id, orgId, "/integrations"), data),
+  integrationSetupUrl: (
+    id: string,
+    data: { provider: "feishu"; providerRegion?: "feishu_cn" | "lark_global" },
+    orgId?: string,
+  ) => {
+    const params = new URLSearchParams();
+    params.set("providerRegion", data.providerRegion ?? "feishu_cn");
+    return api.get<AgentIntegrationSetupUrl>(
+      agentPath(id, orgId, `/integrations/${encodeURIComponent(data.provider)}/setup-url?${params.toString()}`),
+    );
+  },
   revokeIntegration: (id: string, integrationId: string, orgId?: string) =>
     api.delete<AgentIntegrationSummary>(
       agentPath(id, orgId, `/integrations/${encodeURIComponent(integrationId)}`),

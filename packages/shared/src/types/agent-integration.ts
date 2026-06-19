@@ -32,6 +32,13 @@ export type AgentIntegrationSummary = Omit<AgentIntegration, "appCredentialSecre
   hasCredentialSecret: boolean;
 };
 
+export interface AgentIntegrationSetupUrl {
+  provider: AgentIntegrationProvider;
+  providerRegion: AgentIntegrationProviderRegion;
+  setupUrl: string;
+  expiresAt: Date | null;
+}
+
 export interface AgentIntegrationUserBinding {
   id: string;
   orgId: string;

@@ -18,6 +18,7 @@ import {
   organizationSkillCreateSchema,
   resetAgentSessionSchema,
   testAgentRuntimeEnvironmentSchema,
+  type AgentIntegrationProviderRegion,
   type AgentSkillAnalytics,
   type AgentSkillSnapshot,
   type InstanceSchedulerHeartbeatAgent
@@ -72,6 +73,9 @@ const AGENT_AVATAR_SIZE_PX = 256;
 const AGENT_AVATAR_WEBP_QUALITY = 82;
 const AGENT_AVATAR_ASSET_RE =
   /^asset:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\?bg=[a-z0-9-]+)?$/i;
+const FEISHU_INTEGRATION_SETUP_BASE_URL = process.env.RUDDER_FEISHU_INTEGRATION_SETUP_URL?.trim() || null;
+const FEISHU_OPEN_PLATFORM_HOME_URL = "https://open.feishu.cn/app";
+const LARK_OPEN_PLATFORM_HOME_URL = "https://open.larksuite.com/app";
 
 type UploadedMemoryFile = {
   mimetype: string;
@@ -119,6 +123,37 @@ async function compressAgentAvatar(file: UploadedMemoryFile): Promise<Buffer> {
   } catch {
     throw unprocessable("Avatar image could not be processed");
   }
+}
+
+function requestBaseUrl(req: Request) {
+  return `${req.protocol}://${req.get("host")}`;
+}
+
+function normalizeFeishuProviderRegion(value: unknown): AgentIntegrationProviderRegion {
+  return value === "lark_global" ? "lark_global" : "feishu_cn";
+}
+
+function buildFeishuIntegrationSetupUrl(input: {
+  req: Request;
+  orgId: string;
+  agentId: string;
+  providerRegion: AgentIntegrationProviderRegion;
+}) {
+  const callbackUrl = new URL(
+    `/api/orgs/${encodeURIComponent(input.orgId)}/integrations/feishu/mock-inbound`,
+    requestBaseUrl(input.req),
+  ).toString();
+
+  const baseUrl = FEISHU_INTEGRATION_SETUP_BASE_URL
+    || (input.providerRegion === "lark_global" ? LARK_OPEN_PLATFORM_HOME_URL : FEISHU_OPEN_PLATFORM_HOME_URL);
+  const setupUrl = new URL(baseUrl);
+  setupUrl.searchParams.set("provider", "feishu");
+  setupUrl.searchParams.set("region", input.providerRegion);
+  setupUrl.searchParams.set("orgId", input.orgId);
+  setupUrl.searchParams.set("agentId", input.agentId);
+  setupUrl.searchParams.set("callbackUrl", callbackUrl);
+  setupUrl.searchParams.set("transport", "long_connection");
+  return setupUrl.toString();
 }
 
 export function agentRoutes(db: Db, storage?: StorageService) {
@@ -1309,6 +1344,28 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     }
     await assertCanReadAgent(req, agent);
     res.json(await integrationsSvc.listForAgent(agent.orgId, agent.id));
+  });
+
+  router.get("/agents/:id/integrations/feishu/setup-url", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanUpdateAgent(req, agent);
+    const providerRegion = normalizeFeishuProviderRegion(req.query.providerRegion);
+    res.json({
+      provider: "feishu",
+      providerRegion,
+      setupUrl: buildFeishuIntegrationSetupUrl({
+        req,
+        orgId: agent.orgId,
+        agentId: agent.id,
+        providerRegion,
+      }),
+      expiresAt: null,
+    });
   });
 
   router.post("/agents/:id/integrations", validate(connectAgentIntegrationSchema), async (req, res) => {
