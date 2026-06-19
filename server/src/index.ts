@@ -66,6 +66,7 @@ import {
   reconcileWorkspaceBackupArtifactStorage,
   workspaceBackupService,
 } from "./services/index.js";
+import { feishuIntegrationRuntimeService } from "./services/integrations/feishu/runtime.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { serverVersion } from "./version.js";
@@ -974,6 +975,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     });
   
   const intervalHandles: Array<ReturnType<typeof setInterval>> = [];
+  const feishuRuntime = feishuIntegrationRuntimeService(db as any, { storage: storageService });
 
   if (config.heartbeatSchedulerEnabled) {
     const heartbeat = heartbeatService(db as any);
@@ -1048,6 +1050,17 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
           logger.error({ err }, "periodic chat run recovery failed");
         });
     }, config.heartbeatSchedulerIntervalMs));
+  }
+
+  if (process.env.RUDDER_FEISHU_LONG_CONNECTION_ENABLED === "true") {
+    void feishuRuntime
+      .start()
+      .then((result) => {
+        logger.info({ started: result.started }, "Feishu long-connection runtime started");
+      })
+      .catch((err) => {
+        logger.error({ err }, "Feishu long-connection runtime startup failed");
+      });
   }
   
   if (config.databaseBackupEnabled) {
@@ -1268,6 +1281,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
           resolveClose();
         });
       });
+      try {
+        await feishuRuntime.stop();
+      } catch (err) {
+        logger.warn({ err }, "Feishu long-connection runtime cleanup failed");
+      }
       try {
         await appHandle?.close();
       } catch (err) {

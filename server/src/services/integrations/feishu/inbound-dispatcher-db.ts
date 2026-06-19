@@ -47,6 +47,8 @@ function chatTitle(event: FeishuInboundMessage) {
 
 export interface FeishuInboundDispatcherDbOptions {
   orgId?: string;
+  enqueueAgentRun?: boolean;
+  createOutboundPlaceholder?: boolean;
 }
 
 export function createFeishuInboundDispatcherDbDeps(
@@ -57,7 +59,7 @@ export function createFeishuInboundDispatcherDbDeps(
   const issues = issueService(db);
   const chatRuns = chatAgentRunService(db);
 
-  return {
+  const deps: AgentIntegrationInboundDispatcherDeps = {
     resolveActiveIntegration: async (event) => {
       const conditions = [
         eq(agentIntegrations.provider, event.provider),
@@ -281,7 +283,10 @@ export function createFeishuInboundDispatcherDbDeps(
       return { issueId: issue.id };
     },
 
-    enqueueAgentRun: async (integration, _binding, chat, message, _event, issue) => {
+  };
+
+  if (options.enqueueAgentRun !== false) {
+    deps.enqueueAgentRun = async (integration, _binding, chat, message, _event, issue) => {
       const conversation = await chats.getById(chat.conversationId);
       if (!conversation) throw new Error("Feishu chat conversation not found");
       const run = await chatRuns.createRun({
@@ -293,9 +298,11 @@ export function createFeishuInboundDispatcherDbDeps(
         linkedProjectId: null,
       });
       return { runId: run.id };
-    },
+    };
+  }
 
-    createOutboundPlaceholder: async (integration, chat, event, message, issue, run) => {
+  if (options.createOutboundPlaceholder !== false) {
+    deps.createOutboundPlaceholder = async (integration, chat, event, message, issue, run) => {
       await db.insert(agentIntegrationOutboundMessages).values({
         orgId: integration.orgId,
         integrationId: integration.id,
@@ -306,8 +313,10 @@ export function createFeishuInboundDispatcherDbDeps(
         externalChatId: event.chatId,
         status: "pending",
       });
-    },
-  };
+    };
+  }
+
+  return deps;
 }
 
 export type FeishuInboundDispatcherDbDeps = ReturnType<typeof createFeishuInboundDispatcherDbDeps>;
