@@ -134,6 +134,7 @@ jobs:
       - name: Wait for desktop release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          DESKTOP_RELEASE_VERIFY_ATTEMPTS: "360"
         run: |
           tag="canary/v${{ steps.publish.outputs.version }}"
           node scripts/wait-for-desktop-release-assets.mjs \
@@ -235,6 +236,7 @@ jobs:
       - name: Wait for desktop release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          DESKTOP_RELEASE_VERIFY_ATTEMPTS: "360"
         run: |
           tag="v${{ steps.publish.outputs.version }}"
           node scripts/wait-for-desktop-release-assets.mjs \

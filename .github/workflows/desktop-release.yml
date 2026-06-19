@@ -144,4 +144,9 @@ jobs:
             gh release "${edit_args[@]}"
           fi
 
-          gh release upload "${tag}" dist/desktop-assets/Rudder-* dist/desktop-assets/SHASUMS256.txt --clobber
+          find dist/desktop-assets -maxdepth 1 -type f \( -name 'Rudder-*' -o -name 'SHASUMS256.txt' \) \
+            | sort \
+            | while IFS= read -r asset; do
+              echo "Uploading ${asset}"
+              gh release upload "${tag}" "${asset}" --clobber
+            done
