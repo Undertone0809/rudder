@@ -17,11 +17,18 @@ aid, not a substitute for tracing the actual code path.
 - Keep errors visible even when placeholder data is shown.
 - Review invalidation fan-out after mutations and live events; invalidate the
   narrowest key that preserves correctness.
+- Repeated skeletons after navigation are often caused by unstable query keys or
+  missing placeholder data, not by the absence of a cache library.
 
 ## Network And API
 
 - Look for request waterfalls caused by component nesting or conditional
   fetching.
+- Search for unbounded list calls such as `status=all` without `limit`, default
+  issue/activity lists, and context sidebars that load page-wide data on every
+  route.
+- Measure payload size as well as latency; a 1MB+ JSON response on a default
+  navigation is usually a product-contract problem.
 - Batch or prefetch only after confirming the data is needed together.
 - Push filtering, pagination, and aggregation to the layer that owns the data
   contract.
@@ -42,6 +49,11 @@ aid, not a substitute for tracing the actual code path.
   external process metadata.
 - Do not cache external-process or runtime state without a clear invalidation
   source.
+- When a UI action needs multiple writes to succeed together, prefer a narrow
+  transactional endpoint over chained frontend mutations.
+- Runtime prompt/context bundles need a token budget, source refs, and a
+  persistence boundary; do not save full sensitive context in observability
+  traces or snapshots.
 
 ## Architecture
 
@@ -65,3 +77,5 @@ aid, not a substitute for tracing the actual code path.
   loading behavior changed.
 - Record unresolved bottlenecks as follow-ups instead of expanding scope
   silently.
+- If browser E2E uses an existing dev server, confirm the server has loaded any
+  new backend route before treating the browser result as evidence.

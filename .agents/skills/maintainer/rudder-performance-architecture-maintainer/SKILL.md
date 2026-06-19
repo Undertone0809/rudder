@@ -24,7 +24,8 @@ This skill covers two related classes of work:
   about
 
 Read `references/optimization-checklist.md` before doing non-trivial work with
-this skill.
+this skill. When the user asks for broad optimization or know-how capture, also
+read `references/recent-thread-signals.md`.
 
 ## Use When
 
@@ -37,6 +38,7 @@ Use this skill for requests like:
 - "这里是不是 query key / staleTime / invalidation 写错了"
 - "架构上有什么热点文件或边界可以优化"
 - "把这次性能优化 know how 沉淀成 skill"
+- "分析一下最近的 thread 里有没有类似性能/架构任务"
 
 ## Do Not Use When
 
@@ -98,7 +100,24 @@ Read the minimum Rudder context needed for the surface:
 Use `rg` first for call sites, query keys, endpoints, invalidation keys, and
 hot modules.
 
-### 2. Classify The Optimization
+### 2. Mine Recent Threads When The Task Is Broad
+
+When the user asks for global optimization, reusable know-how, or "recent
+thread" analysis, inspect recent Codex threads before editing code. Look for:
+
+- prior performance scans and daily health checks
+- repeated slow surfaces, large payloads, or unbounded list symptoms
+- architecture decisions that moved work across UI/API/service boundaries
+- reviewer-discovered blockers, especially privacy, transactionality, and
+  org-scoping issues
+- validation gaps caused by dev-server restarts, embedded Postgres bootstrap, or
+  dirty shared worktrees
+
+Use the thread evidence as hypotheses, not truth. Re-check the current code and
+runtime before implementing. Store durable patterns in
+`references/recent-thread-signals.md` or `references/optimization-checklist.md`.
+
+### 3. Classify The Optimization
 
 Pick the dominant class:
 
@@ -117,11 +136,13 @@ Pick the dominant class:
   contracts unclear
 - `validation-slowness`: build/test/dev loop is slow because of avoidable setup,
   scope, or fixture cost
+- `frontend-race`: a UI workflow depends on multiple ordered requests where the
+  server should own atomicity
 
 Name the first broken boundary. Downstream symptoms matter, but the first broken
 boundary is where fixes usually belong.
 
-### 3. Trace The Path End To End
+### 4. Trace The Path End To End
 
 For UI performance, trace:
 
@@ -144,7 +165,7 @@ Record:
 - response shape and client-side filtering/aggregation
 - expensive loops, broad scans, N+1 calls, and repeated derived computation
 
-### 4. Choose The Smallest Correct Fix
+### 5. Choose The Smallest Correct Fix
 
 Prefer behavior-preserving changes that make the real contract explicit:
 
@@ -154,6 +175,8 @@ Prefer behavior-preserving changes that make the real contract explicit:
   acceptable and errors remain visible
 - push filters to API/DB when the server owns the data contract
 - batch or share requests when multiple components need the same data
+- move multi-step UI writes into a narrow transactional API when partial success
+  creates broken product state
 - introduce a facade when multiple consumers duplicate data-path or caching
   semantics
 - add indexes only with evidence and a migration path
@@ -163,7 +186,7 @@ Prefer behavior-preserving changes that make the real contract explicit:
 Avoid adding cache as a blanket cover for slow or incorrect code. Cache should
 encode a freshness contract, not hide broken invalidation.
 
-### 5. Add Regression Coverage
+### 6. Add Regression Coverage
 
 Match tests to the failure mode:
 
@@ -174,11 +197,13 @@ Match tests to the failure mode:
   response shape
 - DB query changes: integration tests around date/status/org boundaries
 - user-visible workflow: E2E test when the repo rules require it
+- multi-step writes: service/route tests for rollback and UI tests for the
+  single product action
 
 Include at least one edge case when the optimization depends on dates, org
 boundaries, permissions, async runtime state, or large data volume.
 
-### 6. Validate And Commit
+### 7. Validate And Commit
 
 Run the narrow validation first, then the repo-appropriate baseline:
 
@@ -197,7 +222,7 @@ Per repo rules, commit and push completed skill, performance, or architecture
 work. Stage only files for the current task when the worktree has unrelated
 changes.
 
-### 7. Record Know How
+### 8. Record Know How
 
 When a performance or architecture investigation produces a durable rule, add it
 to `references/optimization-checklist.md` or a more specific future reference.
