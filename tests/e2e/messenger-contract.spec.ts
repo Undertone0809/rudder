@@ -890,6 +890,47 @@ test.describe("Messenger unified threads contract", () => {
     expect(persistedMainListOrder.length).toBeGreaterThanOrEqual(2);
   });
 
+  test("shows a compact emoji picker when changing a custom group icon", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Emoji-Picker-${Date.now()}`);
+    const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Emoji picker group", icon: "😀::amber" },
+    });
+    expect(groupRes.ok()).toBe(true);
+    const group = await groupRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+
+    const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
+    await expect(groupSection).toContainText("Emoji picker group", { timeout: 15_000 });
+
+    await groupSection.hover();
+    await groupSection.getByRole("button", { name: "Group actions" }).click();
+    await page.getByRole("menuitem", { name: "Change icon" }).click();
+
+    const emojiPicker = page.locator('[aria-label="Group emoji"]');
+    await expect(emojiPicker).toBeVisible();
+    await expect(emojiPicker.getByRole("menuitem", { name: /group emoji$/ })).toHaveCount(8);
+    await expect(page.getByRole("button", { name: "🔥🔥" })).toHaveCount(0);
+
+    const updateResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${group.id}`) &&
+      response.request().method() === "PATCH",
+    );
+    await page.getByRole("menuitem", { name: "Use 🔥 group emoji" }).click();
+    expect((await updateResponse).ok()).toBe(true);
+    await expect(emojiPicker).toHaveCount(0);
+
+    const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+    expect(groupsRes.ok()).toBe(true);
+    const payload = await groupsRes.json() as { groups: Array<{ id: string; icon: string | null }> };
+    expect(payload.groups.find((candidate) => candidate.id === group.id)?.icon).toBe("🔥::amber");
+  });
+
   test("moves pinned tabs into groups and merges two loose tabs by dropping one on another", async ({ page }) => {
     const pageErrors: string[] = [];
     const consoleErrors: string[] = [];

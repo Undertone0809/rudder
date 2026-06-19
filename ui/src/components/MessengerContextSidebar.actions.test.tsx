@@ -180,15 +180,18 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuItem: ({
     children,
     disabled,
+    onSelect,
     onClick,
     variant,
+    ...props
   }: {
     children: ReactNode;
     disabled?: boolean;
+    onSelect?: () => void;
     onClick?: () => void;
     variant?: "default" | "destructive";
   }) => (
-    <button type="button" data-variant={variant} disabled={disabled} onClick={onClick}>
+    <button type="button" data-variant={variant} disabled={disabled} onClick={onClick ?? onSelect} {...props}>
       {children}
     </button>
   ),
@@ -889,10 +892,13 @@ describe("MessengerContextSidebar chat actions", () => {
     const changeIconTrigger = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Change icon") as HTMLButtonElement | undefined;
     const emojiButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.getAttribute("aria-label") === "Use 🔥 group emoji") as HTMLButtonElement | undefined;
+    const duplicatedEmojiMenuItem = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "🔥🔥") as HTMLButtonElement | undefined;
 
     expect(changeIconTrigger).toBeTruthy();
     expect(emojiButton).toBeTruthy();
+    expect(duplicatedEmojiMenuItem).toBeUndefined();
     await act(async () => {
       emojiButton?.click();
       await Promise.resolve();
@@ -977,7 +983,7 @@ describe("MessengerContextSidebar chat actions", () => {
     renderSidebar();
 
     const emojiButton = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "🔥🔥") as HTMLButtonElement | undefined;
+      .find((button) => button.getAttribute("aria-label") === "Use 🔥 group emoji") as HTMLButtonElement | undefined;
     const colorButton = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Teal") as HTMLButtonElement | undefined;
 

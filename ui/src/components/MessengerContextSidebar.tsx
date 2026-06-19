@@ -3202,14 +3202,27 @@ export function MessengerContextSidebar() {
                       </DropdownMenuItem>
                     ))}
                     <DropdownMenuSeparator />
-                    {CUSTOM_GROUP_EMOJI_OPTIONS.map((option) => (
-                      <DropdownMenuItem key={option} onClick={() => updateCustomGroupIcon(customGroup, option)}>
-                        <span className="inline-flex h-4 w-4 items-center justify-center text-[14px] leading-none" aria-hidden>
-                          {option}
-                        </span>
-                        {option}
-                      </DropdownMenuItem>
-                    ))}
+                    <div className="grid grid-cols-4 gap-1 px-1 py-1" aria-label="Group emoji">
+                      {CUSTOM_GROUP_EMOJI_OPTIONS.map((option) => {
+                        const currentIcon = pendingCustomGroupIcons[customGroup.id] ?? customGroup.icon;
+                        const selected = splitCustomGroupIconValue(currentIcon).glyph === option;
+                        return (
+                          <DropdownMenuItem
+                            key={option}
+                            aria-label={`Use ${option} group emoji`}
+                            className={cn(
+                              "flex h-8 w-8 cursor-default items-center justify-center rounded-[calc(var(--radius-sm)-1px)] border p-0 text-[16px] leading-none transition-[background-color,border-color,transform]",
+                              selected
+                                ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)]"
+                                : "border-transparent hover:bg-[color:var(--surface-active)] hover:scale-[1.04]",
+                            )}
+                            onSelect={() => updateCustomGroupIcon(customGroup, option)}
+                          >
+                            {option}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </div>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
                 <DropdownMenuSub>
