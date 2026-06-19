@@ -373,7 +373,7 @@ export function feishuIntegrationRuntimeService(
         integration,
         credential,
         chatId: event.chatId,
-        text: bindingRequiredText(),
+        text: result.outbound?.text ?? bindingRequiredText(),
       });
       return result;
     }

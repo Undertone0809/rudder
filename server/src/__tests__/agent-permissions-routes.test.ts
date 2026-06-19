@@ -85,6 +85,11 @@ const mockAgentInstructionsService = vi.hoisted(() => ({
   materializeManagedBundle: vi.fn(),
   getBundle: vi.fn(),
 }));
+const mockAgentIntegrationService = vi.hoisted(() => ({
+  listForAgent: vi.fn(),
+  create: vi.fn(),
+  revokeForAgent: vi.fn(),
+}));
 const mockCompanySkillService = vi.hoisted(() => ({
   listRuntimeSkillEntries: vi.fn(),
   resolveRequestedSkillKeys: vi.fn(),
@@ -116,6 +121,11 @@ vi.mock("../services/index.js", () => ({
   secretService: () => mockSecretService,
   syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
   workspaceOperationService: () => mockWorkspaceOperationService,
+}));
+
+vi.mock("../services/integrations/agent-integrations.js", () => ({
+  agentIntegrationService: () => mockAgentIntegrationService,
+  summarizeAgentIntegration: vi.fn((row) => row),
 }));
 
 function createDbStub(options?: {
@@ -203,6 +213,7 @@ describe("agent permission routes", () => {
       }),
     );
     mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "managed" });
+    mockAgentIntegrationService.listForAgent.mockResolvedValue([]);
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
     mockCompanySkillService.resolveRequestedSkillKeys.mockImplementation(
       async (_companyId: string, requested: string[]) => requested,
