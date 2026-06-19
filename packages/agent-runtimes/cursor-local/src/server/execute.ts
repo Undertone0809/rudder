@@ -18,6 +18,7 @@ import {
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeMaintainerOnlySkillSymlinks,
+  renderRudderSkillPromptSection,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -37,6 +38,13 @@ import { isCursorUnknownSessionError, parseCursorJsonl } from "./parse.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUDDER_INSTANCE_ID = "default";
+const CURSOR_PROTECTED_ENV_KEYS = new Set([
+  "AGENT_HOME",
+  "HOME",
+  "RUDDER_AGENT_ROOT",
+  "RUDDER_OPERATOR_HOME",
+  "USERPROFILE",
+]);
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -171,7 +179,7 @@ async function prepareManagedCursorHome(
 
   await onLog(
     "stdout",
-    `[rudder] Using Rudder-managed Cursor home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Prepared Rudder-managed Cursor sidecar "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
 }
@@ -298,14 +306,18 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   const cursorSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredCursorSkillNames = resolveRudderDesiredSkillNames(config, cursorSkillEntries);
+  const selectedCursorSkillEntries = cursorSkillEntries.filter((entry) => desiredCursorSkillNames.includes(entry.key));
+  const rudderSkillsPromptSection = await renderRudderSkillPromptSection({
+    selectedEntries: selectedCursorSkillEntries,
+  });
   await ensureCursorSkillsInjected(onLog, {
-    skillsEntries: cursorSkillEntries.filter((entry) => desiredCursorSkillNames.includes(entry.key)),
+    skillsEntries: selectedCursorSkillEntries,
     skillsHome: resolveManagedCursorSkillsDir(managedHome),
   });
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
-  env.HOME = managedHome;
+  env.HOME = operatorHome;
   env.RUDDER_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -378,10 +390,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
   }
   for (const [k, v] of Object.entries(envConfig)) {
-    if (k === "HOME") continue;
+    if (CURSOR_PROTECTED_ENV_KEYS.has(k)) continue;
     if (typeof v === "string") env[k] = v;
   }
-  env.HOME = managedHome;
+  env.HOME = operatorHome;
+  if (process.platform === "win32") env.USERPROFILE = operatorHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -412,6 +425,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
+
+  await onLog(
+    "stdout",
+    `[rudder] Using operator HOME "${operatorHome}" with Rudder enabled skills injected into the prompt.\n`,
+  );
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);
@@ -518,6 +536,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const rudderEnvNote = renderRudderEnvNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
+    rudderSkillsPromptSection,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     rudderEnvNote,
@@ -526,6 +545,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    rudderSkillChars: rudderSkillsPromptSection.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     runtimeNoteChars: rudderEnvNote.length,

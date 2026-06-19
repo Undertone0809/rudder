@@ -437,7 +437,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
-  env.HOME = managedHome;
+  env.HOME = operatorHome;
   env.RUDDER_RUN_ID = runId;
   
   const wakeTaskId =
@@ -489,10 +489,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (workspaceHints.length > 0) env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
 
   for (const [key, value] of Object.entries(envConfig)) {
-    if (key === "HOME") continue;
+    if (
+      key === "HOME" ||
+      key === "USERPROFILE" ||
+      key === "RUDDER_OPERATOR_HOME" ||
+      key === "PI_CODING_AGENT_DIR" ||
+      key === "PI_CODING_AGENT_SESSION_DIR"
+    ) continue;
     if (typeof value === "string") env[key] = value;
   }
-  env.HOME = managedHome;
+  env.HOME = operatorHome;
+  if (process.platform === "win32") env.USERPROFILE = operatorHome;
+  env.PI_CODING_AGENT_DIR = path.join(managedHome, ".pi", "agent");
+  env.PI_CODING_AGENT_SESSION_DIR = sessionsDir;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -667,7 +676,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     args.push("--tools", "read,bash,edit,write,grep,find,ls");
     args.push("--session", sessionFile);
 
-    // Add Rudder skills directory so Pi can load the rudder skill
+    args.push("--no-skills");
+
+    // Add only Rudder-selected skills after disabling Pi's default skill discovery.
     args.push("--skill", skillsDir);
 
     if (extraArgs.length > 0) args.push(...extraArgs);

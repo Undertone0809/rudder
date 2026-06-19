@@ -109,10 +109,13 @@ describe("cursor execute", { timeout: 20_000 }, () => {
     const capturePath = path.join(root, "capture.json");
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
+    const skillsRoot = path.join(root, "skills");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer direct status updates.\n", "utf8");
+    const enabledSkillDir = await createSkillDir(skillsRoot, "enabled-skill");
+    const disabledSkillDir = await createSkillDir(skillsRoot, "disabled-skill");
     await writeFakeCursorCommand(commandPath);
 
     const restoreEnv = setManagedCursorEnv(root);
@@ -144,6 +147,13 @@ describe("cursor execute", { timeout: 20_000 }, () => {
             ...clearInheritedGitIdentityEnv,
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
+          rudderRuntimeSkills: [
+            { key: "rudder/enabled-skill", runtimeName: "enabled-skill", source: enabledSkillDir },
+            { key: "rudder/disabled-skill", runtimeName: "disabled-skill", source: disabledSkillDir },
+          ],
+          rudderSkillSync: {
+            desiredSkills: ["rudder/enabled-skill"],
+          },
           instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
@@ -169,11 +179,15 @@ describe("cursor execute", { timeout: 20_000 }, () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expectPreparedGitConfigCapture(capture);
+      expect(capture.home).toBe(root);
       expect(capture.argv).not.toContain("Follow the rudder heartbeat.");
       expect(capture.argv).not.toContain("--mode");
       expect(capture.argv).not.toContain("ask");
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
+      expect(capture.prompt).toContain("Rudder enabled skills:");
+      expect(capture.prompt).toContain("## enabled-skill");
+      expect(capture.prompt).not.toContain("## disabled-skill");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining([
           "RUDDER_AGENT_ID",
@@ -314,7 +328,7 @@ describe("cursor execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("injects organization-library runtime skills into the Cursor skills home before execution", async () => {
+  it("injects organization-library runtime skills into the Cursor prompt before execution", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-runtime-skill-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");

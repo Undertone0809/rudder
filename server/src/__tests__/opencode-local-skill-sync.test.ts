@@ -99,7 +99,7 @@ describe("opencode local skill sync", () => {
     });
   });
 
-  it("surfaces user-installed Claude-compatible skills as opt-in external entries", async () => {
+  it("does not expose user-installed Claude-compatible skills as OpenCode Rudder entries", async () => {
     const home = await makeTempDir("rudder-opencode-user-skills-");
     cleanupDirs.add(home);
     await createSkillDir(path.join(home, ".claude", "skills"), "build-advisor");
@@ -115,20 +115,10 @@ describe("opencode local skill sync", () => {
       },
     });
 
-    expect(snapshot.entries).toContainEqual(expect.objectContaining({
-      key: "build-advisor",
-      runtimeName: "build-advisor",
-      description: "build-advisor description.",
-      desired: false,
-      managed: false,
-      state: "external",
-      origin: "user_installed",
-      locationLabel: "~/.claude/skills",
-      readOnly: false,
-    }));
+    expect(snapshot.entries.find((entry) => entry.key === "build-advisor")).toBeUndefined();
   });
 
-  it("keeps explicitly enabled user-installed OpenCode skills in the desired set", async () => {
+  it("marks unknown desired OpenCode skills as missing instead of loading adapter-home skills", async () => {
     const home = await makeTempDir("rudder-opencode-enabled-user-skills-");
     cleanupDirs.add(home);
     await createSkillDir(path.join(home, ".claude", "skills"), "build-advisor");
@@ -147,17 +137,16 @@ describe("opencode local skill sync", () => {
       },
     }, ["build-advisor"]);
 
-    expect(snapshot.warnings).toEqual([]);
+    expect(snapshot.warnings).toContain('Desired skill "build-advisor" is not available from the Rudder skills directory.');
     expect(snapshot.desiredSkills).toContain("build-advisor");
     expect(snapshot.entries).toContainEqual(expect.objectContaining({
       key: "build-advisor",
-      runtimeName: "build-advisor",
-      description: "build-advisor description.",
+      runtimeName: null,
       desired: true,
-      managed: false,
-      state: "configured",
-      origin: "user_installed",
-      detail: "Enabled for this agent. Rudder will mount this user-installed OpenCode skill on the next run.",
+      managed: true,
+      state: "missing",
+      origin: "external_unknown",
+      detail: "Rudder cannot find this skill in the local runtime skills directory.",
     }));
   });
 });

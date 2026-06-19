@@ -19,6 +19,7 @@ import {
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeMaintainerOnlySkillSymlinks,
+  renderRudderSkillPromptSection,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -43,6 +44,13 @@ import { firstNonEmptyLine } from "./utils.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUDDER_INSTANCE_ID = "default";
+const GEMINI_PROTECTED_ENV_KEYS = new Set([
+  "AGENT_HOME",
+  "HOME",
+  "RUDDER_AGENT_ROOT",
+  "RUDDER_OPERATOR_HOME",
+  "USERPROFILE",
+]);
 
 function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
   const raw = env[key];
@@ -155,7 +163,7 @@ async function prepareManagedGeminiHome(
 
   await onLog(
     "stdout",
-    `[rudder] Using Rudder-managed Gemini home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Prepared Rudder-managed Gemini sidecar "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
 }
@@ -164,11 +172,6 @@ function geminiSkillsHome(): string {
   return path.join(os.homedir(), ".gemini", "skills");
 }
 
-/**
- * Inject Rudder skills directly into `~/.gemini/skills/` via symlinks.
- * This avoids needing GEMINI_CLI_HOME overrides, so the CLI naturally finds
- * both its auth credentials and the injected skills in the real home directory.
- */
 async function ensureGeminiSkillsInjected(
   onLog: AgentRuntimeExecutionContext["onLog"],
   skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
@@ -274,9 +277,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   const geminiSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredGeminiSkillNames = resolveRudderDesiredSkillNames(config, geminiSkillEntries);
+  const selectedGeminiSkillEntries = geminiSkillEntries.filter((entry) => desiredGeminiSkillNames.includes(entry.key));
+  const rudderSkillsPromptSection = await renderRudderSkillPromptSection({
+    selectedEntries: selectedGeminiSkillEntries,
+  });
   await ensureGeminiSkillsInjected(
     onLog,
-    geminiSkillEntries,
+    selectedGeminiSkillEntries,
     desiredGeminiSkillNames,
     resolveManagedGeminiSkillsDir(managedHome),
   );
@@ -284,7 +291,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
-  env.HOME = managedHome;
+  env.HOME = operatorHome;
   env.RUDDER_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -334,10 +341,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (workspaceHints.length > 0) env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
 
   for (const [key, value] of Object.entries(envConfig)) {
-    if (key === "HOME") continue;
+    if (GEMINI_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
-  env.HOME = managedHome;
+  env.HOME = operatorHome;
+  if (process.platform === "win32") env.USERPROFILE = operatorHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -360,6 +368,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
+
+  await onLog(
+    "stdout",
+    `[rudder] Using operator HOME "${operatorHome}" with Rudder enabled skills injected into the prompt.\n`,
+  );
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);
@@ -463,6 +476,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const apiAccessNote = renderApiAccessNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
+    rudderSkillsPromptSection,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     rudderEnvNote,
@@ -472,6 +486,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    rudderSkillChars: rudderSkillsPromptSection.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     runtimeNoteChars: rudderEnvNote.length + apiAccessNote.length,
