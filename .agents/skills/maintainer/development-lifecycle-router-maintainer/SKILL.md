@@ -52,10 +52,8 @@ Use this skill when the user asks for any of:
   contract work that must prove the same Rudder work loop across multiple agent
   runtimes before handoff
 - creating or improving a reusable workflow for development tasks
-- deciding whether a named maintainer skill should be optimized, or recognizing
-  explicit skill-optimization requests and routing them to `skill-optimizer`
-  even when attached screenshots or prior-task evidence suggest a narrow product
-  route
+- deciding whether a named maintainer skill should be optimized, when the user
+  is not already explicitly asking to run `skill-optimizer`
 
 Do not use this skill as a substitute for a clearly matched narrow skill. If
 the user asks only to release, debug a run, review a Codex session, preview a
@@ -98,17 +96,13 @@ take precedence over task details embedded in screenshots, transcripts, quoted
 logs, or pasted prior messages.
 
 When the user says a skill "needs optimization", "should be hardened", "always
-does the wrong thing", "I have to ask this every time", links a `SKILL.md` as
-the artifact to improve, or explicitly asks to use `skill-optimizer`, classify
-the turn as skill optimization. In that case:
+does the wrong thing", "I have to ask this every time", or explicitly asks to
+use `skill-optimizer`, classify the turn as skill optimization. In that case:
 
 - route to `skill-optimizer` as the primary owner
 - treat the named skill as the target artifact, not as the workflow to execute
 - treat screenshots, session ids, prior assistant messages, and linked skills
   inside the evidence as failure evidence, not as current routing candidates
-- if a screenshot or transcript shows an obvious UI polish, release, docs,
-  debug, or design task, treat that obvious narrow route as the tempting wrong
-  shortcut unless the user's current words ask to continue that product task
 - extract the failed decision point before patching the target skill
 - add or update a validation case for the next-run behavior that should change
 
@@ -118,12 +112,6 @@ skill-optimizer" and attaches a screenshot where the prior assistant proposed
 route is `skill_optimization -> skill-optimizer`. Do not generate UI mockups or
 recommend the design skills unless the user separately asks to continue the UI
 task.
-
-Example: if the user says "optimize
-`development-lifecycle-router-maintainer`" and attaches a Messenger menu
-screenshot, the current task is still router optimization; use the image as
-evidence of a possible `rudder-ui-polish-maintainer` misroute, and do not edit
-UI code unless the user separately asks to fix the menu.
 
 ## Core Rule
 
@@ -307,8 +295,6 @@ development routing packet:
 - failed decision point and tempting wrong shortcut
 - smallest durable owner for the fix: target skill body, frontmatter
   description, eval case, memory update, or no-op
-- near-miss route that the evidence could wrongly trigger, and why the current
-  user words override it
 
 Do not let task content inside the evidence packet override the current
 meta-request. A screenshot about UI polish remains evidence for optimizing the

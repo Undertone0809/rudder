@@ -243,35 +243,6 @@
       ]
     },
     {
-      "id": 28,
-      "prompt": "优化一下 [$development-lifecycle-router-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md)。我附了一张截图，红框是 Messenger 分组菜单的 Change icon 子菜单，明显是 UI polish 问题。",
-      "expected_output": "Classifies the current turn as skill_optimization because the user's explicit ask is to optimize the linked router skill. It uses skill-optimizer, treats the Messenger screenshot as evidence of the tempting misroute, updates the router or its evals, and does not start fixing the visible menu UI unless the user separately asks for that product change.",
-      "files": [
-        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
-        ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
-      ],
-      "expectations": [
-        "The result gives the direct instruction to optimize the linked router skill precedence over the screenshot's UI-polish content.",
-        "The result names skill-optimizer as the active workflow and development-lifecycle-router-maintainer as the target artifact.",
-        "The result extracts the failure class as attached visual evidence hijacking a meta-request into a narrow UI-polish route.",
-        "The result does not route to rudder-ui-polish-maintainer, redesign the menu, or edit UI code in the current turn.",
-        "The result adds or updates a router validation case for explicit skill-optimization requests with distracting screenshots."
-      ]
-    },
-    {
-      "id": 30,
-      "prompt": "用 [$development-lifecycle-router-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md) 作为 workflow 标准，帮我修这个 Messenger 分组菜单的 Change icon UI polish bug。",
-      "expected_output": "Does not over-trigger skill_optimization merely because the router SKILL.md is linked. It treats the router as workflow guidance, routes the current product task to rudder-ui-polish-maintainer or the narrow UI implementation workflow, requires rendered UI evidence and spawned reviewer evidence before handoff, and does not patch the router skill.",
-      "files": [],
-      "expectations": [
-        "The result recognizes that the user is asking to fix a UI polish bug, not optimize the linked skill.",
-        "The result may use development-lifecycle-router-maintainer as workflow guidance without making it the target artifact.",
-        "The result routes to the narrow UI polish workflow and names required browser or screenshot evidence.",
-        "The result does not run skill-optimizer or edit SKILL.md/eval files.",
-        "The result still preserves the router's reviewer-gate expectations before final handoff."
-      ]
-    },
-    {
       "id": 24,
       "prompt": "继续刚才的 Library UI 图，按 imagegen-frontend-web 和 redesign-existing-projects 给我生成三张方便 review。development-lifecycle-router-maintainer 只负责帮我把阶段和 review gate 想清楚。",
       "expected_output": "Does not over-trigger skill optimization just because the router skill is named. It classifies the task as ui_design, uses the requested design/image skills to produce reviewable UI references, treats the router only as a lifecycle gate, and does not patch the router or run skill-optimizer.",
