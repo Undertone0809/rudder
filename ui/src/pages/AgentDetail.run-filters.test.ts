@@ -13,6 +13,7 @@ import {
   RunFiltersToolbar,
   runSkillOptions,
   writeRunFilterState,
+  type RunFilterParamPatch,
   type RunFilterState,
 } from "./AgentDetail.run-filters";
 
@@ -64,6 +65,8 @@ function defaultFilterState(overrides: Partial<RunFilterState> = {}): RunFilterS
     q: "",
     statuses: [],
     sources: [],
+    scenes: [],
+    targets: [],
     contexts: [],
     skills: [],
     date: "all",
@@ -80,7 +83,7 @@ function renderToolbar({
   onChange = () => undefined,
 }: {
   state?: RunFilterState;
-  onChange?: (patch: Partial<RunFilterState>) => void;
+  onChange?: (patch: RunFilterParamPatch) => void;
 } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -107,11 +110,13 @@ function cleanupToolbar(root: Root, container: HTMLElement) {
 
 describe("agent run filters", () => {
   it("parses and writes URL query state without dropping unrelated params", () => {
-    const original = new URLSearchParams("tab=runs&runView=failed&runStatus=failed,timed_out&runContext=retry&runSkill=build-advisor&runQ=process&runSort=duration_desc&runDate=custom&runFrom=2026-05-24T08:00&runTo=2026-05-24T18:00");
+    const original = new URLSearchParams("tab=runs&runView=failed&runStatus=failed,timed_out&runScene=chat&runTarget=automation_run&runContext=retry&runSkill=build-advisor&runQ=process&runSort=duration_desc&runDate=custom&runFrom=2026-05-24T08:00&runTo=2026-05-24T18:00");
     const state = parseRunFilterState(original);
 
     expect(state.view).toBe("failed");
     expect(state.statuses).toEqual(["failed", "timed_out"]);
+    expect(state.scenes).toEqual(["chat"]);
+    expect(state.targets).toEqual(["automation_run"]);
     expect(state.contexts).toEqual(["retry"]);
     expect(state.skills).toEqual(["build-advisor"]);
     expect(state.q).toBe("process");
@@ -124,6 +129,8 @@ describe("agent run filters", () => {
       view: "all",
       q: "",
       statuses: [],
+      scenes: [],
+      targets: [],
       contexts: [],
       skills: [],
       date: "all",
@@ -135,6 +142,8 @@ describe("agent run filters", () => {
     expect(next.get("tab")).toBe("runs");
     expect(next.get("runView")).toBeNull();
     expect(next.get("runStatus")).toBeNull();
+    expect(next.get("runScene")).toBeNull();
+    expect(next.get("runTarget")).toBeNull();
     expect(next.get("runContext")).toBeNull();
     expect(next.get("runSkill")).toBeNull();
     expect(next.get("runQ")).toBeNull();
@@ -145,10 +154,10 @@ describe("agent run filters", () => {
   });
 
   it("keeps only run filter query params on run navigation destinations", () => {
-    const searchParams = new URLSearchParams("tab=runs&runStatus=failed&runSkill=build-advisor&runSort=duration_desc&panel=details");
+    const searchParams = new URLSearchParams("tab=runs&runStatus=failed&runScene=chat&runTarget=automation_run&runSkill=build-advisor&runSort=duration_desc&panel=details");
 
     expect(appendRunSearchParams("/agents/agent-1/runs/run-2", searchParams)).toBe(
-      "/agents/agent-1/runs/run-2?runStatus=failed&runSkill=build-advisor&runSort=duration_desc",
+      "/agents/agent-1/runs/run-2?runStatus=failed&runScene=chat&runTarget=automation_run&runSkill=build-advisor&runSort=duration_desc",
     );
     expect(appendRunSearchParams("/agents/agent-1/runs", new URLSearchParams())).toBe("/agents/agent-1/runs");
   });
@@ -211,6 +220,8 @@ describe("agent run filters", () => {
       q: "launch",
       statuses: ["failed"],
       sources: [],
+      scenes: [],
+      targets: [],
       contexts: ["issue", "retry", "process_lost"],
       skills: ["build-advisor"],
       date: "all",
@@ -221,6 +232,32 @@ describe("agent run filters", () => {
     });
 
     expect(filtered.map((item) => item.id)).toEqual([skillRun.id]);
+  });
+
+  it("filters by normalized agent-run scene and target type", () => {
+    const chatAutomation = run({
+      id: "11111111-0000-4000-8000-000000000000",
+      invocationSource: "chat",
+      chatConversationId: "chat-1",
+      contextSnapshot: {
+        scene: "chat",
+        targetType: "automation_run",
+        targetId: "automation-run-1",
+        automationRunId: "automation-run-1",
+      },
+    });
+    const issueRun = run({
+      id: "22222222-0000-4000-8000-000000000000",
+      invocationSource: "assignment",
+      contextSnapshot: { issueId: "issue-1" },
+    });
+
+    const filtered = applyRunFilters([chatAutomation, issueRun], defaultFilterState({
+      scenes: ["chat"],
+      targets: ["automation_run"],
+    }));
+
+    expect(filtered.map((item) => item.id)).toEqual([chatAutomation.id]);
   });
 
   it("lists used skill filter options with run counts", () => {
@@ -251,6 +288,8 @@ describe("agent run filters", () => {
       q: "ZST-289",
       statuses: ["succeeded"],
       sources: ["assignment"],
+      scenes: ["chat"],
+      targets: ["automation_run"],
       contexts: ["followup"],
       skills: ["build-advisor", "debug-run-transcript"],
       date: "7d",
@@ -265,6 +304,8 @@ describe("agent run filters", () => {
       "Search: ZST-289",
       "Status: Succeeded",
       "Source: Assignment",
+      "Scene: Chat",
+      "Target: Automation run",
       "Passive follow-up",
       "Skill: build-advisor, debug-run-transcript",
       ">30m",
@@ -276,6 +317,27 @@ describe("agent run filters", () => {
     expect(runFilterChips(defaultFilterState({
       sources: ["timer"],
     }))).toEqual(["Source: Heartbeat"]);
+  });
+
+  it("filters timer invocations through the normalized heartbeat scene", () => {
+    const timerRun = run({
+      id: "11111111-0000-4000-8000-000000000000",
+      invocationSource: "timer",
+      contextSnapshot: { wakeReason: "heartbeat_timer" },
+    });
+    const manualRun = run({
+      id: "22222222-0000-4000-8000-000000000000",
+      invocationSource: "on_demand",
+    });
+
+    const filtered = applyRunFilters([timerRun, manualRun], defaultFilterState({
+      scenes: ["heartbeat"],
+    }));
+
+    expect(filtered.map((item) => item.id)).toEqual([timerRun.id]);
+    expect(runFilterChips(defaultFilterState({
+      scenes: ["heartbeat"],
+    }))).toEqual(["Scene: Heartbeat"]);
   });
 
   it("filters by custom run time bounds", () => {
@@ -362,7 +424,7 @@ describe("agent run filters", () => {
   });
 
   it("uses the issue-board sort interaction for run sorting", () => {
-    const patches: Array<Partial<RunFilterState>> = [];
+    const patches: RunFilterParamPatch[] = [];
     const { container, root } = renderToolbar({
       onChange: (patch) => patches.push(patch),
     });
@@ -401,7 +463,7 @@ describe("agent run filters", () => {
   });
 
   it("shows custom time inputs in the filter popover", () => {
-    const patches: Array<Partial<RunFilterState>> = [];
+    const patches: RunFilterParamPatch[] = [];
     const { container, root } = renderToolbar({
       onChange: (patch) => patches.push(patch),
     });
@@ -439,5 +501,19 @@ describe("agent run filters", () => {
     } finally {
       cleanupToolbar(root, container);
     }
+  });
+
+  it("applies consecutive filter toggles against the latest query state", () => {
+    let searchParams = new URLSearchParams("runSort=duration_desc");
+    const applyPatch = (patch: RunFilterParamPatch) => {
+      searchParams = writeRunFilterState(searchParams, patch);
+    };
+
+    applyPatch((current) => ({ scenes: [...current.scenes, "chat"] }));
+    applyPatch((current) => ({ targets: [...current.targets, "automation_run"] }));
+
+    expect(searchParams.get("runScene")).toBe("chat");
+    expect(searchParams.get("runTarget")).toBe("automation_run");
+    expect(searchParams.get("runSort")).toBe("duration_desc");
   });
 });

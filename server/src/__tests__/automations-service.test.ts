@@ -750,6 +750,20 @@ describe("automation service live-execution coalescing", () => {
     });
     expect((assistantMessage.structuredPayload as Record<string, unknown>).__chatTranscript).toHaveLength(1);
     expect(chatAssistant.streamChatAssistantReply).toHaveBeenCalledTimes(1);
+    expect(chatAssistant.streamChatAssistantReply).toHaveBeenCalledWith(expect.objectContaining({
+      userMessageId: userMessage.id,
+      chatTurnId: userMessage.chatTurnId,
+      turnVariant: userMessage.turnVariant,
+      runContext: expect.objectContaining({
+        scene: "chat",
+        targetType: "automation_run",
+        targetId: run.id,
+        automationRunId: run.id,
+        automationId: automation.id,
+        triggerId: run.triggerId,
+        source: "manual",
+      }),
+    }));
   });
 
   it("keeps process transcript text out of failed chat output bodies", async () => {

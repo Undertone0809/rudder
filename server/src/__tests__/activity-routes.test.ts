@@ -33,7 +33,17 @@ vi.mock("../services/index.js", () => ({
   issueService: () => mockIssueService,
 }));
 
-function createApp() {
+function createRunLookupDb(run: { orgId: string } | null) {
+  return {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(async () => run ? [run] : []),
+      })),
+    })),
+  };
+}
+
+function createApp(db: Record<string, unknown> = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -46,7 +56,7 @@ function createApp() {
     };
     next();
   });
-  app.use("/api", activityRoutes({} as any));
+  app.use("/api", activityRoutes(db as any));
   app.use(errorHandler);
   return app;
 }
@@ -166,5 +176,34 @@ describe("activity routes", () => {
     expect(mockIssueService.getById).not.toHaveBeenCalled();
     expect(mockActivityService.runsForIssue).toHaveBeenCalledWith("organization-1", "issue-uuid-1");
     expect(res.body).toEqual([{ runId: "run-1" }]);
+  });
+
+  it("aliases agent run issue lookup to the heartbeat run issue route", async () => {
+    mockActivityService.issuesForRun.mockResolvedValue([
+      {
+        issueId: "issue-1",
+      },
+    ]);
+
+    const res = await request(createApp(createRunLookupDb({ orgId: "organization-1" })))
+      .get("/api/agent-runs/run-1/issues");
+
+    expect(res.status).toBe(200);
+    expect(mockActivityService.issuesForRun).toHaveBeenCalledWith("run-1");
+    expect(res.body).toEqual([{ issueId: "issue-1" }]);
+  });
+
+  it("does not expose run issues across organization boundaries", async () => {
+    mockActivityService.issuesForRun.mockResolvedValue([
+      {
+        issueId: "issue-1",
+      },
+    ]);
+
+    const res = await request(createApp(createRunLookupDb({ orgId: "organization-2" })))
+      .get("/api/agent-runs/run-1/issues");
+
+    expect(res.status).toBe(403);
+    expect(mockActivityService.issuesForRun).not.toHaveBeenCalled();
   });
 });

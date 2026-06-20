@@ -1,6 +1,6 @@
 import type { HeartbeatRun } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
-import { getRunListSummary } from "./AgentDetail.runs";
+import { getRunListSummary, runDetailFacts } from "./AgentDetail.runs";
 
 function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
   return {
@@ -62,5 +62,27 @@ describe("getRunListSummary", () => {
       error: "Cancelled because the linked issue is no longer actionable",
       errorCode: "cancelled",
     }))).toBe("The run was cancelled before it could continue. Rudder kept the cancellation reason for context.");
+  });
+
+  it("exposes normalized scene and target facts for the run detail panel", () => {
+    expect(runDetailFacts(run({
+      invocationSource: "chat",
+      triggerDetail: "chat_assistant_reply_stream",
+      chatConversationId: "chat-1",
+      contextSnapshot: {
+        targetType: "automation_run",
+        targetId: "automation-run-1",
+        automationRunId: "automation-run-1",
+        automationId: "automation-1",
+        assistantMessageId: "assistant-message-1",
+      },
+    }))).toEqual([
+      { label: "Scene", value: "Chat" },
+      { label: "Target", value: "Automation run" },
+      { label: "Target ID", value: "automation-run-1" },
+      { label: "Automation", value: "automation-1", href: "/automations/automation-1" },
+      { label: "Conversation", value: "chat-1", href: "/messenger/chat/chat-1" },
+      { label: "Message", value: "assistant-message-1" },
+    ]);
   });
 });

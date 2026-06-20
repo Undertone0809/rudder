@@ -82,6 +82,7 @@ export interface StreamChatAssistantReplyInput extends GenerateChatAssistantRepl
   userMessageId?: string | null;
   chatTurnId?: string | null;
   turnVariant?: number | null;
+  runContext?: Record<string, unknown> | null;
   stream?: boolean;
   abortSignal?: AbortSignal;
   onRunCreated?: (runId: string) => Promise<void> | void;

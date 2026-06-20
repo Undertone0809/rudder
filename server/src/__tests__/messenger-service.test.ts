@@ -2787,6 +2787,11 @@ describe("messengerService and issue follows", () => {
     const failedRunsSummary = summaries.find((item) => item.threadKey === "failed-runs");
 
     expect(thread.detail.items.map((item) => item.id)).toEqual([olderRunId, newerRunId]);
+    expect(thread.detail.items[0]?.actions).toContainEqual({
+      label: "Retry",
+      href: `/agent-runs/${olderRunId}/retry`,
+      method: "POST",
+    });
     expect(thread.summary.unreadCount).toBe(1);
     expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
     expect(failedRunsSummary?.preview).toBe(

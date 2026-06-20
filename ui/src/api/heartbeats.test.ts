@@ -29,7 +29,7 @@ describe("heartbeatsApi", () => {
     await heartbeatsApi.list("org-1");
 
     expect(clientMocks.get).toHaveBeenCalledWith(
-      `/orgs/org-1/heartbeat-runs?limit=${HEARTBEAT_RUN_LIST_DEFAULT_LIMIT}`,
+      `/orgs/org-1/agent-runs?limit=${HEARTBEAT_RUN_LIST_DEFAULT_LIMIT}`,
     );
   });
 
@@ -39,11 +39,11 @@ describe("heartbeatsApi", () => {
 
     expect(clientMocks.get).toHaveBeenNthCalledWith(
       1,
-      `/orgs/org-1/heartbeat-runs?limit=${HEARTBEAT_RUN_LIST_HISTORY_LIMIT}`,
+      `/orgs/org-1/agent-runs?limit=${HEARTBEAT_RUN_LIST_HISTORY_LIMIT}`,
     );
     expect(clientMocks.get).toHaveBeenNthCalledWith(
       2,
-      `/orgs/org-1/heartbeat-runs?agentId=agent-1&limit=${HEARTBEAT_RUN_LIST_AGENT_LIMIT}`,
+      `/orgs/org-1/agent-runs?agentId=agent-1&limit=${HEARTBEAT_RUN_LIST_AGENT_LIMIT}`,
     );
   });
 
@@ -54,7 +54,27 @@ describe("heartbeatsApi", () => {
     });
 
     expect(clientMocks.get).toHaveBeenCalledWith(
-      "/orgs/org-1/heartbeat-runs?startDate=2026-06-10T00%3A00%3A00.000Z&endDate=2026-06-16T12%3A00%3A00.000Z",
+      "/orgs/org-1/agent-runs?startDate=2026-06-10T00%3A00%3A00.000Z&endDate=2026-06-16T12%3A00%3A00.000Z",
     );
+  });
+
+  it("uses agent-run aliases for run detail operations", async () => {
+    await heartbeatsApi.get("run-1");
+    await heartbeatsApi.events("run-1");
+    await heartbeatsApi.log("run-1");
+    await heartbeatsApi.workspaceOperations("run-1");
+    await heartbeatsApi.retry("run-1");
+    await heartbeatsApi.cancel("run-1");
+
+    expect(clientMocks.get).toHaveBeenNthCalledWith(1, "/agent-runs/run-1");
+    expect(clientMocks.get).toHaveBeenNthCalledWith(2, "/agent-runs/run-1/events?afterSeq=0&limit=200");
+    expect(clientMocks.get).toHaveBeenNthCalledWith(
+      3,
+      "/agent-runs/run-1/log?offset=0&limitBytes=256000",
+      { cache: "no-store" },
+    );
+    expect(clientMocks.get).toHaveBeenNthCalledWith(4, "/agent-runs/run-1/workspace-operations");
+    expect(clientMocks.post).toHaveBeenNthCalledWith(1, "/agent-runs/run-1/retry", {});
+    expect(clientMocks.post).toHaveBeenNthCalledWith(2, "/agent-runs/run-1/cancel", {});
   });
 });

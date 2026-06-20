@@ -141,6 +141,80 @@ describe("heartbeat run retry route", () => {
     );
   });
 
+  it("lists normalized agent runs through the agent-runs alias", async () => {
+    mockHeartbeatService.list.mockResolvedValue([
+      {
+        id: "run-1",
+        orgId: "organization-1",
+        agentId: "agent-1",
+        invocationSource: "chat",
+        triggerDetail: "chat_assistant_reply_stream",
+        status: "succeeded",
+        startedAt: null,
+        finishedAt: null,
+        error: null,
+        wakeupRequestId: null,
+        exitCode: null,
+        signal: null,
+        usageJson: null,
+        resultJson: null,
+        sessionIdBefore: null,
+        sessionIdAfter: null,
+        logStore: null,
+        logRef: null,
+        logBytes: null,
+        logSha256: null,
+        logCompressed: false,
+        stdoutExcerpt: null,
+        stderrExcerpt: null,
+        errorCode: null,
+        externalRunId: null,
+        chatConversationId: "conversation-1",
+        processPid: null,
+        processStartedAt: null,
+        retryOfRunId: null,
+        processLossRetryCount: 0,
+        contextSnapshot: {
+          assistantMessageId: "assistant-message-1",
+        },
+        createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+      },
+    ]);
+
+    const res = await request(createApp())
+      .get("/api/orgs/organization-1/agent-runs")
+      .query({
+        agentId: "agent-1",
+        limit: "25",
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockHeartbeatService.list).toHaveBeenCalledWith(
+      "organization-1",
+      "agent-1",
+      25,
+      {
+        startDate: undefined,
+        endDate: undefined,
+      },
+    );
+    expect(res.body).toEqual([
+      expect.objectContaining({
+        id: "run-1",
+        scene: "chat",
+        triggerKind: "chat_assistant_reply_stream",
+        targetType: "chat_conversation",
+        targetId: "conversation-1",
+        conversationId: "conversation-1",
+        messageId: "assistant-message-1",
+        automationRunId: null,
+        automationId: null,
+        wakeupRequestId: null,
+      }),
+    ]);
+  });
+
   it("retries a failed run through the dedicated recovery endpoint", async () => {
     mockHeartbeatService.getRun.mockResolvedValue({
       id: "run-1",
@@ -183,6 +257,48 @@ describe("heartbeat run retry route", () => {
         }),
       }),
     );
+  });
+
+  it("retries through the agent-runs alias and returns normalized metadata", async () => {
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: "run-1",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "failed",
+    });
+    mockHeartbeatService.retryRun.mockResolvedValue({
+      id: "run-2",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      invocationSource: "automation",
+      triggerDetail: "system",
+      status: "queued",
+      wakeupRequestId: "wakeup-1",
+      contextSnapshot: {
+        targetType: "automation_run",
+        targetId: "automation-run-1",
+        automationRunId: "automation-run-1",
+        automationId: "automation-1",
+      },
+    });
+
+    const res = await request(createApp()).post("/api/agent-runs/run-1/retry").send({});
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith("run-1", {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+    });
+    expect(res.body).toEqual(expect.objectContaining({
+      id: "run-2",
+      scene: "automation",
+      triggerKind: "system",
+      targetType: "automation_run",
+      targetId: "automation-run-1",
+      automationRunId: "automation-run-1",
+      automationId: "automation-1",
+      wakeupRequestId: "wakeup-1",
+    }));
   });
 
   it("retries a failed run with agent attribution for same-organization agent callers", async () => {

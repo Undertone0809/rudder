@@ -5,6 +5,8 @@ import {
   createAgentHireSchema,
   createAgentKeySchema,
   createAgentSchema,
+  toAgentRun,
+  toAgentRuns,
   updateAgentInstructionsBundleSchema,
   updateAgentInstructionsPathSchema,
   updateAgentPermissionsSchema,
@@ -1161,6 +1163,18 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   router.get("/orgs/:orgId/heartbeat-runs", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    const runs = await listRunsForRequest(req, orgId);
+    res.json(runs);
+  });
+
+  router.get("/orgs/:orgId/agent-runs", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const runs = await listRunsForRequest(req, orgId);
+    res.json(toAgentRuns(runs));
+  });
+
+  async function listRunsForRequest(req: Request, orgId: string) {
     const agentId = req.query.agentId as string | undefined;
     const limitParam = req.query.limit as string | undefined;
     const startDateParam = req.query.startDate as string | undefined;
@@ -1177,9 +1191,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       : hasDateRange
         ? undefined
         : 100;
-    const runs = await heartbeat.list(orgId, agentId, limit, filters);
-    res.json(runs);
-  });
+    return heartbeat.list(orgId, agentId, limit, filters);
+  }
 
   router.get("/orgs/:orgId/live-runs", async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -1240,17 +1253,39 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   });
 
   router.get("/heartbeat-runs/:runId", async (req, res) => {
+    const run = await getAuthorizedRun(req, res);
+    if (!run) return;
+    res.json(redactCurrentUserValue(run, await getCurrentUserRedactionOptions()));
+  });
+
+  router.get("/agent-runs/:runId", async (req, res) => {
+    const run = await getAuthorizedRun(req, res);
+    if (!run) return;
+    res.json(redactCurrentUserValue(toAgentRun(run), await getCurrentUserRedactionOptions()));
+  });
+
+  async function getAuthorizedRun(req: Request, res: any) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: "Heartbeat run not found" });
-      return;
+      return null;
     }
     assertCompanyAccess(req, run.orgId);
-    res.json(redactCurrentUserValue(run, await getCurrentUserRedactionOptions()));
-  });
+    return run;
+  }
 
   router.post("/heartbeat-runs/:runId/cancel", async (req, res) => {
+    const run = await cancelRunForRequest(req);
+    res.json(run);
+  });
+
+  router.post("/agent-runs/:runId/cancel", async (req, res) => {
+    const run = await cancelRunForRequest(req);
+    res.json(run ? toAgentRun(run) : run);
+  });
+
+  async function cancelRunForRequest(req: Request) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const originalRun = await heartbeat.getRun(runId);
     if (!originalRun) {
@@ -1273,15 +1308,27 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     }
 
-    res.json(run);
-  });
+    return run;
+  }
 
   router.post("/heartbeat-runs/:runId/retry", async (req, res) => {
+    const run = await retryRunForRequest(req, res);
+    if (!run) return;
+    res.json(redactCurrentUserValue(run, await getCurrentUserRedactionOptions()));
+  });
+
+  router.post("/agent-runs/:runId/retry", async (req, res) => {
+    const run = await retryRunForRequest(req, res);
+    if (!run) return;
+    res.json(redactCurrentUserValue(toAgentRun(run), await getCurrentUserRedactionOptions()));
+  });
+
+  async function retryRunForRequest(req: Request, res: any) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const originalRun = await heartbeat.getRun(runId);
     if (!originalRun) {
       res.status(404).json({ error: "Heartbeat run not found" });
-      return;
+      return null;
     }
     assertCompanyAccess(req, originalRun.orgId);
 
@@ -1305,15 +1352,27 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       },
     });
 
-    res.json(redactCurrentUserValue(run, await getCurrentUserRedactionOptions()));
-  });
+    return run;
+  }
 
   router.get("/heartbeat-runs/:runId/events", async (req, res) => {
+    const events = await listRunEventsForRequest(req, res);
+    if (!events) return;
+    res.json(events);
+  });
+
+  router.get("/agent-runs/:runId/events", async (req, res) => {
+    const events = await listRunEventsForRequest(req, res);
+    if (!events) return;
+    res.json(events);
+  });
+
+  async function listRunEventsForRequest(req: Request, res: any) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: "Heartbeat run not found" });
-      return;
+      return null;
     }
     assertCompanyAccess(req, run.orgId);
 
@@ -1327,15 +1386,29 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
         payload: redactEventPayload(event.payload),
       }, currentUserRedactionOptions),
     );
-    res.json(redactedEvents);
-  });
+    return redactedEvents;
+  }
 
   router.get("/heartbeat-runs/:runId/log", async (req, res) => {
+    const result = await readRunLogForRequest(req, res);
+    if (!result) return;
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.json(result);
+  });
+
+  router.get("/agent-runs/:runId/log", async (req, res) => {
+    const result = await readRunLogForRequest(req, res);
+    if (!result) return;
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.json(result);
+  });
+
+  async function readRunLogForRequest(req: Request, res: any) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: "Heartbeat run not found" });
-      return;
+      return null;
     }
     assertCompanyAccess(req, run.orgId);
 
@@ -1346,24 +1419,35 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       limitBytes: Number.isFinite(limitBytes) ? limitBytes : 256000,
     });
 
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.json(result);
-  });
+    return result;
+  }
 
   router.get("/heartbeat-runs/:runId/workspace-operations", async (req, res) => {
+    const operations = await listRunWorkspaceOperationsForRequest(req, res);
+    if (!operations) return;
+    res.json(operations);
+  });
+
+  router.get("/agent-runs/:runId/workspace-operations", async (req, res) => {
+    const operations = await listRunWorkspaceOperationsForRequest(req, res);
+    if (!operations) return;
+    res.json(operations);
+  });
+
+  async function listRunWorkspaceOperationsForRequest(req: Request, res: any) {
     const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
     const run = await heartbeat.getRun(runId);
     if (!run) {
       res.status(404).json({ error: "Heartbeat run not found" });
-      return;
+      return null;
     }
     assertCompanyAccess(req, run.orgId);
 
     const context = asRecord(run.contextSnapshot);
     const executionWorkspaceId = asNonEmptyString(context?.executionWorkspaceId);
     const operations = await workspaceOperations.listForRun(runId, executionWorkspaceId);
-    res.json(redactCurrentUserValue(operations, await getCurrentUserRedactionOptions()));
-  });
+    return redactCurrentUserValue(operations, await getCurrentUserRedactionOptions());
+  }
 
   router.get("/workspace-operations/:operationId/log", async (req, res) => {
     const operationId = req.params.operationId as string;

@@ -9,6 +9,7 @@ import {
   chatMessages,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRuns,
   issueComments,
   issues,
   operatorProfiles,
@@ -119,6 +120,7 @@ describe("activityService.forIssue", () => {
     await db.delete(chatContextLinks);
     await db.delete(chatConversations);
     await db.delete(activityLog);
+    await db.delete(heartbeatRuns);
     await db.delete(issues);
     await db.delete(projects);
     await db.delete(agents);
@@ -353,6 +355,89 @@ describe("activityService.forIssue", () => {
     const orgActivity = await svc.list({ orgId });
     expect(orgActivity.map((event) => event.action)).toEqual(["issue.document_updated", "issue.updated"]);
     expect(orgActivity[1]?.details).toMatchObject({ status: "in_progress" });
+  });
+
+  it("does not return issues from another organization through contaminated run activity", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const issueId = randomUUID();
+    const otherIssueId = randomUUID();
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Rudder Run Activity Org",
+        urlKey: deriveOrganizationUrlKey("Rudder Run Activity Org"),
+        issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Rudder Other Activity Org",
+        urlKey: deriveOrganizationUrlKey("Rudder Other Activity Org"),
+        issuePrefix: `O${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Run activity agent",
+      role: "engineer",
+    });
+
+    await db.insert(issues).values([
+      {
+        id: issueId,
+        orgId,
+        title: "Issue in run org",
+        status: "todo",
+        priority: "medium",
+      },
+      {
+        id: otherIssueId,
+        orgId: otherOrgId,
+        title: "Issue in another org",
+        status: "todo",
+        priority: "medium",
+      },
+    ]);
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "failed",
+    });
+
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "agent",
+        actorId: agentId,
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: issueId,
+        runId,
+      },
+      {
+        orgId,
+        actorType: "agent",
+        actorId: agentId,
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: otherIssueId,
+        runId,
+      },
+    ]);
+
+    const result = await svc.issuesForRun(runId);
+
+    expect(result.map((issue) => issue.issueId)).toEqual([issueId]);
   });
 
   it("filters organization activity by user and agent principals", async () => {

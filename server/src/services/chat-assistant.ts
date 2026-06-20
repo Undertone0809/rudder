@@ -252,6 +252,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       turnVariant: input.turnVariant ?? 0,
       linkedIssueIds,
       linkedProjectId,
+      runContext: input.runContext ?? null,
     });
     const runId = chatRun.id;
     await input.onRunCreated?.(runId);

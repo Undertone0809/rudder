@@ -696,7 +696,7 @@ Passive follow-up is issue closure governance, not runtime failure recovery.
    - enqueue wakeup with source/reason
 2. `POST /agents/:agentId/heartbeat/invoke`
    - backward-compatible alias to wakeup API
-3. `POST /heartbeat-runs/:runId/retry`
+3. `POST /agent-runs/:runId/retry`
    - create a recovery run from an existing failed/timed-out run
 4. `GET /agents/:agentId/runtime-state`
    - board-only debug view
@@ -704,12 +704,15 @@ Passive follow-up is issue closure governance, not runtime failure recovery.
    - board-only list of task-scoped adapter sessions
 5. `POST /agents/:agentId/runtime-state/reset-session`
    - clears all task sessions for the agent, or one when `taskKey` is provided
-6. `GET /heartbeat-runs/:runId/events?afterSeq=:n`
+6. `GET /agent-runs/:runId/events?afterSeq=:n`
    - fetch persisted lightweight timeline
-7. `GET /heartbeat-runs/:runId/log`
+7. `GET /agent-runs/:runId/log`
    - reads full log stream via `RunLogStore` (or redirects/presigned URL for object store)
 8. `GET /api/orgs/:orgId/events/ws`
    - websocket stream
+
+Legacy `/heartbeat-runs` endpoints remain compatibility aliases while the public
+Agent Run surface moves to `/agent-runs`.
 
 ## 13.2 Mutation logging
 

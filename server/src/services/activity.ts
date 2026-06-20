@@ -995,6 +995,7 @@ export function activityService(db: Db) {
             eq(activityLog.orgId, run.orgId),
             eq(activityLog.runId, runId),
             eq(activityLog.entityType, "issue"),
+            eq(issues.orgId, run.orgId),
             isNull(issues.hiddenAt),
           ),
         )

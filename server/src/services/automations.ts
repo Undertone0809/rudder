@@ -688,6 +688,18 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
       const assistantInput = await loadAutomationChatAssistantInput(conversation.id);
       const streamed = await assistantSvc.streamChatAssistantReply({
         ...assistantInput,
+        userMessageId: userMessage.id,
+        chatTurnId: userMessage.chatTurnId,
+        turnVariant: userMessage.turnVariant,
+        runContext: {
+          scene: "chat",
+          targetType: "automation_run",
+          targetId: run.id,
+          automationRunId: run.id,
+          automationId: automation.id,
+          triggerId: run.triggerId,
+          source,
+        },
         abortSignal: abortController.signal,
         onAssistantDelta: async (delta: string) => {
           assistantDraftBody = `${assistantDraftBody}${delta}`;

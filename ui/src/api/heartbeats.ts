@@ -1,4 +1,5 @@
 import type {
+  AgentRun,
   HeartbeatRun,
   HeartbeatRunEvent,
   InstanceSchedulerHeartbeatAgent,
@@ -51,27 +52,27 @@ export const heartbeatsApi = {
     if (filters.startDate) searchParams.set("startDate", filters.startDate);
     if (filters.endDate) searchParams.set("endDate", filters.endDate);
     const qs = searchParams.toString();
-    return api.get<HeartbeatRun[]>(`/orgs/${orgId}/heartbeat-runs${qs ? `?${qs}` : ""}`);
+    return api.get<AgentRun[]>(`/orgs/${orgId}/agent-runs${qs ? `?${qs}` : ""}`);
   },
-  get: (runId: string) => api.get<HeartbeatRun>(`/heartbeat-runs/${runId}`),
+  get: (runId: string) => api.get<AgentRun>(`/agent-runs/${runId}`),
   events: (runId: string, afterSeq = 0, limit = 200) =>
     api.get<HeartbeatRunEvent[]>(
-      `/heartbeat-runs/${runId}/events?afterSeq=${encodeURIComponent(String(afterSeq))}&limit=${encodeURIComponent(String(limit))}`,
+      `/agent-runs/${runId}/events?afterSeq=${encodeURIComponent(String(afterSeq))}&limit=${encodeURIComponent(String(limit))}`,
     ),
   log: (runId: string, offset = 0, limitBytes = 256000) =>
     api.get<{ runId: string; store: string; logRef: string; content: string; endOffset?: number; eof?: boolean; nextOffset?: number }>(
-      `/heartbeat-runs/${runId}/log?offset=${encodeURIComponent(String(offset))}&limitBytes=${encodeURIComponent(String(limitBytes))}`,
+      `/agent-runs/${runId}/log?offset=${encodeURIComponent(String(offset))}&limitBytes=${encodeURIComponent(String(limitBytes))}`,
       { cache: "no-store" },
     ),
   workspaceOperations: (runId: string) =>
-    api.get<WorkspaceOperation[]>(`/heartbeat-runs/${runId}/workspace-operations`),
+    api.get<WorkspaceOperation[]>(`/agent-runs/${runId}/workspace-operations`),
   workspaceOperationLog: (operationId: string, offset = 0, limitBytes = 256000) =>
     api.get<{ operationId: string; store: string; logRef: string; content: string; endOffset?: number; eof?: boolean; nextOffset?: number }>(
       `/workspace-operations/${operationId}/log?offset=${encodeURIComponent(String(offset))}&limitBytes=${encodeURIComponent(String(limitBytes))}`,
       { cache: "no-store" },
     ),
-  cancel: (runId: string) => api.post<void>(`/heartbeat-runs/${runId}/cancel`, {}),
-  retry: (runId: string) => api.post<HeartbeatRun>(`/heartbeat-runs/${runId}/retry`, {}),
+  cancel: (runId: string) => api.post<void>(`/agent-runs/${runId}/cancel`, {}),
+  retry: (runId: string) => api.post<AgentRun>(`/agent-runs/${runId}/retry`, {}),
   liveRunsForIssue: (issueId: string) =>
     api.get<LiveRunForIssue[]>(`/issues/${issueId}/live-runs`),
   activeRunForIssue: (issueId: string) =>

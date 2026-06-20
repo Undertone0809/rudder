@@ -110,13 +110,17 @@ export function chatAgentRunService(db: Db) {
     turnVariant?: number | null;
     linkedIssueIds: string[];
     linkedProjectId: string | null;
+    runContext?: Record<string, unknown> | null;
   }) {
     const now = new Date();
     const issueId = input.conversation.primaryIssueId ?? input.linkedIssueIds[0] ?? null;
     const linkedIssueIds = [...new Set([issueId, ...input.linkedIssueIds].filter((value): value is string => Boolean(value)))];
     const contextSnapshot = {
       scene: "chat",
+      targetType: "chat_conversation",
+      targetId: input.conversation.id,
       conversationId: input.conversation.id,
+      messageId: input.userMessageId ?? null,
       userMessageId: input.userMessageId ?? null,
       chatTurnId: input.chatTurnId ?? null,
       turnVariant: input.turnVariant ?? 0,
@@ -126,6 +130,7 @@ export function chatAgentRunService(db: Db) {
       planMode: input.conversation.planMode,
       stream: input.triggerDetail === "chat_assistant_reply_stream",
       controlIntent: "new",
+      ...(input.runContext ?? {}),
     };
     const run = await db
       .insert(heartbeatRuns)
@@ -221,6 +226,7 @@ export function chatAgentRunService(db: Db) {
     const contextSnapshot = {
       ...((run.contextSnapshot ?? {}) as Record<string, unknown>),
       assistantMessageId: messageId,
+      messageId,
     };
     const [updated] = await db
       .update(heartbeatRuns)

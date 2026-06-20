@@ -161,12 +161,21 @@ describe("chatAgentRunService", () => {
       conversation,
       agentId,
       triggerDetail: "chat_assistant_reply",
+      userMessageId: messageId,
       linkedIssueIds: [],
       linkedProjectId: null,
     });
 
     expect(firstRun.status).toBe("running");
     expect(firstRun.invocationSource).toBe("chat");
+    expect(firstRun.contextSnapshot).toMatchObject({
+      scene: "chat",
+      targetType: "chat_conversation",
+      targetId: conversationId,
+      conversationId,
+      messageId,
+      userMessageId: messageId,
+    });
     await expect(svc.createRun({
       conversation,
       agentId,
@@ -219,9 +228,70 @@ describe("chatAgentRunService", () => {
 
     const [linkedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, secondRun.id));
     expect(linkedRun?.chatConversationId).toBe(conversationId);
-    expect(linkedRun?.contextSnapshot).toMatchObject({ assistantMessageId: messageId });
+    expect(linkedRun?.contextSnapshot).toMatchObject({ assistantMessageId: messageId, messageId });
 
     const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, secondRun.id));
     expect(events.some((event) => event.eventType === "chat.message_linked")).toBe(true);
+  });
+
+  it("stores automation run target metadata on chat-backed agent runs", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+    const userMessageId = randomUUID();
+    const automationRunId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RDR",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Chat Runner",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Automation chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+
+    const run = await svc.createRun({
+      conversation: {
+        id: conversationId,
+        orgId,
+        primaryIssueId: null,
+        planMode: false,
+      },
+      agentId,
+      triggerDetail: "chat_assistant_reply_stream",
+      userMessageId,
+      linkedIssueIds: [],
+      linkedProjectId: null,
+      runContext: {
+        targetType: "automation_run",
+        targetId: automationRunId,
+        automationRunId,
+      },
+    });
+
+    expect(run.contextSnapshot).toMatchObject({
+      scene: "chat",
+      targetType: "automation_run",
+      targetId: automationRunId,
+      automationRunId,
+      conversationId,
+      messageId: userMessageId,
+      userMessageId,
+    });
   });
 });

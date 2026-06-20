@@ -890,7 +890,7 @@ function failedRunCard(run: FailedRunRow, agentName: string | null): MessengerHe
     href: `/agents/${run.agentId}/runs/${run.id}`,
     latestActivityAt: run.updatedAt ?? run.createdAt,
     actions: [
-      buildAction("Retry", `/heartbeat-runs/${run.id}/retry`, "POST"),
+      buildAction("Retry", `/agent-runs/${run.id}/retry`, "POST"),
       buildAction("Open run", `/agents/${run.agentId}/runs/${run.id}`, "GET"),
     ],
     metadata: {

@@ -68,5 +68,5 @@ export const activityApi = {
   },
   forIssue: (issueId: string) => api.get<ActivityEvent[]>(`/issues/${issueId}/activity`),
   runsForIssue: (issueId: string) => api.get<RunForIssue[]>(`/issues/${issueId}/runs`),
-  issuesForRun: (runId: string) => api.get<IssueForRun[]>(`/heartbeat-runs/${runId}/issues`),
+  issuesForRun: (runId: string) => api.get<IssueForRun[]>(`/agent-runs/${runId}/issues`),
 };

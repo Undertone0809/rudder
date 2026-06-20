@@ -31,6 +31,26 @@ export const AGENT_RUN_CONCURRENCY_DEFAULT = 3;
 export const AGENT_RUN_CONCURRENCY_MIN = 1;
 export const AGENT_RUN_CONCURRENCY_MAX = 10;
 
+export const AGENT_RUN_SCENES = [
+  "issue",
+  "chat",
+  "automation",
+  "review",
+  "manual",
+  "heartbeat",
+] as const;
+export type AgentRunScene = (typeof AGENT_RUN_SCENES)[number];
+
+export const AGENT_RUN_TARGET_TYPES = [
+  "issue",
+  "chat_conversation",
+  "chat_message",
+  "automation_run",
+  "wakeup_request",
+  "manual",
+] as const;
+export type AgentRunTargetType = (typeof AGENT_RUN_TARGET_TYPES)[number];
+
 export const AGENT_RUNTIME_TYPES = [
   "process",
   "http",

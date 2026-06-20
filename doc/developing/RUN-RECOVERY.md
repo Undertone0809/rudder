@@ -57,7 +57,7 @@ When retrying an older lossy retry run, Rudder backfills missing issue/comment c
 
 Use:
 
-- `POST /api/heartbeat-runs/:runId/retry`
+- `POST /api/agent-runs/:runId/retry`
 
 Do not use manual retry to call:
 
@@ -202,7 +202,7 @@ Coverage:
 
 When a recovery run looks wrong, check these in order:
 
-1. Did the UI call `POST /api/heartbeat-runs/:runId/retry`?
+1. Did the UI call `POST /api/agent-runs/:runId/retry`?
 2. Does the new run row have `retryOfRunId`?
 3. Does `contextSnapshot.recovery` exist and match the source failure?
 4. Did the retry chain preserve or backfill `contextSnapshot.issue` / `comment`?

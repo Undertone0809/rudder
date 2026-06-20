@@ -1,12 +1,14 @@
-import type { Db } from "@rudderhq/db";
-import { Router, type Request } from "express";
+import { heartbeatRuns, type Db } from "@rudderhq/db";
+import { eq } from "drizzle-orm";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { badRequest } from "../errors.js";
+import { badRequest, notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { sanitizeRecord } from "../redaction.js";
 import { activityService } from "../services/activity.js";
+import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
 import { issueService } from "../services/index.js";
-import { assertBoard, assertCompanyAccess } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getAuthorizedOrgScope } from "./authz.js";
 
 const USER_ACTIVITY_INCLUDES = new Set(["chat", "comments", "issues", "approvals", "activity"]);
 
@@ -171,11 +173,22 @@ export function activityRoutes(db: Db) {
     res.json(result);
   });
 
-  router.get("/heartbeat-runs/:runId/issues", async (req, res) => {
-    const runId = req.params.runId as string;
+  async function handleIssuesForRun(req: Request, res: Response) {
+    const runId = await resolveHeartbeatRunIdReference(db, req.params.runId as string, { orgIds: getAuthorizedOrgScope(req) });
+    const run = await db
+      .select({ orgId: heartbeatRuns.orgId })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    if (!run) throw notFound("Heartbeat run not found");
+    assertCompanyAccess(req, run.orgId);
+
     const result = await svc.issuesForRun(runId);
     res.json(result);
-  });
+  }
+
+  router.get("/heartbeat-runs/:runId/issues", handleIssuesForRun);
+  router.get("/agent-runs/:runId/issues", handleIssuesForRun);
 
   return router;
 }

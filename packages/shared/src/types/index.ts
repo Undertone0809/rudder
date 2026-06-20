@@ -68,8 +68,7 @@ export type { DashboardSummary } from "./dashboard.js";
 export type { FinanceByBiller, FinanceByKind, FinanceEvent, FinanceSummary } from "./finance.js";
 export type { Goal, GoalDependencies, GoalDependencyPreview } from "./goal.js";
 export type {
-  AgentRuntimeState,
-  AgentTaskSession,
+  AgentRun, AgentRuntimeState, AgentTaskSession,
   AgentWakeupRequest, HeartbeatRecoveryMode,
   HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, InstanceSchedulerHeartbeatAgent
 } from "./heartbeat.js";

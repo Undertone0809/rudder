@@ -379,7 +379,7 @@ describe("Messenger page headers", () => {
           href: "/heartbeats/run-1",
           latestActivityAt: "2026-04-11T10:00:00.000Z",
           actions: [
-            { label: "Retry", href: "/api/heartbeat-runs/run-1/retry", method: "POST" },
+            { label: "Retry", href: "/api/agent-runs/run-1/retry", method: "POST" },
             { label: "Open run", href: "/heartbeats/run-1", method: "GET" },
           ],
           metadata: {

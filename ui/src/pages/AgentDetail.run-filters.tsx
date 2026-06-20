@@ -3,8 +3,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import type { HeartbeatInvocationSource, HeartbeatRun, HeartbeatRunStatus } from "@rudderhq/shared";
-import { HEARTBEAT_INVOCATION_SOURCES, HEARTBEAT_RUN_STATUSES } from "@rudderhq/shared";
+import type { AgentRunScene, AgentRunTargetType, HeartbeatInvocationSource, HeartbeatRun, HeartbeatRunStatus } from "@rudderhq/shared";
+import { AGENT_RUN_SCENES, AGENT_RUN_TARGET_TYPES, HEARTBEAT_INVOCATION_SOURCES, HEARTBEAT_RUN_STATUSES, toAgentRun } from "@rudderhq/shared";
 import { ArrowDownUp, Filter, Search, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { asNonEmptyString, asRecord, formatCompactTokenLabel, readInvocationSkillList, runMetrics } from "./AgentDetail.helpers";
@@ -23,6 +23,8 @@ export interface RunFilterState {
   q: string;
   statuses: HeartbeatRunStatus[];
   sources: HeartbeatInvocationSource[];
+  scenes: AgentRunScene[];
+  targets: AgentRunTargetType[];
   contexts: RunFilterContext[];
   skills: string[];
   date: RunFilterDatePreset;
@@ -32,7 +34,9 @@ export interface RunFilterState {
   sort: RunSortKey;
 }
 
-type RunFilterParamPatch = Partial<RunFilterState>;
+export type RunFilterParamPatch =
+  | Partial<RunFilterState>
+  | ((state: RunFilterState) => Partial<RunFilterState>);
 
 const runFilterViews: Array<{ value: RunFilterView; label: string }> = [
   { value: "all", label: "All" },
@@ -66,6 +70,24 @@ const contextLabels: Record<RunFilterContext, string> = {
   retry: "Retry / recovery",
   followup: "Passive follow-up",
   process_lost: "Process lost",
+};
+
+const sceneLabels: Record<AgentRunScene, string> = {
+  issue: "Issue",
+  chat: "Chat",
+  automation: "Automation",
+  review: "Review",
+  manual: "Manual",
+  heartbeat: "Heartbeat",
+};
+
+const targetTypeLabels: Record<AgentRunTargetType, string> = {
+  issue: "Issue",
+  chat_conversation: "Chat conversation",
+  chat_message: "Chat message",
+  automation_run: "Automation run",
+  wakeup_request: "Wakeup request",
+  manual: "Manual",
 };
 
 const dateLabels: Record<RunFilterDatePreset, string> = {
@@ -102,6 +124,8 @@ const runSortOptions: Array<{ value: RunSortField; label: string }> = [
 const validViews = new Set<RunFilterView>(runFilterViews.map((view) => view.value));
 const validStatuses = new Set<HeartbeatRunStatus>(HEARTBEAT_RUN_STATUSES);
 const validSources = new Set<HeartbeatInvocationSource>(HEARTBEAT_INVOCATION_SOURCES);
+const validScenes = new Set<AgentRunScene>(AGENT_RUN_SCENES);
+const validTargets = new Set<AgentRunTargetType>(AGENT_RUN_TARGET_TYPES);
 const validContexts = new Set<RunFilterContext>(Object.keys(contextLabels) as RunFilterContext[]);
 const validDates = new Set<RunFilterDatePreset>(Object.keys(dateLabels) as RunFilterDatePreset[]);
 const validCosts = new Set<RunFilterCostPreset>(Object.keys(costLabels) as RunFilterCostPreset[]);
@@ -111,6 +135,8 @@ const RUN_SEARCH_PARAM_KEYS = [
   "runQ",
   "runStatus",
   "runSource",
+  "runScene",
+  "runTarget",
   "runContext",
   "runSkill",
   "runCost",
@@ -167,7 +193,8 @@ function toggleValue<T extends string>(values: T[], value: T) {
 }
 
 function readRunIssueId(run: HeartbeatRun) {
-  return asNonEmptyString(asRecord(run.contextSnapshot)?.issueId);
+  const agentRun = toAgentRun(run);
+  return agentRun.targetType === "issue" ? agentRun.targetId : asNonEmptyString(asRecord(run.contextSnapshot)?.issueId);
 }
 
 function runHasRecoveryContext(run: HeartbeatRun) {
@@ -251,6 +278,14 @@ function matchesCost(run: HeartbeatRun, cost: RunFilterCostPreset) {
   return runDurationMs(run) >= LONG_RUN_MS;
 }
 
+function matchesScene(run: HeartbeatRun, scene: AgentRunScene) {
+  return toAgentRun(run).scene === scene;
+}
+
+function matchesTarget(run: HeartbeatRun, target: AgentRunTargetType) {
+  return toAgentRun(run).targetType === target;
+}
+
 function normalizeRunSkillEntry(value: unknown) {
   const record = asRecord(value);
   if (record) {
@@ -328,6 +363,9 @@ function searchableText(run: HeartbeatRun) {
     run.error,
     run.errorCode,
     readRunIssueId(run),
+    toAgentRun(run).scene,
+    toAgentRun(run).targetType,
+    toAgentRun(run).targetId,
     asNonEmptyString(result?.summary),
     asNonEmptyString(result?.result),
     ...runUsedSkills(run).flatMap((skill) => [skill.key, skill.label]),
@@ -343,6 +381,8 @@ export function parseRunFilterState(searchParams: URLSearchParams): RunFilterSta
     q: searchParams.get("runQ")?.trim() ?? "",
     statuses: readList(searchParams.get("runStatus"), validStatuses),
     sources: readList(searchParams.get("runSource"), validSources),
+    scenes: readList(searchParams.get("runScene"), validScenes),
+    targets: readList(searchParams.get("runTarget"), validTargets),
     contexts: readList(searchParams.get("runContext"), validContexts),
     skills: readFreeformList(searchParams.get("runSkill")),
     date: rawDate && validDates.has(rawDate) ? rawDate : "all",
@@ -354,7 +394,11 @@ export function parseRunFilterState(searchParams: URLSearchParams): RunFilterSta
 }
 
 export function writeRunFilterState(searchParams: URLSearchParams, patch: RunFilterParamPatch) {
-  const nextState = { ...parseRunFilterState(searchParams), ...patch };
+  const currentState = parseRunFilterState(searchParams);
+  const nextState = {
+    ...currentState,
+    ...(typeof patch === "function" ? patch(currentState) : patch),
+  };
   const next = new URLSearchParams(searchParams);
 
   if (nextState.view === "all") next.delete("runView");
@@ -366,6 +410,8 @@ export function writeRunFilterState(searchParams: URLSearchParams, patch: RunFil
   const values: Array<[string, string | null]> = [
     ["runStatus", writeList(nextState.statuses)],
     ["runSource", writeList(nextState.sources)],
+    ["runScene", writeList(nextState.scenes)],
+    ["runTarget", writeList(nextState.targets)],
     ["runContext", writeList(nextState.contexts)],
     ["runSkill", writeList(nextState.skills)],
     ["runCost", writeList(nextState.cost)],
@@ -401,6 +447,8 @@ export function countActiveRunFilters(state: RunFilterState) {
     + Number(state.q.length > 0)
     + Number(state.statuses.length > 0)
     + Number(state.sources.length > 0)
+    + Number(state.scenes.length > 0)
+    + Number(state.targets.length > 0)
     + Number(state.contexts.length > 0)
     + Number(state.skills.length > 0)
     + Number(state.date !== "all")
@@ -413,6 +461,8 @@ export function applyRunFilters(runs: HeartbeatRun[], state: RunFilterState) {
     if (!matchesView(run, state.view)) return false;
     if (state.statuses.length > 0 && !state.statuses.includes(run.status)) return false;
     if (state.sources.length > 0 && !state.sources.includes(run.invocationSource)) return false;
+    if (state.scenes.length > 0 && !state.scenes.some((scene) => matchesScene(run, scene))) return false;
+    if (state.targets.length > 0 && !state.targets.some((target) => matchesTarget(run, target))) return false;
     if (state.contexts.length > 0 && !state.contexts.every((context) => matchesContext(run, context))) return false;
     if (state.skills.length > 0 && !runUsedSkills(run).some((skill) => state.skills.includes(skill.key))) return false;
     if (state.cost.length > 0 && !state.cost.every((cost) => matchesCost(run, cost))) return false;
@@ -472,6 +522,8 @@ export function runFilterChips(state: RunFilterState) {
   if (state.q) chips.push(`Search: ${state.q}`);
   if (state.statuses.length > 0) chips.push(`Status: ${state.statuses.map((status) => statusLabels[status]).join(", ")}`);
   if (state.sources.length > 0) chips.push(`Source: ${state.sources.map((source) => sourceLabels[source]).join(", ")}`);
+  if (state.scenes.length > 0) chips.push(`Scene: ${state.scenes.map((scene) => sceneLabels[scene]).join(", ")}`);
+  if (state.targets.length > 0) chips.push(`Target: ${state.targets.map((target) => targetTypeLabels[target]).join(", ")}`);
   for (const context of state.contexts) chips.push(contextLabels[context]);
   if (state.skills.length > 0) chips.push(`Skill: ${state.skills.join(", ")}`);
   for (const cost of state.cost) chips.push(costLabels[cost]);
@@ -535,7 +587,7 @@ export function RunFiltersToolbar({
     customRangeDraftRef.current = nextDraft;
     setCustomRangeDraft(nextDraft);
   }, [state.customFrom, state.customTo]);
-  const updateCustomRange = (patch: Pick<RunFilterParamPatch, "customFrom" | "customTo">) => {
+  const updateCustomRange = (patch: Partial<Pick<RunFilterState, "customFrom" | "customTo">>) => {
     const nextDraft = { ...customRangeDraftRef.current, ...patch };
     customRangeDraftRef.current = nextDraft;
     setCustomRangeDraft(nextDraft);
@@ -652,7 +704,7 @@ export function RunFiltersToolbar({
                     <label key={status} className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
                       <Checkbox
                         checked={state.statuses.includes(status)}
-                        onCheckedChange={() => onChange({ statuses: toggleValue(state.statuses, status) })}
+                        onCheckedChange={() => onChange((current) => ({ statuses: toggleValue(current.statuses, status) }))}
                       />
                       <span className="min-w-0 flex-1 truncate text-sm">{statusLabels[status]}</span>
                       <span className="text-xs tabular-nums text-muted-foreground">{statusCounts.get(status) ?? 0}</span>
@@ -675,7 +727,7 @@ export function RunFiltersToolbar({
                             ? "border-primary bg-primary text-primary-foreground"
                             : "border-border text-muted-foreground hover:text-foreground",
                         )}
-                        onClick={() => onChange({ sources: toggleValue(state.sources, source) })}
+                        onClick={() => onChange((current) => ({ sources: toggleValue(current.sources, source) }))}
                       >
                         {sourceLabels[source]}
                       </button>
@@ -727,6 +779,50 @@ export function RunFiltersToolbar({
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5" data-testid="run-filter-scene-section">
+                  <span className="text-xs text-muted-foreground">Scene</span>
+                  <div className="flex flex-wrap gap-1">
+                    {AGENT_RUN_SCENES.map((scene) => (
+                      <button
+                        key={scene}
+                        type="button"
+                        className={cn(
+                          "rounded-md border px-2 py-1 text-xs transition-colors",
+                          state.scenes.includes(scene)
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border text-muted-foreground hover:text-foreground",
+                        )}
+                        onClick={() => onChange((current) => ({ scenes: toggleValue(current.scenes, scene) }))}
+                      >
+                        {sceneLabels[scene]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5" data-testid="run-filter-target-section">
+                  <span className="text-xs text-muted-foreground">Target</span>
+                  <div className="flex flex-wrap gap-1">
+                    {AGENT_RUN_TARGET_TYPES.map((target) => (
+                      <button
+                        key={target}
+                        type="button"
+                        className={cn(
+                          "rounded-md border px-2 py-1 text-xs transition-colors",
+                          state.targets.includes(target)
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border text-muted-foreground hover:text-foreground",
+                        )}
+                        onClick={() => onChange((current) => ({ targets: toggleValue(current.targets, target) }))}
+                      >
+                        {targetTypeLabels[target]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-1.5">
                 <span className="text-xs text-muted-foreground">Context</span>
                 <div className="flex flex-wrap gap-1">
@@ -740,7 +836,7 @@ export function RunFiltersToolbar({
                           ? "border-primary bg-primary text-primary-foreground"
                           : "border-border text-muted-foreground hover:text-foreground",
                       )}
-                      onClick={() => onChange({ contexts: toggleValue(state.contexts, context) })}
+                      onClick={() => onChange((current) => ({ contexts: toggleValue(current.contexts, context) }))}
                     >
                       {contextLabels[context]}
                     </button>
@@ -764,7 +860,7 @@ export function RunFiltersToolbar({
                               : "border-border text-muted-foreground hover:text-foreground",
                           )}
                           title={skill.key}
-                          onClick={() => onChange({ skills: toggleValue(state.skills, skill.key) })}
+                          onClick={() => onChange((current) => ({ skills: toggleValue(current.skills, skill.key) }))}
                         >
                           {skill.label}
                           <span className="ml-1 opacity-70">{skill.count}</span>
@@ -792,7 +888,7 @@ export function RunFiltersToolbar({
                           ? "border-primary bg-primary text-primary-foreground"
                           : "border-border text-muted-foreground hover:text-foreground",
                       )}
-                      onClick={() => onChange({ cost: toggleValue(state.cost, cost) })}
+                      onClick={() => onChange((current) => ({ cost: toggleValue(current.cost, cost) }))}
                     >
                       {costLabels[cost]}
                     </button>

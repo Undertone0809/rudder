@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { skillAnalyticsQueryOptions, SKILL_ANALYTICS_STALE_TIME_MS } from "./skill-analytics-cache";
+import { SKILL_ANALYTICS_STALE_TIME_MS, skillAnalyticsQueryOptions } from "./skill-analytics-cache";
 
 describe("skill analytics query cache", () => {
   it("keeps skill analytics fresh long enough for dashboard navigation", () => {

@@ -26,13 +26,13 @@ async function createAgentFixture(page: Page, name: string) {
   return { organization, agent };
 }
 
-async function holdHeartbeatRuns(page: Page, orgId: string) {
+async function holdAgentRuns(page: Page, orgId: string) {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
 
-  await page.route(`**/api/orgs/${orgId}/heartbeat-runs**`, async (route: Route) => {
+  await page.route(`**/api/orgs/${orgId}/agent-runs**`, async (route: Route) => {
     await gate;
     await route.fulfill({
       status: 200,
@@ -76,7 +76,7 @@ async function holdAgentSkillAnalytics(page: Page, orgId: string, agentId: strin
 test.describe("Agent detail loading state", () => {
   test("keeps the dashboard in a skeleton state until agent activity loads", async ({ page }) => {
     const { organization, agent } = await createAgentFixture(page, "Loading Dashboard Agent");
-    const releaseHeartbeatRuns = await holdHeartbeatRuns(page, organization.id);
+    const releaseAgentRuns = await holdAgentRuns(page, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/dashboard`, {
       waitUntil: "domcontentloaded",
@@ -87,7 +87,7 @@ test.describe("Agent detail loading state", () => {
     await expect(mainContent.getByTestId("agent-dashboard-skeleton")).toBeVisible();
     await expect(mainContent.getByText("No recent issues.")).toHaveCount(0);
 
-    releaseHeartbeatRuns();
+    releaseAgentRuns();
 
     await expect(mainContent.getByTestId("agent-dashboard-skeleton")).toHaveCount(0);
     await expect(mainContent.getByText("No recent issues.")).toBeVisible();
@@ -115,7 +115,7 @@ test.describe("Agent detail loading state", () => {
 
   test("does not flash an empty runs state before runs have loaded", async ({ page }) => {
     const { organization, agent } = await createAgentFixture(page, "Loading Runs Agent");
-    const releaseHeartbeatRuns = await holdHeartbeatRuns(page, organization.id);
+    const releaseAgentRuns = await holdAgentRuns(page, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/runs`, {
       waitUntil: "domcontentloaded",
@@ -126,7 +126,7 @@ test.describe("Agent detail loading state", () => {
     await expect(mainContent.getByTestId("agent-runs-skeleton")).toBeVisible();
     await expect(mainContent.getByText("No runs yet.")).toHaveCount(0);
 
-    releaseHeartbeatRuns();
+    releaseAgentRuns();
 
     await expect(mainContent.getByTestId("agent-runs-skeleton")).toHaveCount(0);
     await expect(mainContent.getByText("No runs yet.")).toBeVisible();

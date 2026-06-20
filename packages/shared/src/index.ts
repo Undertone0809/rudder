@@ -1,6 +1,6 @@
 export {
   AGENT_AVATAR_BACKGROUND_PRESET_IDS, AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX, AGENT_ICON_NAMES, AGENT_INTEGRATION_CHAT_TYPES, AGENT_INTEGRATION_DROP_REASONS, AGENT_INTEGRATION_OUTBOUND_STATUSES, AGENT_INTEGRATION_PROVIDERS, AGENT_INTEGRATION_PROVIDER_REGIONS, AGENT_INTEGRATION_STATUSES, AGENT_INTEGRATION_TRANSPORTS, AGENT_ROLES,
-  AGENT_ROLE_LABELS, AGENT_RUNTIME_TYPES, AGENT_RUN_CONCURRENCY_DEFAULT, AGENT_RUN_CONCURRENCY_MAX, AGENT_RUN_CONCURRENCY_MIN, AGENT_STATUSES, APPROVAL_STATUSES, APPROVAL_TYPES, AUTH_BASE_URL_MODES, AUTOMATION_CATCH_UP_POLICIES, AUTOMATION_CONCURRENCY_POLICIES, AUTOMATION_OUTPUT_MODES, AUTOMATION_RUN_SOURCES, AUTOMATION_RUN_STATUSES, AUTOMATION_STATUSES, AUTOMATION_TRIGGER_KINDS,
+  AGENT_ROLE_LABELS, AGENT_RUNTIME_TYPES, AGENT_RUN_CONCURRENCY_DEFAULT, AGENT_RUN_CONCURRENCY_MAX, AGENT_RUN_CONCURRENCY_MIN, AGENT_RUN_SCENES, AGENT_RUN_TARGET_TYPES, AGENT_STATUSES, APPROVAL_STATUSES, APPROVAL_TYPES, AUTH_BASE_URL_MODES, AUTOMATION_CATCH_UP_POLICIES, AUTOMATION_CONCURRENCY_POLICIES, AUTOMATION_OUTPUT_MODES, AUTOMATION_RUN_SOURCES, AUTOMATION_RUN_STATUSES, AUTOMATION_STATUSES, AUTOMATION_TRIGGER_KINDS,
   AUTOMATION_TRIGGER_SIGNING_MODES, BILLING_TYPES, BUDGET_INCIDENT_RESOLUTION_ACTIONS, BUDGET_INCIDENT_STATUSES, BUDGET_METRICS, BUDGET_SCOPE_TYPES, BUDGET_THRESHOLD_TYPES, BUDGET_WINDOW_KINDS, CALENDAR_EVENT_KINDS,
   CALENDAR_EVENT_STATUSES, CALENDAR_OWNER_TYPES, CALENDAR_SOURCE_MODES, CALENDAR_SOURCE_STATUSES, CALENDAR_SOURCE_TYPES, CALENDAR_VISIBILITIES, CHAT_CONTEXT_ENTITY_TYPES, CHAT_CONVERSATION_STATUSES,
   CHAT_ISSUE_CREATION_MODES, CHAT_MESSAGE_KINDS, CHAT_MESSAGE_ROLES, CHAT_MESSAGE_STATUSES, DEFAULT_PROJECT_ICON, DEPLOYMENT_EXPOSURES, DEPLOYMENT_MODES, FINANCE_DIRECTIONS, FINANCE_EVENT_KINDS, FINANCE_UNITS, GOAL_LEVELS,
@@ -12,7 +12,7 @@ export {
   PLUGIN_JOB_RUN_TRIGGERS, PLUGIN_JOB_STATUSES, PLUGIN_LAUNCHER_ACTIONS,
   PLUGIN_LAUNCHER_BOUNDS, PLUGIN_LAUNCHER_PLACEMENT_ZONES, PLUGIN_LAUNCHER_RENDER_ENVIRONMENTS,
   PLUGIN_STATE_SCOPE_KINDS, PLUGIN_STATUSES, PLUGIN_UI_SLOT_ENTITY_TYPES, PLUGIN_UI_SLOT_TYPES, PLUGIN_WEBHOOK_DELIVERY_STATUSES, PRINCIPAL_TYPES, PROJECT_COLORS, PROJECT_ICONS, PROJECT_RESOURCE_ATTACHMENT_ROLES, PROJECT_STATUSES, SECRET_PROVIDERS,
-  STORAGE_PROVIDERS, WAKEUP_REQUEST_STATUSES, WAKEUP_TRIGGER_DETAILS, type AgentAvatarBackgroundPresetId, type AgentIconName, type AgentIntegrationChatType, type AgentIntegrationDropReason, type AgentIntegrationOutboundStatus, type AgentIntegrationProvider, type AgentIntegrationProviderRegion, type AgentIntegrationStatus, type AgentIntegrationTransport, type AgentRole, type AgentRuntimeType, type AgentStatus, type ApprovalStatus, type ApprovalType, type AuthBaseUrlMode, type AutomationCatchUpPolicy, type AutomationConcurrencyPolicy, type AutomationOutputMode, type AutomationRunSource, type AutomationRunStatus, type AutomationStatus, type AutomationTriggerKind,
+  STORAGE_PROVIDERS, WAKEUP_REQUEST_STATUSES, WAKEUP_TRIGGER_DETAILS, type AgentAvatarBackgroundPresetId, type AgentIconName, type AgentIntegrationChatType, type AgentIntegrationDropReason, type AgentIntegrationOutboundStatus, type AgentIntegrationProvider, type AgentIntegrationProviderRegion, type AgentIntegrationStatus, type AgentIntegrationTransport, type AgentRole, type AgentRunScene, type AgentRunTargetType, type AgentRuntimeType, type AgentStatus, type ApprovalStatus, type ApprovalType, type AuthBaseUrlMode, type AutomationCatchUpPolicy, type AutomationConcurrencyPolicy, type AutomationOutputMode, type AutomationRunSource, type AutomationRunStatus, type AutomationStatus, type AutomationTriggerKind,
   type AutomationTriggerSigningMode, type BillingType, type BudgetIncidentResolutionAction, type BudgetIncidentStatus, type BudgetMetric, type BudgetScopeType, type BudgetThresholdType, type BudgetWindowKind, type CalendarEventKind,
   type CalendarEventStatus, type CalendarOwnerType, type CalendarSourceMode, type CalendarSourceStatus, type CalendarSourceType, type CalendarVisibility, type ChatContextEntityType, type ChatConversationStatus,
   type ChatIssueCreationMode, type ChatMessageKind, type ChatMessageRole, type ChatMessageStatus, type DeploymentExposure, type DeploymentMode, type FinanceDirection, type FinanceEventKind, type FinanceUnit, type GoalLevel,
@@ -26,6 +26,7 @@ export {
   type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
 } from "./constants.js";
 
+export { toAgentRun, toAgentRuns } from "./agent-run.js";
 export { EXECUTION_OBSERVABILITY_SURFACES } from "./types/observability.js";
 export {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
@@ -35,7 +36,7 @@ export {
 
 export type {
   ActivityEvent, Agent,
-  AgentAccessState, AgentChainOfCommandEntry, AgentConfigRevision, AgentDetail, AgentEnvConfig, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentIntegration, AgentIntegrationBindingToken, AgentIntegrationChatBinding, AgentIntegrationInboundAudit, AgentIntegrationOutboundMessage, AgentIntegrationSetupUrl, AgentIntegrationSummary, AgentIntegrationUserBinding, AgentKeyCreated, AgentPermissions, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus, AgentRuntimeState, AgentSkillAnalytics, AgentSkillAnalyticsDay, AgentSkillAnalyticsSkillTotal, AgentSkillEntry, AgentSkillOrigin, AgentSkillSnapshot, AgentSkillSourceClass, AgentSkillState, AgentSkillSyncMode, AgentSkillSyncRequest,
+  AgentAccessState, AgentChainOfCommandEntry, AgentConfigRevision, AgentDetail, AgentEnvConfig, AgentInstructionsBundle, AgentInstructionsBundleMode, AgentInstructionsFileDetail, AgentInstructionsFileSummary, AgentIntegration, AgentIntegrationBindingToken, AgentIntegrationChatBinding, AgentIntegrationInboundAudit, AgentIntegrationOutboundMessage, AgentIntegrationSetupUrl, AgentIntegrationSummary, AgentIntegrationUserBinding, AgentKeyCreated, AgentPermissions, AgentRun, AgentRuntimeEnvironmentCheck, AgentRuntimeEnvironmentCheckLevel, AgentRuntimeEnvironmentTestResult, AgentRuntimeEnvironmentTestStatus, AgentRuntimeState, AgentSkillAnalytics, AgentSkillAnalyticsDay, AgentSkillAnalyticsSkillTotal, AgentSkillEntry, AgentSkillOrigin, AgentSkillSnapshot, AgentSkillSourceClass, AgentSkillState, AgentSkillSyncMode, AgentSkillSyncRequest,
   AgentSkillTelemetryEvidence,
   AgentSkillTelemetryEvidenceCounts, AgentTaskSession,
   AgentWakeupRequest, Approval,

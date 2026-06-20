@@ -848,7 +848,7 @@ async function runSystemAction(action: MessengerEvent["actions"][number]) {
     throw new Error("Unsupported Messenger action.");
   }
 
-  const retryMatch = action.href.match(/^\/heartbeat-runs\/([^/]+)\/retry$/);
+  const retryMatch = action.href.match(/^\/(?:agent-runs|heartbeat-runs)\/([^/]+)\/retry$/);
   if (retryMatch) {
     await heartbeatsApi.retry(retryMatch[1] ?? "");
     return;

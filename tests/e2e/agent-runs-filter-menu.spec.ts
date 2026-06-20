@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { createDb, heartbeatRunEvents, heartbeatRuns } from "../../packages/db/src/index.ts";
+import { automations, createDb, heartbeatRunEvents, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -41,6 +41,16 @@ test.describe("Agent runs filter menu", () => {
     const failedRunId = randomUUID();
     const newestShortRunId = randomUUID();
     const issueContextId = randomUUID();
+    const automationId = randomUUID();
+    await e2eDb.insert(automations).values({
+      id: automationId,
+      orgId: organization.id,
+      assigneeAgentId: agent.id,
+      title: "Agent run source automation",
+      description: "Verifies Agent Run source navigation.",
+      outputMode: "chat_output",
+      status: "active",
+    });
     await e2eDb.insert(heartbeatRuns).values([
       {
         id: selectedRunId,
@@ -57,6 +67,13 @@ test.describe("Agent runs filter menu", () => {
         },
         stdoutExcerpt: "Selected run should stay open",
         resultJson: { summary: "Selected run should stay open" },
+        contextSnapshot: {
+          scene: "chat",
+          targetType: "automation_run",
+          targetId: "automation-run-filter-fixture",
+          automationRunId: "automation-run-filter-fixture",
+          automationId,
+        },
         createdAt: new Date("2026-05-22T08:00:00.000Z"),
         updatedAt: new Date("2026-05-22T08:03:00.000Z"),
       },
@@ -137,6 +154,19 @@ test.describe("Agent runs filter menu", () => {
     const mainContent = page.locator("#main-content");
     await expect(mainContent.getByTestId("run-filter-floating-toolbar")).toBeVisible();
     await expect(mainContent.getByTestId("agent-runs-detail-pane").getByText("Selected run should stay open")).toBeVisible();
+    await expect(mainContent.getByTestId("run-agent-run-facts").getByText("Scene")).toBeVisible();
+    await expect(mainContent.getByTestId("run-agent-run-facts").getByText("Chat")).toBeVisible();
+    await expect(mainContent.getByTestId("run-agent-run-facts").getByText("Automation run")).toBeVisible();
+    const automationLink = mainContent.getByTestId("run-agent-run-facts").getByRole("link", { name: automationId });
+    await expect(automationLink).toHaveAttribute(
+      "href",
+      new RegExp(`/automations/${automationId}$`),
+    );
+    await automationLink.click();
+    await expect(page).toHaveURL(new RegExp(`/automations/${automationId}$`));
+    await expect(page.getByRole("textbox", { name: "Automation title" })).toHaveValue("Agent run source automation");
+    await page.goBack({ waitUntil: "domcontentloaded" });
+    await expect(mainContent.getByTestId("agent-runs-detail-pane").getByText("Selected run should stay open")).toBeVisible();
 
     const listPane = mainContent.getByTestId("agent-runs-list-pane");
     await expect(listPane.getByRole("link").first()).toContainText(newestShortRunId.slice(0, 8));
@@ -164,6 +194,7 @@ test.describe("Agent runs filter menu", () => {
     await expect(popover.getByText("Used skill")).toBeVisible();
     await popover.getByRole("button", { name: /build-advisor/ }).click();
     await expect(page).toHaveURL(/runSkill=build-advisor/);
+    await expect(mainContent.getByText("Skill: build-advisor")).toBeVisible();
 
     await expect(listPane.getByText("Selected run is outside the current filters.")).toBeVisible();
     await expect(listPane.getByText(failedRunId.slice(0, 8))).toBeVisible();
@@ -175,7 +206,10 @@ test.describe("Agent runs filter menu", () => {
     await expect(page).toHaveURL(new RegExp(`/agents/[^/]+/runs/${failedRunId}`));
     await expect(page).toHaveURL(/runStatus=failed/);
     await expect(page).toHaveURL(/runSkill=build-advisor/);
-    await expect(mainContent.getByTestId("agent-runs-detail-pane").getByText("Process lost")).toBeVisible();
+    await expect(mainContent.getByTestId("run-summary-card").getByText("Run failed")).toBeVisible();
+    await expect(mainContent.getByText("Recovery")).toBeVisible();
+    await expect(mainContent.getByText("process_lost", { exact: true })).toBeVisible();
+    await expect(mainContent.getByTestId("run-agent-run-facts").getByText("Issue")).toHaveCount(2);
 
     await mainContent.getByRole("button", { name: "Clear run filters" }).click();
     await expect(page).not.toHaveURL(/runStatus=failed/);
@@ -196,5 +230,17 @@ test.describe("Agent runs filter menu", () => {
     await expect(listPane.getByText(newestShortRunId.slice(0, 8))).toHaveCount(0);
     await expect(listPane.getByText("Selected run is outside the current filters.")).toHaveCount(0);
     await expect(mainContent.getByText(/Custom:/)).toBeVisible();
+
+    await mainContent.getByRole("button", { name: "Clear run filters" }).click();
+    await mainContent.getByRole("button", { name: /^Filter$/ }).click();
+    const agentRunPopover = page.getByTestId("run-filter-popover");
+    await expect(agentRunPopover).toBeVisible();
+    await agentRunPopover.getByTestId("run-filter-scene-section").getByRole("button", { name: "Chat" }).click();
+    await agentRunPopover.getByTestId("run-filter-target-section").getByRole("button", { name: "Automation run" }).click();
+    await expect(page).toHaveURL(/runScene=chat/);
+    await expect(page).toHaveURL(/runTarget=automation_run/);
+    await expect(listPane.getByText("Selected run is outside the current filters.")).toBeVisible();
+    await expect(listPane.getByText(selectedRunId.slice(0, 8))).toBeVisible();
+    await expect(listPane.getByText(failedRunId.slice(0, 8))).toBeVisible();
   });
 });

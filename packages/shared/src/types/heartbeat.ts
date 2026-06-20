@@ -1,5 +1,7 @@
 import type {
   AgentRole,
+  AgentRunScene,
+  AgentRunTargetType,
   AgentStatus,
   HeartbeatInvocationSource,
   HeartbeatRunStatus,
@@ -28,6 +30,18 @@ export interface HeartbeatRunPassiveFollowupContext {
 }
 
 export interface HeartbeatRunContextSnapshot extends Record<string, unknown> {
+  scene?: AgentRunScene;
+  triggerKind?: string | null;
+  targetType?: AgentRunTargetType;
+  targetId?: string | null;
+  conversationId?: string | null;
+  messageId?: string | null;
+  userMessageId?: string | null;
+  assistantMessageId?: string | null;
+  automationRunId?: string | null;
+  automationId?: string | null;
+  wakeupRequestId?: string | null;
+  issueId?: string | null;
   recovery?: HeartbeatRunRecoveryContext;
   passiveFollowup?: HeartbeatRunPassiveFollowupContext;
 }
@@ -66,6 +80,18 @@ export interface HeartbeatRun {
   contextSnapshot: HeartbeatRunContextSnapshot | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AgentRun extends HeartbeatRun {
+  scene: AgentRunScene;
+  triggerKind: string;
+  targetType: AgentRunTargetType;
+  targetId: string | null;
+  conversationId: string | null;
+  messageId: string | null;
+  automationRunId: string | null;
+  automationId: string | null;
+  wakeupRequestId: string | null;
 }
 
 export interface HeartbeatRunEvent {

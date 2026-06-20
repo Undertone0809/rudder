@@ -1,6 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
 import {
+  toAgentRun,
+  type AgentRunScene,
+  type AgentRunTargetType,
   type HeartbeatRun
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -63,6 +66,47 @@ export function getRunListSummary(run: HeartbeatRun): string {
     return String((run.resultJson as Record<string, unknown>).summary ?? (run.resultJson as Record<string, unknown>).result ?? "");
   }
   return failureDisplay?.body ?? "";
+}
+
+const runSceneLabels: Record<AgentRunScene, string> = {
+  issue: "Issue",
+  chat: "Chat",
+  automation: "Automation",
+  review: "Review",
+  manual: "Manual",
+  heartbeat: "Heartbeat",
+};
+
+const runTargetLabels: Record<AgentRunTargetType, string> = {
+  issue: "Issue",
+  chat_conversation: "Chat conversation",
+  chat_message: "Chat message",
+  automation_run: "Automation run",
+  wakeup_request: "Wakeup request",
+  manual: "Manual",
+};
+
+export function runDetailFacts(run: HeartbeatRun) {
+  const agentRun = toAgentRun(run);
+  const facts: Array<{ label: string; value: string; href?: string }> = [
+    { label: "Scene", value: runSceneLabels[agentRun.scene] },
+    { label: "Target", value: runTargetLabels[agentRun.targetType] },
+  ];
+  if (agentRun.targetId) {
+    facts.push({
+      label: "Target ID",
+      value: agentRun.targetId,
+      href: agentRun.targetType === "issue" ? `/issues/${agentRun.targetId}` : undefined,
+    });
+  }
+  if (agentRun.automationId) {
+    facts.push({ label: "Automation", value: agentRun.automationId, href: `/automations/${agentRun.automationId}` });
+  }
+  if (agentRun.conversationId) {
+    facts.push({ label: "Conversation", value: agentRun.conversationId, href: `/messenger/chat/${agentRun.conversationId}` });
+  }
+  if (agentRun.messageId) facts.push({ label: "Message", value: agentRun.messageId });
+  return facts;
 }
 
 export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelected: boolean; agentId: string }) {
@@ -217,6 +261,8 @@ export function RunsTab({
       q: "",
       statuses: [],
       sources: [],
+      scenes: [],
+      targets: [],
       contexts: [],
       skills: [],
       date: "all",
@@ -429,6 +475,7 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
   const startTime = run.startedAt ? new Date(run.startedAt).toLocaleTimeString("en-US", timeFormat) : null;
   const endTime = run.finishedAt ? new Date(run.finishedAt).toLocaleTimeString("en-US", timeFormat) : null;
   const hasMetrics = metrics.input > 0 || metrics.output > 0 || metrics.cached > 0 || metrics.cost > 0;
+  const facts = runDetailFacts(run);
   const hasSession = !!(run.sessionIdBefore || run.sessionIdAfter);
   const sessionChanged = run.sessionIdBefore && run.sessionIdAfter && run.sessionIdBefore !== run.sessionIdAfter;
   const hasNonZeroExit = run.exitCode !== null && run.exitCode !== 0;
@@ -609,6 +656,22 @@ export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: {
               <div className="text-xs text-red-600 dark:text-red-400">
                 Exit code {run.exitCode}
                 {run.signal && <span className="text-muted-foreground ml-1">(signal: {run.signal})</span>}
+              </div>
+            )}
+            {facts.length > 0 && (
+              <div className="grid gap-1.5 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2" data-testid="run-agent-run-facts">
+                {facts.map((fact) => (
+                  <div key={`${fact.label}:${fact.value}`} className="min-w-0">
+                    <div className="text-[11px] text-muted-foreground">{fact.label}</div>
+                    {fact.href ? (
+                      <Link className="block truncate font-medium text-foreground underline-offset-2 hover:underline" title={fact.value} to={fact.href}>
+                        {fact.value}
+                      </Link>
+                    ) : (
+                      <div className="truncate font-medium text-foreground" title={fact.value}>{fact.value}</div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
             {recoveryOriginalRunId && (
