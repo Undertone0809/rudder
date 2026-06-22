@@ -11,6 +11,9 @@ import type {
 } from "./types.js";
 
 const LOCAL_CLI_CREDENTIAL_AUTH_CHECK_TIMEOUT_MS = 3000;
+const RUDDER_COPIED_SKILL_MANIFEST = path.join(".rudder", "materialized-skill.json");
+type RuntimeSkillLinkType = "dir" | "file" | "junction";
+type RuntimeSkillLinker = (source: string, target: string, type?: RuntimeSkillLinkType) => Promise<void>;
 
 export function ensurePathInEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (typeof env.PATH === "string" && env.PATH.length > 0) return env;
@@ -213,7 +216,8 @@ export async function readInstalledSkillTargets(skillsHome: string): Promise<Map
   for (const entry of entries) {
     const fullPath = path.join(skillsHome, entry.name);
     const linkedPath = entry.isSymbolicLink() ? await fs.readlink(fullPath).catch(() => null) : null;
-    out.set(entry.name, resolveInstalledEntryTarget(skillsHome, entry.name, entry, linkedPath));
+    const copiedSkillSource = entry.isDirectory() ? await readCopiedSkillSourcePath(fullPath) : null;
+    out.set(entry.name, resolveInstalledEntryTarget(skillsHome, entry.name, entry, linkedPath, copiedSkillSource));
   }
   return out;
 }
@@ -521,6 +525,106 @@ export async function ensureSymlinkToSource(target: string, source: string): Pro
   return "repaired";
 }
 
+function isRecoverableDirectoryLinkError(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as NodeJS.ErrnoException).code)
+    : "";
+  return code === "EPERM" || code === "EACCES" || code === "ENOTSUP" || code === "ENOSYS";
+}
+
+async function sourceIsDirectory(source: string): Promise<boolean> {
+  return fs.stat(source).then((stat) => stat.isDirectory()).catch(() => false);
+}
+
+async function readCopiedSkillSourcePath(target: string): Promise<string | null> {
+  const manifestPath = path.join(target, RUDDER_COPIED_SKILL_MANIFEST);
+  try {
+    const parsed = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { sourcePath?: unknown };
+    return typeof parsed.sourcePath === "string" && parsed.sourcePath.trim().length > 0
+      ? path.resolve(parsed.sourcePath)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCopiedSkillManifest(source: string, target: string): Promise<void> {
+  const manifestPath = path.join(target, RUDDER_COPIED_SKILL_MANIFEST);
+  await fs.mkdir(path.dirname(manifestPath), { recursive: true });
+  await fs.writeFile(
+    manifestPath,
+    `${JSON.stringify({ sourcePath: path.resolve(source) }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+async function copyDirectoryWithoutDereferencingSymlinks(source: string, target: string): Promise<void> {
+  await fs.mkdir(target, { recursive: true });
+  const entries = await fs.readdir(source, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(source, entry.name);
+    const targetPath = path.join(target, entry.name);
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) {
+      await copyDirectoryWithoutDereferencingSymlinks(sourcePath, targetPath);
+      continue;
+    }
+    if (entry.isFile()) {
+      await fs.copyFile(sourcePath, targetPath);
+    }
+  }
+}
+
+async function copyDirectorySkill(source: string, target: string): Promise<void> {
+  await fs.rm(target, { recursive: true, force: true });
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await copyDirectoryWithoutDereferencingSymlinks(source, target);
+  await writeCopiedSkillManifest(source, target);
+}
+
+async function materializeRuntimeSkillDirectory(
+  source: string,
+  target: string,
+  linkSkill: RuntimeSkillLinker,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  const isDirectory = await sourceIsDirectory(source);
+  if (platform === "win32" && isDirectory) {
+    try {
+      await linkSkill(source, target, "junction");
+      return;
+    } catch (error) {
+      if (!isRecoverableDirectoryLinkError(error)) {
+        throw error;
+      }
+    }
+
+    await copyDirectorySkill(source, target);
+    return;
+  }
+
+  try {
+    await linkSkill(source, target);
+    return;
+  } catch (error) {
+    if (!isRecoverableDirectoryLinkError(error) || !isDirectory) {
+      throw error;
+    }
+  }
+
+  try {
+    await linkSkill(source, target, "junction");
+    return;
+  } catch (error) {
+    if (!isRecoverableDirectoryLinkError(error)) {
+      throw error;
+    }
+  }
+
+  await copyDirectorySkill(source, target);
+}
+
 export async function syncLocalCliCredentialHomeEntries(input: {
   sourceHome?: string | null;
   targetHome: string;
@@ -720,16 +824,22 @@ export async function ensureLocalCliCredentialShimsInPath(input: {
 export async function ensureRudderSkillSymlink(
   source: string,
   target: string,
-  linkSkill: (source: string, target: string) => Promise<void> = (linkSource, linkTarget) =>
-    fs.symlink(linkSource, linkTarget),
+  linkSkill: RuntimeSkillLinker = (linkSource, linkTarget, linkType) =>
+    fs.symlink(linkSource, linkTarget, linkType),
+  options: { platform?: NodeJS.Platform } = {},
 ): Promise<"created" | "repaired" | "skipped"> {
   const existing = await fs.lstat(target).catch(() => null);
   if (!existing) {
-    await linkSkill(source, target);
+    await materializeRuntimeSkillDirectory(source, target, linkSkill, options.platform);
     return "created";
   }
 
   if (!existing.isSymbolicLink()) {
+    if (existing.isDirectory() && await readCopiedSkillSourcePath(target)) {
+      await fs.rm(target, { recursive: true, force: true });
+      await materializeRuntimeSkillDirectory(source, target, linkSkill, options.platform);
+      return "repaired";
+    }
     return "skipped";
   }
 
@@ -747,7 +857,7 @@ export async function ensureRudderSkillSymlink(
   }
 
   await fs.unlink(target);
-  await linkSkill(source, target);
+  await materializeRuntimeSkillDirectory(source, target, linkSkill, options.platform);
   return "repaired";
 }
 

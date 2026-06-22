@@ -22,6 +22,15 @@ const addDir = addDirIndex >= 0 ? process.argv[addDirIndex + 1] : null;
 const appendSystemPromptFileIndex = process.argv.indexOf("--append-system-prompt-file");
 const appendSystemPromptFile = appendSystemPromptFileIndex >= 0 ? process.argv[appendSystemPromptFileIndex + 1] : null;
 const addDirSkillsPath = addDir ? path.join(addDir, ".claude", "skills") : null;
+const addDirSkillContents = {};
+if (addDirSkillsPath && fs.existsSync(addDirSkillsPath)) {
+  for (const entry of fs.readdirSync(addDirSkillsPath)) {
+    const skillPath = path.join(addDirSkillsPath, entry, "SKILL.md");
+    if (fs.existsSync(skillPath)) {
+      addDirSkillContents[entry] = fs.readFileSync(skillPath, "utf8");
+    }
+  }
+}
 const settingsIndex = process.argv.indexOf("--settings");
 const settingsPath = settingsIndex >= 0 ? process.argv[settingsIndex + 1] : null;
 const settingSourcesIndex = process.argv.indexOf("--setting-sources");
@@ -70,6 +79,7 @@ const payload = {
     addDirSkillsPath && fs.existsSync(addDirSkillsPath)
       ? fs.readdirSync(addDirSkillsPath).sort()
       : [],
+  addDirSkillContents,
   runtimeTmpExists: runtimeTmpDir ? fs.existsSync(runtimeTmpDir) : false,
   gitIdentity: captureGitIdentityEnv(),
 };
@@ -420,8 +430,10 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
         addDirSkillEntries: string[];
+        addDirSkillContents: Record<string, string>;
       };
       expect(capture.addDirSkillEntries).toContain("build-advisor");
+      expect(capture.addDirSkillContents["build-advisor"]).toContain("name: build-advisor");
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });

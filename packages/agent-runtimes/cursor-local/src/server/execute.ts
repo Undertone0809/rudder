@@ -182,7 +182,7 @@ type EnsureCursorSkillsInjectedOptions = {
   skillsDir?: string | null;
   skillsEntries?: Array<{ key: string; runtimeName: string; source: string }>;
   skillsHome?: string;
-  linkSkill?: (source: string, target: string) => Promise<void>;
+  linkSkill?: (source: string, target: string, type?: "dir" | "file" | "junction") => Promise<void>;
 };
 
 export async function ensureCursorSkillsInjected(

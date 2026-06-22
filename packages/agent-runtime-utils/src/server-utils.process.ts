@@ -215,6 +215,7 @@ export function resolveInstalledEntryTarget(
   entryName: string,
   dirent: Dirent,
   linkedPath: string | null,
+  copiedSkillSourcePath: string | null = null,
 ): InstalledSkillTarget {
   const fullPath = path.join(skillsHome, entryName);
   if (dirent.isSymbolicLink()) {
@@ -224,7 +225,7 @@ export function resolveInstalledEntryTarget(
     };
   }
   if (dirent.isDirectory()) {
-    return { targetPath: fullPath, kind: "directory" };
+    return { targetPath: copiedSkillSourcePath ?? fullPath, kind: "directory" };
   }
   return { targetPath: fullPath, kind: "file" };
 }

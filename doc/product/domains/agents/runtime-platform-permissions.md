@@ -328,10 +328,11 @@ Related tests:
 
 Known gaps:
 
-- Some runtime paths still call `fs.symlink` directly. The product contract
-  records the desired cross-platform behavior; follow-up implementation should
-  consolidate skill and credential materialization behind a platform-aware
-  helper with Windows junction/copy fallback.
+- Directory runtime skill materialization for shared Rudder skill sync and
+  Claude local's transient skill home now uses a platform-aware helper with
+  Windows junction/copy fallback. Some non-skill credential/home bridge paths
+  still call `fs.symlink` directly and must remain scoped to selected,
+  redacted credential entries rather than copying operator-home contents.
 - Product evidence for skill materialization is not yet normalized across all
   adapters. Some adapters expose created/repaired/skipped/failed results, while
   others only expose logs or command notes.

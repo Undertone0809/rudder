@@ -6,8 +6,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
+  ensureRudderSkillSymlink,
+  buildPersistentSkillSnapshot,
   loadAgentInstructionsPrefix,
   prepareAgentInstructionRuntimeContext,
+  readInstalledSkillTargets,
   renderTemplate,
   resolveLocalOperatorHome,
   RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
@@ -1242,6 +1245,183 @@ describe("ensureLocalCliCredentialShimsInPath", () => {
       };
       expect(capture.home).toBe(operatorHome);
       expect(capture.userProfile).toBe(operatorHome);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ensureRudderSkillSymlink", () => {
+  it("uses a junction first for Windows directory skill materialization", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-skill-windows-junction-"));
+    const source = path.join(root, "source-skill");
+    const target = path.join(root, "target-skills", "build-advisor");
+    const calls: string[] = [];
+
+    await fs.mkdir(source, { recursive: true });
+    await fs.writeFile(path.join(source, "SKILL.md"), "---\nname: build-advisor\n---\n", "utf8");
+
+    try {
+      const result = await ensureRudderSkillSymlink(
+        source,
+        target,
+        async (linkSource, linkTarget, linkType) => {
+          calls.push(linkType ?? "default");
+          await fs.symlink(linkSource, linkTarget, linkType);
+        },
+        { platform: "win32" },
+      );
+
+      expect(result).toBe("created");
+      expect(calls).toEqual(["junction"]);
+      expect(await fs.readFile(path.join(target, "SKILL.md"), "utf8")).toContain("build-advisor");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to a Windows-safe directory link when symlink creation is denied", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-skill-link-fallback-"));
+    const source = path.join(root, "source-skill");
+    const target = path.join(root, "target-skills", "build-advisor");
+    const calls: string[] = [];
+
+    await fs.mkdir(source, { recursive: true });
+    await fs.writeFile(path.join(source, "SKILL.md"), "---\nname: build-advisor\n---\n", "utf8");
+
+    try {
+      const result = await ensureRudderSkillSymlink(source, target, async (linkSource, linkTarget, linkType) => {
+        calls.push(linkType ?? "default");
+        if (!linkType) {
+          const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        }
+        await fs.symlink(linkSource, linkTarget, linkType);
+      });
+
+      expect(result).toBe("created");
+      expect(calls).toEqual(["default", "junction"]);
+      expect(await fs.readFile(path.join(target, "SKILL.md"), "utf8")).toContain("build-advisor");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("tracks copied directory fallbacks as managed installed skills", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-skill-copy-fallback-"));
+    const source = path.join(root, "source-skill");
+    const skillsHome = path.join(root, "target-skills");
+    const target = path.join(skillsHome, "build-advisor");
+
+    await fs.mkdir(source, { recursive: true });
+    await fs.writeFile(path.join(source, "SKILL.md"), "---\nname: build-advisor\n---\n", "utf8");
+
+    try {
+      const result = await ensureRudderSkillSymlink(source, target, async () => {
+        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      });
+
+      expect(result).toBe("created");
+      expect((await fs.lstat(target)).isDirectory()).toBe(true);
+      expect(await fs.readFile(path.join(target, "SKILL.md"), "utf8")).toContain("build-advisor");
+
+      const installed = await readInstalledSkillTargets(skillsHome);
+      expect(installed.get("build-advisor")).toMatchObject({
+        targetPath: source,
+        kind: "directory",
+      });
+
+      const snapshot = buildPersistentSkillSnapshot({
+        agentRuntimeType: "test_runtime",
+        availableEntries: [{
+          key: "rudder/build-advisor",
+          runtimeName: "build-advisor",
+          source,
+          name: "build-advisor",
+          description: null,
+        }],
+        desiredSkills: ["rudder/build-advisor"],
+        installed,
+        skillsHome,
+        missingDetail: "missing",
+        externalConflictDetail: "external conflict",
+        externalDetail: "external",
+      });
+      const entry = snapshot.entries.find((item) => item.key === "rudder/build-advisor");
+      expect(entry?.managed).toBe(true);
+      expect(entry?.state).toBe("installed");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not dereference symlinks inside copied directory fallbacks", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-skill-copy-safe-"));
+    const source = path.join(root, "source-skill");
+    const secretDir = path.join(root, "operator-home", ".config");
+    const target = path.join(root, "target-skills", "build-advisor");
+
+    await fs.mkdir(source, { recursive: true });
+    await fs.mkdir(secretDir, { recursive: true });
+    await fs.writeFile(path.join(source, "SKILL.md"), "---\nname: build-advisor\n---\n", "utf8");
+    await fs.writeFile(path.join(secretDir, "token"), "do-not-copy", "utf8");
+    await fs.symlink(secretDir, path.join(source, "linked-config"));
+
+    try {
+      await ensureRudderSkillSymlink(source, target, async () => {
+        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      });
+
+      await expect(fs.readFile(path.join(target, "linked-config", "token"), "utf8")).rejects.toThrow();
+      await expect(fs.lstat(path.join(target, "linked-config"))).rejects.toThrow();
+      expect(await fs.readFile(path.join(target, "SKILL.md"), "utf8")).toContain("build-advisor");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs managed copied skill directories and preserves user-owned directories", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-skill-copy-repair-"));
+    const managedSource = path.join(root, "source-skill");
+    const userSource = path.join(root, "user-skill");
+    const managedTarget = path.join(root, "target-skills", "build-advisor");
+    const userTarget = path.join(root, "target-skills", "custom-skill");
+
+    await fs.mkdir(managedSource, { recursive: true });
+    await fs.mkdir(userSource, { recursive: true });
+    await fs.writeFile(path.join(managedSource, "SKILL.md"), "---\nname: build-advisor\n---\nold", "utf8");
+    await fs.writeFile(path.join(userSource, "SKILL.md"), "---\nname: custom-skill\n---\n", "utf8");
+
+    const failLink = async () => {
+      const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+      error.code = "EPERM";
+      throw error;
+    };
+
+    try {
+      await ensureRudderSkillSymlink(managedSource, managedTarget, failLink);
+      await fs.writeFile(path.join(managedSource, "SKILL.md"), "---\nname: build-advisor\n---\nnew", "utf8");
+      expect(await ensureRudderSkillSymlink(managedSource, managedTarget, async (_source, target) => {
+        if (await fs.lstat(target).then(() => true).catch(() => false)) {
+          const error = new Error("file already exists") as NodeJS.ErrnoException;
+          error.code = "EEXIST";
+          throw error;
+        }
+        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      })).toBe("repaired");
+      expect(await fs.readFile(path.join(managedTarget, "SKILL.md"), "utf8")).toContain("new");
+
+      await fs.mkdir(userTarget, { recursive: true });
+      await fs.writeFile(path.join(userTarget, "keep.txt"), "user-owned", "utf8");
+      expect(await ensureRudderSkillSymlink(userSource, userTarget, failLink)).toBe("skipped");
+      expect(await fs.readFile(path.join(userTarget, "keep.txt"), "utf8")).toBe("user-owned");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
