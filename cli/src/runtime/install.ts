@@ -14,6 +14,18 @@ export const DEFAULT_RUNTIME_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 export const DEFAULT_RUNTIME_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const DEFAULT_RUNTIME_CACHE_KEEP_PREVIOUS = 0;
 const RUNTIME_NPM_INSTALL_FLAGS = ["--omit=dev", "--include=optional", "--no-audit", "--no-fund"];
+const RUNTIME_NPM_PACK_FLAGS = ["--registry", NPM_PUBLIC_REGISTRY_URL, "--silent"];
+const RUNTIME_CACHE_PACKAGE_JSON = {
+  name: "rudder-runtime-cache",
+  version: "0.0.0",
+  private: true,
+  type: "module",
+};
+const NPM_PLATFORM_REPAIR_ENV = {
+  npm_config_registry: NPM_PUBLIC_REGISTRY_URL,
+  npm_config_update_notifier: "false",
+  NO_UPDATE_NOTIFIER: "1",
+};
 
 export interface RuntimeInstallMetadata {
   version: 1;
@@ -185,8 +197,32 @@ export async function ensureRuntimeInstalled(
     return { status: "hit", cacheDir, packageSpec, command, output: "", ...(prune ? { prune } : {}) };
   }
 
+  const existingRuntimeOutput = await tryRepairExistingRuntimePackage({
+    spawnSyncImpl: options.spawnSyncImpl ?? spawnSync,
+    cacheDir,
+    packageName,
+    packageVersion,
+  });
+  if (existingRuntimeOutput !== null) {
+    const metadata: RuntimeInstallMetadata = {
+      version: 1,
+      packageName,
+      packageVersion,
+      installedAt: new Date().toISOString(),
+      lastUsedAt: new Date().toISOString(),
+    };
+    await writeRuntimeInstallMetadata(cacheDir, metadata);
+    const prune = await maybePruneRuntimeCache({
+      homeDir: options.homeDir,
+      requestedVersion: packageVersion,
+      enabled: options.pruneRuntimeCache !== false,
+      retention: options.retention,
+    });
+    return { status: "installed", cacheDir, packageSpec, command, output: existingRuntimeOutput, ...(prune ? { prune } : {}) };
+  }
+
   await mkdir(cacheDir, { recursive: true });
-  await writeFile(path.join(cacheDir, "package.json"), `${JSON.stringify({ private: true, type: "module" }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(cacheDir, "package.json"), `${JSON.stringify(RUNTIME_CACHE_PACKAGE_JSON, null, 2)}\n`, "utf8");
 
   const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
   const result = runNpmRuntimeInstall(spawnSyncImpl, cacheDir, packageSpec);
@@ -209,7 +245,7 @@ export async function ensureRuntimeInstalled(
     }
 
     await mkdir(fallbackCacheDir, { recursive: true });
-    await writeFile(path.join(fallbackCacheDir, "package.json"), `${JSON.stringify({ private: true, type: "module" }, null, 2)}\n`, "utf8");
+    await writeFile(path.join(fallbackCacheDir, "package.json"), `${JSON.stringify(RUNTIME_CACHE_PACKAGE_JSON, null, 2)}\n`, "utf8");
 
     const fallbackResult = runNpmRuntimeInstall(spawnSyncImpl, fallbackCacheDir, fallbackSpec);
     let fallbackOutput = collectSpawnOutput(fallbackResult);
@@ -305,6 +341,10 @@ function formatRuntimeInstallCommand(cacheDir: string, packageSpec: string): str
   return `npm install --prefix ${cacheDir} ${RUNTIME_NPM_INSTALL_FLAGS.join(" ")} ${packageSpec}`;
 }
 
+function formatRuntimePlatformRepairCommand(cacheDir: string, packageSpec: string): string {
+  return `npm pack ${packageSpec} --registry=${NPM_PUBLIC_REGISTRY_URL} --silent, then extract it into ${path.join(cacheDir, "node_modules")}`;
+}
+
 function collectSpawnOutput(result: SpawnSyncResultLike): string {
   return [result.stdout, result.stderr, result.error instanceof Error ? result.error.message : null]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
@@ -326,6 +366,20 @@ async function readPackageJson(cacheDir: string, packageName: string): Promise<P
   } catch {
     return null;
   }
+}
+
+async function tryRepairExistingRuntimePackage(options: {
+  spawnSyncImpl: typeof spawnSync;
+  cacheDir: string;
+  packageName: string;
+  packageVersion: string;
+}): Promise<string | null> {
+  const runtimePackage = await readPackageJson(options.cacheDir, options.packageName);
+  if (!runtimePackage) return null;
+  if (options.packageVersion !== "latest" && runtimePackage.version !== options.packageVersion) return null;
+
+  const output = await ensureRequiredEmbeddedPostgresPlatformPackage(options.spawnSyncImpl, options.cacheDir);
+  return await hasRequiredEmbeddedPostgresPlatformPackage(options.cacheDir, runtimePackage) ? output : null;
 }
 
 export function embeddedPostgresPlatformPackageName(
@@ -367,7 +421,8 @@ async function resolveEmbeddedPostgresPlatformPackageSpec(cacheDir: string): Pro
 
   const embeddedPostgresPackage = await readPackageJson(cacheDir, "embedded-postgres");
   const versionRange = embeddedPostgresPackage?.optionalDependencies?.[packageName];
-  return versionRange ? `${packageName}@${versionRange}` : packageName;
+  const packageVersion = normalizeOptionalDependencyVersion(versionRange);
+  return packageVersion ? `${packageName}@${packageVersion}` : packageName;
 }
 
 async function hasRequiredEmbeddedPostgresPlatformPackage(
@@ -390,22 +445,109 @@ async function ensureRequiredEmbeddedPostgresPlatformPackage(
   const packageName = packageNameFromSpec(packageSpec);
   if (packageName && await readPackageJson(cacheDir, packageName)) return "";
 
-  const result = runNpmInstall(
-    spawnSyncImpl,
-    cacheDir,
-    [...RUNTIME_NPM_INSTALL_FLAGS, packageSpec],
-    { ...process.env, npm_config_registry: NPM_PUBLIC_REGISTRY_URL },
-  );
+  await removeRuntimeInstallLocks(cacheDir);
+  const result = await installRuntimePackageInStaging(spawnSyncImpl, cacheDir, packageSpec, packageName);
   const output = collectSpawnOutput(result);
   if (result.status === 0 && packageName && await readPackageJson(cacheDir, packageName)) {
     return output;
   }
 
-  const command = formatRuntimeInstallCommand(cacheDir, packageSpec);
+  const command = formatRuntimePlatformRepairCommand(cacheDir, packageSpec);
   throw new RuntimeInstallError(
     `Rudder runtime installation is missing required platform package ${packageName || packageSpec}. Re-run manually: ${command}`,
     { cacheDir, command, output },
   );
+}
+
+async function installRuntimePackageInStaging(
+  spawnSyncImpl: typeof spawnSync,
+  cacheDir: string,
+  packageSpec: string,
+  packageName: string,
+): Promise<SpawnSyncResultLike> {
+  const stagingDir = path.join(cacheDir, `.platform-repair-${process.pid}-${Date.now()}`);
+  await mkdir(stagingDir, { recursive: true });
+
+  try {
+    const packResult = runNpmPack(spawnSyncImpl, packageSpec, stagingDir);
+    if (packResult.status !== 0) return packResult;
+
+    const packFilename = parseNpmPackFilename(packResult.stdout);
+    if (!packFilename) {
+      return createSyntheticSpawnResult(1, "", `Unable to parse npm pack output for ${packageSpec}.`);
+    }
+
+    const archivePath = path.join(stagingDir, packFilename);
+    const targetDir = path.dirname(runtimePackageJsonPath(cacheDir, packageName));
+    await mkdir(path.dirname(targetDir), { recursive: true });
+    await rm(targetDir, { recursive: true, force: true });
+    await mkdir(targetDir, { recursive: true });
+
+    const extractResult = runTarExtract(spawnSyncImpl, archivePath, targetDir);
+    return combineSpawnResults(packResult, extractResult);
+  } finally {
+    await rm(stagingDir, { recursive: true, force: true });
+  }
+}
+
+function runNpmPack(
+  spawnSyncImpl: typeof spawnSync,
+  packageSpec: string,
+  destinationDir: string,
+): SpawnSyncResultLike {
+  return spawnSyncImpl(
+    process.platform === "win32" ? "npm.cmd" : "npm",
+    ["pack", packageSpec, "--pack-destination", destinationDir, ...RUNTIME_NPM_PACK_FLAGS],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...NPM_PLATFORM_REPAIR_ENV },
+      ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+    },
+  );
+}
+
+function runTarExtract(
+  spawnSyncImpl: typeof spawnSync,
+  archivePath: string,
+  targetDir: string,
+): SpawnSyncResultLike {
+  return spawnSyncImpl(
+    "tar",
+    ["-xzf", archivePath, "-C", targetDir, "--strip-components", "1"],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(process.platform === "win32" ? { windowsHide: true } : {}),
+    },
+  );
+}
+
+function parseNpmPackFilename(stdout: unknown): string | null {
+  if (typeof stdout !== "string") return null;
+  const filename = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+  return filename?.endsWith(".tgz") ? filename : null;
+}
+
+function createSyntheticSpawnResult(status: number, stdout: string, stderr: string): SpawnSyncResultLike {
+  return { status, stdout, stderr } as SpawnSyncResultLike;
+}
+
+function combineSpawnResults(...results: SpawnSyncResultLike[]): SpawnSyncResultLike {
+  const last = results.at(-1);
+  return {
+    status: last?.status ?? 0,
+    stdout: results.map((result) => result.stdout).filter(Boolean).join("\n"),
+    stderr: results.map((result) => result.stderr).filter(Boolean).join("\n"),
+    error: results.find((result) => result.error)?.error,
+  } as SpawnSyncResultLike;
+}
+
+async function removeRuntimeInstallLocks(cacheDir: string): Promise<void> {
+  await Promise.all([
+    rm(path.join(cacheDir, "package-lock.json"), { force: true }),
+    rm(path.join(cacheDir, "node_modules", ".package-lock.json"), { force: true }),
+  ]);
 }
 
 function packageNameFromSpec(packageSpec: string): string {
@@ -416,6 +558,13 @@ function packageNameFromSpec(packageSpec: string): string {
 
   const versionSeparator = packageSpec.indexOf("@", 1);
   return versionSeparator === -1 ? packageSpec : packageSpec.slice(0, versionSeparator);
+}
+
+function normalizeOptionalDependencyVersion(versionRange: string | undefined): string | null {
+  const trimmed = versionRange?.trim();
+  if (!trimmed) return null;
+  const exactVersion = /^[~^]\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$/.exec(trimmed);
+  return exactVersion?.[1] ?? trimmed;
 }
 
 function isVersionNotFoundError(output: string): boolean {

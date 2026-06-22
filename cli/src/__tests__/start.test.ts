@@ -1294,11 +1294,16 @@ describe("runtime install helpers", () => {
       const serverPackageDir = path.join(cacheDir, "node_modules", "@rudderhq", "server");
       const embeddedPackageDir = path.join(cacheDir, "node_modules", "embedded-postgres");
       const platformPackageDir = path.join(cacheDir, "node_modules", ...platformPackageName!.split("/"));
+      const rootLockPath = path.join(cacheDir, "package-lock.json");
+      const nodeModulesLockPath = path.join(cacheDir, "node_modules", ".package-lock.json");
+      let repairPrefix = "";
       const spawnSyncImpl = vi
         .fn()
         .mockImplementationOnce(() => {
           mkdirSync(serverPackageDir, { recursive: true });
           mkdirSync(embeddedPackageDir, { recursive: true });
+          writeFileSync(rootLockPath, "{}", "utf8");
+          writeFileSync(nodeModulesLockPath, "{}", "utf8");
           writeFileSync(
             path.join(serverPackageDir, "package.json"),
             JSON.stringify({
@@ -1319,14 +1324,23 @@ describe("runtime install helpers", () => {
           );
           return { status: 0, stdout: "added runtime", stderr: "" };
         })
-        .mockImplementationOnce(() => {
-          mkdirSync(platformPackageDir, { recursive: true });
+        .mockImplementationOnce((_command, args: string[]) => {
+          repairPrefix = args[args.indexOf("--pack-destination") + 1];
+          return {
+            status: 0,
+            stdout: "embedded-postgres-windows-x64-18.1.0-beta.16.tgz\n",
+            stderr: "",
+          };
+        })
+        .mockImplementationOnce((_command, args: string[]) => {
+          const targetDir = args[args.indexOf("-C") + 1];
+          mkdirSync(targetDir, { recursive: true });
           writeFileSync(
-            path.join(platformPackageDir, "package.json"),
+            path.join(targetDir, "package.json"),
             JSON.stringify({ name: platformPackageName, version: "18.1.0-beta.16" }),
             "utf8",
           );
-          return { status: 0, stdout: "added platform package", stderr: "" };
+          return { status: 0, stdout: "extracted platform package", stderr: "" };
         });
 
       const result = await ensureRuntimeInstalled({
@@ -1337,25 +1351,119 @@ describe("runtime install helpers", () => {
 
       expect(result.status).toBe("installed");
       expect(result.output).toContain("added runtime");
-      expect(result.output).toContain("added platform package");
-      expect(spawnSyncImpl).toHaveBeenCalledTimes(2);
+      expect(result.output).toContain("extracted platform package");
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(3);
       expect(spawnSyncImpl).toHaveBeenNthCalledWith(
         2,
-        npmInstallCommand,
-        [
-          "install",
-          "--prefix",
-          cacheDir,
-          "--omit=dev",
-          "--include=optional",
-          "--no-audit",
-          "--no-fund",
-          `${platformPackageName}@^18.1.0-beta.16`,
-        ],
+        expect.any(String),
+        expect.arrayContaining([
+          "pack",
+          `${platformPackageName}@18.1.0-beta.16`,
+          "--registry",
+          NPM_PUBLIC_REGISTRY_URL,
+          "--silent",
+        ]),
         expect.objectContaining({
           env: expect.objectContaining({ npm_config_registry: NPM_PUBLIC_REGISTRY_URL }),
         }),
       );
+      expect(spawnSyncImpl).toHaveBeenNthCalledWith(
+        3,
+        "tar",
+        [
+          "-xzf",
+          path.join(repairPrefix, "embedded-postgres-windows-x64-18.1.0-beta.16.tgz"),
+          "-C",
+          platformPackageDir,
+          "--strip-components",
+          "1",
+        ],
+        expect.any(Object),
+      );
+      await expect(access(rootLockPath)).rejects.toThrow();
+      await expect(access(nodeModulesLockPath)).rejects.toThrow();
+      await expect(access(path.join(platformPackageDir, "package.json"))).resolves.toBeUndefined();
+      await expect(access(repairPrefix)).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs an existing runtime package that is missing only the embedded-postgres platform package", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-existing-platform-repair-test."));
+    try {
+      const cacheDir = resolveRuntimeCacheDir("1.2.3", root);
+      const platformPackageName = embeddedPostgresPlatformPackageName();
+      expect(platformPackageName).toBeTruthy();
+      const serverPackageDir = path.join(cacheDir, "node_modules", "@rudderhq", "server");
+      const embeddedPackageDir = path.join(cacheDir, "node_modules", "embedded-postgres");
+      const platformPackageDir = path.join(cacheDir, "node_modules", ...platformPackageName!.split("/"));
+      await mkdir(serverPackageDir, { recursive: true });
+      await mkdir(embeddedPackageDir, { recursive: true });
+      await writeFile(path.join(cacheDir, "package.json"), JSON.stringify({ private: true }), "utf8");
+      await writeFile(
+        path.join(serverPackageDir, "package.json"),
+        JSON.stringify({
+          name: "@rudderhq/server",
+          version: "1.2.3",
+          dependencies: { "embedded-postgres": "18.1.0-beta.16" },
+        }),
+        "utf8",
+      );
+      await writeFile(
+        path.join(embeddedPackageDir, "package.json"),
+        JSON.stringify({
+          name: "embedded-postgres",
+          version: "18.1.0-beta.16",
+          optionalDependencies: { [platformPackageName!]: "^18.1.0-beta.16" },
+        }),
+        "utf8",
+      );
+
+      const spawnSyncImpl = vi
+        .fn()
+        .mockImplementationOnce(() => ({
+          status: 0,
+          stdout: "embedded-postgres-windows-x64-18.1.0-beta.16.tgz\n",
+          stderr: "",
+        }))
+        .mockImplementationOnce((_command, args: string[]) => {
+          const targetDir = args[args.indexOf("-C") + 1];
+          mkdirSync(targetDir, { recursive: true });
+          writeFileSync(
+            path.join(targetDir, "package.json"),
+            JSON.stringify({ name: platformPackageName, version: "18.1.0-beta.16" }),
+            "utf8",
+          );
+          return { status: 0, stdout: "extracted platform package", stderr: "" };
+        });
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+      });
+
+      expect(result.status).toBe("installed");
+      expect(result.output).toContain("extracted platform package");
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(2);
+      expect(spawnSyncImpl).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([
+          "pack",
+          `${platformPackageName}@18.1.0-beta.16`,
+          "--registry",
+          NPM_PUBLIC_REGISTRY_URL,
+        ]),
+        expect.objectContaining({
+          env: expect.objectContaining({ npm_config_registry: NPM_PUBLIC_REGISTRY_URL }),
+        }),
+      );
+      await expect(access(path.join(platformPackageDir, "package.json"))).resolves.toBeUndefined();
+      await expect(readRuntimeInstallMetadata(cacheDir)).resolves.toMatchObject({
+        packageName: "@rudderhq/server",
+        packageVersion: "1.2.3",
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
