@@ -1,5 +1,6 @@
 import { access, chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -57,7 +58,9 @@ import {
   waitForProcessExit,
 } from "../commands/start.js";
 import {
+  embeddedPostgresPlatformPackageName,
   ensureRuntimeInstalled,
+  NPM_PUBLIC_REGISTRY_URL,
   pruneRuntimeCache,
   readRuntimeInstallMetadata,
   resolveRuntimeCacheDir,
@@ -1276,6 +1279,82 @@ describe("runtime install helpers", () => {
           stdio: ["ignore", "pipe", "pipe"],
           ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
         },
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs missing embedded-postgres platform packages from the public npm registry", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-platform-repair-test."));
+    try {
+      const cacheDir = resolveRuntimeCacheDir("1.2.3", root);
+      const platformPackageName = embeddedPostgresPlatformPackageName();
+      expect(platformPackageName).toBeTruthy();
+      const serverPackageDir = path.join(cacheDir, "node_modules", "@rudderhq", "server");
+      const embeddedPackageDir = path.join(cacheDir, "node_modules", "embedded-postgres");
+      const platformPackageDir = path.join(cacheDir, "node_modules", ...platformPackageName!.split("/"));
+      const spawnSyncImpl = vi
+        .fn()
+        .mockImplementationOnce(() => {
+          mkdirSync(serverPackageDir, { recursive: true });
+          mkdirSync(embeddedPackageDir, { recursive: true });
+          writeFileSync(
+            path.join(serverPackageDir, "package.json"),
+            JSON.stringify({
+              name: "@rudderhq/server",
+              version: "1.2.3",
+              dependencies: { "embedded-postgres": "18.1.0-beta.16" },
+            }),
+            "utf8",
+          );
+          writeFileSync(
+            path.join(embeddedPackageDir, "package.json"),
+            JSON.stringify({
+              name: "embedded-postgres",
+              version: "18.1.0-beta.16",
+              optionalDependencies: { [platformPackageName!]: "^18.1.0-beta.16" },
+            }),
+            "utf8",
+          );
+          return { status: 0, stdout: "added runtime", stderr: "" };
+        })
+        .mockImplementationOnce(() => {
+          mkdirSync(platformPackageDir, { recursive: true });
+          writeFileSync(
+            path.join(platformPackageDir, "package.json"),
+            JSON.stringify({ name: platformPackageName, version: "18.1.0-beta.16" }),
+            "utf8",
+          );
+          return { status: 0, stdout: "added platform package", stderr: "" };
+        });
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+      });
+
+      expect(result.status).toBe("installed");
+      expect(result.output).toContain("added runtime");
+      expect(result.output).toContain("added platform package");
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(2);
+      expect(spawnSyncImpl).toHaveBeenNthCalledWith(
+        2,
+        npmInstallCommand,
+        [
+          "install",
+          "--prefix",
+          cacheDir,
+          "--omit=dev",
+          "--include=optional",
+          "--no-audit",
+          "--no-fund",
+          `${platformPackageName}@^18.1.0-beta.16`,
+        ],
+        expect.objectContaining({
+          env: expect.objectContaining({ npm_config_registry: NPM_PUBLIC_REGISTRY_URL }),
+        }),
       );
     } finally {
       await rm(root, { recursive: true, force: true });

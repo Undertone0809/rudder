@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { resolveRudderHomeDir } from "../config/home.js";
 
 export const RUNTIME_NPM_PACKAGE_NAME = "@rudderhq/server";
+export const NPM_PUBLIC_REGISTRY_URL = "https://registry.npmjs.org";
 export const RUNTIME_METADATA_FILE = "runtime.json";
 export const DEFAULT_RUNTIME_CACHE_MAX_ENTRIES = 2;
 export const DEFAULT_RUNTIME_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -80,6 +81,13 @@ export class RuntimeInstallError extends Error {
 
 type SpawnSyncResultLike = ReturnType<typeof spawnSync>;
 
+type PackageJsonLike = {
+  name?: string;
+  version?: string;
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+};
+
 function sanitizeRuntimeCacheSegment(value: string): string {
   return encodeURIComponent(value.trim() || "latest").replaceAll("%", "_");
 }
@@ -149,8 +157,9 @@ export async function isRuntimeCacheHit(options: {
 
   try {
     const packageJsonPath = path.join(options.cacheDir, "node_modules", ...packageName.split("/"), "package.json");
-    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as { version?: string };
-    return packageVersion === "latest" || packageJson.version === packageVersion;
+    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as PackageJsonLike;
+    if (packageVersion !== "latest" && packageJson.version !== packageVersion) return false;
+    return await hasRequiredEmbeddedPostgresPlatformPackage(options.cacheDir, packageJson);
   } catch {
     return false;
   }
@@ -181,7 +190,7 @@ export async function ensureRuntimeInstalled(
 
   const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
   const result = runNpmRuntimeInstall(spawnSyncImpl, cacheDir, packageSpec);
-  const output = collectSpawnOutput(result);
+  let output = collectSpawnOutput(result);
 
   if (result.status !== 0 && packageVersion !== "latest" && isVersionNotFoundError(output)) {
     const fallbackVersion = "latest";
@@ -203,8 +212,12 @@ export async function ensureRuntimeInstalled(
     await writeFile(path.join(fallbackCacheDir, "package.json"), `${JSON.stringify({ private: true, type: "module" }, null, 2)}\n`, "utf8");
 
     const fallbackResult = runNpmRuntimeInstall(spawnSyncImpl, fallbackCacheDir, fallbackSpec);
-    const fallbackOutput = collectSpawnOutput(fallbackResult);
+    let fallbackOutput = collectSpawnOutput(fallbackResult);
     if (fallbackResult.status === 0) {
+      fallbackOutput = collectOutputParts(
+        fallbackOutput,
+        await ensureRequiredEmbeddedPostgresPlatformPackage(spawnSyncImpl, fallbackCacheDir),
+      );
       const fallbackMetadata: RuntimeInstallMetadata = {
         version: 1,
         packageName,
@@ -229,6 +242,11 @@ export async function ensureRuntimeInstalled(
       { cacheDir, command, output },
     );
   }
+
+  output = collectOutputParts(
+    output,
+    await ensureRequiredEmbeddedPostgresPlatformPackage(spawnSyncImpl, cacheDir),
+  );
 
   const metadata: RuntimeInstallMetadata = {
     version: 1,
@@ -262,12 +280,22 @@ function runNpmRuntimeInstall(
   cacheDir: string,
   packageSpec: string,
 ): SpawnSyncResultLike {
+  return runNpmInstall(spawnSyncImpl, cacheDir, [...RUNTIME_NPM_INSTALL_FLAGS, packageSpec]);
+}
+
+function runNpmInstall(
+  spawnSyncImpl: typeof spawnSync,
+  cacheDir: string,
+  installArgs: string[],
+  env?: NodeJS.ProcessEnv,
+): SpawnSyncResultLike {
   return spawnSyncImpl(
     process.platform === "win32" ? "npm.cmd" : "npm",
-    ["install", "--prefix", cacheDir, ...RUNTIME_NPM_INSTALL_FLAGS, packageSpec],
+    ["install", "--prefix", cacheDir, ...installArgs],
     {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      ...(env ? { env } : {}),
       ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
     },
   );
@@ -282,6 +310,112 @@ function collectSpawnOutput(result: SpawnSyncResultLike): string {
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .join("\n")
     .trim();
+}
+
+function collectOutputParts(...parts: string[]): string {
+  return parts.filter((part) => part.trim().length > 0).join("\n").trim();
+}
+
+function runtimePackageJsonPath(cacheDir: string, packageName: string): string {
+  return path.join(cacheDir, "node_modules", ...packageName.split("/"), "package.json");
+}
+
+async function readPackageJson(cacheDir: string, packageName: string): Promise<PackageJsonLike | null> {
+  try {
+    return JSON.parse(await readFile(runtimePackageJsonPath(cacheDir, packageName), "utf8")) as PackageJsonLike;
+  } catch {
+    return null;
+  }
+}
+
+export function embeddedPostgresPlatformPackageName(
+  platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch,
+): string | null {
+  if (platform === "win32") {
+    if (arch === "x64") return "@embedded-postgres/windows-x64";
+    return null;
+  }
+  if (platform === "darwin") {
+    if (arch === "arm64") return "@embedded-postgres/darwin-arm64";
+    if (arch === "x64") return "@embedded-postgres/darwin-x64";
+    return null;
+  }
+  if (platform === "linux") {
+    if (arch === "arm64") return "@embedded-postgres/linux-arm64";
+    if (arch === "arm") return "@embedded-postgres/linux-arm";
+    if (arch === "ia32") return "@embedded-postgres/linux-ia32";
+    if (arch === "ppc64") return "@embedded-postgres/linux-ppc64";
+    if (arch === "x64") return "@embedded-postgres/linux-x64";
+  }
+  return null;
+}
+
+function usesEmbeddedPostgres(packageJson: PackageJsonLike): boolean {
+  return Boolean(
+    packageJson.dependencies?.["embedded-postgres"] ??
+    packageJson.optionalDependencies?.["embedded-postgres"],
+  );
+}
+
+async function resolveEmbeddedPostgresPlatformPackageSpec(cacheDir: string): Promise<string | null> {
+  const runtimePackage = await readPackageJson(cacheDir, RUNTIME_NPM_PACKAGE_NAME);
+  if (!runtimePackage || !usesEmbeddedPostgres(runtimePackage)) return null;
+
+  const packageName = embeddedPostgresPlatformPackageName();
+  if (!packageName) return null;
+
+  const embeddedPostgresPackage = await readPackageJson(cacheDir, "embedded-postgres");
+  const versionRange = embeddedPostgresPackage?.optionalDependencies?.[packageName];
+  return versionRange ? `${packageName}@${versionRange}` : packageName;
+}
+
+async function hasRequiredEmbeddedPostgresPlatformPackage(
+  cacheDir: string,
+  runtimePackage: PackageJsonLike,
+): Promise<boolean> {
+  if (!usesEmbeddedPostgres(runtimePackage)) return true;
+  const packageName = embeddedPostgresPlatformPackageName();
+  if (!packageName) return true;
+  return Boolean(await readPackageJson(cacheDir, packageName));
+}
+
+async function ensureRequiredEmbeddedPostgresPlatformPackage(
+  spawnSyncImpl: typeof spawnSync,
+  cacheDir: string,
+): Promise<string> {
+  const packageSpec = await resolveEmbeddedPostgresPlatformPackageSpec(cacheDir);
+  if (!packageSpec) return "";
+
+  const packageName = packageNameFromSpec(packageSpec);
+  if (packageName && await readPackageJson(cacheDir, packageName)) return "";
+
+  const result = runNpmInstall(
+    spawnSyncImpl,
+    cacheDir,
+    [...RUNTIME_NPM_INSTALL_FLAGS, packageSpec],
+    { ...process.env, npm_config_registry: NPM_PUBLIC_REGISTRY_URL },
+  );
+  const output = collectSpawnOutput(result);
+  if (result.status === 0 && packageName && await readPackageJson(cacheDir, packageName)) {
+    return output;
+  }
+
+  const command = formatRuntimeInstallCommand(cacheDir, packageSpec);
+  throw new RuntimeInstallError(
+    `Rudder runtime installation is missing required platform package ${packageName || packageSpec}. Re-run manually: ${command}`,
+    { cacheDir, command, output },
+  );
+}
+
+function packageNameFromSpec(packageSpec: string): string {
+  if (!packageSpec.startsWith("@")) {
+    const versionSeparator = packageSpec.indexOf("@");
+    return versionSeparator === -1 ? packageSpec : packageSpec.slice(0, versionSeparator);
+  }
+
+  const versionSeparator = packageSpec.indexOf("@", 1);
+  return versionSeparator === -1 ? packageSpec : packageSpec.slice(0, versionSeparator);
 }
 
 function isVersionNotFoundError(output: string): boolean {
