@@ -15,6 +15,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chatAgentRunService } from "../../chat-agent-runs.js";
 import { chatService } from "../../chats.js";
 import { issueService } from "../../issues.js";
+import { fallbackTitleFromText } from "../../title-generation.js";
 import type {
   AgentIntegrationInboundDispatcherDeps,
   FeishuInboundMessage,
@@ -41,8 +42,7 @@ function integrationStatus(value: string): ResolvedAgentIntegration["status"] {
 }
 
 function chatTitle(event: FeishuInboundMessage) {
-  const prefix = event.chatType === "group" ? "Feishu group" : "Feishu chat";
-  return `${prefix} ${event.chatId}`.slice(0, 120);
+  return fallbackTitleFromText(event.body) ?? "New chat";
 }
 
 export interface FeishuInboundDispatcherDbOptions {

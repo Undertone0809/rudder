@@ -177,6 +177,17 @@ export function chatRoutes(db: Db, storage: StorageService) {
     return fallbackTitleFromText(body);
   }
 
+  function isFeishuBackedConversation(conversation: ChatConversation) {
+    const metadata = conversation.sourceMetadata;
+    return Boolean(
+      metadata
+      && typeof metadata === "object"
+      && !Array.isArray(metadata)
+      && metadata.source === "agent_integration"
+      && metadata.provider === "feishu",
+    );
+  }
+
   function buildChatTitlePromptFromMessages(messages: ChatMessage[]) {
     const source = messages
       .filter((message) => message.role === "user" || message.role === "assistant")
@@ -1315,6 +1326,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
         return;
       }
     }
+    if (req.body.status === "archived" && isFeishuBackedConversation(existing as ChatConversation)) {
+      throw conflict("Feishu-backed chats cannot be archived or deleted yet");
+    }
 
     const updated = await svc.update(existing.id, {
       ...req.body,
@@ -1429,6 +1443,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
       } else {
         throw conflict("Cannot delete a chat while a reply is in progress");
       }
+    }
+    if (isFeishuBackedConversation(existing as ChatConversation)) {
+      throw conflict("Feishu-backed chats cannot be archived or deleted yet");
     }
 
     const attachments = await svc.listAttachmentsForConversation(existing.id);

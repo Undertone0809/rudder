@@ -53,6 +53,22 @@ export interface FeishuOutboundSender {
     chatId: string;
     text: string;
   }): Promise<{ messageId: string | null }>;
+  addReaction?(input: {
+    region: AgentIntegrationProviderRegion;
+    appId: string;
+    appSecret?: string | null;
+    tenantAccessToken?: string | null;
+    messageId: string;
+    emojiType: string;
+  }): Promise<{ reactionId: string | null }>;
+  removeReaction?(input: {
+    region: AgentIntegrationProviderRegion;
+    appId: string;
+    appSecret?: string | null;
+    tenantAccessToken?: string | null;
+    messageId: string;
+    reactionId: string;
+  }): Promise<void>;
 }
 
 export interface FeishuLongConnectionClient {
@@ -148,12 +164,49 @@ export function createFeishuRestOutboundSender(): FeishuOutboundSender {
           content: JSON.stringify({ text: input.text }),
         }),
       });
-      const json = await res.json() as Record<string, unknown>;
+      const json = await res.json().catch(() => ({})) as Record<string, unknown>;
       const data = json.data && typeof json.data === "object" ? json.data as Record<string, unknown> : null;
       if (!res.ok || (typeof json.code === "number" && json.code !== 0)) {
         throw new Error(`Failed to send Feishu message: ${firstString(json.msg) ?? res.statusText}`);
       }
       return { messageId: firstString(data?.message_id) };
+    },
+    addReaction: async (input) => {
+      const token = await resolveTenantAccessToken(input);
+      const res = await fetch(`${feishuOpenApiBase(input.region)}/open-apis/im/v1/messages/${encodeURIComponent(input.messageId)}/reactions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reaction_type: {
+            emoji_type: input.emojiType,
+          },
+        }),
+      });
+      const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+      const data = json.data && typeof json.data === "object" ? json.data as Record<string, unknown> : null;
+      const reactionId = firstString(data?.reaction_id)
+        ?? firstString((data?.reaction as Record<string, unknown> | undefined)?.reaction_id);
+      if (!res.ok || (typeof json.code === "number" && json.code !== 0)) {
+        throw new Error(`Failed to add Feishu reaction: ${firstString(json.msg) ?? res.statusText}`);
+      }
+      return { reactionId };
+    },
+    removeReaction: async (input) => {
+      const token = await resolveTenantAccessToken(input);
+      const res = await fetch(`${feishuOpenApiBase(input.region)}/open-apis/im/v1/messages/${encodeURIComponent(input.messageId)}/reactions/${encodeURIComponent(input.reactionId)}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+      const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+      if (!res.ok || (typeof json.code === "number" && json.code !== 0)) {
+        throw new Error(`Failed to remove Feishu reaction: ${firstString(json.msg) ?? res.statusText}`);
+      }
     },
   };
 }
@@ -279,6 +332,49 @@ export function createDisabledFeishuLongConnectionClient(): FeishuLongConnection
 
 function bindingRequiredText() {
   return "Rudder received your message, but your Feishu identity is not bound to this organization yet. Open Rudder and bind this Feishu account before continuing.";
+}
+
+async function withWorkingReaction<T>(
+  sender: FeishuOutboundSender,
+  integration: FeishuRuntimeIntegration,
+  credential: FeishuCredential,
+  event: FeishuInboundMessage,
+  fn: () => Promise<T>,
+) {
+  let reactionId: string | null = null;
+  if (sender.addReaction) {
+    try {
+      const reaction = await sender.addReaction({
+        region: integration.providerRegion,
+        appId: credential.appId ?? integration.externalAppId,
+        appSecret: credential.appSecret,
+        tenantAccessToken: credential.tenantAccessToken,
+        messageId: event.messageId,
+        emojiType: "OnIt",
+      });
+      reactionId = reaction.reactionId;
+    } catch (err) {
+      logger.warn({ err, integrationId: integration.id, messageId: event.messageId }, "Failed to add Feishu working reaction");
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    if (reactionId && sender.removeReaction) {
+      try {
+        await sender.removeReaction({
+          region: integration.providerRegion,
+          appId: credential.appId ?? integration.externalAppId,
+          appSecret: credential.appSecret,
+          tenantAccessToken: credential.tenantAccessToken,
+          messageId: event.messageId,
+          reactionId,
+        });
+      } catch (err) {
+        logger.warn({ err, integrationId: integration.id, messageId: event.messageId, reactionId }, "Failed to remove Feishu working reaction");
+      }
+    }
+  }
 }
 
 function persistableAssistantKind(kind: "message" | "ask_user" | "issue_proposal" | "operation_proposal" | "automation_create") {
@@ -473,24 +569,26 @@ export function feishuIntegrationRuntimeService(
       return result;
     }
     if (result.status === "accepted") {
-      try {
-        await completeAcceptedReply(integration, credential, event, result);
-      } catch (error) {
-        const body = error instanceof ChatAssistantStreamError && error.partialBody
-          ? error.partialBody
-          : "Rudder accepted your message, but the agent reply failed before a final response was produced.";
-        await sendAndRecord({
-          integration,
-          credential,
-          chatId: event.chatId,
-          text: body,
-          conversationId: result.conversationId,
-          chatMessageId: result.chatMessageId,
-          runId: result.runId,
-          issueId: result.issueId,
-        });
-        throw error;
-      }
+      await withWorkingReaction(sender, integration, credential, event, async () => {
+        try {
+          await completeAcceptedReply(integration, credential, event, result);
+        } catch (error) {
+          const body = error instanceof ChatAssistantStreamError && error.partialBody
+            ? error.partialBody
+            : "Rudder accepted your message, but the agent reply failed before a final response was produced.";
+          await sendAndRecord({
+            integration,
+            credential,
+            chatId: event.chatId,
+            text: body,
+            conversationId: result.conversationId,
+            chatMessageId: result.chatMessageId,
+            runId: result.runId,
+            issueId: result.issueId,
+          });
+          throw error;
+        }
+      });
     }
     return result;
   }

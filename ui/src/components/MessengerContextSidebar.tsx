@@ -27,6 +27,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { displayChatTitle } from "@/lib/chat-title";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import {
@@ -1249,6 +1250,7 @@ function ChatThreadRow({
   onFork,
   onArchive,
   onDelete,
+  archiveDeleteAllowed = true,
   onTogglePin,
   onToggleUnread,
   onCopyConversationLink,
@@ -1280,6 +1282,7 @@ function ChatThreadRow({
   onFork: () => void;
   onArchive: () => void;
   onDelete: () => void;
+  archiveDeleteAllowed?: boolean;
   onTogglePin: () => void;
   onToggleUnread: () => void;
   onCopyConversationLink: () => void;
@@ -1556,18 +1559,22 @@ function ChatThreadRow({
                   </DropdownMenuSub>
                 </>
               ) : null}
-              <DropdownMenuItem onClick={onArchive}>
-                <Archive className="h-4 w-4" />
-                Archive
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={onDelete}
-                title={generating ? "Stops the active reply before deleting this chat." : undefined}
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete
-              </DropdownMenuItem>
+              {archiveDeleteAllowed ? (
+                <>
+                  <DropdownMenuItem onClick={onArchive}>
+                    <Archive className="h-4 w-4" />
+                    Archive
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={onDelete}
+                    title={generating ? "Stops the active reply before deleting this chat." : undefined}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </>
@@ -3413,6 +3420,7 @@ export function MessengerContextSidebar() {
               generating: isChatGenerationActive(conversation.id),
             });
           }}
+          archiveDeleteAllowed={!isFeishuBackedConversation(conversation)}
           onTogglePin={() => {
             if (model.selectedOrganizationId) {
               markMessengerChatPinnedInCache(queryClient, model.selectedOrganizationId, conversation.id, !conversation.isPinned);

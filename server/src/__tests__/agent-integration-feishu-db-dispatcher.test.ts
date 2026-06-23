@@ -49,6 +49,7 @@ import {
 } from "../services/integrations/feishu/inbound-dispatcher.js";
 import { isFeishuLongConnectionEnabled } from "../services/integrations/feishu/runtime-registry.js";
 import {
+  createFeishuRestOutboundSender,
   dispatchFeishuNormalizedMessage,
   feishuIntegrationRuntimeService,
   feishuRuntimePayloadFromNormalizedMessage,
@@ -491,6 +492,8 @@ describe("Feishu inbound dispatcher DB deps", () => {
       integrationId: seeded.integrationId,
       externalMessageId: "om_accept",
     });
+    const [conversation] = await db.select().from(chatConversations).where(eq(chatConversations.id, result.conversationId));
+    expect(conversation?.title).toBe("/issue Fix Feishu inbox");
 
     const [issue] = await db.select().from(issues).where(eq(issues.id, result.issueId!));
     expect(issue).toMatchObject({
@@ -880,10 +883,18 @@ describe("Feishu inbound dispatcher DB deps", () => {
       credentialValue: JSON.stringify({ appSecret: "feishu-app-secret" }),
     });
     const sent: Array<{ chatId: string; text: string }> = [];
+    const reactions: Array<{ action: "add" | "remove"; messageId: string; emojiType?: string; reactionId?: string }> = [];
     const sender: FeishuOutboundSender = {
       sendText: async (input) => {
         sent.push({ chatId: input.chatId, text: input.text });
         return { messageId: "om_agent_reply" };
+      },
+      addReaction: async (input) => {
+        reactions.push({ action: "add", messageId: input.messageId, emojiType: input.emojiType });
+        return { reactionId: "reaction_working" };
+      },
+      removeReaction: async (input) => {
+        reactions.push({ action: "remove", messageId: input.messageId, reactionId: input.reactionId });
       },
     };
     const runtime = feishuIntegrationRuntimeService(db, {
@@ -931,6 +942,10 @@ describe("Feishu inbound dispatcher DB deps", () => {
     );
 
     expect(result.status).toBe("accepted");
+    expect(reactions).toEqual([
+      { action: "add", messageId: "om_accepted_reply", emojiType: "OnIt" },
+      { action: "remove", messageId: "om_accepted_reply", reactionId: "reaction_working" },
+    ]);
     expect(sent).toEqual([{ chatId: "oc_chat", text: "Agent accepted this request." }]);
     const messages = await db.select().from(chatMessages);
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
@@ -962,5 +977,53 @@ describe("Feishu inbound dispatcher DB deps", () => {
     const audits = await db.select().from(agentIntegrationInboundAudit);
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({ dropReason: "duplicate", bodyPersisted: false });
+  });
+
+  it("sends Feishu reaction requests with the documented OnIt emoji type", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return new Response(JSON.stringify({
+        code: 0,
+        data: { reaction_id: "reaction_working" },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    try {
+      const sender = createFeishuRestOutboundSender();
+      const reaction = await sender.addReaction?.({
+        region: "feishu_cn",
+        appId: "cli_app",
+        tenantAccessToken: "tenant-token",
+        messageId: "om message/1",
+        emojiType: "OnIt",
+      });
+      await sender.removeReaction?.({
+        region: "feishu_cn",
+        appId: "cli_app",
+        tenantAccessToken: "tenant-token",
+        messageId: "om message/1",
+        reactionId: reaction?.reactionId ?? "reaction_working",
+      });
+    } finally {
+      vi.stubGlobal("fetch", originalFetch);
+    }
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.url).toBe("https://open.feishu.cn/open-apis/im/v1/messages/om%20message%2F1/reactions");
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(calls[0]?.init.headers).toEqual(expect.objectContaining({
+      Authorization: "Bearer tenant-token",
+      "Content-Type": "application/json",
+    }));
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      reaction_type: { emoji_type: "OnIt" },
+    });
+    expect(calls[1]?.url).toBe("https://open.feishu.cn/open-apis/im/v1/messages/om%20message%2F1/reactions/reaction_working");
+    expect(calls[1]?.init.method).toBe("DELETE");
   });
 });

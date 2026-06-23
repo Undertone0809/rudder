@@ -969,6 +969,85 @@ describe("Chat streaming controls", () => {
   });
 });
 
+describe("Feishu-backed chat controls", () => {
+  function feishuChat(overrides: Partial<ChatConversation> = {}) {
+    return chat({
+      sourceMetadata: {
+        source: "agent_integration",
+        provider: "feishu",
+        integrationId: "integration-1",
+        externalChatId: "oc_chat",
+        externalChatType: "p2p",
+      },
+      ...overrides,
+    });
+  }
+
+  it("sends the /new quick command without changing the composer draft", async () => {
+    mockState.conversations = [feishuChat()];
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "plain-user-message", body: "Message from Feishu" })],
+    };
+
+    const { container } = renderChat();
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(textarea).not.toBeNull();
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Keep my draft");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const quickCommandTrigger = container.querySelector<HTMLButtonElement>('[data-testid="feishu-quick-command"]');
+    expect(quickCommandTrigger).not.toBeNull();
+    await act(async () => {
+      quickCommandTrigger?.dispatchEvent(new MouseEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      }));
+      await Promise.resolve();
+    });
+
+    const newCommand = document.body.querySelector<HTMLDivElement>('[data-testid="feishu-quick-command-new"]');
+    expect(newCommand).not.toBeNull();
+    await act(async () => {
+      newCommand?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledWith("chat-1", "/new", expect.objectContaining({ onEvent: expect.any(Function) }));
+    expect(textarea?.value).toBe("Keep my draft");
+  });
+
+  it("hides archive and delete actions for Feishu-backed chats", async () => {
+    mockState.conversations = [feishuChat()];
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "plain-user-message", body: "Message from Feishu" })],
+    };
+
+    const { container } = renderChat();
+    const actionsTrigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-actions-trigger"]');
+    expect(actionsTrigger).not.toBeNull();
+
+    await act(async () => {
+      actionsTrigger?.dispatchEvent(new MouseEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Pin Chat");
+    expect(document.body.textContent).toContain("Fork latest");
+    expect(document.body.textContent).not.toContain("Delete");
+    expect(document.body.textContent).not.toContain("Archive");
+  });
+});
+
 describe("Chat attachment previews", () => {
   it("does not over-cancel the workspace main padding on desktop", () => {
     const { container } = renderChat();

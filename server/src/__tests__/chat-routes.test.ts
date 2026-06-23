@@ -231,6 +231,19 @@ function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function createFeishuBackedConversation(overrides: Partial<Record<string, unknown>> = {}) {
+  return createConversation({
+    sourceMetadata: {
+      source: "agent_integration",
+      provider: "feishu",
+      integrationId: "integration-1",
+      externalChatId: "oc_chat",
+      externalChatType: "p2p",
+    },
+    ...overrides,
+  });
+}
+
 function createMessage(id: string, role: "user" | "assistant" | "system", kind: string, body: string, approvalId: string | null = null) {
   const now = new Date("2026-03-26T08:01:00.000Z");
   return {
@@ -564,6 +577,18 @@ describe("chat routes", () => {
     } finally {
       release?.();
     }
+  });
+
+  it("rejects deleting Feishu-backed chat conversations", async () => {
+    mockChatService.getById.mockResolvedValue(createFeishuBackedConversation());
+
+    const res = await request(createApp())
+      .delete("/api/chats/chat-1");
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("Feishu-backed chats cannot be archived or deleted yet");
+    expect(mockChatService.listAttachmentsForConversation).not.toHaveBeenCalled();
+    expect(mockChatService.remove).not.toHaveBeenCalled();
   });
 
   it("forks a chat conversation from a selected message and logs the activity", async () => {
@@ -1976,6 +2001,18 @@ describe("chat routes", () => {
     expect(res.status).toBe(403);
     expect(mockChatService.getById).not.toHaveBeenCalled();
     expect(mockProductIntelligenceService.execute).not.toHaveBeenCalled();
+    expect(mockChatService.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects archiving Feishu-backed chat conversations", async () => {
+    mockChatService.getById.mockResolvedValue(createFeishuBackedConversation());
+
+    const res = await request(createApp())
+      .patch("/api/chats/chat-1")
+      .send({ status: "archived" });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("Feishu-backed chats cannot be archived or deleted yet");
     expect(mockChatService.update).not.toHaveBeenCalled();
   });
 

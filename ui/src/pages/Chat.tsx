@@ -54,6 +54,7 @@ import {
 } from "@/lib/chat-process-duration";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
+import { isFeishuBackedConversation } from "@/lib/chat-source";
 import {
   readChatScopedFlag,
   readChatScopedState,
@@ -241,7 +242,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     searchParams,
     selectedOrganizationId, visibleProjects, draftPreferredAgentId, ]); const selectedConversation = activeConversationBelongsToSelectedOrganization
     ? conversationQuery.data ?? activeConversationFromList
-    : null; const selectedConversationGenerating = Boolean(selectedConversation && (streamDrafts[selectedConversation.id] || sendInFlightByChatId[selectedConversation.id])); const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
+    : null; const selectedConversationGenerating = Boolean(selectedConversation && (streamDrafts[selectedConversation.id] || sendInFlightByChatId[selectedConversation.id])); const selectedConversationFeishuBacked = isFeishuBackedConversation(selectedConversation); const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
   const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null; const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
   const {
     data: organizationSkills,
@@ -1312,6 +1313,30 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               }} >
               <span className="min-w-0 truncate">Skills</span>
               <ChevronDown className="h-3 w-3 shrink-0 opacity-70" /> </button> ) : null} </div>
+          {selectedConversationFeishuBacked && selectedConversation ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger type="button" data-testid="feishu-quick-command" className="chat-chip inline-flex max-w-[min(100%,12rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)]">
+                <span className="min-w-0 truncate">Quick Command</span>
+                <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="surface-overlay text-foreground">
+                <DropdownMenuItem
+                  data-testid="feishu-quick-command-new"
+                  disabled={composerUnavailable || newConversationSendInFlight}
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    void sendMessage({
+                      bodyOverride: "/new",
+                      filesOverride: [],
+                      conversationOverride: selectedConversation,
+                    });
+                  }}
+                >
+                  /new
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         {canStopSelectedConversationReply && selectedConversation && sendButtonMode !== "stop" && sendButtonMode !== "sending" ? (
           <Button type="button" variant="ghost" size="icon-sm" aria-label="Stop streaming" onClick={() => stopStreaming(selectedConversation.id)} className={cn(
             "shrink-0 rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground",
@@ -1427,32 +1452,36 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       <GitFork className="h-4 w-4" />
                       Fork latest
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      variant="destructive"
-                      disabled={selectedConversationGenerating}
-                      onClick={async () => {
-                        const confirmed = await confirm({
-                          title: "Delete chat",
-                          description: `Delete "${conversationDisplayTitle(selectedConversation)}"? This cannot be undone.`,
-                          confirmLabel: "Delete",
-                          tone: "destructive",
-                        });
-                        if (!confirmed) return;
-                        deleteConversationMutation.mutate(selectedConversation.id);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Delete
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => updateConversationMutation.mutate({
-                        chatId: selectedConversation.id,
-                        data: { status: "archived" },
-                      })}
-                    >
-                      <Archive className="h-4 w-4" />
-                      Archive
-                    </DropdownMenuItem>
+                    {!selectedConversationFeishuBacked ? (
+                      <>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          disabled={selectedConversationGenerating}
+                          onClick={async () => {
+                            const confirmed = await confirm({
+                              title: "Delete chat",
+                              description: `Delete "${conversationDisplayTitle(selectedConversation)}"? This cannot be undone.`,
+                              confirmLabel: "Delete",
+                              tone: "destructive",
+                            });
+                            if (!confirmed) return;
+                            deleteConversationMutation.mutate(selectedConversation.id);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => updateConversationMutation.mutate({
+                            chatId: selectedConversation.id,
+                            data: { status: "archived" },
+                          })}
+                        >
+                          <Archive className="h-4 w-4" />
+                          Archive
+                        </DropdownMenuItem>
+                      </>
+                    ) : null}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>

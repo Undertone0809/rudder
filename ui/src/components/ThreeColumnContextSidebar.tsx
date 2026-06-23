@@ -29,6 +29,7 @@ import { useIssueFollows } from "@/hooks/useIssueFollows";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 import { sidebarAgentStatusTag } from "@/lib/agent-sidebar-status";
+import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { displayChatTitle } from "@/lib/chat-title";
 import { isFollowingIssue } from "@/lib/issue-scope-filters";
 import {
@@ -1670,17 +1671,19 @@ export function ThreeColumnContextSidebar() {
                         <Copy className="h-4 w-4" />
                         Copy chat ID
                       </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          updateConversationMutation.mutate({
-                            chatId: conversation.id,
-                            data: { status: "archived" },
-                          });
-                        }}
-                      >
-                        <Archive className="h-4 w-4" />
-                        Archive
-                      </DropdownMenuItem>
+                      {!isFeishuBackedConversation(conversation) ? (
+                        <DropdownMenuItem
+                          onClick={() => {
+                            updateConversationMutation.mutate({
+                              chatId: conversation.id,
+                              data: { status: "archived" },
+                            });
+                          }}
+                        >
+                          <Archive className="h-4 w-4" />
+                          Archive
+                        </DropdownMenuItem>
+                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </>
@@ -1779,17 +1782,19 @@ export function ThreeColumnContextSidebar() {
                         <Copy className="h-4 w-4" />
                         Copy chat ID
                       </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          updateConversationMutation.mutate({
-                            chatId: conversation.id,
-                            data: { status: "archived" },
-                          });
-                        }}
-                      >
-                        <Archive className="h-4 w-4" />
-                        Archive
-                      </DropdownMenuItem>
+                      {!isFeishuBackedConversation(conversation) ? (
+                        <DropdownMenuItem
+                          onClick={() => {
+                            updateConversationMutation.mutate({
+                              chatId: conversation.id,
+                              data: { status: "archived" },
+                            });
+                          }}
+                        >
+                          <Archive className="h-4 w-4" />
+                          Archive
+                        </DropdownMenuItem>
+                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </>

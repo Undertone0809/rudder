@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
 import { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { fetchWebsiteIcon, resolveWebsiteMetadata } from "../services/website-metadata.js";

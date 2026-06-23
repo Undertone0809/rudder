@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import type { TranslationKey } from "@/i18n/locales/en";
+import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { formatDisplayPath } from "@/lib/display-path";
 import { normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
@@ -943,17 +944,19 @@ export function OrganizationSettings() {
                             <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" />
                             {t("organizationSettings.chat.archived.restore")}
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-muted-foreground hover:text-destructive"
-                            disabled={restoring || deleting}
-                            aria-label={t("organizationSettings.chat.archived.deleteAria", { title: conversation.title })}
-                            onClick={() => void handleDeleteArchivedChat(conversation.id, conversation.title)}
-                          >
-                            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                            {t("organizationSettings.chat.archived.delete")}
-                          </Button>
+                          {!isFeishuBackedConversation(conversation) ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-muted-foreground hover:text-destructive"
+                              disabled={restoring || deleting}
+                              aria-label={t("organizationSettings.chat.archived.deleteAria", { title: conversation.title })}
+                              onClick={() => void handleDeleteArchivedChat(conversation.id, conversation.title)}
+                            >
+                              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                              {t("organizationSettings.chat.archived.delete")}
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
                     );
