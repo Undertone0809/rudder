@@ -315,6 +315,43 @@ describe("ChatSystemMessageBody", () => {
     expect(html).toContain('aria-label="Open automation Daily AI HOT report"');
     expect(html).toContain(">Daily AI HOT report</a> from this chat conversation.");
   });
+
+  it("renders fork source messages as a clickable at-message token without exposing raw IDs", () => {
+    const sourceMessageId = "99c63cd7-5996-4b16-a1e4-c6d462599a2e";
+    const html = renderSystemMessageBody(message({
+      body: "Forked from [Forkable strategy chat](chat://source-chat) at message.",
+      structuredPayload: {
+        eventType: "chat_fork",
+        sourceConversationId: "source-chat",
+        sourceConversationTitle: "Forkable strategy chat",
+        sourceMessageId,
+      },
+    }));
+
+    expect(html).toContain("Forked from");
+    expect(html).toContain('href="/messenger/chat/source-chat"');
+    expect(html).toContain('aria-label="Open source chat Forkable strategy chat"');
+    expect(html).toContain('class="chat-system-issue-link chat-system-message-link"');
+    expect(html).toContain('href="chat://source-chat?messageId=99c63cd7-5996-4b16-a1e4-c6d462599a2e"');
+    expect(html).toContain('aria-label="Open source message"');
+    expect(html).toContain("at <a");
+    expect(html).toContain(">message</a>.");
+    expect(html.replace(/href=\"[^\"]*\"/g, "")).not.toContain(sourceMessageId);
+  });
+
+  it("keeps legacy fork source titles when structured payloads predate title storage", () => {
+    const html = renderSystemMessageBody(message({
+      body: "Forked from [Legacy strategy chat](chat://source-chat) at message 99c63cd7-5996-4b16-a1e4-c6d462599a2e.",
+      structuredPayload: {
+        type: "chat_fork",
+        sourceConversationId: "source-chat",
+        sourceMessageId: "99c63cd7-5996-4b16-a1e4-c6d462599a2e",
+      },
+    }));
+
+    expect(html).toContain(">Legacy strategy chat</a>");
+    expect(html).not.toContain(">source chat</a>");
+  });
 });
 
 describe("ChatMessageItem", () => {

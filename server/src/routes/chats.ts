@@ -186,7 +186,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
 
   function isForkSystemEvent(message: ChatMessage) {
     if (message.role !== "system" || message.kind !== "system_event") return false;
-    if (message.structuredPayload?.type === "chat_fork") return true;
+    if (message.structuredPayload?.eventType === "chat_fork" || message.structuredPayload?.type === "chat_fork") return true;
     return message.body.startsWith("Forked from ");
   }
 

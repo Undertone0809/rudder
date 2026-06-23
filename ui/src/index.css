@@ -1602,6 +1602,36 @@
     outline-offset: 2px;
   }
 
+  .chat-system-message-link {
+    border-color: color-mix(in oklab, var(--accent-base) 34%, var(--border-soft));
+    background: color-mix(in oklab, var(--accent-base) 12%, transparent);
+    color: var(--accent-strong);
+  }
+
+  .chat-system-message-link:hover {
+    border-color: color-mix(in oklab, var(--accent-base) 48%, var(--border-soft));
+    background: color-mix(in oklab, var(--accent-base) 18%, transparent);
+    color: var(--accent-strong);
+  }
+
+  .chat-message-jump-highlight {
+    border-radius: var(--radius-xl);
+    animation: chat-message-jump-highlight 2400ms ease-out;
+  }
+
+  @keyframes chat-message-jump-highlight {
+    0%,
+    45% {
+      background: color-mix(in oklab, var(--accent-base) 18%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent-base) 34%, transparent), 0 12px 32px color-mix(in oklab, var(--accent-base) 14%, transparent);
+    }
+
+    100% {
+      background: transparent;
+      box-shadow: none;
+    }
+  }
+
   .chat-message-user {
     --foreground: var(--ink-strong);
     --muted-foreground: var(--ink-muted);

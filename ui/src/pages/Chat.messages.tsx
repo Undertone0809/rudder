@@ -1279,6 +1279,17 @@ export function readStructuredPayloadString(payload: Record<string, unknown> | n
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function legacyChatForkSourceTitleFromBody(body: string, sourceConversationId: string) {
+  const linkPattern = /\[([^\]]+)\]\(chat:\/\/([^)]+)\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = linkPattern.exec(body)) !== null) {
+    const title = match[1]?.trim();
+    const linkedConversationId = match[2]?.split(/[?#]/)[0]?.trim();
+    if (title && linkedConversationId === sourceConversationId) return title;
+  }
+  return null;
+}
+
 export function issueCreatedSystemMessageParts(message: ChatMessage) {
   const payload = message.structuredPayload;
   if (!payload || payload.eventType !== "issue_created") return null;
@@ -1336,6 +1347,25 @@ function automationSourceSystemMessageParts(message: ChatMessage) {
   };
 }
 
+function chatForkSystemMessageParts(message: ChatMessage) {
+  const payload = message.structuredPayload;
+  if (!payload || (payload.eventType !== "chat_fork" && payload.type !== "chat_fork")) return null;
+
+  const sourceConversationId = readStructuredPayloadString(payload, "sourceConversationId");
+  const sourceMessageId = readStructuredPayloadString(payload, "sourceMessageId");
+  if (!sourceConversationId) return null;
+  const sourceConversationTitle =
+    readStructuredPayloadString(payload, "sourceConversationTitle")
+    ?? legacyChatForkSourceTitleFromBody(message.body, sourceConversationId)
+    ?? "source chat";
+
+  return {
+    sourceConversationId,
+    sourceConversationTitle,
+    sourceMessageId,
+  };
+}
+
 function isAutomationSystemMessage(message: ChatMessage) {
   const eventType = message.structuredPayload?.eventType;
   return eventType === "automation_source" || eventType === "automation_created";
@@ -1352,6 +1382,45 @@ export function ChatSystemMessageBody({
 }) {
   const issueCreatedParts = issueCreatedSystemMessageParts(message);
   const automationSourceParts = automationSourceSystemMessageParts(message);
+  const chatForkParts = chatForkSystemMessageParts(message);
+
+  if (chatForkParts) {
+    const sourceChatHref = `chat://${chatForkParts.sourceConversationId}`;
+    const sourceMessageHref = chatForkParts.sourceMessageId
+      ? `${sourceChatHref}?messageId=${encodeURIComponent(chatForkParts.sourceMessageId)}`
+      : null;
+    const handleSourceMessageClick = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      if (!sourceMessageHref) return;
+      onMarkdownLinkClick?.({ event, href: sourceMessageHref, label: "message" });
+    };
+
+    return (
+      <span className="min-w-0 flex-1 leading-5">
+        Forked from{" "}
+        <Link
+          to={`/messenger/chat/${chatForkParts.sourceConversationId}`}
+          className="chat-system-issue-link"
+          aria-label={`Open source chat ${chatForkParts.sourceConversationTitle}`}
+        >
+          {chatForkParts.sourceConversationTitle}
+        </Link>
+        {sourceMessageHref ? (
+          <>
+            {" "}at{" "}
+            <a
+              href={sourceMessageHref}
+              className="chat-system-issue-link chat-system-message-link"
+              aria-label="Open source message"
+              onClick={handleSourceMessageClick}
+            >
+              message
+            </a>
+          </>
+        ) : null}
+        .
+      </span>
+    );
+  }
 
   if (automationSourceParts) {
     if (message.structuredPayload?.eventType === "automation_created") {

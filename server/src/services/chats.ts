@@ -1261,7 +1261,7 @@ export function chatService(db: Db) {
   }
 
   function forkSystemEventBody(sourceConversation: ConversationRow, sourceMessageId: string | null) {
-    const messageSuffix = sourceMessageId ? ` at message ${sourceMessageId}` : "";
+    const messageSuffix = sourceMessageId ? " at message" : "";
     return `Forked from [${sourceConversation.title}](chat://${sourceConversation.id})${messageSuffix}.`;
   }
 
@@ -1491,8 +1491,10 @@ export function chatService(db: Db) {
           status: "completed",
           body: forkSystemEventBody(source, input.sourceMessageId ?? null),
           structuredPayload: {
+            eventType: "chat_fork",
             type: "chat_fork",
             sourceConversationId: source.id,
+            sourceConversationTitle: source.title,
             sourceMessageId: input.sourceMessageId ?? null,
             forkRootConversationId: rootConversationId,
           },
