@@ -1622,32 +1622,23 @@
   .chat-message-jump-highlight::before {
     content: "";
     position: absolute;
-    top: -0.5rem;
-    bottom: -0.5rem;
-    left: -0.875rem;
-    width: 4px;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--accent-strong) 68%, transparent);
-    box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent-base) 12%, transparent);
+    inset: -0.625rem -0.75rem;
+    border: 1.5px solid color-mix(in oklab, var(--accent-base) 38%, transparent);
+    border-radius: calc(var(--radius-xl) + 0.625rem);
+    background: transparent;
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent-base) 7%, transparent), 0 10px 24px color-mix(in oklab, var(--accent-base) 8%, transparent);
     pointer-events: none;
-    animation: chat-message-jump-marker 1800ms ease-out;
+    animation: chat-message-jump-highlight 1800ms ease-out;
   }
 
-  [data-testid="chat-user-message"].chat-message-jump-highlight::before {
-    right: -0.875rem;
-    left: auto;
-  }
-
-  @keyframes chat-message-jump-marker {
+  @keyframes chat-message-jump-highlight {
     0%,
     52% {
       opacity: 1;
-      transform: scaleY(1);
     }
 
     100% {
       opacity: 0;
-      transform: scaleY(0.82);
     }
   }
 
