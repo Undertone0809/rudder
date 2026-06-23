@@ -1615,15 +1615,26 @@
   }
 
   .chat-message-jump-highlight {
+    position: relative;
     border-radius: var(--radius-xl);
+    isolation: isolate;
+  }
+
+  .chat-message-jump-highlight::before {
+    content: "";
+    position: absolute;
+    inset: -0.875rem -1rem;
+    z-index: -1;
+    border-radius: calc(var(--radius-xl) + 0.75rem);
+    pointer-events: none;
     animation: chat-message-jump-highlight 2400ms ease-out;
   }
 
   @keyframes chat-message-jump-highlight {
     0%,
     45% {
-      background: color-mix(in oklab, var(--accent-base) 18%, transparent);
-      box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent-base) 34%, transparent), 0 12px 32px color-mix(in oklab, var(--accent-base) 14%, transparent);
+      background: color-mix(in oklab, var(--accent-base) 16%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent-base) 30%, transparent), 0 16px 36px color-mix(in oklab, var(--accent-base) 12%, transparent);
     }
 
     100% {
