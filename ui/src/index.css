@@ -1617,29 +1617,37 @@
   .chat-message-jump-highlight {
     position: relative;
     border-radius: var(--radius-xl);
-    isolation: isolate;
   }
 
   .chat-message-jump-highlight::before {
     content: "";
     position: absolute;
-    inset: -0.875rem -1rem;
-    z-index: -1;
-    border-radius: calc(var(--radius-xl) + 0.75rem);
+    top: -0.5rem;
+    bottom: -0.5rem;
+    left: -0.875rem;
+    width: 3px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--accent-strong) 68%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent-base) 12%, transparent);
     pointer-events: none;
-    animation: chat-message-jump-highlight 2400ms ease-out;
+    animation: chat-message-jump-marker 1800ms ease-out;
   }
 
-  @keyframes chat-message-jump-highlight {
+  [data-testid="chat-user-message"].chat-message-jump-highlight::before {
+    right: -0.875rem;
+    left: auto;
+  }
+
+  @keyframes chat-message-jump-marker {
     0%,
-    45% {
-      background: color-mix(in oklab, var(--accent-base) 16%, transparent);
-      box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent-base) 30%, transparent), 0 16px 36px color-mix(in oklab, var(--accent-base) 12%, transparent);
+    52% {
+      opacity: 1;
+      transform: scaleY(1);
     }
 
     100% {
-      background: transparent;
-      box-shadow: none;
+      opacity: 0;
+      transform: scaleY(0.82);
     }
   }
 
