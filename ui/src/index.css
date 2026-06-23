@@ -1625,7 +1625,7 @@
     top: -0.5rem;
     bottom: -0.5rem;
     left: -0.875rem;
-    width: 3px;
+    width: 4px;
     border-radius: 999px;
     background: color-mix(in oklab, var(--accent-strong) 68%, transparent);
     box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent-base) 12%, transparent);
@@ -1648,6 +1648,12 @@
     100% {
       opacity: 0;
       transform: scaleY(0.82);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chat-message-jump-highlight::before {
+      animation: none;
     }
   }
 
