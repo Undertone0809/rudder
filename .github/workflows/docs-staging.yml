@@ -50,11 +50,11 @@ jobs:
 
       - name: Validate docs
         working-directory: docs
-        run: PUPPETEER_SKIP_DOWNLOAD=1 pnpm --package=node@20 --package=mint@latest dlx mint validate
+        run: PUPPETEER_SKIP_DOWNLOAD=1 pnpm --package=node@20 --package=mint@4.2.637 dlx mint validate
 
       - name: Export docs
         working-directory: docs
-        run: pnpm --package=node@20 --package=mint@latest dlx mint export --output "$RUNNER_TEMP/rudder-docs.zip"
+        run: pnpm --package=node@20 --package=mint@4.2.637 dlx mint export --output "$RUNNER_TEMP/rudder-docs.zip"
 
       - name: Unpack static export
         run: |
