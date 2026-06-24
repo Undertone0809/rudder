@@ -10,6 +10,9 @@ const DEFAULT_HOSTS = [
 const CANONICAL_ORIGIN = "https://doc.rudder.zeeland.studio";
 const REQUIRED_PATHS = [
   { path: "/", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN },
+  { path: "/about", status: 200, bodyIncludes: ["Rudder", "control plane"], canonical: `${CANONICAL_ORIGIN}/about` },
+  { path: "/contact", status: 200, bodyIncludes: ["GitHub", "Report a bug"], canonical: `${CANONICAL_ORIGIN}/contact` },
+  { path: "/home", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },
   { path: "/get-started/installation", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/get-started/installation` },
   { path: "/zh", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/zh` },
   { path: "/zh/get-started/installation", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/zh/get-started/installation` },
@@ -113,6 +116,13 @@ async function checkPath(host, check, timeoutMs) {
 
   if (response.status !== check.status) {
     throw new Error(`${url} returned ${response.status}, expected ${check.status}`);
+  }
+
+  if (check.finalPath) {
+    const finalPath = new URL(response.url).pathname;
+    if (finalPath !== check.finalPath) {
+      throw new Error(`${url} resolved to path ${finalPath}, expected ${check.finalPath}`);
+    }
   }
 
   for (const expected of check.bodyIncludes ?? []) {

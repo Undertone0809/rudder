@@ -96,6 +96,17 @@ jobs:
           unzip -q "$RUNNER_TEMP/rudder-docs.zip" -d "$RUNNER_TEMP/rudder-docs-export"
           mkdir -p "$RUNNER_TEMP/rudder-docs-export/.vercel"
           printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > "$RUNNER_TEMP/rudder-docs-export/.vercel/project.json"
+          cat > "$RUNNER_TEMP/rudder-docs-export/vercel.json" <<'JSON'
+          {
+            "redirects": [
+              {
+                "source": "/home",
+                "destination": "/",
+                "permanent": true
+              }
+            ]
+          }
+          JSON
 
       - name: Inject production analytics id
         env:

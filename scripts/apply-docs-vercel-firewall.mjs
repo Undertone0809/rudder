@@ -8,7 +8,7 @@ const RULE_VALUE = {
   active: true,
   name: RULE_NAME,
   description:
-    "Deny high-volume crawler probes for non-doc marketing paths that collapse into the docs /404.html route.",
+    "Deny high-volume crawler probes for obvious non-doc attack paths before they collapse into the docs /404.html route.",
   conditionGroup: [
     {
       conditions: [
@@ -16,7 +16,8 @@ const RULE_VALUE = {
           type: "path",
           op: "re",
           neg: false,
-          value: "^/(about|contact|home)/?$",
+          value:
+            "^/(?:wp-admin(?:/.*)?|wp-login\\.php|wordpress(?:/.*)?|wp(?:/.*)?|admin(?:/.*)?|login(?:/.*)?|\\.git(?:/.*)?|\\.env)$",
         },
       ],
     },

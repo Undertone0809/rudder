@@ -73,6 +73,8 @@
             "group": "Project",
             "icon": "folder-git-2",
             "pages": [
+              "about",
+              "contact",
               "releases"
             ]
           }
@@ -167,6 +169,14 @@
         "header": "Project",
         "items": [
           {
+            "label": "About",
+            "href": "/about"
+          },
+          {
+            "label": "Contact",
+            "href": "/contact"
+          },
+          {
             "label": "GitHub",
             "href": "https://github.com/Undertone0809/rudder"
           },
@@ -179,6 +189,10 @@
     ]
   },
   "redirects": [
+    {
+      "source": "/home",
+      "destination": "/"
+    },
     {
       "source": "/concepts/messenger-approvals",
       "destination": "/concepts/chat-messenger"

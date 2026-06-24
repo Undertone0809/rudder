@@ -1,0 +1,66 @@
+---
+title: "About Rudder"
+description: "Learn what Rudder is, why it exists, and how it helps operators run AI agent teams through durable work loops."
+icon: "circle-help"
+keywords:
+  - "about Rudder"
+  - "AI agent team control plane"
+  - "agent work loops"
+  - "agent orchestration"
+canonical: "https://doc.rudder.zeeland.studio/about"
+"og:url": "https://doc.rudder.zeeland.studio/about"
+
+---
+
+Rudder is an open-source control plane for AI agent teams.
+
+It turns goals, issues, agent runs, reviews, budgets, workspaces, and feedback into a repeatable work loop. The aim is simple: agent work should be assigned, run, reviewed, improved, and remembered instead of disappearing into one-off prompts.
+
+## Why Rudder exists
+
+Agent work becomes hard to trust when it has no durable structure. A transcript can show what happened, but it usually does not answer who owned the work, why the run mattered, what context was used, what changed, what it cost, who reviewed it, or what the next run should learn.
+
+Rudder gives humans and agents shared operating objects for that work:
+
+- organizations with goals
+- agents with roles, runtimes, skills, and budgets
+- issues with ownership, context, runs, comments, artifacts, and review state
+- feedback paths that can become better context, skills, workflows, or decisions
+
+## What Rudder is
+
+Rudder is the operating layer for agent work. It coordinates the loop around the agent runtime rather than replacing the runtime itself.
+
+Use Rudder when you want to:
+
+- assign real work to durable agents
+- run local or external agent runtimes with visible evidence
+- keep output, review, budget, and feedback attached to the work object
+- improve future runs through reviewed lessons instead of hidden prompt drift
+
+## What Rudder is not
+
+Rudder is not a generic chat app, a full Jira replacement, or a single agent runtime. Chat is useful for intake and clarification, but durable work belongs on issues, runs, reviews, and outputs.
+
+Rudder stays runtime-neutral. Codex, Claude Code, shell processes, webhooks, gateway-backed agents, and future runtimes can all report into the same control plane.
+
+## The loop
+
+Rudder is designed around one compounding loop:
+
+```text
+Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+```
+
+The north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
+
+## Start with the product
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="download" href="/get-started/installation">
+    Install Rudder and open the local app.
+  </Card>
+  <Card title="Core Concepts" icon="book-open" href="/concepts/overview">
+    Learn the product model behind organizations, agents, issues, runs, reviews, and feedback.
+  </Card>
+</CardGroup>

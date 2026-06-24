@@ -37,7 +37,8 @@ The docs site has two Vercel-backed channels:
 
 Both workflows validate the Mintlify project, export the static site, deploy it
 through the Vercel CLI, assign the channel domain, and verify key public paths
-such as `/robots.txt`, `/sitemap.xml`, `/zh`, `/llms.txt`, and favicons.
+such as `/about`, `/contact`, `/home`, `/robots.txt`, `/sitemap.xml`, `/zh`,
+`/llms.txt`, and favicons.
 Production publishes also bind the public Vercel project aliases to the same
 deployment and create a `docs/vYYYY.MM.DD` git tag for the source commit.
 Those aliases are intentionally production-facing public entry points; the
@@ -48,15 +49,16 @@ compete with the canonical docs host in search indexes.
 ## Public Edge Protection
 
 The production Vercel project can receive high-volume generic crawler probes for
-paths that are not part of the docs information architecture, such as `/about`,
-`/contact`, and `/home`. Do not convert those probes into broad homepage
-redirects: that hides the 404 symptom, can create soft-404 signals, and still
-lets invalid traffic reach the deployment.
+paths that are not part of the docs information architecture, such as WordPress,
+admin, login, git, or dotenv paths. Do not convert those probes into broad
+homepage redirects: that hides the 404 symptom, can create soft-404 signals, and
+still lets invalid traffic reach the deployment.
 
 Use `.github/workflows/docs-vercel-firewall.yml` to apply the docs firewall rule
-that denies those known non-doc probe paths before they hit the static docs
-surface. Reserve Mintlify redirects in `docs.json` for real old URLs that have a
-close semantic replacement.
+that denies obvious non-doc attack paths before they hit the static docs
+surface. Reserve Mintlify redirects in `docs.json` for real old URLs or expected
+public entry points that have a close semantic replacement, such as `/home` to
+`/`.
 
 ## Content Scope
 
