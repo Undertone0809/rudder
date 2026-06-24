@@ -1,6 +1,6 @@
 ---
 name: development-lifecycle-router-maintainer
-description: "Route ambiguous or multi-stage Rudder development work across requirements, advisor/product analysis, UI design, implementation, verification, review, release, recovery, and handoff. Use when the request needs stage selection, cross-stage sequencing, reviewer gates, interrupted-run or dirty-worktree recovery, component-lab/performance/runtime-contract routing, or a decision about whether a named maintainer skill should be optimized. Keep thin: if a narrow maintainer clearly owns the task, state that route and follow it."
+description: "Use for Rudder development requests where the correct lifecycle stage or owner is unclear: requirements, advisor/product analysis, UI design, implementation, verification, review, release, recovery, runtime contracts, performance, component lab, or handoff. Also use when a user asks whether a named maintainer skill should be optimized. Choose the earliest blocking stage, state the exit bar, then route to the smallest capable maintainer. Do not trigger when a narrow maintainer clearly owns the next artifact."
 ---
 
 # Development Lifecycle Router Maintainer
