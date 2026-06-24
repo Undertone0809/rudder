@@ -16,12 +16,14 @@ import {
   applyPendingMigrations,
   chatContextLinks,
   chatConversations,
+  chatGenerations,
   chatMessages,
   createDb,
   ensurePostgresDatabase,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
+  organizationIntelligenceProfiles,
   organizationMemberships,
   organizationSecretVersions,
   organizationSecrets,
@@ -40,6 +42,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { errorHandler } from "../middleware/index.js";
 import { integrationRoutes } from "../routes/integrations.js";
 import { localEncryptedProvider } from "../secrets/local-encrypted-provider.js";
+import { claimChatGeneration, clearActiveChatGenerationsForTest } from "../services/chat-generation-locks.js";
+import { chatService } from "../services/chats.js";
 import { agentIntegrationService } from "../services/integrations/agent-integrations.js";
 import { feishuCallbackCredentialService } from "../services/integrations/feishu/callback-credentials.js";
 import { createFeishuInboundDispatcherDbDeps } from "../services/integrations/feishu/inbound-dispatcher-db.js";
@@ -172,6 +176,21 @@ function createRouteApp(db: ReturnType<typeof createDb>, actor: Record<string, u
   return app;
 }
 
+async function waitUntil(assertion: () => void | Promise<void>, timeoutMs = 1000) {
+  const startedAt = Date.now();
+  let lastError: unknown;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  throw lastError;
+}
+
 describe("Feishu inbound dispatcher DB deps", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -185,6 +204,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
   }, 20_000);
 
   afterEach(async () => {
+    clearActiveChatGenerationsForTest();
     await db.delete(agentIntegrationOutboundMessages);
     await db.delete(agentIntegrationInboundAudit);
     await db.delete(agentIntegrationInboundDedup);
@@ -193,12 +213,14 @@ describe("Feishu inbound dispatcher DB deps", () => {
     await db.delete(agentIntegrationUserBindings);
     await db.delete(chatContextLinks);
     await db.delete(chatMessages);
+    await db.delete(chatGenerations);
     await db.delete(heartbeatRunEvents);
     await db.delete(activityLog);
     await db.delete(heartbeatRuns);
     await db.delete(chatConversations);
     await db.delete(issues);
     await db.delete(agentIntegrations);
+    await db.delete(organizationIntelligenceProfiles);
     await db.delete(organizationSecretVersions);
     await db.delete(organizationSecrets);
     await db.delete(organizationMemberships);
@@ -536,6 +558,268 @@ describe("Feishu inbound dispatcher DB deps", () => {
     });
   });
 
+  it("handles the Feishu /new quick command by switching the external chat to a fresh Rudder conversation", async () => {
+    const seeded = await seedIntegration();
+    const deps = createFeishuInboundDispatcherDbDeps(db, { startTitleGeneration: false });
+    const first = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_before_new",
+        eventId: "event_before_new",
+        body: "keep this in the first session",
+      }),
+      deps,
+    );
+    expect(first.status).toBe("accepted");
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+
+    const result = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_new_command",
+        eventId: "event_new_command",
+        body: "/new",
+        commandBody: "/new",
+      }),
+      deps,
+    );
+
+    expect(result.status).toBe("quick_command");
+    if (result.status !== "quick_command") throw new Error("Expected quick_command result");
+    expect(result.command).toBe("new");
+    expect(result.conversationId).not.toBe(first.conversationId);
+    expect(result.outbound).toMatchObject({
+      externalChatId: "oc_chat",
+      text: "New session started.",
+    });
+
+    const [binding] = await db.select().from(agentIntegrationChatBindings);
+    expect(binding).toMatchObject({
+      integrationId: seeded.integrationId,
+      externalChatId: "oc_chat",
+      conversationId: result.conversationId,
+    });
+
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => ({
+      conversationId: message.conversationId,
+      role: message.role,
+      kind: message.kind,
+      body: message.body,
+    }))).toEqual([
+      {
+        conversationId: first.conversationId,
+        role: "user",
+        kind: "message",
+        body: "keep this in the first session",
+      },
+      {
+        conversationId: first.conversationId,
+        role: "system",
+        kind: "system_event",
+        body: "New Feishu session started.",
+      },
+    ]);
+    await expect(db.select().from(heartbeatRuns)).resolves.toHaveLength(1);
+    await expect(db.select().from(agentIntegrationOutboundMessages)).resolves.toHaveLength(1);
+
+    const next = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_after_new",
+        eventId: "event_after_new",
+        body: "first message in the new session",
+      }),
+      deps,
+    );
+    expect(next.status).toBe("accepted");
+    if (next.status !== "accepted") throw new Error("Expected next message to be accepted");
+    expect(next.conversationId).toBe(result.conversationId);
+    const [nextConversation] = await db.select().from(chatConversations).where(eq(chatConversations.id, next.conversationId));
+    expect(nextConversation?.title).toBe("New chat");
+  });
+
+  it("serializes concurrent Feishu /new quick commands without orphaning acknowledged sessions", async () => {
+    const seeded = await seedIntegration();
+    const deps = createFeishuInboundDispatcherDbDeps(db, { startTitleGeneration: false });
+    const first = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_concurrent_new_seed",
+        eventId: "event_concurrent_new_seed",
+        body: "seed the original session",
+      }),
+      deps,
+    );
+    expect(first.status).toBe("accepted");
+    if (first.status !== "accepted") throw new Error("Expected first message to be accepted");
+
+    const [newOne, newTwo] = await Promise.all([
+      dispatchFeishuInboundMessage(
+        inboundEvent({
+          messageId: "om_concurrent_new_1",
+          eventId: "event_concurrent_new_1",
+          body: "/new",
+          commandBody: "/new",
+        }),
+        deps,
+      ),
+      dispatchFeishuInboundMessage(
+        inboundEvent({
+          messageId: "om_concurrent_new_2",
+          eventId: "event_concurrent_new_2",
+          body: "/new",
+          commandBody: "/new",
+        }),
+        deps,
+      ),
+    ]);
+
+    expect(newOne.status).toBe("quick_command");
+    expect(newTwo.status).toBe("quick_command");
+    if (newOne.status !== "quick_command" || newTwo.status !== "quick_command") {
+      throw new Error("Expected both /new commands to be handled");
+    }
+    expect(newOne.command).toBe("new");
+    expect(newTwo.command).toBe("new");
+    expect(newOne.conversationId).not.toBe(first.conversationId);
+    expect(newTwo.conversationId).not.toBe(first.conversationId);
+    expect(newOne.conversationId).not.toBe(newTwo.conversationId);
+
+    const [binding] = await db.select().from(agentIntegrationChatBindings);
+    expect(binding).toMatchObject({
+      integrationId: seeded.integrationId,
+      externalChatId: "oc_chat",
+    });
+    expect([newOne.conversationId, newTwo.conversationId]).toContain(binding?.conversationId);
+
+    const messages = await db.select().from(chatMessages);
+    expect(messages.filter((message) => message.role === "user").map((message) => message.body)).toEqual([
+      "seed the original session",
+    ]);
+    expect(messages.filter((message) => message.kind === "system_event").map((message) => message.body)).toEqual([
+      "New Feishu session started.",
+      "New Feishu session started.",
+    ]);
+    const conversations = await db.select().from(chatConversations);
+    expect(conversations.map((conversation) => conversation.id).sort()).toEqual([
+      first.conversationId,
+      newOne.conversationId,
+      newTwo.conversationId,
+    ].sort());
+  });
+
+  it("generates Feishu chat titles through the same fallback and lightweight replacement flow as normal chat", async () => {
+    const seeded = await seedIntegration();
+    await db.insert(organizationIntelligenceProfiles).values({
+      orgId: seeded.orgId,
+      purpose: "lightweight",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write('Feishu release debug')"],
+        timeoutSec: 5,
+      },
+      status: "configured",
+    });
+    const deps = createFeishuInboundDispatcherDbDeps(db);
+
+    const result = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_title_generation",
+        eventId: "event_title_generation",
+        body: "Help me debug the release failure from Feishu",
+      }),
+      deps,
+    );
+
+    expect(result.status).toBe("accepted");
+    if (result.status !== "accepted") throw new Error("Expected accepted result");
+    await waitUntil(async () => {
+      const [conversation] = await db.select().from(chatConversations).where(eq(chatConversations.id, result.conversationId));
+      expect(conversation?.title).toBe("Feishu release debug");
+    });
+  });
+
+  it("handles the Feishu /stop quick command without appending it as a user prompt", async () => {
+    const seeded = await seedIntegration();
+    const accepted = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_before_stop",
+        eventId: "event_before_stop",
+        body: "start a session",
+      }),
+      createFeishuInboundDispatcherDbDeps(db),
+    );
+    expect(accepted.status).toBe("accepted");
+    if (accepted.status !== "accepted") throw new Error("Expected accepted result");
+
+    const generation = await chatService(db).createGeneration(seeded.orgId, accepted.conversationId);
+    const release = claimChatGeneration(accepted.conversationId, new AbortController(), generation.id);
+    expect(release).toEqual(expect.any(Function));
+
+    const result = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_stop_command",
+        eventId: "event_stop_command",
+        body: "/stop",
+        commandBody: "/stop",
+      }),
+      createFeishuInboundDispatcherDbDeps(db),
+    );
+
+    expect(result.status).toBe("quick_command");
+    if (result.status !== "quick_command") throw new Error("Expected quick_command result");
+    expect(result.command).toBe("stop");
+    expect(result.conversationId).toBe(accepted.conversationId);
+    expect(result.runId).toBeNull();
+    expect(result.outbound.text).toBe("Stop requested.");
+
+    const [updatedGeneration] = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generation.id));
+    expect(updatedGeneration).toMatchObject({
+      status: "stopped",
+      terminalReason: "stopped",
+    });
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+      { role: "user", kind: "message", body: "start a session" },
+      { role: "system", kind: "system_event", body: "Feishu session stop requested." },
+    ]);
+    await expect(db.select().from(heartbeatRuns)).resolves.toHaveLength(1);
+  });
+
+  it("does not claim Feishu /stop success for a stale DB-only active generation", async () => {
+    const seeded = await seedIntegration();
+    const accepted = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_before_stale_stop",
+        eventId: "event_before_stale_stop",
+        body: "start a session with stale DB generation",
+      }),
+      createFeishuInboundDispatcherDbDeps(db),
+    );
+    expect(accepted.status).toBe("accepted");
+    if (accepted.status !== "accepted") throw new Error("Expected accepted result");
+
+    const generation = await chatService(db).createGeneration(seeded.orgId, accepted.conversationId);
+    const result = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_stale_stop_command",
+        eventId: "event_stale_stop_command",
+        body: "/stop",
+        commandBody: "/stop",
+      }),
+      createFeishuInboundDispatcherDbDeps(db),
+    );
+
+    expect(result.status).toBe("quick_command");
+    if (result.status !== "quick_command") throw new Error("Expected quick_command result");
+    expect(result.outbound.text).toBe("No active reply to stop.");
+    const [updatedGeneration] = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generation.id));
+    expect(updatedGeneration?.status).toBe("active");
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+      { role: "user", kind: "message", body: "start a session with stale DB generation" },
+      { role: "system", kind: "system_event", body: "No active Feishu reply to stop." },
+    ]);
+  });
+
   it("drives the mock inbound route through DB-backed Messenger issue run and outbound writes", async () => {
     const seeded = await seedIntegration();
     const app = createRouteApp(db, {
@@ -777,6 +1061,294 @@ describe("Feishu inbound dispatcher DB deps", () => {
       { role: "user", body: "hello from sdk channel" },
       { role: "assistant", body: "Rudder Feishu reply" },
     ]);
+  });
+
+  it("responds to Feishu quick commands without invoking the assistant runtime", async () => {
+    const seeded = await seedIntegration({
+      credentialValue: JSON.stringify({ appId: "cli_a_feishu_app", appSecret: "feishu-app-secret" }),
+    });
+    const sent: Array<{ chatId: string; text: string; conversationId?: string | null; chatMessageId?: string | null }> = [];
+    const sender: FeishuOutboundSender = {
+      sendText: async (input) => {
+        sent.push({
+          chatId: input.chatId,
+          text: input.text,
+        });
+        return { messageId: "om_new_ack" };
+      },
+    };
+    const streamChatAssistantReply = vi.fn(async () => ({
+      outcome: "completed" as const,
+      partialBody: "should not run",
+      replyingAgentId: seeded.agentId,
+      reply: {
+        kind: "message" as const,
+        body: "should not run",
+        structuredPayload: null,
+        replyingAgentId: seeded.agentId,
+      },
+    }));
+    const runtime = feishuIntegrationRuntimeService(db, {
+      sender,
+      assistant: { streamChatAssistantReply },
+    });
+
+    const result = await runtime.handleEvent(
+      {
+        id: seeded.integrationId,
+        orgId: seeded.orgId,
+        agentId: seeded.agentId,
+        providerRegion: "feishu_cn",
+        appCredentialSecretId: seeded.secretId,
+        externalAppId: "cli_a_feishu_app",
+        externalBotOpenId: "ou_bot",
+      },
+      { appId: "cli_a_feishu_app", appSecret: "feishu-app-secret" },
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_runtime_new_command",
+        messageId: "om_runtime_new_command",
+        chatId: "oc_runtime_new",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "/new",
+        commandBody: "/new",
+        addressedToBot: true,
+        messageType: "text",
+      },
+    );
+
+    expect(result.status).toBe("quick_command");
+    expect(streamChatAssistantReply).not.toHaveBeenCalled();
+    expect(sent).toEqual([{ chatId: "oc_runtime_new", text: "New session started." }]);
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+      { role: "system", kind: "system_event", body: "New Feishu session started." },
+    ]);
+    const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
+    expect(outbound).toMatchObject({
+      orgId: seeded.orgId,
+      integrationId: seeded.integrationId,
+      externalChatId: "oc_runtime_new",
+      externalMessageId: "om_new_ack",
+      status: "final",
+      conversationId: result.conversationId,
+      chatMessageId: null,
+    });
+  });
+
+  it("stops an active Feishu runtime assistant reply through the /stop quick command", async () => {
+    const seeded = await seedIntegration({
+      credentialValue: JSON.stringify({ appId: "cli_a_feishu_app", appSecret: "feishu-app-secret" }),
+    });
+    const sent: Array<{ chatId: string; text: string }> = [];
+    let runningReplyStarted: (() => void) | null = null;
+    let stopReply: (() => void) | null = null;
+    let observedSignal: AbortSignal | null = null;
+    const runningReplyStartedPromise = new Promise<void>((resolve) => {
+      runningReplyStarted = resolve;
+    });
+    const stopReplyPromise = new Promise<void>((resolve) => {
+      stopReply = resolve;
+    });
+    const sender: FeishuOutboundSender = {
+      sendText: async (input) => {
+        sent.push({ chatId: input.chatId, text: input.text });
+        return { messageId: `om_sent_${sent.length}` };
+      },
+    };
+    const runtime = feishuIntegrationRuntimeService(db, {
+      sender,
+      assistant: {
+        streamChatAssistantReply: async (input) => {
+          observedSignal = input.abortSignal ?? null;
+          input.abortSignal?.addEventListener("abort", () => {
+            stopReply?.();
+          }, { once: true });
+          runningReplyStarted?.();
+          await stopReplyPromise;
+          return {
+            outcome: "stopped",
+            partialBody: "",
+            replyingAgentId: seeded.agentId,
+          };
+        },
+      },
+    });
+
+    const integration = {
+      id: seeded.integrationId,
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      providerRegion: "feishu_cn" as const,
+      appCredentialSecretId: seeded.secretId,
+      externalAppId: "cli_a_feishu_app",
+      externalBotOpenId: "ou_bot",
+    };
+    const credential = { appId: "cli_a_feishu_app", appSecret: "feishu-app-secret" };
+    const acceptedPromise = runtime.handleEvent(
+      integration,
+      credential,
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_runtime_stop_before",
+        messageId: "om_runtime_stop_before",
+        chatId: "oc_runtime_stop",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "please start a long reply",
+        addressedToBot: true,
+        messageType: "text",
+      },
+    );
+    await runningReplyStartedPromise;
+    expect(observedSignal?.aborted).toBe(false);
+
+    const stopResult = await runtime.handleEvent(
+      integration,
+      credential,
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_runtime_stop_command",
+        messageId: "om_runtime_stop_command",
+        chatId: "oc_runtime_stop",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "/stop",
+        commandBody: "/stop",
+        addressedToBot: true,
+        messageType: "text",
+      },
+    );
+    await expect(acceptedPromise).resolves.toMatchObject({ status: "accepted" });
+
+    expect(stopResult.status).toBe("quick_command");
+    expect(observedSignal?.aborted).toBe(true);
+    expect(sent).toEqual([{ chatId: "oc_runtime_stop", text: "Stop requested." }]);
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+      { role: "user", kind: "message", body: "please start a long reply" },
+      { role: "system", kind: "system_event", body: "Feishu session stop requested." },
+    ]);
+    const [generation] = await db.select().from(chatGenerations);
+    expect(generation).toMatchObject({
+      status: "stopped",
+      terminalReason: "stopped",
+    });
+    const outbounds = await db.select().from(agentIntegrationOutboundMessages);
+    expect(outbounds).toHaveLength(1);
+    expect(outbounds[0]).toMatchObject({
+      externalChatId: "oc_runtime_stop",
+      externalMessageId: "om_sent_1",
+      status: "final",
+      runId: null,
+    });
+  });
+
+  it("does not send a failure reply when a stopped Feishu runtime assistant throws after abort", async () => {
+    const seeded = await seedIntegration({
+      credentialValue: JSON.stringify({ appId: "cli_a_feishu_app", appSecret: "feishu-app-secret" }),
+    });
+    const sent: Array<{ chatId: string; text: string }> = [];
+    let runningReplyStarted: (() => void) | null = null;
+    let stopReply: (() => void) | null = null;
+    let observedSignal: AbortSignal | null = null;
+    const runningReplyStartedPromise = new Promise<void>((resolve) => {
+      runningReplyStarted = resolve;
+    });
+    const stopReplyPromise = new Promise<void>((resolve) => {
+      stopReply = resolve;
+    });
+    const sender: FeishuOutboundSender = {
+      sendText: async (input) => {
+        sent.push({ chatId: input.chatId, text: input.text });
+        return { messageId: `om_abort_throw_sent_${sent.length}` };
+      },
+    };
+    const runtime = feishuIntegrationRuntimeService(db, {
+      sender,
+      assistant: {
+        streamChatAssistantReply: async (input) => {
+          observedSignal = input.abortSignal ?? null;
+          input.abortSignal?.addEventListener("abort", () => {
+            stopReply?.();
+          }, { once: true });
+          runningReplyStarted?.();
+          await stopReplyPromise;
+          throw new Error("assistant noticed the abort");
+        },
+      },
+    });
+
+    const integration = {
+      id: seeded.integrationId,
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      providerRegion: "feishu_cn" as const,
+      appCredentialSecretId: seeded.secretId,
+      externalAppId: "cli_a_feishu_app",
+      externalBotOpenId: "ou_bot",
+    };
+    const credential = { appId: "cli_a_feishu_app", appSecret: "feishu-app-secret" };
+    const acceptedPromise = runtime.handleEvent(
+      integration,
+      credential,
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_runtime_abort_throw_before",
+        messageId: "om_runtime_abort_throw_before",
+        chatId: "oc_runtime_abort_throw",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "please start a reply that will throw after stop",
+        addressedToBot: true,
+        messageType: "text",
+      },
+    );
+    await runningReplyStartedPromise;
+
+    const stopResult = await runtime.handleEvent(
+      integration,
+      credential,
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_runtime_abort_throw_stop",
+        messageId: "om_runtime_abort_throw_stop",
+        chatId: "oc_runtime_abort_throw",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "/stop",
+        commandBody: "/stop",
+        addressedToBot: true,
+        messageType: "text",
+      },
+    );
+    await expect(acceptedPromise).resolves.toMatchObject({ status: "accepted" });
+
+    expect(stopResult.status).toBe("quick_command");
+    expect(observedSignal?.aborted).toBe(true);
+    expect(sent).toEqual([{ chatId: "oc_runtime_abort_throw", text: "Stop requested." }]);
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+      { role: "user", kind: "message", body: "please start a reply that will throw after stop" },
+      { role: "system", kind: "system_event", body: "Feishu session stop requested." },
+    ]);
+    const [generation] = await db.select().from(chatGenerations);
+    expect(generation).toMatchObject({
+      status: "stopped",
+      terminalReason: "stopped",
+    });
+    await expect(db.select().from(agentIntegrationOutboundMessages)).resolves.toHaveLength(1);
   });
 
   it("maps SDK normalized channel messages into Rudder Feishu inbound payloads", async () => {

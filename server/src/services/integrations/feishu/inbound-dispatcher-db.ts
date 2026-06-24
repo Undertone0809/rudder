@@ -7,15 +7,21 @@ import {
   agentIntegrationOutboundMessages,
   agentIntegrationUserBindings,
   agentIntegrations,
+  chatContextLinks,
   chatConversations,
+  chatGenerations,
+  chatMessages,
   organizationMemberships,
 } from "@rudderhq/db";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
+import { logger } from "../../../middleware/logger.js";
 import { chatAgentRunService } from "../../chat-agent-runs.js";
+import { cancelActiveChatGeneration, getActiveChatGeneration } from "../../chat-generation-locks.js";
 import { chatService } from "../../chats.js";
 import { issueService } from "../../issues.js";
-import { fallbackTitleFromText } from "../../title-generation.js";
+import { productIntelligenceService } from "../../product-intelligence.js";
+import { startChatTitleGeneration } from "../../title-generation.js";
 import type {
   AgentIntegrationInboundDispatcherDeps,
   FeishuInboundMessage,
@@ -41,14 +47,65 @@ function integrationStatus(value: string): ResolvedAgentIntegration["status"] {
   return "error";
 }
 
-function chatTitle(event: FeishuInboundMessage) {
-  return fallbackTitleFromText(event.body) ?? "New chat";
+function feishuQuickCommandMessage(command: "new" | "stop", event: FeishuInboundMessage, details: Record<string, unknown> = {}) {
+  return {
+    source: "agent_integration",
+    provider: event.provider,
+    command,
+    integrationId: details.integrationId,
+    externalChatId: event.chatId,
+    externalChatType: event.chatType,
+    externalMessageId: event.messageId,
+    externalEventId: event.eventId,
+    externalSenderOpenId: event.senderOpenId,
+    externalSenderUnionId: event.senderUnionId,
+    externalParentMessageId: event.parentMessageId ?? null,
+    ...details,
+  };
+}
+
+async function createFeishuChatConversation(
+  client: Pick<Db, "insert">,
+  input: {
+    orgId: string;
+    agentId: string;
+    userId: string | null;
+    provider: string;
+  },
+) {
+  const [conversation] = await client
+    .insert(chatConversations)
+    .values({
+      orgId: input.orgId,
+      title: "New chat",
+      summary: null,
+      preferredAgentId: input.agentId,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: input.userId,
+    })
+    .returning();
+  if (!conversation) throw new Error("Failed to create Feishu chat conversation");
+
+  await client
+    .insert(chatContextLinks)
+    .values({
+      orgId: input.orgId,
+      conversationId: conversation.id,
+      entityType: "agent",
+      entityId: input.agentId,
+      metadata: { source: "agent_integration", provider: input.provider },
+    })
+    .onConflictDoNothing();
+
+  return conversation;
 }
 
 export interface FeishuInboundDispatcherDbOptions {
   orgId?: string;
   enqueueAgentRun?: boolean;
   createOutboundPlaceholder?: boolean;
+  startTitleGeneration?: boolean;
 }
 
 export function createFeishuInboundDispatcherDbDeps(
@@ -58,6 +115,7 @@ export function createFeishuInboundDispatcherDbDeps(
   const chats = chatService(db);
   const issues = issueService(db);
   const chatRuns = chatAgentRunService(db);
+  const productIntelligence = productIntelligenceService(db);
 
   const deps: AgentIntegrationInboundDispatcherDeps = {
     resolveActiveIntegration: async (event) => {
@@ -196,7 +254,7 @@ export function createFeishuInboundDispatcherDbDeps(
       if (existing) return existing;
 
       const conversation = await chats.create(integration.orgId, {
-        title: chatTitle(event),
+        title: "New chat",
         summary: null,
         preferredAgentId: integration.agentId,
         issueCreationMode: "manual_approval",
@@ -243,6 +301,124 @@ export function createFeishuInboundDispatcherDbDeps(
       return raced;
     },
 
+    handleQuickCommand: async (integration, binding, chat, command, event) => {
+      if (command.kind === "new") {
+        const nextConversation = await db.transaction(async (tx) => {
+          const now = new Date();
+          const [lockedBinding] = await tx
+            .update(agentIntegrationChatBindings)
+            .set({ updatedAt: now })
+            .where(
+              and(
+                eq(agentIntegrationChatBindings.orgId, integration.orgId),
+                eq(agentIntegrationChatBindings.integrationId, integration.id),
+                eq(agentIntegrationChatBindings.externalChatId, event.chatId),
+              ),
+            )
+            .returning({
+              id: agentIntegrationChatBindings.id,
+              conversationId: agentIntegrationChatBindings.conversationId,
+            });
+          if (!lockedBinding) throw new Error("Failed to lock Feishu chat binding for /new quick command");
+          const previousConversationId = lockedBinding.conversationId;
+
+          await tx.insert(chatMessages).values({
+            orgId: integration.orgId,
+            conversationId: previousConversationId,
+            role: "system",
+            kind: "system_event",
+            body: "New Feishu session started.",
+            structuredPayload: feishuQuickCommandMessage("new", event, {
+              integrationId: integration.id,
+              previousConversationId,
+            }),
+          });
+
+          const conversation = await createFeishuChatConversation(tx, {
+            orgId: integration.orgId,
+            agentId: integration.agentId,
+            userId: binding.userId,
+            provider: integration.provider,
+          });
+
+          const [updatedBinding] = await tx
+            .update(agentIntegrationChatBindings)
+            .set({
+              conversationId: conversation.id,
+              externalChatType: event.chatType,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(agentIntegrationChatBindings.orgId, integration.orgId),
+                eq(agentIntegrationChatBindings.id, lockedBinding.id),
+                eq(agentIntegrationChatBindings.conversationId, previousConversationId),
+              ),
+            )
+            .returning({ conversationId: agentIntegrationChatBindings.conversationId });
+          if (!updatedBinding) throw new Error("Failed to switch Feishu chat binding for /new quick command");
+          return conversation;
+        });
+        return {
+          command: "new",
+          conversationId: nextConversation.id,
+          chatMessageId: null,
+          runId: null,
+          text: "New session started.",
+        };
+      }
+
+      const active = getActiveChatGeneration(chat.conversationId);
+      const latestActiveGeneration = active
+        ? null
+        : await db
+          .select()
+          .from(chatGenerations)
+          .where(
+            and(
+              eq(chatGenerations.conversationId, chat.conversationId),
+              inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
+            ),
+          )
+          .orderBy(desc(chatGenerations.startedAt), desc(chatGenerations.createdAt))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+      const stopped = cancelActiveChatGeneration(chat.conversationId);
+      const generationId = active?.generationId ?? null;
+      const staleGenerationId = stopped ? null : latestActiveGeneration?.id ?? null;
+      if (generationId) {
+        const now = new Date();
+        await db
+          .update(chatGenerations)
+          .set({
+            status: "stopped",
+            terminalReason: "stopped",
+            completedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(chatGenerations.id, generationId));
+      }
+      const ack = await chats.addMessage(chat.conversationId, {
+        orgId: integration.orgId,
+        role: "system",
+        kind: "system_event",
+        body: stopped ? "Feishu session stop requested." : "No active Feishu reply to stop.",
+        structuredPayload: feishuQuickCommandMessage("stop", event, {
+          integrationId: integration.id,
+          generationId,
+          staleGenerationId,
+          stopped,
+        }),
+      });
+      return {
+        command: "stop",
+        conversationId: chat.conversationId,
+        chatMessageId: ack.id,
+        runId: null,
+        text: stopped ? "Stop requested." : "No active reply to stop.",
+      };
+    },
+
     appendInboundMessage: async (integration, binding, chat, event) => {
       const message = await chats.addMessage(chat.conversationId, {
         orgId: integration.orgId,
@@ -262,6 +438,20 @@ export function createFeishuInboundDispatcherDbDeps(
           externalParentMessageId: event.parentMessageId ?? null,
         },
       });
+      if (options.startTitleGeneration !== false) {
+        const conversation = await chats.getById(chat.conversationId);
+        startChatTitleGeneration({
+          conversation: conversation ?? {
+            id: chat.conversationId,
+            orgId: integration.orgId,
+            title: "",
+          },
+          body: event.body,
+          chats,
+          productIntelligence,
+          logger,
+        });
+      }
       return { chatMessageId: message.id };
     },
 

@@ -202,6 +202,39 @@ export function chatService(db: Db) {
         externalChatType: row.externalChatType,
       });
     }
+    const missingConversationIds = conversationIds.filter((id) => !map.has(id));
+    if (missingConversationIds.length === 0) return map;
+
+    const historicalRows = await db
+      .select({
+        conversationId: chatMessages.conversationId,
+        payload: chatMessages.structuredPayload,
+      })
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.orgId, orgId),
+          inArray(chatMessages.conversationId, missingConversationIds),
+          sql<boolean>`${chatMessages.structuredPayload}->>'source' = 'agent_integration'`,
+          sql<boolean>`${chatMessages.structuredPayload}->>'provider' = 'feishu'`,
+        ),
+      )
+      .orderBy(chatMessages.createdAt);
+    for (const row of historicalRows) {
+      if (map.has(row.conversationId)) continue;
+      const payload = row.payload ?? {};
+      const integrationId = typeof payload.integrationId === "string" ? payload.integrationId : null;
+      const externalChatId = typeof payload.externalChatId === "string" ? payload.externalChatId : null;
+      const externalChatType = typeof payload.externalChatType === "string" ? payload.externalChatType : null;
+      if (!integrationId || !externalChatId || !externalChatType) continue;
+      map.set(row.conversationId, {
+        source: "agent_integration",
+        provider: "feishu",
+        integrationId,
+        externalChatId,
+        externalChatType,
+      });
+    }
     return map;
   }
 

@@ -293,6 +293,7 @@ function FeishuSetupPrompt({
         <span className="font-medium text-foreground">{suggestedBotName}</span>. Connect opens {providerName} with the
         bot name prefilled; after you confirm, Rudder stores the app credential and starts the chat connection.
       </p>
+      <FeishuQuickCommandSetupNote providerName={providerName} />
       <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
         <button
           type="button"
@@ -350,6 +351,18 @@ function FeishuSetupPrompt({
   );
 }
 
+function FeishuQuickCommandSetupNote({ providerName }: { providerName: string }) {
+  return (
+    <div className="max-w-2xl rounded-md border border-border bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
+      <div className="font-medium text-foreground">Quick Command menu</div>
+      <p className="mt-1">
+        In the {providerName} bot developer console, add a Quick Command custom menu with send-text items /new and
+        /stop. Do not use event-key menu items. Publish a new app version for the menu to appear in {providerName}.
+      </p>
+    </div>
+  );
+}
+
 function IntegrationMeta({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
@@ -361,17 +374,20 @@ function IntegrationMeta({ label, value }: { label: string; value: string }) {
 
 function IntegrationMetadata({ integration }: { integration: AgentIntegrationSummary }) {
   return (
-    <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-      <IntegrationMeta label="Provider" value={providerLabel(integration.provider)} />
-      <IntegrationMeta label="Region" value={regionLabel(integration.providerRegion)} />
-      <IntegrationMeta label="App ID" value={integration.externalAppId} />
-      <IntegrationMeta label="Bot" value={integration.externalBotOpenId ?? "Any bot"} />
-      <IntegrationMeta label="Installed" value={formatDateTime(integration.installedAt)} />
-      <IntegrationMeta
-        label="Credentials"
-        value={integration.hasCredentialSecret ? "Credential stored" : "Missing credential"}
-      />
-    </dl>
+    <div className="space-y-3">
+      <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
+        <IntegrationMeta label="Provider" value={providerLabel(integration.provider)} />
+        <IntegrationMeta label="Region" value={regionLabel(integration.providerRegion)} />
+        <IntegrationMeta label="App ID" value={integration.externalAppId} />
+        <IntegrationMeta label="Bot" value={integration.externalBotOpenId ?? "Any bot"} />
+        <IntegrationMeta label="Installed" value={formatDateTime(integration.installedAt)} />
+        <IntegrationMeta
+          label="Credentials"
+          value={integration.hasCredentialSecret ? "Credential stored" : "Missing credential"}
+        />
+      </dl>
+      <FeishuQuickCommandSetupNote providerName={setupProviderName(integration.providerRegion)} />
+    </div>
   );
 }
 

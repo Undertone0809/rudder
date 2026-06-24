@@ -172,6 +172,10 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Connect");
     expect(container.textContent).toContain("Create a Feishu bot named Wesley - Rudder");
     expect(container.textContent).toContain("opens Feishu with the bot name prefilled");
+    expect(container.textContent).toContain("Quick Command menu");
+    expect(container.textContent).toContain("send-text items /new and /stop");
+    expect(container.textContent).toContain("Do not use event-key menu items");
+    expect(container.textContent).toContain("Publish a new app version");
     expect(container.textContent).toContain("Feishu CN");
     expect(container.textContent).toContain("Lark Global");
   });
@@ -287,6 +291,10 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("ou_bot");
     expect(container.textContent).toContain("Feishu CN");
     expect(container.textContent).toContain("Credential stored");
+    expect(container.textContent).toContain("Quick Command menu");
+    expect(container.textContent).toContain("send-text items /new and /stop");
+    expect(container.textContent).toContain("Do not use event-key menu items");
+    expect(container.textContent).toContain("Publish a new app version");
     expect(container.textContent).not.toContain("secret-1");
     expect(container.textContent).toContain("Disconnect");
   });

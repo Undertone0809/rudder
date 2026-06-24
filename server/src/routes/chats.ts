@@ -68,9 +68,9 @@ import { sanitizeStartupContextPromptForPersistence } from "../services/runtime-
 import { summarizeRuntimeSkillsForTrace } from "../services/runtime-trace-metadata.js";
 import {
   buildChatTitlePrompt,
-  fallbackTitleFromText,
   runtimeResultText,
   sanitizeGeneratedTitle,
+  startChatTitleGeneration,
 } from "../services/title-generation.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -173,10 +173,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
     return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
   }
 
-  function fallbackChatTitleFromBody(body: string) {
-    return fallbackTitleFromText(body);
-  }
-
   function isFeishuBackedConversation(conversation: ChatConversation) {
     const metadata = conversation.sourceMetadata;
     return Boolean(
@@ -198,48 +194,13 @@ export function chatRoutes(db: Db, storage: StorageService) {
     return source ? buildChatTitlePrompt(source, "Conversation excerpt") : null;
   }
 
-  function startChatTitleGeneration(conversation: ChatConversation, body: string) {
-    if (conversation.title !== "New chat" || body.trim().length === 0) return;
-    const prompt = buildChatTitlePrompt(body);
-    const fallbackTitle = fallbackChatTitleFromBody(body);
-    void (async () => {
-      if (fallbackTitle) {
-        await svc.updateDefaultTitle(conversation.id, fallbackTitle);
-      }
-      try {
-        const result = await productIntelligence.execute({
-          orgId: conversation.orgId,
-          purpose: "lightweight",
-          feature: "chat_title",
-          prompt,
-        });
-        const title = sanitizeGeneratedTitle(runtimeResultText(result));
-        if (title) {
-          if (fallbackTitle) {
-            await svc.replaceSystemGeneratedTitle(conversation.id, fallbackTitle, title);
-          } else {
-            await svc.updateDefaultTitle(conversation.id, title);
-          }
-        }
-      } catch (error) {
-        logger.warn(
-          {
-            err: error,
-            conversationId: conversation.id,
-            orgId: conversation.orgId,
-          },
-          "Failed to generate chat title with organization lightweight model",
-        );
-      }
-    })().catch((error) => {
-      logger.warn(
-        {
-          err: error,
-          conversationId: conversation.id,
-          orgId: conversation.orgId,
-        },
-        "Failed to update chat title",
-      );
+  function startConversationTitleGeneration(conversation: ChatConversation, body: string) {
+    startChatTitleGeneration({
+      conversation,
+      body,
+      chats: svc,
+      productIntelligence,
+      logger,
     });
   }
 
@@ -1722,7 +1683,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         req.body.editUserMessageId ?? null,
       );
       if (!req.body.editUserMessageId) {
-        startChatTitleGeneration(conversation as ChatConversation, req.body.body);
+        startConversationTitleGeneration(conversation as ChatConversation, req.body.body);
       }
       const turnContext = turnContextFromUserMessage(userMessage);
       chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
@@ -1967,7 +1928,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,
     addUserMessage,
-    startChatTitleGeneration,
+    startChatTitleGeneration: startConversationTitleGeneration,
     attachFilesToUserMessage,
     loadAssistantInput,
     chatReplyingAgentId,

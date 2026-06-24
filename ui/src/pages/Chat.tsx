@@ -1313,30 +1313,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               }} >
               <span className="min-w-0 truncate">Skills</span>
               <ChevronDown className="h-3 w-3 shrink-0 opacity-70" /> </button> ) : null} </div>
-          {selectedConversationFeishuBacked && selectedConversation ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger type="button" data-testid="feishu-quick-command" className="chat-chip inline-flex max-w-[min(100%,12rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)]">
-                <span className="min-w-0 truncate">Quick Command</span>
-                <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="surface-overlay text-foreground">
-                <DropdownMenuItem
-                  data-testid="feishu-quick-command-new"
-                  disabled={composerUnavailable || newConversationSendInFlight}
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    void sendMessage({
-                      bodyOverride: "/new",
-                      filesOverride: [],
-                      conversationOverride: selectedConversation,
-                    });
-                  }}
-                >
-                  /new
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
         {canStopSelectedConversationReply && selectedConversation && sendButtonMode !== "stop" && sendButtonMode !== "sending" ? (
           <Button type="button" variant="ghost" size="icon-sm" aria-label="Stop streaming" onClick={() => stopStreaming(selectedConversation.id)} className={cn(
             "shrink-0 rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground",
