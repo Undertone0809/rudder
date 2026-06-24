@@ -104,10 +104,19 @@ jobs:
           const response = await fetch(archiveUrl);
           if (!response.ok) throw new Error(`failed to download ${archiveUrl}: ${response.status} ${response.statusText}`);
           await writeFile(archivePath, Buffer.from(await response.arrayBuffer()));
-          const extractArgs = platform === "win32"
-            ? ["--force-local", "-xf", archivePath, "-C", extractDir]
-            : ["-xf", archivePath, "-C", extractDir];
-          const extract = spawnSync("tar", extractArgs, { encoding: "utf8" });
+          const extract = platform === "win32"
+            ? spawnSync("powershell.exe", [
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:PG_ARCHIVE_PATH -DestinationPath $env:PG_EXTRACT_DIR -Force",
+              ], {
+                encoding: "utf8",
+                env: { ...process.env, PG_ARCHIVE_PATH: archivePath, PG_EXTRACT_DIR: extractDir },
+              })
+            : spawnSync("tar", ["-xf", archivePath, "-C", extractDir], { encoding: "utf8" });
           if (extract.status !== 0) throw new Error(`failed to extract PostgreSQL archive: ${extract.stderr || extract.stdout}`);
 
           const executable = (name) => platform === "win32" ? `${name}.exe` : name;
