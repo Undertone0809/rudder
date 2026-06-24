@@ -1,6 +1,11 @@
 #!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
+const DOCS_DIR = fileURLToPath(new URL("../docs/", import.meta.url));
+const LUCIDE_CDN_BASE = "https://d3gk2c5xim1je2.cloudfront.net/lucide/v1.16.0";
 const DEFAULT_HOSTS = [
   "doc.rudder.zeeland.studio",
   "rudder-docs.vercel.app",
@@ -26,6 +31,7 @@ const REQUIRED_PATHS = [
 function parseArgs(argv) {
   const hosts = [];
   let attempts = 1;
+  let checkIcons = process.env.DOCS_HEALTH_CHECK_ICONS !== "0";
   let retryDelayMs = 1000;
   let timeoutMs = 10_000;
 
@@ -46,6 +52,10 @@ function parseArgs(argv) {
     if (arg === "--attempts") {
       attempts = Number.parseInt(argv[++i] ?? "", 10);
       if (!Number.isInteger(attempts) || attempts < 1) throw new Error("--attempts must be a positive integer");
+      continue;
+    }
+    if (arg === "--no-icon-check") {
+      checkIcons = false;
       continue;
     }
     if (arg === "--retry-delay-ms") {
@@ -70,10 +80,39 @@ function parseArgs(argv) {
 
   return {
     attempts,
+    checkIcons,
     hosts: [...new Set(explicitHosts.length > 0 ? explicitHosts : DEFAULT_HOSTS)],
     retryDelayMs,
     timeoutMs,
   };
+}
+
+function findDocsIcons() {
+  const icons = new Set();
+
+  function visit(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const filePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(filePath);
+        continue;
+      }
+      if (!/\.(json|mdx)$/.test(entry.name)) {
+        continue;
+      }
+
+      const source = fs.readFileSync(filePath, "utf8");
+      for (const match of source.matchAll(/\bicon\s*[:=]\s*["']([^"']+)["']/g)) {
+        const icon = match[1];
+        if (icon && !icon.startsWith("/") && !/^https?:\/\//.test(icon)) {
+          icons.add(icon);
+        }
+      }
+    }
+  }
+
+  visit(DOCS_DIR);
+  return [...icons].sort();
 }
 
 function normalizeHost(input) {
@@ -98,6 +137,39 @@ async function fetchText(url, timeoutMs) {
   });
   const text = await response.text();
   return { response, text };
+}
+
+async function checkLucideIcon(icon, timeoutMs) {
+  const url = `${LUCIDE_CDN_BASE}/${icon}.svg`;
+  const response = await fetch(url, {
+    headers: {
+      "user-agent": "rudder-docs-health/1.0",
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (response.status !== 200) {
+    throw new Error(`${url} returned ${response.status}, expected 200`);
+  }
+  return {
+    contentType: response.headers.get("content-type"),
+    icon,
+    status: response.status,
+  };
+}
+
+async function checkIcons(timeoutMs) {
+  const results = [];
+  const failures = [];
+
+  for (const icon of findDocsIcons()) {
+    try {
+      results.push(await checkLucideIcon(icon, timeoutMs));
+    } catch (error) {
+      failures.push(`${icon}: ${error.message}`);
+    }
+  }
+
+  return { failures, results };
 }
 
 async function checkPath(host, check, timeoutMs) {
@@ -166,6 +238,7 @@ async function checkHost(hostInput, timeoutMs) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const failures = [];
+  const iconCheck = options.checkIcons ? await checkIcons(options.timeoutMs) : null;
   const successes = [];
 
   for (const host of options.hosts) {
@@ -196,6 +269,17 @@ async function main() {
     for (const result of success.results) {
       const cache = result.cache ? ` cache=${result.cache}` : "";
       console.log(`  ${result.status} ${result.path}${cache}`);
+    }
+  }
+
+  if (iconCheck) {
+    if (iconCheck.failures.length > 0) {
+      failures.push({ host: "lucide-icons", message: iconCheck.failures.join("; ") });
+    } else {
+      console.log("ok lucide-icons");
+      for (const result of iconCheck.results) {
+        console.log(`  ${result.status} ${result.icon}`);
+      }
     }
   }
 
