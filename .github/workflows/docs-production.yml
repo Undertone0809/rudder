@@ -160,31 +160,32 @@ jobs:
             throw new Error("Missing or invalid RUDDER_GA_MEASUREMENT_ID in the Vercel production environment");
           }
 
-          let replacements = 0;
+          const analyticsFile = path.join(exportDir, "ga.js");
+          const source = fs.readFileSync(analyticsFile, "utf8");
+          if (!source.includes(placeholder)) {
+            throw new Error("GA measurement placeholder was not found in ga.js");
+          }
+          fs.writeFileSync(analyticsFile, source.split(placeholder).join(measurementId));
 
-          function walk(dir) {
+          function assertHtmlFlightPayloadsRemainUntouched(dir) {
             for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
               const filePath = path.join(dir, entry.name);
               if (entry.isDirectory()) {
-                walk(filePath);
+                assertHtmlFlightPayloadsRemainUntouched(filePath);
                 continue;
               }
-              const source = fs.readFileSync(filePath, "utf8");
-              if (!source.includes(placeholder)) {
+              if (!entry.name.endsWith(".html")) {
                 continue;
               }
-              fs.writeFileSync(filePath, source.split(placeholder).join(measurementId));
-              replacements += 1;
+              const html = fs.readFileSync(filePath, "utf8");
+              if (html.includes("self.__next_f.push") && !html.includes(placeholder)) {
+                throw new Error(`GA placeholder unexpectedly missing from HTML Flight payload: ${filePath}`);
+              }
             }
           }
+          assertHtmlFlightPayloadsRemainUntouched(exportDir);
 
-          walk(exportDir);
-
-          if (replacements === 0) {
-            throw new Error("GA measurement placeholder was not found in the Mintlify export");
-          }
-
-          console.log(`Injected analytics id into ${replacements} exported file(s).`);
+          console.log("Injected analytics id into ga.js.");
           NODE
 
       - name: Deploy to Vercel production
