@@ -95,6 +95,36 @@ async function startTempDatabase() {
 }
 
 describe("agent startup context prompt", () => {
+  it("omits the startup context section when all sources are empty", () => {
+    const prompt = buildAgentStartupContextPrompt({
+      todayMemory: {
+        dateKey: "2026-06-19",
+        relativePath: "memory/2026-06-19.md",
+        content: "   \n\t",
+        existed: true,
+        created: false,
+      },
+      yesterdayMemory: {
+        dateKey: "2026-06-18",
+        relativePath: "memory/2026-06-18.md",
+        content: "",
+        existed: true,
+        created: false,
+      },
+      recentIssues: [],
+      recentChats: [],
+      metrics: {
+        version: "agent-startup-context/v1",
+        totalChars: 0,
+        limitChars: DEFAULT_AGENT_STARTUP_CONTEXT_LIMITS.totalChars,
+        omittedIssues: 0,
+        omittedChats: 0,
+      },
+    });
+
+    expect(prompt).toBe("");
+  });
+
   it("renders daily memory, recent issues, and recent chats without debug metadata in the compact startup format", () => {
     const prompt = buildAgentStartupContextPrompt({
       todayMemory: {

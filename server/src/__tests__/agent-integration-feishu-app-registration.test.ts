@@ -7,7 +7,7 @@ vi.mock("@larksuiteoapi/node-sdk", () => ({
 }));
 
 describe("Feishu app registration", () => {
-  it("requests only message receive/send permissions for newly registered apps", async () => {
+  it("requests message receive/send and reaction permissions for newly registered apps", async () => {
     const { createFeishuNodeSdkAppRegistrar } = await import("../services/integrations/feishu/app-registration.js");
     mockRegisterApp.mockImplementationOnce(async (input: {
       onQRCodeReady: (info: { url: string; expireIn: number }) => void;
@@ -43,7 +43,7 @@ describe("Feishu app registration", () => {
     expect(mockRegisterApp).toHaveBeenCalledWith(expect.objectContaining({
       addons: {
         scopes: {
-          tenant: ["im:message:send_as_bot"],
+          tenant: ["im:message:send_as_bot", "im:message.reactions:write_only"],
         },
         events: {
           items: {

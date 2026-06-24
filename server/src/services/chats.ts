@@ -16,7 +16,7 @@ import {
   messengerCustomGroups,
   organizations
 } from "@rudderhq/db";
-import { MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatQueuedMessagePayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { MESSENGER_FORK_GROUP_DEFAULT_ICON, sanitizeChatStructuredPayload, type ChatConversationMutability, type ChatQueuedMessagePayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -54,6 +54,21 @@ type ConversationSourceMetadata = {
 };
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
+
+function conversationMutability(
+  row: ConversationRow,
+  sourceMetadata: ConversationSourceMetadata | null | undefined,
+  sourceMetadataByConversationId: Map<string, ConversationSourceMetadata>,
+): ChatConversationMutability {
+  if (sourceMetadata) return "external_bound_chat";
+  if (
+    (row.forkedFromConversationId && sourceMetadataByConversationId.has(row.forkedFromConversationId)) ||
+    (row.forkRootConversationId && sourceMetadataByConversationId.has(row.forkRootConversationId))
+  ) {
+    return "native_fork_from_external";
+  }
+  return "native_chat";
+}
 
 import {
   buildSearchSnippet,
@@ -146,6 +161,12 @@ export function chatService(db: Db) {
           isNull(chatMessages.supersededAt),
           visibleIncomingMessageSql(),
           gt(chatMessages.createdAt, chatConversationUserStates.lastReadAt),
+          sql<boolean>`not exists (
+            select 1
+            from ${agentIntegrationChatBindings}
+            where ${agentIntegrationChatBindings.orgId} = ${orgId}
+              and ${agentIntegrationChatBindings.conversationId} = ${chatMessages.conversationId}
+          )`,
         ),
       )
       .groupBy(chatMessages.conversationId);
@@ -419,6 +440,12 @@ export function chatService(db: Db) {
     }
 
     const conversationIds = rows.map((row) => row.id);
+    const sourceLookupConversationIds = [
+      ...new Set([
+        ...conversationIds,
+        ...rows.flatMap((row) => [row.forkedFromConversationId, row.forkRootConversationId].filter((id): id is string => Boolean(id))),
+      ]),
+    ];
     const orgId = rows[0]?.orgId ?? null;
 
     const [
@@ -449,25 +476,32 @@ export function chatService(db: Db) {
         ? listUserMessageSummaries(orgId, conversationIds)
         : Promise.resolve(new Map<string, { count: number; latestPreview: string | null }>()),
       orgId
-        ? listConversationSourceMetadata(orgId, conversationIds)
+        ? listConversationSourceMetadata(orgId, sourceLookupConversationIds)
         : Promise.resolve(new Map<string, ConversationSourceMetadata>()),
     ]);
-    return rows.map((row) => ({
-      ...row,
-      primaryIssue: row.primaryIssueId ? (primaryIssuesById.get(row.primaryIssueId) ?? null) : null,
-      latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
-      latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
-      userMessageCount: userMessageSummariesByConversationId.get(row.id)?.count ?? 0,
-      contextLinks: contextLinksByConversationId.get(row.id) ?? [],
-      sourceMetadata: sourceMetadataByConversationId.get(row.id) ?? null,
-      lastReadAt: userStatesByConversationId.get(row.id)?.lastReadAt ?? null,
-      isPinned: Boolean(userStatesByConversationId.get(row.id)?.pinnedAt),
-      unreadCount: unreadCountsByConversationId.get(row.id) ?? 0,
-      isUnread: (unreadCountsByConversationId.get(row.id) ?? 0) > 0,
-      needsAttention:
-        (unreadCountsByConversationId.get(row.id) ?? 0) > 0 ||
-        pendingProposalConversationIds.has(row.id),
-    }));
+    return rows.map((row) => {
+      const sourceMetadata = sourceMetadataByConversationId.get(row.id) ?? null;
+      const isExternalBound = Boolean(sourceMetadata);
+      const unreadCount = isExternalBound ? 0 : (unreadCountsByConversationId.get(row.id) ?? 0);
+      return {
+        ...row,
+        primaryIssue: row.primaryIssueId ? (primaryIssuesById.get(row.primaryIssueId) ?? null) : null,
+        latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
+        latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
+        userMessageCount: userMessageSummariesByConversationId.get(row.id)?.count ?? 0,
+        contextLinks: contextLinksByConversationId.get(row.id) ?? [],
+        sourceMetadata,
+        mutability: conversationMutability(row, sourceMetadata, sourceMetadataByConversationId),
+        lastReadAt: userStatesByConversationId.get(row.id)?.lastReadAt ?? null,
+        isPinned: Boolean(userStatesByConversationId.get(row.id)?.pinnedAt),
+        unreadCount,
+        isUnread: unreadCount > 0,
+        needsAttention: !isExternalBound && (
+          unreadCount > 0 ||
+          pendingProposalConversationIds.has(row.id)
+        ),
+      };
+    });
   }
 
   async function hydrateConversationSummaries(rows: ConversationRow[], userId?: string | null) {
@@ -476,6 +510,12 @@ export function chatService(db: Db) {
     }
 
     const conversationIds = rows.map((row) => row.id);
+    const sourceLookupConversationIds = [
+      ...new Set([
+        ...conversationIds,
+        ...rows.flatMap((row) => [row.forkedFromConversationId, row.forkRootConversationId].filter((id): id is string => Boolean(id))),
+      ]),
+    ];
     const orgId = rows[0]?.orgId ?? null;
 
     const [
@@ -502,23 +542,30 @@ export function chatService(db: Db) {
         ? listUserMessageSummaries(orgId, conversationIds)
         : Promise.resolve(new Map<string, { count: number; latestPreview: string | null }>()),
       orgId
-        ? listConversationSourceMetadata(orgId, conversationIds)
+        ? listConversationSourceMetadata(orgId, sourceLookupConversationIds)
         : Promise.resolve(new Map<string, ConversationSourceMetadata>()),
     ]);
-    return rows.map((row) => ({
-      ...row,
-      latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
-      latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
-      userMessageCount: userMessageSummariesByConversationId.get(row.id)?.count ?? 0,
-      sourceMetadata: sourceMetadataByConversationId.get(row.id) ?? null,
-      lastReadAt: userStatesByConversationId.get(row.id)?.lastReadAt ?? null,
-      isPinned: Boolean(userStatesByConversationId.get(row.id)?.pinnedAt),
-      unreadCount: unreadCountsByConversationId.get(row.id) ?? 0,
-      isUnread: (unreadCountsByConversationId.get(row.id) ?? 0) > 0,
-      needsAttention:
-        (unreadCountsByConversationId.get(row.id) ?? 0) > 0 ||
-        pendingProposalConversationIds.has(row.id),
-    }));
+    return rows.map((row) => {
+      const sourceMetadata = sourceMetadataByConversationId.get(row.id) ?? null;
+      const isExternalBound = Boolean(sourceMetadata);
+      const unreadCount = isExternalBound ? 0 : (unreadCountsByConversationId.get(row.id) ?? 0);
+      return {
+        ...row,
+        latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
+        latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
+        userMessageCount: userMessageSummariesByConversationId.get(row.id)?.count ?? 0,
+        sourceMetadata,
+        mutability: conversationMutability(row, sourceMetadata, sourceMetadataByConversationId),
+        lastReadAt: userStatesByConversationId.get(row.id)?.lastReadAt ?? null,
+        isPinned: Boolean(userStatesByConversationId.get(row.id)?.pinnedAt),
+        unreadCount,
+        isUnread: unreadCount > 0,
+        needsAttention: !isExternalBound && (
+          unreadCount > 0 ||
+          pendingProposalConversationIds.has(row.id)
+        ),
+      };
+    });
   }
 
   async function getConversationOrThrow(id: string) {
@@ -1535,14 +1582,14 @@ export function chatService(db: Db) {
       return getById(id);
   }
 
-  async function updateDefaultTitle(id: string, title: string) {
+  async function updateDefaultTitle(id: string, title: string, expectedCurrentTitle = "New chat") {
     const [updated] = await db
       .update(chatConversations)
       .set({
         title,
         updatedAt: new Date(),
       })
-      .where(and(eq(chatConversations.id, id), eq(chatConversations.title, "New chat")))
+      .where(and(eq(chatConversations.id, id), eq(chatConversations.title, expectedCurrentTitle)))
       .returning();
     if (!updated) return null;
     return getById(id);

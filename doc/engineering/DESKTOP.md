@@ -241,11 +241,26 @@ On macOS and Windows, `start` prefers the layered `shell` asset when the release
 publishes one. Shell assets keep the Electron shell and packaged desktop CLI,
 but load the server from the already prepared `~/.rudder/runtimes/<version>`
 cache instead of carrying the full packaged server and embedded PostgreSQL
-payload on every Desktop update. If the shell asset is missing, unchecked, or
-cannot be downloaded, `start` falls back to the full portable asset.
+payload on every Desktop update. The shell asset is eligible only when that
+runtime cache includes `postgres-18.4/<platform>-<arch>/bin`; otherwise `start`
+falls back to the full portable asset. If the shell asset is missing, unchecked,
+or cannot be downloaded, `start` also falls back to the full portable asset.
 Launching a shell asset directly without the matching runtime cache is not a
 supported install path; rerun `rudder start` so the CLI can prepare the runtime
 cache first, or install the full portable asset.
+
+Full portable Desktop assets include a PostgreSQL 18.4 production runtime
+payload under `postgres-18.4/<platform>-<arch>/bin`, for example
+`postgres-18.4/win32-x64/bin`. The staging source is
+`desktop/.packaged/postgres-18.4/`, and `desktop/scripts/after-pack.mjs` copies
+it into Electron resources during packaging. At startup, packaged Desktop uses
+an explicit operator-provided `RUDDER_POSTGRES_BIN_DIR` first, then a successfully
+loaded external runtime cache payload, then the bundled resources payload.
+
+Production staging fails when `RUDDER_POSTGRES_BIN_DIR` is missing or when
+`initdb`, `pg_ctl`, or `postgres` are missing, or when `postgres --version` is not PostgreSQL 18.4. Use
+`RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1` only for development fallback
+packaging.
 Downloaded Desktop assets are cached under `~/.rudder/desktop-assets/` by
 SHA-256 checksum so repeated installs or retries can reuse an already verified
 portable asset instead of downloading the full release again.

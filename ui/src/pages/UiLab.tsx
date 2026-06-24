@@ -735,6 +735,7 @@ const fixtureChatConversation: ChatConversation = {
   id: "chat-ui-lab",
   orgId: "org-rudder",
   status: "active",
+  mutability: "native_chat",
   title: "UI Lab component review",
   summary: "Fixture conversation for reviewing chat components.",
   latestReplyPreview: "I split the component inventory into visible lab states.",

@@ -441,7 +441,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
       await logActivity(db, {
         orgId: passiveClosure.issue.orgId,
         actorType: "system",
-        actorId: "issue_review_closeout_governance",
+        actorId: "issue_review_followup",
         action: "issue.review_closeout_missing",
         entityType: "issue",
         entityId: passiveClosure.issue.id,
@@ -468,7 +468,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
             attempts: passiveClosure.attempts,
             maxAttempts: passiveClosure.maxAttempts,
             requestedByActorType: "system",
-            requestedByActorId: "issue_review_closeout_governance",
+            requestedByActorId: "issue_review_followup",
           }),
           idempotencyKey: `${ISSUE_REVIEW_CLOSEOUT_REASON}:${run.id}`,
         }).catch((err) => {
@@ -494,7 +494,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
       await logActivity(db, {
         orgId: passiveClosure.issue.orgId,
         actorType: "system",
-        actorId: "issue_review_closeout_governance",
+        actorId: "issue_review_followup",
         action: "issue.review_closure_needs_operator_review",
         entityType: "issue",
         entityId: passiveClosure.issue.id,

@@ -37,6 +37,8 @@ export interface ResolvedIntegrationUserBinding {
 
 export interface ResolvedIntegrationChatBinding {
   conversationId: string;
+  created?: boolean;
+  initialTitle?: string | null;
 }
 
 export interface AppendedIntegrationMessage {

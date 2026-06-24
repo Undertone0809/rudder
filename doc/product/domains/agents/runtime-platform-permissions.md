@@ -135,26 +135,32 @@ produce a clear permission/configuration error before provider execution.
    native provider config, symlink, directory junction, copied directory,
    prompt-injected skill text, or another explicit strategy. Materialization is
    a runtime implementation detail, but the product result is that selected
-   skills are available to the provider or clearly reported as unavailable.
+   skills are available to the provider or clearly reported as unavailable. The
+   adapter mechanism must not broaden the selected set with provider-native,
+   operator-home, project, global, or stale managed skills.
 
-5. When materialization depends on filesystem indirection, Rudder must choose a
+5. Before provider execution, Rudder prunes, disables, isolates, or ignores
+   stale Rudder-managed and provider-native skills that are not in the current
+   selected set.
+
+6. When materialization depends on filesystem indirection, Rudder must choose a
    platform-safe method. POSIX symlinks are acceptable on macOS/Linux. Windows
    directory symlinks must not be the only path for ordinary users because they
    may require Developer Mode or elevation; junction or copy fallback is the
    expected durable strategy for directory skill materialization.
 
-6. Rudder bridges credential entries into the managed home only for selected
+7. Rudder bridges credential entries into the managed home only for selected
    local CLI surfaces. Existing non-empty managed-home credential directories
    are not overwritten. Empty placeholders may be repaired. If managed-home
    credentials still fail, command-specific shims may run the selected command
    with the operator home.
 
-7. If a platform limitation is recoverable, Rudder records the substitution or
+8. If a platform limitation is recoverable, Rudder records the substitution or
    skip in logs, command notes, adapter metadata, or skill sync evidence. The
    run may continue when the selected skill/credential behavior still matches
    the product contract.
 
-8. If the limitation prevents required runtime startup, workspace access,
+9. If the limitation prevents required runtime startup, workspace access,
    credential access, or skill availability, Rudder fails before or during
    adapter invocation with a clear error code/message that tells the operator
    what permission, path, login, or configuration needs repair.
@@ -166,6 +172,7 @@ produce a clear permission/configuration error before provider execution.
 | POSIX skill directory indirection | Runtime materializes a selected skill on macOS/Linux | Symlink or native provider config may expose the skill | Product code must not assume the materialized path is a physical copy | Skill sync metadata, adapter command notes, provider-visible skill home |
 | Windows selected directory skill | Runtime materializes a directory skill on Windows | Use a Windows-safe mechanism such as junction or copy fallback when native provider config is not available | Ordinary run must not fail only because `fs.symlink` needs elevated Windows privileges | Runtime logs, skill sync result, known gap until all adapter paths implement fallback |
 | Windows symlink privilege unavailable | `fs.symlink` returns `EPERM` for a recoverable directory materialization | Fallback strategy should preserve selected skill availability or report the skill as unavailable with actionable error text | Error must not be exposed as an unexplained provider failure or require admin as the only product path | Adapter error code/message and command notes |
+| Stale previously selected skill | A prior run materialized a skill that is now disabled or absent from the selected set | Provider execution starts with that skill removed, disabled, isolated, or ignored | Previously enabled skills must not remain provider-visible because they were left in a managed skill home | Execute-level adapter tests, skill sync metadata, loaded-skill metadata |
 | Managed workspace missing or unwritable | Agent home/instructions/memory/life/skills path cannot be created or write-probed | Workspace preflight fails with a repair-needed error before provider execution | Provider must not start with a broken managed workspace and produce opaque downstream errors | `workspace_permission_repair_needed`, managed workspace preflight tests |
 | Credential entry exists in operator home | A selected local CLI credential directory/file exists outside managed home | Bridge only selected entries or use command shims; preserve managed-home isolation | Entire operator home must not become the runtime home unless the adapter explicitly owns that behavior | Credential bridge logs, shim command notes, server-utils tests |
 | Existing non-empty managed credential dir | Target managed-home credential path already contains user/runtime data | Skip replacement and preserve the existing directory | Rudder must not delete or overwrite non-empty credential state to create a symlink | Credential sync result and tests |
@@ -179,6 +186,13 @@ Actor-visible input is the resulting provider environment:
 
 - selected skills are available through the adapter's skill mechanism, prompt
   context, or provider-visible skill directory
+- discovered-only, disabled, stale, provider-default, and operator-home skills
+  are absent from the loaded skill set unless Rudder selected them for the
+  current invocation
+- provider-native built-ins that cannot be disabled by the provider remain
+  classified as provider-native behavior, not Rudder-loaded skills; the run
+  must expose a Rudder skill boundary so the agent does not report those
+  built-ins as enabled Agent Skills
 - `HOME`, `USERPROFILE`, provider home variables, and `RUDDER_OPERATOR_HOME`
   reflect the intended managed-home and operator-home boundary
 - Rudder API env vars and local auth credentials are present only when the

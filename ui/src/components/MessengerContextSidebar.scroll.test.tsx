@@ -508,6 +508,49 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     expect(loadMoreThreadSummaries).toHaveBeenCalledTimes(1);
   });
 
+  it("stops auto-loading after the rendered thread guard and keeps manual loading available", async () => {
+    const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: Array.from({ length: 160 }, (_, index) =>
+        baseThread(`chat:thread-${index}`, `Thread ${index}`),
+      ),
+      hasMoreThreadSummaries: true,
+      loadMoreThreadSummaries,
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-thread-page-sentinel"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="messenger-thread-page-load-more"]')).not.toBeNull();
+
+    await act(async () => {
+      intersectionCallback?.([{ isIntersecting: true }]);
+      await Promise.resolve();
+    });
+
+    expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
+
+    await act(async () => {
+      (document.querySelector('[data-testid="messenger-thread-page-load-more"]') as HTMLButtonElement | null)?.click();
+      await Promise.resolve();
+    });
+
+    expect(loadMoreThreadSummaries).toHaveBeenCalledTimes(1);
+  });
+
   it("starts loading the next Messenger thread page before the user reaches the sentinel", async () => {
     messengerModel = {
       ...messengerModel,

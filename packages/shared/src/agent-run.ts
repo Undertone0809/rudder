@@ -17,7 +17,6 @@ function isAgentRunScene(value: unknown): value is AgentRunScene {
     || value === "chat"
     || value === "automation"
     || value === "review"
-    || value === "manual"
     || value === "heartbeat";
 }
 
@@ -32,12 +31,14 @@ function isAgentRunTargetType(value: unknown): value is AgentRunTargetType {
 
 function resolveScene(run: HeartbeatRun, context: Record<string, unknown>): AgentRunScene {
   if (isAgentRunScene(context.scene)) return context.scene;
+  if (isAgentRunScene(context.rudderScene)) return context.rudderScene;
   if (run.invocationSource === "chat" || run.chatConversationId || stringValue(context.conversationId)) return "chat";
   if (run.invocationSource === "review") return "review";
-  if (run.invocationSource === "automation" || stringValue(context.automationRunId)) return "automation";
   if (run.invocationSource === "timer") return "heartbeat";
+  if (stringValue(context.automationRunId)) return "automation";
   if (stringValue(context.issueId)) return "issue";
-  return "manual";
+  if (run.invocationSource === "automation") return "automation";
+  return "heartbeat";
 }
 
 function resolveTargetType(run: HeartbeatRun, context: Record<string, unknown>): AgentRunTargetType {
@@ -46,7 +47,7 @@ function resolveTargetType(run: HeartbeatRun, context: Record<string, unknown>):
   if (stringValue(context.automationRunId)) return "automation_run";
   if (stringValue(context.issueId)) return "issue";
   if (run.wakeupRequestId || stringValue(context.wakeupRequestId)) return "wakeup_request";
-  return "manual";
+  return "wakeup_request";
 }
 
 function resolveTargetId(
@@ -88,4 +89,8 @@ export function toAgentRun(run: HeartbeatRun): AgentRun {
 
 export function toAgentRuns(runs: HeartbeatRun[]): AgentRun[] {
   return runs.map(toAgentRun);
+}
+
+export function resolveAgentRunScene(run: HeartbeatRun): AgentRunScene {
+  return toAgentRun(run).scene;
 }

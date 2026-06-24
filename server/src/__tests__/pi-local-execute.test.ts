@@ -274,8 +274,8 @@ describe("pi execute", { timeout: 20_000 }, () => {
         "pi-home",
       );
       const managedPiAgentDir = path.join(managedPiHome, ".pi", "agent");
-      expect(capture.home).toBe(root);
-      expect(capture.userProfile).toBe(process.env.USERPROFILE ?? root);
+      expect(capture.home).toBe(managedPiHome);
+      expect(capture.userProfile).toBe(managedPiHome);
       expect(capture.piCodingAgentDir).toBe(managedPiAgentDir);
       expect(capture.piCodingAgentSessionDir).toBe(path.join(managedPiHome, ".pi", "paperclips"));
       expect(capture.argv).toEqual(expect.arrayContaining(["--print", "--mode", "json"]));
@@ -335,6 +335,108 @@ describe("pi execute", { timeout: 20_000 }, () => {
       else process.env.HOME = previousHome;
       if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
       else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes previously materialized Pi skills when they are no longer selected", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-prune-skill-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "pi");
+    const capturePath = path.join(root, "capture.json");
+    const runtimeSkillsRoot = path.join(root, "runtime-skills");
+    const managedPiHome = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "pi-home",
+    );
+    const managedSkillsHome = path.join(managedPiHome, ".pi", "agent", "skills");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakePiCommand(commandPath);
+
+    const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
+    await fs.mkdir(managedSkillsHome, { recursive: true });
+    await fs.symlink(asciiHeartDir, path.join(managedSkillsHome, "ascii-heart"));
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    const previousRudderHome = process.env.RUDDER_HOME;
+    const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+    const previousLocalEnv = process.env.RUDDER_LOCAL_ENV;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+    process.env.RUDDER_HOME = path.join(root, ".rudder");
+    process.env.RUDDER_INSTANCE_ID = "default";
+    delete process.env.RUDDER_LOCAL_ENV;
+
+    let loadedSkills: unknown[] = [{ key: "before" }];
+
+    try {
+      const result = await execute({
+        runId: "run-pi-prune-skill",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Pi Agent",
+          agentRuntimeType: "pi",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-test",
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          rudderRuntimeSkills: [
+            {
+              name: "ascii-heart",
+              source: asciiHeartDir,
+            },
+          ],
+          rudderSkillSync: {
+            desiredSkills: [],
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          loadedSkills = meta.loadedSkills ?? [];
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv.at(-1)).not.toContain("## Skill: ascii-heart");
+      await expect(fs.lstat(path.join(managedSkillsHome, "ascii-heart"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(loadedSkills).toEqual([]);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
+      if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+      if (previousLocalEnv === undefined) delete process.env.RUDDER_LOCAL_ENV;
+      else process.env.RUDDER_LOCAL_ENV = previousLocalEnv;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

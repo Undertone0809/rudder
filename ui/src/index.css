@@ -1646,6 +1646,10 @@
     box-shadow: var(--shadow-md);
   }
 
+  [data-testid="chat-external-bound-readonly"] > * {
+    border-width: 0;
+  }
+
   .chat-composer-editor-scroll {
     max-height: min(34dvh, 20rem);
     padding-inline: 0.75rem;

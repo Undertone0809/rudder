@@ -21,7 +21,7 @@ import { secretService } from "./secrets.js";
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const LEGACY_COPILOT_SYSTEM_KIND = "rudder_copilot";
 
-export type AgentRunScene = "chat" | "heartbeat";
+export type AgentRunScene = "issue" | "chat" | "automation" | "review" | "heartbeat";
 
 export type AgentRunContextAgent = {
   id: string;

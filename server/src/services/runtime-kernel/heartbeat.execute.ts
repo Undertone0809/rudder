@@ -14,6 +14,10 @@ import {
   issues,
   projects
 } from "@rudderhq/db";
+import {
+  resolveAgentRunScene,
+  type HeartbeatRun,
+} from "@rudderhq/shared";
 import { and, eq } from "drizzle-orm";
 import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
 import type {
@@ -70,6 +74,16 @@ const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTo
 
 function buildPersistableHeartbeatContext(context: Record<string, unknown>) {
   return sanitizeStartupContextContextForPersistence(context) ?? {};
+}
+
+function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
+  return resolveAgentRunScene({
+    ...run,
+    invocationSource: run.invocationSource as HeartbeatRun["invocationSource"],
+    triggerDetail: run.triggerDetail as HeartbeatRun["triggerDetail"],
+    status: run.status as HeartbeatRun["status"],
+    contextSnapshot: run.contextSnapshot as HeartbeatRun["contextSnapshot"],
+  });
 }
 
 export function createHeartbeatExecuteHandlers(context: any) {
@@ -475,8 +489,9 @@ export function createHeartbeatExecuteHandlers(context: any) {
           ]
         : []),
     ];
+    const runtimeScene = resolveRuntimeSceneForRun(run);
     const runtimeSceneContext = await runContextSvc.buildSceneContext({
-      scene: "heartbeat",
+      scene: runtimeScene,
       agent,
       resolvedWorkspace,
       runtimeConfig,

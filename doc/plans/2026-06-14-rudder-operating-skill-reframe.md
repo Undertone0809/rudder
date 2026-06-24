@@ -245,9 +245,9 @@ Repository checkout with test dependencies installed.
 - Mention wake: the skill requires reading wake context and does not permit
   self-assignment unless the comment explicitly transfers ownership.
 - Passive follow-up: the skill treats `issue_passive_followup` as close-out
-  governance, not new work discovery.
+  follow-up, not new work discovery.
 - Review close-out follow-up: the skill treats
-  `issue_review_closeout_missing` as review close-out governance and requires a
+  `issue_review_closeout_missing` as review close-out follow-up and requires a
   structured decision.
 - Screenshot evidence: the skill preserves `--image` guidance when screenshot
   evidence is mentioned.

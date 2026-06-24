@@ -816,7 +816,8 @@ describe("MessengerContextSidebar", () => {
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
     expect(html.match(/data-testid="messenger-thread-issue-issue-1"/g) ?? []).toHaveLength(1);
-    expect(html.match(/ISS-1 · Pinned split issue/g) ?? []).toHaveLength(1);
+    expect(html).toContain("ISS-1 · Pinned split issue");
+    expect(html).not.toContain("Duplicate from a later page should not render.");
   });
 
   it("keeps a refreshed duplicate split issue row when the older watermark is hidden", () => {

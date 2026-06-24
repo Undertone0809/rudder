@@ -83,7 +83,7 @@ history or line-by-line code copies.
 - `domains/control-plane/`: approvals, budgets, costs, activity, dashboard
   rollups, and operator-observability signals.
 - `domains/review-feedback-learning/`: review decisions, feedback capture,
-  close-out governance, and learning-promotion paths.
+  issue/review follow-up, and learning-promotion paths.
 - `domains/plugins/`: installed plugin lifecycle, worker boundaries,
   capabilities, jobs, webhooks, UI slots, and plugin state.
 

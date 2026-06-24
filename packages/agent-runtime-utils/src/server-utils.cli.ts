@@ -755,31 +755,62 @@ export async function removeMaintainerOnlySkillSymlinks(
   skillsHome: string,
   allowedSkillNames: Iterable<string>,
 ): Promise<string[]> {
+  return removeUnselectedRudderSkillSymlinks(skillsHome, allowedSkillNames);
+}
+
+async function readRudderMaterializedSkillSource(target: string): Promise<string | null> {
+  const manifestPath = path.join(target, ".rudder", "materialized-skill.json");
+  const raw = await fs.readFile(manifestPath, "utf8").catch(() => null);
+  if (!raw) return null;
+  try {
+    const parsed = parseObject(JSON.parse(raw));
+    const sourcePath = asString(parsed.sourcePath, "").trim();
+    return sourcePath.length > 0 ? path.resolve(sourcePath) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function removeUnselectedRudderSkillSymlinks(
+  skillsHome: string,
+  allowedSkillNames: Iterable<string>,
+  knownSkillSources: Iterable<string> = [],
+): Promise<string[]> {
   const allowed = new Set(Array.from(allowedSkillNames));
+  const knownSources = new Set(
+    Array.from(knownSkillSources)
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => path.resolve(value)),
+  );
   try {
     const entries = await fs.readdir(skillsHome, { withFileTypes: true });
     const removed: string[] = [];
     for (const entry of entries) {
-      if (allowed.has(entry.name)) continue;
-
       const target = path.join(skillsHome, entry.name);
       const existing = await fs.lstat(target).catch(() => null);
-      if (!existing?.isSymbolicLink()) continue;
+      if (!existing) continue;
 
-      const linkedPath = await fs.readlink(target).catch(() => null);
-      if (!linkedPath) continue;
+      let isRudderManagedSkill = false;
+      if (existing.isSymbolicLink()) {
+        const linkedPath = await fs.readlink(target).catch(() => null);
+        if (!linkedPath) continue;
 
-      const resolvedLinkedPath = path.isAbsolute(linkedPath)
-        ? linkedPath
-        : path.resolve(path.dirname(target), linkedPath);
-      if (
-        !isMaintainerOnlySkillTarget(linkedPath) &&
-        !isMaintainerOnlySkillTarget(resolvedLinkedPath)
-      ) {
-        continue;
+        const resolvedLinkedPath = path.isAbsolute(linkedPath)
+          ? linkedPath
+          : path.resolve(path.dirname(target), linkedPath);
+        isRudderManagedSkill =
+          knownSources.has(path.resolve(resolvedLinkedPath)) ||
+          isMaintainerOnlySkillTarget(linkedPath) ||
+          isMaintainerOnlySkillTarget(resolvedLinkedPath);
+      } else if (existing.isDirectory()) {
+        const materializedSource = await readRudderMaterializedSkillSource(target);
+        isRudderManagedSkill = materializedSource !== null && knownSources.has(materializedSource);
       }
+      if (!isRudderManagedSkill) continue;
+      if (allowed.has(entry.name)) continue;
 
-      await fs.unlink(target);
+      await fs.rm(target, { recursive: true, force: true });
       removed.push(entry.name);
     }
 

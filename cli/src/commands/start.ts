@@ -17,7 +17,7 @@ import {
   installPersistentCli,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
-import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError } from "../runtime/install.js";
+import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError, type RuntimeInstallResult } from "../runtime/install.js";
 import { createByteProgress, formatBytes, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
 
@@ -345,6 +345,13 @@ export function resolveDesktopReleaseTag(version: string): string {
 
 export function isExactRuntimePackageSpec(version: string, packageSpec: string): boolean {
   return version !== "latest" && packageSpec === resolveRuntimePackageSpec(version);
+}
+
+export function runtimeSupportsDesktopShellAssets(
+  version: string,
+  runtime: Pick<RuntimeInstallResult, "packageSpec" | "postgresPayloadBinDir">,
+): boolean {
+  return isExactRuntimePackageSpec(version, runtime.packageSpec) && Boolean(runtime.postgresPayloadBinDir);
 }
 
 export function resolveDesktopAssetTarget(
@@ -1708,13 +1715,16 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       const spinner = p.spinner();
       spinner.start("Installing or reusing Rudder runtime...");
       try {
-        const runtime = await ensureRuntimeInstalled({ version });
-        runtimeSupportsShellAssets = isExactRuntimePackageSpec(version, runtime.packageSpec);
+        const runtime = await ensureRuntimeInstalled({ version, preparePostgresPayload: true });
+        runtimeSupportsShellAssets = runtimeSupportsDesktopShellAssets(version, runtime);
         spinner.stop(
           runtime.status === "hit"
             ? `Rudder runtime cache hit at ${pc.cyan(runtime.cacheDir)}.`
             : `Rudder runtime installed at ${pc.cyan(runtime.cacheDir)}.`,
         );
+        if (!runtime.postgresPayloadBinDir && installDesktop) {
+          p.log.warn("Rudder runtime cache has no PostgreSQL 18.4 payload; the full portable Desktop asset will be used.");
+        }
         if (!runtimeSupportsShellAssets && installDesktop) {
           p.log.warn("Rudder runtime did not resolve to the exact Desktop version; the full portable Desktop asset will be used.");
         }

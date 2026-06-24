@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const targetDir = path.join(repoRoot, "desktop", ".packaged", "server-package");
+const postgresRuntimeDir = path.join(repoRoot, "desktop", ".packaged", "postgres-18.4");
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const sourceManifestRoots = ["packages", "server", "cli"];
 
@@ -129,6 +130,67 @@ async function normalizeSelfReference(packageDir) {
   await Promise.all(selfReferencePaths.map((selfReferencePath) => fs.rm(selfReferencePath, { force: true })));
 }
 
+function postgresRuntimePlatformSegment() {
+  const arch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
+  return `${process.platform}-${arch}`;
+}
+
+async function execFileAsync(command, args) {
+  const { execFile } = await import("node:child_process");
+  return await new Promise((resolve, reject) => {
+    execFile(command, args, { encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function assertPostgresBinDirComplete(sourceBinDir) {
+  const requiredBinaries = ["initdb", "pg_ctl", "postgres"];
+  const missing = [];
+  for (const binary of requiredBinaries) {
+    const binaryName = process.platform === "win32" ? `${binary}.exe` : binary;
+    const binaryPath = path.join(sourceBinDir, binaryName);
+    try {
+      await fs.access(binaryPath);
+    } catch {
+      missing.push(binaryPath);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(`RUDDER_POSTGRES_BIN_DIR must contain PostgreSQL 18.4 initdb, pg_ctl, and postgres binaries; missing ${missing.join(", ")}`);
+  }
+}
+
+async function stagePostgresRuntimePayload() {
+  await fs.rm(postgresRuntimeDir, { recursive: true, force: true });
+
+  const sourceBinDir = process.env.RUDDER_POSTGRES_BIN_DIR?.trim();
+  if (!sourceBinDir) {
+    if (process.env.RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES === "1") return;
+    throw new Error(
+      "Desktop production packaging requires RUDDER_POSTGRES_BIN_DIR pointing at PostgreSQL 18.4 production binaries. Set RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1 only for development fallback packaging.",
+    );
+  }
+
+  await assertPostgresBinDirComplete(sourceBinDir);
+  const postgresBinary = path.join(sourceBinDir, process.platform === "win32" ? "postgres.exe" : "postgres");
+  const versionResult = await execFileAsync(postgresBinary, ["--version"]);
+  const versionOutput = [versionResult.stdout, versionResult.stderr].filter(Boolean).join("\n");
+  if (!/\bPostgreSQL\)?\s+18\.4\b/i.test(versionOutput)) {
+    throw new Error(`RUDDER_POSTGRES_BIN_DIR must contain PostgreSQL 18.4 binaries; got ${versionOutput.trim() || "unknown version"}`);
+  }
+
+  const targetBinDir = path.join(postgresRuntimeDir, postgresRuntimePlatformSegment(), "bin");
+  await fs.mkdir(path.dirname(targetBinDir), { recursive: true });
+  await fs.cp(path.resolve(sourceBinDir), targetBinDir, { recursive: true, dereference: true });
+}
+
 async function rewriteInternalPackages(targetDir) {
   const rudderDir = path.join(targetDir, "node_modules", "@rudderhq");
   try {
@@ -154,6 +216,7 @@ async function main() {
   await rewritePublishedManifest(targetDir);
   await rewriteInternalPackages(targetDir);
   await normalizeSelfReference(targetDir);
+  await stagePostgresRuntimePayload();
 
   const deployedEntry = path.join(targetDir, "dist", "index.js");
   await fs.access(deployedEntry);

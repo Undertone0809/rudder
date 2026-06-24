@@ -1,6 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import {
   addIssueCommentSchema,
+  buildAgentMentionHref,
   createIssueAttachmentMetadataSchema,
   createIssueWorkspaceAttachmentSchema,
   updateIssueCommentSchema
@@ -16,6 +17,11 @@ import {
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
+function appendAssigneeWakeMentionIfMissing(body: string, assigneeAgentId: string | null, mentionedIds: string[]) {
+  if (!assigneeAgentId || mentionedIds.includes(assigneeAgentId)) return body;
+  const mention = `[Assigned Agent](${buildAgentMentionHref(assigneeAgentId, null, "wake")})`;
+  return `${body.trimEnd()}\n\n${mention}`;
+}
 
 type IssueCommentAttachmentRouteContext = {
   router: Router;
@@ -259,7 +265,35 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
       }
     }
 
-    const comment = await svc.addComment(id, req.body.body, {
+    let commentBody = req.body.body;
+    let mentionedIdsForCommentBody: string[] = [];
+    try {
+      mentionedIdsForCommentBody = await svc.findMentionedAgents(issue.orgId, commentBody);
+    } catch (err) {
+      logger.warn({ err, issueId: id }, "failed to resolve agent wake mentions before comment persistence");
+    }
+    const actorIsAgent = actor.actorType === "agent";
+    const selfComment = actorIsAgent && actor.actorId === currentIssue.assigneeAgentId;
+    const shouldAppendReopenAssigneeMention = reopened
+      && Boolean(currentIssue.assigneeAgentId)
+      && !selfComment
+      && currentIssue.status !== "backlog";
+    if (shouldAppendReopenAssigneeMention) {
+      commentBody = appendAssigneeWakeMentionIfMissing(
+        commentBody,
+        currentIssue.assigneeAgentId,
+        mentionedIdsForCommentBody,
+      );
+      if (commentBody !== req.body.body) {
+        try {
+          mentionedIdsForCommentBody = await svc.findMentionedAgents(issue.orgId, commentBody);
+        } catch (err) {
+          logger.warn({ err, issueId: id }, "failed to resolve agent wake mentions after reopen mention append");
+        }
+      }
+    }
+
+    const comment = await svc.addComment(id, commentBody, {
       agentId: actor.agentId ?? undefined,
       userId: actor.actorType === "user" ? actor.actorId : undefined,
     });
@@ -292,93 +326,52 @@ export function registerIssueCommentAttachmentRoutes(ctx: IssueCommentAttachment
     void (async () => {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
       const assigneeId = currentIssue.assigneeAgentId;
-      const actorIsAgent = actor.actorType === "agent";
-      const selfComment = actorIsAgent && actor.actorId === assigneeId;
       const backlogComment = currentIssue.status === "backlog";
-      let mentionedIds: string[] = [];
+      let mentionedIds: string[] = mentionedIdsForCommentBody;
       try {
-        mentionedIds = await svc.findMentionedAgents(issue.orgId, req.body.body);
+        mentionedIds = await svc.findMentionedAgents(issue.orgId, comment.body);
       } catch (err) {
         logger.warn({ err, issueId: id }, "failed to resolve agent wake mentions");
       }
-      const directedMentionToOtherAgent = mentionedIds.some((mentionedId) => mentionedId !== assigneeId);
-      const skipWake = selfComment || isClosed || backlogComment || directedMentionToOtherAgent;
-      if (assigneeId && (reopened || !skipWake)) {
-        if (reopened) {
-          wakeups.set(assigneeId, {
-            source: "automation",
-            triggerDetail: "system",
-            reason: "issue_reopened_via_comment",
-            payload: {
-              issueId: currentIssue.id,
-              commentId: comment.id,
-              reopenedFrom: reopenFromStatus,
-              mutation: "comment",
-              ...(interruptedRunId ? { interruptedRunId } : {}),
+      const assigneeMentioned = Boolean(assigneeId && mentionedIds.includes(assigneeId));
+      if (assigneeId && reopened && !selfComment && !backlogComment && assigneeMentioned) {
+        wakeups.set(assigneeId, {
+          source: "automation",
+          triggerDetail: "system",
+          reason: "issue_reopened_via_comment",
+          payload: {
+            issueId: currentIssue.id,
+            commentId: comment.id,
+            reopenedFrom: reopenFromStatus,
+            mutation: "comment",
+            ...(interruptedRunId ? { interruptedRunId } : {}),
+          },
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+          contextSnapshot: {
+            issueId: currentIssue.id,
+            taskId: currentIssue.id,
+            commentId: comment.id,
+            wakeCommentId: comment.id,
+            source: "issue.comment.reopen",
+            wakeReason: "issue_reopened_via_comment",
+            reopenedFrom: reopenFromStatus,
+            issue: {
+              id: currentIssue.id,
+              title: currentIssue.title,
+              description: currentIssue.description,
+              status: currentIssue.status,
+              priority: currentIssue.priority,
             },
-            requestedByActorType: actor.actorType,
-            requestedByActorId: actor.actorId,
-            contextSnapshot: {
-              issueId: currentIssue.id,
-              taskId: currentIssue.id,
-              commentId: comment.id,
-              wakeCommentId: comment.id,
-              source: "issue.comment.reopen",
-              wakeReason: "issue_reopened_via_comment",
-              reopenedFrom: reopenFromStatus,
-              issue: {
-                id: currentIssue.id,
-                title: currentIssue.title,
-                description: currentIssue.description,
-                status: currentIssue.status,
-                priority: currentIssue.priority,
-              },
-              comment: {
-                id: comment.id,
-                body: comment.body,
-                authorAgentId: comment.authorAgentId,
-                authorUserId: comment.authorUserId,
-              },
-              ...(interruptedRunId ? { interruptedRunId } : {}),
+            comment: {
+              id: comment.id,
+              body: comment.body,
+              authorAgentId: comment.authorAgentId,
+              authorUserId: comment.authorUserId,
             },
-          });
-        } else {
-          wakeups.set(assigneeId, {
-            source: "automation",
-            triggerDetail: "system",
-            reason: "issue_commented",
-            payload: {
-              issueId: currentIssue.id,
-              commentId: comment.id,
-              mutation: "comment",
-              ...(interruptedRunId ? { interruptedRunId } : {}),
-            },
-            requestedByActorType: actor.actorType,
-            requestedByActorId: actor.actorId,
-            contextSnapshot: {
-              issueId: currentIssue.id,
-              taskId: currentIssue.id,
-              commentId: comment.id,
-              wakeCommentId: comment.id,
-              source: "issue.comment",
-              wakeReason: "issue_commented",
-              issue: {
-                id: currentIssue.id,
-                title: currentIssue.title,
-                description: currentIssue.description,
-                status: currentIssue.status,
-                priority: currentIssue.priority,
-              },
-              comment: {
-                id: comment.id,
-                body: comment.body,
-                authorAgentId: comment.authorAgentId,
-                authorUserId: comment.authorUserId,
-              },
-              ...(interruptedRunId ? { interruptedRunId } : {}),
-            },
-          });
-        }
+            ...(interruptedRunId ? { interruptedRunId } : {}),
+          },
+        });
       }
 
       for (const mentionedId of mentionedIds) {

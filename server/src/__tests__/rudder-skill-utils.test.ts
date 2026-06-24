@@ -1,6 +1,7 @@
 import {
   listRudderSkillEntries,
   removeMaintainerOnlySkillSymlinks,
+  removeUnselectedRudderSkillSymlinks,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -97,5 +98,30 @@ describe("rudder skill utils", () => {
     await expect(fs.lstat(path.join(skillsHome, "release"))).rejects.toThrow();
     expect((await fs.lstat(path.join(skillsHome, "rudder"))).isSymbolicLink()).toBe(true);
     expect((await fs.lstat(path.join(skillsHome, "release-notes"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("removes stale Rudder-managed materialized directories without deleting native provider skills", async () => {
+    const root = await makeTempDir("rudder-skill-materialized-cleanup-");
+    cleanupDirs.add(root);
+
+    const skillsHome = path.join(root, "skills-home");
+    const runtimeSkill = path.join(root, "runtime-skills", "ascii-heart");
+    const staleManagedSkill = path.join(skillsHome, "ascii-heart");
+    const nativeProviderSkill = path.join(skillsHome, "native-provider-skill");
+    await fs.mkdir(path.join(staleManagedSkill, ".rudder"), { recursive: true });
+    await fs.mkdir(nativeProviderSkill, { recursive: true });
+    await fs.mkdir(runtimeSkill, { recursive: true });
+    await fs.writeFile(
+      path.join(staleManagedSkill, ".rudder", "materialized-skill.json"),
+      JSON.stringify({ sourcePath: runtimeSkill }),
+      "utf8",
+    );
+    await fs.writeFile(path.join(nativeProviderSkill, "SKILL.md"), "---\nname: native-provider-skill\n---\n", "utf8");
+
+    const removed = await removeUnselectedRudderSkillSymlinks(skillsHome, [], [runtimeSkill]);
+
+    expect(removed).toEqual(["ascii-heart"]);
+    await expect(fs.lstat(staleManagedSkill)).rejects.toThrow();
+    expect((await fs.lstat(nativeProviderSkill)).isDirectory()).toBe(true);
   });
 });

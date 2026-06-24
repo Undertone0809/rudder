@@ -69,8 +69,8 @@ behavior to comment-triggered issue work.
 
 Instruction loading is split by ownership:
 
-- Rudder runtime code owns the universal operating contract and runtime
-  heartbeat instruction. These rules are stable platform behavior and cannot
+- Rudder runtime code owns the universal operating contract and heartbeat-only
+  runtime instruction. These rules are stable platform behavior and cannot
   depend on mutable agent home files.
 - The agent's instruction directory owns durable role/persona/tool/memory
   material. These files let an operator customize an agent without editing
@@ -85,9 +85,10 @@ resource context into the shared instruction prefix, then clears duplicate
 template aliases so adapters do not re-inject the same resource block later.
 Heartbeat instructions are runtime-owned instead of read from legacy
 `HEARTBEAT.md` because heartbeat behavior is a control-plane contract, not an
-agent-local note. Comment-triggered issue wakes are excluded from runtime
-heartbeat instructions so a direct comment mention feels like targeted issue
-work, not a generic autonomous heartbeat loop.
+agent-local note. They are loaded only for `rudderScene=heartbeat`. Issue,
+review, chat, and automation runs are excluded so task assignment, review,
+comment mention, chat, and automation work are not framed as a generic
+autonomous heartbeat loop.
 
 ## Actors / Objects / State
 
@@ -130,8 +131,8 @@ work, not a generic autonomous heartbeat loop.
 - `rudderWorkspace.resourcesPrompt`, `rudderWorkspace.orgResourcesPrompt`, and
   top-level `rudderResourcesPrompt` are candidates for the resource/startup
   section.
-- `rudderScene` and `wakeReason` decide whether runtime heartbeat instructions
-  are included.
+- `rudderScene` decides whether runtime heartbeat instructions are included:
+  only `rudderScene = heartbeat` may include them.
 - Saved task session parameters and execution workspace settings affect the cwd
   and session handoff context that the adapter sees.
 
@@ -141,7 +142,9 @@ work, not a generic autonomous heartbeat loop.
    Secret-backed config values are resolved for the agent organization. Enabled
    skills are resolved for the exact agent, organization, runtime type, and
    resolved config, then materialized as runtime skill entries in the adapter
-   config.
+   config. Adapters receive this selected set as input; they must not add
+   provider-native, operator-home, project, global, or adapter-home skills that
+   Rudder did not resolve as enabled or always-enabled for the invocation.
 
 2. Rudder resolves the working directory for the run. Project workspace wins
    when issue/project context points to an available project workspace.
@@ -203,14 +206,16 @@ work, not a generic autonomous heartbeat loop.
 
 | Case | Conditions | Product result | Must not happen | Evidence |
 | --- | --- | --- | --- | --- |
-| Standard issue heartbeat | `rudderScene = heartbeat`; wake reason is assignment, checkout, retry, timer, passive follow-up, or another non-comment wake | Runtime operating contract, agent files, resources/startup context, current time, runtime heartbeat instruction, then wake prompt are available to the agent | Heartbeat instruction must not appear before current time or before durable agent files | Prompt order tests, command notes, `runtimePromptMetrics.runtimeHeartbeatChars > 0`, adapter invocation event |
-| Comment-triggered issue wake | `rudderScene = heartbeat`; `wakeReason` is `issue_commented`, `issue_comment_mentioned`, or `issue_reopened_via_comment` | Agent gets operating contract, agent files, resources/startup context, current time, and the comment/issue wake prompt; runtime heartbeat instruction is excluded | The run must not add generic runtime heartbeat instructions that can override the direct comment context | `shouldIncludeRuntimeHeartbeatInstructions` tests, `runtimeHeartbeatChars = 0`, command notes do not contain heartbeat instruction note |
-| Chat run | `rudderScene = chat` | Agent gets the same operating contract and configured agent files plus chat-scene context; runtime heartbeat instruction is excluded | Chat prompts must not be framed as autonomous heartbeat work | Adapter metadata and prompt metrics show no runtime heartbeat section |
-| No configured entry file | `instructionsFilePath` is empty | Prefix still contains runtime operating contract, prepared runtime context, current time, and optional heartbeat instruction | A missing entry path must not drop the runtime operating contract | `commandNotes` include operating contract note; prompt metrics include operating contract chars |
+| Heartbeat Run | `rudderScene = heartbeat`; timer/self-check or operator `Run heartbeat` manual trigger | Runtime operating contract, agent files, resources/startup context, current time, runtime heartbeat instruction, then heartbeat prompt are available to the agent | Heartbeat instruction must not appear before current time or before durable agent files | Prompt order tests, command notes, `runtimePromptMetrics.runtimeHeartbeatChars > 0`, adapter invocation event |
+| Issue Run | `rudderScene = issue`; assignment, checkout, issue follow-up, issue comment mention, or comment reopen wake | Agent gets operating contract, agent files, resources/startup context, current time, and issue/comment wake prompt; runtime heartbeat instruction is excluded | Task assignment or comment work must not be framed as generic heartbeat/self-check work | `shouldIncludeRuntimeHeartbeatInstructions` tests, `runtimeHeartbeatChars = 0`, assignment execute tests, comment wake tests |
+| Review Run | `rudderScene = review`; reviewer routing, changes-requested review work, or review follow-up after missing decision while issue remains `in_review` | Agent gets operating contract, agent files, resources/startup context, current time, and review-scene prompt; runtime heartbeat instruction is excluded | Review follow-up must stay reviewer-scoped and must not become assignee implementation | Scene derivation tests and prompt metrics show no runtime heartbeat section |
+| Chat Run | `rudderScene = chat` | Agent gets the same operating contract and configured agent files plus chat-scene context; runtime heartbeat instruction is excluded | Chat prompts must not be framed as autonomous heartbeat work | Adapter metadata and prompt metrics show no runtime heartbeat section |
+| Automation Run | `rudderScene = automation` | Agent gets operating contract, agent files, resources/startup context, current time, and automation context; runtime heartbeat instruction is excluded | Automation dispatch must not inherit heartbeat/self-check close-out instructions unless it explicitly creates a heartbeat scene run | Scene derivation tests and prompt metrics show no runtime heartbeat section |
+| No configured entry file | `instructionsFilePath` is empty | Prefix still contains runtime operating contract, prepared runtime context, current time, and heartbeat instruction only for heartbeat scene runs | A missing entry path must not drop the runtime operating contract | `commandNotes` include operating contract note; prompt metrics include operating contract chars |
 | Configured entry file missing | `instructionsFilePath` points to unreadable file | Run continues without that file, logs a warning, and records the missing-file command note | Runtime invocation must not fail solely because an operator removed an optional entry file | Runtime log warning and command note |
-| Legacy `HEARTBEAT.md` configured as entry | Entry file basename is `HEARTBEAT.md` | The file is ignored as legacy agent-owned heartbeat notes; runtime heartbeat behavior remains controlled by runtime scene/wake reason | Legacy file content must not be loaded as durable agent instructions | Command note and stdout log say legacy `HEARTBEAT.md` was ignored |
+| Legacy `HEARTBEAT.md` configured as entry | Entry file basename is `HEARTBEAT.md` | The file is ignored as legacy agent-owned heartbeat notes; runtime heartbeat behavior remains controlled by `rudderScene` | Legacy file content must not be loaded as durable agent instructions | Command note and stdout log say legacy `HEARTBEAT.md` was ignored |
 | Duplicate resource aliases | More than one of workspace resources, workspace org resources, and top-level resources contains the selected prompt | Selected resource block appears once before current time; duplicate aliases are cleared from template context | Prompt templates must not re-inject the same resources later | `prepareAgentInstructionRuntimeContext` tests and rendered prompt order tests |
-| Project workspace unavailable | Issue/project references a workspace path that does not exist | Run falls back to shared organization workspace or agent home and emits workspace warning; instruction context reports actual cwd/source | Agent must not believe it is running in a missing cwd | Workspace warning log, `rudderWorkspace.cwd`, heartbeat `contextSnapshot` |
+| Project workspace unavailable | Issue/project references a workspace path that does not exist | Run falls back to shared organization workspace or agent home and emits workspace warning; instruction context reports actual cwd/source | Agent must not believe it is running in a missing cwd | Workspace warning log, `rudderWorkspace.cwd`, run `contextSnapshot` |
 
 ## Actor-Visible Input
 
@@ -227,10 +232,13 @@ stack must preserve this semantic order:
 5. Sibling `MEMORY.md`, if present.
 6. The selected resources/startup context section, when non-empty.
 7. `## Current Time`, with the runtime instruction load timestamp.
-8. Runtime heartbeat instruction, only for non-comment heartbeat scene runs.
-9. Adapter-specific bootstrap prompt, session handoff markdown, and wake/chat
-   prompt after the instruction prefix when the adapter uses stdin-style prompt
-   assembly.
+8. Runtime heartbeat instruction, only for heartbeat scene runs.
+9. Adapter-specific selected-skill boundary text inside the provider's system
+   prompt layer when that provider can expose native or built-in skills outside
+   Rudder's desired selection.
+10. Adapter-specific bootstrap prompt, session handoff markdown, and wake/chat
+    prompt after the instruction prefix or system prompt when the adapter uses
+    stdin-style prompt assembly.
 
 The agent does not see duplicated resource aliases after the selected resource
 prompt is moved into the instruction prefix. The agent does not see sibling
@@ -246,7 +254,7 @@ through Rudder APIs, but the auth injection is separate from prompt text.
 
 | Adapter | Prefix transport | Final actor-visible input after shared prefix | Additional notes |
 | --- | --- | --- | --- |
-| Claude local | Writes the loaded prefix to an appended system prompt file | Provider receives the appended system prompt plus bootstrap/session/wake prompt through Claude Code invocation | Image attachment paths can be added to prompt instructions for Claude inspection |
+| Claude local | Writes the loaded prefix and Rudder enabled-skill boundary to an appended system prompt file | Provider receives the appended system prompt plus bootstrap/session/wake prompt through Claude Code invocation | Claude Code may advertise built-in provider-native skills in its own init metadata; Rudder keeps those out of loaded skill metadata and tells the agent to answer Rudder skill questions from the Rudder enabled-skill boundary |
 | Codex local | Prepends the loaded prefix to the stdin prompt | Prefix, optional bootstrap prompt, optional session handoff markdown, then selected wake/chat prompt | Codex CLI can also auto-apply repo-scoped `AGENTS.md` from the current workspace; Rudder records this as a command note and does not suppress it |
 | Cursor local | Pipes the prompt through stdin | Prefix, optional bootstrap prompt, optional session handoff markdown, runtime env note, then selected wake/chat prompt | Command notes record stdin transport and auto-trust flags when applied |
 | Gemini local | Sends the full prompt through the Gemini `--prompt` argument | Prefix, optional bootstrap prompt, optional session handoff markdown, Rudder env note, API access note, then selected wake/chat prompt | Prompt metrics include `runtimeNoteChars` for the env/API notes |
@@ -282,7 +290,7 @@ layers were loaded.
 
 The contract is evidenced by:
 
-- heartbeat run `contextSnapshot` containing `rudderScene`, `rudderWorkspace`,
+- run `contextSnapshot` containing `rudderScene`, `rudderWorkspace`,
   `rudderWorkspaces`, `rudderStartupContext`, startup metrics, wake reason,
   issue/comment context, and execution workspace/runtime service updates when
   present
@@ -300,18 +308,28 @@ The contract is evidenced by:
 
 ## Canonical Scenarios
 
-1. Assignment heartbeat with configured agent memory:
-   - Trigger: an issue assignment wakes the assignee agent in heartbeat scene.
+1. Issue assignment run with configured agent memory:
+   - Trigger: an issue assignment wakes the assignee agent in issue scene.
    - Expected state/action: Rudder resolves config, workspace, runtime skills,
-     scene context, agent files, resources, current time, and runtime heartbeat
-     instruction before the assignment wake prompt.
+     scene context, agent files, resources, and current time before the
+     assignment wake prompt. Runtime heartbeat instruction is not loaded.
    - Visible output: command notes list the operating contract, entry file,
-     sibling files that exist, and heartbeat instruction; prompt metrics show
-     non-zero runtime heartbeat chars.
+     and sibling files that exist; prompt metrics show
+     `runtimeHeartbeatChars = 0`.
    - Evidence: `packages/agent-runtime-utils/src/server-utils.test.ts` and
      adapter execute tests for command notes and prompt metrics.
 
-2. Comment mention wake:
+2. Manual heartbeat run:
+   - Trigger: an operator clicks `Run heartbeat`, producing
+     `rudderScene=heartbeat` with manual trigger detail.
+   - Expected state/action: Rudder resolves config, workspace, runtime skills,
+     scene context, agent files, resources, current time, and runtime heartbeat
+     instruction before the heartbeat prompt.
+   - Visible output: command notes list the heartbeat instruction; prompt
+     metrics show non-zero runtime heartbeat chars.
+   - Evidence: scene derivation and prompt-order tests.
+
+3. Comment mention wake:
    - Trigger: an operator mentions an agent in an issue comment, producing
      `issue_comment_mentioned`.
    - Expected state/action: the agent receives the issue/comment prompt and
@@ -322,7 +340,7 @@ The contract is evidenced by:
      prove prompt exclusion; comment-mention E2E coverage under work-routing
      contracts proves the wake path and issue/comment context.
 
-3. Resource context with duplicate aliases:
+4. Resource context with duplicate aliases:
    - Trigger: project resources/startup context are compiled into workspace and
      top-level resource prompt aliases.
    - Expected state/action: the selected resources prompt is inserted once
@@ -333,7 +351,7 @@ The contract is evidenced by:
    - Evidence: `prepareAgentInstructionRuntimeContext` tests and adapter prompt
      order tests.
 
-4. Legacy heartbeat file:
+5. Legacy heartbeat file:
    - Trigger: an agent config points `instructionsFilePath` at
      `HEARTBEAT.md`.
    - Expected state/action: the file is ignored as legacy agent-owned heartbeat
@@ -350,12 +368,17 @@ The contract is evidenced by:
   layers.
 - Runtime skill loading is scoped to the agent, organization, runtime type, and
   resolved config.
+- Adapter-native skill discovery is candidate metadata only. It must not cause
+  disabled or discovered-only skills to appear in prompt text,
+  provider-visible skill directories, provider-native config, or loaded-skill
+  metadata.
 - Project and startup resources are injected once at the instruction-prefix
   position when available.
 - `## Current Time` stays after durable instructions and runtime context.
 - Runtime heartbeat instruction, when present, stays at the end of the
   instruction prefix.
-- Comment-triggered issue wakes do not receive runtime heartbeat instruction.
+- Issue, review, chat, and automation runs do not receive runtime heartbeat
+  instruction.
 - Missing optional sibling files do not fail the run.
 - This contract does not specify the full natural-language body of every
   prompt template. Prompt wording can change when the semantic layers, order,
@@ -404,7 +427,7 @@ Loaded sections:
    scene-specific context.
 5. `## Current Time`.
 6. Runtime heartbeat instructions only when the current scene is a heartbeat
-   scene that should receive heartbeat close-out guidance.
+   scene.
 
 Why this order:
 
@@ -412,8 +435,9 @@ Why this order:
 - Dynamic context must be explicit and bounded so Project Context Resources do
   not become an unreviewed global memory dump.
 - Current time is late because it is runtime fact, not durable instruction.
-- Heartbeat instructions are last only for eligible heartbeat scenes so they can
-  close the final-action loop without overriding chat/comment-specific prompts.
+- Heartbeat instructions are last only for heartbeat scenes so they can guide
+  timer/self-check work without overriding issue, review, chat, or automation
+  prompts.
 
 Related code:
 

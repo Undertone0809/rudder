@@ -18,7 +18,7 @@ import {
   prepareAgentInstructionRuntimeContext,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
-  removeMaintainerOnlySkillSymlinks,
+  removeUnselectedRudderSkillSymlinks,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -211,8 +211,6 @@ async function ensureGeminiSkillsInjected(
 ): Promise<void> {
   const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
   const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
-  if (selectedEntries.length === 0) return;
-
   const skillsHome = targetSkillsHome ?? geminiSkillsHome();
   try {
     await fs.mkdir(skillsHome, { recursive: true });
@@ -223,9 +221,10 @@ async function ensureGeminiSkillsInjected(
     );
     return;
   }
-  const removedSkills = await removeMaintainerOnlySkillSymlinks(
+  const removedSkills = await removeUnselectedRudderSkillSymlinks(
     skillsHome,
     selectedEntries.map((entry) => entry.runtimeName),
+    skillsEntries.map((entry) => entry.source),
   );
   for (const skillName of removedSkills) {
     await onLog(
@@ -326,8 +325,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
-  env.HOME = operatorHome;
-  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.HOME = managedHome;
+  env.USERPROFILE = managedHome;
   env.GEMINI_CLI_HOME = managedHome;
   env.RUDDER_RUN_ID = runId;
   const wakeTaskId =
@@ -381,8 +380,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (GEMINI_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
-  env.HOME = operatorHome;
-  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.HOME = managedHome;
+  env.USERPROFILE = managedHome;
   env.GEMINI_CLI_HOME = managedHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {

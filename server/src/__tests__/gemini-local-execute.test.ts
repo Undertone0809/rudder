@@ -80,6 +80,13 @@ type CapturePayload = {
   gitIdentity: GitIdentityCapture;
 };
 
+async function createSkillDir(root: string, name: string) {
+  const skillDir = path.join(root, name);
+  await fs.mkdir(skillDir, { recursive: true });
+  await fs.writeFile(path.join(skillDir, "SKILL.md"), `---\nname: ${name}\n---\n`, "utf8");
+  return skillDir;
+}
+
 describe("gemini execute", { timeout: 20_000 }, () => {
   it("passes prompt via --prompt and injects rudder env vars", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-gemini-execute-"));
@@ -175,8 +182,8 @@ describe("gemini execute", { timeout: 20_000 }, () => {
         "organization-1",
         "gemini-home",
       );
-      expect(capture.home).toBe(root);
-      expect(capture.userProfile).toBe(process.env.USERPROFILE ?? root);
+      expect(capture.home).toBe(managedGeminiHome);
+      expect(capture.userProfile).toBe(managedGeminiHome);
       expect(capture.geminiCliHome).toBe(managedGeminiHome);
       expect(capture.argv).toContain("--output-format");
       expect(capture.argv).toContain("stream-json");
@@ -417,6 +424,107 @@ describe("gemini execute", { timeout: 20_000 }, () => {
       } else {
         process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
       }
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes previously materialized Gemini skills when they are no longer selected", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-gemini-prune-skill-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "gemini");
+    const capturePath = path.join(root, "capture.json");
+    const runtimeSkillsRoot = path.join(root, "runtime-skills");
+    const managedSkillsHome = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "gemini-home",
+      ".gemini",
+      "skills",
+    );
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeGeminiCommand(commandPath);
+
+    const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
+    await fs.mkdir(managedSkillsHome, { recursive: true });
+    await fs.symlink(asciiHeartDir, path.join(managedSkillsHome, "ascii-heart"));
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    const previousRudderHome = process.env.RUDDER_HOME;
+    const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+    const previousLocalEnv = process.env.RUDDER_LOCAL_ENV;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+    process.env.RUDDER_HOME = path.join(root, ".rudder");
+    process.env.RUDDER_INSTANCE_ID = "default";
+    delete process.env.RUDDER_LOCAL_ENV;
+
+    let loadedSkills: unknown[] = [{ key: "before" }];
+
+    try {
+      const result = await execute({
+        runId: "run-gemini-prune-skill",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Gemini Coder",
+          agentRuntimeType: "gemini_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "gemini-2.5-pro",
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          rudderRuntimeSkills: [
+            {
+              name: "ascii-heart",
+              source: asciiHeartDir,
+            },
+          ],
+          rudderSkillSync: {
+            desiredSkills: [],
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          loadedSkills = meta.loadedSkills ?? [];
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      await expect(fs.lstat(path.join(managedSkillsHome, "ascii-heart"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(loadedSkills).toEqual([]);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
+      if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+      if (previousLocalEnv === undefined) delete process.env.RUDDER_LOCAL_ENV;
+      else process.env.RUDDER_LOCAL_ENV = previousLocalEnv;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

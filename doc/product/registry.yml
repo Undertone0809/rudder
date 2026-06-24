@@ -49,14 +49,17 @@ contracts:
     docs:
       - doc/product/domains/execution/heartbeats.md
     related_code:
+      - packages/shared/src/agent-run.ts
       - server/src/services/runtime-kernel/heartbeat.wakeup.ts
       - server/src/services/runtime-kernel/heartbeat.recovery.ts
       - server/src/services/runtime-kernel/heartbeat.ts
     related_tests:
+      - packages/shared/src/agent-run.test.ts
       - server/src/__tests__/heartbeat-paused-wakeups.test.ts
       - server/src/__tests__/heartbeat-run-concurrency.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
   RUN.PREFLIGHT.001:
     owner: product
     domain: execution
@@ -191,10 +194,12 @@ contracts:
       - server/src/services/runtime-kernel/heartbeat.recovery.ts
       - server/src/services/issue-review-wakeup.ts
     related_tests:
+      - server/src/__tests__/issue-lifecycle-routes.test.ts
       - tests/e2e/issue-comment-mentions.spec.ts
       - tests/e2e/issue-comment-mention-boundary.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
   AGENT.INSTRUCTIONS.001:
     owner: product
     domain: agents
@@ -216,6 +221,7 @@ contracts:
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - server/src/services/workspace-runtime.helpers.ts
     related_tests:
+      - server/src/__tests__/heartbeat-workspace-preflight.test.ts
       - packages/agent-runtime-utils/src/server-utils.test.ts
       - server/src/__tests__/agent-instructions-service.test.ts
       - server/src/__tests__/agent-run-context.test.ts
@@ -228,6 +234,7 @@ contracts:
       - server/src/__tests__/pi-local-execute.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
 
   ISSUE.HIERARCHY.001:
     owner: product
@@ -267,10 +274,12 @@ contracts:
       - server/src/routes/issues.comments-attachments.ts
       - server/src/services/runtime-kernel/heartbeat.wakeup.ts
     related_tests:
+      - server/src/__tests__/issue-lifecycle-routes.test.ts
       - tests/e2e/issue-comment-mentions.spec.ts
       - tests/e2e/issue-comment-mention-boundary.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
   RUN.AGENT.UNIFICATION.001:
     owner: product
     domain: execution
@@ -278,13 +287,20 @@ contracts:
       - doc/product/domains/execution/agent-runs.md
     related_code:
       - packages/shared/src/agent-run.ts
+      - server/src/services/runtime-kernel/heartbeat.execute.ts
       - server/src/routes/agents.management-routes.ts
       - ui/src/pages/AgentDetail.runs.tsx
     related_tests:
+      - packages/shared/src/agent-run.test.ts
+      - packages/agent-runtime-utils/src/server-utils.test.ts
+      - server/src/__tests__/codex-local-execute.test.ts
+      - server/src/__tests__/heartbeat-workspace-preflight.test.ts
+      - ui/src/pages/AgentDetail.run-filters.test.ts
       - ui/src/pages/AgentDetail.runs.test.ts
       - tests/e2e/agent-runs-filter-menu.spec.ts
     related_plans:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
+      - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
   RUN.CHAT.AGENT.001:
     owner: product
     domain: execution
@@ -314,6 +330,7 @@ contracts:
       - server/src/__tests__/agent-startup-context.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
   AGENT.RUNTIME.ADAPTERS.001:
     owner: product
     domain: agents
@@ -620,8 +637,10 @@ contracts:
     related_code:
       - packages/db/src/schema/chat_conversations.ts
       - packages/db/src/schema/chat_messages.ts
+      - packages/shared/src/constants.ts
       - packages/shared/src/types/chat.ts
       - packages/shared/src/validators/chat.ts
+      - server/src/routes/chats.stream-routes.ts
       - server/src/routes/chats.ts
       - server/src/services/chats.ts
       - ui/src/api/chats.ts
@@ -632,8 +651,10 @@ contracts:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/messenger-service.test.ts
       - ui/src/pages/Chat.messages.test.tsx
+      - ui/src/pages/Chat.attachment-preview.test.tsx
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
       - tests/e2e/chat-fork.spec.ts
+      - tests/e2e/feishu-source-badges.spec.ts
     related_plans:
       - doc/plans/2026-06-22-chat-fork-conversation-groups.md
   CHAT.RICH.REFERENCE.RENDERING.001:
@@ -711,7 +732,10 @@ contracts:
       - doc/product/domains/collaboration/chat-messenger-im.md
     related_code:
       - packages/db/src/schema/agent_integrations.ts
+      - packages/shared/src/constants.ts
       - packages/shared/src/types/chat.ts
+      - server/src/routes/chats.ts
+      - server/src/routes/chats.stream-routes.ts
       - server/src/routes/integrations.ts
       - server/src/services/chats.ts
       - server/src/services/chat-agent-runs.ts
@@ -727,6 +751,8 @@ contracts:
       - server/src/services/integrations/feishu/user-bindings.ts
       - ui/src/pages/AgentDetail.integrations.tsx
       - ui/src/pages/AgentDetail.runs.tsx
+      - ui/src/pages/Chat.tsx
+      - ui/src/pages/Chat.messages.tsx
       - ui/src/components/MessengerContextSidebar.tsx
       - ui/src/lib/source-badge.ts
     related_tests:
@@ -736,8 +762,11 @@ contracts:
       - server/src/__tests__/agent-integration-feishu-inbound-normalizer.test.ts
       - server/src/__tests__/agent-integration-setup-url-routes.test.ts
       - server/src/__tests__/messenger-service.test.ts
+      - server/src/__tests__/chat-routes.test.ts
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
       - ui/src/pages/AgentDetail.runs.test.ts
+      - ui/src/pages/Chat.attachment-preview.test.tsx
+      - ui/src/pages/Chat.messages.test.tsx
       - ui/src/lib/source-badge.test.ts
       - tests/e2e/agent-detail-feishu-integration.spec.ts
       - tests/e2e/feishu-source-badges.spec.ts

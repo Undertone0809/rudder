@@ -346,7 +346,7 @@ describe("heartbeat passive issue closeout", () => {
       source: "review",
       reason: "issue_review_closeout_missing",
       requestedByActorType: "system",
-      requestedByActorId: "issue_review_closeout_governance",
+      requestedByActorId: "issue_review_followup",
     });
 
     const activity = await db

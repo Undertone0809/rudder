@@ -36,7 +36,6 @@ export const AGENT_RUN_SCENES = [
   "chat",
   "automation",
   "review",
-  "manual",
   "heartbeat",
 ] as const;
 export type AgentRunScene = (typeof AGENT_RUN_SCENES)[number];
@@ -221,6 +220,9 @@ export type CalendarSourceMode = (typeof CALENDAR_SOURCE_MODES)[number];
 
 export const CHAT_CONVERSATION_STATUSES = ["active", "resolved", "archived"] as const;
 export type ChatConversationStatus = (typeof CHAT_CONVERSATION_STATUSES)[number];
+
+export const CHAT_CONVERSATION_MUTABILITIES = ["native_chat", "external_bound_chat", "native_fork_from_external"] as const;
+export type ChatConversationMutability = (typeof CHAT_CONVERSATION_MUTABILITIES)[number];
 
 export const CHAT_ISSUE_CREATION_MODES = ["manual_approval", "auto_create"] as const;
 export type ChatIssueCreationMode = (typeof CHAT_ISSUE_CREATION_MODES)[number];

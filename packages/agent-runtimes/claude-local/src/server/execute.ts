@@ -96,6 +96,29 @@ function runtimeImagePaths(media: AgentRuntimeExecutionContext["media"]): string
     .filter((value) => value.trim().length > 0);
 }
 
+function renderClaudeRudderSkillBoundaryPrompt(
+  loadedSkills: Array<{ key: string; runtimeName?: string | null; name?: string | null }>,
+): string {
+  const skillLines = loadedSkills.length > 0
+    ? loadedSkills.map((entry) => {
+        const label = entry.name && entry.name !== entry.runtimeName
+          ? `${entry.runtimeName ?? entry.key} (${entry.name})`
+          : entry.runtimeName ?? entry.key;
+        return `- ${label}: ${entry.key}`;
+      })
+    : ["- None. No optional Rudder skills are enabled for this run."];
+
+  return [
+    "# Enabled Rudder Skills",
+    "",
+    "Rudder is the source of truth for runtime skill enablement.",
+    "Only skills listed in this section are enabled by Rudder for this run. Claude Code built-in/provider-native skills or slash commands may appear in Claude's own runtime metadata, but they are not Rudder-enabled skills and must not be described as this agent's Rudder skills unless listed here.",
+    "When the user asks what skills are enabled, loaded, or available in Rudder, answer from this section and say provider-native Claude Code skills are separate if relevant.",
+    "",
+    ...skillLines,
+  ].join("\n");
+}
+
 async function pathExists(candidate: string): Promise<boolean> {
   return fs.access(candidate).then(() => true).catch(() => false);
 }
@@ -441,8 +464,8 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
   }
-  env.HOME = operatorHome;
-  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.HOME = managedHome;
+  env.USERPROFILE = managedHome;
   env.CLAUDE_CONFIG_DIR = managedClaudeHome.configDir;
   env.RUDDER_CLAUDE_HOME = managedHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
@@ -571,6 +594,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       name: entry.name ?? null,
       description: entry.description ?? null,
     }));
+  const skillBoundaryPrompt = renderClaudeRudderSkillBoundaryPrompt(loadedSkills);
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const instructionRuntimeContext = prepareAgentInstructionRuntimeContext(context as Record<string, unknown>);
   const loadedInstructions = await loadAgentInstructionsPrefix({
@@ -591,9 +615,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   // includes both the file content and the path directive, so we only need
   // --append-system-prompt-file (Claude CLI forbids using both flags together).
   let effectiveInstructionsFilePath: string | undefined;
-  if (loadedInstructions.prefix) {
+  const claudeSystemPrompt = joinPromptSections([
+    loadedInstructions.prefix,
+    skillBoundaryPrompt,
+  ]);
+  if (claudeSystemPrompt) {
     const combinedPath = path.join(skillsDir, "agent-instructions.md");
-    await fs.writeFile(combinedPath, loadedInstructions.prefix, "utf-8");
+    await fs.writeFile(combinedPath, claudeSystemPrompt, "utf-8");
     effectiveInstructionsFilePath = combinedPath;
   }
   const commandNotes = (() => {
@@ -601,6 +629,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       return [
         ...loadedInstructions.commandNotes,
         "Injected Rudder operating contract via --append-system-prompt-file.",
+        "Injected Rudder enabled-skill boundary via --append-system-prompt-file.",
         ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       ];
     }
@@ -613,6 +642,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     return [
       ...loadedInstructions.commandNotes,
       `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended; relative references from ${instructionsFileDir}).`,
+      "Injected Rudder enabled-skill boundary via --append-system-prompt-file.",
       ...(imageAttachmentNote ? [imageAttachmentNote] : []),
     ];
   })();
@@ -681,12 +711,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     renderedPrompt,
   ]);
   const agentInstructionStack = joinPromptSections([
-    loadedInstructions.prefix,
+    claudeSystemPrompt,
     prompt,
   ]);
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,

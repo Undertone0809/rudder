@@ -12,10 +12,11 @@ work is not only "run a command"; it is a governed loop:
 Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
 ```
 
-Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow for
-timed wakeups, assignment wakes, reviewer wakes, mention wakes, passive
-follow-up, and review close-out. Use this skill when that flow, a chat/manual
-context, or your own investigation needs Rudder control-plane details:
+Runtime-owned heartbeat prompts provide the fixed heartbeat execution flow only
+for heartbeat scene runs. Issue, review, chat, and automation runs still use
+this skill for Rudder control-plane details when needed. Use this skill when a
+heartbeat flow, issue/review/chat/automation context, or your own investigation
+needs Rudder control-plane details:
 ownership, checkout, approvals, comments, reviews, Library handoffs, and
 organization-skill operations.
 
@@ -42,8 +43,8 @@ organization-skill operations.
   implement, modify files, close the issue, or take ownership, respond to the
   comment's actual content instead of broadening the wake into issue execution.
 - Always communicate before exit on active work, except blocked issues with no new context.
-- Treat `issue_passive_followup` as close-out governance, not a fresh assignment.
-- Treat `issue_review_closeout_missing` as review close-out governance.
+- Treat `issue_passive_followup` as issue follow-up, not a fresh assignment.
+- Treat `issue_review_closeout_missing` as review follow-up.
 - A reviewer does not take over implementation unless explicitly asked.
 - Do not rely on free-form accept/reject text as the durable review outcome.
 - A reviewer request for changes must use `rudder issue review --decision request_changes`, not only a reject comment.

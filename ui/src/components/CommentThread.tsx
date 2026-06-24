@@ -171,7 +171,7 @@ function findScrollContainer(element: HTMLElement) {
 function scrollCommentElementToCenter(element: HTMLElement, behavior: ScrollBehavior) {
   const container = findScrollContainer(element);
   if (!container || typeof container.scrollTo !== "function") {
-    element.scrollIntoView({ behavior, block: "center", inline: "nearest" });
+    element.scrollIntoView?.({ behavior, block: "center", inline: "nearest" });
     return { container: null, scrollTop: null };
   }
 
@@ -1041,6 +1041,7 @@ export function CommentThread({
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
+  const [reserveHashScrollEndSpace, setReserveHashScrollEndSpace] = useState(false);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
@@ -1054,8 +1055,6 @@ export function CommentThread({
   const pendingScrollCancelCleanupRef = useRef<(() => void) | null>(null);
   const visibleComments = useMemo(() => comments.filter((comment) => !comment.deletedAt), [comments]);
   const currentIssueId = visibleComments[0]?.issueId ?? null;
-  const hashCommentId = commentIdFromIssueCommentHash(location.hash);
-  const reserveHashScrollEndSpace = Boolean(hashCommentId && visibleComments.some((comment) => comment.id === hashCommentId));
 
   const timeline = useMemo<TimelineItem[]>(() => {
     const commentItems: TimelineItem[] = visibleComments.map((comment) => ({
@@ -1178,6 +1177,7 @@ export function CommentThread({
     pendingScrollCancelCleanupRef.current?.();
     pendingScrollCancelCleanupRef.current = null;
     lastCommentScrollRef.current = null;
+    setReserveHashScrollEndSpace(false);
   }, []);
 
   useEffect(() => {
@@ -1264,9 +1264,11 @@ export function CommentThread({
     const hash = location.hash;
     const commentId = commentIdFromIssueCommentHash(hash);
     if (!commentId || visibleComments.length === 0) return;
+    if (!visibleComments.some((comment) => comment.id === commentId)) return;
     const navigationKey = `${location.key}:${hash}`;
     if (lastHandledCommentHashRef.current === navigationKey) return;
     clearPendingCommentScroll();
+    setReserveHashScrollEndSpace(true);
 
     if (scrollToComment(commentId, "auto")) {
       lastHandledCommentHashRef.current = navigationKey;
@@ -1300,8 +1302,15 @@ export function CommentThread({
         }, delay);
         pendingScrollRetryTimersRef.current.push(timer);
       }
+      const clearSpacerTimer = setTimeout(() => {
+        setReserveHashScrollEndSpace(false);
+        pendingScrollRetryTimersRef.current = pendingScrollRetryTimersRef.current.filter((item) => item !== clearSpacerTimer);
+      }, Math.max(...COMMENT_HASH_SCROLL_RETRY_DELAYS_MS) + 120);
+      pendingScrollRetryTimersRef.current.push(clearSpacerTimer);
+    } else {
+      setReserveHashScrollEndSpace(false);
     }
-  }, [clearPendingCommentScroll, location.hash, location.key, scrollToComment, visibleComments.length]);
+  }, [clearPendingCommentScroll, location.hash, location.key, scrollToComment, visibleComments]);
 
   async function handleSubmit() {
     const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;

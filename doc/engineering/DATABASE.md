@@ -43,6 +43,16 @@ This mode is ideal for local development and one-command installs.
 
 Docker note: the Docker quickstart image also uses embedded PostgreSQL by default. Persist `/rudder` to keep DB state across container restarts (see `doc/engineering/DOCKER.md`).
 
+Production local and packaged Desktop builds should use PostgreSQL 18.4 production binaries for this managed local database path. Set `RUDDER_POSTGRES_BIN_DIR` to the `bin` directory from a PostgreSQL 18.4 installation or packaged runtime payload:
+
+```sh
+RUDDER_POSTGRES_BIN_DIR=/path/to/postgresql-18.4/bin pnpm rudder run
+```
+
+When `RUDDER_POSTGRES_BIN_DIR` is set, Rudder validates `initdb`, `pg_ctl`, and `postgres`, requires `postgres --version` to report PostgreSQL 18.4, and then manages the local cluster with those production binaries. If the variable is unset, development shells can still fall back to the legacy `embedded-postgres` wrapper for compatibility; production Desktop packaging requires the PostgreSQL 18.4 payload unless `RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1` is explicitly set for a development fallback package.
+
+The CLI runtime cache can also stage a `postgres-18.4/<platform>-<arch>/bin` payload when `RUDDER_POSTGRES_BIN_DIR` is available. The Desktop release workflow provisions PostgreSQL 18.4 before packaging so release assets do not silently fall back to the legacy wrapper.
+
 ## 2. Local PostgreSQL (Docker)
 
 For a full PostgreSQL server locally, use the included Docker Compose setup:

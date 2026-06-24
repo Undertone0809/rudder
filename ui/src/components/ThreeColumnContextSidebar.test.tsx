@@ -224,6 +224,7 @@ function chatConversation(overrides: Partial<ChatConversation> = {}): ChatConver
     id: "chat-1",
     orgId: "org-1",
     status: "active",
+    mutability: "native_chat",
     title: "Inbox triage",
     summary: null,
     latestReplyPreview: null,
@@ -452,11 +453,13 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
         id: "chat-pinned-feishu",
         title: "Pinned Feishu",
         isPinned: true,
+        mutability: "external_bound_chat",
         sourceMetadata: { source: "agent_integration", provider: "feishu" },
       }),
       chatConversation({
         id: "chat-recent-feishu",
         title: "Recent Feishu",
+        mutability: "external_bound_chat",
         sourceMetadata: { source: "agent_integration", provider: "feishu" },
       }),
     ];
@@ -465,10 +468,10 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const pinned = document.querySelector("[data-testid='chat-sidebar-conversation-chat-pinned-feishu']");
     const recent = document.querySelector("[data-testid='chat-sidebar-conversation-chat-recent-feishu']");
-    expect(pinned?.textContent).toContain("Rename");
+    expect(pinned?.textContent).not.toContain("Rename");
     expect(pinned?.textContent).toContain("Unpin");
     expect(pinned?.textContent).not.toContain("Archive");
-    expect(recent?.textContent).toContain("Rename");
+    expect(recent?.textContent).not.toContain("Rename");
     expect(recent?.textContent).toContain("Pin");
     expect(recent?.textContent).not.toContain("Archive");
   });

@@ -238,48 +238,55 @@ Use this body shape for `releases/vX.Y.Z.md` because GitHub already renders the
 release title, tag, author, and publish date around the notes:
 
 ```md
-## Highlights
+## New Features
 
 - ...
 
-## Install
+## Improvements
 
-...
+- ...
+
+## Bug Fixes
+
+- ...
 ```
 
 Do not add an initial `# Rudder vX.Y.Z` heading, `Released: YYYY-MM-DD` line, or
-standalone prose summary before `## Highlights`.
+standalone prose summary before `## New Features`.
 
-For the public docs changelog, keep the version as the only release-level
-heading so Mintlify's page TOC stays scannable:
+For the public docs changelog, keep `## vX.Y.Z` as the version heading, then
+use the same changelog categories inside that version entry:
 
-````md
+```md
 ## vX.Y.Z
 
 Released: YYYY-MM-DD
 
 [GitHub Release](...)
 
-**Highlights**
+### New Features
 
 - ...
 
-**Install**
+### Improvements
 
-```sh
-npx @rudderhq/cli@latest start
+- ...
+
+### Bug Fixes
+
+- ...
 ```
-````
 
-Do not write repeated public-doc labels such as `Highlights`, `Install`, or
-`重点变化` with `##` or `###` heading syntax in `docs/releases.mdx` or
-`docs/zh/releases.mdx`. Use bold labels or prose labels instead.
+Do not use release-section labels such as `Highlights`, `Install`, or
+`重点变化` in `releases/vX.Y.Z.md`, `docs/releases.mdx`, or
+`docs/zh/releases.mdx`. The stable changelog taxonomy is always `New Features`,
+`Improvements`, and `Bug Fixes`, in that order.
 
 Recommended local generation flow:
 
 ```bash
 VERSION="$(./scripts/release.sh stable --print-version)"
-claude --print --output-format stream-json --verbose --dangerously-skip-permissions --model claude-opus-4-6 "Use the release-changelog skill to draft or update releases/v${VERSION}.md for Rudder. Read doc/engineering/RELEASING.md and .agents/skills/release-changelog/SKILL.md, then generate the stable changelog for v${VERSION} from commits since the last stable tag. Do not create a canary changelog."
+claude --print --output-format stream-json --verbose --dangerously-skip-permissions --model claude-opus-4-6 "Use the release-changelog skill to draft or update releases/v${VERSION}.md for Rudder. Read doc/engineering/RELEASING.md and .agents/skills/release-changelog/SKILL.md, then generate the stable changelog for v${VERSION} from commits since the last stable tag. Use exactly these top-level sections in order: ## New Features, ## Improvements, ## Bug Fixes. Do not create a canary changelog."
 ```
 
 The repo intentionally does not run this through GitHub Actions because:

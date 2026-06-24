@@ -24,8 +24,8 @@ Seed domains:
   and runtime-context loading.
 - `collaboration`: chat, Messenger, comments, issue threads, unread, and
   conversation semantics.
-- `review-feedback-learning`: review decisions, feedback capture, close-out
-  governance, and learning promotion.
+- `review-feedback-learning`: review decisions, feedback capture, issue/review
+  follow-up, and learning promotion.
 - `library-and-context`: resources, project Library, file references, and
   context eligibility.
 - `automations`: triggers, schedules, output modes, and automation run records.

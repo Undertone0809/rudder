@@ -266,6 +266,9 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(systemPrompt).toContain("# Tacit Memory");
       expect(systemPrompt).toContain("## Your Current Automations");
       expect(systemPrompt).toContain("# Rudder Heartbeat Instruction");
+      expect(systemPrompt).toContain("# Enabled Rudder Skills");
+      expect(systemPrompt).toContain("No optional Rudder skills are enabled for this run.");
+      expect(systemPrompt).toContain("Claude Code built-in/provider-native skills");
       expect(systemPrompt.match(/## Your Current Automations/g)).toHaveLength(1);
       expect(systemPrompt.indexOf("# Agent Instructions")).toBeLessThan(systemPrompt.indexOf("# Agent Soul"));
       expect(systemPrompt.indexOf("# Agent Soul")).toBeLessThan(systemPrompt.indexOf("# Agent Tools"));
@@ -273,12 +276,14 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(systemPrompt.indexOf("# Tacit Memory")).toBeLessThan(systemPrompt.indexOf("## Your Current Automations"));
       expect(systemPrompt.indexOf("## Your Current Automations")).toBeLessThan(systemPrompt.indexOf("## Current Time"));
       expect(systemPrompt.indexOf("## Current Time")).toBeLessThan(systemPrompt.indexOf("# Rudder Heartbeat Instruction"));
+      expect(systemPrompt.indexOf("# Rudder Heartbeat Instruction")).toBeLessThan(systemPrompt.indexOf("# Enabled Rudder Skills"));
       expect(agentInstructionStack).toContain(systemPrompt);
       expect(agentInstructionStack).toContain("Follow the rudder heartbeat.");
       expect(agentInstructionStack).toContain("# Agent Instructions");
       expect(agentInstructionStack).toContain("# Agent Soul");
       expect(agentInstructionStack).toContain("# Agent Tools");
       expect(agentInstructionStack).toContain("# Tacit Memory");
+      expect(agentInstructionStack).toContain("# Enabled Rudder Skills");
       expect(agentInstructionStack).not.toContain("## Agent Instruction:");
       expect(agentInstructionStack).toContain("## Your Current Automations");
       expect(agentInstructionStack).not.toContain("[startup context omitted from persisted prompt]");
@@ -419,9 +424,81 @@ describe("claude execute", { timeout: 20_000 }, () => {
 
       expect(result.exitCode).toBe(0);
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        appendedSystemPrompt: string | null;
         addDirSkillEntries: string[];
       };
       expect(capture.addDirSkillEntries).toContain("build-advisor");
+      expect(capture.appendedSystemPrompt).toContain("# Enabled Rudder Skills");
+      expect(capture.appendedSystemPrompt).toContain("- build-advisor: adapter:claude_local:build-advisor");
+      expect(capture.appendedSystemPrompt).not.toContain("No optional Rudder skills are enabled");
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("mounts always-enabled Rudder bundled skills from runtime context", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-bundled-skill-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "claude");
+    const capturePath = path.join(root, "capture.json");
+    const bundledSkillRoot = path.join(root, "bundled", "rudder");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(bundledSkillRoot, { recursive: true });
+    await fs.writeFile(path.join(bundledSkillRoot, "SKILL.md"), "---\nname: rudder\n---\n", "utf8");
+    await writeFakeClaudeCommand(commandPath);
+
+    const restoreEnv = setOperatorHomeForTest(root);
+
+    try {
+      const result = await execute({
+        runId: "run-claude-bundled-skill",
+        agent: {
+          id: "agent-bundled",
+          orgId: "organization-1",
+          name: "Claude Coder",
+          agentRuntimeType: "claude_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            HOME: root,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          rudderRuntimeSkills: [
+            {
+              key: "bundled:rudder/rudder",
+              runtimeName: "rudder",
+              name: "rudder",
+              source: bundledSkillRoot,
+            },
+          ],
+          rudderSkillSync: {
+            desiredSkills: ["bundled:rudder/rudder"],
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        appendedSystemPrompt: string | null;
+        addDirSkillEntries: string[];
+      };
+      expect(capture.addDirSkillEntries).toContain("rudder");
+      expect(capture.appendedSystemPrompt).toContain("# Enabled Rudder Skills");
+      expect(capture.appendedSystemPrompt).toContain("- rudder: bundled:rudder/rudder");
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });
@@ -476,6 +553,11 @@ describe("claude execute", { timeout: 20_000 }, () => {
     const restoreEnv = setOperatorHomeForTest(root);
 
     try {
+      let commandNotes: string[] = [];
+      let promptMetrics: Record<string, number> = {};
+      let loadedSkills: unknown[] = [{ key: "before" }];
+      let realizedSkills: unknown[] = [{ key: "before" }];
+      let nativeDiscoverableSkills: unknown[] | undefined = [{ key: "before" }];
       const result = await execute({
         runId: "run-3",
         agent: {
@@ -503,10 +585,18 @@ describe("claude execute", { timeout: 20_000 }, () => {
         context: {},
         authToken: "run-jwt-token",
         onLog: async () => {},
+        onMeta: async (meta) => {
+          commandNotes = Array.isArray(meta.commandNotes) ? meta.commandNotes : [];
+          promptMetrics = meta.promptMetrics ?? {};
+          loadedSkills = meta.loadedSkills ?? [];
+          realizedSkills = meta.realizedSkills ?? [];
+          nativeDiscoverableSkills = meta.nativeDiscoverableSkills;
+        },
       });
 
       expect(result.exitCode).toBe(0);
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        appendedSystemPrompt: string | null;
         argv: string[];
         env: {
           HOME: string | null;
@@ -531,8 +621,8 @@ describe("claude execute", { timeout: 20_000 }, () => {
       const managedConfigDir = path.join(managedHome, ".claude");
       const runtimeTmpDir = path.join(managedHome, "runtime-tmp", "run-3");
       expect(capture.managedClaudeSettingsPath).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/.claude/settings.json");
-      expect(capture.env.HOME).toBe(root);
-      expect(capture.env.USERPROFILE).toBe(root);
+      expect(capture.env.HOME).toBe(managedHome);
+      expect(capture.env.USERPROFILE).toBe(managedHome);
       expect(capture.env.RUDDER_OPERATOR_HOME).toBe(root);
       expect(capture.env.RUDDER_CLAUDE_HOME).toBe(managedHome);
       expect(capture.env.RUDDER_RUNTIME_TMPDIR).toBe(runtimeTmpDir);
@@ -570,6 +660,16 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(capture.argv).toContain("--add-dir");
       expect(capture.argv).toContain(runtimeTmpDir);
       expect(capture.addDirSkillEntries).not.toContain("user-skill.txt");
+      expect(capture.appendedSystemPrompt).toContain("# Enabled Rudder Skills");
+      expect(capture.appendedSystemPrompt).toContain("No optional Rudder skills are enabled for this run.");
+      expect(capture.appendedSystemPrompt).toContain("Claude Code built-in/provider-native skills");
+      expect(capture.appendedSystemPrompt).not.toContain("host-global-skill");
+      expect(capture.appendedSystemPrompt).not.toContain("user-skill");
+      expect(commandNotes).toContain("Injected Rudder enabled-skill boundary via --append-system-prompt-file.");
+      expect(promptMetrics.skillBoundaryPromptChars).toBeGreaterThan(0);
+      expect(loadedSkills).toEqual([]);
+      expect(realizedSkills).toEqual([]);
+      expect(nativeDiscoverableSkills).toBeUndefined();
     } finally {
       restoreEnv();
       await fs.rm(path.join(root, ".rudder"), { recursive: true, force: true });

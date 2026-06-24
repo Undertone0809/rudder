@@ -6,24 +6,12 @@ import {
   cleanupStaleSysvSharedMemorySegments,
   isEmbeddedPostgresSharedMemoryError,
 } from "./embedded-postgres-recovery.js";
+import {
+  createLocalPostgresInstance,
+  RUDDER_PRODUCTION_POSTGRES_VERSION,
+  type LocalPostgresInstance,
+} from "./local-postgres-provider.js";
 import { resolveDatabaseTarget } from "./runtime-config.js";
-
-type EmbeddedPostgresInstance = {
-  initialise(): Promise<void>;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-};
-
-type EmbeddedPostgresCtor = new (opts: {
-  databaseDir: string;
-  user: string;
-  password: string;
-  port: number;
-  persistent: boolean;
-  initdbFlags?: string[];
-  onLog?: (message: unknown) => void;
-  onError?: (message: unknown) => void;
-}) => EmbeddedPostgresInstance;
 
 export type MigrationConnection = {
   connectionString: string;
@@ -91,22 +79,10 @@ async function findAvailablePort(startPort: number): Promise<number> {
   );
 }
 
-async function loadEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
-  try {
-    const mod = await import("embedded-postgres");
-    return mod.default as EmbeddedPostgresCtor;
-  } catch {
-    throw new Error(
-      "Embedded PostgreSQL support requires dependency `embedded-postgres`. Reinstall dependencies and try again.",
-    );
-  }
-}
-
 async function ensureEmbeddedPostgresConnection(
   dataDir: string,
   preferredPort: number,
 ): Promise<MigrationConnection> {
-  const EmbeddedPostgres = await loadEmbeddedPostgresCtor();
   const selectedPort = await findAvailablePort(preferredPort);
   const postmasterPidFile = path.resolve(dataDir, "postmaster.pid");
   const pgVersionFile = path.resolve(dataDir, "PG_VERSION");
@@ -171,8 +147,9 @@ async function ensureEmbeddedPostgresConnection(
     };
   }
 
-  const createInstance = () =>
-    new EmbeddedPostgres({
+  let providerLabel = "embedded-postgres";
+  const createInstance = async (): Promise<LocalPostgresInstance> => {
+    const selection = await createLocalPostgresInstance({
       databaseDir: dataDir,
       user: "rudder",
       password: "rudder",
@@ -182,8 +159,13 @@ async function ensureEmbeddedPostgresConnection(
       onLog: appendLog,
       onError: appendLog,
     });
+    providerLabel = selection.provider === "official-postgres"
+      ? `postgresql-${RUDDER_PRODUCTION_POSTGRES_VERSION}`
+      : "embedded-postgres";
+    return selection.instance;
+  };
 
-  const instance = createInstance();
+  const instance = await createInstance();
 
   if (!existsSync(path.resolve(dataDir, "PG_VERSION"))) {
     try {
@@ -209,7 +191,7 @@ async function ensureEmbeddedPostgresConnection(
         process.emitWarning(
           `Recovered ${recovered.removedIds.length} stale SysV shared memory segment(s) before retrying embedded PostgreSQL startup on port ${selectedPort}.`,
         );
-        startedInstance = createInstance();
+        startedInstance = await createInstance();
         try {
           await startedInstance.start();
         } catch (retryError) {
@@ -228,7 +210,7 @@ async function ensureEmbeddedPostgresConnection(
 
   return {
     connectionString: `postgres://rudder:rudder@127.0.0.1:${selectedPort}/rudder`,
-    source: `embedded-postgres@${selectedPort}`,
+    source: `${providerLabel}@${selectedPort}`,
     stop: async () => {
       await startedInstance.stop();
     },

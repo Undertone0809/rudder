@@ -227,7 +227,7 @@ Before changing the issue, inspect the current issue state and any side effects 
  * - issue_changes_requested:
  *   "A reviewer requested changes on an issue you own ..."
  *   Includes issue summary plus reviewer attribution/comment body so the assignee can act on feedback immediately.
- * - issue_commented / issue_reopened_via_comment:
+ * - issue_commented (legacy compatibility) / issue_reopened_via_comment:
  *   "There is a new comment on an issue you own ..."
  *   Includes issue summary plus the newest comment author/body so the assignee can continue immediately.
  * - recovery:
@@ -378,7 +378,7 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
 export const RUDDER_AGENT_HEARTBEAT_INSTRUCTION = [
   "# Rudder Heartbeat Instruction",
   "",
-  "This section is injected by Rudder for heartbeat scene runs. It is the platform-owned timed-wakeup pipeline.",
+  "This section is injected by Rudder only for heartbeat scene runs. It is the platform-owned heartbeat/self-check pipeline.",
   "",
   "## Heartbeat Pipeline",
   "",
@@ -395,8 +395,8 @@ export const RUDDER_AGENT_HEARTBEAT_INSTRUCTION = [
   "6. Checkout before doing assignee task work. A `409` means another agent owns the task; do not retry it.",
   "7. Load compact issue context, do one bounded useful chunk, and preserve evidence.",
   "8. Before exiting active work, leave exactly one durable signal: progress, done, blocked, explicit handoff, or structured review decision.",
-  "9. Treat passive follow-up as close-out governance, not a fresh assignment.",
-  "10. Treat review close-out follow-up as review governance; free-form accept/reject text is not a durable decision.",
+  "9. Treat passive follow-up as issue follow-up, not a fresh assignment.",
+  "10. Treat review close-out follow-up as review follow-up; free-form accept/reject text is not a durable decision.",
   "",
   "Use the Rudder control-plane interface available in this runtime. CLI-capable runtimes should use the bundled `rudder` skill for command details, Library handoff rules, organization-skill workflow, and control-plane best practices. HTTP compatibility runtimes should follow the explicit HTTP workflow in their wake text; that workflow overrides CLI command guidance.",
 ].join("\n");

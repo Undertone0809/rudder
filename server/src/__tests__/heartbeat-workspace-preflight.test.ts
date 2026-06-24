@@ -927,9 +927,11 @@ describe("heartbeat managed workspace preflight", () => {
     expect(capture.prompt).toContain(`| \`${chatId}\` |`);
     expect(capture.prompt).toContain("Agent run startup memory | 默认装载今天和昨天的 memory md");
     expect(capture.prompt).not.toContain("recent runs");
+    expect(capture.prompt).not.toContain("# Rudder Heartbeat Instruction");
 
     const [updatedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run!.id));
     expect(updatedRun?.contextSnapshot).toMatchObject({
+      rudderScene: "issue",
       rudderStartupContextMetrics: {
         recentIssuesCount: 1,
         recentChatsCount: 1,

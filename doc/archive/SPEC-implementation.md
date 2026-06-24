@@ -954,7 +954,13 @@ Required UX behaviors:
 
 - Node 20+
 - `DATABASE_URL` optional
-- if unset, auto-use PGlite and push schema
+- if unset, use the managed local PostgreSQL path and apply Drizzle migrations
+- production local and packaged Desktop builds use an official PostgreSQL 18.4
+  runtime payload (`postgres-18.4/<platform>-<arch>/bin`) selected from
+  `RUDDER_POSTGRES_BIN_DIR`, a prepared runtime cache, or packaged Desktop
+  resources
+- the legacy `embedded-postgres` npm wrapper is a development/backward-
+  compatibility fallback, not the production packaging contract
 
 ## 15.2 Migrations
 
@@ -1063,7 +1069,7 @@ V1 is complete only when all criteria are true:
 6. Budget hard limit auto-pauses an agent and prevents new invocations.
 7. Dashboard shows accurate counts/spend from live DB data.
 8. Every mutation is auditable in activity log.
-9. App runs with embedded PostgreSQL by default and with external Postgres via `DATABASE_URL`.
+9. App runs with the managed local PostgreSQL 18.4 production runtime by default and with external Postgres via `DATABASE_URL`.
 10. Chat can clarify requests, create at most one primary issue per conversation, and preserve audit-visible proposal history.
 
 ## 20. Post-V1 Backlog (Explicitly Deferred)

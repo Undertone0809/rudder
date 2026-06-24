@@ -193,7 +193,7 @@ describe("selectPromptTemplate", () => {
     expect(rendered).not.toContain("Current Issue Context");
   });
 
-  it("renders a passive issue follow-up prompt when close-out governance wakes the agent", () => {
+  it("renders a passive issue follow-up prompt when issue follow-up wakes the agent", () => {
     const context = {
       wakeReason: "issue_passive_followup",
       issue: {
@@ -411,7 +411,7 @@ describe("loadAgentInstructionsPrefix", () => {
 
     expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
     expect(loaded.prefix).toContain(RUDDER_AGENT_HEARTBEAT_INSTRUCTION);
-    expect(loaded.prefix).toContain("platform-owned timed-wakeup pipeline");
+    expect(loaded.prefix).toContain("platform-owned heartbeat/self-check pipeline");
     expect(loaded.commandNotes).toEqual([
       "Loaded Rudder agent operating contract from runtime code",
       "Loaded Rudder heartbeat instructions from runtime code",
@@ -424,11 +424,13 @@ describe("loadAgentInstructionsPrefix", () => {
 
   it("does not request runtime heartbeat instructions for comment-triggered issue wakes", () => {
     expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "heartbeat" })).toBe(true);
-    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "heartbeat", wakeReason: "issue_assigned" })).toBe(true);
+    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "issue", wakeReason: "issue_assigned" })).toBe(false);
+    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "review", wakeReason: "issue_review_requested" })).toBe(false);
+    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "automation" })).toBe(false);
     expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "chat" })).toBe(false);
-    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "heartbeat", wakeReason: "issue_commented" })).toBe(false);
-    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "heartbeat", wakeReason: "issue_comment_mentioned" })).toBe(false);
-    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "heartbeat", wakeReason: "issue_reopened_via_comment" })).toBe(false);
+    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "issue", wakeReason: "issue_commented" })).toBe(false);
+    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "issue", wakeReason: "issue_comment_mentioned" })).toBe(false);
+    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "issue", wakeReason: "issue_reopened_via_comment" })).toBe(false);
   });
 
   it("loads the operating contract and entry instructions when no sibling memory file exists", async () => {

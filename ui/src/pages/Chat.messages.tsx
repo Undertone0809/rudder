@@ -2005,9 +2005,9 @@ export function ChatMessageItem({
   actionPending: boolean;
   onCopyMessageText: (text: string) => void | Promise<void>;
   onForkMessage?: (message: ChatMessage) => void;
-  onEditUserMessage: (message: ChatMessage) => void;
-  onContinueInterruptedMessage: (message: ChatMessage) => void;
-  onRetryFailedMessage: (message: ChatMessage) => void;
+  onEditUserMessage?: (message: ChatMessage) => void;
+  onContinueInterruptedMessage?: (message: ChatMessage) => void;
+  onRetryFailedMessage?: (message: ChatMessage) => void;
   onOpenImage: (preview: AttachmentPreviewState) => void;
   onOpenFile: (targetPath: string) => void;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
@@ -2096,8 +2096,8 @@ export function ChatMessageItem({
 
   const isUser = message.role === "user";
   const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
-  const canContinueInterrupted = canContinueInterruptedChatMessage(message);
-  const canRetryFailed = canRetryFailedChatMessage(message);
+  const canContinueInterrupted = Boolean(onContinueInterruptedMessage) && canContinueInterruptedChatMessage(message);
+  const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
   const recoverableFailure = message.status === "failed" ? recoverableFailureFromMessage(message) : null;
   const isEmptyStreamingAssistant = !isUser && message.status === "streaming" && message.body.trim().length === 0;
   const isInlineEditing = isUser && Boolean(inlineEdit);
@@ -2120,7 +2120,7 @@ export function ChatMessageItem({
                 <button
                   type="button"
                   className="inline-flex h-7 items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 text-xs font-medium text-amber-700 transition-[background-color,border-color,color,box-shadow] hover:border-amber-500/70 hover:bg-amber-500/25 hover:text-amber-950 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/35 dark:text-amber-300 dark:hover:text-amber-100"
-                  onClick={() => onContinueInterruptedMessage(message)}
+                  onClick={() => onContinueInterruptedMessage?.(message)}
                 >
                   Continue
                 </button>
@@ -2148,7 +2148,7 @@ export function ChatMessageItem({
                 <button
                   type="button"
                   className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-destructive/30 bg-background/70 px-2 text-xs font-medium text-destructive transition-colors hover:bg-background"
-                  onClick={() => onRetryFailedMessage(message)}
+                  onClick={() => onRetryFailedMessage?.(message)}
                 >
                   <RotateCcw className="h-3.5 w-3.5" aria-hidden />
                   Retry
@@ -2296,14 +2296,16 @@ export function ChatMessageItem({
           )}
         >
           <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-            aria-label="Edit message"
-            onClick={() => onEditUserMessage(message)}
-          >
-            <Pencil className="h-4 w-4" />
-          </button>
+          {onEditUserMessage ? (
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+              aria-label="Edit message"
+              onClick={() => onEditUserMessage(message)}
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+          ) : null}
           {turnBranchControls ? (
             <span className="inline-flex items-center gap-0.5 rounded-md px-0.5 text-[11px] tabular-nums text-muted-foreground">
             <button

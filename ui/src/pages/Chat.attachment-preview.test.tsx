@@ -39,6 +39,7 @@ const mockState = vi.hoisted(() => ({
   navigate: vi.fn(),
   pushToast: vi.fn(),
   queryKeys: [] as unknown[][],
+  getQueryData: vi.fn(),
   sendInFlightByChatId: {} as Record<string, true>,
   sendMessageStream: vi.fn(),
   setQueriesData: vi.fn(),
@@ -111,6 +112,7 @@ vi.mock("@tanstack/react-query", () => ({
     },
   }),
   useQueryClient: () => ({
+    getQueryData: mockState.getQueryData,
     invalidateQueries: mockState.invalidateQueries,
     setQueryData: mockState.setQueryData,
     setQueriesData: mockState.setQueriesData,
@@ -246,6 +248,8 @@ function chat(overrides: Partial<ChatConversation> = {}): ChatConversation {
     needsAttention: false,
     resolvedAt: null,
     contextLinks: [],
+    sourceMetadata: null,
+    mutability: "native_chat",
     chatRuntime: {
       sourceType: "agent",
       sourceLabel: "Wesley",
@@ -638,6 +642,7 @@ beforeEach(() => {
   mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
   mockState.queryKeys = [];
+  mockState.getQueryData.mockReset();
   mockState.sendInFlightByChatId = {};
   mockState.sendMessageStream.mockReset();
   mockState.setQueriesData.mockReset();
@@ -972,6 +977,7 @@ describe("Chat streaming controls", () => {
 describe("Feishu-backed chat controls", () => {
   function feishuChat(overrides: Partial<ChatConversation> = {}) {
     return chat({
+      mutability: "external_bound_chat",
       sourceMetadata: {
         source: "agent_integration",
         provider: "feishu",
@@ -983,7 +989,51 @@ describe("Feishu-backed chat controls", () => {
     });
   }
 
-  it("hides archive and delete actions for Feishu-backed chats", async () => {
+  it("shows a read-only fork CTA instead of sending Feishu quick commands", async () => {
+    mockState.conversations = [feishuChat()];
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "plain-user-message", body: "Message from Feishu" })],
+    };
+
+    const { container } = renderChat();
+
+    expect(container.querySelector("[data-testid='chat-external-bound-readonly']")).not.toBeNull();
+    expect(container.querySelector("textarea[aria-label='Composer draft']")).toBeNull();
+    expect(container.querySelector("[data-testid='feishu-quick-command']")).toBeNull();
+    const forkButton = container.querySelector<HTMLButtonElement>("[data-testid='chat-fork-to-continue']");
+    expect(forkButton).not.toBeNull();
+
+    await act(async () => {
+      forkButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.mutations.at(-1)).toEqual({ chatId: "chat-1" });
+  });
+
+  it("allows normal composer controls in a native fork from Feishu", () => {
+    mockState.conversations = [
+      chat({
+        id: "chat-fork",
+        title: "Forked Feishu chat",
+        forkedFromConversationId: "chat-1",
+        forkRootConversationId: "chat-1",
+        mutability: "native_fork_from_external",
+      }),
+    ];
+    mockState.conversationId = "chat-fork";
+    mockState.messagesByChatId = {
+      "chat-fork": [message({ id: "fork-message", conversationId: "chat-fork", body: "Continue in Rudder" })],
+    };
+
+    const { container } = renderChat();
+
+    expect(container.querySelector("[data-testid='chat-external-bound-readonly']")).toBeNull();
+    expect(container.querySelector("textarea[aria-label='Composer draft']")).not.toBeNull();
+  });
+
+  it("hides local mutation actions for Feishu-backed chats", async () => {
     mockState.conversations = [feishuChat()];
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "plain-user-message", body: "Message from Feishu" })],
@@ -1002,8 +1052,10 @@ describe("Feishu-backed chat controls", () => {
       await Promise.resolve();
     });
 
-    expect(document.body.textContent).toContain("Pin Chat");
-    expect(document.body.textContent).toContain("Fork latest");
+    expect(document.body.textContent).toContain("Pin");
+    expect(document.body.textContent).toContain("Fork");
+    expect(document.body.textContent).not.toContain("Rename");
+    expect(document.body.textContent).not.toContain("Regenerate title");
     expect(document.body.textContent).not.toContain("Delete");
     expect(document.body.textContent).not.toContain("Archive");
   });
@@ -1678,6 +1730,27 @@ describe("Chat project context selector", () => {
     expect(projectMenu).not.toBeNull();
     expect(projectMenu?.textContent).toContain("Rudder mkt");
     expect(projectMenu?.textContent).not.toMatch(/\b\d+\s+resources\b/u);
+  });
+
+  it("hides the no-project selector after a conversation starts without project context", () => {
+    mockState.conversations = [chat({ id: "chat-1" })];
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "message-1",
+          role: "user",
+          kind: "message",
+          body: "What skill do you have?",
+          createdAt: new Date("2026-05-12T09:01:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:01:00.000Z"),
+        }),
+      ],
+    };
+    mockState.projects = [project({ name: "Rudder mkt" })];
+
+    const { container } = renderChat();
+
+    expect(container.querySelector("[data-testid='chat-project-selector']")).toBeNull();
   });
 
   it("locks the project selector after a conversation already has project context", () => {

@@ -311,8 +311,38 @@ describe("CommentThread", () => {
     }
   });
 
-  it("keeps the hash-scroll end spacer compact so comments stay close to the composer", () => {
-    const html = renderToStaticMarkup(
+  it("keeps the hash-scroll end spacer compact while comment hash positioning runs", () => {
+    const container = renderInteractive(
+      <MemoryRouter initialEntries={["/issues/issue-1#comment-comment-2"]}>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-2",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Target comment",
+              createdAt: new Date("2026-05-07T00:01:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:01:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+    const spacer = container.querySelector("[data-testid='comment-hash-scroll-end-space']");
+
+    expect(spacer).toBeTruthy();
+    expect(spacer?.getAttribute("class")).toContain("h-[var(--comment-hash-scroll-end-space)]");
+    expect(spacer?.getAttribute("style")).toContain("--comment-hash-scroll-end-space: min(6rem, 12vh)");
+    expect(spacer?.getAttribute("class")).not.toContain("h-[min(18rem,35vh)]");
+  });
+
+  it("removes the hash-scroll end spacer after comment hash positioning settles", () => {
+    vi.useFakeTimers();
+
+    const container = renderInteractive(
       <MemoryRouter initialEntries={["/issues/issue-1#comment-comment-2"]}>
         <CommentThread
           comments={[
@@ -332,10 +362,13 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain('data-testid="comment-hash-scroll-end-space"');
-    expect(html).toContain("h-[var(--comment-hash-scroll-end-space)]");
-    expect(html).toContain("--comment-hash-scroll-end-space:min(6rem, 12vh)");
-    expect(html).not.toContain("h-[min(18rem,35vh)]");
+    expect(container.querySelector("[data-testid='comment-hash-scroll-end-space']")).toBeTruthy();
+
+    act(() => {
+      vi.advanceTimersByTime(1020);
+    });
+
+    expect(container.querySelector("[data-testid='comment-hash-scroll-end-space']")).toBeNull();
   });
 
   it("retries hash-targeted comment positioning after asynchronous layout shifts", () => {
@@ -567,19 +600,22 @@ describe("CommentThread", () => {
       },
     ];
 
-    const withoutHash = renderToStaticMarkup(
+    let container = renderInteractive(
       <MemoryRouter initialEntries={["/messenger/issues/issue-1"]}>
         <CommentThread comments={comments} onAdd={async () => undefined} />
       </MemoryRouter>,
     );
-    expect(withoutHash).not.toContain("comment-hash-scroll-end-space");
+    expect(container.querySelector("[data-testid='comment-hash-scroll-end-space']")).toBeNull();
 
-    const withHash = renderToStaticMarkup(
+    cleanupFn?.();
+    cleanupFn = null;
+
+    container = renderInteractive(
       <MemoryRouter initialEntries={["/messenger/issues/issue-1#comment-comment-1"]}>
         <CommentThread comments={comments} onAdd={async () => undefined} />
       </MemoryRouter>,
     );
-    expect(withHash).toContain("comment-hash-scroll-end-space");
+    expect(container.querySelector("[data-testid='comment-hash-scroll-end-space']")).toBeTruthy();
   });
 
   beforeEach(() => {

@@ -77,7 +77,6 @@ const sceneLabels: Record<AgentRunScene, string> = {
   chat: "Chat",
   automation: "Automation",
   review: "Review",
-  manual: "Manual",
   heartbeat: "Heartbeat",
 };
 

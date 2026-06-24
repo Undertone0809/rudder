@@ -1665,6 +1665,73 @@ describe("codex execute", { timeout: 20_000 }, () => {
     },
   );
 
+  it("does not inject runtime heartbeat instructions for issue assignment scene runs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-issue-assignment-scene-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    let commandNotes: string[] = [];
+    let promptMetrics: Record<string, number> = {};
+    try {
+      const result = await execute({
+        runId: "run-issue-assignment",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Work on the assigned issue.",
+        },
+        context: {
+          rudderScene: "issue",
+          wakeSource: "assignment",
+          wakeReason: "issue_assigned",
+          issueId: "issue-1",
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          commandNotes = Array.isArray(meta.commandNotes) ? meta.commandNotes : [];
+          promptMetrics = meta.promptMetrics ?? {};
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.prompt).toContain("# Rudder Agent Operating Contract");
+      expect(capture.prompt).toContain("Work on the assigned issue.");
+      expect(capture.prompt).not.toContain("# Rudder Heartbeat Instruction");
+      expect(commandNotes).not.toContain("Loaded Rudder heartbeat instructions from runtime code");
+      expect(promptMetrics.runtimeHeartbeatChars).toBe(0);
+      expect(promptMetrics.heartbeatChars).toBe(0);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("adds --skip-git-repo-check for chat-scene Codex runs", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-chat-scene-"));
     const workspace = path.join(root, "workspace");

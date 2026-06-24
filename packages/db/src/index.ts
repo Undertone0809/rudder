@@ -21,4 +21,20 @@ export {
   type CleanupStaleSysvSharedMemoryResult,
   type SysvSharedMemorySegment
 } from "./embedded-postgres-recovery.js";
+export {
+  RUDDER_POSTGRES_BIN_DIR_ENV,
+  RUDDER_PRODUCTION_POSTGRES_VERSION,
+  assertOfficialPostgresVersion,
+  buildOfficialPostgresInitdbArgs,
+  createLocalPostgresInstance,
+  createOfficialPostgresInstance,
+  resolveOfficialPostgresBinDir,
+  resolveOfficialPostgresBinaries,
+  validateOfficialPostgresBinDir,
+  type LocalPostgresInstance,
+  type LocalPostgresInstanceOptions,
+  type LocalPostgresInstanceSelection,
+  type LocalPostgresProvider,
+  type PostgresVersionRunner
+} from "./local-postgres-provider.js";
 export * from "./schema/index.js";

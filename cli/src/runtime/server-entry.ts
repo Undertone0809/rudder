@@ -29,6 +29,8 @@ export interface LoadServerRuntimeOptions {
   onRuntimeInstalled?: (result: Awaited<ReturnType<typeof ensureRuntimeInstalled>>) => void;
 }
 
+const RUDDER_POSTGRES_BIN_DIR_ENV = "RUDDER_POSTGRES_BIN_DIR";
+
 function formatError(err: unknown): string {
   if (err instanceof Error) {
     if (err.message && err.message.trim().length > 0) return err.message;
@@ -65,8 +67,14 @@ export async function loadServerRuntimeModule(options: LoadServerRuntimeOptions)
   const installOptions: EnsureRuntimeInstalledOptions = {
     version: options.version,
     homeDir: options.homeDir,
+    preparePostgresPayload: true,
   };
   const runtime = await ensureRuntimeInstalled(installOptions);
+  if (!process.env[RUDDER_POSTGRES_BIN_DIR_ENV]?.trim()) {
+    if (runtime.postgresPayloadBinDir && fs.existsSync(runtime.postgresPayloadBinDir)) {
+      process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = runtime.postgresPayloadBinDir;
+    }
+  }
   options.onRuntimeInstalled?.(runtime);
   return await importRuntimeServerModule(runtime.cacheDir);
 }

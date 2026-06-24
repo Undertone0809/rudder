@@ -1,5 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import {
+  agentIntegrationChatBindings,
   agents,
   approvals,
   chatConversationUserStates,
@@ -141,6 +142,12 @@ export function sidebarBadgeService(db: Db) {
                   and ${chatMessages.supersededAt} is null
                   and ${visibleIncomingMessageSql()}
                   and ${chatMessages.createdAt} > ${chatConversationUserStates.lastReadAt}
+                  and not exists (
+                    select 1
+                    from ${agentIntegrationChatBindings}
+                    where ${agentIntegrationChatBindings.orgId} = ${orgId}
+                      and ${agentIntegrationChatBindings.conversationId} = ${chatMessages.conversationId}
+                  )
               )
               or exists (
                 select 1
@@ -151,6 +158,12 @@ export function sidebarBadgeService(db: Db) {
                   and ${chatMessages.supersededAt} is null
                   and ${approvals.orgId} = ${orgId}
                   and ${approvals.status} = 'pending'
+                  and not exists (
+                    select 1
+                    from ${agentIntegrationChatBindings}
+                    where ${agentIntegrationChatBindings.orgId} = ${orgId}
+                      and ${agentIntegrationChatBindings.conversationId} = ${chatMessages.conversationId}
+                  )
               )
             )`,
           ),

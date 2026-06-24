@@ -39,11 +39,11 @@
     },
     {
       "id": 7,
-      "prompt": "发 stable 的时候顺便更新 docs/releases.mdx。右侧 Mintlify TOC 只想看到 v0.3.3、v0.3.2 这些版本，Highlights 和 Install 不要出现在章节目录里。",
-      "expected_output": "Keeps the stable release route in release-maintainer and updates or instructs the public docs changelog with only version headings. The version remains `## vX.Y.Z`; repeated labels such as `Highlights`, `Install`, and `重点变化` are bold/prose labels rather than `##` or `###` headings, while GitHub Release notes may still use their normal `## Highlights` and `## Install` body shape.",
+      "prompt": "发 stable 的时候顺便更新 docs/releases.mdx 和 docs/zh/releases.mdx。发行 changelog 要统一用 New Features、Improvements、Bug Fixes 这三个分组。",
+      "expected_output": "Keeps the stable release route in release-maintainer and requires both GitHub Release notes and public docs changelog entries to use the standard changelog taxonomy: `New Features`, `Improvements`, and `Bug Fixes`, in that order. The GitHub Release source file `releases/vX.Y.Z.md` uses `## New Features`, `## Improvements`, and `## Bug Fixes` as its top-level body headings. The public docs entries keep `## vX.Y.Z` as the version heading and nest the same three category labels under that version entry in `docs/releases.mdx` and `docs/zh/releases.mdx`.",
       "files": [
         ".agents/skills/maintainer/release-maintainer/SKILL.md",
-        "doc/RELEASING.md",
+        "doc/engineering/RELEASING.md",
         "docs/releases.mdx",
         "docs/zh/releases.mdx"
       ]

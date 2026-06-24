@@ -4,6 +4,7 @@ import path from "node:path";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   agentIntegrationChatBindings,
+  agentIntegrationOutboundMessages,
   agentIntegrationUserBindings,
   agentIntegrations,
   chatConversations,
@@ -24,7 +25,7 @@ test.afterAll(async () => {
 });
 
 test.describe("Feishu source badges", () => {
-  test("handles Feishu-side quick commands and hides archive/delete actions", async ({ page }) => {
+  test("keeps Feishu-bound chats read-only, handles Feishu-side quick commands, and forks into a native Rudder chat", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Feishu-Chat-Controls-${Date.now()}` },
     });
@@ -87,7 +88,7 @@ test.describe("Feishu source badges", () => {
       id: conversationId,
       orgId: organization.id,
       title: "/issue Fix Feishu inbox",
-      summary: "A Feishu-origin chat with Quick Commands.",
+      summary: "A Feishu-origin chat that must be forked before local continuation.",
       issueCreationMode: "manual_approval",
       planMode: false,
       preferredAgentId: agent.id,
@@ -121,21 +122,22 @@ test.describe("Feishu source badges", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`, { waitUntil: "domcontentloaded" });
 
     await expect(page.getByText("Message from Feishu")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-external-bound-readonly")).toBeVisible();
     await expect(page.getByTestId("feishu-quick-command")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "editable markdown" })).toHaveCount(0);
+
+    const directSendRes = await page.request.post(`/api/chats/${conversationId}/messages`, {
+      data: { body: "Local Rudder continuation should be blocked." },
+    });
+    expect(directSendRes.status()).toBe(409);
+    expect(await directSendRes.json()).toMatchObject({ error: "Fork this Feishu chat to continue in Rudder" });
 
     await page.getByTestId("chat-actions-trigger").click();
-    await expect(page.getByRole("menuitem", { name: "Pin Chat" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Fork latest" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
-    await expect(page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0);
-
-    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "domcontentloaded" });
-    const thread = page.getByTestId(`messenger-thread-chat-${conversationId}`);
-    await expect(thread).toBeVisible({ timeout: 15_000 });
-    await thread.getByLabel("Chat actions").click();
+    await expect(page.getByRole("menuitem", { name: "Pin" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Fork" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
 
     const quickCommandRes = await page.request.post(`/api/orgs/${organization.id}/integrations/feishu/mock-inbound`, {
       data: {
@@ -184,6 +186,47 @@ test.describe("Feishu source badges", () => {
     expect(archiveOldConversation.status()).toBe(409);
     const deleteOldConversation = await page.request.delete(`/api/chats/${conversationId}`);
     expect(deleteOldConversation.status()).toBe(409);
+
+    const sourceRes = await page.request.get(`/api/chats/${conversationId}`);
+    expect(sourceRes.ok()).toBe(true);
+    const source = await sourceRes.json() as { mutability: string; sourceMetadata: unknown | null };
+    expect(source.mutability).toBe("external_bound_chat");
+    expect(source.sourceMetadata).toMatchObject({ source: "agent_integration", provider: "feishu" });
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`, { waitUntil: "domcontentloaded" });
+    const forkResponsePromise = page.waitForResponse((response) =>
+      response.url().includes(`/api/chats/${conversationId}/fork`) && response.request().method() === "POST",
+    );
+    await page.getByTestId("chat-fork-to-continue").click();
+    const forkResponse = await forkResponsePromise;
+    expect(forkResponse.status()).toBe(201);
+    const forked = await forkResponse.json() as {
+      id: string;
+      forkedFromConversationId: string | null;
+      sourceMetadata: unknown | null;
+      mutability: string;
+    };
+    expect(forked.forkedFromConversationId).toBe(conversationId);
+    expect(forked.sourceMetadata).toBeNull();
+    expect(forked.mutability).toBe("native_fork_from_external");
+
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${forked.id}`));
+    await expect(page.getByTestId("chat-external-bound-readonly")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "editable markdown" })).toBeVisible({ timeout: 15_000 });
+
+    const forkSendRes = await page.request.post(`/api/chats/${forked.id}/messages`, {
+      data: { body: "Local continuation on the fork is allowed." },
+    });
+    expect(forkSendRes.status()).not.toBe(409);
+    const forkMessagesRes = await page.request.get(`/api/chats/${forked.id}/messages`);
+    expect(forkMessagesRes.ok()).toBe(true);
+    const forkMessages = await forkMessagesRes.json() as Array<{ body: string }>;
+    expect(forkMessages.some((message) => message.body === "Local continuation on the fork is allowed.")).toBe(true);
+    const forkOutboundRows = await e2eDb
+      .select()
+      .from(agentIntegrationOutboundMessages)
+      .where(eq(agentIntegrationOutboundMessages.conversationId, forked.id));
+    expect(forkOutboundRows).toHaveLength(0);
   });
 
   test("labels Feishu chats in Messenger and Feishu runs in run detail", async ({ page }) => {

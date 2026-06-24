@@ -1,8 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_CODEX_STUB } from "./support/e2e-env";
+import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const ORG_NAME = `Plan-Mode-Chat-${Date.now()}`;
+const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Chat options menu", () => {
   test("toggles plan mode from the composer menu and persists it", async ({ page }) => {
@@ -197,6 +200,59 @@ test.describe("Chat options menu", () => {
         entityId: project.id,
       }),
     );
+  });
+
+  test("hides no-project context on started conversations", async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("rudder.theme", "dark");
+    });
+
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `No-Project-Started-Chat-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Projectless Agent",
+      command: E2E_CODEX_STUB,
+    });
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "No project started chat",
+        preferredAgentId: chatAgent.id,
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "what skill do you have?",
+      structuredPayload: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/chat/${chat.id}`);
+
+    const toolbar = page.getByTestId("chat-composer-toolbar");
+    await expect(toolbar.getByRole("button", { name: /Projectless Agent/ })).toBeVisible({ timeout: 15_000 });
+    await expect(toolbar.getByTestId("chat-project-selector")).toHaveCount(0);
+    await expect(toolbar).not.toContainText("No project");
   });
 
   test("shows recent conversations for the selected project on new chat", async ({ page }, testInfo) => {

@@ -432,6 +432,26 @@
         "The result updates or proposes a release-maintainer validation case for public changelog heading structure.",
         "The result does not route to UI polish, release publishing, or a new docs skill."
       ]
+    },
+    {
+      "id": 34,
+      "prompt": "这个 development-lifecycle-router-maintainer 太长了，按 skill-creator 优化一下，但不要牺牲它的路由能力。",
+      "expected_output": "Uses skill-creator guidance to keep SKILL.md as a thin entrypoint under the progressive-disclosure budget, moves detailed routing/review/recovery rules into references, quotes and validates frontmatter, and preserves eval coverage for routing behavior instead of deleting the hard-won edge cases.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/route-selection.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/special-routes.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/handoff-git.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
+      ],
+      "expectations": [
+        "The optimized SKILL.md remains a concise router entrypoint rather than a thousand-line copied rulebook.",
+        "Detailed route-selection, verification/review, special-route, and handoff/git rules are preserved in referenced files with clear load conditions.",
+        "The frontmatter description is quoted YAML and stays within the metadata budget.",
+        "Existing eval cases for skill optimization, verifier ordering, reviewer lenses, terminal product proof, and dirty-worktree recovery remain covered.",
+        "The result explains why the skill was long: it mixed trigger metadata, routing rules, gates, proofs, examples, and handoff templates in one file."
+      ]
     }
   ]
 }

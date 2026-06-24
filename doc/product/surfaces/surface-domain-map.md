@@ -23,7 +23,7 @@ owning domain contract.
   `ROUTING.REVIEWER.001`, `ROUTING.ATTENTION.001`.
 - Comment-triggered assignee/mention/reopen wakes:
   `ROUTING.COMMENT.WAKE.001`.
-- Structured reviewer decisions and close-out governance:
+- Structured reviewer decisions and issue/review follow-up:
   `REVIEW.DECISION.001`, `REVIEW.CLOSEOUT.001`.
 - Run evidence, transcript, usage, and results: `RUN.RESULT.001`.
 - Issue-backed run admission and follow-up: `RUN.ADMISSION.001`.

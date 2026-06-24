@@ -1,5 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import { chatContextLinks, chatConversations, chatMessages, issues } from "@rudderhq/db";
+import type { AgentRunScene } from "@rudderhq/shared";
 import { and, desc, eq, or, sql, type SQLWrapper } from "drizzle-orm";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -63,7 +64,7 @@ export type BuildAgentStartupContextInput = {
   agentId: string;
   agentHome: string;
   memoryDir: string;
-  scene: "chat" | "heartbeat";
+  scene: AgentRunScene;
   issueId?: string | null;
   projectId?: string | null;
   chatConversationId?: string | null;
@@ -140,6 +141,12 @@ export function buildAgentStartupContextPrompt(
   limits: AgentStartupContextLimits = {},
 ) {
   const resolvedLimits = { ...DEFAULT_AGENT_STARTUP_CONTEXT_LIMITS, ...limits };
+  const hasDailyMemory =
+    input.todayMemory.content.trim().length > 0
+    || input.yesterdayMemory.content.trim().length > 0;
+  if (!hasDailyMemory && input.recentIssues.length === 0 && input.recentChats.length === 0) {
+    return "";
+  }
   const lines = [
     "## Recent Rudder Context",
     "",

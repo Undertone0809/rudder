@@ -4,6 +4,7 @@ import {
   authUsers,
   cleanupStaleSysvSharedMemorySegments,
   createDb,
+  createLocalPostgresInstance,
   ensurePostgresDatabase,
   ensurePostgresRolePassword,
   getPostgresDataDirectory,
@@ -15,6 +16,8 @@ import {
   organizationMemberships,
   organizations,
   reconcilePendingMigrationHistory,
+  RUDDER_PRODUCTION_POSTGRES_VERSION,
+  type LocalPostgresInstance,
 } from "@rudderhq/db";
 import {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
@@ -85,23 +88,6 @@ type BetterAuthSessionResult = {
   session: { id: string; userId: string } | null;
   user: BetterAuthSessionUser | null;
 };
-
-type EmbeddedPostgresInstance = {
-  initialise(): Promise<void>;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-};
-
-type EmbeddedPostgresCtor = new (opts: {
-  databaseDir: string;
-  user: string;
-  password: string;
-  port: number;
-  persistent: boolean;
-  initdbFlags?: string[];
-  onLog?: (message: unknown) => void;
-  onError?: (message: unknown) => void;
-}) => EmbeddedPostgresInstance;
 
 const WORKSPACE_BACKUP_SCHEDULER_TICK_MS = 60 * 60 * 1000;
 
@@ -566,14 +552,14 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   }
   
   let db;
-  let embeddedPostgres: EmbeddedPostgresInstance | null = null;
+  let embeddedPostgres: LocalPostgresInstance | null = null;
   let embeddedPostgresStartedByThisProcess = false;
   let appHandle: Awaited<ReturnType<typeof createRudderApp>> | null = null;
   let migrationSummary: MigrationSummary = "skipped";
   let activeDatabaseConnectionString: string;
   let startupDbInfo:
     | { mode: "external-postgres"; connectionString: string }
-    | { mode: "embedded-postgres"; dataDir: string; port: number };
+    | { mode: "embedded-postgres"; provider: string; dataDir: string; port: number; postgresBinDir?: string };
   options.onEvent?.({ stage: "database", message: "Preparing database" });
   if (config.databaseUrl) {
     migrationSummary = await ensureMigrations(config.databaseUrl, "PostgreSQL");
@@ -583,20 +569,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     activeDatabaseConnectionString = config.databaseUrl;
     startupDbInfo = { mode: "external-postgres", connectionString: config.databaseUrl };
   } else {
-    const moduleName = "embedded-postgres";
-    let EmbeddedPostgres: EmbeddedPostgresCtor;
-    try {
-      const mod = await import(moduleName);
-      EmbeddedPostgres = mod.default as EmbeddedPostgresCtor;
-    } catch {
-      throw new Error(
-        "Embedded PostgreSQL mode requires dependency `embedded-postgres`. Reinstall dependencies (without omitting required packages), or set DATABASE_URL for external Postgres.",
-      );
-    }
-  
     const dataDir = resolve(config.embeddedPostgresDataDir);
     const configuredPort = config.embeddedPostgresPort;
     let port = configuredPort;
+    let localPostgresProvider = "embedded-postgres";
+    let localPostgresBinDir: string | undefined;
     const embeddedPostgresLogBuffer: string[] = [];
     const EMBEDDED_POSTGRES_LOG_BUFFER_LIMIT = 120;
     const verboseEmbeddedPostgresLogs = process.env.RUDDER_EMBEDDED_POSTGRES_VERBOSE === "true";
@@ -643,8 +620,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       }
       return result.connectionString;
     };
-    const createEmbeddedPostgresInstance = (candidatePort: number) =>
-      new EmbeddedPostgres({
+    const createEmbeddedPostgresInstance = async (candidatePort: number) => {
+      const selection = await createLocalPostgresInstance({
         databaseDir: dataDir,
         user: "rudder",
         password: "rudder",
@@ -654,6 +631,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         onLog: appendEmbeddedPostgresLog,
         onError: appendEmbeddedPostgresLog,
       });
+      localPostgresProvider = selection.provider === "official-postgres"
+        ? `postgresql-${RUDDER_PRODUCTION_POSTGRES_VERSION}`
+        : "embedded-postgres";
+      localPostgresBinDir = selection.postgresBinDir;
+      return selection.instance;
+    };
   
     if (config.databaseMode === "postgres") {
       logger.warn("Database mode is postgres but no connection string was set; falling back to embedded PostgreSQL");
@@ -707,8 +690,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
           logger.warn(`Embedded PostgreSQL port is in use; using next free port (requestedPort=${configuredPort}, selectedPort=${detectedPort})`);
         }
         port = detectedPort;
-        logger.info(`Using embedded PostgreSQL because no DATABASE_URL set (dataDir=${dataDir}, port=${port})`);
-        embeddedPostgres = createEmbeddedPostgresInstance(port);
+        embeddedPostgres = await createEmbeddedPostgresInstance(port);
+        logger.info(`Using local PostgreSQL because no DATABASE_URL set (provider=${localPostgresProvider}, dataDir=${dataDir}, port=${port})`);
 
         if (!clusterAlreadyInitialized) {
           try {
@@ -735,7 +718,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
                 { removedSegmentIds: recovered.removedIds },
                 "Recovered stale SysV shared memory segments after embedded PostgreSQL startup failure; retrying once",
               );
-              embeddedPostgres = createEmbeddedPostgresInstance(port);
+              embeddedPostgres = await createEmbeddedPostgresInstance(port);
               try {
                 await embeddedPostgres.start();
               } catch (retryErr) {
@@ -771,9 +754,13 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     });
   
     db = createDb(embeddedConnectionString);
-    logger.info("Embedded PostgreSQL ready");
+    if (localPostgresProvider === `postgresql-${RUDDER_PRODUCTION_POSTGRES_VERSION}`) {
+      logger.info({ postgresBinDir: localPostgresBinDir }, `PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} production runtime ready`);
+    } else {
+      logger.info("Embedded PostgreSQL ready");
+    }
     activeDatabaseConnectionString = embeddedConnectionString;
-    startupDbInfo = { mode: "embedded-postgres", dataDir, port };
+    startupDbInfo = { mode: "embedded-postgres", provider: localPostgresProvider, dataDir, port, ...(localPostgresBinDir ? { postgresBinDir: localPostgresBinDir } : {}) };
   }
   
   const liveOrganizationRows = await db

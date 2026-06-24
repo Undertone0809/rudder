@@ -208,6 +208,58 @@ function decrementUnreadChatSidebarBadge(current: SidebarBadges | undefined) {
   };
 }
 
+function decrementUnreadIssueSidebarBadge(current: SidebarBadges | undefined, unreadCount: number) {
+  if (!current || unreadCount <= 0) return current;
+  const nextUnreadTouchedIssues = Math.max(0, current.unreadTouchedIssues - unreadCount);
+  const decrement = current.unreadTouchedIssues - nextUnreadTouchedIssues;
+  if (decrement <= 0) return current;
+  return {
+    ...current,
+    inbox: Math.max(0, current.inbox - decrement),
+    unreadTouchedIssues: nextUnreadTouchedIssues,
+  };
+}
+
+function getThreadUnreadCountFromSummaries(
+  summaries: MessengerThreadSummary[] | undefined,
+  threadKey: string,
+) {
+  return summaries?.find((summary) => summary.threadKey === threadKey)?.unreadCount ?? null;
+}
+
+function getCachedMessengerThreadUnreadCount(queryClient: QueryClient, orgId: string, threadKey: string) {
+  const flatUnreadCount = getThreadUnreadCountFromSummaries(
+    queryClient.getQueryData<MessengerThreadSummary[]>(queryKeys.messenger.threads(orgId)),
+    threadKey,
+  );
+  if (flatUnreadCount !== null) return flatUnreadCount;
+
+  for (const splitIssues of [false, true] as const) {
+    const pageData = queryClient.getQueryData<MessengerThreadPageData>(
+      queryKeys.messenger.threadPages(orgId, splitIssues),
+    );
+    for (const page of pageData?.pages ?? []) {
+      const pageUnreadCount = getThreadUnreadCountFromSummaries(page.items, threadKey);
+      if (pageUnreadCount !== null) return pageUnreadCount;
+    }
+  }
+
+  const previewUnreadCount = getThreadUnreadCountFromSummaries(
+    queryClient.getQueryData<MessengerThreadPreviewData>(queryKeys.messenger.threadPreview(orgId))?.items,
+    threadKey,
+  );
+  if (previewUnreadCount !== null) return previewUnreadCount;
+
+  const groups = queryClient.getQueryData<MessengerCustomGroupsResponse>(queryKeys.messenger.customGroups(orgId));
+  for (const group of groups?.groups ?? []) {
+    for (const entry of group.entries) {
+      if (entry.thread.threadKey === threadKey) return entry.thread.unreadCount;
+    }
+  }
+
+  return 0;
+}
+
 export function invalidateMessengerThreadSummaryQueries(queryClient: QueryClient, orgId: string) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
@@ -339,6 +391,7 @@ export function markMessengerThreadReadInCache(
   readAt?: MessengerThreadSummary["lastReadAt"] | string | null,
 ) {
   const nextReadAt = readAtDate(readAt);
+  const unreadCount = getCachedMessengerThreadUnreadCount(queryClient, orgId, threadKey);
   queryClient.setQueryData<MessengerThreadSummary[]>(
     queryKeys.messenger.threads(orgId),
     (current) => current?.map((summary) => markThreadRead(summary, threadKey, nextReadAt)) ?? current,
@@ -355,6 +408,12 @@ export function markMessengerThreadReadInCache(
     queryKeys.messenger.customGroups(orgId),
     (current) => updateCustomGroupsData(current, (summary) => markThreadRead(summary, threadKey, nextReadAt)),
   );
+  if (threadKey === "issues" || threadKey.startsWith("issue:")) {
+    queryClient.setQueryData<SidebarBadges>(
+      queryKeys.sidebarBadges(orgId),
+      (current) => decrementUnreadIssueSidebarBadge(current, unreadCount),
+    );
+  }
 }
 
 export function markMessengerChatReadInCache(

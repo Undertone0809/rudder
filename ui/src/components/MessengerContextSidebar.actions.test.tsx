@@ -33,6 +33,7 @@ const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
 const mockMarkThreadRead = vi.hoisted(() => vi.fn());
 const invalidateQueries = vi.fn();
 const cancelQueries = vi.fn(() => Promise.resolve());
+const getQueryData = vi.fn();
 const setQueryData = vi.fn();
 const setQueriesData = vi.fn();
 const mutationMockState = vi.hoisted(() => ({
@@ -116,7 +117,7 @@ vi.mock("@tanstack/react-query", () => ({
     isPending: mutationMockState.pendingVariables.has(options.mutationFn),
     variables: mutationMockState.pendingVariables.get(options.mutationFn),
   }),
-  useQueryClient: () => ({ cancelQueries, invalidateQueries, setQueryData, setQueriesData }),
+  useQueryClient: () => ({ cancelQueries, getQueryData, invalidateQueries, setQueryData, setQueriesData }),
   useQuery: (options: { queryKey?: unknown; enabled?: boolean }) => {
     if (options.enabled === false) return { data: undefined };
     const queryKey = Array.isArray(options.queryKey) ? options.queryKey : [];
@@ -508,6 +509,7 @@ describe("MessengerContextSidebar chat actions", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     cleanupSidebar();
     document.body.innerHTML = "";
     vi.restoreAllMocks();
@@ -529,6 +531,7 @@ describe("MessengerContextSidebar chat actions", () => {
     invalidateQueries.mockClear();
     setQueryData.mockClear();
     setQueriesData.mockClear();
+    getQueryData.mockClear();
     mutationMockState.pendingVariables.clear();
   });
 
@@ -615,6 +618,40 @@ describe("MessengerContextSidebar chat actions", () => {
 
     const thread = document.querySelector('[data-testid="messenger-thread-chat-chat-1"]');
     expect(thread?.textContent).toContain("Feishu");
+  });
+
+  it("hides local title and archive actions for Feishu-bound chat threads", () => {
+    chatList = [baseConversation({
+      mutability: "external_bound_chat",
+      sourceMetadata: { source: "agent_integration", provider: "feishu" },
+    })];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          ...baseModel().threadSummaries[0],
+          metadata: {
+            source: "feishu",
+          },
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const thread = document.querySelector('[data-testid="messenger-thread-chat-chat-1"]');
+    expect(thread).toBeTruthy();
+    const actionLabels = Array.from(thread?.querySelectorAll("button") ?? [])
+      .map((button) => button.textContent?.trim())
+      .filter(Boolean);
+    expect(actionLabels).toContain("Pin");
+    expect(actionLabels).toContain("Mark as Unread");
+    expect(actionLabels).toContain("Copy Chat Link");
+    expect(actionLabels).toContain("Fork");
+    expect(actionLabels).not.toContain("Rename");
+    expect(actionLabels.some((label) => label?.includes("Regenerate title"))).toBe(false);
+    expect(actionLabels).not.toContain("Archive");
+    expect(actionLabels).not.toContain("Delete");
   });
 
   it("optimistically removes an archived chat from active Messenger caches before the update request resolves", async () => {
@@ -1566,9 +1603,10 @@ describe("MessengerContextSidebar chat actions", () => {
 
     const pinnedRow = document.querySelector('[data-testid="messenger-thread-chat-pinned"]') as HTMLElement | null;
     expect(pinnedRow).toBeTruthy();
-    expect(pinnedRow?.className).toContain("cursor-pointer");
+    expect(pinnedRow?.className).not.toContain("cursor-pointer");
     expect(pinnedRow?.className).not.toContain("cursor-grab");
     expect(pinnedRow?.className).not.toContain("cursor-grabbing");
+    expect(document.querySelector('[aria-label="Drag Pinned thread"]')?.className).toContain("cursor-grab");
     expect(mockUseSortable).toHaveBeenCalledWith(expect.objectContaining({ id: "chat:pinned" }));
   });
 
@@ -1859,7 +1897,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockUseSortable).toHaveBeenCalledWith(expect.objectContaining({ id: "chat:grouped" }));
   });
 
-  it("marks group merge targets without scaling the block", async () => {
+  it("marks existing groups as move targets without scaling the block", async () => {
     customGroupList = [
       {
         id: "group-1",
@@ -1931,9 +1969,208 @@ describe("MessengerContextSidebar chat actions", () => {
 
     const groupSection = document.querySelector('[data-testid="messenger-thread-section-custom-group-group-1"]') as HTMLElement | null;
     if (!groupSection) throw new Error("Expected custom group section to render");
-    expect(groupSection.dataset.dragMergeTarget).toBe("true");
+    expect(groupSection.dataset.dragMoveTarget).toBe("true");
+    expect(groupSection.dataset.dragIntent).toBe("move-into-group");
+    expect(groupSection.textContent).toContain("Move into group");
     expect(groupSection.className).not.toContain("scale-");
     expect(groupSection.className).not.toContain("shadow-[0_16px");
+  });
+
+  it("expands a collapsed group after hovering it during item drag", async () => {
+    vi.useFakeTimers();
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Deep work",
+        icon: "😀::amber",
+        sortOrder: 0,
+        collapsed: true,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:40:00.000Z",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        entries: [
+          {
+            id: "entry-1",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "group-1",
+            threadKey: "chat:grouped",
+            sortOrder: 0,
+            createdAt: "2026-04-11T09:40:00.000Z",
+            updatedAt: "2026-04-11T09:40:00.000Z",
+            thread: {
+              threadKey: "chat:grouped",
+              kind: "chat",
+              title: "Grouped thread",
+              preview: "Grouped work.",
+              subtitle: null,
+              href: "/messenger/chat/grouped",
+              latestActivityAt: "2026-04-11T09:30:00.000Z",
+              lastReadAt: null,
+              unreadCount: 0,
+              needsAttention: false,
+              isPinned: false,
+            },
+          },
+        ],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:pinned",
+          kind: "chat",
+          title: "Pinned thread",
+          preview: "Pinned work.",
+          subtitle: null,
+          href: "/messenger/chat/pinned",
+          latestActivityAt: "2026-04-11T09:50:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: true,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    await act(async () => {
+      dndMockState.onDragStart?.({ active: { id: "chat:pinned" } });
+      dndMockState.onDragOver?.({
+        active: { id: "chat:pinned" },
+        over: { id: "chat:grouped" },
+      });
+      vi.advanceTimersByTime(499);
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).not.toHaveBeenCalledWith("org-1", "group-1", { collapsed: false });
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "group-1", { collapsed: false });
+  });
+
+  it("restarts collapsed group hover expansion when the drag target changes", async () => {
+    vi.useFakeTimers();
+    const groupedThread = (threadKey: string, title: string) => ({
+      threadKey,
+      kind: "chat",
+      title,
+      preview: `${title} work.`,
+      subtitle: null,
+      href: `/messenger/chat/${threadKey.slice("chat:".length)}`,
+      latestActivityAt: "2026-04-11T09:30:00.000Z",
+      lastReadAt: null,
+      unreadCount: 0,
+      needsAttention: false,
+      isPinned: false,
+    });
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "First group",
+        icon: "😀::amber",
+        sortOrder: 0,
+        collapsed: true,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:40:00.000Z",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        entries: [
+          {
+            id: "entry-1",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "group-1",
+            threadKey: "chat:first",
+            sortOrder: 0,
+            createdAt: "2026-04-11T09:40:00.000Z",
+            updatedAt: "2026-04-11T09:40:00.000Z",
+            thread: groupedThread("chat:first", "First grouped"),
+          },
+        ],
+      },
+      {
+        id: "group-2",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Second group",
+        icon: "folder::teal",
+        sortOrder: 1,
+        collapsed: true,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:41:00.000Z",
+        updatedAt: "2026-04-11T09:41:00.000Z",
+        entries: [
+          {
+            id: "entry-2",
+            orgId: "org-1",
+            userId: "local-board",
+            groupId: "group-2",
+            threadKey: "chat:second",
+            sortOrder: 0,
+            createdAt: "2026-04-11T09:41:00.000Z",
+            updatedAt: "2026-04-11T09:41:00.000Z",
+            thread: groupedThread("chat:second", "Second grouped"),
+          },
+        ],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:pinned",
+          kind: "chat",
+          title: "Pinned thread",
+          preview: "Pinned work.",
+          subtitle: null,
+          href: "/messenger/chat/pinned",
+          latestActivityAt: "2026-04-11T09:50:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: true,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    await act(async () => {
+      dndMockState.onDragStart?.({ active: { id: "chat:pinned" } });
+      dndMockState.onDragOver?.({
+        active: { id: "chat:pinned" },
+        over: { id: "chat:first" },
+      });
+      vi.advanceTimersByTime(300);
+      dndMockState.onDragOver?.({
+        active: { id: "chat:pinned" },
+        over: { id: "chat:second" },
+      });
+      vi.advanceTimersByTime(300);
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).not.toHaveBeenCalledWith("org-1", "group-1", { collapsed: false });
+    expect(mockUpdateCustomGroup).not.toHaveBeenCalledWith("org-1", "group-2", { collapsed: false });
+
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateCustomGroup).not.toHaveBeenCalledWith("org-1", "group-1", { collapsed: false });
+    expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "group-2", { collapsed: false });
   });
 
   it("uses pointer-first drag collision and optimized measuring for dense Messenger rows", () => {
@@ -2106,7 +2343,8 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(text.indexOf("Manual second pinned group")).toBeLessThan(text.indexOf("Manual first regular group"));
   });
 
-  it("creates a group when one loose chat is dropped on another loose chat", async () => {
+  it("reorders loose chats instead of creating a group when one loose chat is dropped on another", async () => {
+    const storage = installLocalStorage();
     messengerModel = {
       ...baseModel(),
       threadSummaries: [
@@ -2142,6 +2380,17 @@ describe("MessengerContextSidebar chat actions", () => {
     renderSidebar();
 
     await act(async () => {
+      dndMockState.onDragStart?.({ active: { id: "chat:source" } });
+      dndMockState.onDragOver?.({
+        active: { id: "chat:source" },
+        over: { id: "chat:target" },
+      });
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-insertion-line-after"]')).toBeTruthy();
+
+    await act(async () => {
       dndMockState.onDragEnd?.({
         active: { id: "chat:source" },
         over: { id: "chat:target" },
@@ -2150,77 +2399,16 @@ describe("MessengerContextSidebar chat actions", () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateCustomGroupWithEntries).toHaveBeenCalledWith("org-1", expect.objectContaining({
-      name: "Target tab",
-      icon: "folder::amber",
-      threadKeys: ["chat:target", "chat:source"],
-    }));
+    expect(mockCreateCustomGroupWithEntries).not.toHaveBeenCalled();
     expect(mockAssignCustomGroupEntry).not.toHaveBeenCalled();
-  });
-
-  it("keeps a pending loose chat merge rendered until the group save resolves", async () => {
-    const pendingMerge = deferred<{ groups: any[] }>();
-    mockCreateCustomGroupWithEntries.mockReturnValueOnce(pendingMerge.promise);
-    messengerModel = {
-      ...baseModel(),
-      threadSummaries: [
-        {
-          threadKey: "chat:source",
-          kind: "chat",
-          title: "Source tab",
-          preview: "Source work.",
-          subtitle: null,
-          href: "/messenger/chat/source",
-          latestActivityAt: "2026-04-11T09:50:00.000Z",
-          lastReadAt: null,
-          unreadCount: 0,
-          needsAttention: false,
-          isPinned: false,
-        },
-        {
-          threadKey: "chat:target",
-          kind: "chat",
-          title: "Target tab",
-          preview: "Target work.",
-          subtitle: null,
-          href: "/messenger/chat/target",
-          latestActivityAt: "2026-04-11T09:40:00.000Z",
-          lastReadAt: null,
-          unreadCount: 0,
-          needsAttention: false,
-          isPinned: false,
-        },
-      ],
-    };
-
-    renderSidebar();
-
-    await act(async () => {
-      dndMockState.onDragEnd?.({
-        active: { id: "chat:source" },
-        over: { id: "chat:target" },
-      });
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const pendingSection = document.querySelector(
-      '[data-testid="messenger-thread-section-pending-custom-group-chat-target--chat-source"]',
+    expect(storage.setItem).toHaveBeenCalledWith(
+      "rudder.messengerDefaultThreadOrder:org-1:anonymous",
+      JSON.stringify(["chat:target", "chat:source"]),
     );
-    expect(pendingSection?.textContent).toContain("Target tab");
-    expect(pendingSection?.textContent).toContain("Source tab");
-    expect(document.querySelector('[data-testid="messenger-thread-section-chat-source"]')).toBeNull();
-    expect(document.querySelector('[data-testid="messenger-thread-section-chat-target"]')).toBeNull();
-
-    await act(async () => {
-      pendingMerge.resolve({ groups: [] });
-      await pendingMerge.promise;
-      await Promise.resolve();
-    });
   });
 
-  it("creates custom groups from non-chat rows", async () => {
-    installLocalStorage({
+  it("reorders non-chat rows instead of creating custom groups by drag", async () => {
+    const storage = installLocalStorage({
       "rudder.messengerSplitIssueNotificationsByOrg": JSON.stringify({ "org-1": false }),
     });
     messengerModel = {
@@ -2266,84 +2454,76 @@ describe("MessengerContextSidebar chat actions", () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateCustomGroupWithEntries).toHaveBeenCalledWith("org-1", expect.objectContaining({
-      name: "Planning chat",
-      icon: "folder::amber",
-      threadKeys: ["chat:chat-1", "issues"],
-      autoGenerateName: true,
-    }));
+    expect(mockCreateCustomGroupWithEntries).not.toHaveBeenCalled();
     expect(mockAssignCustomGroupEntry).not.toHaveBeenCalled();
+    expect(storage.setItem).toHaveBeenCalledWith(
+      "rudder.messengerDefaultThreadOrder:org-1:anonymous",
+      JSON.stringify(["issues", "chat:chat-1"]),
+    );
   });
 
-  it("keeps a pending non-chat merge rendered across stale custom group refetches", async () => {
-    installLocalStorage({
-      "rudder.messengerSplitIssueNotificationsByOrg": JSON.stringify({ "org-1": false }),
-    });
-    const pendingMerge = deferred<{ groups: any[] }>();
-    mockCreateCustomGroupWithEntries.mockReturnValueOnce(pendingMerge.promise);
+  it("reorders pinned loose chats instead of exposing a no-op drag", async () => {
+    const storage = installLocalStorage();
     messengerModel = {
       ...baseModel(),
       threadSummaries: [
         {
-          threadKey: "chat:chat-1",
+          threadKey: "chat:source",
           kind: "chat",
-          title: "Planning chat",
-          preview: "Chat work.",
+          title: "Pinned source",
+          preview: "Pinned source work.",
           subtitle: null,
-          href: "/messenger/chat/chat-1",
+          href: "/messenger/chat/source",
           latestActivityAt: "2026-04-11T09:50:00.000Z",
           lastReadAt: null,
           unreadCount: 0,
           needsAttention: false,
-          isPinned: false,
+          isPinned: true,
         },
         {
-          threadKey: "issues",
-          kind: "issues",
-          title: "Issues",
-          preview: "Followed issues",
+          threadKey: "chat:target",
+          kind: "chat",
+          title: "Pinned target",
+          preview: "Pinned target work.",
           subtitle: null,
-          href: "/messenger/issues",
+          href: "/messenger/chat/target",
           latestActivityAt: "2026-04-11T09:40:00.000Z",
           lastReadAt: null,
           unreadCount: 0,
           needsAttention: false,
-          isPinned: false,
+          isPinned: true,
         },
       ],
     };
 
-    const { root } = renderSidebar();
+    renderSidebar();
+
+    await act(async () => {
+      dndMockState.onDragStart?.({ active: { id: "chat:source" } });
+      dndMockState.onDragOver?.({
+        active: { id: "chat:source" },
+        over: { id: "chat:target" },
+      });
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-insertion-line-after"]')).toBeTruthy();
 
     await act(async () => {
       dndMockState.onDragEnd?.({
-        active: { id: "issues" },
-        over: { id: "chat:chat-1" },
+        active: { id: "chat:source" },
+        over: { id: "chat:target" },
       });
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    customGroupList = [];
-    await act(async () => {
-      root.render(<MessengerContextSidebar />);
-      await Promise.resolve();
-    });
-
-    const pendingSection = document.querySelector(
-      '[data-testid="messenger-thread-section-pending-custom-group-chat-chat-1--issues"]',
+    expect(mockCreateCustomGroupWithEntries).not.toHaveBeenCalled();
+    expect(mockAssignCustomGroupEntry).not.toHaveBeenCalled();
+    expect(storage.setItem).toHaveBeenCalledWith(
+      "rudder.messengerDefaultThreadOrder:org-1:anonymous",
+      JSON.stringify(["chat:target", "chat:source"]),
     );
-    expect(pendingSection?.textContent).toContain("Planning chat");
-    expect(pendingSection?.textContent).toContain("Naming");
-    expect(pendingSection?.textContent).toContain("Issues");
-    expect(document.querySelector('[data-testid="messenger-thread-section-chat-chat-1"]')).toBeNull();
-    expect(document.querySelector('[data-testid="messenger-thread-section-issues"]')).toBeNull();
-
-    await act(async () => {
-      pendingMerge.resolve({ groups: [] });
-      await pendingMerge.promise;
-      await Promise.resolve();
-    });
   });
 
   it("regenerates a custom group title from the group actions menu", async () => {
@@ -2577,7 +2757,8 @@ describe("MessengerContextSidebar chat actions", () => {
 
     const issuesRow = document.querySelector('[data-testid="messenger-thread-issues"]') as HTMLElement | null;
     expect(issuesRow).toBeTruthy();
-    expect(issuesRow?.className).toContain("cursor-pointer");
+    expect(issuesRow?.className).not.toContain("cursor-pointer");
+    expect(document.querySelector('[aria-label="Drag Issues"]')?.className).toContain("cursor-grab");
     expect(mockUseSortable).toHaveBeenCalledWith(expect.objectContaining({ id: "issues" }));
 
     expect(document.querySelector('[aria-label="Thread actions"]')).toBeTruthy();

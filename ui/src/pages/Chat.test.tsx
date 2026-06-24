@@ -117,6 +117,7 @@ function conversation(overrides: Partial<ChatConversation>): ChatConversation {
     id: "chat-1",
     orgId: "org-1",
     status: "active",
+    mutability: "native_chat",
     title: "Plan mode chat",
     summary: null,
     latestReplyPreview: null,

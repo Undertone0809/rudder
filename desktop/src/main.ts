@@ -27,6 +27,11 @@ import {
   resolvePostUpdateReloadDelayMs
 } from "./post-update-reload.js";
 import {
+  resolveDesktopPostgresBinDir,
+  resolvePreferredDesktopPostgresBinDir,
+  RUDDER_POSTGRES_BIN_DIR_ENV,
+} from "./postgres-runtime.js";
+import {
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
 } from "./runtime-cache.js";
@@ -367,6 +372,7 @@ let startInFlight: Promise<void> | null = null;
 let pendingDesktopNavigationPath: string | null = null;
 let lastKnownAppUrl: string | null = null;
 let rendererRecoveryInFlight = false;
+let externalServerRuntimeCacheDir: string | null = null;
 let deferredUpdatePromptRendererReady = false;
 const pendingDeferredUpdatePrompts = new Map<string, {
   resolve: (decision: DeferredUpdatePromptDecision | null) => void;
@@ -550,6 +556,14 @@ function applyDesktopEnvironment(): LocalEnvProfile {
   process.env.SERVE_UI = "true";
   process.env.RUDDER_UI_DEV_MIDDLEWARE = "false";
   process.env.RUDDER_OPEN_ON_LISTEN = "false";
+  const postgresBinDir = resolvePreferredDesktopPostgresBinDir({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    externalRuntimeCacheDir: externalServerRuntimeCacheDir,
+  });
+  if (postgresBinDir) {
+    process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = postgresBinDir;
+  }
   return profile;
 }
 
@@ -1188,12 +1202,24 @@ async function importServerModule(): Promise<ServerModule> {
       onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
     });
     if (externalRuntime) {
+      const previousPostgresBinDir = process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
+      const hasExplicitPostgresBinDir = Boolean(previousPostgresBinDir?.trim());
+      const postgresBinDir = hasExplicitPostgresBinDir ? null : resolveDesktopPostgresBinDir(externalRuntime.cacheDir);
+      if (postgresBinDir) process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = postgresBinDir;
       console.info("[rudder-desktop] loading server runtime from shared cache", {
         entrypoint: externalRuntime.entrypoint,
       });
       try {
-        return await import(pathToFileURL(externalRuntime.entrypoint).href) as ServerModule;
+        const mod = await import(pathToFileURL(externalRuntime.entrypoint).href) as ServerModule;
+        externalServerRuntimeCacheDir = externalRuntime.cacheDir;
+        return mod;
       } catch (error) {
+        if (previousPostgresBinDir === undefined) {
+          delete process.env[RUDDER_POSTGRES_BIN_DIR_ENV];
+        } else {
+          process.env[RUDDER_POSTGRES_BIN_DIR_ENV] = previousPostgresBinDir;
+        }
+        externalServerRuntimeCacheDir = null;
         console.warn("[rudder-desktop] failed to load shared server runtime cache, falling back to bundled runtime", error);
       }
     }

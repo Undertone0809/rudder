@@ -68,6 +68,71 @@ test("same-issue comment links scroll in place without reloading the issue page"
   await expect(targetCommentBlock).toHaveClass(/bg-primary\/5/);
 });
 
+test("comment hash spacer is removed after positioning the last comment", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto("/");
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Comment-Hash-Spacer-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Last comment stays close to composer",
+      description: "Hash positioning should not leave permanent spacer below the comment thread.",
+      status: "done",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+  const routeRef = issue.identifier ?? issue.id;
+
+  const commentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+    data: {
+      body: "This final comment should sit close to the comment composer after hash positioning settles.",
+    },
+  });
+  expect(commentRes.ok()).toBe(true);
+  const comment = await commentRes.json() as { id: string };
+
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/messenger/issues/${routeRef}#comment-${comment.id}`);
+
+  const commentBlock = page.locator(`#comment-${comment.id}`);
+  const composer = page.locator(".chat-composer").last();
+  await expect(commentBlock).toBeVisible({ timeout: 15_000 });
+  await expect(composer).toBeVisible();
+  await expect(page.getByTestId("comment-hash-scroll-end-space")).toHaveCount(0, { timeout: 3_000 });
+
+  const metrics = await page.evaluate((commentId) => {
+    const comment = document.getElementById(`comment-${commentId}`);
+    const composer = Array.from(document.querySelectorAll(".chat-composer")).at(-1);
+    if (!comment || !composer) return null;
+    const commentBox = comment.getBoundingClientRect();
+    const composerBox = composer.getBoundingClientRect();
+    return {
+      gap: Math.round(composerBox.top - commentBox.bottom),
+      spacerCount: document.querySelectorAll("[data-testid='comment-hash-scroll-end-space']").length,
+    };
+  }, comment.id);
+
+  expect(metrics).not.toBeNull();
+  expect(metrics!.spacerCount).toBe(0);
+  expect(metrics!.gap).toBeGreaterThanOrEqual(12);
+  expect(metrics!.gap).toBeLessThanOrEqual(32);
+
+  await page.screenshot({
+    path: testInfo.outputPath("comment-hash-spacer-removed.png"),
+    fullPage: true,
+  });
+});
+
 test("messenger issue notifications open directly on the source comment", async ({ page }) => {
   await page.setViewportSize({ width: 1360, height: 920 });
   await page.goto("/");

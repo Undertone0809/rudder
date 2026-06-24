@@ -65,10 +65,11 @@ cannot be safely inferred.
   the user explicitly asks to retarget the release.
 - A stable release is not done until verification, npm, GitHub Release, Desktop
   assets, and public notes/announcement are all handled.
-- Stable public docs changelog entries keep the version (`## vX.Y.Z`) as the
-  only per-release heading. Repeated labels such as `Highlights`, `Install`,
-  and `重点变化` must be bold/prose labels, not `##` or `###` headings, so
-  Mintlify's page TOC lists versions instead of repeated section names.
+- Stable release notes use the standard changelog categories `New Features`,
+  `Improvements`, and `Bug Fixes`, in that order. GitHub Release source files
+  use those categories as `##` headings. Public docs changelog entries keep
+  `## vX.Y.Z` as the version heading, then use the same category labels inside
+  the entry.
 - Pre-stable public canaries may temporarily be the default `latest` install
   path if there is no stable npm version yet and the user explicitly wants
   `npx @rudderhq/cli@latest start` or bare `npx @rudderhq/cli start` to work
@@ -387,11 +388,13 @@ node scripts/release-package-map.mjs list
 ./scripts/release.sh stable --print-version
 ```
 
-3. Confirm `releases/vX.Y.Z.md` exists on the source ref.
+3. Confirm `releases/vX.Y.Z.md` exists on the source ref and uses exactly this
+   changelog section order: `## New Features`, `## Improvements`, then
+   `## Bug Fixes`.
 4. Confirm `docs/releases.mdx` and `docs/zh/releases.mdx` are updated for the
-   stable version. In public docs changelog entries, use `## vX.Y.Z` for the
-   version and bold/prose labels for `Highlights`, `Install`, or `重点变化`;
-   do not use `##` or `###` for those repeated labels.
+   stable version with the same `New Features`, `Improvements`, and
+   `Bug Fixes` grouping. Keep `## vX.Y.Z` as the version heading in docs, then
+   nest the changelog categories under that version entry.
 5. Check recent and in-progress `release.yml` runs. If there are unrelated
    `main` push canaries in progress, decide whether they are true blockers:
    - before npm stable exists, they can temporarily move `latest` to a canary,

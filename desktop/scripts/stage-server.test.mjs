@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -72,8 +72,8 @@ function createStageServerRepo() {
 
   const binDir = join(repo, "bin");
   mkdirSync(binDir, { recursive: true });
-  const pnpmPath = join(binDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
-  writeFileSync(pnpmPath, [
+  const pnpmFixturePath = join(binDir, "pnpm-fixture.cjs");
+  writeFileSync(pnpmFixturePath, [
     "#!/usr/bin/env node",
     "const fs = require('node:fs');",
     "const path = require('node:path');",
@@ -97,9 +97,16 @@ function createStageServerRepo() {
     "fs.linkSync(path.join(repo, 'packages/shared/package.json'), path.join(sharedStore, 'package.json'));",
     "const sharedTarget = path.join(target, 'node_modules/@rudderhq');",
     "fs.mkdirSync(sharedTarget, { recursive: true });",
-    "fs.symlinkSync('../.pnpm/@rudderhq+shared@file+packages+shared/node_modules/@rudderhq/shared', path.join(sharedTarget, 'shared'));",
+    "fs.cpSync(sharedStore, path.join(sharedTarget, 'shared'), { recursive: true });",
     "",
   ].join("\n"));
+
+  const pnpmPath = join(binDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
+  if (process.platform === "win32") {
+    writeFileSync(pnpmPath, `@echo off\r\nnode "%~dp0\\pnpm-fixture.cjs" %*\r\n`);
+  } else {
+    writeFileSync(pnpmPath, `#!/bin/sh\nexec node "$(dirname "$0")/pnpm-fixture.cjs" "$@"\n`);
+  }
   chmodSync(pnpmPath, 0o755);
 
   return { repo, binDir, sharedManifestPath };
@@ -112,6 +119,45 @@ afterEach(() => {
 });
 
 describe("desktop stage-server", () => {
+  it("fails production staging when no PostgreSQL 18.4 payload is configured", () => {
+    const { repo, binDir } = createStageServerRepo();
+
+    const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
+        RUDDER_POSTGRES_BIN_DIR: "",
+        RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("requires RUDDER_POSTGRES_BIN_DIR");
+  });
+
+  it("fails production staging when the PostgreSQL payload is incomplete", () => {
+    const { repo, binDir } = createStageServerRepo();
+    const pgBinDir = join(repo, "fake-pg-bin");
+    mkdirSync(pgBinDir, { recursive: true });
+    writeFileSync(join(pgBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"), "");
+
+    const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
+        RUDDER_POSTGRES_BIN_DIR: pgBinDir,
+        RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must contain PostgreSQL 18.4 initdb, pg_ctl, and postgres binaries");
+  });
+
   it("restores source package manifests after pnpm deploy rewrites them", () => {
     const { repo, binDir, sharedManifestPath } = createStageServerRepo();
     const before = readFileSync(sharedManifestPath, "utf8");
@@ -120,7 +166,8 @@ describe("desktop stage-server", () => {
       cwd: repo,
       env: {
         ...process.env,
-        PATH: `${binDir}:${process.env.PATH}`,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
+        RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1",
       },
       encoding: "utf8",
     });

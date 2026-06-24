@@ -3,6 +3,7 @@ import type {
   AgentRuntimeEnvironmentTestContext,
   AgentRuntimeEnvironmentTestResult,
 } from "@rudderhq/agent-runtime-utils";
+import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import {
   asBoolean,
   asNumber,
@@ -11,8 +12,11 @@ import {
   ensureCommandResolvable,
   ensurePathInEnv,
   parseObject,
+  resolveLocalOperatorHome,
   runChildProcess,
+  syncLocalCliCredentialHomeEntries,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import fs from "node:fs/promises";
 import path from "node:path";
 import {
   configuredClaudeExtraArgs,
@@ -47,6 +51,110 @@ function commandLooksLike(command: string, expected: string): boolean {
 
 function isDeepSeekClaudeModel(model: string): boolean {
   return model.trim().toLowerCase().startsWith("deepseek");
+}
+
+const DEFAULT_RUDDER_INSTANCE_ID = "default";
+const CLAUDE_PROTECTED_ENV_KEYS = new Set([
+  "AGENT_HOME",
+  "HOME",
+  "RUDDER_AGENT_ROOT",
+  "RUDDER_OPERATOR_HOME",
+  "USERPROFILE",
+]);
+const CLAUDE_SETTINGS_AUTH_ENV_PREFIXES = ["ANTHROPIC_", "DEEPSEEK_"] as const;
+const SHARED_CLAUDE_HOME_ENTRIES = [
+  ".config/claude",
+  ".config/anthropic",
+  ".anthropic",
+] as const;
+
+function nonEmpty(value: string | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveManagedClaudeHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
+  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(process.env.HOME ?? ".", ".rudder");
+  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
+  return path.resolve(rudderHome, "instances", instanceId, "organizations", resolveOrganizationStorageKey(orgId), "claude-home");
+}
+
+async function readJsonObject(filePath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  return fs.access(candidate).then(() => true).catch(() => false);
+}
+
+async function ensureParentDir(target: string) {
+  await fs.mkdir(path.dirname(target), { recursive: true });
+}
+
+async function ensureSymlink(target: string, source: string) {
+  const existing = await fs.lstat(target).catch(() => null);
+  if (!existing) {
+    await ensureParentDir(target);
+    await fs.symlink(source, target);
+    return;
+  }
+  if (!existing.isSymbolicLink()) return;
+
+  const linkedPath = await fs.readlink(target).catch(() => null);
+  const resolvedLinkedPath = linkedPath ? path.resolve(path.dirname(target), linkedPath) : null;
+  if (resolvedLinkedPath === source) return;
+  await fs.unlink(target);
+  await fs.symlink(source, target);
+}
+
+async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: string): Promise<string> {
+  const sourceSettings = await readJsonObject(path.join(sourceHome, ".claude", "settings.json"));
+  const targetSettingsPath = path.join(targetHome, ".claude", "settings.json");
+  const sourceEnv = parseObject(sourceSettings?.env);
+  const authEnv: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(sourceEnv)) {
+    if (!CLAUDE_SETTINGS_AUTH_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+    if (typeof value === "string" && value.trim().length > 0) authEnv[key] = value;
+  }
+
+  const sanitized = Object.keys(authEnv).length > 0 ? { env: authEnv } : {};
+  await fs.mkdir(path.dirname(targetSettingsPath), { recursive: true });
+  await fs.writeFile(targetSettingsPath, `${JSON.stringify(sanitized, null, 2)}\n`, "utf8");
+  return targetSettingsPath;
+}
+
+async function prepareManagedClaudeProbeHome(
+  sourceEnv: NodeJS.ProcessEnv,
+  orgId: string,
+): Promise<{ home: string; configDir: string; settingsPath: string; operatorHome: string }> {
+  const operatorHome = resolveLocalOperatorHome(sourceEnv);
+  const home = resolveManagedClaudeHomeDir(sourceEnv, orgId);
+  const configDir = path.join(home, ".claude");
+  await fs.mkdir(home, { recursive: true });
+  await fs.rm(path.join(configDir, "skills"), { recursive: true, force: true });
+  await fs.rm(path.join(configDir, "plugins"), { recursive: true, force: true });
+  await fs.rm(path.join(home, ".claude.json"), { force: true });
+  await fs.mkdir(path.join(configDir, "skills"), { recursive: true });
+  const settingsPath = await writeSanitizedClaudeSettings(operatorHome, home);
+  for (const relativeEntry of SHARED_CLAUDE_HOME_ENTRIES) {
+    const source = path.join(operatorHome, relativeEntry);
+    if (!(await pathExists(source))) continue;
+    await ensureSymlink(path.join(home, relativeEntry), source);
+  }
+  await syncLocalCliCredentialHomeEntries({
+    sourceHome: operatorHome,
+    targetHome: home,
+    onLog: async () => {},
+  });
+  return { home, configDir, settingsPath, operatorHome };
 }
 
 function summarizeProbeDetail(stdout: string, stderr: string): string | null {
@@ -150,10 +258,22 @@ export async function testEnvironment(
   }
 
   const envConfig = parseObject(config.env);
-  const env: Record<string, string> = {};
+  const envConfigStrings: Record<string, string> = {};
   for (const [key, value] of Object.entries(envConfig)) {
-    if (typeof value === "string") env[key] = value;
+    if (typeof value === "string" && !CLAUDE_PROTECTED_ENV_KEYS.has(key)) envConfigStrings[key] = value;
   }
+  const managedClaudeHome = await prepareManagedClaudeProbeHome(
+    { ...process.env, ...envConfigStrings },
+    ctx.orgId,
+  );
+  const env: Record<string, string> = {
+    ...envConfigStrings,
+    HOME: managedClaudeHome.home,
+    USERPROFILE: managedClaudeHome.home,
+    CLAUDE_CONFIG_DIR: managedClaudeHome.configDir,
+    RUDDER_CLAUDE_HOME: managedClaudeHome.home,
+    RUDDER_OPERATOR_HOME: managedClaudeHome.operatorHome,
+  };
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
   try {
     await ensureCommandResolvable(command, cwd, runtimeEnv);
@@ -236,6 +356,7 @@ export async function testEnvironment(
       if (model) args.push("--model", model);
       if (effort) args.push("--effort", effort);
       if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
+      args.push("--settings", managedClaudeHome.settingsPath, "--setting-sources", "user", "--strict-mcp-config");
       if (extraArgs.length > 0) args.push(...extraArgs);
 
       const probe = await runChildProcess(

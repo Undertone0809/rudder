@@ -102,6 +102,88 @@ describe("toAgentRun", () => {
     expect(run.targetId).toBe("issue-1");
   });
 
+  it("treats issue-comment automation wakes as issue scene runs", () => {
+    const run = toAgentRun(heartbeatRun({
+      invocationSource: "automation",
+      triggerDetail: "system",
+      contextSnapshot: {
+        issueId: "issue-1",
+        commentId: "comment-1",
+        wakeReason: "issue_commented",
+        wakeSource: "issue.comment",
+      },
+    }));
+
+    expect(run.scene).toBe("issue");
+    expect(run.triggerKind).toBe("system");
+    expect(run.targetType).toBe("issue");
+    expect(run.targetId).toBe("issue-1");
+  });
+
+  it("keeps automation run identity as automation scene even when linked to an issue", () => {
+    const run = toAgentRun(heartbeatRun({
+      invocationSource: "automation",
+      triggerDetail: "system",
+      contextSnapshot: {
+        automationRunId: "automation-run-1",
+        automationId: "automation-1",
+        issueId: "issue-1",
+      },
+    }));
+
+    expect(run.scene).toBe("automation");
+    expect(run.targetType).toBe("automation_run");
+    expect(run.targetId).toBe("automation-run-1");
+    expect(run.automationRunId).toBe("automation-run-1");
+  });
+
+  it("lets an explicit issue scene override automation run linkage", () => {
+    const run = toAgentRun(heartbeatRun({
+      invocationSource: "automation",
+      triggerDetail: "system",
+      contextSnapshot: {
+        scene: "issue",
+        automationRunId: "automation-run-1",
+        issueId: "issue-1",
+      },
+    }));
+
+    expect(run.scene).toBe("issue");
+    expect(run.targetType).toBe("automation_run");
+    expect(run.targetId).toBe("automation-run-1");
+  });
+
+  it("honors persisted runtime rudderScene metadata", () => {
+    const run = toAgentRun(heartbeatRun({
+      invocationSource: "automation",
+      triggerDetail: "system",
+      contextSnapshot: {
+        rudderScene: "issue",
+        automationRunId: "automation-run-1",
+        issueId: "issue-1",
+      },
+    }));
+
+    expect(run.scene).toBe("issue");
+    expect(run.targetType).toBe("automation_run");
+    expect(run.targetId).toBe("automation-run-1");
+  });
+
+  it("treats review wakeups as review scene runs even when issue-backed", () => {
+    const run = toAgentRun(heartbeatRun({
+      invocationSource: "review",
+      triggerDetail: "system",
+      contextSnapshot: {
+        issueId: "issue-1",
+        wakeReason: "issue_review_closeout_missing",
+      },
+    }));
+
+    expect(run.scene).toBe("review");
+    expect(run.targetType).toBe("issue");
+    expect(run.targetId).toBe("issue-1");
+  });
+
   it("normalizes timer invocations to the heartbeat scene", () => {
     const run = toAgentRun(heartbeatRun({
       invocationSource: "timer",
@@ -113,7 +195,22 @@ describe("toAgentRun", () => {
 
     expect(run.scene).toBe("heartbeat");
     expect(run.triggerKind).toBe("system");
-    expect(run.targetType).toBe("manual");
+    expect(run.targetType).toBe("wakeup_request");
+    expect(run.targetId).toBeNull();
+  });
+
+  it("treats on-demand manual invocations without another target as heartbeat scene runs", () => {
+    const run = toAgentRun(heartbeatRun({
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      contextSnapshot: {
+        triggeredBy: "board",
+      },
+    }));
+
+    expect(run.scene).toBe("heartbeat");
+    expect(run.triggerKind).toBe("manual");
+    expect(run.targetType).toBe("wakeup_request");
     expect(run.targetId).toBeNull();
   });
 });

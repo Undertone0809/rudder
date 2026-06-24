@@ -20,7 +20,7 @@ related_tests:
 edit_policy: user_confirmed_only
 ---
 
-# Review Closeout And Learning
+# Review Follow-Up And Learning
 
 ## REVIEW.DECISION.001
 
@@ -59,8 +59,12 @@ Evidence:
 Why:
 
 - A successful issue-backed run that leaves no close-out signal burns tokens
-  without telling Rudder whether work moved forward. Close-out governance keeps
+  without telling Rudder whether work moved forward. Bounded follow-up keeps
   the work loop inspectable.
+- Reviewer work has a separate failure mode: if a reviewer-requested run does
+  not record a structured review result and the issue remains `in_review`,
+  Rudder needs review follow-up instead of treating the run as accepted,
+  rejected, or assigned implementation work.
 
 Flow:
 
@@ -68,14 +72,22 @@ Flow:
 2. Release/recovery checks whether sufficient issue close-out evidence exists:
    status transition, comment, reviewer handoff, result reference, or other
    accepted signal.
-3. If not, Rudder may queue bounded same-agent passive follow-up unless timer
-   continuity makes a retry unnecessary.
-4. After bounded attempts, Rudder escalates toward reviewer/operator visibility
+3. For assignee issue work, if no sufficient close-out exists, Rudder may queue
+   bounded same-agent issue follow-up unless timer continuity makes a retry
+   unnecessary.
+4. For reviewer work, if the reviewer run does not produce a structured review
+   decision and the issue remains `in_review`, Rudder may queue bounded review
+   follow-up for the reviewer.
+5. After bounded attempts, Rudder escalates toward reviewer/operator visibility
    instead of infinite follow-up.
 
 Invariants:
 
-- Passive follow-up is bounded, auditable, and same-agent scoped.
+- Issue follow-up is bounded, auditable, and same-agent scoped.
+- Review follow-up is reviewer-scoped and remains in the review scene.
+- Free-form accept/reject text is not a durable review decision. Durable review
+  result requires the structured review decision path under
+  `REVIEW.DECISION.001`.
 - Missing close-out is visible as a work-loop gap, not hidden as success.
 
 Evidence:

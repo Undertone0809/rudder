@@ -815,4 +815,88 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it("removes previously materialized Cursor skills when they are no longer selected", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-prune-skill-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    const capturePath = path.join(root, "capture.json");
+    const runtimeSkillsRoot = path.join(root, "runtime-skills");
+    const managedSkillsHome = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "cursor-home",
+      ".cursor",
+      "skills",
+    );
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCursorCommand(commandPath);
+
+    const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
+    await fs.mkdir(managedSkillsHome, { recursive: true });
+    await fs.symlink(asciiHeartDir, path.join(managedSkillsHome, "ascii-heart"));
+
+    let loadedSkills: unknown[] = [{ key: "before" }];
+    const restoreEnv = setManagedCursorEnv(root);
+
+    try {
+      const result = await execute({
+        runId: "run-4",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Cursor Coder",
+          agentRuntimeType: "cursor",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          rudderRuntimeSkills: [
+            {
+              name: "ascii-heart",
+              source: asciiHeartDir,
+            },
+          ],
+          rudderSkillSync: {
+            desiredSkills: [],
+          },
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          loadedSkills = meta.loadedSkills ?? [];
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.prompt ?? "").not.toContain("## Skill: ascii-heart");
+      await expect(fs.lstat(path.join(managedSkillsHome, "ascii-heart"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(loadedSkills).toEqual([]);
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -17,7 +17,7 @@ import {
   prepareAgentInstructionRuntimeContext,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
-  removeMaintainerOnlySkillSymlinks,
+  removeUnselectedRudderSkillSymlinks,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -182,6 +182,7 @@ type EnsureCursorSkillsInjectedOptions = {
   skillsDir?: string | null;
   skillsEntries?: Array<{ key: string; runtimeName: string; source: string }>;
   skillsHome?: string;
+  desiredSkillNames?: string[];
   linkSkill?: (source: string, target: string) => Promise<void>;
 };
 
@@ -199,8 +200,6 @@ export async function ensureCursorSkillsInjected(
             source: path.join(options.skillsDir!, entry.name),
           }))
       : await readRudderRuntimeSkillEntries({}, __moduleDir));
-  if (skillsEntries.length === 0) return;
-
   const skillsHome = options.skillsHome ?? cursorSkillsHome();
   try {
     await fs.mkdir(skillsHome, { recursive: true });
@@ -211,9 +210,12 @@ export async function ensureCursorSkillsInjected(
     );
     return;
   }
-  const removedSkills = await removeMaintainerOnlySkillSymlinks(
+  const desiredSet = new Set(options.desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
+  const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
+  const removedSkills = await removeUnselectedRudderSkillSymlinks(
     skillsHome,
-    skillsEntries.map((entry) => entry.runtimeName),
+    selectedEntries.map((entry) => entry.runtimeName),
+    skillsEntries.map((entry) => entry.source),
   );
   for (const skillName of removedSkills) {
     await onLog(
@@ -222,7 +224,7 @@ export async function ensureCursorSkillsInjected(
     );
   }
   const linkSkill = options.linkSkill ?? ((source: string, target: string) => fs.symlink(source, target));
-  for (const entry of skillsEntries) {
+  for (const entry of selectedEntries) {
     const target = path.join(skillsHome, entry.runtimeName);
     try {
       const result = await ensureRudderSkillSymlink(entry.source, target, linkSkill);
@@ -334,8 +336,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }));
   const managedCursorSkillsDir = resolveManagedCursorSkillsDir(managedHome);
   await ensureCursorSkillsInjected(onLog, {
-    skillsEntries: selectedCursorSkillEntries,
+    skillsEntries: cursorSkillEntries,
     skillsHome: managedCursorSkillsDir,
+    desiredSkillNames: desiredCursorSkillNames,
   });
   const selectedSkillPrompt = await renderSelectedCursorSkillPrompt(onLog, managedCursorSkillsDir, selectedCursorSkillEntries);
   const hasExplicitApiKey =

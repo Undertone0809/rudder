@@ -77,6 +77,8 @@ jobs:
         run: pnpm -s exec vitest run cli/src/__tests__/start.test.ts
 
       - name: Build
+        env:
+          RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
         run: pnpm build
 
   canary:
@@ -87,6 +89,7 @@ jobs:
     environment: npm-canary
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:
@@ -158,6 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -189,6 +193,7 @@ jobs:
     environment: npm-stable
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:

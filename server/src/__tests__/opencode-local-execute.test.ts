@@ -575,4 +575,115 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it("removes previously materialized OpenCode skills when they are no longer selected", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-prune-skill-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    const capturePath = path.join(root, "capture.json");
+    const runtimeSkillsRoot = path.join(root, "runtime-skills");
+    const managedOpenCodeHome = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "opencode-home",
+    );
+    const managedSkillsHome = path.join(managedOpenCodeHome, ".claude", "skills");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
+    await fs.mkdir(managedSkillsHome, { recursive: true });
+    await fs.symlink(asciiHeartDir, path.join(managedSkillsHome, "ascii-heart"));
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    const previousRudderHome = process.env.RUDDER_HOME;
+    const previousRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
+    const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    const previousXdgDataHome = process.env.XDG_DATA_HOME;
+    const previousXdgCacheHome = process.env.XDG_CACHE_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+    process.env.RUDDER_HOME = path.join(root, ".rudder");
+    process.env.RUDDER_INSTANCE_ID = "default";
+    process.env.XDG_CONFIG_HOME = path.join(root, ".config");
+    process.env.XDG_DATA_HOME = path.join(root, ".local", "share");
+    process.env.XDG_CACHE_HOME = path.join(root, ".cache");
+
+    let loadedSkills: unknown[] = [{ key: "before" }];
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-prune-skill",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          rudderRuntimeSkills: [
+            {
+              name: "ascii-heart",
+              source: asciiHeartDir,
+            },
+          ],
+          rudderSkillSync: {
+            desiredSkills: [],
+          },
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          loadedSkills = meta.loadedSkills ?? [];
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { prompt: string };
+      expect(capture.prompt).not.toContain("## Skill: ascii-heart");
+      await expect(fs.lstat(path.join(managedSkillsHome, "ascii-heart"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(loadedSkills).toEqual([]);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
+      if (previousRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousRudderInstanceId;
+      if (previousXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+      if (previousXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = previousXdgDataHome;
+      if (previousXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+      else process.env.XDG_CACHE_HOME = previousXdgCacheHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

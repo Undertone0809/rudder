@@ -18,7 +18,7 @@ import {
   prepareAgentInstructionRuntimeContext,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
-  removeMaintainerOnlySkillSymlinks,
+  removeUnselectedRudderSkillSymlinks,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -227,9 +227,10 @@ async function ensureOpenCodeSkillsInjected(
   await fs.mkdir(skillsHome, { recursive: true });
   const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
   const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
-  const removedSkills = await removeMaintainerOnlySkillSymlinks(
+  const removedSkills = await removeUnselectedRudderSkillSymlinks(
     skillsHome,
     selectedEntries.map((entry) => entry.runtimeName),
+    skillsEntries.map((entry) => entry.source),
   );
   for (const skillName of removedSkills) {
     await onLog(
@@ -414,7 +415,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   await ensureOpenCodeSkillsInjected(
     onLog,
     managedOpenCodeSkillsDir,
-    selectedOpenCodeSkillEntries,
+    openCodeSkillEntries,
     desiredOpenCodeSkillNames,
   );
   const selectedSkillPrompt = await renderSelectedOpenCodeSkillPrompt(

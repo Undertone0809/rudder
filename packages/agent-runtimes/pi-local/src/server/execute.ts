@@ -18,7 +18,7 @@ import {
   prepareAgentInstructionRuntimeContext,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
-  removeMaintainerOnlySkillSymlinks,
+  removeUnselectedRudderSkillSymlinks,
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
@@ -326,11 +326,11 @@ async function ensurePiSkillsInjected(
 ) {
   const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
   const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
-  if (selectedEntries.length === 0) return;
   await fs.mkdir(skillsDir, { recursive: true });
-  const removedSkills = await removeMaintainerOnlySkillSymlinks(
+  const removedSkills = await removeUnselectedRudderSkillSymlinks(
     skillsDir,
     selectedEntries.map((entry) => entry.runtimeName),
+    skillsEntries.map((entry) => entry.source),
   );
   for (const skillName of removedSkills) {
     await onLog(
@@ -451,8 +451,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
-  env.HOME = operatorHome;
-  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.HOME = managedHome;
+  env.USERPROFILE = managedHome;
   env.PI_CODING_AGENT_DIR = path.join(managedHome, ".pi", "agent");
   env.PI_CODING_AGENT_SESSION_DIR = sessionsDir;
   env.RUDDER_RUN_ID = runId;
@@ -509,8 +509,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (PI_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
-  env.HOME = operatorHome;
-  env.USERPROFILE = process.env.USERPROFILE ?? operatorHome;
+  env.HOME = managedHome;
+  env.USERPROFILE = managedHome;
   env.PI_CODING_AGENT_DIR = path.join(managedHome, ".pi", "agent");
   env.PI_CODING_AGENT_SESSION_DIR = sessionsDir;
   env.RUDDER_OPERATOR_HOME = operatorHome;

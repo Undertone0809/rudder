@@ -178,6 +178,12 @@ describe("index.css motion rules", () => {
     expect(composerRing).toContain("filter: drop-shadow");
   });
 
+  it("keeps the Feishu read-only composer from drawing a nested border", () => {
+    const feishuReadOnlyComposerInner = cssBlock('[data-testid="chat-external-bound-readonly"] > *');
+
+    expect(feishuReadOnlyComposerInner).toContain("border-width: 0");
+  });
+
   it("keeps proposal action feedback from colliding with the review block fold", () => {
     const reviewBlock =
       indexCss.match(/\n\s*\.chat-review-block \{\s*\n\s*--chat-review-fold-size:[\s\S]*?\n\s*\}/)?.[0] ?? "";

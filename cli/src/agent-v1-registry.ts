@@ -1130,7 +1130,7 @@ export function renderAgentCliReferenceMarkdown(): string {
     "",
     "If your issue comment cites a screenshot path or visual validation artifact, attach that file with `--image <path>` instead of leaving only the local path in the text.",
     "",
-    "If `RUDDER_WAKE_REASON=issue_passive_followup`, the run is close-out governance for the same issue. Inspect current issue state first, then leave a progress comment, completion, blocker, or explicit handoff.",
+    "If `RUDDER_WAKE_REASON=issue_passive_followup`, the run is issue follow-up for the same issue. Inspect current issue state first, then leave a progress comment, completion, blocker, or explicit handoff.",
     "",
     "## Renderable Library References",
     "",

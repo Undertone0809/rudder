@@ -319,7 +319,7 @@ describe("agent run filters", () => {
     }))).toEqual(["Source: Heartbeat"]);
   });
 
-  it("filters timer invocations through the normalized heartbeat scene", () => {
+  it("filters timer and manual heartbeat invocations through the normalized heartbeat scene", () => {
     const timerRun = run({
       id: "11111111-0000-4000-8000-000000000000",
       invocationSource: "timer",
@@ -334,7 +334,7 @@ describe("agent run filters", () => {
       scenes: ["heartbeat"],
     }));
 
-    expect(filtered.map((item) => item.id)).toEqual([timerRun.id]);
+    expect(filtered.map((item) => item.id)).toEqual([timerRun.id, manualRun.id]);
     expect(runFilterChips(defaultFilterState({
       scenes: ["heartbeat"],
     }))).toEqual(["Scene: Heartbeat"]);

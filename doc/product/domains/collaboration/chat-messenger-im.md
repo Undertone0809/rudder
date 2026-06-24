@@ -17,9 +17,11 @@ related_code:
   - packages/db/src/schema/chat_messages.ts
   - packages/db/src/schema/chat_generations.ts
   - packages/db/src/schema/agent_integrations.ts
+  - packages/shared/src/constants.ts
   - packages/shared/src/types/chat.ts
   - packages/shared/src/project-mentions.ts
   - server/src/routes/chats.ts
+  - server/src/routes/chats.stream-routes.ts
   - server/src/services/product-intelligence.ts
   - server/src/services/chats.ts
   - server/src/services/chat-agent-runs.ts
@@ -38,6 +40,7 @@ related_code:
   - ui/src/components/MilkdownMarkdownEditor.tsx
   - ui/src/components/MessengerContextSidebar.tsx
   - ui/src/pages/Chat.tsx
+  - ui/src/pages/Chat.messages.tsx
   - ui/src/pages/Messenger.tsx
   - ui/src/pages/AgentDetail.runs.tsx
   - server/src/routes/website-metadata.ts
@@ -59,6 +62,8 @@ related_tests:
   - ui/src/components/MilkdownMarkdownEditor.test.ts
   - ui/src/components/MarkdownBody.test.tsx
   - ui/src/pages/AgentDetail.runs.test.ts
+  - ui/src/pages/Chat.attachment-preview.test.tsx
+  - ui/src/pages/Chat.messages.test.tsx
   - server/src/__tests__/website-metadata.test.ts
   - server/src/__tests__/website-metadata-routes.test.ts
   - tests/e2e/messenger-contract.spec.ts
@@ -389,6 +394,9 @@ Product model:
   the operator, Rudder reuses that group as the fork-family group and appends
   the forked conversations to it without overwriting that group's existing
   icon.
+- If the source conversation is bound to an external IM provider such as
+  Feishu, the fork keeps Rudder lineage but does not inherit the provider chat
+  binding. The child is a normal Rudder chat that can be continued locally.
 
 Flow:
 
@@ -399,7 +407,10 @@ Flow:
    no source message is supplied, it copies through the latest eligible message.
 4. Rudder writes a system message in the child conversation naming the fork
    source.
-5. Rudder ensures the fork-family Messenger custom group contains the root and
+5. When the source is Feishu-bound, Rudder leaves the Feishu binding on the
+   source conversation only. The fork has no provider source metadata or
+   outbound Feishu binding.
+6. Rudder ensures the fork-family Messenger custom group contains the root and
    forked conversations, then navigates the operator to the child conversation.
 
 Invariants:
@@ -412,6 +423,9 @@ Invariants:
   conversation is truncated at that response.
 - Forked conversations must not share mutable runtime context with the source
   conversation.
+- Forked conversations must not inherit external provider bindings from the
+  source conversation. A fork from a Feishu-bound conversation is locally
+  mutable in Rudder and must not send its future messages back to Feishu.
 - A message-level fork must not copy messages after the selected assistant
   response.
 - User messages must not expose or accept message-level fork actions.
@@ -429,6 +443,8 @@ Evidence:
   reuse.
 - Chat message/UI tests cover the message-level fork action.
 - Chat fork E2E covers the visible fork workflow and copied-message boundary.
+- Feishu source badge E2E covers that a fork from a Feishu-bound conversation
+  returns a normal Rudder chat with no Feishu outbound rows.
 
 ## CHAT.RICH.REFERENCE.RENDERING.001
 
@@ -710,6 +726,9 @@ Product model:
   thread summaries, so chat rows can show a compact `Feishu` source badge.
 - Feishu-origin chat runs carry source metadata in the run context snapshot, so
   Agent Detail can show `Source: Feishu` on the originating run.
+- Feishu-bound conversations are read-only from Rudder's local chat surface.
+  Operators must fork them to continue locally. The fork keeps chat lineage but
+  is not bound to the Feishu conversation.
 
 Setup flow:
 
@@ -748,6 +767,19 @@ Outbound flow:
 3. Outbound table records provider, external chat id, text, status, and linked
    Rudder message/run/conversation.
 
+Local Rudder read-only flow:
+
+1. Operator opens a Feishu-bound conversation in Messenger or Chat.
+2. Rudder shows the existing transcript and Feishu source badge, but replaces
+   the local composer with a fork-to-continue call to action.
+3. Local mutation APIs for that conversation reject with `409` and the message
+   `Fork this Feishu chat to continue in Rudder`.
+4. Listing messages remains passive and must not repair or rewrite message
+   state as a side effect of reading the Feishu-bound conversation.
+5. When the operator forks, Rudder creates a normal Rudder chat with lineage to
+   the Feishu-bound source. Local messages on the fork are allowed and are not
+   written to Feishu outbound delivery state.
+
 Invariants:
 
 - Dedup must run before chat binding, issue creation, run enqueue, or outbound
@@ -761,6 +793,18 @@ Invariants:
   details.
 - Source badges must derive from persisted provider/source metadata, not title
   parsing alone.
+- Feishu-bound conversations must be locally read-only in Rudder. Local send,
+  queued follow-up, edit, retry, continue, stop, attachment upload, context or
+  project mutation, conversion, resolve, archive, and delete actions must be
+  blocked or hidden for the bound source conversation.
+- Feishu inbound dispatch and Feishu runtime outbound delivery remain the only
+  paths that write back to the external Feishu chat binding.
+- Forked conversations from Feishu-bound sources must not carry
+  `sourceMetadata` or create `agentIntegrationOutboundMessages` for future local
+  messages.
+- UI controls must teach the operator to fork before continuing instead of
+  silently dropping local input or pretending the Feishu-bound conversation is a
+  normal chat.
 
 Evidence:
 
@@ -776,6 +820,13 @@ Evidence:
   app-registration provider.
 - Feishu source badge E2E covers the visible Messenger row badge and Agent
   Detail run detail badge for Feishu-origin work.
+- Feishu source badge E2E covers the Feishu-bound read-only UI, local mutation
+  `409`, fork creation, fork-local message send/readback, and absence of Feishu
+  outbound rows for the fork.
+- Chat route tests cover Feishu-bound local mutation rejection and passive
+  message listing.
+- Chat UI tests cover the read-only fork call to action, hidden local mutation
+  controls, and normal composer behavior on the fork.
 - Messenger service tests cover Feishu source metadata in thread summaries.
 - Agent Detail run facts tests and source-badge unit tests cover badge
   detection from persisted source metadata.

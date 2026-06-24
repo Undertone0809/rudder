@@ -1647,15 +1647,17 @@ export function ThreeColumnContextSidebar() {
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="surface-overlay text-foreground">
-                      <DropdownMenuItem
-                        onClick={() => {
-                          setRenamingConversationId(conversation.id);
-                          setRenameDraft(conversation.title);
-                        }}
-                      >
-                        <PencilLine className="h-4 w-4" />
-                        Rename
-                      </DropdownMenuItem>
+                      {!isFeishuBackedConversation(conversation) ? (
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setRenamingConversationId(conversation.id);
+                            setRenameDraft(conversation.title);
+                          }}
+                        >
+                          <PencilLine className="h-4 w-4" />
+                          Rename
+                        </DropdownMenuItem>
+                      ) : null}
                       <DropdownMenuItem
                         onClick={() => {
                           updateConversationUserStateMutation.mutate({
@@ -1758,15 +1760,17 @@ export function ThreeColumnContextSidebar() {
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="surface-overlay text-foreground">
-                      <DropdownMenuItem
-                        onClick={() => {
-                          setRenamingConversationId(conversation.id);
-                          setRenameDraft(conversation.title);
-                        }}
-                      >
-                        <PencilLine className="h-4 w-4" />
-                        Rename
-                      </DropdownMenuItem>
+                      {!isFeishuBackedConversation(conversation) ? (
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setRenamingConversationId(conversation.id);
+                            setRenameDraft(conversation.title);
+                          }}
+                        >
+                          <PencilLine className="h-4 w-4" />
+                          Rename
+                        </DropdownMenuItem>
+                      ) : null}
                       <DropdownMenuItem
                         onClick={() => {
                           updateConversationUserStateMutation.mutate({

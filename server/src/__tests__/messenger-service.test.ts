@@ -1538,6 +1538,125 @@ describe("messengerService and issue follows", () => {
     expect(afterAgentMessage?.needsAttention).toBe(true);
   });
 
+  it("does not mark Feishu-bound chats unread in Messenger summaries", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const agentId = randomUUID();
+    const secretId = randomUUID();
+    const integrationId = randomUUID();
+    const approvalId = randomUUID();
+    const userId = "board-user-feishu-unread";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Feishu Unread Org",
+      urlKey: deriveOrganizationUrlKey("Feishu Unread Org"),
+      issuePrefix: `F${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Feishu Agent",
+      role: "general",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(organizationSecrets).values({
+      id: secretId,
+      orgId,
+      name: "Feishu credential",
+      provider: "local_encrypted",
+    });
+    await db.insert(agentIntegrations).values({
+      id: integrationId,
+      orgId,
+      agentId,
+      provider: "feishu",
+      status: "active",
+      transport: "long_connection",
+      providerRegion: "feishu_cn",
+      appCredentialSecretId: secretId,
+      externalAppId: "cli_a_feishu_app_unread",
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "hi, what skill do you have?",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      preferredAgentId: agentId,
+      lastMessageAt: new Date("2026-06-24T07:42:00.000Z"),
+      createdAt: new Date("2026-06-24T07:40:00.000Z"),
+      updatedAt: new Date("2026-06-24T07:42:00.000Z"),
+    });
+    await db.insert(agentIntegrationChatBindings).values({
+      orgId,
+      integrationId,
+      conversationId,
+      externalChatId: "oc_feishu_unread",
+      externalChatType: "p2p",
+    });
+
+    await chatSvc.markRead(conversationId, orgId, userId, new Date("2026-06-24T07:41:00.000Z"));
+    await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "I'm the CMO agent.",
+      replyingAgentId: agentId,
+    });
+
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const chatSummary = summaries.find((item) => item.threadKey === `chat:${conversationId}`);
+    const [conversation] = await chatSvc.list(orgId, { status: "active" }, userId);
+
+    expect(chatSummary?.metadata).toMatchObject({
+      source: "agent_integration",
+      provider: "feishu",
+    });
+    expect(chatSummary?.unreadCount).toBe(0);
+    expect(chatSummary?.needsAttention).toBe(false);
+    expect(conversation?.mutability).toBe("external_bound_chat");
+    expect(conversation?.unreadCount).toBe(0);
+    expect(conversation?.isUnread).toBe(false);
+    expect(conversation?.needsAttention).toBe(false);
+
+    await db.insert(approvals).values({
+      id: approvalId,
+      orgId,
+      type: "chat_issue_creation",
+      requestedByUserId: userId,
+      status: "pending",
+      payload: { proposedIssue: { title: "Do not badge Feishu" } },
+      createdAt: new Date("2026-06-24T07:43:00.000Z"),
+      updatedAt: new Date("2026-06-24T07:43:00.000Z"),
+    });
+    await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "issue_proposal",
+      status: "completed",
+      body: "",
+      approvalId,
+      replyingAgentId: agentId,
+    });
+
+    const summariesAfterApproval = await messengerSvc.listThreadSummaries(orgId, userId);
+    const chatSummaryAfterApproval = summariesAfterApproval.find((item) => item.threadKey === `chat:${conversationId}`);
+    const [conversationAfterApproval] = await chatSvc.list(orgId, { status: "active" }, userId);
+
+    expect(chatSummaryAfterApproval?.unreadCount).toBe(0);
+    expect(chatSummaryAfterApproval?.needsAttention).toBe(false);
+    expect(conversationAfterApproval?.unreadCount).toBe(0);
+    expect(conversationAfterApproval?.isUnread).toBe(false);
+    expect(conversationAfterApproval?.needsAttention).toBe(false);
+  });
+
   it("hydrates deterministic latest user previews and user message counts", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();

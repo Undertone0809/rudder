@@ -103,7 +103,7 @@ export function createFeishuNodeSdkAppRegistrar(): FeishuAppRegistrar {
         },
         addons: {
           scopes: {
-            tenant: ["im:message:send_as_bot"],
+            tenant: ["im:message:send_as_bot", "im:message.reactions:write_only"],
           },
           events: {
             items: {

@@ -2260,7 +2260,7 @@ describe("issue lifecycle routes", () => {
     );
   });
 
-  it("includes issue and comment context when assignee wakeup is queued from comment endpoint", async () => {
+  it("does not wake the assignee for ordinary issue comments without mentions", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({
         assigneeAgentId: ASSIGNEE_AGENT_ID,
@@ -2283,24 +2283,56 @@ describe("issue lifecycle routes", () => {
 
     expect(res.status).toBe(201);
     await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.anything(),
+    );
+  });
+
+  it("includes issue and comment context when assignee is mentioned from comment endpoint", async () => {
+    const mention = buildAgentMentionHref(ASSIGNEE_AGENT_ID, "code", "wake");
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([ASSIGNEE_AGENT_ID]);
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-assignee-mention-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      body: `[Assigned Agent](${mention}) please check the retry path`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorAgentId: null,
+      authorUserId: "local-board",
+    });
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: `[Assigned Agent](${mention}) please check the retry path` });
+
+    expect(res.status).toBe(201);
+    await flushAsyncWork();
     expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
       ASSIGNEE_AGENT_ID,
       expect.objectContaining({
         source: "automation",
-        reason: "issue_commented",
+        reason: "issue_comment_mentioned",
         contextSnapshot: expect.objectContaining({
           issueId: "11111111-1111-4111-8111-111111111111",
-          commentId: "comment-assignee-1",
-          wakeCommentId: "comment-assignee-1",
-          wakeReason: "issue_commented",
+          commentId: "comment-assignee-mention-1",
+          wakeCommentId: "comment-assignee-mention-1",
+          wakeReason: "issue_comment_mentioned",
+          wakeSource: "comment.mention",
           issue: expect.objectContaining({
             id: "11111111-1111-4111-8111-111111111111",
             title: "Lifecycle hardening",
             status: "todo",
           }),
           comment: expect.objectContaining({
-            id: "comment-assignee-1",
-            body: "please check the retry path",
+            id: "comment-assignee-mention-1",
+            body: `[Assigned Agent](${mention}) please check the retry path`,
             authorUserId: "local-board",
           }),
         }),
@@ -2320,7 +2352,7 @@ describe("issue lifecycle routes", () => {
       issue: context.issue,
       comment: context.comment,
     });
-    expect(renderedPrompt).toContain("There is a new comment on an issue you own.");
+    expect(renderedPrompt).toContain("You were mentioned in a comment and your attention is needed.");
     expect(renderedPrompt).toContain("Lifecycle hardening");
     expect(renderedPrompt).toContain("please check the retry path");
   });
@@ -2333,6 +2365,9 @@ describe("issue lifecycle routes", () => {
         description: "Closed issue should resume from the reopen comment.",
       }),
     );
+    mockIssueService.findMentionedAgents
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([ASSIGNEE_AGENT_ID]);
     mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
       makeIssue({
         assigneeAgentId: ASSIGNEE_AGENT_ID,
@@ -2340,22 +2375,28 @@ describe("issue lifecycle routes", () => {
         description: "Closed issue should resume from the reopen comment.",
       }),
     );
-    mockIssueService.addComment.mockResolvedValue({
+    const expectedMention = `[Assigned Agent](${buildAgentMentionHref(ASSIGNEE_AGENT_ID, null, "wake")})`;
+    mockIssueService.addComment.mockImplementation(async (_issueId: string, body: string) => ({
       id: "comment-reopen-1",
       issueId: "11111111-1111-4111-8111-111111111111",
       orgId: "organization-1",
-      body: "please reopen and continue",
+      body,
       createdAt: new Date(),
       updatedAt: new Date(),
       authorAgentId: null,
       authorUserId: "local-board",
-    });
+    }));
 
     const res = await request(createApp())
       .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
       .send({ body: "please reopen and continue", reopen: true });
 
     expect(res.status).toBe(201);
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      `please reopen and continue\n\n${expectedMention}`,
+      expect.anything(),
+    );
     await flushAsyncWork();
     expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
       ASSIGNEE_AGENT_ID,
@@ -2385,7 +2426,7 @@ describe("issue lifecycle routes", () => {
           }),
           comment: expect.objectContaining({
             id: "comment-reopen-1",
-            body: "please reopen and continue",
+            body: `please reopen and continue\n\n${expectedMention}`,
             authorUserId: "local-board",
           }),
         }),
@@ -2405,6 +2446,77 @@ describe("issue lifecycle routes", () => {
     expect(renderedPrompt).toContain("There is a new comment on an issue you own.");
     expect(renderedPrompt).toContain("Lifecycle hardening");
     expect(renderedPrompt).toContain("please reopen and continue");
+  });
+
+  it("does not duplicate assignee mentions when a reopen comment already mentions the assignee", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "done",
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([ASSIGNEE_AGENT_ID]);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: patch.status as "todo",
+      }),
+    );
+    const mention = `[Assigned Agent](${buildAgentMentionHref(ASSIGNEE_AGENT_ID, null, "wake")})`;
+    const body = `please reopen and continue ${mention}`;
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body, reopen: true });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      body,
+      expect.anything(),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        reason: "issue_reopened_via_comment",
+        contextSnapshot: expect.objectContaining({
+          wakeReason: "issue_reopened_via_comment",
+          comment: expect.objectContaining({ body }),
+        }),
+      }),
+    );
+  });
+
+  it("does not append a self mention or wake the assignee when the assignee reopens with a comment", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "done",
+        checkoutRunId: RUN_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: patch.status as "todo",
+        checkoutRunId: RUN_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "reopening because I found the missing case", reopen: true });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "reopening because I found the missing case",
+      expect.objectContaining({ agentId: ASSIGNEE_AGENT_ID }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
   it("does not wake the assignee when a comment explicitly wakes the reviewer", async () => {

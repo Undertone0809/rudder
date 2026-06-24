@@ -68,6 +68,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     operatorProfiles,
     heartbeat,
     assertConversationAccess,
+    assertChatLocalMutationAllowed,
     boardUserId,
     assertCanAssignTasks,
     runSingleFileUpload,
@@ -133,6 +134,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
 
     const actor = getActorInfo(req);
     if (actor.actorType === "agent") {
@@ -287,7 +289,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         });
       }
       if (!parsedBody.data.editUserMessageId) {
-        startChatTitleGeneration(conversation as ChatConversation, parsedBody.data.body);
+        startChatTitleGeneration(conversation as ChatConversation, userMessage);
       }
       const userAttachments = await attachFilesToUserMessage(
         conversation as ChatConversation,
@@ -622,6 +624,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
 
     res.json({ stopped: cancelActiveChatGeneration(conversation.id) });
   });
@@ -640,6 +643,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(422).json({ error: "Chat conversation does not belong to organization" });
       return;
     }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
 
     try {
       await runSingleFileUpload(req, res);
@@ -725,6 +729,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
     await assertContextLinksBelongToCompany(conversation.orgId, [req.body]);
     const linked = await svc.addContextLink(conversation.id, conversation.orgId, req.body);
     const actor = getActorInfo(req);
@@ -748,6 +753,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
     const projectId = req.body.projectId ?? null;
     if (projectId) {
       await assertContextLinksBelongToCompany(conversation.orgId, [{
@@ -787,6 +793,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
     const actor = getActorInfo(req);
     if (req.body.proposal?.goalId) {
       const goal = await goalsSvc.getById(req.body.proposal.goalId);
@@ -884,6 +891,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         res.status(404).json({ error: "Chat conversation not found" });
         return;
       }
+      assertChatLocalMutationAllowed(conversation as ChatConversation);
 
       const actor = getActorInfo(req);
       const messageId = req.params.messageId as string;
@@ -933,6 +941,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
     const resolved = await svc.resolve(conversation.id);
     const actor = getActorInfo(req);
     await logActivity(db, {

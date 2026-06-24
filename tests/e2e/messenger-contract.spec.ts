@@ -54,36 +54,12 @@ async function createConfiguredOrganization(page: Page, name: string) {
   return { ...organization, chatAgent };
 }
 
-async function configureFastTitleProfile(page: Page, orgId: string, title: string) {
-  const profileRes = await page.request.put(`/api/orgs/${orgId}/intelligence-profiles/lightweight`, {
-    data: {
-      agentRuntimeType: "process",
-      agentRuntimeConfig: {
-        command: "node",
-        args: ["-e", `process.stdout.write(${JSON.stringify(title)})`],
-      },
-      status: "configured",
-    },
-  });
-  expect(profileRes.ok()).toBe(true);
-}
-
 function threadTestId(threadKey: string) {
   return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 function messengerSectionTestId(sectionKey: string) {
   return `messenger-thread-section-${sectionKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-}
-
-function deferred<T>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((promiseResolve, promiseReject) => {
-    resolve = promiseResolve;
-    reject = promiseReject;
-  });
-  return { promise, resolve, reject };
 }
 
 function chatUnreadBadgeTestId(chatId: string) {
@@ -121,7 +97,8 @@ async function dragMessengerSectionOver(page: Page, source: Locator, target: Loc
 }
 
 async function dragMessengerThreadHandleOver(page: Page, source: Locator, target: Locator) {
-  const sourceBox = await source.boundingBox();
+  const sourceHandle = source.getByRole("button", { name: /^Drag / }).first();
+  const sourceBox = await sourceHandle.boundingBox() ?? await source.boundingBox();
   const targetBox = await target.boundingBox();
   if (!sourceBox || !targetBox) {
     throw new Error("Could not resolve Messenger thread drag bounds");
@@ -175,7 +152,7 @@ test.describe("Messenger unified threads contract", () => {
   test("loads additional chat sessions in the Messenger sidebar without fetching every thread up front", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Paged-Sessions-${Date.now()}`);
     const baseTime = Date.parse("2026-05-15T12:00:00.000Z");
-    const rows = Array.from({ length: 55 }).map((_, index) => {
+    const rows = Array.from({ length: 205 }).map((_, index) => {
       const activityAt = new Date(baseTime - index * 60_000);
       return {
         id: randomUUID(),
@@ -197,7 +174,6 @@ test.describe("Messenger unified threads contract", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
     const unpagedThreadRequests: string[] = [];
-    const fullChatListRequests: string[] = [];
     page.on("request", (request) => {
       const url = new URL(request.url());
       if (
@@ -207,26 +183,18 @@ test.describe("Messenger unified threads contract", () => {
       ) {
         unpagedThreadRequests.push(request.url());
       }
-      if (
-        request.method() === "GET"
-        && url.pathname === `/api/orgs/${organization.id}/chats`
-        && url.searchParams.get("status") === "active"
-      ) {
-        fullChatListRequests.push(request.url());
-      }
     });
 
     const firstPageResponse = page.waitForResponse((response) =>
       response.request().method() === "GET"
       && response.url().includes(`/api/orgs/${organization.id}/messenger/threads?limit=40`),
     );
-    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    await page.goto(`/${organization.issuePrefix}/messenger/issues`, { waitUntil: "commit" });
     const firstPage = await (await firstPageResponse).json();
     expect(firstPage.items).toHaveLength(40);
     expect(firstPage.pageInfo.hasMore).toBe(true);
-    expect(firstPage.items.some((item: { title: string }) => item.title === "Paged session 55")).toBe(false);
+    expect(firstPage.items.some((item: { title: string }) => item.title === "Paged session 205")).toBe(false);
     expect(unpagedThreadRequests).toEqual([]);
-    expect(fullChatListRequests).toEqual([]);
 
     const nextPageResponse = page.waitForResponse((response) =>
       response.request().method() === "GET"
@@ -241,7 +209,31 @@ test.describe("Messenger unified threads contract", () => {
     expect(nextPage.items.some((item: { title: string }) => item.title === "Paged session 55")).toBe(true);
     await expect(page.getByTestId(threadTestId(`chat:${rows[54]!.id}`))).toBeVisible({ timeout: 15_000 });
     expect(unpagedThreadRequests).toEqual([]);
-    expect(fullChatListRequests).toEqual([]);
+
+    const sidebarThreadList = page.getByTestId("workspace-sidebar").locator("nav");
+    const manualLoadButton = page.getByTestId("messenger-thread-page-load-more");
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await sidebarThreadList.evaluate((node) => {
+        node.scrollTop = node.scrollHeight;
+        node.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      if (await manualLoadButton.isVisible().catch(() => false)) break;
+      await page.waitForTimeout(250);
+    }
+
+    await expect(manualLoadButton).toBeVisible({ timeout: 15_000 });
+    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBe(160);
+    await sidebarThreadList.evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+      node.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await page.waitForTimeout(500);
+    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBe(160);
+
+    await manualLoadButton.click();
+    await expect.poll(async () => page.locator("[data-messenger-thread-key]").count()).toBe(200);
+    await expect(page.getByTestId(threadTestId(`chat:${rows[199]!.id}`))).toBeAttached({ timeout: 15_000 });
+    expect(unpagedThreadRequests).toEqual([]);
   });
 
   test("keeps pinned Messenger chats visible when they are older than the first activity page", async ({ page }) => {
@@ -1323,14 +1315,14 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByRole("menuitem", { name: "Pin" })).toBeVisible();
   });
 
-  test("moves pinned tabs into groups and merges two loose tabs by dropping one on another", async ({ page }) => {
+  test("moves tabs into existing groups and reorders loose tabs without drag-merging", async ({ page }) => {
     const pageErrors: string[] = [];
     const consoleErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
-    const organization = await createOrganization(page, `Messenger-Tab-Merge-${Date.now()}`);
+    const organization = await createOrganization(page, `Messenger-Tab-Reorder-${Date.now()}`);
 
     async function createChat(title: string, summary = `${title} summary`) {
       const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
@@ -1347,8 +1339,8 @@ test.describe("Messenger unified threads contract", () => {
 
     const groupedChat = await createChat("Existing grouped tab");
     const pinnedChat = await createChat("Pinned tab to group");
-    const looseTarget = await createChat("Loose merge target");
-    const looseSource = await createChat("Loose merge source");
+    const looseTarget = await createChat("Loose reorder target");
+    const looseSource = await createChat("Loose reorder source");
     const pinRes = await page.request.post(`/api/chats/${pinnedChat.id}/user-state`, {
       data: { pinned: true },
     });
@@ -1393,111 +1385,35 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId("messenger-thread-section-custom-pinned")).toHaveCount(0);
     await expect(page.getByTestId(groupSectionId)).toContainText("Pinned tab to group");
 
+    const mergeRequests: string[] = [];
+    await page.route(`**/api/orgs/${organization.id}/messenger/groups/merge`, async (route) => {
+      mergeRequests.push(route.request().postData() ?? "");
+      await route.continue();
+    });
+
     await dragMessengerThreadHandleOver(
       page,
       page.getByTestId(threadTestId(`chat:${looseSource.id}`)),
       page.getByTestId(threadTestId(`chat:${looseTarget.id}`)),
     );
-    await expect.poll(async () => {
-      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
-      expect(groupsRes.ok()).toBe(true);
-      const payload = await groupsRes.json() as { groups: Array<{ id: string; name: string; entries: Array<{ threadKey: string }> }> };
-      return payload.groups
-        .map((candidate) => candidate.entries.map((entry) => entry.threadKey).sort())
-        .some((threadKeys) =>
-          threadKeys.includes(`chat:${looseSource.id}`) &&
-          threadKeys.includes(`chat:${looseTarget.id}`),
-        );
-    }).toBe(true);
+    await page.waitForTimeout(250);
+    expect(mergeRequests).toEqual([]);
+    const groupsAfterLooseDropRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+    expect(groupsAfterLooseDropRes.ok()).toBe(true);
+    const groupsAfterLooseDrop = await groupsAfterLooseDropRes.json() as { groups: Array<{ entries: Array<{ threadKey: string }> }> };
+    expect(groupsAfterLooseDrop.groups
+      .some((candidate) => {
+        const threadKeys = candidate.entries.map((entry) => entry.threadKey);
+        return threadKeys.includes(`chat:${looseSource.id}`) && threadKeys.includes(`chat:${looseTarget.id}`);
+      })).toBe(false);
+    await expectTestIdsInDomOrder(page, [
+      threadTestId(`chat:${looseTarget.id}`),
+      threadTestId(`chat:${looseSource.id}`),
+    ]);
 
     const fatalClientSignals = [...pageErrors, ...consoleErrors]
       .filter((message) => /removeChild|UI recovery|reload|NotFoundError/i.test(message));
     expect(fatalClientSignals).toEqual([]);
-  });
-
-  test("keeps a pending custom group rendered while a loose-row merge is saving", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Pending-Merge-${Date.now()}`);
-    await configureFastTitleProfile(page, organization.id, "Generated planning bundle");
-
-    async function createChat(title: string, summary = `${title} summary`) {
-      const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-        data: {
-          title,
-          summary,
-          issueCreationMode: "manual_approval",
-          planMode: false,
-        },
-      });
-      expect(res.ok()).toBe(true);
-      return res.json() as Promise<{ id: string }>;
-    }
-
-    const sourceChat = await createChat("Pending source tab");
-    const targetChat = await createChat("Pending target tab");
-
-    await page.goto("/");
-    await page.evaluate((orgId) => {
-      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
-      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
-    }, organization.id);
-    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
-
-    const releaseMerge = deferred<void>();
-    let startedMerge!: () => void;
-    const mergeStarted = new Promise<void>((resolve) => {
-      startedMerge = resolve;
-    });
-    let mergePayload: { name?: string; threadKeys?: string[]; autoGenerateName?: boolean } | null = null;
-    await page.route(`**/api/orgs/${organization.id}/messenger/groups/merge`, async (route) => {
-      mergePayload = route.request().postDataJSON();
-      startedMerge();
-      await releaseMerge.promise;
-      const response = await route.fetch();
-      await route.fulfill({ response });
-    });
-
-    await dragMessengerThreadHandleOver(
-      page,
-      page.getByTestId(threadTestId(`chat:${sourceChat.id}`)),
-      page.getByTestId(threadTestId(`chat:${targetChat.id}`)),
-    );
-    await mergeStarted;
-
-    const pendingSectionId = messengerSectionTestId(`pending-custom-group:chat:${targetChat.id}->chat:${sourceChat.id}`);
-    const pendingSection = page.getByTestId(pendingSectionId);
-    await expect(pendingSection).toBeVisible();
-    expect(mergePayload).toMatchObject({
-      name: "Pending target tab",
-      threadKeys: [`chat:${targetChat.id}`, `chat:${sourceChat.id}`],
-      autoGenerateName: true,
-    });
-    await expect(pendingSection).toContainText("Pending target tab");
-    await expect(pendingSection).toContainText("Pending source tab");
-    await expect(pendingSection).toContainText("Naming");
-    await expect(page.getByTestId(messengerSectionTestId(`chat:${sourceChat.id}`))).toHaveCount(0);
-    await expect(page.getByTestId(messengerSectionTestId(`chat:${targetChat.id}`))).toHaveCount(0);
-
-    releaseMerge.resolve();
-    let savedGroupId: string | null = null;
-    await expect.poll(async () => {
-      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
-      expect(groupsRes.ok()).toBe(true);
-      const payload = await groupsRes.json() as { groups: Array<{ id: string; name: string; entries: Array<{ threadKey: string }> }> };
-      const group = payload.groups.find((candidate) => {
-        const threadKeys = candidate.entries.map((entry) => entry.threadKey);
-        return candidate.name === "Generated planning bundle" &&
-          threadKeys[0] === `chat:${targetChat.id}` &&
-          threadKeys[1] === `chat:${sourceChat.id}`;
-      });
-      savedGroupId = group?.id ?? null;
-      return Boolean(savedGroupId);
-    }).toBe(true);
-    expect(savedGroupId).toBeTruthy();
-    await expect(pendingSection).toHaveCount(0);
-    const savedGroupSection = page.getByTestId(`messenger-thread-section-custom-group-${savedGroupId}`);
-    await expect(savedGroupSection).toContainText("Generated planning bundle");
-    await expect(savedGroupSection).toContainText("Pending target tab");
-    await expect(savedGroupSection).toContainText("Pending source tab");
   });
 
   test("loads older issue messages on demand instead of rendering the full issue feed", async ({ page }) => {
@@ -3214,7 +3130,7 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId(`messenger-approval-message-${approval.id}-timestamp`)).toHaveText(exactTimestampPattern());
   });
 
-  test("supports chat pin, archive, and delete actions from Messenger menus", async ({ page }) => {
+  test("keeps active chat actions aligned with Messenger row actions", async ({ page, baseURL }) => {
     const organization = await createOrganization(page, `Messenger-Actions-${Date.now()}`);
 
     async function createChat(title: string, summary = `${title} summary`) {
@@ -3231,10 +3147,33 @@ test.describe("Messenger unified threads contract", () => {
     }
 
     const pinChat = await createChat("Pin action chat");
+    const activeMenuChat = await createChat("Active menu parity chat", "Active menu stable summary");
+    const activeMenuReplyAt = new Date();
+    await e2eDb.insert(chatMessages).values({
+      orgId: organization.id,
+      conversationId: activeMenuChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Incoming reply for active menu unread parity.",
+      createdAt: activeMenuReplyAt,
+      updatedAt: activeMenuReplyAt,
+    });
+    await e2eDb.update(chatConversations)
+      .set({
+        lastMessageAt: activeMenuReplyAt,
+        updatedAt: activeMenuReplyAt,
+      })
+      .where(eq(chatConversations.id, activeMenuChat.id));
     const renameChat = await createChat("Rename action chat", "Rename action stable summary");
     const archiveChat = await createChat("Archive action chat");
     const deleteChat = await createChat("Delete action chat");
     const sidebarDeleteChat = await createChat("Sidebar delete action chat");
+    const existingGroupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Existing action group", icon: "folder" },
+    });
+    expect(existingGroupRes.ok()).toBe(true);
+    const existingGroup = await existingGroupRes.json() as { id: string };
 
     let releaseRenamePatch!: () => void;
     const renamePatchGate = new Promise<void>((resolve) => {
@@ -3259,12 +3198,68 @@ test.describe("Messenger unified threads contract", () => {
     releaseRenamePatch();
     await expect.poll(async () => (await (await page.request.get(`/api/chats/${renameChat.id}`)).json()).title).toBe("Renamed action chat");
 
+    if (baseURL) {
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
+    }
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${activeMenuChat.id}`, { waitUntil: "commit" });
+    await page.getByTestId("chat-actions-trigger").click();
+    for (const actionName of [
+      "Rename",
+      "Pin",
+      "Mark as Unread",
+      "Copy Chat Link",
+      "Fork",
+      "New group",
+      "Move to group",
+      "Archive",
+      "Delete",
+    ]) {
+      await expect(page.getByRole("menuitem", { name: actionName, exact: true })).toBeVisible();
+    }
+    await page.screenshot({ path: "/tmp/rudder-active-chat-actions-menu.png", fullPage: true });
+    await page.getByRole("menuitem", { name: "Copy Chat Link" }).click();
+    await expect.poll(async () => page.evaluate(() => navigator.clipboard.readText())).toBe(`[Active menu parity chat](chat://${activeMenuChat.id})`);
+
+    await page.getByTestId("chat-actions-trigger").click();
+    await page.getByRole("menuitem", { name: "Mark as Unread" }).click();
+    await expect.poll(async () => (await (await page.request.get(`/api/chats/${activeMenuChat.id}`)).json()).isUnread).toBe(true);
+
+    await page.getByTestId("chat-actions-trigger").click();
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    const activeRenameInput = page.getByTestId("chat-title-rename-form").getByRole("textbox", { name: "Chat title" });
+    await expect(activeRenameInput).toBeVisible();
+    await activeRenameInput.fill("Renamed active menu chat");
+    await activeRenameInput.press("Enter");
+    await expect.poll(async () => (await (await page.request.get(`/api/chats/${activeMenuChat.id}`)).json()).title).toBe("Renamed active menu chat");
+
+    await page.getByTestId("chat-actions-trigger").click();
+    await page.getByRole("menuitem", { name: "Move to group" }).hover();
+    await page.getByRole("menuitem", { name: "Existing action group" }).dispatchEvent("click");
+    await expect.poll(async () => {
+      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+      expect(groupsRes.ok()).toBe(true);
+      const groups = await groupsRes.json() as { groups: Array<{ id: string; entries: Array<{ threadKey: string }> }> };
+      return groups.groups.find((group) => group.id === existingGroup.id)?.entries.some((entry) => entry.threadKey === `chat:${activeMenuChat.id}`) ?? false;
+    }).toBe(true);
+
+    await page.getByTestId("chat-actions-trigger").click();
+    await page.getByRole("menuitem", { name: "New group" }).click();
+    await expect.poll(async () => {
+      const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+      expect(groupsRes.ok()).toBe(true);
+      const groups = await groupsRes.json() as { groups: Array<{ name: string; entries: Array<{ threadKey: string }> }> };
+      return groups.groups.some((group) =>
+        group.name === "Renamed active menu chat"
+        && group.entries.some((entry) => entry.threadKey === `chat:${activeMenuChat.id}`),
+      );
+    }).toBe(true);
+
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${pinChat.id}`, { waitUntil: "commit" });
     await page.getByTestId("chat-actions-trigger").click();
-    await expect(page.getByRole("menuitem", { name: "Pin Chat" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Pin" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Archive" })).toBeVisible();
-    await page.getByRole("menuitem", { name: "Pin Chat" }).click();
+    await page.getByRole("menuitem", { name: "Pin" }).click();
     const pinnedRes = await page.request.get(`/api/chats/${pinChat.id}`);
     expect(pinnedRes.ok()).toBe(true);
     await expect.poll(async () => (await (await page.request.get(`/api/chats/${pinChat.id}`)).json()).isPinned).toBe(true);
@@ -3276,9 +3271,9 @@ test.describe("Messenger unified threads contract", () => {
     await expect.poll(async () => (await (await page.request.get(`/api/chats/${archiveChat.id}`)).json()).status).toBe("archived");
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${deleteChat.id}`, { waitUntil: "commit" });
-    page.once("dialog", (dialog) => dialog.accept());
     await page.getByTestId("chat-actions-trigger").click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
+    await page.getByRole("dialog", { name: "Delete chat" }).getByRole("button", { name: "Delete" }).click();
     await expect(page).toHaveURL(/\/messenger\/chat(?:\?[^#]*)?$/, { timeout: 15_000 });
     await expect.poll(async () => (await page.request.get(`/api/chats/${deleteChat.id}`)).status()).toBe(404);
 
@@ -3287,8 +3282,8 @@ test.describe("Messenger unified threads contract", () => {
     await expect(sidebarRow).toContainText("Sidebar delete action chat");
     await sidebarRow.hover();
     await sidebarRow.getByRole("button", { name: "Chat actions" }).click();
-    page.once("dialog", (dialog) => dialog.accept());
     await page.getByRole("menuitem", { name: "Delete" }).click();
+    await page.getByRole("dialog", { name: "Delete chat" }).getByRole("button", { name: "Delete" }).click();
     await expect.poll(async () => (await page.request.get(`/api/chats/${sidebarDeleteChat.id}`)).status()).toBe(404);
     await expect(sidebarRow).toHaveCount(0);
   });

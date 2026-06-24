@@ -1,9 +1,11 @@
 import {
+  agentIntegrationChatBindings,
+  agentIntegrations,
   agents,
   applyPendingMigrations,
   approvals,
-  chatConversationUserStates,
   chatConversations,
+  chatConversationUserStates,
   chatMessages,
   createDb,
   ensurePostgresDatabase,
@@ -14,6 +16,7 @@ import {
   issues,
   messengerThreadUserStates,
   organizations,
+  organizationSecrets,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
@@ -119,6 +122,7 @@ describe("sidebarBadgeService", () => {
   afterEach(async () => {
     await db.delete(chatMessages);
     await db.delete(chatConversationUserStates);
+    await db.delete(agentIntegrationChatBindings);
     await db.delete(chatConversations);
     await db.delete(approvals);
     await db.delete(heartbeatRuns);
@@ -127,6 +131,8 @@ describe("sidebarBadgeService", () => {
     await db.delete(issueFollows);
     await db.delete(issueReadStates);
     await db.delete(issues);
+    await db.delete(agentIntegrations);
+    await db.delete(organizationSecrets);
     await db.delete(agents);
     await db.delete(organizations);
   });
@@ -514,6 +520,91 @@ describe("sidebarBadgeService", () => {
     });
 
     await expect(svc.countActiveChatAttention(orgId, userId)).resolves.toBe(2);
+  });
+
+  it("does not count Feishu-bound chat replies in active chat attention", async () => {
+    const orgId = await createOrg("Sidebar Feishu Chats");
+    const userId = "board-user-feishu";
+    const conversationId = randomUUID();
+    const agentId = await createAgent(orgId, "Feishu Agent");
+    const secretId = randomUUID();
+    const integrationId = randomUUID();
+    const approvalId = randomUUID();
+
+    await db.insert(organizationSecrets).values({
+      id: secretId,
+      orgId,
+      name: "Feishu credential",
+      provider: "local_encrypted",
+    });
+    await db.insert(agentIntegrations).values({
+      id: integrationId,
+      orgId,
+      agentId,
+      provider: "feishu",
+      status: "active",
+      transport: "long_connection",
+      providerRegion: "feishu_cn",
+      appCredentialSecretId: secretId,
+      externalAppId: "cli_a_feishu_sidebar",
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "hi, what skill do you have?",
+      status: "active",
+      issueCreationMode: "manual_approval",
+      preferredAgentId: agentId,
+      lastMessageAt: new Date("2026-06-24T07:42:00.000Z"),
+      updatedAt: new Date("2026-06-24T07:42:00.000Z"),
+    });
+    await db.insert(agentIntegrationChatBindings).values({
+      orgId,
+      integrationId,
+      conversationId,
+      externalChatId: "oc_feishu_sidebar",
+      externalChatType: "p2p",
+    });
+    await db.insert(chatConversationUserStates).values({
+      orgId,
+      conversationId,
+      userId,
+      lastReadAt: new Date("2026-06-24T07:41:00.000Z"),
+    });
+    await db.insert(chatMessages).values({
+      orgId,
+      conversationId,
+      role: "assistant",
+      kind: "message",
+      body: "I'm the CMO agent.",
+      replyingAgentId: agentId,
+      createdAt: new Date("2026-06-24T07:42:00.000Z"),
+    });
+
+    await expect(svc.countActiveChatAttention(orgId, userId)).resolves.toBe(0);
+
+    await db.insert(approvals).values({
+      id: approvalId,
+      orgId,
+      type: "chat_issue_creation",
+      requestedByUserId: userId,
+      status: "pending",
+      payload: { proposedIssue: { title: "Do not badge Feishu" } },
+      createdAt: new Date("2026-06-24T07:43:00.000Z"),
+      updatedAt: new Date("2026-06-24T07:43:00.000Z"),
+    });
+    await db.insert(chatMessages).values({
+      orgId,
+      conversationId,
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "",
+      approvalId,
+      replyingAgentId: agentId,
+      createdAt: new Date("2026-06-24T07:43:00.000Z"),
+    });
+
+    await expect(svc.countActiveChatAttention(orgId, userId)).resolves.toBe(0);
   });
 
   it("builds badges from base counts and counts failed latest runs for active agents only", async () => {

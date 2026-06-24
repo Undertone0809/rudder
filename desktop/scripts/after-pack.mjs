@@ -145,6 +145,15 @@ async function copyPackagedServerBundle(appDir, resourcesDir) {
   await copyTreePreservingSymlinks(stagedServerPackageDir, destinationDir);
 }
 
+async function copyPostgresRuntimePayload(appDir, resourcesDir) {
+  const stagedPostgresRuntimeDir = path.join(appDir, ".packaged", "postgres-18.4");
+  if (!(await exists(stagedPostgresRuntimeDir))) return;
+
+  const destinationDir = path.join(resourcesDir, "postgres-18.4");
+  await fs.rm(destinationDir, { recursive: true, force: true });
+  await copyTreePreservingSymlinks(stagedPostgresRuntimeDir, destinationDir);
+}
+
 async function copyTreePreservingSymlinks(sourcePath, destinationPath) {
   const stats = await fs.lstat(sourcePath);
 
@@ -196,6 +205,7 @@ export default async function afterPack(context) {
 
   await copyOptionalDependencies(appDir, appNodeModulesDir);
   await copyPackagedServerBundle(projectDir, resourcesDir);
+  await copyPostgresRuntimePayload(projectDir, resourcesDir);
 
   for (const packagedServerRudderPackagesDir of packagedServerRudderPackagesDirs) {
     if (!(await exists(packagedServerRudderPackagesDir))) continue;

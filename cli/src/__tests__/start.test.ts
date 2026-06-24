@@ -39,6 +39,7 @@ import {
   resolveDesktopReleaseTag,
   resolveDesktopReleaseVersion,
   resolveDesktopShellAssetName,
+  runtimeSupportsDesktopShellAssets,
   selectChecksumAsset,
   selectChecksummedDesktopAssetCandidate,
   selectDesktopAsset,
@@ -752,6 +753,14 @@ describe("desktop start command helpers", () => {
     expect(isExactRuntimePackageSpec("0.3.1", "@rudderhq/server@0.3.1")).toBe(true);
     expect(isExactRuntimePackageSpec("0.3.1", "@rudderhq/server@latest")).toBe(false);
     expect(isExactRuntimePackageSpec("latest", "@rudderhq/server@latest")).toBe(false);
+    expect(runtimeSupportsDesktopShellAssets("0.3.1", {
+      packageSpec: "@rudderhq/server@0.3.1",
+      postgresPayloadBinDir: undefined,
+    })).toBe(false);
+    expect(runtimeSupportsDesktopShellAssets("0.3.1", {
+      packageSpec: "@rudderhq/server@0.3.1",
+      postgresPayloadBinDir: "/tmp/rudder/postgres-18.4/linux-x64/bin",
+    })).toBe(true);
   });
 
   it("falls back to the full desktop asset when shell is not checksummed", () => {
