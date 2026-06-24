@@ -228,15 +228,15 @@
     },
     {
       "id": 23,
-      "prompt": "你这个 development-lifecycle-router-maintainer 得优化了啊，不然我每次都要这样问，好麻烦 019e93bc-6b5b-7fe0-bbf6-cf73f34a9c7e。用 skill-optimizer 来优化一下这个 skill。截图里上一轮提到了 imagegen-frontend-web、redesign-existing-projects 和 router。",
-      "expected_output": "Classifies the turn as skill_optimization and routes to skill-optimizer with development-lifecycle-router-maintainer as the target artifact. It treats the screenshot, linked design skills, and session id as failure evidence, extracts the failed decision point, patches the router or its evals narrowly, and does not generate UI mockups or recommend the design skills as the current task.",
+      "prompt": "你这个 development-lifecycle-router-maintainer 得优化了啊，不然我每次都要这样问，好麻烦 019e93bc-6b5b-7fe0-bbf6-cf73f34a9c7e。用 skill-creator 来优化一下这个 skill。截图里上一轮提到了 imagegen-frontend-web、redesign-existing-projects 和 router。",
+      "expected_output": "Classifies the turn as skill_optimization and routes to skill-creator with development-lifecycle-router-maintainer as the target artifact. It treats the screenshot, linked design skills, and session id as failure evidence, extracts the failed decision point, patches the router or its evals narrowly, and does not generate UI mockups or recommend the design skills as the current task.",
       "files": [
         ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
         ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
       ],
       "expectations": [
         "The result gives meta-request precedence over content embedded in the screenshot or prior assistant output.",
-        "The result names skill-optimizer as the primary workflow and the router skill as the target artifact.",
+        "The result names skill-creator as the primary workflow and the router skill as the target artifact.",
         "The result uses the session id, screenshot, and prior recommendations as evidence rather than current routing candidates.",
         "The result extracts a reusable failure class such as screenshot evidence overriding the user's skill-optimization request.",
         "The result updates or proposes a validation case that prevents the same misroute on the next run."
@@ -245,7 +245,7 @@
     {
       "id": 24,
       "prompt": "继续刚才的 Library UI 图，按 imagegen-frontend-web 和 redesign-existing-projects 给我生成三张方便 review。development-lifecycle-router-maintainer 只负责帮我把阶段和 review gate 想清楚。",
-      "expected_output": "Does not over-trigger skill optimization just because the router skill is named. It classifies the task as ui_design, uses the requested design/image skills to produce reviewable UI references, treats the router only as a lifecycle gate, and does not patch the router or run skill-optimizer.",
+      "expected_output": "Does not over-trigger skill optimization just because the router skill is named. It classifies the task as ui_design, uses the requested design/image skills to produce reviewable UI references, treats the router only as a lifecycle gate, and does not patch the router or run skill-creator.",
       "files": [],
       "expectations": [
         "The result recognizes the user is continuing the UI design task, not asking to optimize a skill.",
@@ -257,14 +257,14 @@
     {
       "id": 30,
       "prompt": "先确认一下 Messenger 里 pinned custom group 的排序需求：group pin 应该放在 Messenger 顶部 Pinned 下面，并且优先级高于散的 issue/chat item。 assistant 已经重述完。现在用户说：是的，优化一下 [$development-lifecycle-router-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md)。",
-      "expected_output": "Classifies the newest turn as skill_optimization and routes to skill-optimizer with development-lifecycle-router-maintainer as the target artifact. It treats the prior Messenger pinned-group requirement as failure evidence for the router patch, not as authorization to implement Messenger sorting or route to UI polish. It also distinguishes this from cases where the user invokes the router only as workflow policy for continuing a product task.",
+      "expected_output": "Classifies the newest turn as skill_optimization and routes to skill-creator with development-lifecycle-router-maintainer as the target artifact. It treats the prior Messenger pinned-group requirement as failure evidence for the router patch, not as authorization to implement Messenger sorting or route to UI polish. It also distinguishes this from cases where the user invokes the router only as workflow policy for continuing a product task.",
       "files": [
         ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
         ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
       ],
       "expectations": [
         "The result uses the newest user instruction as the routing source of truth.",
-        "The result names skill-optimizer as the primary workflow and the router skill as the target artifact.",
+        "The result names skill-creator as the primary workflow and the router skill as the target artifact.",
         "The result separates the latest skill-optimization request from the prior Messenger product requirement in its evidence packet.",
         "The result does not start implementing Messenger pinned-group sorting or route to rudder-ui-polish-maintainer.",
         "The result preserves the inverse boundary: if the user asks to continue the product fix using this router's review gate, the route remains a product implementation/review route rather than skill optimization."
@@ -278,7 +278,7 @@
       "expectations": [
         "The result recognizes the user is continuing the Messenger product fix rather than optimizing a skill.",
         "The result uses development-lifecycle-router-maintainer only as lifecycle and reviewer-gate process guidance.",
-        "The result does not route to skill-optimizer or treat the router skill as the target artifact.",
+        "The result does not route to skill-creator or treat the router skill as the target artifact.",
         "The result names product implementation, verification, and spawned review evidence required for handoff.",
         "The result does not edit SKILL.md or eval files for this prompt."
       ]
@@ -418,15 +418,15 @@
     },
     {
       "id": 29,
-      "prompt": "[$development-lifecycle-router-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md) 看看这个优化，你的 skill 需要优化一下了。使用 [$skill-optimizer](/Users/zeeland/projects/zee-agent-skills/meta-skills/skill-optimizer/SKILL.md) 来优化。截图里是上一轮关于 Mintlify changelog TOC、Highlights 和 Install heading 的讨论。",
-      "expected_output": "Classifies the turn as skill_optimization and uses skill-optimizer as the primary workflow. It treats the Mintlify/docs screenshot as evidence for a release-process changelog rule, identifies release-maintainer and release docs as the smallest durable owner, and does not broaden the lifecycle router into a docs-site route or start editing unrelated UI surfaces.",
+      "prompt": "[$development-lifecycle-router-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md) 看看这个优化，你的 skill 需要优化一下了。使用 [$skill-creator](/Users/zeeland/projects/zee-agent-skills/meta-skills/skill-creator/SKILL.md) 来优化。截图里是上一轮关于 Mintlify changelog TOC、Highlights 和 Install heading 的讨论。",
+      "expected_output": "Classifies the turn as skill_optimization and uses skill-creator as the primary workflow. It treats the Mintlify/docs screenshot as evidence for a release-process changelog rule, identifies release-maintainer and release docs as the smallest durable owner, and does not broaden the lifecycle router into a docs-site route or start editing unrelated UI surfaces.",
       "files": [
         ".agents/skills/maintainer/release-maintainer/SKILL.md",
         "doc/RELEASING.md",
         ".agents/skills/maintainer/release-maintainer/evals/evals.json"
       ],
       "expectations": [
-        "The result gives the explicit skill-optimizer instruction precedence over the docs task content embedded in the screenshot.",
+        "The result gives the explicit skill-creator instruction precedence over the docs task content embedded in the screenshot.",
         "The result extracts the reusable failure class as release changelog generation producing public docs headings that pollute Mintlify TOC.",
         "The result chooses release-maintainer or release docs as the smallest durable owner instead of adding a broad docs route to this router.",
         "The result updates or proposes a release-maintainer validation case for public changelog heading structure.",
@@ -451,6 +451,18 @@
         "The frontmatter description is quoted YAML and stays within the metadata budget.",
         "Existing eval cases for skill optimization, verifier ordering, reviewer lenses, terminal product proof, and dirty-worktree recovery remain covered.",
         "The result explains why the skill was long: it mixed trigger metadata, routing rules, gates, proofs, examples, and handoff templates in one file."
+      ]
+    },
+    {
+      "id": 36,
+      "prompt": "这个 Workspaces 页面按钮间距有点挤，截图我贴了。直接按 rudder-ui-polish-maintainer 修一下并给我截图，不需要完整 lifecycle plan。",
+      "expected_output": "Uses the narrow UI polish maintainer directly instead of keeping ownership in development-lifecycle-router-maintainer. It states the narrow route and required rendered evidence, avoids a full lifecycle plan, and does not add router review gates unless the user explicitly asks for routed review or a stage-gate decision becomes necessary.",
+      "files": [],
+      "expectations": [
+        "The result routes directly to rudder-ui-polish-maintainer because the next artifact is an obvious screenshot-driven UI polish fix.",
+        "The result does not expand the task into requirements, advisor, or full lifecycle sequencing.",
+        "The result names browser or screenshot verification as the exit evidence for the narrow UI task.",
+        "The result does not treat merely mentioning development-lifecycle-router-maintainer concepts as a reason for the router to own the task."
       ]
     }
   ]

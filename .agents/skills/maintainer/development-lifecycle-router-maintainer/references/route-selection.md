@@ -37,8 +37,8 @@ keep the product route and use the skill only as lifecycle policy.
 
 Examples:
 
-- "Optimize this router with skill-optimizer" plus a screenshot mentioning
-  design skills means `skill_optimization -> skill-optimizer`; do not generate
+- "Optimize this router with skill-creator" plus a screenshot mentioning
+  design skills means `skill_optimization -> skill-creator`; do not generate
   UI mockups.
 - "Continue the Messenger fix using this router's review gate" means product
   implementation/verification/review; do not edit this skill.
@@ -69,9 +69,10 @@ For a small bug, one concise sentence is enough.
 
 Use the smallest matching workflow:
 
-- visible screenshot, label, alignment, menu, icon, empty state, or compact UI:
+- visible screenshot, label, alignment, menu, icon, empty state, compact UI, or
+  small interaction polish:
   `rudder-ui-polish-maintainer`
-- missing, stale, wrong, unexplained, slow, or suspicious page data:
+- missing, stale, wrong, unexplained, sparse, slow, or suspicious page data:
   `rudder-data-path-diagnostician-maintainer`
 - one run, recent run batch, transcript, stdout/stderr, runtime failure, or
   run-quality investigation: `debug-run-transcript-maintainer`
@@ -87,18 +88,14 @@ Use the smallest matching workflow:
   `advisor-review-loop-maintainer`
 - Codex session benchmark across local history:
   `codex-session-benchmark-maintainer`
-- screenshot-driven visible UI polish or small interaction fix:
-  `rudder-ui-polish-maintainer`
-- wrong, missing, stale, or sparse data on a Rudder surface:
-  `rudder-data-path-diagnostician-maintainer`
 - local branch preview: `rudder-worktree-preview-maintainer`
 - GitHub PR local checkout/preview/review: `pr-local-preview-maintainer`
 - mock/demo/seed data: `mock-data-maintainer`
 - landing screenshots after mock data: `landing-proof-shots-maintainer`
 - stop/restart/clean repo-local dev runtime: `stop-rudder-dev-maintainer`
-- new skill artifact from a reusable workflow: `skill-creator`
-- existing skill optimization, hardening, eval update, trigger repair, or
-  behavior patch: `skill-optimizer`
+- new or existing reusable workflow skill creation, optimization, hardening,
+  eval update, benchmark, trigger repair, packaging, or description tuning:
+  `skill-creator`
 
 Only keep ownership after this table when the narrow owner cannot safely begin
 without lifecycle sequencing, dirty-state recovery, or stage-gate decisions.

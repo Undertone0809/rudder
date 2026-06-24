@@ -1,13 +1,13 @@
 ---
 name: development-lifecycle-router-maintainer
-description: "Use for Rudder development requests where the correct lifecycle stage or owner is unclear: requirements, advisor/product analysis, UI design, implementation, verification, review, release, recovery, runtime contracts, performance, component lab, or handoff. Also use when a user asks whether a named maintainer skill should be optimized. Choose the earliest blocking stage, state the exit bar, then route to the smallest capable maintainer. Do not trigger when a narrow maintainer clearly owns the next artifact."
+description: "Use for Rudder development requests where the correct lifecycle stage or owner is unclear: requirements, advisor/product analysis, UI design, implementation, verification, review, release, recovery, runtime contracts, performance, component lab, or handoff. Use when deciding whether a named maintainer skill needs skill-creator work. Choose the earliest blocking stage, state the exit bar, then route to the smallest capable maintainer. Do not trigger for review-only verdicts or when a narrow maintainer/skill-creator clearly owns the next artifact."
 ---
 
 # Development Lifecycle Router Maintainer
 
-This skill is a routing layer, not a second copy of every downstream workflow.
-Use it to choose the current lifecycle stage, name the exit bar, and hand off to
-the smallest capable maintainer skill or normal coding workflow.
+Use this skill as a routing layer: choose the current lifecycle stage, name the
+exit bar, and hand off to the smallest capable maintainer skill or normal coding
+workflow.
 
 The reason this skill exists is to prevent two expensive mistakes:
 
@@ -139,11 +139,11 @@ Prefer the smallest matching owner:
 - mock/demo/seed data: `mock-data-maintainer`
 - landing screenshots: `landing-proof-shots-maintainer`
 - stop/restart/clean local dev runtime: `stop-rudder-dev-maintainer`
-- new reusable workflow skill: `skill-creator`
-- existing skill optimization: `skill-optimizer`
+- new or existing reusable workflow skill creation, optimization, eval,
+  benchmark, packaging, or description tuning: `skill-creator`
 
 If this router itself is the target artifact for optimization, route to
-`skill-optimizer` or the user-requested skill-engineering workflow. Do not run
+`skill-creator` or the user-requested skill-engineering workflow. Do not run
 this router's normal product lifecycle except for git safety around the patch.
 
 ## Skill Optimization Boundary
@@ -152,7 +152,7 @@ The newest user instruction is the routing source of truth.
 
 If the user says a skill "needs optimization", "should be hardened", "always
 does the wrong thing", "I have to ask this every time", or asks to use
-`skill-optimizer`/`skill-creator` on a named skill, classify the turn as
+`skill-creator` on a named skill, classify the turn as
 `skill_optimization`.
 
 Treat screenshots, prior requirements, session ids, quoted logs, and prior
