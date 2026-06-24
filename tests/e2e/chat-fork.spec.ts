@@ -41,6 +41,43 @@ function threadTestId(threadKey: string) {
   return `messenger-thread-${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
+async function expectMessageInScrollViewport(page: Page, messageId: string) {
+  const isVisibleInScrollViewport = await page.evaluate((targetMessageId) => {
+    const scrollRegion = document.querySelector<HTMLElement>('[data-testid="chat-messages-scroll-region"]');
+    const message = Array.from(document.querySelectorAll<HTMLElement>("[data-message-id]"))
+      .find((element) => element.dataset.messageId === targetMessageId);
+    if (!scrollRegion || !message) return false;
+
+    const containerBox = scrollRegion.getBoundingClientRect();
+    const messageBox = message.getBoundingClientRect();
+    const containerCenter = containerBox.top + containerBox.height / 2;
+    const messageCenter = messageBox.top + messageBox.height / 2;
+    const intersects = messageBox.bottom > containerBox.top && messageBox.top < containerBox.bottom;
+    return intersects && Math.abs(messageCenter - containerCenter) < containerBox.height * 0.35;
+  }, messageId);
+  expect(isVisibleInScrollViewport).toBe(true);
+}
+
+async function expectMessageJumpHighlightSpansMessageRow(page: Page, messageId: string) {
+  const highlightInsets = await page.evaluate((targetMessageId) => {
+    const message = Array.from(document.querySelectorAll<HTMLElement>("[data-message-id]"))
+      .find((element) => element.dataset.messageId === targetMessageId);
+    if (!message) return null;
+    const highlight = window.getComputedStyle(message, "::before");
+    return {
+      left: highlight.left,
+      right: highlight.right,
+      position: highlight.position,
+    };
+  }, messageId);
+
+  expect(highlightInsets).toEqual({
+    left: "0px",
+    position: "absolute",
+    right: "0px",
+  });
+}
+
 async function seedForkableChatSource(page: Page, input: {
   orgId: string;
   title: string;
@@ -252,13 +289,30 @@ test("forks a chat from a selected message and groups the fork family in Messeng
 
   const messagesRes = await page.request.get(`/api/chats/${forkedConversation.id}/messages`);
   expect(messagesRes.ok()).toBe(true);
-  const forkMessages = await messagesRes.json() as Array<{ role: string; body: string }>;
+  const forkMessages = await messagesRes.json() as Array<{ role: string; body: string; structuredPayload: Record<string, unknown> | null }>;
   expect(forkMessages.map((message) => message.body).slice(0, 2)).toEqual([
     "Original premise",
     "Middle branch point",
   ]);
   expect(forkMessages[2]?.body).toContain("[Forkable strategy chat]");
-  expect(forkMessages[2]?.body).toContain(`message ${sourceMessageIds[1]}`);
+  expect(forkMessages[2]?.body).toContain("at message.");
+  expect(forkMessages[2]?.body).not.toContain(sourceMessageIds[1]!);
+  expect(forkMessages[2]?.structuredPayload).toMatchObject({
+    eventType: "chat_fork",
+    sourceConversationId,
+    sourceConversationTitle: "Forkable strategy chat",
+    sourceMessageId: sourceMessageIds[1],
+  });
+
+  const sourceMessageLink = page.getByRole("link", { name: "Open source message" });
+  await expect(sourceMessageLink).toHaveText("message");
+  await sourceMessageLink.click();
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${sourceConversationId}`));
+  await expect(sourceAssistant).toContainText("Middle branch point");
+  await expect(sourceAssistant).toHaveClass(/chat-message-jump-highlight/);
+  await expectMessageInScrollViewport(page, sourceMessageIds[1]!);
+  await expectMessageJumpHighlightSpansMessageRow(page, sourceMessageIds[1]!);
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${sourceConversationId}$`));
 
   await page.goto(`/${organization.issuePrefix}/messenger`);
   await expect(page.getByTestId(threadTestId(`chat:${sourceConversationId}`))).toBeVisible({ timeout: 15_000 });

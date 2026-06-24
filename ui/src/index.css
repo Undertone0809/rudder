@@ -1602,6 +1602,62 @@
     outline-offset: 2px;
   }
 
+  .chat-system-message-link {
+    border-color: color-mix(in oklab, var(--accent-base) 34%, var(--border-soft));
+    background: color-mix(in oklab, var(--accent-base) 12%, transparent);
+    color: var(--accent-strong);
+  }
+
+  .chat-system-message-link:hover {
+    border-color: color-mix(in oklab, var(--accent-base) 48%, var(--border-soft));
+    background: color-mix(in oklab, var(--accent-base) 18%, transparent);
+    color: var(--accent-strong);
+  }
+
+  .chat-message-jump-highlight {
+    position: relative;
+    overflow: visible;
+    border-radius: var(--radius-xl);
+  }
+
+  .chat-message-jump-highlight::before {
+    content: "";
+    position: absolute;
+    top: -0.5rem;
+    right: 0;
+    bottom: -0.5rem;
+    left: 0;
+    z-index: 0;
+    border: 1px solid color-mix(in oklab, var(--accent-base) 30%, transparent);
+    border-radius: calc(var(--radius-xl) + 0.625rem);
+    background: color-mix(in oklab, var(--accent-base) 14%, transparent);
+    box-shadow: 0 10px 24px color-mix(in oklab, var(--accent-base) 9%, transparent);
+    pointer-events: none;
+    animation: chat-message-jump-highlight 1800ms ease-out;
+  }
+
+  .chat-message-jump-highlight > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  @keyframes chat-message-jump-highlight {
+    0%,
+    52% {
+      opacity: 1;
+    }
+
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chat-message-jump-highlight::before {
+      animation: none;
+    }
+  }
+
   .chat-message-user {
     --foreground: var(--ink-strong);
     --muted-foreground: var(--ink-muted);

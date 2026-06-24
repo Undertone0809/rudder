@@ -3733,6 +3733,15 @@ describe("messengerService and issue follows", () => {
       "First answer",
       expect.stringContaining("Forked from"),
     ]);
+    expect(childMessages[2]?.body).toContain("at message.");
+    expect(childMessages[2]?.body).not.toContain(firstAnswer.id);
+    expect(childMessages[2]?.structuredPayload).toMatchObject({
+      eventType: "chat_fork",
+      sourceConversationId: source.id,
+      sourceConversationTitle: "Original fork topic",
+      sourceMessageId: firstAnswer.id,
+      forkRootConversationId: source.id,
+    });
     expect(childMessages[1]?.replyingAgentId).toBe(agentId);
     expect(childMessages.map((message) => message.body).join("\n")).not.toContain("Later source-only turn");
 
@@ -3907,6 +3916,8 @@ describe("messengerService and issue follows", () => {
       "Fork point answer",
       expect.stringContaining("Forked from"),
     ]);
+    expect(childMessages[2]?.body).toContain("at message.");
+    expect(childMessages[2]?.body).not.toContain(forkMessageId);
     expect(childMessages.map((message) => message.body).join("\n")).not.toContain("Later turn with lexically earlier id");
   });
 
