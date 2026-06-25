@@ -602,8 +602,8 @@ importers:
         specifier: ^5.2.1
         version: 5.2.1
       hermes-paperclip-adapter:
-        specifier: 0.1.1
-        version: 0.1.1
+        specifier: 0.3.0
+        version: 0.3.0
       jsdom:
         specifier: ^28.1.0
         version: 28.1.0(@noble/hashes@2.0.1)
@@ -2446,8 +2446,8 @@ packages:
     resolution: {integrity: sha512-cifvXDhcqMwwTlTK04GBNeIe7yyo28Mfby85QXFe1Yk8nmi36Ab/5UQwptOx84SsoGNRg+EVSjwzfSZMy6pmlw==}
     engines: {node: '>=14'}
 
-  '@paperclipai/adapter-utils@0.3.1':
-    resolution: {integrity: sha512-W66k+hJkQE8ma0asM/Sd90AC8HHy/BLG/sd0aOC+rDWw+gOasQyUkTnDoPv1zhQuTyKEEvLFV6ByOOKqEiAz/A==}
+  '@paperclipai/adapter-utils@2026.618.0':
+    resolution: {integrity: sha512-sZPoth909Y6T7ZwUaSFntkZzHUCoDvcb8h0f8xte21XMTuija8PzZ9+JkNVGbafQrAtyCokk2i3q1LocCb93dQ==}
 
   '@paralleldrive/cuid2@2.3.1':
     resolution: {integrity: sha512-XO7cAxhnTZl0Yggq6jOgjiOHhbgcO4NqFqwSmQpjK3b6TEE6Uj/jfSk6wzYyemh3+I0sHirKSetjQwn5cZktFw==}
@@ -5419,8 +5419,8 @@ packages:
   help-me@5.0.0:
     resolution: {integrity: sha512-7xgomUX6ADmcYzFik0HzAxh/73YlKR9bmFzf51CZwR+b6YtzU2m0u49hQCqV6SvlqIqsaxovfwdvbnsw3b/zpg==}
 
-  hermes-paperclip-adapter@0.1.1:
-    resolution: {integrity: sha512-kbdX349VxExSkVL8n4RwTpP9fUBf2yWpsTsJp02X12A9NynRJatlpYqt0vEkFyE/X7qEXqdJvpBm9tlvUHahsA==}
+  hermes-paperclip-adapter@0.3.0:
+    resolution: {integrity: sha512-MgAM/H2Fp650RVr5E1hYat5n8FaCzvxOOjhlN98hUMS9q6M+JeLvVE8Z1LfUs8KlavCn10m+DiwBxH55m0SmHA==}
     engines: {node: '>=20.0.0'}
 
   hosted-git-info@4.1.0:
@@ -9884,7 +9884,7 @@ snapshots:
 
   '@opentelemetry/semantic-conventions@1.40.0': {}
 
-  '@paperclipai/adapter-utils@0.3.1': {}
+  '@paperclipai/adapter-utils@2026.618.0': {}
 
   '@paralleldrive/cuid2@2.3.1':
     dependencies:
@@ -13197,9 +13197,9 @@ snapshots:
 
   help-me@5.0.0: {}
 
-  hermes-paperclip-adapter@0.1.1:
+  hermes-paperclip-adapter@0.3.0:
     dependencies:
-      '@paperclipai/adapter-utils': 0.3.1
+      '@paperclipai/adapter-utils': 2026.618.0
       picocolors: 1.1.1
 
   hosted-git-info@4.1.0:
