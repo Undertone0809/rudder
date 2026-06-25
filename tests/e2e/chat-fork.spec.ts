@@ -58,7 +58,7 @@ async function expectMessageInScrollViewport(page: Page, messageId: string) {
   expect(isVisibleInScrollViewport).toBe(true);
 }
 
-async function expectMessageJumpHighlightSpansMessageRow(page: Page, messageId: string) {
+async function expectMessageJumpHighlightFramesMessageRow(page: Page, messageId: string) {
   const highlightInsets = await page.evaluate((targetMessageId) => {
     const message = Array.from(document.querySelectorAll<HTMLElement>("[data-message-id]"))
       .find((element) => element.dataset.messageId === targetMessageId);
@@ -72,9 +72,9 @@ async function expectMessageJumpHighlightSpansMessageRow(page: Page, messageId: 
   }, messageId);
 
   expect(highlightInsets).toEqual({
-    left: "0px",
+    left: "-12px",
     position: "absolute",
-    right: "0px",
+    right: "-12px",
   });
 }
 
@@ -311,7 +311,7 @@ test("forks a chat from a selected message and groups the fork family in Messeng
   await expect(sourceAssistant).toContainText("Middle branch point");
   await expect(sourceAssistant).toHaveClass(/chat-message-jump-highlight/);
   await expectMessageInScrollViewport(page, sourceMessageIds[1]!);
-  await expectMessageJumpHighlightSpansMessageRow(page, sourceMessageIds[1]!);
+  await expectMessageJumpHighlightFramesMessageRow(page, sourceMessageIds[1]!);
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${sourceConversationId}$`));
 
   await page.goto(`/${organization.issuePrefix}/messenger`);

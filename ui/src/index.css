@@ -1615,6 +1615,7 @@
   }
 
   .chat-message-jump-highlight {
+    --chat-message-jump-highlight-outset: 0.75rem;
     position: relative;
     overflow: visible;
     border-radius: var(--radius-xl);
@@ -1624,9 +1625,9 @@
     content: "";
     position: absolute;
     top: -0.5rem;
-    right: 0;
+    right: calc(-1 * var(--chat-message-jump-highlight-outset));
     bottom: -0.5rem;
-    left: 0;
+    left: calc(-1 * var(--chat-message-jump-highlight-outset));
     z-index: 0;
     border: 1px solid color-mix(in oklab, var(--accent-base) 30%, transparent);
     border-radius: calc(var(--radius-xl) + 0.625rem);
