@@ -15,6 +15,7 @@ import {
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { prefetchChatConversation } from "@/lib/chat-prefetch";
+import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { displayChatTitle } from "@/lib/chat-title";
 import { renameMessengerChatInCache } from "@/lib/messenger-query-cache";
 import { queryKeys } from "@/lib/queryKeys";
@@ -51,6 +52,7 @@ function ConversationRow({
   onCommitRename,
   onArchive,
   onTogglePin,
+  archiveAllowed = true,
 }: {
   conversation: ChatConversation;
   active: boolean;
@@ -63,6 +65,7 @@ function ConversationRow({
   onCommitRename: () => void;
   onArchive: () => void;
   onTogglePin: () => void;
+  archiveAllowed?: boolean;
 }) {
   const subtitle = conversationSubtitle(conversation);
   const timeLabel = conversation.lastMessageAt
@@ -150,10 +153,12 @@ function ConversationRow({
                     </>
                   )}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={onArchive}>
-                  <Archive className="h-4 w-4" />
-                  Archive
-                </DropdownMenuItem>
+                {archiveAllowed ? (
+                  <DropdownMenuItem onClick={onArchive}>
+                    <Archive className="h-4 w-4" />
+                    Archive
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -312,6 +317,7 @@ export function SidebarChatSessions() {
                       data: { status: "archived" },
                     });
                   }}
+                  archiveAllowed={!isFeishuBackedConversation(conversation)}
                 />
               ))}
               {recentConversations.length > 0 ? (
@@ -354,6 +360,7 @@ export function SidebarChatSessions() {
                       data: { status: "archived" },
                     });
                   }}
+                  archiveAllowed={!isFeishuBackedConversation(conversation)}
                 />
               ))}
             </>

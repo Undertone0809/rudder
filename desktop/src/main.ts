@@ -27,9 +27,9 @@ import {
   resolvePostUpdateReloadDelayMs
 } from "./post-update-reload.js";
 import {
-  RUDDER_POSTGRES_BIN_DIR_ENV,
   resolveDesktopPostgresBinDir,
   resolvePreferredDesktopPostgresBinDir,
+  RUDDER_POSTGRES_BIN_DIR_ENV,
 } from "./postgres-runtime.js";
 import {
   resolveExternalRuntimeServerEntrypoint,

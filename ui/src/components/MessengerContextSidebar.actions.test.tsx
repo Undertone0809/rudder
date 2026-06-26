@@ -620,6 +620,40 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(thread?.textContent).toContain("Feishu");
   });
 
+  it("hides local title and archive actions for Feishu-bound chat threads", () => {
+    chatList = [baseConversation({
+      mutability: "external_bound_chat",
+      sourceMetadata: { source: "agent_integration", provider: "feishu" },
+    })];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          ...baseModel().threadSummaries[0],
+          metadata: {
+            source: "feishu",
+          },
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const thread = document.querySelector('[data-testid="messenger-thread-chat-chat-1"]');
+    expect(thread).toBeTruthy();
+    const actionLabels = Array.from(thread?.querySelectorAll("button") ?? [])
+      .map((button) => button.textContent?.trim())
+      .filter(Boolean);
+    expect(actionLabels).toContain("Pin");
+    expect(actionLabels).toContain("Mark as Unread");
+    expect(actionLabels).toContain("Copy Chat Link");
+    expect(actionLabels).toContain("Fork");
+    expect(actionLabels).not.toContain("Rename");
+    expect(actionLabels.some((label) => label?.includes("Regenerate title"))).toBe(false);
+    expect(actionLabels).not.toContain("Archive");
+    expect(actionLabels).not.toContain("Delete");
+  });
+
   it("optimistically removes an archived chat from active Messenger caches before the update request resolves", async () => {
     renderSidebar();
 

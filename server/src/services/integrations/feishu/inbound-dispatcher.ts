@@ -53,6 +53,18 @@ export interface StartedIntegrationRun {
   runId: string;
 }
 
+export type ParsedFeishuQuickCommand =
+  | { kind: "new" }
+  | { kind: "stop" };
+
+export interface HandledFeishuQuickCommand {
+  command: ParsedFeishuQuickCommand["kind"];
+  conversationId: string;
+  chatMessageId: string | null;
+  runId: string | null;
+  text: string;
+}
+
 export interface MintedIntegrationBindingToken {
   token: string;
   expiresAt: Date;
@@ -110,6 +122,13 @@ export interface AgentIntegrationInboundDispatcherDeps {
     command: ParsedIntegrationIssueCommand,
     event: FeishuInboundMessage,
   ) => Promise<CreatedIntegrationIssue>;
+  handleQuickCommand?: (
+    integration: ResolvedAgentIntegration,
+    binding: ResolvedIntegrationUserBinding,
+    chat: ResolvedIntegrationChatBinding,
+    command: ParsedFeishuQuickCommand,
+    event: FeishuInboundMessage,
+  ) => Promise<HandledFeishuQuickCommand>;
   enqueueAgentRun?: (
     integration: ResolvedAgentIntegration,
     binding: ResolvedIntegrationUserBinding,
@@ -136,6 +155,14 @@ export type AgentIntegrationInboundDispatchResult =
     outbound: FeishuOutboundResponse;
   }
   | {
+    status: "quick_command";
+    command: ParsedFeishuQuickCommand["kind"];
+    conversationId: string;
+    chatMessageId: string | null;
+    runId: string | null;
+    outbound: FeishuOutboundResponse;
+  }
+  | {
     status: "accepted";
     conversationId: string;
     chatMessageId: string;
@@ -159,6 +186,13 @@ export function parseIntegrationIssueCommand(commandBody: string): ParsedIntegra
   if (!title) return null;
   const body = bodyLines.join("\n").trim();
   return { title, body: body || null };
+}
+
+export function parseFeishuQuickCommand(commandBody: string): ParsedFeishuQuickCommand | null {
+  const [command] = commandBody.trim().toLowerCase().split(/\s+/, 1);
+  if (command === "/new") return { kind: "new" };
+  if (command === "/stop") return { kind: "stop" };
+  return null;
 }
 
 export async function dispatchFeishuInboundMessage(
@@ -204,6 +238,24 @@ export async function dispatchFeishuInboundMessage(
   }
 
   const chat = await deps.ensureChatBinding(integration, binding, event);
+  const quickCommand = parseFeishuQuickCommand(event.commandBody);
+  if (quickCommand && deps.handleQuickCommand) {
+    const handled = await deps.handleQuickCommand(integration, binding, chat, quickCommand, event);
+    return {
+      status: "quick_command",
+      command: handled.command,
+      conversationId: handled.conversationId,
+      chatMessageId: handled.chatMessageId,
+      runId: handled.runId,
+      outbound: {
+        provider: event.provider,
+        externalChatId: event.chatId,
+        externalMessageId: null,
+        text: handled.text,
+      },
+    };
+  }
+
   const message = await deps.appendInboundMessage(integration, binding, chat, event);
   const command = parseIntegrationIssueCommand(event.commandBody);
   const issue = command && deps.createIssueFromCommand

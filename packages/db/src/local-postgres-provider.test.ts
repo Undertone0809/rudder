@@ -3,13 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  RUDDER_POSTGRES_BIN_DIR_ENV,
-  RUDDER_PRODUCTION_POSTGRES_VERSION,
   assertOfficialPostgresVersion,
-  createLocalPostgresInstance,
   buildOfficialPostgresInitdbArgs,
+  createLocalPostgresInstance,
   resolveOfficialPostgresBinaries,
   resolveOfficialPostgresBinDir,
+  RUDDER_POSTGRES_BIN_DIR_ENV,
+  RUDDER_PRODUCTION_POSTGRES_VERSION,
   validateOfficialPostgresBinDir,
 } from "./local-postgres-provider.js";
 

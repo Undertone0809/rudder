@@ -162,7 +162,7 @@ describe("Feishu DB dispatcher chat title generation", () => {
     );
   });
 
-  it("does not start AI title generation when Feishu reuses an existing chat binding", async () => {
+  it("uses the normal chat title generation decision for existing Feishu chat bindings", async () => {
     const { createFeishuInboundDispatcherDbDeps } = await import(
       "../services/integrations/feishu/inbound-dispatcher-db.js"
     );
@@ -181,6 +181,10 @@ describe("Feishu DB dispatcher chat title generation", () => {
     }));
 
     expect(chat).toEqual({ conversationId: "conversation-1" });
-    expect(mockStartAutomaticGeneration).not.toHaveBeenCalled();
+    expect(mockStartAutomaticGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "conversation-1" }),
+      expect.objectContaining({ id: "message-row-1" }),
+      { expectedCurrentTitle: undefined },
+    );
   });
 });

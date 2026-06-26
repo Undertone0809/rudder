@@ -5,11 +5,13 @@ import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   agentIntegrationChatBindings,
   agentIntegrationOutboundMessages,
+  agentIntegrationUserBindings,
   agentIntegrations,
   chatConversations,
   chatMessages,
   createDb,
   heartbeatRuns,
+  organizationMemberships,
   organizationSecrets,
 } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
@@ -23,7 +25,7 @@ test.afterAll(async () => {
 });
 
 test.describe("Feishu source badges", () => {
-  test("keeps Feishu-bound chats read-only and forks into a native Rudder chat", async ({ page }) => {
+  test("keeps Feishu-bound chats read-only, handles Feishu-side quick commands, and forks into a native Rudder chat", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Feishu-Chat-Controls-${Date.now()}` },
     });
@@ -45,6 +47,8 @@ test.describe("Feishu source badges", () => {
     const integrationId = randomUUID();
     const secretId = randomUUID();
     const externalChatId = `oc_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const externalAppId = `cli_${randomUUID().replace(/-/g, "")}`;
+    const feishuUserId = `feishu-user-${randomUUID()}`;
 
     await e2eDb.insert(organizationSecrets).values({
       id: secretId,
@@ -61,8 +65,24 @@ test.describe("Feishu source badges", () => {
       transport: "long_connection",
       providerRegion: "feishu_cn",
       appCredentialSecretId: secretId,
-      externalAppId: `cli_${randomUUID().replace(/-/g, "")}`,
+      externalAppId,
       externalBotOpenId: "ou_feishu_chat_controls_bot",
+    });
+    await e2eDb.insert(organizationMemberships).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      principalType: "user",
+      principalId: feishuUserId,
+      status: "active",
+      membershipRole: "member",
+    });
+    await e2eDb.insert(agentIntegrationUserBindings).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      integrationId,
+      userId: feishuUserId,
+      externalOpenId: "ou_feishu_chat_controls_sender",
+      externalUnionId: "on_feishu_chat_controls_sender",
     });
     await e2eDb.insert(chatConversations).values({
       id: conversationId,
@@ -113,12 +133,67 @@ test.describe("Feishu source badges", () => {
     expect(await directSendRes.json()).toMatchObject({ error: "Fork this Feishu chat to continue in Rudder" });
 
     await page.getByTestId("chat-actions-trigger").click();
-    await expect(page.getByRole("menuitem", { name: "Pin Chat" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Fork latest" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Pin" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Fork" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0);
     await page.keyboard.press("Escape");
 
+    const quickCommandRes = await page.request.post(`/api/orgs/${organization.id}/integrations/feishu/mock-inbound`, {
+      data: {
+        body: "/new",
+        commandBody: "/new",
+        appId: externalAppId,
+        botOpenId: "ou_feishu_chat_controls_bot",
+        chatId: externalChatId,
+        chatType: "p2p",
+        messageId: `om_${randomUUID().replace(/-/g, "")}`,
+        eventId: `event_${randomUUID().replace(/-/g, "")}`,
+        senderOpenId: "ou_feishu_chat_controls_sender",
+        senderUnionId: "on_feishu_chat_controls_sender",
+        addressedToBot: true,
+        messageType: "text",
+      },
+    });
+    expect(quickCommandRes.ok()).toBe(true);
+    const quickCommandBody = await quickCommandRes.json() as {
+      result: { status: string; command?: string; conversationId?: string; outbound?: { text?: string } };
+    };
+    expect(quickCommandBody.result).toMatchObject({
+      status: "quick_command",
+      command: "new",
+      outbound: { text: "New session started." },
+    });
+    expect(quickCommandBody.result.conversationId).toBeTruthy();
+    expect(quickCommandBody.result.conversationId).not.toBe(conversationId);
+
+    const [quickCommandBinding] = await e2eDb
+      .select()
+      .from(agentIntegrationChatBindings)
+      .where(eq(agentIntegrationChatBindings.integrationId, integrationId));
+    expect(quickCommandBinding?.conversationId).toBe(quickCommandBody.result.conversationId);
+
+    const oldConversationMessages = await e2eDb
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversationId));
+    expect(oldConversationMessages.some((message) => message.body === "/new" && message.role === "user")).toBe(false);
+    expect(oldConversationMessages.some((message) => message.body === "New Feishu session started." && message.role === "system")).toBe(true);
+
+    const archiveOldConversation = await page.request.patch(`/api/chats/${conversationId}`, {
+      data: { status: "archived" },
+    });
+    expect(archiveOldConversation.status()).toBe(409);
+    const deleteOldConversation = await page.request.delete(`/api/chats/${conversationId}`);
+    expect(deleteOldConversation.status()).toBe(409);
+
+    const sourceRes = await page.request.get(`/api/chats/${conversationId}`);
+    expect(sourceRes.ok()).toBe(true);
+    const source = await sourceRes.json() as { mutability: string; sourceMetadata: unknown | null };
+    expect(source.mutability).toBe("external_bound_chat");
+    expect(source.sourceMetadata).toMatchObject({ source: "agent_integration", provider: "feishu" });
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`, { waitUntil: "domcontentloaded" });
     const forkResponsePromise = page.waitForResponse((response) =>
       response.url().includes(`/api/chats/${conversationId}/fork`) && response.request().method() === "POST",
     );
@@ -152,12 +227,6 @@ test.describe("Feishu source badges", () => {
       .from(agentIntegrationOutboundMessages)
       .where(eq(agentIntegrationOutboundMessages.conversationId, forked.id));
     expect(forkOutboundRows).toHaveLength(0);
-
-    const sourceRes = await page.request.get(`/api/chats/${conversationId}`);
-    expect(sourceRes.ok()).toBe(true);
-    const source = await sourceRes.json() as { mutability: string; sourceMetadata: unknown | null };
-    expect(source.mutability).toBe("external_bound_chat");
-    expect(source.sourceMetadata).toMatchObject({ source: "agent_integration", provider: "feishu" });
   });
 
   test("labels Feishu chats in Messenger and Feishu runs in run detail", async ({ page }) => {

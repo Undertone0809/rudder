@@ -1033,7 +1033,7 @@ describe("Feishu-backed chat controls", () => {
     expect(container.querySelector("textarea[aria-label='Composer draft']")).not.toBeNull();
   });
 
-  it("hides archive and delete actions for Feishu-backed chats", async () => {
+  it("hides local mutation actions for Feishu-backed chats", async () => {
     mockState.conversations = [feishuChat()];
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "plain-user-message", body: "Message from Feishu" })],
@@ -1054,6 +1054,8 @@ describe("Feishu-backed chat controls", () => {
 
     expect(document.body.textContent).toContain("Pin");
     expect(document.body.textContent).toContain("Fork");
+    expect(document.body.textContent).not.toContain("Rename");
+    expect(document.body.textContent).not.toContain("Regenerate title");
     expect(document.body.textContent).not.toContain("Delete");
     expect(document.body.textContent).not.toContain("Archive");
   });

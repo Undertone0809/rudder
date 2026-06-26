@@ -27,6 +27,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { displayChatTitle } from "@/lib/chat-title";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import {
@@ -1287,6 +1288,7 @@ function ChatThreadRow({
   onFork,
   onArchive,
   onDelete,
+  archiveDeleteAllowed = true,
   onTogglePin,
   onToggleUnread,
   onCopyConversationLink,
@@ -1312,12 +1314,13 @@ function ChatThreadRow({
   renameDraft: string;
   onRenameDraftChange: (value: string) => void;
   onCommitRename: () => void;
-  onStartRename: () => void;
+  onStartRename?: () => void;
   onRegenerateTitle?: () => void;
   titleGenerating?: boolean;
   onFork: () => void;
   onArchive: () => void;
   onDelete: () => void;
+  archiveDeleteAllowed?: boolean;
   onTogglePin: () => void;
   onToggleUnread: () => void;
   onCopyConversationLink: () => void;
@@ -1511,10 +1514,12 @@ function ChatThreadRow({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="surface-overlay text-foreground">
-              <DropdownMenuItem onClick={onStartRename}>
-                <PencilLine className="h-4 w-4" />
-                Rename
-              </DropdownMenuItem>
+              {onStartRename ? (
+                <DropdownMenuItem onClick={onStartRename}>
+                  <PencilLine className="h-4 w-4" />
+                  Rename
+                </DropdownMenuItem>
+              ) : null}
               {onRegenerateTitle ? (
                 <DropdownMenuItem disabled={titleGenerating} onClick={onRegenerateTitle}>
                   {titleGenerating ? (
@@ -1596,18 +1601,22 @@ function ChatThreadRow({
                   </DropdownMenuSub>
                 </>
               ) : null}
-              <DropdownMenuItem onClick={onArchive}>
-                <Archive className="h-4 w-4" />
-                Archive
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={onDelete}
-                title={generating ? "Stops the active reply before deleting this chat." : undefined}
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete
-              </DropdownMenuItem>
+              {archiveDeleteAllowed ? (
+                <>
+                  <DropdownMenuItem onClick={onArchive}>
+                    <Archive className="h-4 w-4" />
+                    Archive
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={onDelete}
+                    title={generating ? "Stops the active reply before deleting this chat." : undefined}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </DropdownMenuItem>
+                </>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </>
@@ -1997,9 +2006,16 @@ function chatConversationForThreadSummary(
   const runtimeAgentId = nonEmptyString(metadata.runtimeAgentId);
   const latestUserMessagePreview = nonEmptyString(metadata.latestUserMessagePreview);
   const isPinned = typeof thread.isPinned === "boolean" ? thread.isPinned : Boolean(conversation?.isPinned);
+  const sourceBadge = resolveSourceBadge(conversation, metadata);
+  const sourceMetadata = conversation?.sourceMetadata
+    ?? (sourceBadge?.key === "feishu" ? { source: "agent_integration", provider: "feishu" } : null);
+  const mutability = conversation?.mutability
+    ?? (sourceBadge?.key === "feishu" ? "external_bound_chat" : "native_chat");
   if (conversation) {
     return {
       ...conversation,
+      mutability,
+      sourceMetadata,
       title: thread.title,
       preferredAgentId: conversation.preferredAgentId ?? preferredAgentId,
       routedAgentId: conversation.routedAgentId ?? routedAgentId,
@@ -2021,7 +2037,7 @@ function chatConversationForThreadSummary(
     id: conversationId,
     orgId,
     status: "active",
-    mutability: "native_chat",
+    mutability,
     title: thread.title,
     summary: null,
     latestReplyPreview: preview,
@@ -2054,6 +2070,7 @@ function chatConversationForThreadSummary(
       available: false,
       error: null,
     },
+    sourceMetadata,
     createdAt: activityAt,
     updatedAt: activityAt,
   };
@@ -3401,6 +3418,7 @@ export function MessengerContextSidebar() {
     const active = activeThreadKey === thread.threadKey;
     if (thread.kind === "chat" && conversation) {
       const agentId = resolveChatAgentId(conversation);
+      const localTitleMutationAllowed = !isFeishuBackedConversation(conversation);
       return (
         <ChatThreadRow
           key={thread.threadKey}
@@ -3416,11 +3434,11 @@ export function MessengerContextSidebar() {
           renameDraft={renameDraft}
           onRenameDraftChange={setRenameDraft}
           onCommitRename={submitRename}
-          onStartRename={() => {
+          onStartRename={localTitleMutationAllowed ? () => {
             setRenamingConversationId(conversation.id);
             setRenameDraft(conversation.title);
-          }}
-          onRegenerateTitle={canRegenerateChatTitles ? () => regenerateTitleMutation.mutate(conversation.id) : undefined}
+          } : undefined}
+          onRegenerateTitle={canRegenerateChatTitles && localTitleMutationAllowed ? () => regenerateTitleMutation.mutate(conversation.id) : undefined}
           titleGenerating={generatingChatTitleIds.has(conversation.id)}
           onFork={() => forkConversationMutation.mutate(conversation.id)}
           onArchive={() => {
@@ -3445,6 +3463,7 @@ export function MessengerContextSidebar() {
               generating: isChatGenerationActive(conversation.id),
             });
           }}
+          archiveDeleteAllowed={localTitleMutationAllowed}
           onTogglePin={() => {
             if (model.selectedOrganizationId) {
               markMessengerChatPinnedInCache(queryClient, model.selectedOrganizationId, conversation.id, !conversation.isPinned);

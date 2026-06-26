@@ -15,6 +15,7 @@ import { logger } from "../../../middleware/logger.js";
 import type { StorageService } from "../../../storage/types.js";
 import { chatAgentRunService } from "../../chat-agent-runs.js";
 import { chatAssistantService, ChatAssistantStreamError } from "../../chat-assistant.js";
+import { claimChatGeneration, setActiveChatGenerationId } from "../../chat-generation-locks.js";
 import { chatService } from "../../chats.js";
 import { secretService } from "../../secrets.js";
 import { createFeishuInboundDispatcherDbDeps } from "./inbound-dispatcher-db.js";
@@ -53,6 +54,22 @@ export interface FeishuOutboundSender {
     chatId: string;
     text: string;
   }): Promise<{ messageId: string | null }>;
+  addReaction?(input: {
+    region: AgentIntegrationProviderRegion;
+    appId: string;
+    appSecret?: string | null;
+    tenantAccessToken?: string | null;
+    messageId: string;
+    emojiType: string;
+  }): Promise<{ reactionId: string | null }>;
+  removeReaction?(input: {
+    region: AgentIntegrationProviderRegion;
+    appId: string;
+    appSecret?: string | null;
+    tenantAccessToken?: string | null;
+    messageId: string;
+    reactionId: string;
+  }): Promise<void>;
 }
 
 export interface FeishuLongConnectionClient {
@@ -148,12 +165,49 @@ export function createFeishuRestOutboundSender(): FeishuOutboundSender {
           content: JSON.stringify({ text: input.text }),
         }),
       });
-      const json = await res.json() as Record<string, unknown>;
+      const json = await res.json().catch(() => ({})) as Record<string, unknown>;
       const data = json.data && typeof json.data === "object" ? json.data as Record<string, unknown> : null;
       if (!res.ok || (typeof json.code === "number" && json.code !== 0)) {
         throw new Error(`Failed to send Feishu message: ${firstString(json.msg) ?? res.statusText}`);
       }
       return { messageId: firstString(data?.message_id) };
+    },
+    addReaction: async (input) => {
+      const token = await resolveTenantAccessToken(input);
+      const res = await fetch(`${feishuOpenApiBase(input.region)}/open-apis/im/v1/messages/${encodeURIComponent(input.messageId)}/reactions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reaction_type: {
+            emoji_type: input.emojiType,
+          },
+        }),
+      });
+      const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+      const data = json.data && typeof json.data === "object" ? json.data as Record<string, unknown> : null;
+      const reactionId = firstString(data?.reaction_id)
+        ?? firstString((data?.reaction as Record<string, unknown> | undefined)?.reaction_id);
+      if (!res.ok || (typeof json.code === "number" && json.code !== 0)) {
+        throw new Error(`Failed to add Feishu reaction: ${firstString(json.msg) ?? res.statusText}`);
+      }
+      return { reactionId };
+    },
+    removeReaction: async (input) => {
+      const token = await resolveTenantAccessToken(input);
+      const res = await fetch(`${feishuOpenApiBase(input.region)}/open-apis/im/v1/messages/${encodeURIComponent(input.messageId)}/reactions/${encodeURIComponent(input.reactionId)}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+      const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+      if (!res.ok || (typeof json.code === "number" && json.code !== 0)) {
+        throw new Error(`Failed to remove Feishu reaction: ${firstString(json.msg) ?? res.statusText}`);
+      }
     },
   };
 }
@@ -279,6 +333,49 @@ export function createDisabledFeishuLongConnectionClient(): FeishuLongConnection
 
 function bindingRequiredText() {
   return "Rudder received your message, but your Feishu identity is not bound to this organization yet. Open Rudder and bind this Feishu account before continuing.";
+}
+
+async function withWorkingReaction<T>(
+  sender: FeishuOutboundSender,
+  integration: FeishuRuntimeIntegration,
+  credential: FeishuCredential,
+  event: FeishuInboundMessage,
+  fn: () => Promise<T>,
+) {
+  let reactionId: string | null = null;
+  if (sender.addReaction) {
+    try {
+      const reaction = await sender.addReaction({
+        region: integration.providerRegion,
+        appId: credential.appId ?? integration.externalAppId,
+        appSecret: credential.appSecret,
+        tenantAccessToken: credential.tenantAccessToken,
+        messageId: event.messageId,
+        emojiType: "OnIt",
+      });
+      reactionId = reaction.reactionId;
+    } catch (err) {
+      logger.warn({ err, integrationId: integration.id, messageId: event.messageId }, "Failed to add Feishu working reaction");
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    if (reactionId && sender.removeReaction) {
+      try {
+        await sender.removeReaction({
+          region: integration.providerRegion,
+          appId: credential.appId ?? integration.externalAppId,
+          appSecret: credential.appSecret,
+          tenantAccessToken: credential.tenantAccessToken,
+          messageId: event.messageId,
+          reactionId,
+        });
+      } catch (err) {
+        logger.warn({ err, integrationId: integration.id, messageId: event.messageId, reactionId }, "Failed to remove Feishu working reaction");
+      }
+    }
+  }
 }
 
 function persistableAssistantKind(kind: "message" | "ask_user" | "issue_proposal" | "operation_proposal" | "automation_create") {
@@ -410,43 +507,68 @@ export function feishuIntegrationRuntimeService(
       throw new Error("Feishu accepted inbound message is missing its Rudder chat conversation or user message");
     }
 
-    let activeRunId: string | null = null;
-    const streamed = await assistant.streamChatAssistantReply({
-      conversation,
-      contextLinks: Array.isArray(conversation.contextLinks) ? conversation.contextLinks : [],
-      messages: [userMessage],
-      userMessageId: result.chatMessageId,
-      stream: false,
-      onRunCreated: (runId) => {
-        activeRunId = runId;
-      },
-    });
-    if (streamed.outcome !== "completed") {
-      throw new Error("Feishu chat assistant reply stopped before completion");
+    const abortController = new AbortController();
+    const releaseGeneration = claimChatGeneration(conversation.id, abortController, null);
+    if (!releaseGeneration) {
+      throw new Error("A Feishu chat reply is already being generated for this conversation");
     }
-    const reply = streamed.reply;
-    const assistantMessage = await chats.addMessage(conversation.id, {
-      orgId: conversation.orgId,
-      role: "assistant",
-      kind: persistableAssistantKind(reply.kind),
-      body: reply.body,
-      structuredPayload: null,
-      runId: activeRunId,
-      replyingAgentId: reply.replyingAgentId ?? integration.agentId,
-    }) as ChatMessage;
-    if (activeRunId) {
-      await chatRuns.linkAssistantMessage(activeRunId, conversation.id, assistantMessage.id);
+    const generation = await chats.createGeneration(conversation.orgId, conversation.id);
+    setActiveChatGenerationId(conversation.id, generation.id);
+    let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
+    try {
+      let activeRunId: string | null = null;
+      const streamed = await assistant.streamChatAssistantReply({
+        conversation,
+        contextLinks: Array.isArray(conversation.contextLinks) ? conversation.contextLinks : [],
+        messages: [userMessage],
+        userMessageId: result.chatMessageId,
+        stream: false,
+        abortSignal: abortController.signal,
+        onRunCreated: (runId) => {
+          activeRunId = runId;
+        },
+      });
+      if (streamed.outcome === "stopped") {
+        generationTerminalStatus = "stopped";
+        return;
+      }
+      const reply = streamed.reply;
+      const assistantMessage = await chats.addMessage(conversation.id, {
+        orgId: conversation.orgId,
+        role: "assistant",
+        kind: persistableAssistantKind(reply.kind),
+        body: reply.body,
+        structuredPayload: null,
+        runId: activeRunId,
+        replyingAgentId: reply.replyingAgentId ?? integration.agentId,
+      }) as ChatMessage;
+      if (activeRunId) {
+        await chatRuns.linkAssistantMessage(activeRunId, conversation.id, assistantMessage.id);
+      }
+      generationTerminalStatus = "completed";
+      await sendAndRecord({
+        integration,
+        credential,
+        chatId: event.chatId,
+        text: reply.body,
+        conversationId: conversation.id,
+        chatMessageId: assistantMessage.id,
+        runId: activeRunId ?? result.runId,
+        issueId: result.issueId,
+      });
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        generationTerminalStatus = "stopped";
+        return;
+      }
+      generationTerminalStatus = "failed";
+      throw error;
+    } finally {
+      await chats.markGenerationTerminal(generation.id, generationTerminalStatus).catch((error: unknown) => {
+        logger.warn({ err: error, generationId: generation.id }, "failed to mark Feishu chat generation terminal");
+      });
+      releaseGeneration();
     }
-    await sendAndRecord({
-      integration,
-      credential,
-      chatId: event.chatId,
-      text: reply.body,
-      conversationId: conversation.id,
-      chatMessageId: assistantMessage.id,
-      runId: activeRunId ?? result.runId,
-      issueId: result.issueId,
-    });
   }
 
   async function handleEvent(
@@ -472,25 +594,39 @@ export function feishuIntegrationRuntimeService(
       });
       return result;
     }
+    if (result.status === "quick_command") {
+      await sendAndRecord({
+        integration,
+        credential,
+        chatId: event.chatId,
+        text: result.outbound.text,
+        conversationId: result.conversationId,
+        chatMessageId: result.chatMessageId,
+        runId: result.runId,
+      });
+      return result;
+    }
     if (result.status === "accepted") {
-      try {
-        await completeAcceptedReply(integration, credential, event, result);
-      } catch (error) {
-        const body = error instanceof ChatAssistantStreamError && error.partialBody
-          ? error.partialBody
-          : "Rudder accepted your message, but the agent reply failed before a final response was produced.";
-        await sendAndRecord({
-          integration,
-          credential,
-          chatId: event.chatId,
-          text: body,
-          conversationId: result.conversationId,
-          chatMessageId: result.chatMessageId,
-          runId: result.runId,
-          issueId: result.issueId,
-        });
-        throw error;
-      }
+      await withWorkingReaction(sender, integration, credential, event, async () => {
+        try {
+          await completeAcceptedReply(integration, credential, event, result);
+        } catch (error) {
+          const body = error instanceof ChatAssistantStreamError && error.partialBody
+            ? error.partialBody
+            : "Rudder accepted your message, but the agent reply failed before a final response was produced.";
+          await sendAndRecord({
+            integration,
+            credential,
+            chatId: event.chatId,
+            text: body,
+            conversationId: result.conversationId,
+            chatMessageId: result.chatMessageId,
+            runId: result.runId,
+            issueId: result.issueId,
+          });
+          throw error;
+        }
+      });
     }
     return result;
   }

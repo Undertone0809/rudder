@@ -1,5 +1,5 @@
-import type { Approval } from "./approval.js";
 import type { ChatConversationMutability } from "../constants.js";
+import type { Approval } from "./approval.js";
 
 export interface ChatLinkedEntity {
   type: "issue" | "project" | "agent";

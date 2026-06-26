@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { ISSUE_AUTOSAVE_STORAGE_KEY, ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
-import type { Agent } from "@rudderhq/shared";
+import type { Agent, ChatConversation } from "@rudderhq/shared";
 import type { MouseEventHandler, ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -60,6 +60,7 @@ const mockState = vi.hoisted(() => ({
     createdAt: string;
     issueId?: string | null;
   }>,
+  chats: [] as ChatConversation[],
 }));
 
 const sidebarAgent: Agent = {
@@ -100,6 +101,9 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "issues" && queryKey[1] === "org-1") {
       return { data: mockState.issues, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "chats" && queryKey[1] === "org-1") {
+      return { data: mockState.chats, isLoading: false, error: null };
     }
     if (queryKey[0] === "live-runs" && queryKey[1] === "org-1") {
       return { data: mockState.liveRuns, isLoading: false, error: null };
@@ -181,6 +185,10 @@ vi.mock("@/components/MessengerContextSidebar", () => ({
   MessengerContextSidebar: () => null,
 }));
 
+vi.mock("@/components/HoverTimestamp", () => ({
+  ExactTimestampTooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children, ...props }: { children: ReactNode }) => <div {...props}>{children}</div>,
@@ -210,6 +218,51 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 
 let cleanupFn: (() => void) | null = null;
 let storageState: Record<string, string> = {};
+
+function chatConversation(overrides: Partial<ChatConversation> = {}): ChatConversation {
+  return {
+    id: "chat-1",
+    orgId: "org-1",
+    status: "active",
+    mutability: "native_chat",
+    title: "Inbox triage",
+    summary: null,
+    latestReplyPreview: null,
+    latestUserMessagePreview: "Message from Feishu",
+    userMessageCount: 1,
+    preferredAgentId: null,
+    routedAgentId: null,
+    primaryIssueId: null,
+    forkedFromConversationId: null,
+    forkedFromMessageId: null,
+    forkRootConversationId: null,
+    primaryIssue: null,
+    issueCreationMode: "manual_approval",
+    planMode: false,
+    createdByUserId: null,
+    lastMessageAt: new Date("2026-06-23T08:30:00.000Z"),
+    lastReadAt: null,
+    isPinned: false,
+    isUnread: false,
+    unreadCount: 0,
+    needsAttention: false,
+    resolvedAt: null,
+    contextLinks: [],
+    sourceMetadata: null,
+    chatRuntime: {
+      sourceType: "agent",
+      sourceLabel: "Penelope",
+      runtimeAgentId: "agent-1",
+      agentRuntimeType: "codex_local",
+      model: "gpt-5.4",
+      available: true,
+      error: null,
+    },
+    createdAt: new Date("2026-06-23T08:00:00.000Z"),
+    updatedAt: new Date("2026-06-23T08:30:00.000Z"),
+    ...overrides,
+  };
+}
 
 function resetIssueDraftStorage() {
   delete storageState[ISSUE_AUTOSAVE_STORAGE_KEY];
@@ -249,6 +302,7 @@ beforeEach(() => {
   mockState.linearContributions = [];
   mockState.linearCatalog = null;
   mockState.liveRuns = [];
+  mockState.chats = [];
   sidebarAgent.status = "idle";
   sidebarAgent.pauseReason = null;
   sidebarAgent.pausedAt = null;
@@ -389,6 +443,37 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     renderSidebar();
 
     expect(document.querySelector("[data-testid='agent-sidebar-scroll']")?.classList.contains("scrollbar-auto-hide")).toBe(true);
+  });
+
+  it("hides archive actions for Feishu-backed chats in the chat context sidebar", () => {
+    mockState.pathname = "/RUD/chat";
+    mockState.relativePath = "/chat";
+    mockState.chats = [
+      chatConversation({
+        id: "chat-pinned-feishu",
+        title: "Pinned Feishu",
+        isPinned: true,
+        mutability: "external_bound_chat",
+        sourceMetadata: { source: "agent_integration", provider: "feishu" },
+      }),
+      chatConversation({
+        id: "chat-recent-feishu",
+        title: "Recent Feishu",
+        mutability: "external_bound_chat",
+        sourceMetadata: { source: "agent_integration", provider: "feishu" },
+      }),
+    ];
+
+    renderSidebar();
+
+    const pinned = document.querySelector("[data-testid='chat-sidebar-conversation-chat-pinned-feishu']");
+    const recent = document.querySelector("[data-testid='chat-sidebar-conversation-chat-recent-feishu']");
+    expect(pinned?.textContent).not.toContain("Rename");
+    expect(pinned?.textContent).toContain("Unpin");
+    expect(pinned?.textContent).not.toContain("Archive");
+    expect(recent?.textContent).not.toContain("Rename");
+    expect(recent?.textContent).toContain("Pin");
+    expect(recent?.textContent).not.toContain("Archive");
   });
 
   it("collapses the desktop workspace sidebar from the context header", () => {

@@ -39,12 +39,12 @@ import {
   resolveDesktopReleaseTag,
   resolveDesktopReleaseVersion,
   resolveDesktopShellAssetName,
+  runtimeSupportsDesktopShellAssets,
   selectChecksumAsset,
   selectChecksummedDesktopAssetCandidate,
   selectDesktopAsset,
   selectDesktopShellAsset,
   startCommand,
-  runtimeSupportsDesktopShellAssets,
   waitForProcessExit,
   withDesktopInstallLock,
 } from "../commands/start.js";

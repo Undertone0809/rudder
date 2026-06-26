@@ -3,14 +3,14 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { ensurePostgresDatabase, getPostgresDataDirectory } from "./client.js";
 import {
+  cleanupStaleSysvSharedMemorySegments,
+  isEmbeddedPostgresSharedMemoryError,
+} from "./embedded-postgres-recovery.js";
+import {
   createLocalPostgresInstance,
   RUDDER_PRODUCTION_POSTGRES_VERSION,
   type LocalPostgresInstance,
 } from "./local-postgres-provider.js";
-import {
-  cleanupStaleSysvSharedMemorySegments,
-  isEmbeddedPostgresSharedMemoryError,
-} from "./embedded-postgres-recovery.js";
 import { resolveDatabaseTarget } from "./runtime-config.js";
 
 export type MigrationConnection = {
