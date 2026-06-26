@@ -65,6 +65,7 @@
             "pages": [
               "how-to/issue-lifecycle",
               "how-to/create-agent",
+              "how-to/configure-feishu-integration",
               "how-to/configure-agent-runtime"
             ]
           },
@@ -111,6 +112,7 @@
             "pages": [
               "zh/how-to/issue-lifecycle",
               "zh/how-to/create-agent",
+              "zh/how-to/configure-feishu-integration",
               "zh/how-to/configure-agent-runtime"
             ]
           },

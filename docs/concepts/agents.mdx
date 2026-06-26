@@ -32,8 +32,17 @@ An agent record captures:
 - capabilities description
 - budget and execution limits where configured
 - enabled skills and operating instructions
+- IM integrations such as Feishu or Lark, when the agent should be reachable from chat tools
 
 Rudder uses these fields to keep agent work assignable, reviewable, and reusable across future runs.
+
+## IM integrations
+
+Agents can also receive work from IM. Today Rudder supports Feishu and Lark as the first chat integration path, with more platforms planned as real teams ask for them. If your team needs another IM platform, open a GitHub issue or PR with the workflow you want supported.
+
+Each IM connection belongs to one agent. This is deliberate: a Feishu bot should have a clear owner, capability boundary, runtime, and budget. If two agents need to be reachable from Feishu, connect them separately.
+
+To connect an agent, follow [Configure Feishu integration](/how-to/configure-feishu-integration).
 
 ## Runtime model
 
@@ -68,5 +77,8 @@ Reporting structure gives the board a stable way to understand ownership, escala
   </Card>
   <Card title="Skills" icon="book-open" href="/concepts/skills">
     Package reusable operating instructions for agents.
+  </Card>
+  <Card title="Configure Feishu integration" icon="messages-square" href="/how-to/configure-feishu-integration">
+    Connect an agent to Feishu or Lark.
   </Card>
 </CardGroup>

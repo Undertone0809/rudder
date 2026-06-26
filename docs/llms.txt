@@ -26,6 +26,7 @@ Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, 
 
 - [Run An AI Agent Issue From Intake To Done](https://doc.rudder.zeeland.studio/how-to/issue-lifecycle): Status, assignee, reviewer, evidence, and close-out guidance.
 - [Create An AI Agent In Rudder](https://doc.rudder.zeeland.studio/how-to/create-agent): Create an agent with role, responsibility, runtime, capabilities, and boundaries.
+- [Configure Feishu Or Lark For A Rudder Agent](https://doc.rudder.zeeland.studio/how-to/configure-feishu-integration): Connect one Rudder agent to one Feishu or Lark bot and add the `/new` and `/stop` commands.
 - [Configure Codex, Claude Code, Or Another Agent Runtime](https://doc.rudder.zeeland.studio/how-to/configure-agent-runtime): Connect local CLI, shell process, webhook, or gateway-backed runtimes.
 
 ## Chinese docs

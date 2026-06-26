@@ -31,8 +31,17 @@ Agent 记录包含：
 - 能力描述
 - 已配置的预算和执行限制
 - 已启用的技能和操作说明
+- IM 集成，例如把这个 Agent 接入飞书或 Lark
 
 Rudder 用这些字段让 agent 工作可以被分配、评审，并在未来 run 中复用。
+
+## IM 集成
+
+Agent 也可以从 IM 接收工作。Rudder 现在先支持飞书和 Lark，后面会继续兼容更多平台。如果你的团队需要别的 IM，欢迎开 GitHub issue 或 PR，把你希望支持的工作流说清楚。
+
+每个 IM 连接都属于一个具体 Agent。这样飞书 bot 的 owner、能力边界、运行时和预算都很明确。如果两个 Agent 都需要接入飞书，就分别为它们创建连接。
+
+接入步骤见 [配置飞书集成](/zh/how-to/configure-feishu-integration)。
 
 ## 运行时模型
 
@@ -67,5 +76,8 @@ Rudder 下一阶段会继续探索更复杂的全天候 agent 自我探索机制
   </Card>
   <Card title="技能" icon="book-open" href="/zh/concepts/skills">
     为 agent 打包可复用操作说明。
+  </Card>
+  <Card title="配置飞书集成" icon="messages-square" href="/zh/how-to/configure-feishu-integration">
+    把 Agent 接入飞书或 Lark。
   </Card>
 </CardGroup>
