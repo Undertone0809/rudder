@@ -6,8 +6,12 @@ coverage: detailed
 contract_ids:
   - ORG.SETTINGS.001
   - ORG.ONBOARDING.001
+  - ORG.DESKTOP.RELEASE.NOTES.001
   - ORG.PORTABILITY.001
 related_code:
+  - desktop/src/main.ts
+  - desktop/src/post-update-reload.ts
+  - desktop/src/release-notes.ts
   - packages/db/src/schema/instance_settings.ts
   - packages/db/src/schema/operator_profiles.ts
   - packages/db/src/schema/organization_intelligence_profiles.ts
@@ -24,13 +28,17 @@ related_code:
   - ui/src/pages/OrganizationExport.tsx
   - ui/src/pages/OrganizationImport.tsx
   - ui/src/pages/InviteLanding.tsx
+  - ui/src/components/DesktopReleaseNotesDialog.tsx
 related_tests:
+  - desktop/src/release-notes.test.ts
+  - desktop/src/post-update-reload.test.ts
   - server/src/__tests__/instance-settings-service.test.ts
   - server/src/__tests__/instance-settings-routes.test.ts
   - server/src/__tests__/operator-profile-service.test.ts
   - server/src/__tests__/organization-intelligence-profiles.test.ts
   - server/src/__tests__/organization-intelligence-profiles-routes.test.ts
   - server/src/__tests__/export-jobs.test.ts
+  - ui/src/components/DesktopReleaseNotesDialog.test.tsx
   - tests/e2e/onboarding.spec.ts
   - tests/e2e/settings-sidebar.spec.ts
   - tests/e2e/organization-export-build-job.spec.ts
@@ -116,6 +124,54 @@ Evidence:
   instruction text behavior.
 - Known gap: release-smoke onboarding evidence still belongs to release/Desktop
   validation, not this product contract alone.
+
+## ORG.DESKTOP.RELEASE.NOTES.001
+
+Why:
+
+- Desktop release notes should make installed updates legible without adding
+  friction to a fresh user's first work-loop path.
+- A new user should not see a "what changed" dialog before they have any prior
+  version context.
+
+Product model:
+
+- Desktop keeps release-note display state in the Electron `userData` profile.
+- The state records the current app version as a baseline for fresh installs and
+  the last version whose notes were acknowledged.
+- The Desktop post-update restart marker is the signal that a launch follows an
+  in-app update, even when no previous release-note display state exists.
+
+Flow:
+
+1. On Desktop startup, the renderer asks the Desktop shell for release notes.
+2. If no release-note state exists and the launch is not tied to a consumed
+   post-update marker, Desktop records the current version baseline and returns
+   no notes.
+3. If the launch follows an in-app update and release notes exist for the target
+   version, Desktop returns those notes for a one-time dialog.
+4. If prior state records an older known version and the current version has not
+   been acknowledged, Desktop returns release notes for the current version.
+5. Closing the dialog records the current version as both known and shown.
+
+Invariants:
+
+- Fresh installs must not show the release-notes dialog on first launch.
+- The first launch after an app update should show release notes at most once
+  for the installed version.
+- Old state files that only contain `lastShownVersion` remain valid for upgrade
+  detection.
+- Missing or unavailable release-note markdown must not block app use.
+
+Evidence:
+
+- `desktop/src/release-notes.test.ts` covers fresh-install baseline behavior,
+  post-update launch behavior, update detection, and legacy state
+  compatibility.
+- `ui/src/components/DesktopReleaseNotesDialog.test.tsx` covers the visible
+  dialog and acknowledgement path.
+- `desktop/src/post-update-reload.test.ts` covers the update marker consumed on
+  post-update restart.
 
 ## ORG.PORTABILITY.001
 
