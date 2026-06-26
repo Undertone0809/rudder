@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 const DOCS_DIR = fileURLToPath(new URL("../docs/", import.meta.url));
 const LUCIDE_CDN_BASE = "https://d3gk2c5xim1je2.cloudfront.net/lucide/v1.16.0";
