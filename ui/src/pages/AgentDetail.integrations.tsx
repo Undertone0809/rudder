@@ -7,9 +7,10 @@ import type {
   AgentIntegrationSummary,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Loader2, Plug, ShieldCheck, Trash2 } from "lucide-react";
+import { ExternalLink, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { agentsApi } from "../api/agents";
+import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime } from "../lib/utils";
@@ -202,7 +203,7 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
           <div className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
             <div className="flex min-w-0 items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
-                <Plug className="h-4 w-4 text-muted-foreground" />
+                <FeishuLogoIcon className="h-5 w-5" />
               </div>
               <div className="min-w-0 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
