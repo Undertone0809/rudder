@@ -1796,6 +1796,15 @@ export function messengerService(db: Db) {
     return normalizeDate(rows[0]?.latestActivityAt ?? null);
   }
 
+  async function loadLatestIssueAttentionAtById(orgId: string, userId: string, issueId: string) {
+    const rows = (await db.execute(sql<{ latestActivityAt: Date | null }>`
+      select max("attentionActivityAt") as "latestActivityAt"
+      from (${issueEntryRowsQuery(orgId, userId, sql`where id = ${issueId} limit 1`)}) issue_entry_stats
+      where "attentionActivityAt" is not null
+    `)) as Array<{ latestActivityAt: Date | null }>;
+    return normalizeDate(rows[0]?.latestActivityAt ?? null);
+  }
+
   async function loadLatestIssueDisplayEntry(orgId: string, userId: string) {
     const rows = (await db.execute(issueEntryRowsQuery(
       orgId,
@@ -2579,16 +2588,15 @@ export function messengerService(db: Db) {
       return { lastReadAt: state.lastReadAt } as ThreadReadState;
     }
 
+    const now = new Date();
+    let effectiveReadAt = readAt;
     if (threadKey.startsWith("issue:")) {
       const issueId = threadKey.slice("issue:".length);
       if (!await canUseIssueThread(orgId, userId, issueId)) return null;
+      effectiveReadAt = maxDate(readAt, await loadLatestIssueAttentionAtById(orgId, userId, issueId)) ?? readAt;
+    } else if (threadKey === "issues") {
+      effectiveReadAt = maxDate(readAt, await loadLatestIssueAttentionAt(orgId, userId)) ?? readAt;
     }
-
-    const now = new Date();
-    const effectiveReadAt =
-      threadKey === "issues"
-        ? maxDate(readAt, await loadLatestIssueAttentionAt(orgId, userId)) ?? readAt
-        : readAt;
     const [row] = await db
       .insert(messengerThreadUserStates)
       .values({
@@ -2656,6 +2664,15 @@ export function messengerService(db: Db) {
             where follow_row.org_id = ${orgId}
               and follow_row.user_id = ${userId}
               and follow_row.issue_id = ${issues.id}
+          )`,
+          sql`exists (
+            select 1
+            from ${activityLog} automation_notification_activity
+            where automation_notification_activity.org_id = ${orgId}
+              and automation_notification_activity.entity_type = 'issue'
+              and automation_notification_activity.entity_id = ${issues.id}::text
+              and automation_notification_activity.action = 'automation.issue_created_notification'
+              and automation_notification_activity.details->>'userId' = ${userId}
           )`,
         ),
       ))

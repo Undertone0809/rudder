@@ -1082,6 +1082,44 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
+  it("advances stale split issue read watermarks to the issue's latest activity", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-stale-split-issue-read";
+    const issueId = randomUUID();
+    const openedAt = new Date("2026-05-03T10:29:00.000Z");
+    const issueUpdatedAt = new Date("2026-05-03T10:30:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Stale Split Issue Read Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Stale Split Issue Read Org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Stale split issue read state",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: userId,
+      identifier: "SPL-STALE-1",
+      createdAt: openedAt,
+      updatedAt: issueUpdatedAt,
+    });
+
+    const state = await messengerSvc.setThreadRead(orgId, userId, `issue:${issueId}`, openedAt);
+    expect(state?.lastReadAt.toISOString()).toBe(issueUpdatedAt.toISOString());
+
+    const afterReadSummaries = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    const afterReadIssue = afterReadSummaries.find((item) => item.threadKey === `issue:${issueId}`);
+
+    expect(afterReadIssue?.unreadCount).toBe(0);
+    expect(afterReadIssue?.needsAttention).toBe(false);
+    await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
+  });
+
   it("dismisses all Messenger unread threads for the board user", async () => {
     const orgId = randomUUID();
     const userId = "board-user-dismiss-unreads";
@@ -1260,8 +1298,18 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(2);
     const pinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${followedAutomationIssueId}`, true);
     expect(pinnedState).toEqual({ threadKey: `issue:${followedAutomationIssueId}`, pinned: true });
+    const notifiedReadState = await messengerSvc.setThreadRead(
+      orgId,
+      userId,
+      `issue:${notifiedAutomationIssueId}`,
+      new Date("2026-05-03T12:00:00.000Z"),
+    );
+    expect(notifiedReadState?.lastReadAt.toISOString()).toBe("2026-05-03T12:01:00.000Z");
+    const afterNotifiedRead = await messengerSvc.listThreadSummaries(orgId, userId, { splitIssues: true });
+    const notifiedAfterRead = afterNotifiedRead.find((item) => item.threadKey === `issue:${notifiedAutomationIssueId}`);
+    expect(notifiedAfterRead?.unreadCount).toBe(0);
     const notifiedPinnedState = await messengerSvc.setThreadPinned(orgId, userId, `issue:${notifiedAutomationIssueId}`, true);
-    expect(notifiedPinnedState).toBeNull();
+    expect(notifiedPinnedState).toEqual({ threadKey: `issue:${notifiedAutomationIssueId}`, pinned: true });
     await expect(messengerSvc.setThreadPinned(orgId, userId, `issue:${hiddenAutomationIssueId}`, true)).resolves.toBeNull();
   });
 
