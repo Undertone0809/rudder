@@ -286,6 +286,8 @@ type FailedRunRow = {
   agentId: string;
   status: string;
   error: string | null;
+  errorCode: string | null;
+  resultJson: Record<string, unknown> | null;
   stderrExcerpt: string | null;
   stdoutExcerpt: string | null;
   contextSnapshot: Record<string, unknown> | null;
@@ -889,14 +891,15 @@ function approvalCard(
 }
 
 function failedRunCard(run: FailedRunRow, agentName: string | null): MessengerHeartbeatRunThreadItem {
+  const summary = failedRunUserSummary(run);
   return {
     id: run.id,
     threadKey: "failed-runs",
     kind: "failed-runs",
     title: agentName ? `${agentName} · Failed run` : "Failed run",
     subtitle: run.status.replaceAll("_", " "),
-    body: FAILED_RUN_USER_SUMMARY,
-    preview: FAILED_RUN_USER_SUMMARY,
+    body: summary,
+    preview: summary,
     href: `/agents/${run.agentId}/runs/${run.id}`,
     latestActivityAt: run.updatedAt ?? run.createdAt,
     actions: [
@@ -911,6 +914,14 @@ function failedRunCard(run: FailedRunRow, agentName: string | null): MessengerHe
     },
     run: run as HeartbeatRun,
   };
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function failedRunUserSummary(run: Pick<FailedRunRow, "resultJson">): string {
+  return readNonEmptyString(run.resultJson?.userMessage) ?? FAILED_RUN_USER_SUMMARY;
 }
 
 function budgetCard(incident: BudgetIncidentRow): MessengerBudgetThreadItem {
@@ -2149,6 +2160,8 @@ export function messengerService(db: Db) {
           agentId: heartbeatRuns.agentId,
           status: heartbeatRuns.status,
           error: heartbeatRuns.error,
+          errorCode: heartbeatRuns.errorCode,
+          resultJson: heartbeatRuns.resultJson,
           stderrExcerpt: heartbeatRuns.stderrExcerpt,
           stdoutExcerpt: heartbeatRuns.stdoutExcerpt,
           contextSnapshot: heartbeatRuns.contextSnapshot,
@@ -2218,6 +2231,8 @@ export function messengerService(db: Db) {
       db
         .select({
           error: heartbeatRuns.error,
+          errorCode: heartbeatRuns.errorCode,
+          resultJson: heartbeatRuns.resultJson,
           stderrExcerpt: heartbeatRuns.stderrExcerpt,
         })
         .from(heartbeatRuns)
@@ -2248,7 +2263,7 @@ export function messengerService(db: Db) {
         unreadCount,
         lastReadAt,
         "No failed runs yet",
-        latestRun ? FAILED_RUN_USER_SUMMARY : null,
+        latestRun ? failedRunUserSummary(latestRun) : null,
       ),
     };
   }

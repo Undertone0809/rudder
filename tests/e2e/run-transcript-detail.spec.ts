@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
+import { chatConversations, createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -266,6 +266,75 @@ test.describe("Run transcript detail", () => {
       path: "/tmp/rudder-agent-run-stderr-contained.png",
       fullPage: true,
     });
+  });
+
+  test("shows recoverable chat failure guidance in run detail and list summaries", async ({ page }) => {
+    const organization = await createOrganization(page, `Run-Detail-Chat-Failure-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Chat Failure Tester",
+        role: "engineer",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const runId = randomUUID();
+    const conversationId = randomUUID();
+    const userMessage = "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.";
+    await e2eDb.insert(chatConversations).values({
+      id: conversationId,
+      orgId: organization.id,
+      title: "Recoverable chat failure",
+      preferredAgentId: agent.id,
+      routedAgentId: agent.id,
+      createdAt: new Date("2026-06-26T06:15:55.226Z"),
+      updatedAt: new Date("2026-06-26T06:16:31.946Z"),
+    });
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "chat",
+      triggerDetail: "chat_assistant_reply_stream",
+      status: "failed",
+      startedAt: new Date("2026-06-26T06:15:55.226Z"),
+      finishedAt: new Date("2026-06-26T06:16:31.946Z"),
+      error: "Chat adapter completed without the required Rudder result sentinel",
+      errorCode: "chat_result_missing_sentinel",
+      resultJson: {
+        outcome: "failed",
+        errorCode: "chat_result_missing_sentinel",
+        recoverable: true,
+        userMessage,
+      },
+      contextSnapshot: {
+        scene: "chat",
+        targetType: "chat_conversation",
+        conversationId,
+        messageId: randomUUID(),
+      },
+      createdAt: new Date("2026-06-26T06:15:55.226Z"),
+      updatedAt: new Date("2026-06-26T06:16:31.946Z"),
+    });
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    const summaryCard = detailPane.getByTestId("run-summary-card");
+    await expect(summaryCard.getByText("Run failed")).toBeVisible({ timeout: 15_000 });
+    await expect(summaryCard.getByText(userMessage)).toBeVisible();
+    await expect(summaryCard.getByText("The run hit a system-level execution problem.", { exact: false })).toHaveCount(0);
+
+    const listPane = page.getByTestId("agent-runs-list-pane");
+    await expect(listPane.getByText("The assistant finished without a final Rudder reply", { exact: false })).toBeVisible();
   });
 
   test("does not promote stderr excerpts for failed or successful run detail pages", async ({ page }) => {

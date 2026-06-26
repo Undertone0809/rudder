@@ -2,7 +2,7 @@ import type { HeartbeatRun } from "@rudderhq/shared";
 import { stripBenignStderr } from "./benign-stderr";
 
 type RunStderrExcerptInput = Pick<HeartbeatRun, "status" | "stderrExcerpt">;
-type RunFailureInput = Pick<HeartbeatRun, "error" | "errorCode"> & Partial<Pick<HeartbeatRun, "status">>;
+type RunFailureInput = Pick<HeartbeatRun, "error" | "errorCode"> & Partial<Pick<HeartbeatRun, "status" | "resultJson">>;
 
 const WORKSPACE_PERMISSION_REPAIR_NEEDED_CODE = "workspace_permission_repair_needed";
 export const GENERIC_RUN_FAILURE_BODY =
@@ -21,6 +21,16 @@ export function shouldShowRunStderrExcerpt(run: RunStderrExcerptInput): boolean 
 
 export function isWorkspacePermissionRepairRun(run: RunFailureInput): boolean {
   return run.errorCode === WORKSPACE_PERMISSION_REPAIR_NEEDED_CODE;
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readResultUserMessage(run: RunFailureInput): string | null {
+  const resultJson = run.resultJson;
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return null;
+  return readNonEmptyString(resultJson.userMessage);
 }
 
 export function getRunFailureDisplay(run: RunFailureInput): {
@@ -50,9 +60,10 @@ export function getRunFailureDisplay(run: RunFailureInput): {
       actionPath: "/instance/settings/about",
     };
   }
+  const resultUserMessage = readResultUserMessage(run);
   return {
     title: "Run failed",
-    body: GENERIC_RUN_FAILURE_BODY,
+    body: resultUserMessage ?? GENERIC_RUN_FAILURE_BODY,
     code: run.errorCode,
     tone: "destructive",
   };

@@ -117,7 +117,7 @@ export function summarizeHeartbeatRunResultJson(
   }
 
   const summary: Record<string, unknown> = {};
-  const textFields = ["summary", "result", "message", "error"] as const;
+  const textFields = ["summary", "result", "message", "error", "userMessage"] as const;
   for (const key of textFields) {
     const value = truncateSummaryText(resultJson[key]);
     if (value !== null) {

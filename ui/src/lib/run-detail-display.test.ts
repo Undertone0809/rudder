@@ -77,6 +77,22 @@ describe("getRunFailureDisplay", () => {
     });
   });
 
+  it("uses recoverable chat result messages before generic runtime failure copy", () => {
+    expect(getRunFailureDisplay({
+      status: "failed",
+      error: "Chat adapter completed without the required Rudder result sentinel",
+      errorCode: "chat_result_missing_sentinel",
+      resultJson: {
+        userMessage: "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
+      },
+    })).toEqual({
+      title: "Run failed",
+      body: "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
+      code: "chat_result_missing_sentinel",
+      tone: "destructive",
+    });
+  });
+
   it("labels cancelled runs separately from system failures", () => {
     expect(getRunFailureDisplay({
       status: "cancelled",

@@ -8,6 +8,7 @@ describe("summarizeHeartbeatRunResultJson", () => {
       result: "ok",
       message: "done",
       error: "failed",
+      userMessage: "Retry when ready.",
       total_cost_usd: 1.23,
       cost_usd: 0.45,
       costUsd: 0.67,
@@ -19,9 +20,24 @@ describe("summarizeHeartbeatRunResultJson", () => {
       result: "ok",
       message: "done",
       error: "failed",
+      userMessage: "Retry when ready.",
       total_cost_usd: 1.23,
       cost_usd: 0.45,
       costUsd: 0.67,
+    });
+  });
+
+  it("preserves recoverable chat failure user messages for list summaries", () => {
+    const summary = summarizeHeartbeatRunResultJson({
+      outcome: "failed",
+      errorCode: "chat_result_missing_sentinel",
+      recoverable: true,
+      userMessage: "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
+      partialBody: "",
+    });
+
+    expect(summary).toEqual({
+      userMessage: "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
     });
   });
 

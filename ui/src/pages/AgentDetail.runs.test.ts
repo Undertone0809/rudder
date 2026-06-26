@@ -49,6 +49,17 @@ describe("getRunListSummary", () => {
     }))).toBe("The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.");
   });
 
+  it("shows recoverable chat failure guidance in failed run summaries", () => {
+    expect(getRunListSummary(run({
+      status: "failed",
+      error: "Chat adapter completed without the required Rudder result sentinel",
+      errorCode: "chat_result_missing_sentinel",
+      resultJson: {
+        userMessage: "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
+      },
+    }))).toBe("The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.");
+  });
+
   it("keeps successful run summaries visible", () => {
     expect(getRunListSummary(run({
       status: "succeeded",

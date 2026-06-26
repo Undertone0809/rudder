@@ -3221,6 +3221,10 @@ describe("messengerService and issue follows", () => {
         invocationSource: "on_demand",
         status: "failed",
         error: "Newer run failed",
+        errorCode: "chat_result_missing_sentinel",
+        resultJson: {
+          userMessage: "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
+        },
         createdAt: newerActivityAt,
         updatedAt: newerActivityAt,
       },
@@ -3237,10 +3241,13 @@ describe("messengerService and issue follows", () => {
       href: `/agent-runs/${olderRunId}/retry`,
       method: "POST",
     });
+    expect(thread.detail.items[1]?.preview).toBe(
+      "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
+    );
     expect(thread.summary.unreadCount).toBe(1);
     expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
     expect(failedRunsSummary?.preview).toBe(
-      "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.",
+      "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
     );
     expect(failedRunsSummary?.unreadCount).toBe(1);
     expect(failedRunsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
