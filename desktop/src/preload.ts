@@ -104,6 +104,19 @@ type OpenNotificationSettingsResult = {
   platform: NodeJS.Platform;
 };
 
+type DesktopReleaseNotes = {
+  version: string;
+  title: string;
+  sections: Array<{
+    title: string;
+    items: string[];
+  }>;
+};
+
+type DesktopReleaseNotesResult =
+  | { status: "available"; notes: DesktopReleaseNotes }
+  | { status: "unavailable" | "already-shown" };
+
 type DesktopInboxNotificationPayload = {
   title: string;
   body?: string;
@@ -192,6 +205,10 @@ contextBridge.exposeInMainWorld("desktopShell", {
   reloadApp: () => ipcRenderer.invoke("desktop:reload-app"),
   restart: () => ipcRenderer.invoke("desktop:restart"),
   getAppVersion: () => ipcRenderer.invoke("desktop:get-app-version") as Promise<string>,
+  getReleaseNotes: () =>
+    ipcRenderer.invoke("desktop:get-release-notes") as Promise<DesktopReleaseNotesResult>,
+  markReleaseNotesShown: (version: string) =>
+    ipcRenderer.invoke("desktop:mark-release-notes-shown", version) as Promise<void>,
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates") as Promise<DesktopUpdateCheckResult>,
   installUpdate: (version: string) =>
     ipcRenderer.invoke("desktop:install-update", version) as Promise<DesktopUpdateInstallResult>,
@@ -253,6 +270,8 @@ declare global {
       reloadApp(): Promise<void>;
       restart(): Promise<void>;
       getAppVersion(): Promise<string>;
+      getReleaseNotes(): Promise<DesktopReleaseNotesResult>;
+      markReleaseNotesShown(version: string): Promise<void>;
       checkForUpdates(): Promise<DesktopUpdateCheckResult>;
       installUpdate(version: string): Promise<DesktopUpdateInstallResult>;
       applyUpdate(updateId: string, options?: DesktopUpdateApplyOptions): Promise<DesktopUpdateApplyResult>;

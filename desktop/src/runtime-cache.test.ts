@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  resolveDesktopOrganizationWorkspaceHomeEnv,
+  resolveDefaultOrganizationWorkspaceHomeDir,
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
   sanitizeRuntimeCacheSegment,
@@ -33,6 +35,25 @@ describe("runtime cache helpers", () => {
     expect(resolveSharedRudderHomeDir({ RUDDER_HOME: "~/rudder-data" }, "/Users/test")).toBe(
       "/Users/test/rudder-data",
     );
+  });
+
+  it("resolves the default Desktop organization workspace home under Documents", () => {
+    expect(resolveDefaultOrganizationWorkspaceHomeDir("dev", "/Users/test")).toBe(
+      "/Users/test/Documents/Rudder/instances/dev/organizations",
+    );
+  });
+
+  it("only injects the Desktop organization workspace home when Rudder home is implicit", () => {
+    expect(resolveDesktopOrganizationWorkspaceHomeEnv({}, "dev", "/Users/test")).toBe(
+      "/Users/test/Documents/Rudder/instances/dev/organizations",
+    );
+    expect(resolveDesktopOrganizationWorkspaceHomeEnv({ RUDDER_HOME: "/tmp/rudder" }, "dev", "/Users/test"))
+      .toBeNull();
+    expect(resolveDesktopOrganizationWorkspaceHomeEnv(
+      { RUDDER_ORGANIZATION_WORKSPACE_HOME: "/tmp/workspaces" },
+      "dev",
+      "/Users/test",
+    )).toBeNull();
   });
 
   it("resolves a matching external server runtime entrypoint", async () => {

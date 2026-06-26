@@ -9,6 +9,7 @@ import { authApi } from "./api/auth";
 import { healthApi } from "./api/health";
 import { DesktopUpdatePromptBridge } from "./components/DesktopUpdatePromptBridge";
 import { DesktopUpdateStatusCard } from "./components/DesktopUpdateStatusCard";
+import { DesktopReleaseNotesDialog } from "./components/DesktopReleaseNotesDialog";
 import { DesktopSettingsModalFrame, Layout } from "./components/Layout";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { ProductTourOverlay } from "./components/ProductTourOverlay";
@@ -621,6 +622,7 @@ export function App() {
       ) : null}
       <OnboardingWizard />
       <ProductTourOverlay />
+      <DesktopReleaseNotesDialog />
       <DesktopUpdatePromptBridge />
       <ToastViewport />
       <DesktopUpdateStatusCard />

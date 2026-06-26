@@ -381,6 +381,19 @@ async function closeDesktop(electronApp) {
   await electronApp.close();
 }
 
+async function dismissReleaseNotesDialogIfVisible(page) {
+  const dialog = page.getByRole("dialog", { name: /What's new in Rudder/i });
+  try {
+    await dialog.waitFor({ state: "visible", timeout: 3_000 });
+  } catch {
+    return;
+  }
+
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.waitFor({ state: "detached", timeout: 10_000 });
+  console.log("[desktop-smoke] dismissed release notes dialog");
+}
+
 async function verifyNativeApplicationMenu(electronApp, page, companyId, issuePrefix) {
   const platform = await electronApp.evaluate(() => process.platform);
   if (platform !== "darwin") {
@@ -649,6 +662,7 @@ async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix) {
   });
   await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
   await page.waitForLoadState("networkidle");
+  await dismissReleaseNotesDialogIfVisible(page);
   await page.getByRole("button", { name: "System settings" }).waitFor({ state: "visible", timeout: 30_000 });
   await assertDesktopServiceWorkersDisabled(page);
   const openWindowCount = electronApp.windows().filter((candidate) => !candidate.isClosed()).length;
@@ -657,6 +671,7 @@ async function verifyReloadRecovery(electronApp, page, companyId, issuePrefix) {
 
   await page.waitForLoadState("networkidle");
   await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
+  await dismissReleaseNotesDialogIfVisible(page);
   await page.getByRole("button", { name: "System settings" }).waitFor({ state: "visible", timeout: 30_000 });
   await assertDesktopServiceWorkersDisabled(page);
   const navigationType = await page.evaluate(() => performance.getEntriesByType("navigation")[0]?.type ?? null);

@@ -28,6 +28,23 @@ export function resolveSharedRudderHomeDir(
   return path.resolve(homeDir, ".rudder");
 }
 
+export function resolveDefaultOrganizationWorkspaceHomeDir(
+  instanceId: string,
+  homeDir: string = os.homedir(),
+): string {
+  return path.resolve(homeDir, "Documents", "Rudder", "instances", instanceId, "organizations");
+}
+
+export function resolveDesktopOrganizationWorkspaceHomeEnv(
+  env: NodeJS.ProcessEnv,
+  instanceId: string,
+  homeDir: string = os.homedir(),
+): string | null {
+  if (env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim()) return null;
+  if (env.RUDDER_HOME?.trim()) return null;
+  return resolveDefaultOrganizationWorkspaceHomeDir(instanceId, homeDir);
+}
+
 export function resolveExternalRuntimeServerEntrypoint(options: {
   version: string;
   env?: NodeJS.ProcessEnv;

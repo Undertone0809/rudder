@@ -62,6 +62,7 @@
     },
     "files": [
       "dist/**/*",
+      "releases/**/*",
       "package.json",
       "!**/node_modules/electron",
       "!**/node_modules/electron/**/*",

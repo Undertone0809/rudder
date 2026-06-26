@@ -1,12 +1,13 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import {
   ensureAgentWorkspaceLayout,
   ensureOrganizationWorkspaceLayout,
   ensureProjectLibraryLayout,
+  migrateOrganizationWorkspaceRoot,
   migrateOrganizationStorageRoot,
   pruneOrphanedOrganizationStorage,
   reconcileOrganizationStorageRoots,
@@ -17,10 +18,13 @@ import {
   resolveAgentSkillsDir,
   resolveDefaultAgentWorkspaceDir,
   resolveLegacyOrganizationRoot,
+  resolveLegacyOrganizationWorkspaceRoot,
   resolveOrganizationAgentsDir,
   resolveOrganizationProjectsDir,
   resolveOrganizationRoot,
   resolveOrganizationSkillsDir,
+  resolveOrganizationWorkspaceHomeDir,
+  resolveOrganizationWorkspaceRoot,
   resolveProjectLibraryDir,
   resolveProjectLibraryRelativePath,
 } from "../home-paths.js";
@@ -40,6 +44,7 @@ const agent = { id: agentId, orgId, name: agentName, workspaceKey };
 describe("home paths", () => {
   const originalRudderHome = process.env.RUDDER_HOME;
   const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
+  const originalOrganizationWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {
@@ -47,6 +52,8 @@ describe("home paths", () => {
     else process.env.RUDDER_HOME = originalRudderHome;
     if (originalRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
     else process.env.RUDDER_INSTANCE_ID = originalRudderInstanceId;
+    if (originalOrganizationWorkspaceHome === undefined) delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+    else process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalOrganizationWorkspaceHome;
 
     await Promise.all(Array.from(cleanupDirs).map(async (dir) => {
       await fs.rm(dir, { recursive: true, force: true });
@@ -94,6 +101,57 @@ describe("home paths", () => {
     await expect(fs.stat(resolveAgentMemoryDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentLifeDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentSkillsDir(orgId, workspaceKey))).resolves.toBeDefined();
+  });
+
+  it("keeps organization workspaces under the explicit RUDDER_HOME instance root", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-explicit-home-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+
+    expect(resolveOrganizationWorkspaceHomeDir()).toBe(path.join(
+      rudderHome,
+      "instances",
+      "test-instance",
+      "organizations",
+    ));
+    expect(resolveOrganizationWorkspaceRoot(orgId)).toBe(path.join(
+      rudderHome,
+      "instances",
+      "test-instance",
+      "organizations",
+      orgId,
+      "workspaces",
+    ));
+  });
+
+  it("migrates an existing organization workspace into the configured user workspace home", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-workspace-migration-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const legacyWorkspaceRoot = resolveLegacyOrganizationWorkspaceRoot(orgId);
+    const legacyWorkspaceFile = path.join(legacyWorkspaceRoot, "projects", "demo", "README.md");
+    await fs.mkdir(path.dirname(legacyWorkspaceFile), { recursive: true });
+    await fs.writeFile(legacyWorkspaceFile, "# Demo\n", "utf8");
+
+    const result = await migrateOrganizationWorkspaceRoot(orgId);
+
+    expect(result).toMatchObject({
+      canonicalRootPath: path.join(workspaceHome, orgId, "workspaces"),
+      legacyRootPath: legacyWorkspaceRoot,
+      migrated: true,
+      mergedIntoExistingTarget: false,
+      skippedBecauseTargetExists: false,
+    });
+    await expect(fs.stat(legacyWorkspaceRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "demo", "README.md"), "utf8"))
+      .resolves.toBe("# Demo\n");
   });
 
   it("uses short organization ids for UUID-backed workspace roots", async () => {
@@ -319,6 +377,54 @@ describe("home paths", () => {
     await expect(fs.stat(canonicalRoot)).resolves.toBeDefined();
     await expect(fs.stat(legacyRoot)).resolves.toBeDefined();
     await expect(fs.stat(orphanRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not prune orphaned organization workspace roots from the configured user workspace home", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-prune-workspaces-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-prune-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const liveWorkspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const orphanWorkspaceRoot = path.join(workspaceHome, "orphan-org");
+    await fs.mkdir(liveWorkspaceRoot, { recursive: true });
+    await fs.mkdir(orphanWorkspaceRoot, { recursive: true });
+
+    const result = await pruneOrphanedOrganizationStorage([orgId]);
+
+    expect(result.removedWorkspaceDirNames).toEqual([]);
+    await expect(fs.stat(liveWorkspaceRoot)).resolves.toBeDefined();
+    await expect(fs.stat(orphanWorkspaceRoot)).resolves.toBeDefined();
+  });
+
+  it("explains permission failures when creating a fresh organization workspace", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-create-permission-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-create-permission-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const originalMkdir = fs.mkdir;
+    const permissionError = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    fs.mkdir = vi.fn(async (targetPath, options) => {
+      if (path.resolve(String(targetPath)) === resolveOrganizationWorkspaceRoot(orgId)) {
+        throw permissionError;
+      }
+      return originalMkdir.call(fs, targetPath, options);
+    }) as typeof fs.mkdir;
+
+    try {
+      await expect(ensureOrganizationWorkspaceLayout(orgId)).rejects.toThrow(
+        /could not create the organization workspace.*EACCES.*Windows.*administrator/i,
+      );
+    } finally {
+      fs.mkdir = originalMkdir;
+    }
   });
 
   it("reconciles live organization storage by migrating before pruning orphans", async () => {
