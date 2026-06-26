@@ -69,4 +69,7 @@ jobs:
         run: pnpm -s exec vitest run cli/src/__tests__/start.test.ts
 
       - name: Build
+        env:
+          RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
+          RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
         run: pnpm build

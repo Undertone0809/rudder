@@ -224,7 +224,7 @@ async function main() {
 
   const sourceManifestSnapshots = await snapshotSourcePackageManifests();
   try {
-    await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", "--legacy", targetDir], repoRoot);
+    await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot);
   } finally {
     await restoreSourcePackageManifests(sourceManifestSnapshots);
   }

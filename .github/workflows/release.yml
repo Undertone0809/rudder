@@ -79,6 +79,7 @@ jobs:
       - name: Build
         env:
           RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
+          RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
         run: pnpm build
 
   canary:
