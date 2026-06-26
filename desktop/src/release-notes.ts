@@ -11,6 +11,7 @@ export type DesktopReleaseNotes = {
 };
 
 type ReleaseNotesState = {
+  lastKnownVersion?: string;
   lastShownVersion?: string;
 };
 
@@ -90,16 +91,27 @@ export function resolveReleaseNotesStatePath(userDataPath: string): string {
 
 export function shouldShowReleaseNotes(input: {
   statePath: string;
+  updatedAfterInstall?: boolean;
   version: string;
 }): boolean {
   const normalizedVersion = normalizeVersion(input.version);
   try {
     const state = JSON.parse(fs.readFileSync(input.statePath, "utf8")) as ReleaseNotesState;
-    return state.lastShownVersion !== normalizedVersion;
+    const knownVersion = state.lastKnownVersion ?? state.lastShownVersion;
+    if (!knownVersion) {
+      writeReleaseNotesState(input.statePath, { lastKnownVersion: normalizedVersion });
+      return false;
+    }
+
+    return knownVersion !== normalizedVersion && state.lastShownVersion !== normalizedVersion;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | null)?.code;
-    if (code === "ENOENT") return true;
-    return true;
+    if (code === "ENOENT") {
+      if (input.updatedAfterInstall) return true;
+      writeReleaseNotesState(input.statePath, { lastKnownVersion: normalizedVersion });
+      return false;
+    }
+    throw error;
   }
 }
 
@@ -108,6 +120,13 @@ export function markReleaseNotesShown(input: {
   version: string;
 }): void {
   const normalizedVersion = normalizeVersion(input.version);
-  fs.mkdirSync(path.dirname(input.statePath), { recursive: true });
-  fs.writeFileSync(input.statePath, `${JSON.stringify({ lastShownVersion: normalizedVersion }, null, 2)}\n`, "utf8");
+  writeReleaseNotesState(input.statePath, {
+    lastKnownVersion: normalizedVersion,
+    lastShownVersion: normalizedVersion,
+  });
+}
+
+function writeReleaseNotesState(statePath: string, state: ReleaseNotesState): void {
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }

@@ -24,7 +24,8 @@ import {
 } from "./navigation-guard.js";
 import {
   consumePostUpdateReloadMarker,
-  resolvePostUpdateReloadDelayMs
+  resolvePostUpdateReloadDelayMs,
+  type PostUpdateReloadMarker,
 } from "./post-update-reload.js";
 import {
   resolveDesktopPostgresBinDir,
@@ -363,6 +364,7 @@ let mainWindow: BrowserWindow | null = null;
 let residentTray: Tray | null = null;
 let residentControlsAvailable = false;
 let desktopWindowIcon: Electron.NativeImage | null = null;
+let latestPostUpdateReloadMarker: PostUpdateReloadMarker | null = null;
 let currentThemePreference: DesktopThemePreference = nativeTheme.themeSource;
 let currentAppearance: DesktopAppearance = resolveAppearanceForThemePreference(
   currentThemePreference,
@@ -835,6 +837,7 @@ async function openAppWindow(loadUrl: string): Promise<void> {
 function schedulePostUpdateRendererReloadIfNeeded(): void {
   const marker = consumePostUpdateReloadMarker(app.getPath("userData"));
   if (!marker) return;
+  latestPostUpdateReloadMarker = marker;
 
   const delayMs = resolvePostUpdateReloadDelayMs();
   setTimeout(() => {
@@ -1288,7 +1291,8 @@ function registerIpc(): void {
   ipcMain.handle("desktop:get-release-notes", async (): Promise<DesktopReleaseNotesResult> => {
     const version = resolveRudderAppVersion();
     const statePath = resolveReleaseNotesStatePath(app.getPath("userData"));
-    if (!shouldShowReleaseNotes({ statePath, version })) {
+    const updatedAfterInstall = latestPostUpdateReloadMarker?.targetVersion === version;
+    if (!shouldShowReleaseNotes({ statePath, version, updatedAfterInstall })) {
       return { status: "already-shown" };
     }
     const notes = readReleaseNotes({
