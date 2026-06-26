@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  resolveDesktopOrganizationWorkspaceHomeEnv,
   resolveDefaultOrganizationWorkspaceHomeDir,
+  resolveDesktopOrganizationWorkspaceHomeEnv,
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
   sanitizeRuntimeCacheSegment,

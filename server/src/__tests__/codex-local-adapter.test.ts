@@ -38,6 +38,20 @@ describe("codex_local parser", () => {
     expect(parsed.summary).toBe("completed anyway");
     expect(parsed.errorMessage).toBeNull();
   });
+
+  it("uses the terminal turn result as the summary when no agent message event is present", () => {
+    const stdout = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
+      JSON.stringify({
+        type: "turn.completed",
+        result: "Recovered plain-text reply without the Rudder sentinel.",
+        usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 4 },
+      }),
+    ].join("\n");
+
+    const parsed = parseCodexJsonl(stdout);
+    expect(parsed.summary).toBe("Recovered plain-text reply without the Rudder sentinel.");
+  });
 });
 
 describe("codex_local cost estimation", () => {

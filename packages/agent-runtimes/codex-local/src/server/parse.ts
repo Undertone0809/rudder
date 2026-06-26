@@ -4,6 +4,7 @@ import { isCodexClosedStdinToolSessionError } from "../shared/tool-errors.js";
 export function parseCodexJsonl(stdout: string) {
   let sessionId: string | null = null;
   const messages: string[] = [];
+  let terminalResult: string | null = null;
   let errorMessage: string | null = null;
   const usage = {
     inputTokens: 0,
@@ -44,6 +45,7 @@ export function parseCodexJsonl(stdout: string) {
       usage.inputTokens = asNumber(usageObj.input_tokens, usage.inputTokens);
       usage.cachedInputTokens = asNumber(usageObj.cached_input_tokens, usage.cachedInputTokens);
       usage.outputTokens = asNumber(usageObj.output_tokens, usage.outputTokens);
+      terminalResult = asString(event.result, terminalResult ?? "") || terminalResult;
       continue;
     }
 
@@ -56,7 +58,7 @@ export function parseCodexJsonl(stdout: string) {
 
   return {
     sessionId,
-    summary: messages.join("\n\n").trim(),
+    summary: messages.join("\n\n").trim() || terminalResult?.trim() || "",
     usage,
     errorMessage,
   };
