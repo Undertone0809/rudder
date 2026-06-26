@@ -131,11 +131,30 @@ async function ensureParentDir(target: string): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true });
 }
 
-async function ensureSymlink(target: string, source: string): Promise<void> {
+function isRecoverableSharedFileSymlinkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EPERM" || code === "EACCES";
+}
+
+async function ensureSharedFileReference(
+  target: string,
+  source: string,
+  onLog: AgentRuntimeExecutionContext["onLog"],
+): Promise<void> {
   const existing = await fs.lstat(target).catch(() => null);
   if (!existing) {
     await ensureParentDir(target);
-    await fs.symlink(source, target);
+    try {
+      await fs.symlink(source, target);
+    } catch (err) {
+      if (!isRecoverableSharedFileSymlinkError(err)) throw err;
+      await fs.copyFile(source, target);
+      await onLog(
+        "stdout",
+        `[rudder] Copied shared Codex file "${source}" to "${target}" because this environment cannot create symlinks.\n`,
+      );
+    }
     return;
   }
 
@@ -150,7 +169,16 @@ async function ensureSymlink(target: string, source: string): Promise<void> {
   if (resolvedLinkedPath === source) return;
 
   await fs.unlink(target);
-  await fs.symlink(source, target);
+  try {
+    await fs.symlink(source, target);
+  } catch (err) {
+    if (!isRecoverableSharedFileSymlinkError(err)) throw err;
+    await fs.copyFile(source, target);
+    await onLog(
+      "stdout",
+      `[rudder] Copied shared Codex file "${source}" to "${target}" because this environment cannot create symlinks.\n`,
+    );
+  }
 }
 
 async function ensureCopiedFile(target: string, source: string): Promise<void> {
@@ -599,7 +627,7 @@ export async function prepareManagedCodexHome(
     for (const name of SYMLINKED_SHARED_FILES) {
       const source = path.join(sourceHome, name);
       if (!(await pathExists(source))) continue;
-      await ensureSymlink(path.join(targetHome, name), source);
+      await ensureSharedFileReference(path.join(targetHome, name), source, onLog);
     }
 
     for (const name of COPIED_SHARED_FILES) {

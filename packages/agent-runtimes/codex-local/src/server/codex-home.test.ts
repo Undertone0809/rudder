@@ -1,13 +1,14 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fs, { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareManagedCodexHome } from "./codex-home.js";
 
 describe("managed Codex home config sync", () => {
   const tempRoots: string[] = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
@@ -131,5 +132,39 @@ describe("managed Codex home config sync", () => {
     expect(refreshedConfig).not.toContain('model_provider = "stale"');
     expect(refreshedConfig).not.toContain("service_tier");
     expect(refreshedConfig).toContain('model = "gpt-5.5"');
+  });
+
+  it("copies shared auth when symlink creation is denied", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-home-auth-copy-"));
+    tempRoots.push(root);
+
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    await mkdir(sharedCodexHome, { recursive: true });
+    await writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
+
+    vi.spyOn(fs, "symlink").mockImplementation(async () => {
+      const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+      err.code = "EPERM";
+      throw err;
+    });
+
+    const logs: string[] = [];
+    const codexHome = await prepareManagedCodexHome(
+      {
+        CODEX_HOME: sharedCodexHome,
+        RUDDER_HOME: path.join(root, "rudder-home"),
+        RUDDER_INSTANCE_ID: "prod-local-test",
+      },
+      async (_stream, chunk) => {
+        logs.push(chunk);
+      },
+      "org-1",
+      "agent-1",
+    );
+
+    const managedAuthPath = path.join(codexHome, "auth.json");
+    expect((await fs.lstat(managedAuthPath)).isFile()).toBe(true);
+    expect(await readFile(managedAuthPath, "utf8")).toBe('{"token":"shared"}\n');
+    expect(logs.join("\n")).toContain("because this environment cannot create symlinks");
   });
 });

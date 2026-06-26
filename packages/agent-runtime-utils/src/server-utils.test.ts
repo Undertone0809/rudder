@@ -967,7 +967,43 @@ describe("runChildProcess", () => {
       controller.abort();
       await fs.rm(root, { recursive: true, force: true });
     }
-  });
+  }, 10_000);
+
+  it.runIf(process.platform === "win32")("times out Windows cmd wrappers without waiting for the wrapped process", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-run-child-process-cmd-timeout-"));
+    const scriptPath = path.join(root, "slow-child.mjs");
+    const wrapperPath = path.join(root, "slow-child.cmd");
+    await fs.writeFile(
+      scriptPath,
+      [
+        "process.on('SIGTERM', () => {});",
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.writeFile(
+      wrapperPath,
+      `@echo off\r\n"${process.execPath}" "${scriptPath}"\r\n`,
+      "utf8",
+    );
+
+    const startedAt = Date.now();
+
+    try {
+      const result = await runChildProcess("run-child-process-cmd-timeout", wrapperPath, [], {
+        cwd: root,
+        env: {},
+        timeoutSec: 1,
+        graceSec: 1,
+        onLog: async () => {},
+      });
+
+      expect(result.timedOut).toBe(true);
+      expect(Date.now() - startedAt).toBeLessThan(8_000);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }, 10_000);
 });
 
 describe("syncLocalCliCredentialHomeEntries", () => {

@@ -31,6 +31,21 @@ export function prependPathEntry(env: NodeJS.ProcessEnv, entry: string): NodeJS.
   };
 }
 
+function killChildProcessTree(child: ChildProcessWithEvents, force: boolean): void {
+  if (process.platform === "win32" && typeof child.pid === "number" && child.pid > 0) {
+    const args = ["/pid", String(child.pid), "/t"];
+    if (force) args.push("/f");
+    const killer = spawn("taskkill.exe", args, {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.on("error", () => {});
+    return;
+  }
+
+  child.kill(force ? "SIGKILL" : "SIGTERM");
+}
+
 export async function findAncestorWithFile(
   startDir: string,
   relativePath: string,
@@ -942,10 +957,10 @@ export async function runChildProcess(
           opts.timeoutSec > 0
             ? setTimeout(() => {
                 timedOut = true;
-                child.kill("SIGTERM");
+                killChildProcessTree(child, false);
                 setTimeout(() => {
                   if (isChildProcessAlive(child)) {
-                    child.kill("SIGKILL");
+                    killChildProcessTree(child, true);
                   }
                 }, Math.max(1, opts.graceSec) * 1000);
               }, opts.timeoutSec * 1000)
@@ -955,10 +970,10 @@ export async function runChildProcess(
         if (opts.abortSignal) {
           const onAbort = () => {
             aborted = true;
-            child.kill("SIGTERM");
+            killChildProcessTree(child, false);
             setTimeout(() => {
               if (isChildProcessAlive(child)) {
-                child.kill("SIGKILL");
+                killChildProcessTree(child, true);
               }
             }, Math.max(1, opts.graceSec) * 1000);
           };
