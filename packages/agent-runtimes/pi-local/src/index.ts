@@ -51,7 +51,9 @@ Notes:
   truth.
 - Sessions are stored in ~/.pi/paperclips/ and resumed with --session.
 - Rudder realizes only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page.
-- Selected skills are linked into a Rudder-managed Pi home for the run; unselected skills already present in the real user home do not load.
+- Pi runs keep HOME/USERPROFILE on the operator home for normal local CLI auth and host tooling state; RUDDER_OPERATOR_HOME records the same boundary.
+- Selected skills, Pi agent state, session files, and isolated Git config live in adapter-managed runtime state through PI_CODING_AGENT_DIR and PI_CODING_AGENT_SESSION_DIR.
+- Operator HOME does not authorize provider-native, project, global, stale, or unselected skills to become Rudder-loaded skills.
 - All tools (read, bash, edit, write, grep, find, ls) are enabled by default.
 - Agent instructions are appended to Pi's system prompt via --append-system-prompt, while the user task is sent as the --print JSON-mode message.
 - Rudder parses Pi's full JSON stdout for final text, usage, and tool events, but stores a sanitized stdout view so large thinking/signature payloads do not dominate run logs.

@@ -8,7 +8,6 @@ import {
   buildRudderEnv,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
-  ensureLocalCliCredentialShimsInPath,
   ensurePathInEnv,
   ensureRudderCliInPath,
   ensureRudderSkillSymlink,
@@ -16,6 +15,7 @@ import {
   loadAgentInstructionsPrefix,
   parseObject,
   prepareAgentInstructionRuntimeContext,
+  pruneLegacyLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeUnselectedRudderSkillSymlinks,
@@ -25,7 +25,6 @@ import {
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
-  syncLocalCliCredentialHomeEntries,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -39,9 +38,16 @@ const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const OPENCODE_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
+  "OPENCODE_CONFIG",
+  "OPENCODE_DISABLE_CLAUDE_CODE",
+  "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT",
+  "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS",
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
 ]);
 const SHARED_OPENCODE_HOME_ENTRIES = [
   ".local/share/opencode",
@@ -180,7 +186,7 @@ async function ensureManagedOpenCodeConfig(input: {
   );
   await input.onLog(
     "stdout",
-    `[rudder] Wrote sanitized OpenCode config into managed HOME ${configDir}.\n`,
+    `[rudder] Wrote sanitized OpenCode config into adapter-managed runtime state ${configDir}.\n`,
   );
 }
 
@@ -194,14 +200,16 @@ function resolveManagedOpenCodeSkillsDir(homeDir: string): string {
 
 async function prepareManagedOpenCodeHome(
   env: NodeJS.ProcessEnv,
+  operatorHome: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
 ): Promise<string> {
-  const sourceHome = resolveSharedOpenCodeHomeDir(env);
+  const sourceHome = path.resolve(operatorHome);
   const targetHome = resolveManagedOpenCodeHomeDir({ env }, orgId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(targetHome, { recursive: true });
+  await pruneLegacyLocalCliCredentialHomeEntries({ targetHome, onLog });
   await fs.mkdir(resolveManagedOpenCodeSkillsDir(targetHome), { recursive: true });
 
   for (const relativeEntry of SHARED_OPENCODE_HOME_ENTRIES) {
@@ -213,7 +221,7 @@ async function prepareManagedOpenCodeHome(
 
   await onLog(
     "stdout",
-    `[rudder] Using Rudder-managed OpenCode home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Using adapter-managed OpenCode runtime state "${targetHome}" with operator HOME "${sourceHome}".\n`,
   );
   return targetHome;
 }
@@ -381,16 +389,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
   const sourceEnv = { ...process.env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedOpenCodeHome({ ...sourceEnv, ...env }, onLog, agent.orgId);
-  await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
+  const managedHome = await prepareManagedOpenCodeHome({ ...sourceEnv, ...env }, operatorHome, onLog, agent.orgId);
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
     home: managedHome,
     sourceEnv,
     onLog,
   });
-  env.HOME = managedHome;
-  env.USERPROFILE = managedHome;
+  env.HOME = operatorHome;
+  env.USERPROFILE = operatorHome;
+  env.OPENCODE_CONFIG = path.join(managedHome, ".config", "opencode", MANAGED_OPENCODE_CONFIG_FILE);
+  env.OPENCODE_DISABLE_CLAUDE_CODE = "true";
+  env.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT = "true";
+  env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = "true";
   env.RUDDER_OPERATOR_HOME = operatorHome;
   env.XDG_CONFIG_HOME = path.join(managedHome, ".config");
   env.XDG_DATA_HOME = path.join(managedHome, ".local", "share");
@@ -424,13 +435,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     selectedOpenCodeSkillEntries,
   );
   const runtimeEnv = Object.fromEntries(
-    Object.entries(await ensureLocalCliCredentialShimsInPath({
-      operatorHome,
-      targetHome: managedHome,
-      cwd,
-      env: ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })),
-      onLog,
-    })).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    Object.entries(ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })))
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 

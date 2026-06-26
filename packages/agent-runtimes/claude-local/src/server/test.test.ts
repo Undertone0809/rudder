@@ -112,7 +112,7 @@ describe("claude hello probe classification", () => {
     }
   });
 
-  it("runs the hello probe from the same managed Claude home boundary as execution", async () => {
+  it("runs the hello probe with operator HOME and managed Claude config boundary", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-claude-managed-env-"));
     const command = path.join(tempDir, "claude");
     const capturePath = path.join(tempDir, "capture.json");
@@ -171,8 +171,8 @@ describe("claude hello probe classification", () => {
         env: Record<string, string>;
       };
       const managedHome = path.join(tempDir, ".rudder", "instances", "default", "organizations", "org-1", "claude-home");
-      expect(capture.env.HOME).toBe(managedHome);
-      expect(capture.env.USERPROFILE).toBe(managedHome);
+      expect(capture.env.HOME).toBe(tempDir);
+      expect(capture.env.USERPROFILE).toBe(tempDir);
       expect(capture.env.RUDDER_CLAUDE_HOME).toBe(managedHome);
       expect(capture.env.CLAUDE_CONFIG_DIR).toBe(path.join(managedHome, ".claude"));
       expect(capture.env.RUDDER_OPERATOR_HOME).toBe(tempDir);

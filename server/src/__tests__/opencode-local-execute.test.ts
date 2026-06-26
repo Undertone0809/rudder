@@ -26,6 +26,7 @@ const payload = {
   argv: process.argv.slice(2),
   home: process.env.HOME || null,
   userProfile: process.env.USERPROFILE || null,
+  opencodeConfig: process.env.OPENCODE_CONFIG || null,
   rudderOperatorHome: process.env.RUDDER_OPERATOR_HOME || null,
   xdgConfigHome: process.env.XDG_CONFIG_HOME || null,
   xdgDataHome: process.env.XDG_DATA_HOME || null,
@@ -61,6 +62,44 @@ async function createSkillDir(root: string, name: string) {
   await fs.mkdir(skillDir, { recursive: true });
   await fs.writeFile(path.join(skillDir, "SKILL.md"), `---\nname: ${name}\n---\n`, "utf8");
   return skillDir;
+}
+
+async function createOperatorHomeSentinels(home: string) {
+  await fs.mkdir(path.join(home, ".ssh"), { recursive: true });
+  await fs.mkdir(path.join(home, ".config", "gh"), { recursive: true });
+  await fs.mkdir(path.join(home, ".npm"), { recursive: true });
+  await fs.mkdir(path.join(home, ".vscode"), { recursive: true });
+  await fs.writeFile(path.join(home, ".npmrc"), "//registry.example/:_authToken=secret\n", "utf8");
+  await fs.writeFile(path.join(home, ".git-credentials"), "https://token@example.invalid\n", "utf8");
+  await fs.writeFile(path.join(home, ".ssh", "config"), "Host example\n", "utf8");
+  await fs.writeFile(path.join(home, ".config", "gh", "hosts.yml"), "github.com: {}\n", "utf8");
+  await fs.writeFile(path.join(home, ".npm", "sentinel"), "operator npm cache\n", "utf8");
+  await fs.writeFile(path.join(home, ".vscode", "settings.json"), "{}\n", "utf8");
+}
+
+async function expectNoOperatorHomeSentinelsInManagedHome(managedHome: string) {
+  for (const relativePath of [
+    ".npmrc",
+    ".git-credentials",
+    ".ssh",
+    ".config/gh",
+    ".npm",
+    ".vscode",
+  ]) {
+    await expect(fs.lstat(path.join(managedHome, relativePath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }
+}
+
+async function createLegacyManagedCredentialBridgeSentinels(operatorHome: string, managedHome: string) {
+  await fs.mkdir(managedHome, { recursive: true });
+  for (const relativePath of [".npmrc", ".git-credentials", ".ssh", ".config/gh", ".npm", ".vscode"]) {
+    const source = path.join(operatorHome, relativePath);
+    const target = path.join(managedHome, relativePath);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.symlink(source, target);
+  }
 }
 
 describe("opencode execute", { timeout: 20_000 }, () => {
@@ -203,14 +242,16 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         argv: string[];
         home: string | null;
         userProfile: string | null;
+        opencodeConfig: string | null;
         rudderOperatorHome: string | null;
         prompt: string;
         rudderEnvKeys: string[];
         gitIdentity: GitIdentityCapture;
       };
       expectPreparedGitConfigCapture(capture);
-      expect(capture.home).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "opencode-home"));
-      expect(capture.userProfile).toBe(capture.home);
+      expect(capture.home).toBe(root);
+      expect(capture.userProfile).toBe(root);
+      expect(capture.opencodeConfig).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "opencode-home", ".config", "opencode", "opencode.json"));
       expect(capture.rudderOperatorHome).toBe(root);
       expect(capture.argv).toEqual(expect.arrayContaining(["run", "--pure", "--format", "json", "--dir", workspace]));
       expect(capture.argv).not.toContain("--dangerously-skip-permissions");
@@ -375,6 +416,8 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.dirname(operatorSkillPath), { recursive: true });
     await fs.mkdir(path.dirname(operatorOpenCodePluginPath), { recursive: true });
+    await createOperatorHomeSentinels(root);
+    await createLegacyManagedCredentialBridgeSentinels(root, managedOpenCodeHome);
     await fs.writeFile(operatorSkillPath, "---\nname: operator-skill\n---\n", "utf8");
     await fs.mkdir(path.join(managedOpenCodeHome, ".config", "opencode", "skills", "stale-skill"), { recursive: true });
     await fs.mkdir(path.join(managedOpenCodeHome, ".config", "opencode", "plugin"), { recursive: true });
@@ -446,9 +489,9 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     process.env.RUDDER_OPERATOR_HOME = root;
     process.env.RUDDER_HOME = path.join(root, ".rudder");
     process.env.RUDDER_INSTANCE_ID = "default";
-    process.env.XDG_CONFIG_HOME = path.join(root, ".config");
-    process.env.XDG_DATA_HOME = path.join(root, ".local", "share");
-    process.env.XDG_CACHE_HOME = path.join(root, ".cache");
+    process.env.XDG_CONFIG_HOME = path.join(root, "forbidden-host-xdg-config");
+    process.env.XDG_DATA_HOME = path.join(root, "forbidden-host-xdg-data");
+    process.env.XDG_CACHE_HOME = path.join(root, "forbidden-host-xdg-cache");
 
     try {
       const result = await execute({
@@ -505,18 +548,21 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
         argv: string[];
         home: string | null;
+        opencodeConfig: string | null;
         rudderOperatorHome: string | null;
         xdgConfigHome: string | null;
         xdgDataHome: string | null;
         xdgCacheHome: string | null;
         prompt: string;
       };
-      expect(capture.home).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "opencode-home"));
+      expect(capture.home).toBe(root);
+      expect(capture.opencodeConfig).toBe(path.join(managedOpenCodeHome, ".config", "opencode", "opencode.json"));
       expect(capture.rudderOperatorHome).toBe(root);
-      expect(capture.xdgConfigHome).toBe(path.join(capture.home!, ".config"));
-      expect(capture.xdgDataHome).toBe(path.join(capture.home!, ".local", "share"));
-      expect(capture.xdgCacheHome).toBe(path.join(capture.home!, ".cache"));
+      expect(capture.xdgConfigHome).toBe(path.join(managedOpenCodeHome, ".config"));
+      expect(capture.xdgDataHome).toBe(path.join(managedOpenCodeHome, ".local", "share"));
+      expect(capture.xdgCacheHome).toBe(path.join(managedOpenCodeHome, ".cache"));
       expect(capture.argv).toContain("--pure");
+      await expectNoOperatorHomeSentinelsInManagedHome(managedOpenCodeHome);
       const managedConfigDir = path.join(managedOpenCodeHome, ".config", "opencode");
       expect((await fs.lstat(managedConfigDir)).isSymbolicLink()).toBe(false);
       await expect(fs.lstat(path.join(managedConfigDir, "plugins", "forbidden-plugin.js"))).rejects.toMatchObject({

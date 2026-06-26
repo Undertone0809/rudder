@@ -8,7 +8,6 @@ import {
   buildRudderEnv,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
-  ensureLocalCliCredentialShimsInPath,
   ensurePathInEnv,
   ensureRudderCliInPath,
   joinPromptSections,
@@ -16,6 +15,7 @@ import {
   parseJson,
   parseObject,
   prepareAgentInstructionRuntimeContext,
+  pruneLegacyLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   renderTemplate,
@@ -23,7 +23,6 @@ import {
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
-  syncLocalCliCredentialHomeEntries,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -198,10 +197,11 @@ function resolveManagedClaudeHomeDir(env: NodeJS.ProcessEnv, orgId: string): str
 
 async function prepareManagedClaudeHome(
   env: NodeJS.ProcessEnv,
+  operatorHome: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
 ): Promise<{ home: string; configDir: string; settingsPath: string }> {
-  const sourceHome = resolveSharedClaudeHomeDir(env);
+  const sourceHome = path.resolve(operatorHome);
   const targetHome = resolveManagedClaudeHomeDir(env, orgId);
   const configDir = path.join(targetHome, ".claude");
   if (targetHome === sourceHome) {
@@ -213,6 +213,7 @@ async function prepareManagedClaudeHome(
   }
 
   await fs.mkdir(targetHome, { recursive: true });
+  await pruneLegacyLocalCliCredentialHomeEntries({ targetHome, onLog });
   await fs.rm(path.join(configDir, "skills"), { recursive: true, force: true });
   await fs.rm(path.join(configDir, "plugins"), { recursive: true, force: true });
   await fs.rm(path.join(targetHome, ".claude.json"), { force: true });
@@ -227,7 +228,7 @@ async function prepareManagedClaudeHome(
 
   await onLog(
     "stdout",
-    `[rudder] Using Rudder-managed Claude home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Using adapter-managed Claude runtime state "${targetHome}" with operator HOME "${sourceHome}".\n`,
   );
   return { home: targetHome, configDir, settingsPath };
 }
@@ -442,6 +443,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
   const managedClaudeHome = await prepareManagedClaudeHome(
     { ...sourceEnv, ...env },
+    operatorHome,
     input.onLog ?? (async () => {}),
     agent.orgId,
   );
@@ -449,11 +451,6 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
   await fs.rm(runtimeTmpDir, { recursive: true, force: true });
   await fs.mkdir(runtimeTmpDir, { recursive: true });
-  await syncLocalCliCredentialHomeEntries({
-    sourceHome: operatorHome,
-    targetHome: managedHome,
-    onLog: input.onLog,
-  });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
     home: managedHome,
@@ -464,8 +461,8 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
   }
-  env.HOME = managedHome;
-  env.USERPROFILE = managedHome;
+  env.HOME = operatorHome;
+  env.USERPROFILE = operatorHome;
   env.CLAUDE_CONFIG_DIR = managedClaudeHome.configDir;
   env.RUDDER_CLAUDE_HOME = managedHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
@@ -473,13 +470,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   applyGitIdentityPreparationEnv(env, preparedGitIdentity);
   applyGitCredentialHelperPolicyEnv(env);
 
-  const runtimeEnv = await ensureLocalCliCredentialShimsInPath({
-    operatorHome,
-    targetHome: managedHome,
-    cwd,
-    env: ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })),
-    onLog: input.onLog,
-  });
+  const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env }));
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);

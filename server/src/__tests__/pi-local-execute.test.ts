@@ -147,6 +147,44 @@ async function createSkillDir(root: string, name: string) {
   return skillDir;
 }
 
+async function createOperatorHomeSentinels(home: string) {
+  await fs.mkdir(path.join(home, ".ssh"), { recursive: true });
+  await fs.mkdir(path.join(home, ".config", "gh"), { recursive: true });
+  await fs.mkdir(path.join(home, ".npm"), { recursive: true });
+  await fs.mkdir(path.join(home, ".vscode"), { recursive: true });
+  await fs.writeFile(path.join(home, ".npmrc"), "//registry.example/:_authToken=secret\n", "utf8");
+  await fs.writeFile(path.join(home, ".git-credentials"), "https://token@example.invalid\n", "utf8");
+  await fs.writeFile(path.join(home, ".ssh", "config"), "Host example\n", "utf8");
+  await fs.writeFile(path.join(home, ".config", "gh", "hosts.yml"), "github.com: {}\n", "utf8");
+  await fs.writeFile(path.join(home, ".npm", "sentinel"), "operator npm cache\n", "utf8");
+  await fs.writeFile(path.join(home, ".vscode", "settings.json"), "{}\n", "utf8");
+}
+
+async function expectNoOperatorHomeSentinelsInManagedHome(managedHome: string) {
+  for (const relativePath of [
+    ".npmrc",
+    ".git-credentials",
+    ".ssh",
+    ".config/gh",
+    ".npm",
+    ".vscode",
+  ]) {
+    await expect(fs.lstat(path.join(managedHome, relativePath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }
+}
+
+async function createLegacyManagedCredentialBridgeSentinels(operatorHome: string, managedHome: string) {
+  await fs.mkdir(managedHome, { recursive: true });
+  for (const relativePath of [".npmrc", ".git-credentials", ".ssh", ".config/gh", ".npm", ".vscode"]) {
+    const source = path.join(operatorHome, relativePath);
+    const target = path.join(managedHome, relativePath);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.symlink(source, target);
+  }
+}
+
 type CapturePayload = {
   argv: string[];
   stdin: string;
@@ -169,6 +207,15 @@ describe("pi execute", { timeout: 20_000 }, () => {
     const commandPath = path.join(root, "pi");
     const capturePath = path.join(root, "capture.json");
     const operatorSkillPath = path.join(root, ".pi", "agent", "skills", "operator-skill", "SKILL.md");
+    const managedPiHome = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "pi-home",
+    );
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
     const soulPath = path.join(root, "instructions", "SOUL.md");
     const toolsPath = path.join(root, "instructions", "TOOLS.md");
@@ -177,6 +224,8 @@ describe("pi execute", { timeout: 20_000 }, () => {
     await fs.mkdir(path.dirname(operatorSkillPath), { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(operatorSkillPath, "---\nname: operator-skill\n---\n", "utf8");
+    await createOperatorHomeSentinels(root);
+    await createLegacyManagedCredentialBridgeSentinels(root, managedPiHome);
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(soulPath, "# Agent Soul\n", "utf8");
     await fs.writeFile(toolsPath, "# Agent Tools\n", "utf8");
@@ -264,20 +313,12 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toBeNull();
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expectPreparedGitConfigCapture(capture);
-      const managedPiHome = path.join(
-        root,
-        ".rudder",
-        "instances",
-        "default",
-        "organizations",
-        "organization-1",
-        "pi-home",
-      );
       const managedPiAgentDir = path.join(managedPiHome, ".pi", "agent");
-      expect(capture.home).toBe(managedPiHome);
-      expect(capture.userProfile).toBe(managedPiHome);
+      expect(capture.home).toBe(root);
+      expect(capture.userProfile).toBe(root);
       expect(capture.piCodingAgentDir).toBe(managedPiAgentDir);
       expect(capture.piCodingAgentSessionDir).toBe(path.join(managedPiHome, ".pi", "paperclips"));
+      await expectNoOperatorHomeSentinelsInManagedHome(managedPiHome);
       expect(capture.argv).toEqual(expect.arrayContaining(["--print", "--mode", "json"]));
       expect(capture.argv).not.toContain("rpc");
       expect(capture.argv).toEqual(expect.arrayContaining(["--skill", path.join(managedPiAgentDir, "skills")]));

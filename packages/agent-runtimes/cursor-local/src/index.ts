@@ -80,7 +80,7 @@ Notes:
 - Prompts are piped to Cursor via stdin.
 - Sessions are resumed with --resume when stored session cwd matches current cwd.
 - Rudder realizes only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page.
-- Cursor subscription authentication is bridged into a Rudder-managed Cursor home through macOS Keychain access and generic local CLI credential bridges. Rudder does not launch cursor-agent through an operator HOME shim or mirror operator .cursor config/MCP state; the child process sees managed HOME/USERPROFILE and the real operator home only through RUDDER_OPERATOR_HOME.
-- Cursor CLI currently exposes --plugin-dir but no verified skills-directory allowlist or native discovery-disable flag. Rudder links selected skills into a Rudder-managed Cursor sidecar, runs cursor-agent with that managed HOME, then injects only those selected SKILL.md files into the prompt.
+- Cursor runs keep HOME/USERPROFILE on the operator home for normal local CLI auth and host tooling state; RUDDER_OPERATOR_HOME records the same boundary.
+- Cursor CLI currently exposes --plugin-dir but no verified skills-directory allowlist or native discovery-disable flag. Rudder links selected skills into a Rudder-managed Cursor sidecar and injects only those selected SKILL.md files into the prompt.
 - Rudder auto-adds --yolo unless one of --trust/--yolo/-f is already present in extraArgs.
 `;

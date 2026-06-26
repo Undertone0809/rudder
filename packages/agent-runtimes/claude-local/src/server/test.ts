@@ -12,9 +12,9 @@ import {
   ensureCommandResolvable,
   ensurePathInEnv,
   parseObject,
+  pruneLegacyLocalCliCredentialHomeEntries,
   resolveLocalOperatorHome,
   runChildProcess,
-  syncLocalCliCredentialHomeEntries,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -139,6 +139,7 @@ async function prepareManagedClaudeProbeHome(
   const home = resolveManagedClaudeHomeDir(sourceEnv, orgId);
   const configDir = path.join(home, ".claude");
   await fs.mkdir(home, { recursive: true });
+  await pruneLegacyLocalCliCredentialHomeEntries({ targetHome: home });
   await fs.rm(path.join(configDir, "skills"), { recursive: true, force: true });
   await fs.rm(path.join(configDir, "plugins"), { recursive: true, force: true });
   await fs.rm(path.join(home, ".claude.json"), { force: true });
@@ -149,11 +150,6 @@ async function prepareManagedClaudeProbeHome(
     if (!(await pathExists(source))) continue;
     await ensureSymlink(path.join(home, relativeEntry), source);
   }
-  await syncLocalCliCredentialHomeEntries({
-    sourceHome: operatorHome,
-    targetHome: home,
-    onLog: async () => {},
-  });
   return { home, configDir, settingsPath, operatorHome };
 }
 
@@ -268,8 +264,8 @@ export async function testEnvironment(
   );
   const env: Record<string, string> = {
     ...envConfigStrings,
-    HOME: managedClaudeHome.home,
-    USERPROFILE: managedClaudeHome.home,
+    HOME: managedClaudeHome.operatorHome,
+    USERPROFILE: managedClaudeHome.operatorHome,
     CLAUDE_CONFIG_DIR: managedClaudeHome.configDir,
     RUDDER_CLAUDE_HOME: managedClaudeHome.home,
     RUDDER_OPERATOR_HOME: managedClaudeHome.operatorHome,

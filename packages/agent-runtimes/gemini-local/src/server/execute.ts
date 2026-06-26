@@ -8,7 +8,6 @@ import {
   buildRudderEnv,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
-  ensureLocalCliCredentialShimsInPath,
   ensurePathInEnv,
   ensureRudderCliInPath,
   ensureRudderSkillSymlink,
@@ -16,6 +15,7 @@ import {
   loadAgentInstructionsPrefix,
   parseObject,
   prepareAgentInstructionRuntimeContext,
+  pruneLegacyLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeUnselectedRudderSkillSymlinks,
@@ -25,7 +25,6 @@ import {
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
-  syncLocalCliCredentialHomeEntries,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -174,14 +173,16 @@ async function syncGeminiSharedHomeEntries(sourceHome: string, targetHome: strin
 
 async function prepareManagedGeminiHome(
   env: NodeJS.ProcessEnv,
+  operatorHome: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
 ): Promise<string> {
-  const sourceHome = resolveSharedGeminiHomeDir(env);
+  const sourceHome = path.resolve(operatorHome);
   const targetHome = resolveManagedGeminiHomeDir({ env }, orgId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(resolveManagedGeminiSkillsDir(targetHome), { recursive: true });
+  await pruneLegacyLocalCliCredentialHomeEntries({ targetHome, onLog });
   if (await pathExists(path.join(sourceHome, ".gemini"))) {
     await syncGeminiSharedHomeEntries(sourceHome, targetHome);
     await copyGeminiAuthSettings(sourceHome, targetHome);
@@ -189,7 +190,7 @@ async function prepareManagedGeminiHome(
 
   await onLog(
     "stdout",
-    `[rudder] Using Rudder-managed Gemini home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Using adapter-managed Gemini runtime state "${targetHome}" with operator HOME "${sourceHome}".\n`,
   );
   return targetHome;
 }
@@ -199,9 +200,9 @@ function geminiSkillsHome(): string {
 }
 
 /**
- * Inject Rudder skills directly into `~/.gemini/skills/` via symlinks.
- * This avoids needing GEMINI_CLI_HOME overrides, so the CLI naturally finds
- * both its auth credentials and the injected skills in the real home directory.
+ * Inject Rudder skills into the adapter-selected Gemini skills directory.
+ * Execution keeps child HOME on the operator home while GEMINI_CLI_HOME points
+ * at Rudder-managed provider state for selected skill isolation.
  */
 async function ensureGeminiSkillsInjected(
   onLog: AgentRuntimeExecutionContext["onLog"],
@@ -297,8 +298,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ...process.env,
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedGeminiHome({ ...sourceEnv, ...envConfigStrings }, onLog, agent.orgId);
-  await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
+  const managedHome = await prepareManagedGeminiHome({ ...sourceEnv, ...envConfigStrings }, operatorHome, onLog, agent.orgId);
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
     home: managedHome,
@@ -325,8 +325,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
-  env.HOME = managedHome;
-  env.USERPROFILE = managedHome;
+  env.HOME = operatorHome;
+  env.USERPROFILE = operatorHome;
   env.GEMINI_CLI_HOME = managedHome;
   env.RUDDER_RUN_ID = runId;
   const wakeTaskId =
@@ -380,8 +380,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (GEMINI_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
-  env.HOME = managedHome;
-  env.USERPROFILE = managedHome;
+  env.HOME = operatorHome;
+  env.USERPROFILE = operatorHome;
   env.GEMINI_CLI_HOME = managedHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
@@ -395,13 +395,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   );
   const billingType = resolveGeminiBillingType(effectiveEnv);
-  const runtimeEnv = await ensureLocalCliCredentialShimsInPath({
-    operatorHome,
-    targetHome: managedHome,
-    cwd,
-    env: ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv)),
-    onLog,
-  });
+  const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv));
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);

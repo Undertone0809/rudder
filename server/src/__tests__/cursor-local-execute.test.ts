@@ -138,6 +138,44 @@ async function createSkillDir(root: string, name: string) {
   return skillDir;
 }
 
+async function createOperatorHomeSentinels(home: string) {
+  await fs.mkdir(path.join(home, ".ssh"), { recursive: true });
+  await fs.mkdir(path.join(home, ".config", "gh"), { recursive: true });
+  await fs.mkdir(path.join(home, ".npm"), { recursive: true });
+  await fs.mkdir(path.join(home, ".vscode"), { recursive: true });
+  await fs.writeFile(path.join(home, ".npmrc"), "//registry.example/:_authToken=secret\n", "utf8");
+  await fs.writeFile(path.join(home, ".git-credentials"), "https://token@example.invalid\n", "utf8");
+  await fs.writeFile(path.join(home, ".ssh", "config"), "Host example\n", "utf8");
+  await fs.writeFile(path.join(home, ".config", "gh", "hosts.yml"), "github.com: {}\n", "utf8");
+  await fs.writeFile(path.join(home, ".npm", "sentinel"), "operator npm cache\n", "utf8");
+  await fs.writeFile(path.join(home, ".vscode", "settings.json"), "{}\n", "utf8");
+}
+
+async function expectNoOperatorHomeSentinelsInManagedHome(managedHome: string) {
+  for (const relativePath of [
+    ".npmrc",
+    ".git-credentials",
+    ".ssh",
+    ".config/gh",
+    ".npm",
+    ".vscode",
+  ]) {
+    await expect(fs.lstat(path.join(managedHome, relativePath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }
+}
+
+async function createLegacyManagedCredentialBridgeSentinels(operatorHome: string, managedHome: string) {
+  await fs.mkdir(managedHome, { recursive: true });
+  for (const relativePath of [".npmrc", ".git-credentials", ".ssh", ".config/gh", ".npm", ".vscode"]) {
+    const source = path.join(operatorHome, relativePath);
+    const target = path.join(managedHome, relativePath);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.symlink(source, target);
+  }
+}
+
 describe("cursor execute", { timeout: 20_000 }, () => {
   const itDarwin = process.platform === "darwin" ? it : it.skip;
 
@@ -152,6 +190,9 @@ describe("cursor execute", { timeout: 20_000 }, () => {
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer direct status updates.\n", "utf8");
+    await createOperatorHomeSentinels(root);
+    const managedHome = path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "cursor-home");
+    await createLegacyManagedCredentialBridgeSentinels(root, managedHome);
     await writeFakeCursorCommand(commandPath);
 
     const restoreEnv = setManagedCursorEnv(root);
@@ -207,11 +248,11 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toBeNull();
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      const managedHome = path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "cursor-home");
       expectPreparedGitConfigCapture(capture);
-      expect(capture.home).toBe(managedHome);
-      expect(capture.userProfile).toBe(managedHome);
+      expect(capture.home).toBe(root);
+      expect(capture.userProfile).toBe(root);
       expect(capture.rudderOperatorHome).toBe(root);
+      await expectNoOperatorHomeSentinelsInManagedHome(managedHome);
       expect(capture.argv).not.toContain("Follow the rudder heartbeat.");
       expect(capture.argv).not.toContain("--mode");
       expect(capture.argv).not.toContain("ask");
@@ -348,7 +389,7 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toBeNull();
       expect(logs.join("")).not.toContain("Prepared local CLI credential shim");
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.home).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "cursor-home"));
+      expect(capture.home).toBe(root);
       expect(capture.rudderOperatorHome).toBe(root);
     } finally {
       if (previousPath === undefined) delete process.env.PATH;
@@ -358,7 +399,7 @@ describe("cursor execute", { timeout: 20_000 }, () => {
     }
   });
 
-  itDarwin("bridges operator keychain into the managed Cursor home for subscription auth", async () => {
+  itDarwin("keeps operator keychain in operator HOME instead of bridging it into the managed Cursor state", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-keychain-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");
@@ -415,11 +456,12 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.home).toBe(managedHome);
+      expect(capture.home).toBe(root);
       expect(capture.rudderOperatorHome).toBe(root);
       const linkedKeychains = path.join(managedHome, "Library", "Keychains");
-      expect((await fs.lstat(linkedKeychains)).isSymbolicLink()).toBe(true);
-      expect(await fs.realpath(linkedKeychains)).toBe(await fs.realpath(operatorKeychains));
+      await expect(fs.lstat(linkedKeychains)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       await expect(fs.lstat(path.join(managedHome, ".cursor", "skills"))).resolves.toBeTruthy();
       await expect(fs.lstat(path.join(root, ".cursor", "skills"))).rejects.toMatchObject({
         code: "ENOENT",
@@ -597,7 +639,7 @@ describe("cursor execute", { timeout: 20_000 }, () => {
     }
   });
 
-  itDarwin("uses RUDDER_OPERATOR_HOME for the keychain bridge when the server HOME is isolated", async () => {
+  itDarwin("uses RUDDER_OPERATOR_HOME as child HOME when the server HOME is isolated", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-operator-home-"));
     const operatorHome = path.join(root, "operator-home");
     const serverHome = path.join(root, "server-home");
@@ -675,11 +717,12 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.home).toBe(managedHome);
+      expect(capture.home).toBe(operatorHome);
       expect(capture.rudderOperatorHome).toBe(operatorHome);
       const linkedKeychains = path.join(managedHome, "Library", "Keychains");
-      expect((await fs.lstat(linkedKeychains)).isSymbolicLink()).toBe(true);
-      expect(await fs.realpath(linkedKeychains)).toBe(await fs.realpath(operatorKeychains));
+      await expect(fs.lstat(linkedKeychains)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       await expect(fs.lstat(path.join(managedHome, ".cursor", "cli-config.json"))).rejects.toMatchObject({
         code: "ENOENT",
       });
@@ -789,7 +832,7 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.home).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "cursor-home"));
+      expect(capture.home).toBe(root);
       expect(capture.rudderOperatorHome).toBe(root);
       expect((await fs.lstat(path.join(managedSkillsHome, "ascii-heart"))).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(path.join(managedSkillsHome, "ascii-heart"))).toBe(

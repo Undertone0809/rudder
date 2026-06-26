@@ -573,6 +573,57 @@ export async function syncLocalCliCredentialHomeEntries(input: {
   return { linked, skipped };
 }
 
+export async function pruneLegacyLocalCliCredentialHomeEntries(input: {
+  targetHome: string;
+  entries?: readonly string[];
+  onLog?: ((stream: "stdout" | "stderr", chunk: string) => Promise<void>) | null;
+}): Promise<{ removed: string[]; skipped: string[] }> {
+  const targetHome = path.resolve(input.targetHome);
+  const removed: string[] = [];
+  const skipped: string[] = [];
+  const entries = input.entries ?? [
+    ...DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES,
+    ".npm",
+    ".vscode",
+  ];
+
+  for (const relativeEntry of entries) {
+    const target = path.join(targetHome, relativeEntry);
+    const existing = await fs.lstat(target).catch(() => null);
+    if (!existing) continue;
+
+    try {
+      if (existing.isSymbolicLink()) {
+        await fs.unlink(target);
+        removed.push(relativeEntry);
+        continue;
+      }
+      if (existing.isDirectory() && await directoryIsEmpty(target)) {
+        await fs.rmdir(target);
+        removed.push(relativeEntry);
+        continue;
+      }
+      if (existing.isFile() && existing.size === 0) {
+        await fs.unlink(target);
+        removed.push(relativeEntry);
+        continue;
+      }
+      skipped.push(relativeEntry);
+    } catch {
+      skipped.push(relativeEntry);
+    }
+  }
+
+  if (input.onLog && removed.length > 0) {
+    await input.onLog(
+      "stdout",
+      `[rudder] Removed ${removed.length} legacy local CLI credential bridge entr${removed.length === 1 ? "y" : "ies"} from adapter-managed runtime state ${targetHome}: ${removed.join(", ")}\n`,
+    );
+  }
+
+  return { removed, skipped };
+}
+
 export async function writeOperatorHomeShim(input: {
   shimDir: string;
   command: string;

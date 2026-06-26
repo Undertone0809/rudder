@@ -123,6 +123,44 @@ function setOperatorHomeForTest(home: string) {
   };
 }
 
+async function createOperatorHomeSentinels(home: string) {
+  await fs.mkdir(path.join(home, ".ssh"), { recursive: true });
+  await fs.mkdir(path.join(home, ".config", "gh"), { recursive: true });
+  await fs.mkdir(path.join(home, ".npm"), { recursive: true });
+  await fs.mkdir(path.join(home, ".vscode"), { recursive: true });
+  await fs.writeFile(path.join(home, ".npmrc"), "//registry.example/:_authToken=secret\n", "utf8");
+  await fs.writeFile(path.join(home, ".git-credentials"), "https://token@example.invalid\n", "utf8");
+  await fs.writeFile(path.join(home, ".ssh", "config"), "Host example\n", "utf8");
+  await fs.writeFile(path.join(home, ".config", "gh", "hosts.yml"), "github.com: {}\n", "utf8");
+  await fs.writeFile(path.join(home, ".npm", "sentinel"), "operator npm cache\n", "utf8");
+  await fs.writeFile(path.join(home, ".vscode", "settings.json"), "{}\n", "utf8");
+}
+
+async function expectNoOperatorHomeSentinelsInManagedHome(managedHome: string) {
+  for (const relativePath of [
+    ".npmrc",
+    ".git-credentials",
+    ".ssh",
+    ".config/gh",
+    ".npm",
+    ".vscode",
+  ]) {
+    await expect(fs.lstat(path.join(managedHome, relativePath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }
+}
+
+async function createLegacyManagedCredentialBridgeSentinels(operatorHome: string, managedHome: string) {
+  await fs.mkdir(managedHome, { recursive: true });
+  for (const relativePath of [".npmrc", ".git-credentials", ".ssh", ".config/gh", ".npm", ".vscode"]) {
+    const source = path.join(operatorHome, relativePath);
+    const target = path.join(managedHome, relativePath);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.symlink(source, target);
+  }
+}
+
 describe("claude execute", { timeout: 20_000 }, () => {
   it("runs the current Claude auth login subcommand", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-login-"));
@@ -512,8 +550,11 @@ describe("claude execute", { timeout: 20_000 }, () => {
     const capturePath = path.join(root, "capture.json");
     const sharedClaudeDir = path.join(root, ".claude");
     const sharedSkillsDir = path.join(sharedClaudeDir, "skills");
+    const managedHome = path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "claude-home");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(sharedSkillsDir, { recursive: true });
+    await createOperatorHomeSentinels(root);
+    await createLegacyManagedCredentialBridgeSentinels(root, managedHome);
     await fs.writeFile(
       path.join(sharedClaudeDir, "settings.json"),
       JSON.stringify({
@@ -617,16 +658,16 @@ describe("claude execute", { timeout: 20_000 }, () => {
         addDirSkillEntries: string[];
         runtimeTmpExists: boolean;
       };
-      const managedHome = path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "claude-home");
       const managedConfigDir = path.join(managedHome, ".claude");
       const runtimeTmpDir = path.join(managedHome, "runtime-tmp", "run-3");
       expect(capture.managedClaudeSettingsPath).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/.claude/settings.json");
-      expect(capture.env.HOME).toBe(managedHome);
-      expect(capture.env.USERPROFILE).toBe(managedHome);
+      expect(capture.env.HOME).toBe(root);
+      expect(capture.env.USERPROFILE).toBe(root);
       expect(capture.env.RUDDER_OPERATOR_HOME).toBe(root);
       expect(capture.env.RUDDER_CLAUDE_HOME).toBe(managedHome);
       expect(capture.env.RUDDER_RUNTIME_TMPDIR).toBe(runtimeTmpDir);
       expect(capture.env.CLAUDE_CONFIG_DIR).toBe(managedConfigDir);
+      await expectNoOperatorHomeSentinelsInManagedHome(managedHome);
       expect(capture.runtimeTmpExists).toBe(true);
       expect(capture.managedClaudeConfigDir).toBe(managedConfigDir);
       expect(capture.argv).toContain("--permission-mode");

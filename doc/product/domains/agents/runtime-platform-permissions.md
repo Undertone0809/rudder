@@ -28,6 +28,7 @@ related_tests:
   - server/src/__tests__/managed-workspace-preflight.test.ts
 related_plans:
   - doc/plans/2026-06-21-product-logic-registry.md
+  - doc/plans/2026-06-26-local-runtime-operator-home-default.md
 edit_policy: user_confirmed_only
 ---
 
@@ -50,11 +51,12 @@ failures as operator-actionable errors.
 ## Intent / User Job
 
 Operators expect a Rudder agent configured on macOS, Linux, or Windows to run
-with the same product semantics: isolated managed home, access to required
-Rudder context, selected skills, and usable local CLI credentials when the
-adapter intentionally bridges them. They should not need to know whether a
-provider adapter uses symlinks, junctions, copied directories, temporary homes,
-or shell shims unless a repair action is required.
+with the same product semantics: the child process uses the operator's normal
+local home by default, while Rudder keeps provider-specific runtime state,
+selected skills, sessions, and temporary files under adapter-owned managed
+state. They should not need to know whether a provider adapter uses symlinks,
+junctions, copied directories, provider home variables, temporary homes, or
+prompt injection unless a repair action is required.
 
 ## Why / Design Reasoning
 
@@ -65,12 +67,15 @@ Rudder local runtimes cross two boundaries at the same time:
 - the platform boundary between POSIX filesystems and Windows filesystem
   permissions
 
-The current design favors managed runtime homes and explicit credential bridges
-over running every adapter directly in the operator home. That protects
-repeatability, avoids leaking unrelated user files into the agent's default
-home, and lets Rudder attach run evidence to a known workspace. The tradeoff is
-that files, credentials, skills, sockets, config directories, and temporary
-runtime material must be materialized in a platform-aware way.
+The current design favors operator-home process execution for local trusted
+runtimes, with provider-owned state split into explicit adapter variables such
+as `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GEMINI_CLI_HOME`, or
+`PI_CODING_AGENT_*`. That lets local commands see the same package managers,
+editor state, shell config, and authenticated host CLIs the operator normally
+uses, without copying broad credential and tooling directories into a Rudder
+managed home. The tradeoff is that skills, provider config, sessions, and
+temporary runtime material must be materialized separately and
+platform-aware.
 
 The key platform rule is that Windows directory symlink creation can require
 Developer Mode or elevated privileges. Rudder must not make ordinary Windows
@@ -86,18 +91,21 @@ produce a clear permission/configuration error before provider execution.
   filesystem permissions host the local runtime.
 - Runtime agent: the adapter-invoked process running as the selected Rudder
   agent.
-- Managed home: Rudder-created runtime home for an adapter, such as managed
-  Codex, Claude, Cursor, Gemini, OpenCode, or Pi state.
-- Operator home: the host user's real home, exposed as `RUDDER_OPERATOR_HOME`
-  when a local runtime intentionally needs access to host credentials.
+- Adapter-managed runtime state: Rudder-created adapter state for an adapter,
+  such as managed Codex, Claude, Cursor, Gemini, OpenCode, or Pi config,
+  selected skills, narrow provider-native auth/session materialization,
+  isolated Git policy files, sessions, and temporary runtime files.
+- Operator home: the host user's real home. Local trusted runtime child
+  processes use this as `HOME` and `USERPROFILE` by default, and Rudder also
+  exposes it as `RUDDER_OPERATOR_HOME` for explicit boundary visibility.
 - Skill source directory: bundled, organization, global/user, or agent-home
   skill directory selected for a run.
 - Materialized skill directory: the provider-visible skill location created by
   symlink, junction, copy, native config, prompt injection, or another
   adapter-specific mechanism.
-- Credential bridge: a managed-home entry, shell shim, git config, or env var
-  that lets a local CLI use the operator's authenticated state without treating
-  the entire operator home as the runtime home.
+- Credential bridge: a legacy or explicit managed-state entry, shell shim, git
+  config, or env var that lets a local CLI use operator authenticated state
+  when the child process is not already running with operator `HOME`.
 - Platform capability: filesystem and process capability that differs by OS,
   including symlink privileges, path syntax, case behavior, home variables,
   executable lookup, process termination, and installer/package copying.
@@ -109,8 +117,8 @@ produce a clear permission/configuration error before provider execution.
 - Runtime skill sync, skill listing, or temporary provider skill-home creation.
 - Managed workspace preflight for agent home, instructions, memory, life, and
   skills directories.
-- Local CLI credential bridging for provider CLIs, git, `gh`, and other
-  selected host commands.
+- Explicit local CLI credential bridging for legacy or non-default runtime
+  modes that do not run the child process with operator `HOME`.
 - Desktop packaging and update flows that copy app resources across platforms.
 - Environment inputs including `HOME`, `USERPROFILE`, `RUDDER_HOME`,
   `RUDDER_OPERATOR_HOME`, provider-specific home variables, and `PATH`/`Path`.
@@ -121,14 +129,17 @@ produce a clear permission/configuration error before provider execution.
    and verifies that required managed workspace directories exist, are
    directories, and are writable.
 
-2. Rudder resolves two distinct homes: the managed runtime home used by the
-   adapter process, and the operator home used only for explicitly supported
-   credential bridging. `RUDDER_OPERATOR_HOME` records that boundary when
-   exposed to the child process.
+2. Rudder resolves two distinct homes: the operator home used as the default
+   child `HOME`/`USERPROFILE` for local trusted adapters, and the
+   adapter-managed runtime state used only for adapter-owned config, selected
+   skills, narrow provider-native auth/session materialization, isolated Git
+   policy files, sessions, and temporary files. `RUDDER_OPERATOR_HOME` records
+   the operator boundary when exposed to the child process.
 
 3. Rudder prepares the child environment with platform-correct home variables.
-   On Windows, `USERPROFILE` must be set consistently with the chosen home
-   semantics; on all platforms, `HOME` isolation and `PATH`/`Path` lookup must
+   For local trusted adapters, `HOME` and `USERPROFILE` default to the
+   operator home. Provider-specific home variables may point at
+   adapter-managed runtime state. On all platforms, `PATH`/`Path` lookup must
    preserve command resolution.
 
 4. Rudder materializes runtime skills using an adapter-supported mechanism:
@@ -149,18 +160,28 @@ produce a clear permission/configuration error before provider execution.
    may require Developer Mode or elevation; junction or copy fallback is the
    expected durable strategy for directory skill materialization.
 
-7. Rudder bridges credential entries into the managed home only for selected
-   local CLI surfaces. Existing non-empty managed-home credential directories
-   are not overwritten. Empty placeholders may be repaired. If managed-home
-   credentials still fail, command-specific shims may run the selected command
-   with the operator home.
+7. Rudder must not copy, symlink, or recreate broad operator-home credential
+   and tooling entries into adapter-managed runtime state by default. Entries
+   such as `.git-credentials`, `.npmrc`, `.npm`, `.ssh`, `.config/gh`,
+   `.docker`, `.kube`, and `.vscode` remain in the operator home and are
+   available because the child process already uses operator `HOME`. Explicit
+   credential bridges or command-specific shims are reserved for legacy or
+   non-default modes. Adapter setup must prune legacy generic credential bridge
+   symlinks or empty placeholders from adapter-managed runtime state when it
+   prepares that state.
 
-8. If a platform limitation is recoverable, Rudder records the substitution or
+8. Narrow provider-native auth/session materialization remains allowed when an
+   adapter needs provider-specific state outside child `HOME`, such as
+   Claude/Anthropic auth directories, Gemini auth files, OpenCode cache/session
+   state, or Pi profile files. This must stay adapter-specific and must not
+   become a broad local CLI/tooling bridge.
+
+9. If a platform limitation is recoverable, Rudder records the substitution or
    skip in logs, command notes, adapter metadata, or skill sync evidence. The
    run may continue when the selected skill/credential behavior still matches
    the product contract.
 
-9. If the limitation prevents required runtime startup, workspace access,
+10. If the limitation prevents required runtime startup, workspace access,
    credential access, or skill availability, Rudder fails before or during
    adapter invocation with a clear error code/message that tells the operator
    what permission, path, login, or configuration needs repair.
@@ -174,8 +195,10 @@ produce a clear permission/configuration error before provider execution.
 | Windows symlink privilege unavailable | `fs.symlink` returns `EPERM` for a recoverable directory materialization | Fallback strategy should preserve selected skill availability or report the skill as unavailable with actionable error text | Error must not be exposed as an unexplained provider failure or require admin as the only product path | Adapter error code/message and command notes |
 | Stale previously selected skill | A prior run materialized a skill that is now disabled or absent from the selected set | Provider execution starts with that skill removed, disabled, isolated, or ignored | Previously enabled skills must not remain provider-visible because they were left in a managed skill home | Execute-level adapter tests, skill sync metadata, loaded-skill metadata |
 | Managed workspace missing or unwritable | Agent home/instructions/memory/life/skills path cannot be created or write-probed | Workspace preflight fails with a repair-needed error before provider execution | Provider must not start with a broken managed workspace and produce opaque downstream errors | `workspace_permission_repair_needed`, managed workspace preflight tests |
-| Credential entry exists in operator home | A selected local CLI credential directory/file exists outside managed home | Bridge only selected entries or use command shims; preserve managed-home isolation | Entire operator home must not become the runtime home unless the adapter explicitly owns that behavior | Credential bridge logs, shim command notes, server-utils tests |
-| Existing non-empty managed credential dir | Target managed-home credential path already contains user/runtime data | Skip replacement and preserve the existing directory | Rudder must not delete or overwrite non-empty credential state to create a symlink | Credential sync result and tests |
+| Local trusted runtime child home | Adapter invokes Codex, Claude, Cursor, Gemini, OpenCode, or Pi locally | `HOME` and `USERPROFILE` default to the operator home, with `RUDDER_OPERATOR_HOME` matching that value | Adapter must not use adapter-managed runtime state as child `HOME` by default | Execute-level adapter env tests and command metadata |
+| Adapter-managed runtime state isolation | Adapter needs provider config, selected skills, narrow provider-native auth/session state, isolated Git policy, sessions, or temp files | Use explicit provider variables or adapter-owned paths such as `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GEMINI_CLI_HOME`, `OPENCODE_CONFIG`, OpenCode XDG state, `PI_CODING_AGENT_*`, or managed prompt sidecars | Adapter-managed state must not require copying broad operator-home dotfiles into managed state | Adapter tests for provider variables and managed skill/config dirs |
+| Operator credential or tooling entry exists | `.npmrc`, `.npm`, `.ssh`, `.config/gh`, `.git-credentials`, `.vscode`, or similar exists in operator home | Leave it in operator home; local commands see it through child `HOME`; prune legacy generic bridge symlinks from adapter-managed runtime state | Default runtime setup must not copy, symlink, or recreate broad operator-home entries in adapter-managed runtime state | Negative execute tests for adapter-managed runtime state |
+| Explicit non-default credential bridge | A legacy or non-default mode cannot use operator `HOME` as child home | Bridge only selected entries or use command shims; preserve managed-state boundaries and logs | Bridge must not become the default for local trusted adapters | Credential bridge utility tests and adapter-specific opt-in evidence |
 | Windows home environment | Runtime sets child process home on Windows | `HOME`, `USERPROFILE`, and provider-specific home variables match the selected managed/operator-home semantics | Child process must not read credentials from a different home because only one variable was updated | Adapter env construction tests and command metadata |
 | Desktop resource packaging | Packaged app copies resources on Windows | Packaging may dereference symlinks into real files/directories | Runtime skill injection must not assume packaging fallback also protects run-time temp dirs | Desktop packaging code and separate runtime adapter tests |
 
@@ -193,10 +216,12 @@ Actor-visible input is the resulting provider environment:
   classified as provider-native behavior, not Rudder-loaded skills; the run
   must expose a Rudder skill boundary so the agent does not report those
   built-ins as enabled Agent Skills
-- `HOME`, `USERPROFILE`, provider home variables, and `RUDDER_OPERATOR_HOME`
-  reflect the intended managed-home and operator-home boundary
-- Rudder API env vars and local auth credentials are present only when the
-  adapter supports them
+- `HOME` and `USERPROFILE` default to the operator home for local trusted
+  adapters; provider home variables reflect separate adapter-managed runtime
+  state isolation
+- Rudder API env vars and local auth credentials are available only through
+  operator `HOME`, explicit env, or an adapter-supported adapter-managed
+  runtime state path
 - cwd and workspace paths point at the verified execution workspace, fallback
   workspace, or agent home chosen for the run
 
@@ -212,8 +237,9 @@ Operators and reviewers should be able to see:
 - managed workspace preflight failures with the path and repair instruction
 - adapter auth-required, command-not-found, permission-denied, or
   materialization-failed errors when a local runtime cannot start correctly
-- logs or command notes for credential bridging, command shim preparation,
-  workspace fallback, and skill materialization warnings
+- logs or command notes for adapter-managed runtime state preparation,
+  workspace fallback, explicit credential bridges or command shims when a
+  non-default mode uses them, and skill materialization warnings
 - run result/transcript metadata that separates provider failure from Rudder
   runtime setup failure
 
@@ -228,13 +254,15 @@ Evidence can include:
 - heartbeat run context snapshot with workspace and runtime-home facts
 - adapter invocation metadata with cwd, command, env-derived notes, prompt
   metrics, loaded/realized skill facts, and command notes
-- run logs recording workspace preflight, credential bridge, shim, or
-  materialization actions
+- run logs recording workspace preflight, adapter-managed runtime state
+  preparation, explicit credential bridge/shim use, or materialization actions
 - skill sync/listing results for created, repaired, skipped, failed, desired,
   realized, native, or prompt-injected skills
 - managed workspace preflight error code/message when a path is not writable
-- test coverage for home isolation, credential bridging, symlink repair, and
-  adapter-specific local runtime execution
+- test coverage for operator-home defaults, adapter-managed runtime state
+  isolation, absence of default broad credential/tooling bridges, legacy
+  generic bridge pruning, symlink repair, and adapter-specific local runtime
+  execution
 
 ## Canonical Scenarios
 
@@ -246,23 +274,25 @@ Evidence can include:
      materialization error naming the skill/path.
    - Evidence: adapter logs/metadata show the materialized skill result.
 
-2. Codex local uses a worktree-isolated home:
+2. Codex local uses operator `HOME` plus managed `CODEX_HOME`:
    - Trigger: Codex local run starts with a managed `CODEX_HOME` and selected
      workspace cwd.
-   - Expected state/action: Rudder isolates runtime state while preserving
-     explicit auth/config bridges needed for Codex to run.
+   - Expected state/action: Rudder keeps child `HOME` on the operator home and
+     isolates provider-owned Codex state in `CODEX_HOME`.
    - Visible output: agent receives Rudder instructions and workspace context,
      not an unbounded copy of the operator home.
-   - Evidence: command notes and tests show managed home, shared auth/config,
-     and cwd selection.
+   - Evidence: command notes and tests show operator `HOME`, managed
+     `CODEX_HOME`, selected skills, and cwd selection.
 
-3. Local CLI credential bridge falls back to shim:
-   - Trigger: a provider or helper CLI cannot authenticate from the managed
-     home after selected credential entries are bridged.
-   - Expected state/action: Rudder prepares command-specific shim execution
-     with the operator home when the command is allowed.
-   - Visible output: logs name the prepared shim command, not secret material.
-   - Evidence: credential shim tests and redacted run logs.
+3. Claude local uses operator `HOME` plus managed Claude config:
+   - Trigger: Claude local run starts with selected Rudder skills.
+   - Expected state/action: Rudder sets child `HOME`/`USERPROFILE` to the
+     operator home, points `CLAUDE_CONFIG_DIR` at adapter-managed runtime
+     state, and passes selected skills through Claude's adapter mechanism.
+   - Visible output: agent sees Rudder-selected skills and can run local CLIs
+     against the operator's normal home.
+   - Evidence: execute tests show operator `HOME`, managed `CLAUDE_CONFIG_DIR`,
+     and no default `.npmrc`, `.ssh`, `.config/gh`, or `.vscode` bridge.
 
 4. Managed workspace permission failure:
    - Trigger: `AGENT_HOME/skills` or another required managed directory is a
@@ -279,10 +309,14 @@ Evidence can include:
   assumptions.
 - Windows users must not be required to run Rudder as administrator for
   recoverable directory materialization such as selected skills.
-- Managed runtime home and operator home are separate product concepts even
-  when a specific adapter temporarily exposes both.
-- Credential bridges must be selected, logged, and redacted. Rudder must not
-  copy or expose arbitrary operator-home contents as a convenience shortcut.
+- Adapter-managed runtime state and operator home are separate product concepts
+  even when a provider-specific variable points at managed state.
+- Default local trusted adapters must not copy, symlink, or expose arbitrary
+  operator-home contents into adapter-managed runtime state as a convenience
+  shortcut. Any explicit credential bridge must be selected, logged, and
+  redacted.
+- Operator `HOME` does not authorize provider-native, project, global, stale,
+  or unselected skills to become Rudder-loaded runtime skills.
 - This contract does not promise equal provider capability across all
   adapters. Adapter capability parity remains owned by
   `AGENT.RUNTIME.ADAPTERS.001`.
@@ -293,13 +327,13 @@ Evidence can include:
 
 Requires updating this contract:
 
-- changing how local runtimes choose managed home, operator home, or
+- changing how local runtimes choose operator `HOME`, adapter-managed runtime state, or
   provider-specific home variables
 - adding or removing a runtime skill materialization strategy
 - changing Windows fallback behavior for symlinks, junctions, copies, or
   temp-home creation
-- broadening or narrowing credential bridge entries, shim commands, or
-  allowed host-home access
+- broadening or narrowing default operator-home behavior, credential bridge
+  entries, shim commands, or allowed host-home access
 - changing permission/preflight error semantics for managed workspaces
 
 Does not require updating this contract:
@@ -315,6 +349,7 @@ Does not require updating this contract:
 Related plans:
 
 - `doc/plans/2026-06-21-product-logic-registry.md`
+- `doc/plans/2026-06-26-local-runtime-operator-home-default.md`
 
 Related code:
 

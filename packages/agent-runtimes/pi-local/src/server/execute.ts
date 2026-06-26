@@ -7,7 +7,6 @@ import {
   buildRudderEnv,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
-  ensureLocalCliCredentialShimsInPath,
   ensurePathInEnv,
   ensureRudderCliInPath,
   ensureRudderSkillSymlink,
@@ -16,6 +15,7 @@ import {
   parseJson,
   parseObject,
   prepareAgentInstructionRuntimeContext,
+  pruneLegacyLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
   removeUnselectedRudderSkillSymlinks,
@@ -25,7 +25,6 @@ import {
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
-  syncLocalCliCredentialHomeEntries,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -298,22 +297,24 @@ async function syncPiSharedHomeEntries(sourceHome: string, targetHome: string) {
 
 async function prepareManagedPiHome(
   env: NodeJS.ProcessEnv,
+  operatorHome: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
 ): Promise<string> {
-  const sourceHome = resolveSharedPiHomeDir(env);
+  const sourceHome = path.resolve(operatorHome);
   const targetHome = resolveManagedPiHomeDir({ env }, orgId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(resolvePiSkillsDir(targetHome), { recursive: true });
   await fs.mkdir(resolvePiSessionsDir(targetHome), { recursive: true });
+  await pruneLegacyLocalCliCredentialHomeEntries({ targetHome, onLog });
   if (await pathExists(resolvePiRoot(sourceHome))) {
     await syncPiSharedHomeEntries(sourceHome, targetHome);
   }
 
   await onLog(
     "stdout",
-    `[rudder] Using Rudder-managed Pi home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Using adapter-managed Pi runtime state "${targetHome}" with operator HOME "${sourceHome}".\n`,
   );
   return targetHome;
 }
@@ -421,8 +422,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ...process.env,
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedPiHome({ ...sourceEnv, ...envConfigStrings }, onLog, agent.orgId);
-  await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
+  const managedHome = await prepareManagedPiHome({ ...sourceEnv, ...envConfigStrings }, operatorHome, onLog, agent.orgId);
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
     home: managedHome,
@@ -451,8 +451,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
-  env.HOME = managedHome;
-  env.USERPROFILE = managedHome;
+  env.HOME = operatorHome;
+  env.USERPROFILE = operatorHome;
   env.PI_CODING_AGENT_DIR = path.join(managedHome, ".pi", "agent");
   env.PI_CODING_AGENT_SESSION_DIR = sessionsDir;
   env.RUDDER_RUN_ID = runId;
@@ -509,8 +509,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (PI_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
-  env.HOME = managedHome;
-  env.USERPROFILE = managedHome;
+  env.HOME = operatorHome;
+  env.USERPROFILE = operatorHome;
   env.PI_CODING_AGENT_DIR = path.join(managedHome, ".pi", "agent");
   env.PI_CODING_AGENT_SESSION_DIR = sessionsDir;
   env.RUDDER_OPERATOR_HOME = operatorHome;
@@ -521,13 +521,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   applyGitCredentialHelperPolicyEnv(env);
   
   const runtimeEnv = Object.fromEntries(
-    Object.entries(await ensureLocalCliCredentialShimsInPath({
-      operatorHome,
-      targetHome: managedHome,
-      cwd,
-      env: ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })),
-      onLog,
-    })).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    Object.entries(ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })))
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
