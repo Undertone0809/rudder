@@ -50,6 +50,8 @@ server/ui-dist/index.html
 /.agents/skills/*
 !/.agents/skills/maintainer/
 !/.agents/skills/maintainer/**
+/.agents/skills/maintainer/*-workspace/
+/.agents/skills/maintainer/**/.DS_Store
 !/.agents/skills/self-improvement/
 !/.agents/skills/self-improvement/**
 
@@ -57,6 +59,8 @@ server/ui-dist/index.html
 .doc-review-cursor
 
 # Playwright
+.playwright-cli/
+test-results/
 .playwright-mcp/
 tests/e2e/test-results/
 tests/e2e/playwright-report/
