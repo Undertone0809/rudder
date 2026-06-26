@@ -51,6 +51,43 @@ Signals:
 - Logs, trace warnings, and runtime RSS/CPU spikes are performance signals even
   when endpoint timings look acceptable.
 
+## ZStudio-Scale Control-Plane Overfetch
+
+Threads:
+
+- `rudder 数据量一大之后网页卡`
+- `ZStudio dev 同规模性能测试`
+
+Signals:
+
+- Large organizations expose list-contract problems quickly. Chat, activity,
+  issue, and run-intelligence surfaces can be functionally correct while still
+  unusable because default navigation pulls full-history or heavily hydrated
+  payloads.
+- "Same scale" requires row counts plus payload shape. Transcript,
+  transcription, log, heartbeat, chat, and activity bodies should be represented
+  when those fields are part of real user data; small strings with matching row
+  counts understate parse and render pressure.
+- Keep production data read-only for sizing and shape inspection unless the user
+  explicitly authorizes mutation. Use disposable dev organizations for current
+  branch pressure proof and browser testing.
+- Measure before and after with latency, response bytes, and item counts. The
+  improvement often comes from bounding or projecting list payloads, not from
+  making the database marginally faster.
+- Verify server freshness before trusting a result. Check health/version,
+  restart-required state, and whether the dev server has actually loaded the
+  route or service code under test.
+- If a full production clone fails because seed tooling runs out of memory or
+  cannot serialize the data shape, report that as a tooling blocker and proceed
+  with a synthetic scale-equivalent org. Do not present that as full-clone proof.
+- Bounded previews are product semantics, not just performance hacks. If a UI
+  only needs the latest 40 chats or 200 issues for navigation, make that contract
+  explicit; if the page needs total history or aggregate counts, compute those
+  separately.
+- Offset pagination is acceptable as a scoped fix for stable or low-churn lists,
+  but name the skip/duplicate risk under concurrent inserts. Prefer cursor
+  semantics when high-churn correctness matters and scope allows.
+
 ## Runtime Context And Memory Loading
 
 Threads:

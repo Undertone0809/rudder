@@ -3,10 +3,11 @@ name: rudder-performance-architecture-maintainer
 description: >
   Use when Rudder needs architecture or system performance optimization:
   slow pages, repeated skeleton loading, query cache misses, refetch storms,
-  over-fetching, expensive API/service/DB paths, hot files, module-boundary
-  erosion, or requests to record optimization know-how. Do not use for pure
-  visual polish, release operations, missing-data diagnosis, or Desktop startup
-  recovery.
+  large-org or ZStudio-scale over-fetching, payload budgets, expensive
+  API/service/DB paths, hot files, module-boundary erosion, before/after
+  performance measurement, prod-read-only sizing, dev pressure proof, or
+  requests to record optimization know-how. Do not use for pure visual polish,
+  release operations, missing-data diagnosis, or Desktop startup recovery.
 ---
 
 # Rudder Performance Architecture Maintainer
@@ -35,6 +36,8 @@ Use this skill for requests like:
 - "全局看看哪里可以做缓存加速"
 - "这个页面/API 太慢，找一下瓶颈"
 - "做一版系统性能优化"
+- "数据量一大之后网页卡，给我优化前后的具体数值"
+- "用 ZStudio 同等规模的数据在 DEV 里测一下"
 - "这里是不是 query key / staleTime / invalidation 写错了"
 - "架构上有什么热点文件或边界可以优化"
 - "把这次性能优化 know how 沉淀成 skill"
@@ -85,6 +88,38 @@ Evidence can come from code search, tests, API calls, browser/network traces,
 React Query Devtools-style reasoning, logs, SQL `EXPLAIN`, benchmarks, or
 profiling. Do not tune from screenshots alone.
 
+## Scale And Runtime Calibration
+
+When live performance, production-shaped data, or user-visible slowness is part
+of the task, calibrate the runtime before interpreting numbers:
+
+- call `/api/health` on the target server and record `instanceId`, `localEnv`,
+  version/build fields, and any `restartRequired` signal
+- prove whether the browser/dev server is running current code; restart or
+  re-check health before treating browser evidence as current-branch proof
+- use prod-local data only as a read-only sizing reference unless the user has
+  explicitly authorized writes to that environment
+- use dev or a disposable organization for pressure proof, implementation
+  verification, and browser testing against current code
+- if the user asks for a testable surface, seed or create a dev org at
+  comparable scale before measuring; tiny fixtures cannot prove large-org
+  behavior
+- for transcript-heavy organizations, match payload shape as well as row counts:
+  include large transcript, transcription, log, chat, heartbeat, and activity
+  bodies when they are part of the real bottleneck
+- if a full production clone fails because of seed tooling, memory, or data
+  shape limits, report that as a blocker and substitute a synthetic
+  scale-equivalent dev org with the limitation stated clearly
+
+Separate evidence classes in notes and handoffs:
+
+- `prod-read-only baseline`: current user data shape, sizing, and observed
+  bottlenecks without mutation
+- `current-code dev proof`: disposable data on the branch under test, suitable
+  for before/after timing and browser verification
+- `synthetic pressure proof`: generated row counts and heavy payloads that match
+  the stress shape but are not a full clone
+
 ## Workflow
 
 ### 1. Load Local Context
@@ -92,8 +127,8 @@ profiling. Do not tune from screenshots alone.
 Read the minimum Rudder context needed for the surface:
 
 - `AGENTS.md`
-- `doc/GOAL.md`, `doc/PRODUCT.md`, `doc/SPEC-implementation.md` when the work
-  changes behavior or architecture
+- `doc/product/GOAL.md`, `doc/product/PRODUCT.md`, and `doc/product/README.md`
+  when the work changes behavior or architecture
 - relevant UI page/hooks/API clients, server routes/services, shared contracts,
   DB schema, and nearby tests
 
@@ -128,6 +163,8 @@ Pick the dominant class:
 - `network-waterfall`: serial requests could be shared, prefetched, batched, or
   moved server-side
 - `over-fetch`: UI/API requests more data than the surface needs
+- `payload-overweight`: item count is bounded but each row carries large
+  transcript, log, activity, or nested hydration bodies
 - `server-hot-path`: service aggregation, DB query, filesystem scan, or external
   process work is too expensive
 - `render-hot-path`: React render, memoization, virtualization, or derived state
@@ -163,6 +200,8 @@ Record:
 - invalidation and mutation side effects
 - endpoint path, request validators, and org scoping
 - response shape and client-side filtering/aggregation
+- latency, response bytes, item counts, and whether the response includes heavy
+  transcript/log/activity bodies
 - expensive loops, broad scans, N+1 calls, and repeated derived computation
 
 ### 5. Choose The Smallest Correct Fix
@@ -171,6 +210,8 @@ Prefer behavior-preserving changes that make the real contract explicit:
 
 - stabilize query keys before increasing `staleTime`
 - canonicalize date ranges, filters, and sort options at the boundary
+- add explicit `limit`, page, cursor, or preview contracts to broad navigation
+  list calls before optimizing rendering around unbounded data
 - use `placeholderData`, prefetch, or shared queries only when stale display is
   acceptable and errors remain visible
 - push filters to API/DB when the server owns the data contract
@@ -185,6 +226,13 @@ Prefer behavior-preserving changes that make the real contract explicit:
 
 Avoid adding cache as a blanket cover for slow or incorrect code. Cache should
 encode a freshness contract, not hide broken invalidation.
+
+When replacing broad list responses with bounded previews, state the semantic
+tradeoff. A preview endpoint can make navigation fast, but it is not equivalent
+to a full aggregate unless the server computes the aggregate separately. If
+offset pagination remains, name the residual skip/duplicate risk under
+concurrent inserts and prefer cursor semantics for high-churn lists when scope
+allows.
 
 ### 6. Add Regression Coverage
 
@@ -243,6 +291,14 @@ rules.
 - Prefer one stable abstraction over duplicated ad hoc fixes across pages.
 - Do not change product semantics during a performance refactor unless the user
   asked for that change and tests cover it.
+- Treat payload size as a first-class metric. JSON transfer, parse, hydration,
+  and render pressure can dominate even when SQL timing looks acceptable.
+- Default navigation/list calls should have an explicit bounded contract:
+  `limit`, cursor/page, field projection, or a documented server aggregate.
+- Do not claim current-code proof from a stale dev/prod server. Verify health,
+  branch/build freshness, and restart state before using browser numbers.
+- Prefer synthetic scale-equivalent dev proof over unsafe prod mutation. Be
+  explicit when the proof is not a full production clone.
 
 ## Output Shape
 
@@ -261,6 +317,25 @@ Validation:
 - ...
 
 Follow-up opportunities:
+- ...
+```
+
+For a quantified optimization report:
+
+```markdown
+Runtime calibration:
+- prod-read-only baseline: <server/version/org shape or not used>
+- current-code dev proof: <server/version/org shape or not used>
+
+Measurements:
+| Surface/API | Env | Before latency | After latency | Delta | Before bytes | After bytes | Delta | Items before/after |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ... | ... | ... | ... | ... | ... | ... | ... | ... |
+
+Interpretation:
+- ...
+
+Residual risk:
 - ...
 ```
 

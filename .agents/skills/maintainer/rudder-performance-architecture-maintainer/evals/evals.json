@@ -1,0 +1,72 @@
+{
+  "skill_name": "rudder-performance-architecture-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "网页上看 ZStudio 特别卡，数据量一大之后掉帧，里面还有很多 transcription。你先系统分析根因，给一个优化 proposal，然后按照你的思路实现；优化完给我优化前后的具体数值，并在 DEV 创建一个同等规模组织让我测试。",
+      "expected_output": "Uses the Rudder performance architecture workflow to calibrate runtime freshness, inspect production only as a read-only sizing reference, create or seed a current-code dev organization with comparable row counts and heavy transcript-like payloads, implement scoped over-fetch fixes, and report before/after latency, bytes, item counts, and residual risks.",
+      "files": [],
+      "expectations": [
+        "Verifies /api/health or equivalent runtime freshness before trusting measurements.",
+        "Separates prod-read-only sizing evidence from current-code dev pressure proof.",
+        "Requires same-scale data to include row counts and transcript/transcription-like payload shape.",
+        "Reports before/after latency, response bytes, and item counts in a quantitative table.",
+        "Names residual risks such as offset pagination, preview-vs-aggregate semantics, or full-clone blockers."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Dashboard 每次切回来都重新骨架屏，感觉不是没有数据，而是缓存没有生效。帮我定位并修一下。",
+      "expected_output": "Classifies the issue as cache-key instability or a freshness policy gap, traces query keys and API calls before changing cache settings, implements the smallest behavior-preserving fix, and adds regression coverage for stable keys or placeholder behavior.",
+      "files": [],
+      "expectations": [
+        "Inspects query keys, date buckets, staleTime, placeholderData, invalidation, and API requests before proposing a fix.",
+        "Does not globally increase cache lifetime without proving org scope and freshness semantics.",
+        "Adds or proposes a regression test for the exact cache/freshness failure mode."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "全局帮我扫一下 Rudder 还有哪里 over-fetch 或者 cache 可以优化，别只是加缓存，要找真正影响用户等待时间的点。",
+      "expected_output": "Runs a broad evidence-led scan for unbounded list calls, refetch storms, unstable query keys, oversized payloads, and expensive server paths; prioritizes by user-visible latency and correctness risk; implements only high-confidence scoped fixes or returns a ranked proposal.",
+      "files": [],
+      "expectations": [
+        "Searches both UI call sites and server route/service contracts for unbounded or over-hydrated data paths.",
+        "Treats payload size as a first-class metric alongside latency.",
+        "Avoids blanket caching and keeps organization scoping intact.",
+        "Records durable findings in the skill references when the task includes know-how capture."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Costs 页面最近 7 天加载慢，但日期范围肉眼看起来一样。你看下是不是 query key 或服务端聚合的问题。",
+      "expected_output": "Checks whether moving timestamps or non-canonical filters cause repeated cache misses, then traces API/service/DB aggregation and fixes the first broken boundary with date and organization edge-case tests.",
+      "files": [],
+      "expectations": [
+        "Checks for moving `now` or Date values in the query key before assuming database slowness.",
+        "Traces the path from UI hook through API route/service to DB filters.",
+        "Covers date boundary and organization-scoping behavior in validation."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Calendar 为什么没有任何数据？server 里明明应该有数据，帮我查数据链路。",
+      "expected_output": "Does not use this skill as the primary route; routes to rudder-data-path-diagnostician-maintainer because the visible pain is missing or wrong data rather than performance architecture.",
+      "files": [],
+      "expectations": [
+        "Identifies this as a missing-data/data-path diagnosis task.",
+        "Does not start a generic cache or performance optimization workflow."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Desktop 打包后启动失败，本地 dev 环境也起不来了，先帮我恢复一下。",
+      "expected_output": "Does not use this skill as the primary route; routes to a Desktop recovery or preview-maintainer workflow because the visible pain is startup recovery, not performance optimization.",
+      "files": [],
+      "expectations": [
+        "Identifies Desktop startup recovery as the primary task.",
+        "Does not perform performance architecture analysis before restoring the environment."
+      ]
+    }
+  ]
+}

@@ -29,6 +29,11 @@ aid, not a substitute for tracing the actual code path.
   route.
 - Measure payload size as well as latency; a 1MB+ JSON response on a default
   navigation is usually a product-contract problem.
+- Measure latency, bytes, and item counts together. A fast query that returns
+  megabytes of JSON can still create parse, hydration, and render jank.
+- Treat broad navigation list calls as bounded contracts. Add explicit
+  `limit`, cursor/page, field projection, or server aggregate semantics instead
+  of relying on the client to survive full-history payloads.
 - Batch or prefetch only after confirming the data is needed together.
 - Push filtering, pagination, and aggregation to the layer that owns the data
   contract.
@@ -42,6 +47,9 @@ aid, not a substitute for tracing the actual code path.
 
 - Start from route validators, org scoping, and service aggregation boundaries.
 - Search for broad scans followed by in-memory filtering.
+- For large-org proof, match both row counts and payload shape. Transcript,
+  transcription, log, heartbeat, chat, and activity bodies can dominate response
+  cost even when the table counts look representative.
 - Check date/status/org filters before adding indexes.
 - Use `EXPLAIN` or representative fixtures when changing a query for
   performance.
@@ -75,6 +83,14 @@ aid, not a substitute for tracing the actual code path.
 - Run the smallest failing/relevant test first, then the required repo baseline.
 - For UI performance changes, use a browser or screenshot when the user-visible
   loading behavior changed.
+- Before browser or endpoint timing, verify `/api/health` for instance, version,
+  local environment, and restart-required signals. A stale dev server can make a
+  correct patch look ineffective or make an old build look fixed.
+- Use prod-local only as read-only sizing evidence unless writes are explicitly
+  authorized. Do implementation and pressure proof in dev or a disposable org.
+- If a full prod-shaped clone fails because seed tooling exhausts memory or
+  cannot represent the data, report that blocker and substitute a synthetic
+  scale-equivalent fixture with the limitation stated.
 - Record unresolved bottlenecks as follow-ups instead of expanding scope
   silently.
 - If browser E2E uses an existing dev server, confirm the server has loaded any
