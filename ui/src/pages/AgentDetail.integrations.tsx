@@ -354,10 +354,11 @@ function FeishuSetupPrompt({
 function FeishuQuickCommandSetupNote({ providerName }: { providerName: string }) {
   return (
     <div className="max-w-2xl rounded-md border border-border bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
-      <div className="font-medium text-foreground">Quick Command menu</div>
+      <div className="font-medium text-foreground">Quick Commands</div>
       <p className="mt-1">
-        In the {providerName} bot developer console, add a Quick Command custom menu with send-text items /new and
-        /stop. Do not use event-key menu items. Publish a new app version for the menu to appear in {providerName}.
+        Rudder requests {providerName} bot menu and Slash Command permissions, and handles /new and /stop messages from
+        {providerName}. Automatic creation of the {providerName} Quick Command menu is not enabled until a supported
+        app-level menu configuration API is available.
       </p>
     </div>
   );

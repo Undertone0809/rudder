@@ -48,6 +48,8 @@ test.describe("Agent detail Feishu integration", () => {
     });
 
     await expect(page.getByText("Create a Feishu bot named")).toBeVisible();
+    await expect(page.getByText("requests Feishu bot menu and Slash Command permissions")).toBeVisible();
+    await expect(page.getByText("Automatic creation of the Feishu Quick Command menu is not enabled")).toBeVisible();
 
     const popupPromise = page.waitForEvent("popup");
     await page.getByRole("button", { name: "Connect" }).click();
@@ -64,6 +66,7 @@ test.describe("Agent detail Feishu integration", () => {
 
     await expect(page.getByText("Waiting for Feishu authorization").first()).toBeVisible();
     await expect(page.getByText("Connected", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Quick Commands", { exact: true })).toBeVisible();
     await expect(page.getByText("Credential stored")).toBeVisible();
     await expect(page.getByText(/cli_mock_/)).toBeVisible();
 
