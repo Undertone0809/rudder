@@ -167,6 +167,8 @@ describe("AgentIntegrationsTab", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
 
     expect(container.textContent).toContain("Integrations");
+    expect(container.textContent).toContain("Connect the external tools this agent can use during work loops.");
+    expect(container.textContent).toContain("0 of 8 connected");
     expect(container.textContent).toContain("Feishu / Lark");
     expect(container.textContent).toContain("Not configured");
     expect(container.textContent).toContain("Connect");
@@ -178,6 +180,32 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Automatic creation of the Feishu Quick Command menu is not enabled");
     expect(container.textContent).toContain("Feishu CN");
     expect(container.textContent).toContain("Lark Global");
+  });
+
+  it("renders the planned agent tool integrations as disabled setup cards", () => {
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+
+    for (const name of [
+      "Gmail",
+      "Google Calendar",
+      "Google Drive",
+      "Notion",
+      "Feishu Workspace",
+      "GitHub",
+      "Linear",
+    ]) {
+      expect(container.textContent).toContain(name);
+    }
+    expect(container.textContent).toContain("Read, search, draft, and send email from agent work.");
+    expect(container.textContent).toContain("View and edit calendar events for scheduling work.");
+    expect(container.textContent).toContain("Browse Drive files and attach workspace context.");
+    expect(container.textContent).toContain("Search pages, databases, and operating notes.");
+    expect(container.textContent).toContain("Access Feishu docs, messages, and workspace data.");
+    expect(container.textContent).toContain("Clone and inspect repositories during agent runs.");
+    expect(container.textContent).toContain("Link delivery issues and sync engineering work state.");
+    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(7);
+    expect([...container.querySelectorAll("button[disabled]")]
+      .filter((button) => button.getAttribute("aria-label")?.endsWith("setup coming soon"))).toHaveLength(7);
   });
 
   it("renders a Feishu-safe prefilled bot name for long agent names", () => {
@@ -287,6 +315,7 @@ describe("AgentIntegrationsTab", () => {
     const container = render(<AgentIntegrationsTab agent={agent({ integrations: [integration()] })} orgId="org-1" />);
 
     expect(container.textContent).toContain("Connected");
+    expect(container.textContent).toContain("1 of 8 connected");
     expect(container.textContent).toContain("cli_a_app");
     expect(container.textContent).toContain("ou_bot");
     expect(container.textContent).toContain("Feishu CN");

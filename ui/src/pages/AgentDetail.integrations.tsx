@@ -7,7 +7,19 @@ import type {
   AgentIntegrationSummary,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Loader2, ShieldCheck, Trash2 } from "lucide-react";
+import {
+  CalendarDays,
+  ExternalLink,
+  FileText,
+  FolderOpen,
+  Github,
+  Inbox,
+  Loader2,
+  MessageSquareText,
+  ShieldCheck,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
@@ -16,6 +28,83 @@ import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime } from "../lib/utils";
 
 type IntegrationState = "not_configured" | "active" | "revoked" | "error";
+
+type UpcomingIntegrationId =
+  | "gmail"
+  | "google_calendar"
+  | "google_drive"
+  | "notion"
+  | "feishu_workspace"
+  | "github"
+  | "linear";
+
+interface UpcomingIntegrationDefinition {
+  id: UpcomingIntegrationId;
+  name: string;
+  description: string;
+  connectionScope: "Personal" | "Workspace" | "Developer";
+  actionLabel: string;
+  Icon: LucideIcon | typeof FeishuLogoIcon;
+}
+
+const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
+  {
+    id: "gmail",
+    name: "Gmail",
+    description: "Read, search, draft, and send email from agent work.",
+    connectionScope: "Personal",
+    actionLabel: "Set up",
+    Icon: Inbox,
+  },
+  {
+    id: "google_calendar",
+    name: "Google Calendar",
+    description: "View and edit calendar events for scheduling work.",
+    connectionScope: "Personal",
+    actionLabel: "Set up",
+    Icon: CalendarDays,
+  },
+  {
+    id: "google_drive",
+    name: "Google Drive",
+    description: "Browse Drive files and attach workspace context.",
+    connectionScope: "Workspace",
+    actionLabel: "Set up",
+    Icon: FolderOpen,
+  },
+  {
+    id: "notion",
+    name: "Notion",
+    description: "Search pages, databases, and operating notes.",
+    connectionScope: "Workspace",
+    actionLabel: "Set up",
+    Icon: FileText,
+  },
+  {
+    id: "feishu_workspace",
+    name: "Feishu Workspace",
+    description: "Access Feishu docs, messages, and workspace data.",
+    connectionScope: "Workspace",
+    actionLabel: "Set up",
+    Icon: FeishuLogoIcon,
+  },
+  {
+    id: "github",
+    name: "GitHub",
+    description: "Clone and inspect repositories during agent runs.",
+    connectionScope: "Developer",
+    actionLabel: "Manage",
+    Icon: Github,
+  },
+  {
+    id: "linear",
+    name: "Linear",
+    description: "Link delivery issues and sync engineering work state.",
+    connectionScope: "Developer",
+    actionLabel: "Set up",
+    Icon: MessageSquareText,
+  },
+];
 
 function integrationStateCopy(state: IntegrationState) {
   switch (state) {
@@ -93,6 +182,8 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const feishuIntegration = integrations.find((integration) => integration.provider === "feishu") ?? null;
   const state = getFeishuIntegrationState(feishuIntegration);
   const stateCopy = integrationStateCopy(state);
+  const availableCount = 1 + UPCOMING_INTEGRATIONS.length;
+  const configuredCount = integrations.filter((integration) => integration.status === "active").length;
   const isActive = state === "active";
   const shouldShowSetupPrompt = !feishuIntegration || state !== "active";
   const openSetup = useMutation({
@@ -181,22 +272,27 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   });
 
   return (
-    <div className="max-w-4xl space-y-4">
+    <div className="max-w-5xl space-y-4">
       <div className="rounded-lg border border-border bg-card">
         <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <h2 className="text-base font-semibold text-foreground">Integrations</h2>
-            <p className="text-sm text-muted-foreground">External messaging surfaces linked to this agent.</p>
+            <p className="text-sm text-muted-foreground">Connect the external tools this agent can use during work loops.</p>
           </div>
-          <span
-            className={cn(
-              "inline-flex w-fit items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium",
-              stateCopy.tone,
-            )}
-          >
-            <ShieldCheck className="h-3.5 w-3.5" />
-            {stateCopy.label}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+              {configuredCount} of {availableCount} connected
+            </span>
+            <span
+              className={cn(
+                "inline-flex w-fit items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium",
+                stateCopy.tone,
+              )}
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Feishu / Lark {stateCopy.label}
+            </span>
+          </div>
         </div>
 
         <div className="divide-y divide-border">
@@ -261,8 +357,46 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
               )}
             </div>
           </div>
+          <div className="grid gap-3 px-4 py-4 lg:grid-cols-2">
+            {UPCOMING_INTEGRATIONS.map((integration) => (
+              <UpcomingIntegrationCard key={integration.id} integration={integration} />
+            ))}
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface UpcomingIntegrationCardProps {
+  integration: UpcomingIntegrationDefinition;
+}
+
+function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) {
+  const { Icon } = integration;
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">{integration.name}</p>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              {integration.connectionScope}
+            </span>
+            <span className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-xs text-muted-foreground">
+              Coming soon
+            </span>
+          </div>
+          <p className="text-sm text-muted-foreground">{integration.description}</p>
+        </div>
+      </div>
+      <Button variant="outline" size="sm" disabled aria-label={`${integration.name} setup coming soon`}>
+        {integration.actionLabel}
+      </Button>
     </div>
   );
 }
