@@ -46,7 +46,7 @@ import {
 } from "../lib/global-search-scope";
 import { eventMatchesShortcutAction, isEditableShortcutTarget } from "../lib/keyboard-shortcuts";
 import { queryKeys } from "../lib/queryKeys";
-import { agentUrl, projectUrl } from "../lib/utils";
+import { agentUrl, projectUrl, relativeTime } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
 import { ProjectIcon } from "./ProjectIdentity";
 
@@ -480,6 +480,7 @@ export function CommandPalette() {
             <CommandGroup heading="Chats">
               {visibleChats.slice(0, 10).map((chat) => {
                 const preview = chat.searchPreview ?? chat.latestReplyPreview ?? chat.summary;
+                const updatedLabel = relativeTime(chat.lastMessageAt ?? chat.updatedAt, { compactDate: true });
                 return (
                   <CommandItem
                     key={chat.id}
@@ -494,7 +495,7 @@ export function CommandPalette() {
                       )}
                     </span>
                     <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
-                      {chat.status}
+                      {updatedLabel}
                     </span>
                   </CommandItem>
                 );

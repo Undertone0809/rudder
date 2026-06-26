@@ -95,6 +95,8 @@ vi.mock("@tanstack/react-query", () => ({
             latestUserMessagePreview: null,
             userMessageCount: 0,
             searchPreview: "Message body matched launch planning notes.",
+            lastMessageAt: new Date("2026-06-09T11:40:00.000Z"),
+            updatedAt: new Date("2026-06-09T11:40:00.000Z"),
           },
         ],
       };
@@ -227,6 +229,7 @@ let cleanupFn: (() => void) | null = null;
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-06-09T12:00:00.000Z"));
 });
 
 afterEach(() => {
@@ -350,6 +353,8 @@ describe("CommandPalette", () => {
     expect(container.textContent).toContain("Chats");
     expect(container.textContent).toContain("Launch planning");
     expect(container.textContent).toContain("Message body matched launch planning notes.");
+    expect(container.textContent).toContain("20m ago");
+    expect(container.textContent).not.toContain("active");
 
     const chatButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Launch planning"));
