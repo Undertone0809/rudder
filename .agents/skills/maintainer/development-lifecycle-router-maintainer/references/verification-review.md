@@ -11,7 +11,7 @@ For implementation workflows, use this order:
 writer implementation
 -> writer basic checks
 -> optional lightweight pre-review
--> verifier black-box acceptance
+-> spawned verifier black-box acceptance
 -> final spawned reviewer gate
 -> handoff / commit / push
 ```
@@ -68,8 +68,36 @@ shell capture`.
 Default to `product-acceptance-verifier-maintainer` after implementation and
 writer checks when acceptance is required. The verifier may run commands, start
 services, use Browser or Computer Use, query API/DB state, and create disposable
-data. The verifier must not edit files, stage, commit, push, or fix failures
-during the acceptance pass.
+product/runtime data. The verifier must not edit repo files, stage, commit,
+push, or fix failures during the acceptance pass.
+
+For routed development work, acceptance is required by default when the artifact
+changes user-visible, agent-visible, Desktop, release, runtime, CLI, workflow, or
+control-plane behavior. "Small bug", "quick fix", "优化一下", "推进", or the
+absence of the word "review" does not remove this gate. The gate is not
+applicable only when the current artifact is advisory, review-only,
+skill-optimization text, recovery diagnosis without a fix, or another explicitly
+non-product artifact. Record that decision as `verifier: not applicable` with the
+reason.
+
+When spawning is available, run the verifier as a child agent. Use
+`../agents/product-verifier.md` as the prompt template or route to the
+`product-acceptance-verifier-maintainer` skill with the same constraints. The
+verifier packet must include:
+
+- requirement and acceptance bar
+- target SHA, branch, changed files, or artifact to verify
+- actor, trigger, system effect, and terminal surface
+- writer-run checks and any substituted evidence
+- prior blockers, changed evidence since the last round, and whether this is a
+  stage or final verifier gate
+- rule that the verifier may not edit repo files, stage, commit, push, or fix
+
+For benchmark, performance, or skill-evaluation validation, avoid the user's
+real/prod Rudder data by default. Use static contract checks, disposable
+fixtures, temp databases, or explicit read-only inspection unless the user
+explicitly asks for hard real-local validation. If real-local validation is
+required, keep the mutation ledger precise and clean up disposable records.
 
 Reconcile the verifier result before review or handoff:
 
@@ -125,6 +153,26 @@ this router's spawned-reviewer policy is active. Either spawn reviewers, or
 record the exact user-disabled policy, tool-policy rejection, missing-tool
 result, or tool-call failure.
 
+For routed development work, run final reviewers after verifier `PASS`. Use the
+templates under `../agents/` or equivalent prompts:
+
+- `functional-reviewer.md` for functional trust
+- `adversarial-reviewer.md` for hidden assumptions and weak proof
+- `heuristic-reviewer.md` for product-systems judgment
+
+For mechanical changes, two spawned reviewers are enough only when one is
+functional and the other is adversarial or heuristic. Record why the third lens
+was not needed.
+
+For narrow low-risk routed fixes, keep the verifier gate, then choose the
+smallest reviewer set that still challenges the evidence. Two final reviewers
+are acceptable when the verifier produced strong terminal proof and the change is
+localized; one targeted reviewer is acceptable only for truly mechanical text or
+config-only changes with no product behavior change. Record the reason, the
+omitted lens, and why the remaining lens coverage is enough. Consequential
+workflow, Desktop, runtime, CLI, release, agent-visible, or control-plane changes
+still need the three-lens set.
+
 ## Reviewer Lenses
 
 For consequential workflow, proposal, skill, agent-visible contract, UI/product
@@ -165,6 +213,23 @@ For UI, workflow, Desktop, runtime, release, or control-plane changes, the
 parent must verify that reviewers distinguish author-claimed validation from
 reviewer-verified terminal proof. Spawned reviewer approval is not a substitute
 for a missing verifier result.
+
+## Agent Prompt Templates
+
+Keep child prompts short and concrete. Load the relevant template before
+spawning:
+
+- verifier: `../agents/product-verifier.md`
+- functional reviewer: `../agents/functional-reviewer.md`
+- adversarial reviewer: `../agents/adversarial-reviewer.md`
+- heuristic reviewer: `../agents/heuristic-reviewer.md`
+
+The parent remains responsible for reconciling outputs. Child creation is not a
+passed gate until the parent reads final verdicts and records blockers.
+
+Each child packet should include target SHA or artifact basis, changed files,
+acceptance bar, prior blockers, changed evidence since the last round, and
+whether the verdict is for a stage artifact or final handoff.
 
 ## Evidence Ledger
 

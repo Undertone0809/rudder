@@ -23,7 +23,8 @@ needs them.
 - `references/route-selection.md`: stage classifier, narrow-skill routing,
   meta-request precedence, and skill-optimization boundaries.
 - `references/verification-review.md`: verifier gates, terminal product proof,
-  spawned reviewer policy, reviewer lenses, and evidence ledger.
+  spawned reviewer policy, reviewer lenses, agent prompt templates, and evidence
+  ledger.
 - `references/special-routes.md`: recovery, component lab, performance
   benchmark, runtime/provider contracts, and hard real-local validation.
 - `references/handoff-git.md`: git safety, final handoff shape, acceptance
@@ -37,7 +38,10 @@ Before editing files, running long checks, spawning reviewers, or committing:
 2. Classify the current stage.
 3. State the selected route and downstream owner in one concise update.
 4. Name the artifact or proof required to leave the current stage.
-5. Decide which references are needed for this route and read only those.
+5. For development work, state the full loop before editing:
+   implementation, writer checks, verifier, final reviewers, reconciliation, and
+   handoff.
+6. Decide which references are needed for this route and read only those.
 
 For obvious narrow requests, do not expand a lifecycle plan. Say the route,
 load the narrow skill, and execute it.
@@ -67,8 +71,8 @@ implementation sandwich is:
 writer implementation
 -> writer basic checks
 -> optional lightweight pre-review
--> verifier black-box acceptance
--> final spawned reviewer gate
+-> spawned verifier black-box acceptance
+-> spawned final reviewer gate
 -> handoff / commit / push
 ```
 
@@ -83,6 +87,13 @@ Separate verification from review:
   user's side
 - review asks whether the diff, architecture, scope, tests, proof, and handoff
   are trustworthy
+
+For development routes, do not treat the loop as optional just because the user
+said "fix", "优化", "推进", or omitted the word review. User-visible,
+agent-visible, Desktop, release, runtime, CLI, workflow, and control-plane
+changes need the verifier plus final reviewer loop before complete handoff. If a
+route truly does not need that loop, say why it is `not applicable` rather than
+silently skipping it.
 
 ## Stage Classifier
 
@@ -173,21 +184,25 @@ For this route:
 For user-visible, agent-visible, Desktop, release, runtime, CLI, workflow, or
 control-plane changes, identify the terminal product surface before calling
 verification complete. Use `product-acceptance-verifier-maintainer` for a
-distinct black-box acceptance pass when the product path is cheap enough to
-exercise.
+distinct black-box acceptance pass. If the product path is too expensive or
+unsafe to exercise, record verifier `blocked` or `substituted` with the exact
+reason; do not silently skip acceptance.
 
-Spawned reviewer gates are the default for routed stage artifacts when the user
-explicitly invokes this router or asks for routed review. If spawning is
-available and authorized, final reviewers should cover these lenses:
+Spawned verifier and reviewer gates are the default for routed development
+artifacts when this router owns the lifecycle. If spawning is available, the
+verifier should be a distinct child agent using
+`agents/product-verifier.md` or equivalent `product-acceptance-verifier-maintainer`
+instructions. Final reviewers should be child agents using the templates under
+`agents/` or equivalent reviewer prompts, with these lenses:
 
 - functional trust
 - adversarial
 - heuristic/product-systems
 
-Do not replace spawned reviewer verdicts with self-review or serial personas. If
-the active runtime cannot spawn reviewers after a real availability probe,
-record `blocked: spawned reviewers unavailable` with the probe evidence instead
-of claiming review passed.
+Do not replace spawned verifier or reviewer verdicts with self-review, serial
+personas, or author-claimed screenshots. If the active runtime cannot spawn
+agents after a real availability probe, record `blocked: spawned verifier/reviewer
+unavailable` with the probe evidence instead of claiming the loop passed.
 
 For the full verifier/reviewer contract, read
 `references/verification-review.md`.

@@ -464,6 +464,105 @@
         "The result names browser or screenshot verification as the exit evidence for the narrow UI task.",
         "The result does not treat merely mentioning development-lifecycle-router-maintainer concepts as a reason for the router to own the task."
       ]
+    },
+    {
+      "id": 37,
+      "prompt": "修一下 Messenger 未读闪烁这个小 bug，按 development-lifecycle-router-maintainer 推进。我没有特别说 review，但这是开发任务。",
+      "expected_output": "Treats the prompt as a routed development task even though the user did not explicitly ask for review. It states the implementation loop up front, implements narrowly, runs writer checks, spawns a product verifier after implementation, then spawns final reviewer agents covering functional, adversarial, and heuristic lenses before handoff.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/product-verifier.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/functional-reviewer.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/adversarial-reviewer.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/heuristic-reviewer.md"
+      ],
+      "expectations": [
+        "The result does not skip verifier or reviewers merely because the user asked for a small bug fix.",
+        "The result names the loop before editing: implementation, writer checks, verifier, final reviewers, reconciliation, and handoff.",
+        "The result uses a spawned product verifier or records a real spawn blocker.",
+        "The result uses spawned final reviewers with functional, adversarial, and heuristic lenses or records a real spawn blocker.",
+        "The result blocks complete handoff when verifier or reviewer verdicts are missing, open, conditional, failed, or unavailable."
+      ]
+    },
+    {
+      "id": 38,
+      "prompt": "推进这个 Desktop 更新提示功能，完整开发、验证、review、commit、push 都走好。benchmark 不要污染我的真实 Rudder 数据。",
+      "expected_output": "Runs the full routed development loop for a Desktop/user-visible workflow, keeps validation data disposable, uses product-verifier before final review, then uses functional/adversarial/heuristic reviewer agents. It records any substituted proof and avoids mutating the user's real environment during benchmark-style checks.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/product-verifier.md"
+      ],
+      "expectations": [
+        "The result treats Desktop/user-visible behavior as requiring product acceptance verification by default.",
+        "The result keeps benchmark or fixture data disposable and avoids the user's real Rudder data unless explicitly required for hard real-local validation.",
+        "The result runs verifier before final reviewers.",
+        "The result includes three reviewer lenses for consequential Desktop workflow work.",
+        "The result reconciles verifier and reviewer outputs before commit/push handoff."
+      ]
+    },
+    {
+      "id": 39,
+      "prompt": "只需要讨论下这个 skill pipeline 有没有问题，不要改代码，也不要做产品验收。",
+      "expected_output": "Classifies the request as advisory or skill discussion, not implementation. It can mark verifier as not applicable with a reason, but still explains what the development pipeline would require when implementation starts. It must not silently skip the loop in development tasks.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md"
+      ],
+      "expectations": [
+        "The result does not spawn or require a product verifier for a pure discussion artifact.",
+        "The result explicitly records why verifier is not applicable instead of silently omitting it.",
+        "The result still states that future implementation work requires verifier plus final reviewers.",
+        "The result does not confuse advisory discussion with permission to edit product code."
+      ]
+    },
+    {
+      "id": 40,
+      "prompt": "只是修 help 文案里的一个 typo，按 lifecycle-router 走，但别因为这个开一堆没必要的 reviewer。",
+      "expected_output": "Keeps the verifier gate or marks it not applicable only with a precise reason, then uses the smallest reviewer set that still challenges the artifact. For a truly mechanical text-only change, one targeted reviewer or two reviewers with functional plus adversarial/heuristic coverage is acceptable when the reason and omitted lens are recorded.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md"
+      ],
+      "expectations": [
+        "The result does not skip the loop silently for a trivial routed change.",
+        "The result avoids blindly spawning three final reviewers for a truly mechanical low-risk task.",
+        "The result records why a smaller reviewer set is enough and which lens is omitted.",
+        "The result still rejects self-review and duplicate functional-only review as a passed gate."
+      ]
+    },
+    {
+      "id": 41,
+      "prompt": "优化这个 skill 的 benchmark，不要碰我本地真实 Rudder 数据，也不要拿 prod 数据做写入实验。",
+      "expected_output": "Uses static contract checks, disposable fixtures, temporary databases, or read-only inspection for benchmark validation. It does not mutate real/prod Rudder data unless the user explicitly asks for hard real-local validation, and any required mutation gets a precise mutation ledger and cleanup.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/scripts/benchmark_pipeline.py"
+      ],
+      "expectations": [
+        "The result treats benchmark/performance validation as non-mutating by default.",
+        "The result explicitly avoids real/prod Rudder data unless hard real-local validation is requested.",
+        "The result records mutation ledger and cleanup when disposable validation data is necessary.",
+        "The result labels static contract benchmarks as contract checks rather than native routing telemetry."
+      ]
+    },
+    {
+      "id": 42,
+      "prompt": "spawn verifier/reviewer 的时候，别只说 review 一下。要把 target、改了什么、上一轮 blocker、证据变化和这是不是 final handoff 都传过去。",
+      "expected_output": "Builds a compact child packet for verifier and reviewer agents, including target SHA or artifact basis, changed files, acceptance bar, prior blockers, changed evidence since the last round, and whether the child is judging a stage artifact or final handoff.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/product-verifier.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/functional-reviewer.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/adversarial-reviewer.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/heuristic-reviewer.md"
+      ],
+      "expectations": [
+        "The result includes target SHA or artifact basis in child prompts.",
+        "The result includes changed files and acceptance bar in child prompts.",
+        "The result includes prior blockers and changed evidence since the last round.",
+        "The result labels whether the verdict is for a stage artifact or final handoff.",
+        "The result still requires author-claimed versus reviewer-inspected proof separation."
+      ]
     }
   ]
 }
