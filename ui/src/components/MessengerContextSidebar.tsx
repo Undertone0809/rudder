@@ -133,6 +133,7 @@ const DEFAULT_SPLIT_ISSUE_NOTIFICATIONS = true;
 const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_AUTO_LOAD_RENDERED_THREAD_LIMIT = 160;
+const SELECTED_READ_EMPHASIS_HOLD_MS = 1200;
 const DELETE_AFTER_STOP_RETRY_DELAYS_MS = [120, 300, 700] as const;
 const CUSTOM_GROUP_COLOR_OPTIONS = ["slate", "teal", "sky", "indigo", "amber", "rose", "red", "orange"] as const;
 type CustomGroupColor = (typeof CUSTOM_GROUP_COLOR_OPTIONS)[number];
@@ -1629,6 +1630,7 @@ function ThreadRow({
   thread,
   active,
   density,
+  preserveUnreadEmphasis = false,
   onTogglePin,
   onHideIssue,
   customGroups,
@@ -1644,6 +1646,7 @@ function ThreadRow({
   thread: ReturnType<typeof useMessengerModel>["threadSummaries"][number];
   active: boolean;
   density: MessengerThreadDensity;
+  preserveUnreadEmphasis?: boolean;
   onTogglePin: () => void;
   onHideIssue?: () => void;
   customGroups?: MessengerCustomGroupWithEntries[];
@@ -1669,6 +1672,7 @@ function ThreadRow({
     thread.metadata?.splitIssue === true && typeof thread.metadata.status === "string"
       ? thread.metadata.status
       : null;
+  const emphasizeUnread = active || preserveUnreadEmphasis || thread.unreadCount > 0;
   const activeExecutionRunId =
     thread.metadata?.splitIssue === true && typeof thread.metadata.activeExecutionRunId === "string"
       ? thread.metadata.activeExecutionRunId
@@ -1726,7 +1730,7 @@ function ThreadRow({
             <span
               className={cn(
                 "flex min-w-0 items-center gap-2 text-[13px] leading-tight",
-                thread.unreadCount > 0 ? "font-semibold text-foreground" : "font-medium text-foreground/92",
+                emphasizeUnread ? "font-semibold text-foreground" : "font-medium text-foreground/92",
               )}
             >
               <span className="truncate">{threadDisplayTitle(thread.title)}</span>
@@ -1746,7 +1750,7 @@ function ThreadRow({
             <span
               className={cn(
                 "mt-0.5 block truncate text-[12px]",
-                thread.unreadCount > 0 ? "text-foreground/76" : "text-muted-foreground",
+                emphasizeUnread ? "text-foreground/76" : "text-muted-foreground",
               )}
             >
               {preview}
@@ -2366,11 +2370,13 @@ export function MessengerContextSidebar() {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [dragIntent, setDragIntent] = useState<MessengerDragIntent>(null);
   const [locallyReadThreadWatermarks, setLocallyReadThreadWatermarks] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const [selectedReadEmphasisKey, setSelectedReadEmphasisKey] = useState<string | null>(null);
   const draggingThreadIdRef = useRef<string | null>(null);
   const dragOverIdRef = useRef<string | null>(null);
   const dragIntentRef = useRef<MessengerDragIntent>(null);
   const collapsedGroupOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const collapsedGroupOpenTargetRef = useRef<string | null>(null);
+  const selectedReadEmphasisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [unreadScrollRequestId, setUnreadScrollRequestId] = useState(0);
   const [threadOrganizationRule, setThreadOrganizationRule] = useState<ThreadOrganizationRule>(() =>
     readThreadOrganizationRule(model.selectedOrganizationId),
@@ -2442,6 +2448,16 @@ export function MessengerContextSidebar() {
     collapsedGroupOpenTimerRef.current = null;
     collapsedGroupOpenTargetRef.current = null;
   }, []);
+  const holdSelectedReadEmphasis = useCallback((threadKey: string) => {
+    setSelectedReadEmphasisKey(threadKey);
+    if (selectedReadEmphasisTimerRef.current) {
+      clearTimeout(selectedReadEmphasisTimerRef.current);
+    }
+    selectedReadEmphasisTimerRef.current = setTimeout(() => {
+      selectedReadEmphasisTimerRef.current = null;
+      setSelectedReadEmphasisKey((current) => (current === threadKey ? null : current));
+    }, SELECTED_READ_EMPHASIS_HOLD_MS);
+  }, []);
   const resetThreadDragState = useCallback(() => {
     clearCollapsedGroupOpenTimer();
     updateDraggingThreadId(null);
@@ -2463,6 +2479,11 @@ export function MessengerContextSidebar() {
     setVisibleThreadGroupEntryLimits({});
     setPendingChatRenameTitles({});
     setLocallyReadThreadWatermarks(new Map());
+    setSelectedReadEmphasisKey(null);
+    if (selectedReadEmphasisTimerRef.current) {
+      clearTimeout(selectedReadEmphasisTimerRef.current);
+      selectedReadEmphasisTimerRef.current = null;
+    }
   }, [model.selectedOrganizationId]);
 
   useEffect(() => {
@@ -2609,6 +2630,12 @@ export function MessengerContextSidebar() {
     ? "custom"
     : threadOrganizationRule;
   useEffect(() => clearCollapsedGroupOpenTimer, [clearCollapsedGroupOpenTimer, effectiveThreadOrganizationRule, model.selectedOrganizationId]);
+  useEffect(() => () => {
+    if (selectedReadEmphasisTimerRef.current) {
+      clearTimeout(selectedReadEmphasisTimerRef.current);
+      selectedReadEmphasisTimerRef.current = null;
+    }
+  }, []);
   const customGroupBySectionKey = useMemo(() => {
     const map = new Map<string, MessengerCustomGroupWithEntries>();
     for (const group of customGroups) {
@@ -2904,6 +2931,7 @@ export function MessengerContextSidebar() {
     const marker = `${orgId}:${thread.threadKey}:${readAt ?? "none"}`;
     if (markedThreadRef.current === marker) return;
     markedThreadRef.current = marker;
+    holdSelectedReadEmphasis(thread.threadKey);
 
     setLocallyReadThreadWatermarks((current) => {
       const nextWatermark = readAt instanceof Date ? readAt.toISOString() : readAt ?? "none";
@@ -3416,6 +3444,7 @@ export function MessengerContextSidebar() {
   ) => {
     const { thread, conversation } = entry;
     const active = activeThreadKey === thread.threadKey;
+    const preserveUnreadEmphasis = selectedReadEmphasisKey === thread.threadKey;
     if (thread.kind === "chat" && conversation) {
       const agentId = resolveChatAgentId(conversation);
       const localTitleMutationAllowed = !isFeishuBackedConversation(conversation);
@@ -3499,6 +3528,7 @@ export function MessengerContextSidebar() {
         thread={thread}
         active={active}
         density={threadDensity}
+        preserveUnreadEmphasis={preserveUnreadEmphasis}
         onTogglePin={() => {
           if (model.selectedOrganizationId) {
             markMessengerThreadPinnedInCache(queryClient, model.selectedOrganizationId, thread.threadKey, !thread.isPinned);

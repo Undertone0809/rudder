@@ -24,6 +24,12 @@ function threadUnreadBadgeTestId(threadKey: string) {
   return `${threadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}-unread-badge`;
 }
 
+async function rowTitleFontWeight(page: Page, rowTestId: string) {
+  return page.getByTestId(rowTestId).locator("a .truncate").first().evaluate((element) =>
+    window.getComputedStyle(element.parentElement ?? element).fontWeight,
+  );
+}
+
 test("clears a split issue unread badge before mark-read returns", async ({ page }) => {
   const sessionRes = await page.request.get("/api/auth/get-session");
   expect(sessionRes.ok()).toBe(true);
@@ -45,6 +51,7 @@ test("clears a split issue unread badge before mark-read returns", async ({ page
   const issue = await issueRes.json() as { id: string; identifier?: string | null; title: string };
   const issueRef = issue.identifier ?? issue.id;
   const threadKey = `issue:${issue.id}`;
+  const rowTestId = threadTestId(threadKey);
 
   await page.addInitScript(({ orgId }) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -53,10 +60,11 @@ test("clears a split issue unread badge before mark-read returns", async ({ page
 
   await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
 
-  const splitIssueRow = page.getByTestId(threadTestId(threadKey));
+  const splitIssueRow = page.getByTestId(rowTestId);
   const unreadBadge = page.getByTestId(threadUnreadBadgeTestId(threadKey));
   await expect(splitIssueRow).toContainText(issue.title, { timeout: 15_000 });
   await expect(unreadBadge).toHaveText("1");
+  const fontWeightBeforeClick = await rowTitleFontWeight(page, rowTestId);
 
   const markReadGate: { release?: () => void } = {};
   const markReadStarted = new Promise<void>((resolve) => {
@@ -76,6 +84,7 @@ test("clears a split issue unread badge before mark-read returns", async ({ page
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/issues/${issueRef}$`));
   await markReadStarted;
   expect(await unreadBadge.count()).toBe(0);
+  await expect.poll(() => rowTitleFontWeight(page, rowTestId)).toBe(fontWeightBeforeClick);
 
   markReadGate.release?.();
   await expect.poll(async () => {
@@ -108,6 +117,7 @@ test("clears a grouped split issue unread badge when the group row is selected",
   const issue = await issueRes.json() as { id: string; identifier?: string | null; title: string };
   const issueRef = issue.identifier ?? issue.id;
   const threadKey = `issue:${issue.id}`;
+  const rowTestId = threadTestId(threadKey);
 
   const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
     data: { name: "Grouped issue work", icon: "folder::amber" },
@@ -128,11 +138,12 @@ test("clears a grouped split issue unread badge when the group row is selected",
   await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
 
   const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
-  const groupedIssueRow = groupSection.getByTestId(threadTestId(threadKey));
+  const groupedIssueRow = groupSection.getByTestId(rowTestId);
   const unreadBadge = groupedIssueRow.getByTestId(threadUnreadBadgeTestId(threadKey));
   await expect(groupSection).toContainText("Grouped issue work", { timeout: 15_000 });
   await expect(groupedIssueRow).toContainText(issue.title);
   await expect(unreadBadge).toHaveText("1");
+  const fontWeightBeforeClick = await rowTitleFontWeight(page, rowTestId);
 
   const markReadGate: { release?: () => void } = {};
   const markReadStarted = new Promise<void>((resolve) => {
@@ -152,6 +163,7 @@ test("clears a grouped split issue unread badge when the group row is selected",
   await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/issues/${issueRef}$`));
   await markReadStarted;
   await expect(unreadBadge).toHaveCount(0);
+  await expect.poll(() => rowTitleFontWeight(page, rowTestId)).toBe(fontWeightBeforeClick);
 
   markReadGate.release?.();
   await expect.poll(async () => {
