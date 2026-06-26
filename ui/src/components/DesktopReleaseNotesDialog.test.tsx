@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { DesktopReleaseNotesResult, DesktopShellApi } from "@/lib/desktop-shell";
+import { RUDDER_DOCS_URL } from "@/lib/product-links";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,12 +18,14 @@ function renderHarness(result: DesktopReleaseNotesResult) {
   document.body.appendChild(container);
   const root = createRoot(container);
   const markReleaseNotesShown = vi.fn().mockResolvedValue(undefined);
+  const openExternal = vi.fn().mockResolvedValue(undefined);
 
   Object.defineProperty(window, "desktopShell", {
     configurable: true,
     value: {
       getReleaseNotes: vi.fn().mockResolvedValue(result),
       markReleaseNotesShown,
+      openExternal,
     } as Partial<DesktopShellApi>,
   });
 
@@ -37,7 +40,7 @@ function renderHarness(result: DesktopReleaseNotesResult) {
     delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
   };
 
-  return { markReleaseNotesShown };
+  return { markReleaseNotesShown, openExternal };
 }
 
 afterEach(() => {
@@ -68,6 +71,16 @@ describe("DesktopReleaseNotesDialog", () => {
     expect(document.body.textContent).toContain("What's new in Rudder 0.4.0");
     expect(document.body.textContent).toContain("Moved organization workspaces to Documents.");
     expect(document.body.querySelector('img[alt="Rudder"]')?.getAttribute("src")).toBe("/rudder-logo.png");
+
+    const docsAction = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Docs");
+    await act(async () => {
+      docsAction?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(harness.openExternal).toHaveBeenCalledWith(RUDDER_DOCS_URL);
+    expect(harness.markReleaseNotesShown).not.toHaveBeenCalled();
 
     const action = Array.from(document.body.querySelectorAll("button"))
       .find((button) => button.textContent === "Continue");

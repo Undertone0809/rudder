@@ -8,6 +8,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { readDesktopShell, type DesktopReleaseNotes } from "@/lib/desktop-shell";
+import { RUDDER_DOCS_URL } from "@/lib/product-links";
+import { ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { RudderLogo } from "./RudderLogo";
 
@@ -39,6 +41,15 @@ export function DesktopReleaseNotesDialog() {
     setNotes(null);
     if (!current) return;
     await readDesktopShell()?.markReleaseNotesShown?.(current.version).catch(() => undefined);
+  }
+
+  async function openDocs() {
+    const desktopShell = readDesktopShell();
+    if (desktopShell) {
+      await desktopShell.openExternal(RUDDER_DOCS_URL).catch(() => undefined);
+      return;
+    }
+    window.open(RUDDER_DOCS_URL, "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -79,7 +90,11 @@ export function DesktopReleaseNotesDialog() {
             ))}
           </div>
         </div>
-        <DialogFooter className="border-t border-border/70 px-5 py-4">
+        <DialogFooter className="border-t border-border/70 px-5 py-4 sm:justify-between">
+          <Button type="button" variant="outline" onClick={() => void openDocs()}>
+            <ExternalLink className="h-4 w-4" />
+            Docs
+          </Button>
           <Button type="button" onClick={() => void close()}>
             Continue
           </Button>
