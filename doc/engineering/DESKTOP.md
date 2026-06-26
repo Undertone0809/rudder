@@ -137,7 +137,29 @@ Rudder business data lives under the shared Rudder home:
 - embedded Postgres: `~/.rudder/instances/<instance>/db`
 - storage: `~/.rudder/instances/<instance>/data/storage`
 
+Organization workspaces are user work files and default to the user's Documents
+folder when `RUDDER_HOME` is not explicitly set:
+
+- macOS, Windows, and Linux default:
+  `~/Documents/Rudder/instances/<instance>/organizations/<org-storage-key>/workspaces`
+- explicit override:
+  `RUDDER_ORGANIZATION_WORKSPACE_HOME=/path/to/organizations`
+- compatibility mode:
+  setting `RUDDER_HOME` keeps organization workspaces under
+  `~/.rudder/instances/<instance>/organizations/<org-storage-key>/workspaces`
+  unless `RUDDER_ORGANIZATION_WORKSPACE_HOME` is also set
+
+On startup or first workspace access, Rudder attempts to migrate the legacy
+workspace subtree from the instance root into the configured organization
+workspace home. This migration is silent when it succeeds. If the operating
+system blocks access to the Documents target, Rudder reports the source path,
+target path, and permission-oriented recovery guidance. On Windows, that
+guidance includes choosing a writable workspace home or running Rudder as
+administrator when local folder policy requires elevated access.
+
 Electron `userData` now stores only desktop-shell preferences such as window state. It is not the source of truth for Rudder config, database, or storage.
+Desktop also stores per-version release-note acknowledgement state there so a
+completed update can show the current version's changelog once after restart.
 
 Published CLI and Desktop starts install the server runtime into a versioned
 cache under `~/.rudder/runtimes/<version>`. Rudder automatically prunes old
@@ -185,6 +207,8 @@ pnpm --filter @rudderhq/desktop smoke
 ```
 
 `RUDDER_HOME` controls shared Rudder state. `RUDDER_DESKTOP_USER_DATA_DIR` only controls Electron shell preferences.
+Use `RUDDER_ORGANIZATION_WORKSPACE_HOME` when a smoke or manual run needs an
+isolated organization workspace root outside the user's Documents folder.
 
 ## Validation rules
 

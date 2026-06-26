@@ -809,8 +809,8 @@ export function ThreeColumnContextSidebar() {
     enabled: !!selectedOrganizationId,
   });
   const { data: chats } = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
+    queryKey: queryKeys.chats.listPreview(selectedOrganizationId ?? "__none__", "active", 40),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active", { limit: 40 }),
     enabled: !!selectedOrganizationId,
   });
   const { data: calendarSources } = useQuery({
@@ -843,8 +843,8 @@ export function ThreeColumnContextSidebar() {
     refetchInterval: 10_000,
   });
   const { data: allIssues } = useQuery({
-    queryKey: queryKeys.issues.list(selectedOrganizationId ?? "__none__"),
-    queryFn: () => issuesApi.list(selectedOrganizationId!),
+    queryKey: queryKeys.issues.listPreview(selectedOrganizationId ?? "__none__", 80),
+    queryFn: () => issuesApi.list(selectedOrganizationId!, { limit: 80 }),
     enabled: !!selectedOrganizationId && isIssuesRoute,
   });
   const {

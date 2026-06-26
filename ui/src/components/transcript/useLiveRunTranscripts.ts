@@ -16,6 +16,8 @@ import { heartbeatRunEventTranscriptEntry } from "../../lib/run-detail-events";
 
 const LOG_POLL_INTERVAL_MS = 2000;
 const LOG_READ_LIMIT_BYTES = 256_000;
+const LOG_ERROR_COOLDOWN_MS = 30_000;
+const TERMINAL_LOG_STABLE_READS_REQUIRED = 2;
 type LiveLogChunk = { type: "log"; chunk: RunLogChunk };
 type LiveEntryChunk = { type: "entry"; entry: TranscriptEntry };
 type LiveTranscriptChunk = LiveLogChunk | LiveEntryChunk;
@@ -125,6 +127,9 @@ export function useLiveRunTranscripts({
   const seenChunkKeysRef = useRef(new Set<string>());
   const pendingLogRowsByRunRef = useRef(new Map<string, string>());
   const logOffsetByRunRef = useRef(new Map<string, number>());
+  const logErrorCooldownUntilRef = useRef(new Map<string, number>());
+  const terminalLogSettledRunIdsRef = useRef(new Set<string>());
+  const terminalLogStableReadsByRunRef = useRef(new Map<string, number>());
   const { data: generalSettings } = useQuery({
     queryKey: queryKeys.instance.generalSettings,
     queryFn: () => instanceSettingsApi.getGeneral(),
@@ -186,6 +191,21 @@ export function useLiveRunTranscripts({
         logOffsetByRunRef.current.delete(runId);
       }
     }
+    for (const runId of logErrorCooldownUntilRef.current.keys()) {
+      if (!knownRunIds.has(runId)) {
+        logErrorCooldownUntilRef.current.delete(runId);
+      }
+    }
+    for (const runId of terminalLogSettledRunIdsRef.current) {
+      if (!knownRunIds.has(runId)) {
+        terminalLogSettledRunIdsRef.current.delete(runId);
+      }
+    }
+    for (const runId of terminalLogStableReadsByRunRef.current.keys()) {
+      if (!knownRunIds.has(runId)) {
+        terminalLogStableReadsByRunRef.current.delete(runId);
+      }
+    }
   }, [runs]);
 
   useEffect(() => {
@@ -194,26 +214,41 @@ export function useLiveRunTranscripts({
     let cancelled = false;
 
     const readRunLog = async (run: LiveRunForIssue) => {
+      const isTerminal = isTerminalStatus(run.status);
+      if (isTerminal && terminalLogSettledRunIdsRef.current.has(run.id)) return;
+      const cooldownUntil = logErrorCooldownUntilRef.current.get(run.id) ?? 0;
+      if (cooldownUntil > Date.now()) return;
+
       const offset = logOffsetByRunRef.current.get(run.id) ?? 0;
       try {
         const result = await agentRunsApi.log(run.id, offset, LOG_READ_LIMIT_BYTES);
         if (cancelled) return;
+        logErrorCooldownUntilRef.current.delete(run.id);
 
         appendChunks(run.id, parsePersistedLogContent(run.id, result.content, pendingLogRowsByRunRef.current));
 
+        let nextOffset = offset;
         if (result.nextOffset !== undefined) {
-          logOffsetByRunRef.current.set(run.id, result.nextOffset);
-          return;
+          nextOffset = result.nextOffset;
+        } else if (result.endOffset !== undefined) {
+          nextOffset = result.endOffset;
+        } else if (result.content.length > 0) {
+          nextOffset = offset + utf8ByteLength(result.content);
         }
-        if (result.endOffset !== undefined) {
-          logOffsetByRunRef.current.set(run.id, result.endOffset);
-          return;
-        }
-        if (result.content.length > 0) {
-          logOffsetByRunRef.current.set(run.id, offset + utf8ByteLength(result.content));
+        logOffsetByRunRef.current.set(run.id, nextOffset);
+
+        if (!isTerminal) return;
+
+        const stableRead = result.content.length === 0 && nextOffset === offset;
+        const stableReads = stableRead
+          ? (terminalLogStableReadsByRunRef.current.get(run.id) ?? 0) + 1
+          : 0;
+        terminalLogStableReadsByRunRef.current.set(run.id, stableReads);
+        if (stableReads >= TERMINAL_LOG_STABLE_READS_REQUIRED) {
+          terminalLogSettledRunIdsRef.current.add(run.id);
         }
       } catch {
-        // Ignore log read errors while output is initializing.
+        logErrorCooldownUntilRef.current.set(run.id, Date.now() + LOG_ERROR_COOLDOWN_MS);
       }
     };
 
@@ -223,7 +258,10 @@ export function useLiveRunTranscripts({
 
     void readAll();
     const interval = window.setInterval(() => {
-      void readAll();
+      const hasUnsettledRuns = runs.some((run) =>
+        !isTerminalStatus(run.status) || !terminalLogSettledRunIdsRef.current.has(run.id),
+      );
+      if (hasUnsettledRuns) void readAll();
     }, LOG_POLL_INTERVAL_MS);
 
     return () => {

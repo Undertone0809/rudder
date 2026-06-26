@@ -74,6 +74,8 @@ export interface IssueFilters {
   excludeReviewerRecordedBlockedDecision?: boolean;
   touchedByUserId?: string;
   unreadForUserId?: string;
+  followedByUserId?: string;
+  involvedUserId?: string;
   projectId?: string;
   parentId?: string;
   labelId?: string;
@@ -83,6 +85,7 @@ export interface IssueFilters {
   q?: string;
   searchFields?: IssueSearchField[];
   limit?: number;
+  offset?: number;
 }
 
 export type IssueRow = typeof issues.$inferSelect;

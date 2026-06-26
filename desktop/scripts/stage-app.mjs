@@ -6,6 +6,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
 const stagedAppDir = path.join(desktopRoot, ".packaged", "app");
 const sourceDistDir = path.join(desktopRoot, "dist");
+const sourceReleasesDir = path.join(desktopRoot, "..", "releases");
 const packageJsonPath = path.join(desktopRoot, "package.json");
 
 async function readDesktopPackageJson() {
@@ -18,6 +19,7 @@ async function main() {
   await fs.rm(stagedAppDir, { recursive: true, force: true });
   await fs.mkdir(stagedAppDir, { recursive: true });
   await fs.cp(sourceDistDir, path.join(stagedAppDir, "dist"), { recursive: true });
+  await fs.cp(sourceReleasesDir, path.join(stagedAppDir, "releases"), { recursive: true });
 
   const appManifest = {
     name: "@rudderhq/desktop",

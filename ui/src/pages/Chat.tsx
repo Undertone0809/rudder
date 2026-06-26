@@ -166,6 +166,8 @@ function findChatMessageElement(root: HTMLElement, messageId: string) {
 }
 const RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT = 5;
 const RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT = 10;
+const CHAT_LIST_PREVIEW_LIMIT = 40;
+const CHAT_ISSUE_MENTION_LIMIT = 50;
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
   const {
     abortChatStream,
@@ -215,10 +217,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     navigate( {
         pathname: conversationId ? chatConversationPath(conversationId) : chatRootPath,
         search: nextSearch.toString() ? `?${nextSearch.toString()}` : "", }, { replace: true }, ); }, [chatConversationPath, chatRootPath, conversationId, draft, navigate, pendingPrefill, searchParams]); const conversationsQuery = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"), enabled: !!selectedOrganizationId && isMobile, }); const mentionConversationsQuery = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"), enabled: !!selectedOrganizationId, }); const conversationQuery = useQuery({
+    queryKey: queryKeys.chats.listPreview(selectedOrganizationId ?? "__none__", "active", CHAT_LIST_PREVIEW_LIMIT),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active", { limit: CHAT_LIST_PREVIEW_LIMIT }), enabled: !!selectedOrganizationId && isMobile, }); const mentionConversationsQuery = useQuery({
+    queryKey: queryKeys.chats.listPreview(selectedOrganizationId ?? "__none__", "active", CHAT_LIST_PREVIEW_LIMIT),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active", { limit: CHAT_LIST_PREVIEW_LIMIT }), enabled: !!selectedOrganizationId, }); const conversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.get(conversationId!), enabled: !!selectedOrganizationId && !!conversationId, }); const activeConversationFromList = conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const activeConversationBelongsToSelectedOrganization =
     conversationQuery.data
@@ -254,8 +256,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     return profiles.some((profile) => profile?.purpose === "lightweight" && profile.status === "configured");
   }, [intelligenceProfilesQuery.data]);
   const { data: issues, error: issuesError } = useQuery({
-    queryKey: queryKeys.issues.list(selectedOrganizationId ?? "__none__"),
-    queryFn: () => issuesApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, }); const { data: libraryDocuments } = useQuery({
+    queryKey: queryKeys.issues.listPreview(selectedOrganizationId ?? "__none__", CHAT_ISSUE_MENTION_LIMIT),
+    queryFn: () => issuesApi.list(selectedOrganizationId!, { limit: CHAT_ISSUE_MENTION_LIMIT }), enabled: !!selectedOrganizationId, }); const { data: libraryDocuments } = useQuery({
     queryKey: queryKeys.organizations.libraryDocuments(selectedOrganizationId ?? "__none__"),
     queryFn: () => organizationsApi.listLibraryDocuments(selectedOrganizationId!), enabled: !!selectedOrganizationId, });
   const normalizedLibraryFileMentionQuery = libraryFileMentionQuery?.trim() ?? "";

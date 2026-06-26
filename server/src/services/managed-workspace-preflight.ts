@@ -84,7 +84,7 @@ export function formatWorkspacePermissionPreflightMessage(
   const codeSuffix = failure.code ? ` (${failure.code})` : "";
   return [
     `Rudder managed agent directory permission repair needed: managed ${failure.kind} path is not writable: ${failure.path}${codeSuffix}.`,
-    "Repair the managed agent directory permissions or move RUDDER_HOME to a writable location before starting the run.",
+    "Repair the managed agent directory permissions, choose a writable organization workspace home with RUDDER_ORGANIZATION_WORKSPACE_HOME, or move RUDDER_HOME before starting the run.",
   ].join(" ");
 }
 

@@ -708,7 +708,7 @@ describe("Chat mention sources", () => {
     renderChat();
 
     const chatListStatuses = mockState.queryKeys
-      .filter((queryKey) => queryKey[0] === "chats" && queryKey.length === 3)
+      .filter((queryKey) => queryKey[0] === "chats" && queryKey[3] === "preview")
       .map((queryKey) => queryKey[2]);
     expect(chatListStatuses).toContain("active");
     expect(chatListStatuses).not.toContain("all");

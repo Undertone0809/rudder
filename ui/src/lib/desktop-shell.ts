@@ -108,6 +108,19 @@ export type OpenNotificationSettingsResult = {
   platform: string;
 };
 
+export type DesktopReleaseNotes = {
+  version: string;
+  title: string;
+  sections: Array<{
+    title: string;
+    items: string[];
+  }>;
+};
+
+export type DesktopReleaseNotesResult =
+  | { status: "available"; notes: DesktopReleaseNotes }
+  | { status: "unavailable" | "already-shown" };
+
 export type DesktopNotificationPayload = {
   title: string;
   body?: string;
@@ -160,6 +173,8 @@ export type DesktopShellApi = {
   reloadApp?(): Promise<void>;
   restart(): Promise<void>;
   getAppVersion(): Promise<string>;
+  getReleaseNotes?(): Promise<DesktopReleaseNotesResult>;
+  markReleaseNotesShown?(version: string): Promise<void>;
   checkForUpdates(): Promise<DesktopUpdateCheckResult>;
   installUpdate(version: string): Promise<DesktopUpdateInstallResult>;
   applyUpdate?(updateId: string, options?: DesktopUpdateApplyOptions): Promise<DesktopUpdateApplyResult>;

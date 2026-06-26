@@ -63,6 +63,7 @@ import { IssueDetail } from "./IssueDetail";
 const ISSUE_COMMENT_PREVIEW_LINES = 10;
 const ISSUE_COMMENT_PREVIEW_LINE_HEIGHT = 20;
 const ISSUE_COMMENT_PREVIEW_COLLAPSED_HEIGHT = ISSUE_COMMENT_PREVIEW_LINES * ISSUE_COMMENT_PREVIEW_LINE_HEIGHT;
+const MESSENGER_CHAT_LOOKUP_LIMIT = 80;
 
 function firstNonEmptyLine(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -794,8 +795,8 @@ export function MessengerApprovalsView() {
     enabled: Boolean(selectedOrganizationId),
   });
   const { data: chatConversations } = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId ?? "", "all"),
-    queryFn: () => chatsApi.list(selectedOrganizationId ?? "", "all"),
+    queryKey: queryKeys.chats.listPreview(selectedOrganizationId ?? "", "all", MESSENGER_CHAT_LOOKUP_LIMIT),
+    queryFn: () => chatsApi.list(selectedOrganizationId ?? "", "all", { limit: MESSENGER_CHAT_LOOKUP_LIMIT }),
     enabled: Boolean(selectedOrganizationId),
   });
 

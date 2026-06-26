@@ -1,7 +1,7 @@
 import { useIssueFollows } from "@/hooks/useIssueFollows";
 import { useLocation, useSearchParams } from "@/lib/router";
-import type { Agent, IssueSearchField, Project, ReorderIssue } from "@rudderhq/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Agent, Issue, IssueSearchField, Project, ReorderIssue } from "@rudderhq/shared";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleDot, Clock3, FolderKanban, PencilLine, Trash2, UserRound } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { agentRunsApi } from "../api/agent-runs";
@@ -20,7 +20,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { formatAssigneeUserLabel, parseAssigneeValue } from "../lib/assignees";
 import { rememberIssueNavigation } from "../lib/issue-navigation";
-import { getIssueScopeFilters, isFollowingIssue } from "../lib/issue-scope-filters";
+import { getIssueScopeFilters } from "../lib/issue-scope-filters";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import {
   deleteIssueDraft,
@@ -65,6 +65,7 @@ function resolveDraftAssigneeLabel(
 
 const DRAFT_ISSUE_DELETE_EXIT_MS = 220;
 const ISSUE_SEARCH_FIELDS = new Set<IssueSearchField>(["title", "description", "comment"]);
+const ISSUE_LIST_INITIAL_LIMIT = 200;
 
 function parseIssueSearchFieldsParam(raw: string | null): IssueSearchField[] {
   if (!raw) return ["title"];
@@ -377,7 +378,14 @@ export function Issues() {
     [currentUserId, effectiveIssueScope],
   );
 
-  const { data: issues, isLoading, error } = useQuery({
+  const {
+    data: issuePages,
+    isLoading,
+    error,
+    hasNextPage: hasMoreIssues,
+    fetchNextPage: fetchMoreIssues,
+    isFetchingNextPage: isLoadingMoreIssues,
+  } = useInfiniteQuery({
     queryKey: [
       ...queryKeys.issues.list(selectedOrganizationId!),
       "participant-agent",
@@ -388,20 +396,32 @@ export function Issues() {
       currentUserId ?? "__none__",
       "project",
       projectId ?? "__all__",
+      "limit",
+      ISSUE_LIST_INITIAL_LIMIT,
     ],
-    queryFn: () => issuesApi.list(selectedOrganizationId!, { participantAgentId, projectId, ...issueFilters }),
+    queryFn: ({ pageParam = 0 }) =>
+      issuesApi.list(selectedOrganizationId!, {
+        participantAgentId,
+        projectId,
+        ...issueFilters,
+        limit: ISSUE_LIST_INITIAL_LIMIT,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.length === ISSUE_LIST_INITIAL_LIMIT ? allPages.length * ISSUE_LIST_INITIAL_LIMIT : undefined,
     enabled: !!selectedOrganizationId && !isDraftScope && !isLinearSource,
   });
+  const issues = useMemo(() => {
+    const byId = new Map<string, Issue>();
+    for (const issue of issuePages?.pages.flat() ?? []) {
+      byId.set(issue.id, issue);
+    }
+    return [...byId.values()];
+  }, [issuePages]);
   const visibleIssues = useMemo(() => {
-    const allIssues = issues ?? [];
-    if (effectiveIssueScope === "pinned") {
-      return allIssues.filter((issue) => followedIssueIds.has(issue.id));
-    }
-    if (effectiveIssueScope === "following" && currentUserId) {
-      return allIssues.filter((issue) => isFollowingIssue(issue, currentUserId));
-    }
-    return allIssues;
-  }, [currentUserId, effectiveIssueScope, followedIssueIds, issues]);
+    return issues;
+  }, [issues]);
 
   const updateIssue = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
@@ -506,6 +526,11 @@ export function Issues() {
         onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
         onReorderIssue={(data) => reorderIssue.mutate(data)}
         searchFilters={participantAgentId ? { participantAgentId } : undefined}
+        hasMoreIssues={Boolean(hasMoreIssues)}
+        isLoadingMoreIssues={isLoadingMoreIssues}
+        onLoadMoreIssues={() => {
+          void fetchMoreIssues();
+        }}
       />
     </div>
   );

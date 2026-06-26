@@ -187,8 +187,8 @@ export function SidebarChatSessions() {
   const activeConversationId = activeConversationIdFromPath(location.pathname);
 
   const conversationsQuery = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
+    queryKey: queryKeys.chats.listPreview(selectedOrganizationId ?? "__none__", "active", 40),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active", { limit: 40 }),
     enabled: !!selectedOrganizationId,
   });
 

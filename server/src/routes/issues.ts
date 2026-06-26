@@ -53,6 +53,13 @@ function positiveIntegerQuery(value: unknown, max: number): number | undefined {
   return Math.min(max, parsed);
 }
 
+function nonNegativeIntegerQuery(value: unknown): number | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+  return parsed;
+}
+
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
   const svc = issueService(db);
@@ -384,6 +391,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const reviewerUserFilterRaw = req.query.reviewerUserId as string | undefined;
     const touchedByUserFilterRaw = req.query.touchedByUserId as string | undefined;
     const unreadForUserFilterRaw = req.query.unreadForUserId as string | undefined;
+    const followedByUserFilterRaw = req.query.followedByUserId as string | undefined;
+    const involvedUserFilterRaw = req.query.involvedUserId as string | undefined;
     const assigneeUserId =
       assigneeUserFilterRaw === "me" && req.actor.type === "board"
         ? req.actor.userId
@@ -400,6 +409,14 @@ export function issueRoutes(db: Db, storage: StorageService) {
       unreadForUserFilterRaw === "me" && req.actor.type === "board"
         ? req.actor.userId
         : unreadForUserFilterRaw;
+    const followedByUserId =
+      followedByUserFilterRaw === "me" && req.actor.type === "board"
+        ? req.actor.userId
+        : followedByUserFilterRaw;
+    const involvedUserId =
+      involvedUserFilterRaw === "me" && req.actor.type === "board"
+        ? req.actor.userId
+        : involvedUserFilterRaw;
 
     if (assigneeUserFilterRaw === "me" && (!assigneeUserId || req.actor.type !== "board")) {
       res.status(403).json({ error: "assigneeUserId=me requires board authentication" });
@@ -417,6 +434,14 @@ export function issueRoutes(db: Db, storage: StorageService) {
       res.status(403).json({ error: "unreadForUserId=me requires board authentication" });
       return;
     }
+    if (followedByUserFilterRaw === "me" && (!followedByUserId || req.actor.type !== "board")) {
+      res.status(403).json({ error: "followedByUserId=me requires board authentication" });
+      return;
+    }
+    if (involvedUserFilterRaw === "me" && (!involvedUserId || req.actor.type !== "board")) {
+      res.status(403).json({ error: "involvedUserId=me requires board authentication" });
+      return;
+    }
 
     const result = await svc.list(orgId, {
       status: req.query.status as string | undefined,
@@ -427,6 +452,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
       reviewerUserId,
       touchedByUserId,
       unreadForUserId,
+      followedByUserId,
+      involvedUserId,
       projectId: req.query.projectId as string | undefined,
       parentId: req.query.parentId as string | undefined,
       labelId: req.query.labelId as string | undefined,
@@ -437,6 +464,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       q: req.query.q as string | undefined,
       searchFields: parseIssueSearchFields(req.query.searchFields),
       limit: positiveIntegerQuery(req.query.limit, MAX_ISSUE_LIST_LIMIT),
+      offset: nonNegativeIntegerQuery(req.query.offset),
     });
     res.json(result);
   });

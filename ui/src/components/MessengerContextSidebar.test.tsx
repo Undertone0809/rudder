@@ -440,7 +440,7 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("Pinned");
     expect(html).not.toContain("Default");
     expect(queryOptions).toContainEqual(expect.objectContaining({
-      queryKey: ["chats", "org-1", "all"],
+      queryKey: ["chats", "org-1", "all", "preview", 80],
       enabled: false,
     }));
   });
@@ -940,7 +940,7 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("System");
     expect(html.indexOf("Website launch")).toBeLessThan(html.indexOf("System"));
     expect(queryOptions).toContainEqual(expect.objectContaining({
-      queryKey: ["chats", "org-1", "all"],
+      queryKey: ["chats", "org-1", "all", "preview", 80],
       enabled: true,
     }));
   });

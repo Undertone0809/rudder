@@ -32,6 +32,15 @@ import {
   RUDDER_POSTGRES_BIN_DIR_ENV,
 } from "./postgres-runtime.js";
 import {
+  markReleaseNotesShown,
+  readReleaseNotes,
+  resolveReleaseNotesPath,
+  resolveReleaseNotesStatePath,
+  shouldShowReleaseNotes,
+  type DesktopReleaseNotes,
+} from "./release-notes.js";
+import {
+  resolveDesktopOrganizationWorkspaceHomeEnv,
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
 } from "./runtime-cache.js";
@@ -187,6 +196,10 @@ type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: NodeJS.Platform;
 };
+
+type DesktopReleaseNotesResult =
+  | { status: "available"; notes: DesktopReleaseNotes }
+  | { status: "unavailable" | "already-shown" };
 
 function normalizeBooleanEnvFlag(value: string | null | undefined): boolean | null {
   const normalized = value?.trim().toLowerCase();
@@ -548,6 +561,10 @@ function applyDesktopEnvironment(): LocalEnvProfile {
   });
   process.env.RUDDER_LOCAL_ENV = profile.name;
   process.env.RUDDER_INSTANCE_ID = profile.instanceId;
+  const workspaceHome = resolveDesktopOrganizationWorkspaceHomeEnv(process.env, profile.instanceId);
+  if (workspaceHome) {
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+  }
   process.env.PORT ??= profile.port;
   process.env.RUDDER_EMBEDDED_POSTGRES_PORT ??= profile.embeddedPostgresPort;
   process.env.RUDDER_DEPLOYMENT_MODE = "local_trusted";
@@ -1268,6 +1285,28 @@ function registerIpc(): void {
   });
   ipcMain.handle("desktop:get-system-permissions", async () => refreshDesktopSystemPermissions());
   ipcMain.handle("desktop:get-app-version", async () => resolveRudderAppVersion());
+  ipcMain.handle("desktop:get-release-notes", async (): Promise<DesktopReleaseNotesResult> => {
+    const version = resolveRudderAppVersion();
+    const statePath = resolveReleaseNotesStatePath(app.getPath("userData"));
+    if (!shouldShowReleaseNotes({ statePath, version })) {
+      return { status: "already-shown" };
+    }
+    const notes = readReleaseNotes({
+      version,
+      releaseNotesPath: resolveReleaseNotesPath({
+        moduleDir: MODULE_DIR,
+        packaged: app.isPackaged,
+        version,
+      }),
+    });
+    return notes ? { status: "available", notes } : { status: "unavailable" };
+  });
+  ipcMain.handle("desktop:mark-release-notes-shown", async (_event, version: string) => {
+    markReleaseNotesShown({
+      version,
+      statePath: resolveReleaseNotesStatePath(app.getPath("userData")),
+    });
+  });
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {
     await shell.openPath(targetPath);
   });

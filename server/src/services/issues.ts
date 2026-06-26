@@ -56,6 +56,7 @@ import {
   deriveIssueUserContext,
   escapeLikePattern,
   fieldSearchMatch,
+  followedByUserCondition,
   isUniqueConstraintConflict,
   participatedByAgentCondition,
   sameRunLock,
@@ -85,6 +86,13 @@ function normalizeIssueListLimit(limit: number | undefined): number | undefined 
   const normalized = Math.floor(limit);
   if (normalized < 1) return undefined;
   return Math.min(MAX_ISSUE_LIST_LIMIT, normalized);
+}
+
+function normalizeIssueListOffset(offset: number | undefined): number | undefined {
+  if (typeof offset !== "number" || !Number.isFinite(offset)) return undefined;
+  const normalized = Math.floor(offset);
+  if (normalized < 1) return undefined;
+  return normalized;
 }
 
 export function issueService(db: Db) {
@@ -491,6 +499,8 @@ export function issueService(db: Db) {
       const conditions = [eq(issues.orgId, orgId)];
       const touchedByUserId = filters?.touchedByUserId?.trim() || undefined;
       const unreadForUserId = filters?.unreadForUserId?.trim() || undefined;
+      const followedByUserId = filters?.followedByUserId?.trim() || undefined;
+      const involvedUserId = filters?.involvedUserId?.trim() || undefined;
       const contextUserId = unreadForUserId ?? touchedByUserId;
       const rawSearch = filters?.q?.trim() ?? "";
       const hasSearch = rawSearch.length > 0;
@@ -573,6 +583,18 @@ export function issueService(db: Db) {
       if (unreadForUserId) {
         conditions.push(unreadForUserCondition(orgId, unreadForUserId));
       }
+      if (followedByUserId) {
+        conditions.push(followedByUserCondition(orgId, followedByUserId));
+      }
+      if (involvedUserId) {
+        conditions.push(sql<boolean>`
+          (
+            ${issues.createdByUserId} = ${involvedUserId}
+            OR ${issues.assigneeUserId} = ${involvedUserId}
+            OR ${issues.reviewerUserId} = ${involvedUserId}
+          )
+        `);
+      }
       if (filters?.projectId) conditions.push(eq(issues.projectId, filters.projectId));
       if (filters?.parentId) conditions.push(eq(issues.parentId, filters.parentId));
       if (filters?.originKind) conditions.push(eq(issues.originKind, filters.originKind));
@@ -620,6 +642,10 @@ export function issueService(db: Db) {
       const limit = normalizeIssueListLimit(filters?.limit);
       if (limit !== undefined) {
         query = query.limit(limit);
+      }
+      const offset = normalizeIssueListOffset(filters?.offset);
+      if (offset !== undefined) {
+        query = query.offset(offset);
       }
       const rows = await query;
       const withLabels = await withIssueLabels(db, rows);

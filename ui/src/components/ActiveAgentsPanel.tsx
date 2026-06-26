@@ -99,9 +99,12 @@ export function ActiveAgentsPanel({ orgId }: ActiveAgentsPanelProps) {
 
   const runs = liveRuns ?? [];
   const { data: issues } = useQuery({
-    queryKey: queryKeys.issues.list(orgId),
-    queryFn: () => issuesApi.list(orgId),
-    enabled: runs.length > 0,
+    queryKey: [...queryKeys.issues.list(orgId), "dashboard-live-run-hydration", runs.map((run) => run.issueId ?? "").sort().join(",")],
+    queryFn: async () => {
+      const issueIds = [...new Set(runs.map((run) => run.issueId).filter((id): id is string => Boolean(id)))];
+      return Promise.all(issueIds.map((issueId) => issuesApi.get(issueId)));
+    },
+    enabled: runs.some((run) => Boolean(run.issueId)),
   });
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(orgId),

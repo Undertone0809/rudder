@@ -12,6 +12,7 @@ import { type AgentWorkspaceLocator, resolveStoredOrDerivedAgentWorkspaceKey } f
 const DEFAULT_INSTANCE_ID = "default";
 const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
 const FRIENDLY_PATH_SEGMENT_RE = /[^a-zA-Z0-9._-]+/g;
+const WORKSPACE_PERMISSION_ERROR_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 
 function expandHomePrefix(value: string): string {
   if (value === "~") return os.homedir();
@@ -91,10 +92,27 @@ function resolveAgentWorkspacePathSegment(agent: string | AgentWorkspaceLocator)
 }
 
 export function resolveOrganizationWorkspaceRoot(orgId: string): string {
+  const normalizedOrgId = resolveOrganizationStorageKey(orgId);
   return path.resolve(
-    resolveOrganizationRoot(orgId),
+    resolveOrganizationWorkspaceHomeDir(),
+    normalizedOrgId,
     "workspaces",
   );
+}
+
+export function resolveLegacyOrganizationWorkspaceRoot(orgId: string): string {
+  return path.resolve(resolveOrganizationRoot(orgId), "workspaces");
+}
+
+export function resolveOrganizationWorkspaceHomeDir(): string {
+  const envHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME?.trim();
+  if (envHome) return path.resolve(expandHomePrefix(envHome));
+
+  if (process.env.RUDDER_HOME?.trim()) {
+    return path.resolve(resolveRudderInstanceRoot(), "organizations");
+  }
+
+  return path.resolve(os.homedir(), "Documents", "Rudder", "instances", resolveRudderInstanceId(), "organizations");
 }
 
 export function resolveDefaultAgentWorkspaceDir(orgId: string, agent: string | AgentWorkspaceLocator): string {
@@ -179,17 +197,30 @@ export async function ensureOrganizationWorkspaceLayout(orgId: string): Promise<
   projectsDir: string;
 }> {
   await migrateOrganizationStorageRoot(orgId);
+  await migrateOrganizationWorkspaceRoot(orgId);
 
   const root = resolveOrganizationWorkspaceRoot(orgId);
   const agentsDir = resolveOrganizationAgentsDir(orgId);
   const skillsDir = resolveOrganizationSkillsDir(orgId);
   const projectsDir = resolveOrganizationProjectsDir(orgId);
-  await Promise.all([
-    fs.mkdir(root, { recursive: true }),
-    fs.mkdir(agentsDir, { recursive: true }),
-    fs.mkdir(skillsDir, { recursive: true }),
-    fs.mkdir(projectsDir, { recursive: true }),
-  ]);
+  try {
+    await Promise.all([
+      fs.mkdir(root, { recursive: true }),
+      fs.mkdir(agentsDir, { recursive: true }),
+      fs.mkdir(skillsDir, { recursive: true }),
+      fs.mkdir(projectsDir, { recursive: true }),
+    ]);
+  } catch (error) {
+    if (isPermissionError(error)) {
+      throw new Error(formatOrganizationWorkspacePermissionMessage({
+        operation: "create",
+        code: errorCode(error),
+        legacyRootPath: resolveLegacyOrganizationWorkspaceRoot(orgId),
+        canonicalRootPath: root,
+      }), { cause: error });
+    }
+    throw error;
+  }
   return { root, agentsDir, skillsDir, projectsDir };
 }
 
@@ -244,6 +275,93 @@ export async function migrateOrganizationStorageRoot(orgId: string): Promise<{
     const code = typeof error === "object" && error !== null && "code" in error
       ? (error as { code?: unknown }).code
       : undefined;
+    if (code === "ENOENT") {
+      return {
+        canonicalRootPath,
+        legacyRootPath,
+        migrated: false,
+        mergedIntoExistingTarget: false,
+        skippedBecauseTargetExists: false,
+      };
+    }
+    if (code === "EEXIST") {
+      return {
+        canonicalRootPath,
+        legacyRootPath,
+        migrated: false,
+        mergedIntoExistingTarget: false,
+        skippedBecauseTargetExists: true,
+      };
+    }
+    throw error;
+  }
+
+  return {
+    canonicalRootPath,
+    legacyRootPath,
+    migrated: true,
+    mergedIntoExistingTarget: false,
+    skippedBecauseTargetExists: false,
+  };
+}
+
+export async function migrateOrganizationWorkspaceRoot(orgId: string): Promise<{
+  canonicalRootPath: string;
+  legacyRootPath: string;
+  migrated: boolean;
+  mergedIntoExistingTarget: boolean;
+  skippedBecauseTargetExists: boolean;
+}> {
+  const canonicalRootPath = resolveOrganizationWorkspaceRoot(orgId);
+  const legacyRootPath = resolveLegacyOrganizationWorkspaceRoot(orgId);
+  if (canonicalRootPath === legacyRootPath) {
+    return {
+      canonicalRootPath,
+      legacyRootPath,
+      migrated: false,
+      mergedIntoExistingTarget: false,
+      skippedBecauseTargetExists: false,
+    };
+  }
+
+  const legacyExists = await directoryExists(legacyRootPath);
+  if (!legacyExists) {
+    return {
+      canonicalRootPath,
+      legacyRootPath,
+      migrated: false,
+      mergedIntoExistingTarget: false,
+      skippedBecauseTargetExists: false,
+    };
+  }
+
+  const canonicalExists = await directoryExists(canonicalRootPath);
+  try {
+    if (canonicalExists) {
+      await assertCanMergeDirectoryContents(legacyRootPath, canonicalRootPath);
+      await mergeDirectoryContents(legacyRootPath, canonicalRootPath);
+      await fs.rmdir(legacyRootPath);
+      return {
+        canonicalRootPath,
+        legacyRootPath,
+        migrated: true,
+        mergedIntoExistingTarget: true,
+        skippedBecauseTargetExists: false,
+      };
+    }
+
+    await fs.mkdir(path.dirname(canonicalRootPath), { recursive: true });
+    await movePath(legacyRootPath, canonicalRootPath);
+  } catch (error) {
+    if (isPermissionError(error)) {
+      throw new Error(formatOrganizationWorkspacePermissionMessage({
+        operation: "migrate",
+        code: errorCode(error),
+        legacyRootPath,
+        canonicalRootPath,
+      }), { cause: error });
+    }
+    const code = errorCode(error);
     if (code === "ENOENT") {
       return {
         canonicalRootPath,
@@ -376,22 +494,25 @@ function sanitizeFriendlyPathSegment(value: string | null | undefined, fallback 
 export async function removeOrganizationStorage(orgId: string): Promise<{
   organizationRootPath: string;
   legacyOrganizationRootPath: string;
+  workspaceRootPath: string;
   legacyProjectsRootPath: string;
 }> {
   const normalizedOrgId = validatePathSegment(orgId, "org id");
   const organizationRootPath = resolveOrganizationRoot(normalizedOrgId);
   const legacyOrganizationRootPath = resolveLegacyOrganizationRoot(normalizedOrgId);
+  const workspaceRootPath = resolveOrganizationWorkspaceRoot(normalizedOrgId);
   const legacyProjectsRootPath = path.resolve(resolveRudderInstanceRoot(), "projects", normalizedOrgId);
   const removeLegacyOrganizationRoot = legacyOrganizationRootPath === organizationRootPath
     ? []
     : [fs.rm(legacyOrganizationRootPath, { recursive: true, force: true })];
   await Promise.all([
     fs.rm(organizationRootPath, { recursive: true, force: true }),
+    fs.rm(workspaceRootPath, { recursive: true, force: true }),
     ...removeLegacyOrganizationRoot,
     // Best-effort cleanup for legacy pre-org-workspace managed project paths.
     fs.rm(legacyProjectsRootPath, { recursive: true, force: true }),
   ]);
-  return { organizationRootPath, legacyOrganizationRootPath, legacyProjectsRootPath };
+  return { organizationRootPath, legacyOrganizationRootPath, workspaceRootPath, legacyProjectsRootPath };
 }
 
 async function listDirectoryNames(rootPath: string): Promise<string[]> {
@@ -420,6 +541,32 @@ async function directoryExists(rootPath: string): Promise<boolean> {
   }
 }
 
+function errorCode(error: unknown): string | null {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return typeof code === "string" && code.trim().length > 0 ? code : null;
+}
+
+function isPermissionError(error: unknown): boolean {
+  const code = errorCode(error);
+  return code !== null && WORKSPACE_PERMISSION_ERROR_CODES.has(code);
+}
+
+function formatOrganizationWorkspacePermissionMessage(input: {
+  operation: string;
+  code: string | null;
+  legacyRootPath: string;
+  canonicalRootPath: string;
+}): string {
+  const codeSuffix = input.code ? ` (${input.code})` : "";
+  return [
+    `Rudder could not ${input.operation} the organization workspace to the Documents workspace location${codeSuffix}.`,
+    `Source: ${input.legacyRootPath}.`,
+    `Target: ${input.canonicalRootPath}.`,
+    "This usually means the target folder is not writable or the operating system blocked access.",
+    "Grant Rudder permission to access Documents, choose a writable folder with RUDDER_ORGANIZATION_WORKSPACE_HOME, or on Windows try running Rudder as administrator if the folder policy requires it.",
+  ].join(" ");
+}
+
 async function lstatIfExists(targetPath: string) {
   try {
     return await fs.lstat(targetPath);
@@ -431,6 +578,23 @@ async function lstatIfExists(targetPath: string) {
   }
 }
 
+async function movePath(sourcePath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.rename(sourcePath, targetPath);
+    return;
+  } catch (error) {
+    if (errorCode(error) !== "EXDEV") throw error;
+  }
+
+  await fs.cp(sourcePath, targetPath, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+    preserveTimestamps: true,
+  });
+  await fs.rm(sourcePath, { recursive: true, force: false });
+}
+
 async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): Promise<void> {
   await fs.mkdir(targetRoot, { recursive: true });
   const entries = await fs.readdir(sourceRoot, { withFileTypes: true });
@@ -440,7 +604,7 @@ async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): P
     const targetPath = path.join(targetRoot, entry.name);
     const targetStat = await lstatIfExists(targetPath);
     if (!targetStat) {
-      await fs.rename(sourcePath, targetPath);
+      await movePath(sourcePath, targetPath);
       continue;
     }
     if (entry.isDirectory() && targetStat.isDirectory()) {
@@ -476,6 +640,7 @@ export async function pruneOrphanedOrganizationStorage(
   liveOrgIds: readonly string[],
 ): Promise<{
   removedOrganizationDirNames: string[];
+  removedWorkspaceDirNames: string[];
   removedLegacyProjectDirNames: string[];
   removedLegacyProjectsRoot: boolean;
 }> {
@@ -505,6 +670,7 @@ export async function pruneOrphanedOrganizationStorage(
 
   return {
     removedOrganizationDirNames,
+    removedWorkspaceDirNames: [],
     removedLegacyProjectDirNames,
     removedLegacyProjectsRoot: legacyProjectsRootExists,
   };
