@@ -1082,6 +1082,93 @@ describe("messengerService and issue follows", () => {
     await expect(messengerSvc.countUnreadIssueThreadEntries(orgId, userId)).resolves.toBe(0);
   });
 
+  it("dismisses all Messenger unread threads for the board user", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-dismiss-unreads";
+    const otherUserId = "board-user-dismiss-unreads-other";
+    const conversationId = randomUUID();
+    const issueId = randomUUID();
+    const readAt = new Date("2026-05-03T10:00:00.000Z");
+    const chatActivityAt = new Date("2026-05-03T10:05:00.000Z");
+    const issueActivityAt = new Date("2026-05-03T10:10:00.000Z");
+    const approvalActivityAt = new Date("2026-05-03T10:15:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Dismiss Unreads Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Dismiss Unreads Org"),
+      issuePrefix: `D${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Dismiss unread chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      lastMessageAt: chatActivityAt,
+      createdAt: readAt,
+      updatedAt: chatActivityAt,
+    });
+    await db.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId,
+      conversationId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Unread assistant reply",
+      createdAt: chatActivityAt,
+      updatedAt: chatActivityAt,
+    });
+    await chatSvc.markRead(conversationId, orgId, userId, readAt);
+    await chatSvc.markRead(conversationId, orgId, otherUserId, readAt);
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Dismiss unread issue",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: userId,
+      identifier: "DISMISS-1",
+      createdAt: issueActivityAt,
+      updatedAt: issueActivityAt,
+    });
+    await db.insert(approvals).values({
+      id: randomUUID(),
+      orgId,
+      type: "chat_issue_creation",
+      requestedByUserId: userId,
+      status: "pending",
+      payload: { proposedIssue: { title: "Dismiss approval unread" } },
+      createdAt: approvalActivityAt,
+      updatedAt: approvalActivityAt,
+    });
+    await messengerSvc.setThreadRead(orgId, userId, "approvals", readAt);
+
+    const before = await messengerSvc.listThreadSummaries(orgId, userId);
+    expect(before.find((item) => item.threadKey === `chat:${conversationId}`)?.unreadCount).toBe(1);
+    expect(before.find((item) => item.threadKey === "issues")?.unreadCount).toBe(1);
+    expect(before.find((item) => item.threadKey === "approvals")?.unreadCount).toBe(1);
+
+    const result = await messengerSvc.dismissUnreadThreads(orgId, userId);
+    expect(result.dismissedThreadKeys.sort()).toEqual([
+      "approvals",
+      `chat:${conversationId}`,
+      "issues",
+    ].sort());
+
+    const after = await messengerSvc.listThreadSummaries(orgId, userId);
+    expect(after.find((item) => item.threadKey === `chat:${conversationId}`)?.unreadCount).toBe(0);
+    expect(after.find((item) => item.threadKey === "issues")?.unreadCount).toBe(0);
+    expect(after.find((item) => item.threadKey === "approvals")?.unreadCount).toBe(0);
+
+    const otherUserAfter = await messengerSvc.listThreadSummaries(orgId, otherUserId);
+    expect(otherUserAfter.find((item) => item.threadKey === `chat:${conversationId}`)?.unreadCount).toBe(1);
+  });
+
   it("allows followed or notified automation execution issues into Messenger while hiding unrelated automation issues", async () => {
     const orgId = randomUUID();
     const userId = "board-user-automation-follow";

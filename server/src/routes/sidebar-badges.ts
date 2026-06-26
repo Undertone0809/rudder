@@ -26,6 +26,12 @@ export function sidebarBadgeRoutes(db: Db) {
       canApproveJoins = await access.hasPermission(orgId, "agent", req.actor.agentId, "joins:approve");
     }
 
+    const boardUserId = req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null;
+    if (boardUserId) {
+      res.json(await svc.getMessengerUnreadCounts(orgId, boardUserId, { includeJoinRequests: canApproveJoins }));
+      return;
+    }
+
     const joinRequestCount = canApproveJoins
       ? await db
         .select({ count: sql<number>`count(*)` })
@@ -34,21 +40,9 @@ export function sidebarBadgeRoutes(db: Db) {
         .then((rows) => Number(rows[0]?.count ?? 0))
       : 0;
 
-    const boardUserId = req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null;
-    const [
-      summary,
-      baseCounts,
-      unreadTouchedIssues,
-      chatAttention,
-    ] = await Promise.all([
+    const [summary, baseCounts] = await Promise.all([
       dashboard.summary(orgId),
       svc.getBaseCounts(orgId),
-      boardUserId
-        ? svc.countUnreadTouchedIssues(orgId, boardUserId)
-        : Promise.resolve(0),
-      boardUserId
-        ? svc.countActiveChatAttention(orgId, boardUserId)
-        : Promise.resolve(0),
     ]);
     const hasFailedRuns = baseCounts.failedRuns > 0;
     const alertsCount =
@@ -56,8 +50,6 @@ export function sidebarBadgeRoutes(db: Db) {
       (summary.costs.monthBudgetCents > 0 && summary.costs.monthUtilizationPercent >= 80 ? 1 : 0);
     const badges = svc.fromCounts(baseCounts, {
       joinRequests: joinRequestCount,
-      unreadTouchedIssues,
-      chatAttention,
       alerts: alertsCount,
     });
 

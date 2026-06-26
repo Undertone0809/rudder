@@ -254,6 +254,13 @@ export function messengerRoutes(db: Db) {
     res.json({ threadKey, lastReadAt: state.lastReadAt });
   });
 
+  router.post("/orgs/:orgId/messenger/unreads/dismiss", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const userId = boardUserId(req);
+    res.json(await svc.dismissUnreadThreads(orgId, userId));
+  });
+
   router.post(
     "/orgs/:orgId/messenger/threads/:threadKey/user-state",
     validate(updateMessengerThreadUserStateSchema),

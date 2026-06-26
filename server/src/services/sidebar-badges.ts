@@ -119,6 +119,32 @@ export function sidebarBadgeService(db: Db) {
       return messengerSvc.countUnreadIssueThreadEntries(orgId, userId);
     },
 
+    getMessengerUnreadCounts: async (
+      orgId: string,
+      userId: string,
+      options: { includeJoinRequests?: boolean } = {},
+    ): Promise<SidebarBadges> => {
+      const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+      const unreadCountFor = (threadKey: string) =>
+        summaries.find((summary) => summary.threadKey === threadKey)?.unreadCount ?? 0;
+      const chatAttention = summaries
+        .filter((summary) => summary.kind === "chat")
+        .reduce((total, summary) => total + Math.max(0, summary.unreadCount), 0);
+
+      return buildBadges(
+        {
+          approvals: unreadCountFor("approvals"),
+          failedRuns: unreadCountFor("failed-runs"),
+        },
+        {
+          joinRequests: options.includeJoinRequests ? unreadCountFor("join-requests") : 0,
+          unreadTouchedIssues: unreadCountFor("issues"),
+          chatAttention,
+          alerts: unreadCountFor("budget-alerts"),
+        },
+      );
+    },
+
     countActiveChatAttention: async (orgId: string, userId: string) => {
       await ensureActiveChatUserStates(orgId, userId);
 

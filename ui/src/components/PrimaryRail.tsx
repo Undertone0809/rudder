@@ -1,4 +1,5 @@
 import { instanceSettingsApi } from "@/api/instanceSettings";
+import { messengerApi } from "@/api/messenger";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,12 +25,13 @@ import { queryKeys } from "@/lib/queryKeys";
 import { NavLink, useLocation, useNavigate } from "@/lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { cn } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   CircleCheckBig,
   FolderKanban,
   Inbox,
+  Inbox as InboxIcon,
   LayoutDashboard,
   LibraryBig,
   MessageCirclePlus,
@@ -43,9 +45,11 @@ import {
 } from "lucide-react";
 import {
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useRef,
+  useState,
 } from "react";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 
@@ -97,6 +101,7 @@ function RailNavItem({
   badgeTestId,
   active,
   onDoubleClick,
+  onContextMenu,
 }: {
   to: string;
   label: string;
@@ -107,6 +112,7 @@ function RailNavItem({
   badgeTestId?: string;
   active?: boolean;
   onDoubleClick?: () => void;
+  onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
 }) {
   return (
     <NavLink
@@ -115,6 +121,7 @@ function RailNavItem({
       data-tour-target={tourTarget}
       data-tour-spotlight={tourTarget ? "compact-rail" : undefined}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       className={({ isActive }) =>
         cn(
           "relative z-10 flex min-h-[56px] w-[var(--primary-rail-item-width,66px)] translate-x-[var(--primary-rail-item-shift,0.25rem)] flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
@@ -161,7 +168,12 @@ export function PrimaryRail({
   const { openNewIssue, openNewAgent, openNewProject } = useDialog();
   const { setSidebarOpen } = useSidebar();
   const { selectedOrganizationId } = useOrganization();
+  const queryClient = useQueryClient();
   const inboxBadge = useInboxBadge(selectedOrganizationId);
+  const [messengerContextMenu, setMessengerContextMenu] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
   const notificationsSettingsQuery = useQuery({
     queryKey: queryKeys.instance.notificationSettings,
     queryFn: () => instanceSettingsApi.getNotifications(),
@@ -248,6 +260,36 @@ export function PrimaryRail({
     setSidebarOpen(true);
     requestMessengerUnreadScroll();
   }, [inboxBadge.inbox, setSidebarOpen]);
+  const dismissUnreadsMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedOrganizationId) {
+        return { dismissedCount: 0, dismissedThreadKeys: [] };
+      }
+      return messengerApi.dismissUnreads(selectedOrganizationId);
+    },
+    onSuccess: async () => {
+      if (!selectedOrganizationId) return;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPreview(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.approvals(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: ["messenger", selectedOrganizationId, "system"] }),
+        queryClient.invalidateQueries({ queryKey: ["chats", selectedOrganizationId] }),
+      ]);
+    },
+  });
+  const handleMessengerContextMenu = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    setMessengerContextMenu({ left: event.clientX, top: event.clientY });
+  }, []);
+  const dismissUnreads = useCallback(() => {
+    if (!selectedOrganizationId || dismissUnreadsMutation.isPending) return;
+    dismissUnreadsMutation.mutate();
+  }, [dismissUnreadsMutation, selectedOrganizationId]);
 
   useEffect(() => {
     if (notificationsSettingsQuery.isLoading) return;
@@ -434,9 +476,44 @@ export function PrimaryRail({
             badgeTestId={item.badgeTestId}
             active={item.active}
             onDoubleClick={item.key === "messenger" ? handleMessengerDoubleClick : undefined}
+            onContextMenu={item.key === "messenger" ? handleMessengerContextMenu : undefined}
           />
         ))}
       </nav>
+
+      <DropdownMenu
+        open={messengerContextMenu !== null}
+        onOpenChange={(open) => {
+          if (!open) setMessengerContextMenu(null);
+        }}
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-hidden="true"
+            tabIndex={-1}
+            className="fixed h-px w-px opacity-0"
+            style={{
+              left: messengerContextMenu?.left ?? -1000,
+              top: messengerContextMenu?.top ?? -1000,
+            }}
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          side="right"
+          align="start"
+          className="glass-popover w-52 text-foreground"
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <DropdownMenuItem
+            disabled={!selectedOrganizationId || dismissUnreadsMutation.isPending || (inboxBadge.inbox ?? 0) <= 0}
+            onClick={dismissUnreads}
+          >
+            <InboxIcon className="h-4 w-4" />
+            Dismiss Unreads
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <Button
         type="button"

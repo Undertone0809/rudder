@@ -495,6 +495,72 @@ test.describe("Messenger unified threads contract", () => {
     await expect.poll(() => isInElementViewport(page, "workspace-sidebar", targetThreadTestIds[0]!)).toBe(true);
   });
 
+  test("right-clicking primary rail Messenger can dismiss unreads", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Rail-Dismiss-${Date.now()}`);
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Rail dismiss unread chat",
+        summary: "Right-clicking Messenger should dismiss this unread thread.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+    const readAt = new Date("2026-06-01T09:00:00.000Z");
+    const messageAt = new Date("2026-06-01T09:05:00.000Z");
+    await e2eDb.insert(chatConversationUserStates).values({
+      orgId: organization.id,
+      conversationId: chat.id,
+      userId: currentUserId,
+      lastReadAt: readAt,
+      updatedAt: readAt,
+    });
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Unread message for rail dismiss",
+      createdAt: messageAt,
+      updatedAt: messageAt,
+    });
+    await e2eDb
+      .update(chatConversations)
+      .set({ lastMessageAt: messageAt, updatedAt: messageAt })
+      .where(eq(chatConversations.id, chat.id));
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
+    await expect(page.getByTestId(chatUnreadBadgeTestId(chat.id))).toBeVisible();
+
+    await page.getByTestId("primary-rail").getByRole("link", { name: "Messenger" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Dismiss Unreads" }).click();
+
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveCount(0);
+    await expect(page.getByTestId(chatUnreadBadgeTestId(chat.id))).toHaveCount(0);
+    await expect.poll(async () => {
+      const rows = await e2eDb
+        .select({ lastReadAt: chatConversationUserStates.lastReadAt })
+        .from(chatConversationUserStates)
+        .where(eq(chatConversationUserStates.conversationId, chat.id));
+      return (rows[0]?.lastReadAt?.getTime() ?? 0) >= messageAt.getTime();
+    }).toBe(true);
+  });
+
   test("archives a Messenger chat from the sidebar and removes it from the thread list", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Archive-${Date.now()}`);
 

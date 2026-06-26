@@ -44,6 +44,11 @@ export const messengerApi = {
       `/orgs/${orgId}/messenger/threads/${encodeURIComponent(threadKey)}/read`,
       lastReadAt ? { lastReadAt } : {},
     ),
+  dismissUnreads: (orgId: string) =>
+    api.post<{ dismissedCount: number; dismissedThreadKeys: string[] }>(
+      `/orgs/${orgId}/messenger/unreads/dismiss`,
+      {},
+    ),
   updateThreadUserState: (
     orgId: string,
     threadKey: string,

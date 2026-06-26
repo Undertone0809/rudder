@@ -36,11 +36,26 @@ const mockState = vi.hoisted(() => ({
   navigate: vi.fn(),
   setSidebarOpen: vi.fn(),
   requestPermission: vi.fn(),
+  dismissUnreads: vi.fn(),
+  invalidateQueries: vi.fn(),
   pathname: "/dashboard",
   primaryRailPaths: {} as Record<string, string>,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+  useMutation: (options: {
+    mutationFn: () => Promise<unknown>;
+    onSuccess?: () => Promise<void> | void;
+  }) => ({
+    mutate: vi.fn(async () => {
+      await options.mutationFn();
+      await options.onSuccess?.();
+    }),
+    isPending: false,
+  }),
+  useQueryClient: () => ({
+    invalidateQueries: mockState.invalidateQueries,
+  }),
   useQuery: () => ({
     data: mockState.notificationSettings,
     isLoading: false,
@@ -63,6 +78,12 @@ vi.mock("@/lib/desktop-notification-permission", () => ({
 vi.mock("@/api/instanceSettings", () => ({
   instanceSettingsApi: {
     getNotifications: vi.fn(),
+  },
+}));
+
+vi.mock("@/api/messenger", () => ({
+  messengerApi: {
+    dismissUnreads: mockState.dismissUnreads,
   },
 }));
 
@@ -140,10 +161,12 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuItem: ({
     children,
     onClick,
+    disabled,
   }: {
     children: ReactNode;
     onClick?: () => void;
-  }) => <button onClick={onClick}>{children}</button>,
+    disabled?: boolean;
+  }) => <button disabled={disabled} onClick={onClick}>{children}</button>,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
@@ -181,6 +204,8 @@ beforeEach(() => {
   mockState.pathname = "/dashboard";
   mockState.primaryRailPaths = {};
   mockState.setSidebarOpen.mockReset();
+  mockState.dismissUnreads.mockResolvedValue({ dismissedCount: 4, dismissedThreadKeys: [] });
+  mockState.invalidateQueries.mockReset();
 });
 
 afterEach(() => {
@@ -388,6 +413,36 @@ describe("PrimaryRail active motion indicator", () => {
     await renderPrimaryRail();
 
     expect(document.querySelector(".rail-create-menu-content")).not.toBeNull();
+  });
+
+  it("dismisses Messenger unreads from the rail context menu and refreshes Messenger caches", async () => {
+    await renderPrimaryRail();
+
+    const messengerLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Messenger"));
+    expect(messengerLink).toBeTruthy();
+
+    await act(async () => {
+      messengerLink!.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 144,
+        clientY: 188,
+      }));
+    });
+
+    const dismissButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Dismiss Unreads"));
+    expect(dismissButton).toBeTruthy();
+
+    await act(async () => {
+      dismissButton!.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.dismissUnreads).toHaveBeenCalledWith("org-1");
+    expect(mockState.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["sidebar-badges", "org-1"] });
+    expect(mockState.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "threads", "preview"] });
   });
 
   it("positions the rail indicator on the active dashboard item", async () => {

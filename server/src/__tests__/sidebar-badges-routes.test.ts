@@ -6,6 +6,7 @@ import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
 
 const mockSidebarBadgeService = vi.hoisted(() => ({
   getBaseCounts: vi.fn(),
+  getMessengerUnreadCounts: vi.fn(),
   countUnreadTouchedIssues: vi.fn(),
   countActiveChatAttention: vi.fn(),
   fromCounts: vi.fn((base, extra = {}) => {
@@ -76,6 +77,18 @@ describe("GET /api/orgs/:orgId/sidebar-badges", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSidebarBadgeService.getBaseCounts.mockResolvedValue({ approvals: 1, failedRuns: 2 });
+    mockSidebarBadgeService.getMessengerUnreadCounts.mockImplementation((_orgId, _userId, options = {}) => {
+      const joinRequests = options.includeJoinRequests ? 1 : 0;
+      return Promise.resolve({
+        inbox: 8 + joinRequests,
+        approvals: 1,
+        failedRuns: 0,
+        joinRequests,
+        unreadTouchedIssues: 3,
+        chatAttention: 4,
+        alerts: 0,
+      });
+    });
     mockSidebarBadgeService.countUnreadTouchedIssues.mockResolvedValue(3);
     mockSidebarBadgeService.countActiveChatAttention.mockResolvedValue(4);
     mockAccessService.canUser.mockResolvedValue(false);
@@ -86,7 +99,7 @@ describe("GET /api/orgs/:orgId/sidebar-badges", () => {
     });
   });
 
-  it("aggregates board-only attention, join approvals, and alerts without changing response shape", async () => {
+  it("uses Messenger read state for board inbox badges without changing response shape", async () => {
     const db = createDb(5);
     const app = createApp({
       type: "board",
@@ -98,20 +111,20 @@ describe("GET /api/orgs/:orgId/sidebar-badges", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      inbox: 16,
+      inbox: 9,
       approvals: 1,
-      failedRuns: 2,
-      joinRequests: 5,
+      failedRuns: 0,
+      joinRequests: 1,
       unreadTouchedIssues: 3,
       chatAttention: 4,
-      alerts: 1,
+      alerts: 0,
     });
-    expect(mockSidebarBadgeService.countUnreadTouchedIssues).toHaveBeenCalledWith("org-1", "user-1");
-    expect(mockSidebarBadgeService.countActiveChatAttention).toHaveBeenCalledWith("org-1", "user-1");
-    expect(mockSidebarBadgeService.fromCounts).toHaveBeenCalledWith(
-      { approvals: 1, failedRuns: 2 },
-      { joinRequests: 5, unreadTouchedIssues: 3, chatAttention: 4, alerts: 1 },
-    );
+    expect(mockSidebarBadgeService.getMessengerUnreadCounts).toHaveBeenCalledWith("org-1", "user-1", {
+      includeJoinRequests: true,
+    });
+    expect(mockSidebarBadgeService.countUnreadTouchedIssues).not.toHaveBeenCalled();
+    expect(mockSidebarBadgeService.countActiveChatAttention).not.toHaveBeenCalled();
+    expect(mockSidebarBadgeService.fromCounts).not.toHaveBeenCalled();
   });
 
   it("does not expose join-request counts to board actors without approval permission", async () => {
@@ -130,6 +143,9 @@ describe("GET /api/orgs/:orgId/sidebar-badges", () => {
     expect(res.body.joinRequests).toBe(0);
     expect(res.body.unreadTouchedIssues).toBe(3);
     expect(res.body.chatAttention).toBe(4);
+    expect(mockSidebarBadgeService.getMessengerUnreadCounts).toHaveBeenCalledWith("org-1", "user-2", {
+      includeJoinRequests: false,
+    });
     expect(mockAccessService.canUser).toHaveBeenCalledWith("org-1", "user-2", "joins:approve");
     expect(db.select).not.toHaveBeenCalled();
   });

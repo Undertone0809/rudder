@@ -2613,6 +2613,27 @@ export function messengerService(db: Db) {
     return row ? ({ lastReadAt: row.lastReadAt } as ThreadReadState) : null;
   }
 
+  async function dismissUnreadThreads(orgId: string, userId: string) {
+    const summaries = await listThreadSummaries(orgId, userId);
+    const unreadSummaries = summaries.filter((summary) => summary.unreadCount > 0);
+    const dismissedThreadKeys: string[] = [];
+
+    for (const summary of unreadSummaries) {
+      const state = await markThreadRead(
+        orgId,
+        userId,
+        summary.threadKey,
+        normalizeDate(summary.latestActivityAt) ?? new Date(),
+      );
+      if (state) dismissedThreadKeys.push(summary.threadKey);
+    }
+
+    return {
+      dismissedCount: dismissedThreadKeys.length,
+      dismissedThreadKeys,
+    };
+  }
+
   async function canUseIssueThread(orgId: string, userId: string, issueId: string) {
     const [row] = await db
       .select({ id: issues.id })
@@ -2704,6 +2725,7 @@ export function messengerService(db: Db) {
     getApprovalsThread,
     getSystemThread,
     getThreadState,
+    dismissUnreadThreads,
     markThreadRead,
     setThreadRead: markThreadRead,
     setThreadPinned,
