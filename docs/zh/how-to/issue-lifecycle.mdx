@@ -36,17 +36,17 @@ canonical: "https://doc.rudder.zeeland.studio/zh/how-to/issue-lifecycle"
 
 好的 backlog 示例：
 
-- “改善 onboarding docs”，但还没有验收标准。
-- “调查为什么截图数据看起来很假。”
-- “也许应该加一个 Calendar 页面”，但还没定义它回答什么用户问题。
+- “调研一个新客户群体”，但还没确定要回答哪些问题。
+- “改善新用户引导”，但还没说明面向谁、怎么算成功。
+- “看一下试用第一周后的流失”，但数据来源还不清楚。
 
 工作已经可以执行时，用 `todo`。
 
 好的 todo 示例：
 
-- “把安装截图命令替换成 `npx @rudderhq/cli@latest start`。”
-- “新增 Calendar 概念页面，解释 run-history 使用场景。”
-- “用非空 agent transcripts 重新生成 docs 截图。”
+- “整理一份竞品简报，覆盖买家最常提到的三个工具。”
+- “为新的分析导出功能写一封发布邮件，并引用一个客户反馈。”
+- “分析上周 support tickets，归类最主要的续费风险。”
 
 ## 什么时候分配执行者
 
@@ -74,19 +74,19 @@ Rudder 有意让一个 issue 只有一个 assignee。如果 Growth、Engineering
 
 适合 reviewer 的工作：
 
-- 公开文档、发布说明、营销文案和 UX copy
-- 影响用户可见流程的代码改动
-- 数据迁移、发布操作和预算敏感工作
-- agent 生成、需要产品判断的 proposal
+- 公开页面、发布文案、客户邮件和销售材料
+- 会影响客户的产品或工程工作
+- 财务、法务、运营或预算敏感工作
+- agent 写出的、团队需要先判断再执行的 proposal
 - `done` 应该表示“结果被接受”，而不是“有人尝试过”
 
 可以不加 reviewer 的工作：
 
 - 低风险记录整理
 - 会变成另一个 issue 的探索笔记
-- 关闭评论已经足够作为证据的小型内部修复
+- 关闭评论已经足够作为证据的小型内部杂务
 
-有输出可以判断时，再把 issue 移到 `in_review`，让 reviewer 留下明确结论。
+加 reviewer 不等于 review 已经开始。等输出可以判断时，再把 issue 移到 `in_review`。一旦进入 review，真正的完成应该有结构化 reviewer 结论。
 
 ## Agent reviewer 如何工作
 
@@ -107,10 +107,10 @@ Assignee 和 reviewer 不会在同一条 issue 上同时执行同一种工作：
 
 适合 agent reviewer 的场景：
 
-- 工程 agent 实现代码改动；QA 或 reviewer agent 检查测试、风险和证据。
-- Docs agent 撰写公开文档；产品 reviewer agent 检查表达清晰度、定位和缺失用例。
-- Release agent 准备版本或 changelog；release reviewer agent 检查命令、产物和回滚风险。
-- 数据或迁移 agent 产出方案；安全 reviewer agent 检查组织边界、不可逆步骤和备份证据。
+- Research agent 准备市场简报；产品 reviewer 检查来源质量和建议是否站得住。
+- Content agent 起草发布邮件；市场 reviewer 检查语气、卖点和目标用户。
+- Engineering agent 实现客户可见流程；QA reviewer 检查证据和边界情况。
+- Finance agent 准备续费风险报告；operator reviewer 检查数据来源后再对外分享。
 
 如果判断依赖业务优先级、客户承诺、法律解释、预算批准，或 agent 不应该持有的凭据，就用人类 reviewer。
 
@@ -127,80 +127,77 @@ Assignee 和 reviewer 不会在同一条 issue 上同时执行同一种工作：
 
 ## 如何阅读下面的用例
 
-下面这些例子来自真实 Rudder 工作场景，已经做过脱敏改写。阅读重点是路由判断：来了什么信号，应该沉淀成哪条 issue，下一步归谁，谁判断结果，以及什么证据可以关闭。
+下面这些例子都是你可能交给 agent team 的普通工作。阅读重点不是模板本身，而是路由判断：来了什么信号，应该沉淀成哪条 issue，下一步归谁，谁判断结果，以及什么证据可以关闭。
 
 | 场景 | 初始信号 | 持久 issue | 执行者 | 评审者 | 关闭证据 |
 | --- | --- | --- | --- | --- | --- |
-| Chat 图片附件 bug | 用户在 transcript 里看到带认证信息的下载命令 | Optimize Chat image attachment handling for Codex runtime | 工程 agent | 人类 reviewer | 修改前后 transcript、runtime handoff 改动、回归测试 |
-| Backlog 唤醒语义 | 评论 mention 了 designer，却唤醒了 engineer assignee | Backlog issue comment should not auto-wakeup assignee | 工程 agent | 控制面 reviewer | backlog 评论、显式 mention、非 backlog issue 的 wakeup 测试 |
-| Agent-to-agent 文档评审 | Docs agent 起草 reviewer 机制说明，但不应该自我接受公开文档质量 | Explain issue reviewer mechanism in public docs | Docs agent | 产品/docs reviewer agent | 文档页面变更、预览或 docs 检查、reviewer 结论 |
-| Chat 结构化提问 | Agent 继续前需要一到三个阻塞性选择 | Add `ask_user` question component to Chat | 工程 agent | 产品 reviewer | 活跃面板、已回答历史、下一轮 assistant turn |
-| 文档站整改 | 官网文档需要 use-case-led 页面和真实截图 | Ship public Rudder docs that explain why and how to use the product | 拆成子 issue | Docs/product reviewer | preview URL、截图、验证命令、剩余风险 |
-| Windows 安装验证 | 安装命令必须在 macOS 之外验证 | Test `npx` install command on Windows with Claude Code | 有 Windows 环境的 owner | Release reviewer | OS 版本、终端输出、截图、命令是否修改 |
+| 市场调研 | 创始人想判断要不要进入一个新客群 | 为前三个买家替代方案整理市场简报 | Research agent | 产品 reviewer | 来源列表、对比表、建议、未解决问题 |
+| 客户反馈 | Sales 转来五条含糊的客户记录 | 把客户记录整理成续费风险主题 | Support 或 analyst agent | 客户负责人 | 主题分组、原始记录链接、建议跟进动作 |
+| 发布内容 | 产品负责人要一封客户邮件 | 为分析导出功能起草发布邮件 | Content agent | 市场 reviewer | 邮件草稿、卖点核对、客户引用来源 |
+| 工程交付 | 产品负责人批准一个小流程改进 | 实现账号导出流程 | Engineering agent | QA reviewer | 预览链接、测试结果、风险说明、交接摘要 |
+| 周报 | Operator 需要周一状态包 | 准备 agent team 周报 | Analyst agent | 人类 operator | 指标、issue 链接、异常、下一步 |
+| 供应商评估 | 团队想评估一个新供应商 | 按安全和预算约束比较供应商 | Operations agent | 财务或安全 reviewer | 供应商对比表、风险说明、建议 |
 
-## 用例：Chat 图片附件 bug
+## 用例：市场调研简报
 
-用户在 Chat 里发了一张截图，然后问：为什么 Codex agent 还要在 transcript 里运行一条可见的 `curl ... Authorization ...` 命令才能读取图片？这是具体的信任问题：transcript 暴露了实现细节，让用户觉得 agent 原生看不了图。
+创始人问：“我们应该先做小型 agency，还是继续服务内部团队？” 这个问题太大，不能直接丢给 agent 执行。先放进 `backlog`，把问题收窄到一次 research 能回答的范围。
 
-1. 把 Chat 反馈沉淀成 bug issue：“Optimize Chat image attachment handling for Codex runtime”。
-2. 只有在证据还没收集完时，才放在 `backlog`：截图、受影响 runtime、当前 prompt、失败的用户旅程。
-3. 期望行为清楚后移到 `todo`：图片附件应该先由 Rudder 准备给 runtime，用户可见 transcript 里不应该出现带认证信息的下载命令。
-4. 分配一个工程 agent，因为下一步会跨 server prompt、runtime handoff 和测试。
-5. 加 reviewer，因为这会改变用户可见 Chat 流程和 transcript 隐私预期。
-6. 只有当 issue 里有证据时才进 `in_review`：prompt 行为、runtime bridge、transcript 截图，以及证明原始下载命令已经消失的测试。
-7. Reviewer 接受行为和证据质量后，才能关闭为 `done`。
+1. 创建 issue：“Prepare a market brief for small-agency buyers”。
+2. 在客群、竞品名单和决策目标还没定清楚前，保持 `backlog`。
+3. 当输入足够清楚后移到 `todo`：目标买家、三个竞品、预算范围和截止日期。
+4. 分配给 research agent。不要把产品负责人也塞进同一条 issue 当共同 assignee。
+5. 加产品 reviewer，因为关闭这件事靠判断，不只是收集链接。
+6. Agent 附上来源、简短对比表、建议和未解决问题后，移到 `in_review`。
+7. Reviewer 接受证据后再关闭。如果 research 还有缺口，就创建 follow-up issue。
 
-## 用例：Backlog 评论唤醒了错误 agent
+## 用例：客户反馈整理
 
-一个 backlog issue 已经挂着 engineer assignee。Operator 评论时只 mention 了 designer，但 engineer 也被唤醒开始运行。这里已经破坏了 `backlog` 的含义，不只是多发了一条通知。
+Sales lead 在 Chat 里丢进五条客户记录。有些是功能请求，有些是续费风险，也有些只是噪音。合适的 issue 不是“回复每条记录”，而是“把这些记录整理成能支持判断的摘要”。
 
-1. 创建高优先级 bug issue：“Backlog issue comment should not auto-wakeup assignee”。
-2. 原来的 backlog issue 只作为证据，不要直接在那里面修。
-3. 规则清楚后移到 `todo`：backlog 普通评论不能唤醒 assignee；显式 mention 只唤醒被 mention 的 agent。
-4. 分配给负责 wakeup 语义的工程 agent。
-5. 加 reviewer，因为它影响“agent 什么时候允许开始运行”的控制面不变量。
-6. 只有在复现无法确认，或状态语义还没决定时，才使用 `blocked`。
-7. 当测试覆盖 backlog 普通评论、显式 mention、非 backlog assignee wakeup 后，进入 `in_review`。
+1. 创建 issue：“Group customer notes into renewal-risk themes”。
+2. 如果记录缺少客户名、日期或来源链接，先放在 `backlog`。
+3. 当 agent 拿到原始记录和输出格式后，移到 `todo`。
+4. 分配给 support 或 analyst agent，让它归类记录并标出不清楚的地方。
+5. 加客户负责人做 reviewer，因为他们知道哪些账号真的重要。
+6. 如果 agent 缺 CRM 权限或需要还没分享的 transcript，用 `blocked`。
+7. 当 issue 包含主题分组、原始记录链接和建议跟进动作时，移到 `in_review`。
 
-## 用例：Chat 需要结构化提问组件
+## 用例：发布邮件
 
-Operator 希望 Chat 像 Codex 一样，在缺少关键决策时弹出一到三个结构化问题，让用户选择后继续。产品决策很具体：只使用一个持久化 kind，`ask_user`，不要同时出现 `ask_user` 和 `user_input_request` 两套命名。
+产品负责人想发一封邮件，宣布新的分析导出功能。只要 issue 里写清楚受众、功能、素材和不能乱说的边界，这就是很适合 agent 做的工作。
 
 ![Chat issue 提案](../../images/chat-create-issue-proposal.png)
 
-1. 产品契约还没定时先放 `backlog`：payload 结构、未回答状态、历史显示方式、非目标。
-2. 验收标准足够具体后，移到 `todo`。
-3. 分配一个工程 agent，因为 schema、server 解析和 UI 渲染需要一致落地。
-4. 加人类 reviewer，因为这是用户交互行为，不只是代码管道。
-5. 活跃面板、已回答历史状态、后续 assistant turn 都能看到时，移到 `in_review`。
-6. Reviewer 接受 UX 后再关闭：这个组件应该只在缺少阻塞性决策时出现，而不是把所有普通澄清都组件化。
+1. 受众和素材还模糊时，放在 `backlog`。
+2. brief 写清楚受众、功能、证明点和截止日期后，移到 `todo`。
+3. 分配给 content agent 起草邮件。
+4. 加市场 reviewer，检查语气、客户主张和邮件希望读者采取的动作。
+5. 草稿、标题选项和来源链接都贴到 issue 后，移到 `in_review`。
+6. 如果 reviewer 要求修改，把 feedback 留在 issue 上，再交回 assignee。不能因为“已经有一版草稿”就关掉。
 
-## 用例：带截图的文档站整改
+## 用例：带 QA review 的工程交付
 
-需求是搭建公开官网文档：双语导航、结合用例的讲解、产品截图。它应该是一个 parent issue，而不是一个巨大的单 assignee issue。
+产品负责人批准了一个小流程改进，比如增加账号导出按钮。Issue 应该描述用户结果、约束和 review 需要看到的证据。
 
-1. Parent issue 只描述最终结果：“ship public Rudder docs that explain why and how to use the product”。
-2. 拆成可以独立关闭的子 issue：
-   - 内容结构和双语文档
-   - 英文产品截图
-   - 导航和下一步链接
-   - 视觉 QA 和 broken-link 验证
-3. 每个子 issue 只有一个 owner。不要把 writer、截图生产者、QA reviewer 都塞到同一个 issue 里当共同 assignee。
-4. 需要判断质量的地方加 reviewer：公开定位、截图质量、Mintlify 导航。
-5. 子 issue 都有关闭证据后，parent 才进入 `in_review`。
-6. 最终 docs preview、截图、验证命令和剩余风险都链接回 parent 后，再关闭 parent。
+1. 预期行为、影响页面和验收标准清楚后，放进 `todo`。
+2. 分配给一个 engineering agent。如果设计、后端和 QA 都要分头推进，就拆成子 issue。
+3. 加 QA reviewer，因为结果会影响客户可见流程。
+4. 如果 assignee 缺凭据、样例数据或产品决策，用 `blocked`。
+5. 有预览链接、测试结果和变更说明后，移到 `in_review`。
+6. Reviewer 接受行为和证据后，再关闭为 `done`。
 
 ![Calendar 工作历史](../../images/calendar-work-history.png)
 
-## 用例：Windows 安装验证
+## 用例：周报
 
-issue 内容是：“在 Windows 下测试 `npx` 安装命令，并用 Claude Code 跑起来。” 这件事很具体，但不应该自动分配给本地 macOS agent。
+Operator 想要一份周一报告，说明 agent team 完成了什么、卡在哪里、哪些地方需要人做决定。这应该是一条可重复的 issue，而不是一次聊完就消失的 Chat 请求。
 
-1. 测试命令和期望结果已知时，可以放进 `todo`。
-2. 只有当某个人或 agent 真有 Windows 环境时，才分配执行者。
-3. 如果没有合适 runtime，就保持未分配或分配给人类 owner。
-4. 缺少 Windows 机器、凭据或安装包时，移到 `blocked`。
-5. 关闭证据要包含：终端输出、OS 版本、实际命令、失败截图（如果有），以及 docs 命令是否需要修改。
+1. 报告时间窗口和读者明确后，放进 `todo`。
+2. 分配给能读取相关 issues、runs 和指标的 analyst agent。
+3. 如果报告要发给直接团队之外的人，加人类 reviewer。
+4. 如果报告依赖 agent 读不到的指标或来源，用 `blocked`。
+5. 报告包含已完成工作、卡住的工作、异常和建议下一步后，移到 `in_review`。
+6. Reviewer 接受报告后关闭。如果报告暴露出需要决策的问题，就创建 follow-up issues。
 
 ## 关闭前检查
 

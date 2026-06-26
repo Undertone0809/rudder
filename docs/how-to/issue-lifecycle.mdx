@@ -1,6 +1,6 @@
 ---
-title: "How To Run An Issue From Intake To Done"
-description: "A practical Rudder guide for moving AI agent work from chat intake to backlog, todo, assignment, execution, review, evidence, and done."
+title: "Run an issue from intake to done"
+description: "A practical Rudder guide for moving agent work from intake to backlog, todo, assignment, execution, review, evidence, and done."
 icon: "route"
 keywords:
   - "AI agent issue lifecycle"
@@ -39,17 +39,17 @@ Use `backlog` when the issue is a real idea but still needs shaping.
 
 Good backlog examples:
 
-- "Improve onboarding docs" without acceptance criteria.
-- "Investigate why screenshot data feels fake."
-- "Maybe add a Calendar page" before deciding what user question it answers.
+- "Research a new customer segment" before you know which questions matter.
+- "Improve our onboarding sequence" without naming the audience or success metric.
+- "Look into churn after trial week one" before the data source is clear.
 
 Use `todo` when the work is ready to execute.
 
 Good todo examples:
 
-- "Replace installation screenshot command with `npx @rudderhq/cli@latest start`."
-- "Add a Calendar concept page explaining run-history use cases."
-- "Regenerate docs screenshots with non-empty agent transcripts."
+- "Prepare a competitor brief for the three tools our buyers mention most."
+- "Draft a launch email for the new analytics export and include one customer quote."
+- "Analyze last week's support tickets and group the top renewal risks."
 
 ## When to assign
 
@@ -77,19 +77,19 @@ Add a reviewer when closing the issue requires independent judgment.
 
 Use a reviewer for:
 
-- public docs, release notes, marketing copy, and UX copy
-- code changes that affect user-visible workflows
-- data migrations, release operations, and budget-sensitive work
-- agent-generated proposals that need product judgment
+- public pages, launch copy, customer emails, and sales material
+- product or engineering work that affects customers
+- financial, legal, operational, or budget-sensitive work
+- agent-written proposals that need judgment before the team acts on them
 - work where "done" should mean "accepted," not only "attempted"
 
 Skip a reviewer for:
 
 - low-risk bookkeeping
 - exploratory notes that will become another issue
-- tiny internal fixes where the close-out comment is enough evidence
+- small internal chores where the close-out comment is enough evidence
 
-Reviewer is issue-level routing metadata. It is not an approval gate by itself. Move the issue to `in_review` when there is output to judge.
+Adding a reviewer does not start review by itself. Move the issue to `in_review` when there is output to judge. Once review is required, accepted work needs a structured reviewer decision before it should be treated as done.
 
 ## How agent reviewers work
 
@@ -115,10 +115,10 @@ into a follow-up issue.
 
 Good agent reviewer use cases:
 
-- Engineering agent implements a code change; QA or reviewer agent checks tests, risk, and evidence.
-- Docs agent writes public documentation; product reviewer agent checks clarity, positioning, and missing use cases.
-- Release agent prepares a version or changelog; release reviewer agent checks commands, artifacts, and rollback risk.
-- Data or migration agent produces a plan; safety reviewer agent checks organization scope, irreversible steps, and backup evidence.
+- Research agent prepares a market brief; product reviewer checks source quality and the recommendation.
+- Content agent drafts a launch email; marketing reviewer checks voice, claims, and audience fit.
+- Engineering agent implements a customer-facing workflow; QA reviewer checks evidence and edge cases.
+- Finance agent prepares a renewal-risk report; operator reviewer checks source data before sharing it.
 
 Use a human reviewer instead when the decision depends on business priority,
 customer commitment, legal interpretation, budget approval, or credentials that
@@ -137,80 +137,77 @@ agents should not hold.
 
 ## How to read the use cases
 
-The examples below are not abstract task-board templates. They are sanitized from real Rudder operator work and rewritten as public English demo data. Read each one as an issue-routing decision: what signal arrived, what durable issue should exist, who owns the next step, who judges the result, and what evidence closes the loop.
+The examples below are ordinary work you might hand to an agent team. Read each one as a routing decision: what came in, what issue should exist, who owns the next step, who judges the result, and what evidence closes the loop.
 
 | Scenario | Intake signal | Durable issue | Assignee | Reviewer | Close-out evidence |
 | --- | --- | --- | --- | --- | --- |
-| Chat image attachment bug | User sees an auth-bearing download command in transcript | Optimize Chat image attachment handling for Codex runtime | Engineering agent | Human/operator reviewer | transcript before/after, runtime handoff change, regression test |
-| Backlog wakeup semantics | Comment mentions a designer but wakes the engineer assignee | Backlog issue comment should not auto-wakeup assignee | Engineering agent | Control-plane reviewer | wakeup tests for backlog comments, mentions, and non-backlog work |
-| Agent-to-agent docs review | Docs agent drafts reviewer guidance but should not self-accept public docs quality | Explain issue reviewer mechanism in public docs | Docs agent | Product/docs reviewer agent | changed docs pages, rendered preview or docs check, reviewer decision |
-| Structured Chat question | Agent needs one to three blocking choices before continuing | Add `ask_user` question component to Chat | Engineering agent | Product reviewer | active panel, answered history, next assistant turn |
-| Docs remediation | Public docs need use-case-led pages and real screenshots | Ship public Rudder docs that explain why and how to use the product | Split child issues | Docs/product reviewer | preview URL, screenshots, validation commands, remaining risks |
-| Windows install smoke | Installation command must be verified outside macOS | Test `npx` install command on Windows with Claude Code | Windows-capable owner | Release reviewer | OS version, terminal output, screenshot, command decision |
+| Market research | Founder asks whether to enter a new segment | Prepare a market brief for the top three buyer alternatives | Research agent | Product reviewer | source list, comparison table, recommendation, open questions |
+| Customer feedback | Sales shares five confusing customer notes | Turn customer notes into renewal-risk themes | Support or analyst agent | Customer lead | grouped themes, linked notes, suggested follow-ups |
+| Launch content | Product lead asks for a customer email | Draft launch email for the analytics export | Content agent | Marketing reviewer | email draft, claims checklist, customer quote source |
+| Engineering delivery | Product owner approves a small workflow improvement | Implement the account export workflow | Engineering agent | QA reviewer | preview link, test result, risk notes, handoff summary |
+| Weekly reporting | Operator needs a Monday status packet | Prepare the weekly agent-work report | Analyst agent | Human operator | metrics, issue links, exceptions, next actions |
+| Procurement review | Team wants to evaluate a new vendor | Compare vendor options against security and budget constraints | Operations agent | Finance or security reviewer | vendor table, risk notes, recommendation |
 
-## Use case: image attachment bug in Chat
+## Use case: market research brief
 
-A user sends a screenshot in Chat and asks why the Codex-backed agent has to run a visible `curl ... Authorization ...` command before it can inspect the image. This is not "improve Chat attachments." It is a concrete trust bug: the transcript exposes implementation details and makes image handling feel broken.
+A founder asks, "Should we build for small agencies first, or keep focusing on internal teams?" That is too broad for immediate execution. Start in `backlog` until the question is narrow enough for one research pass.
 
-1. Capture the Chat report as a bug issue: "Optimize Chat image attachment handling for Codex runtime."
-2. Keep it in `backlog` only while evidence is being gathered: the screenshot, affected runtime, current prompt text, and the failing user journey.
-3. Move it to `todo` once the desired behavior is explicit: image attachments should be materialized for the runtime without showing auth-bearing download commands in user-visible transcript.
-4. Assign one engineering agent because the next step touches server prompt construction, runtime handoff, and tests.
-5. Add a reviewer because the fix changes a visible Chat workflow and the transcript privacy expectation.
-6. Move to `in_review` only when the issue contains evidence: changed prompt behavior, runtime bridge behavior, transcript screenshot, and tests proving the raw download command is gone.
-7. Close as `done` after the reviewer accepts both behavior and evidence quality.
+1. Create an issue called "Prepare a market brief for small-agency buyers."
+2. Keep it in `backlog` while you decide the segment, the competitors to compare, and the decision the brief should support.
+3. Move it to `todo` once the assignee can work from clear inputs: target buyer, three competitor names, budget range, and due date.
+4. Assign a research agent. Do not also assign the product lead to the same issue.
+5. Add a product reviewer because the close-out depends on judgment, not just collecting links.
+6. Move to `in_review` when the agent has attached sources, a short comparison table, a recommendation, and open questions.
+7. Close as `done` only after the reviewer accepts the evidence or creates follow-up issues for missing research.
 
-## Use case: backlog comment wakes the wrong agent
+## Use case: customer feedback triage
 
-A backlog issue already has an engineer listed as assignee. The operator comments and mentions a designer, but the engineer also wakes up and starts running. The bug is not just a notification problem; it breaks the meaning of `backlog`.
+A sales lead drops five customer notes into Chat. Some are feature requests, some are renewal risks, and some are just noisy. The right issue is not "answer every note." It is "turn these notes into a decision-ready summary."
 
-1. Create a high-priority bug issue: "Backlog issue comment should not auto-wakeup assignee."
-2. Keep the original backlog issue as evidence, not as the place to run the fix.
-3. Move the fix issue to `todo` after the rule is clear: a normal backlog comment must not wake the assignee; an explicit mention should wake only the mentioned agent.
-4. Assign the engineering agent who owns wakeup semantics.
-5. Add a reviewer because the change affects the control-plane invariant for when agents are allowed to run.
-6. Use `blocked` only if the reproduction cannot be confirmed or the desired status semantics are undecided.
-7. Use `in_review` when tests cover backlog comments, explicit mentions, and non-backlog assignee wakeups.
+1. Create an issue called "Group customer notes into renewal-risk themes."
+2. Use `backlog` if the notes are missing account names, dates, or source links.
+3. Move to `todo` when the agent has the notes and the expected output format.
+4. Assign a support or analyst agent to group the notes and flag unclear items.
+5. Add the customer lead as reviewer because they know which accounts matter.
+6. Use `blocked` if the agent needs access to the CRM or a transcript that has not been shared.
+7. Move to `in_review` when the issue has grouped themes, linked notes, and suggested follow-ups.
 
-## Use case: Chat needs a structured question component
+## Use case: launch email
 
-The operator asks for a Codex-like interaction where the assistant can ask one to three structured questions before continuing. The product decision is specific: use one persisted kind, `ask_user`, not two competing names such as `ask_user` and `user_input_request`.
+The product lead wants an email announcing a new analytics export. This is a good agent task if the issue includes the audience, the feature, the source material, and the claim boundaries.
 
 ![Chat issue proposal](../images/chat-create-issue-proposal.png)
 
-1. Start in `backlog` while the product contract is being decided: payload shape, active unanswered state, history display, and non-goals.
-2. Move to `todo` when the acceptance criteria are concrete enough for implementation.
-3. Assign one engineering agent because schema, server parsing, and UI rendering need to land coherently.
-4. Add a human reviewer because the issue defines user-facing interaction behavior, not only code plumbing.
-5. Move to `in_review` when the active panel, answered history state, and follow-up assistant turn are visible.
-6. Do not close until the reviewer accepts the UX: the component should appear only when a blocking decision is missing, not for every casual clarification.
+1. Put the issue in `backlog` while the audience and source material are still vague.
+2. Move it to `todo` when the brief names the audience, the feature, the proof point, and the deadline.
+3. Assign a content agent to draft the email.
+4. Add a marketing reviewer to check voice, customer claims, and whether the email asks for the right action.
+5. Move to `in_review` when the draft, subject line options, and source links are attached.
+6. If the reviewer requests changes, keep the feedback on the issue and send it back to the assignee. Do not close the issue just because a draft exists.
 
-## Use case: docs site remediation with screenshots
+## Use case: engineering delivery with QA review
 
-The request is to build a public docs site with bilingual navigation, use-case-led explanations, and product screenshots. Treat this as a parent issue, not one giant assignee-owned task.
+A product owner approves a small workflow improvement, such as adding an account export button. The issue should describe the user result, the constraints, and the evidence needed for review.
 
-1. Keep the parent issue focused on the outcome: "ship public Rudder docs that explain why and how to use the product."
-2. Create sub-issues for independent work:
-   - content structure and bilingual docs
-   - English product screenshots
-   - navigation and next-step links
-   - visual QA and broken-link validation
-3. Assign each sub-issue to one owner. Do not put writer, screenshot producer, and QA reviewer on the same issue as co-assignees.
-4. Add reviewers where judgment matters: public positioning, screenshot quality, and Mintlify navigation.
-5. Use `in_review` for the parent only after the child issues have close-out evidence.
-6. Close the parent when the final docs preview, screenshots, validation commands, and remaining risks are all linked back to it.
+1. Put the work in `todo` once the expected behavior, affected surface, and acceptance criteria are clear.
+2. Assign one engineering agent. If design, backend, and QA all need separate work, create child issues.
+3. Add a QA reviewer because the result affects a customer-facing workflow.
+4. Move to `blocked` if the assignee needs credentials, sample data, or a product decision before implementation can continue.
+5. Move to `in_review` when the issue has a preview link, test result, and short note about what changed.
+6. Close as `done` after the reviewer accepts the behavior and the evidence.
 
 ![Calendar work history](../images/calendar-work-history.png)
 
-## Use case: Windows installation smoke test
+## Use case: weekly report
 
-The issue says: "Test the `npx` install command on Windows with Claude Code." This is concrete, but it should not be auto-assigned to a local macOS agent.
+The operator wants a Monday report covering what the agent team finished, what is stuck, and what needs a decision. This should be a repeatable issue, not a loose chat request that disappears after one answer.
 
-1. Put it in `todo` if the test command and expected result are known.
-2. Assign it to a human or a Windows-capable agent only when that owner actually has the environment.
-3. Leave it unassigned or human-owned if no suitable runtime is available.
-4. Move to `blocked` if the missing piece is access to a Windows machine, credentials, or installer artifact.
-5. Close with evidence: terminal output, OS version, command used, failure screenshot if any, and whether the docs command needs to change.
+1. Put the issue in `todo` when the reporting window and audience are known.
+2. Assign an analyst agent that can read the relevant issues, runs, and metrics.
+3. Add a human reviewer if the report will be shared outside the immediate team.
+4. Use `blocked` if the report depends on a metric or source the agent cannot access.
+5. Move to `in_review` when the report includes completed work, stuck work, exceptions, and proposed next actions.
+6. Close after the reviewer accepts the report or creates follow-up issues for the decisions it surfaced.
 
 ## Close-out checklist
 
