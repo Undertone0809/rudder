@@ -1113,9 +1113,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
     await fs.mkdir(sharedCodexHome, { recursive: true });
     await fs.mkdir(managedCodexHome, { recursive: true });
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
-    await fs.writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
     await fs.writeFile(
-      path.join(managedCodexHome, "config.toml"),
+      path.join(sharedCodexHome, "config.toml"),
       [
         'model = "gpt-5.4"',
         "",

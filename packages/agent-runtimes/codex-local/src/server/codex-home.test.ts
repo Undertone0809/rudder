@@ -63,4 +63,73 @@ describe("managed Codex home config sync", () => {
 
     expect(config).toContain('service_tier = "fast"');
   });
+
+  it("refreshes managed config from the shared Codex config instead of keeping stale provider settings", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-home-refresh-"));
+    tempRoots.push(root);
+
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const sharedConfigPath = path.join(sharedCodexHome, "config.toml");
+    const env = {
+      CODEX_HOME: sharedCodexHome,
+      RUDDER_HOME: path.join(root, "rudder-home"),
+      RUDDER_INSTANCE_ID: "prod-local-test",
+    };
+    const logs: string[] = [];
+
+    await mkdir(sharedCodexHome, { recursive: true });
+    await writeFile(sharedConfigPath, [
+      'model_provider = "custom"',
+      'model = "gpt-5.5"',
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      'base_url = "https://sub.zeeland.studio/backend-api/codex"',
+      'wire_api = "responses"',
+      "",
+    ].join("\n"), "utf8");
+
+    const codexHome = await prepareManagedCodexHome(
+      env,
+      async (_stream, chunk) => {
+        logs.push(chunk);
+      },
+      "org-1",
+      "agent-1",
+    );
+    const initialConfig = await readFile(path.join(codexHome, "config.toml"), "utf8");
+    expect(initialConfig).toContain('base_url = "https://sub.zeeland.studio/backend-api/codex"');
+
+    await writeFile(path.join(codexHome, "config.toml"), [
+      'model_provider = "stale"',
+      'model = "gpt-5.5"',
+      "",
+      "[model_providers.stale]",
+      'base_url = "https://stale.example.invalid"',
+      "",
+    ].join("\n"), "utf8");
+
+    await writeFile(sharedConfigPath, [
+      'model = "gpt-5.5"',
+      'service_tier = "default"',
+      "",
+    ].join("\n"), "utf8");
+
+    await prepareManagedCodexHome(
+      env,
+      async (_stream, chunk) => {
+        logs.push(chunk);
+      },
+      "org-1",
+      "agent-1",
+    );
+
+    const refreshedConfig = await readFile(path.join(codexHome, "config.toml"), "utf8");
+    expect(refreshedConfig).not.toContain("sub.zeeland.studio");
+    expect(refreshedConfig).not.toContain("stale.example.invalid");
+    expect(refreshedConfig).not.toContain('model_provider = "custom"');
+    expect(refreshedConfig).not.toContain('model_provider = "stale"');
+    expect(refreshedConfig).not.toContain("service_tier");
+    expect(refreshedConfig).toContain('model = "gpt-5.5"');
+  });
 });

@@ -476,8 +476,14 @@ async function syncManagedCodexConfigToml(
   isolationSurface: CodexSkillIsolationSurface = { disabledSkillPaths: [] },
 ): Promise<void> {
   const existingTarget = await fs.lstat(target).catch(() => null);
-  const sourceContent = await fs.readFile(source, "utf8").catch(() => "");
-  const rawContent = existingTarget ? await fs.readFile(target, "utf8") : sourceContent;
+  const existingTargetContent = existingTarget ? await fs.readFile(target, "utf8") : null;
+  const sourceExists = await pathExists(source);
+  // The managed home is derived from the operator's current Codex config; do not preserve stale provider/auth settings.
+  const rawContent = sourceExists
+    ? await fs.readFile(source, "utf8")
+    : existingTargetContent !== null
+      ? existingTargetContent
+      : "";
   const withoutLegacyMarkers = rawContent
     .split(/\r?\n/)
     .filter((line) => !LEGACY_RUDDER_MANAGED_SKILLS_MARKERS.has(line.trim()))
@@ -490,7 +496,7 @@ async function syncManagedCodexConfigToml(
   const mergedContent = [baseContent, disabledSkillConfigEntries].filter((part) => part.length > 0).join("\n\n");
   const nextContent = mergedContent.length > 0 ? `${mergedContent}\n` : "";
 
-  if (!existingTarget || nextContent !== rawContent) {
+  if (existingTargetContent === null || nextContent !== existingTargetContent) {
     await ensureParentDir(target);
     await fs.writeFile(target, nextContent, "utf8");
   }
