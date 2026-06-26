@@ -35,6 +35,16 @@ async function computedBorderRadius(locator: Locator) {
   return locator.evaluate((element) => getComputedStyle(element).borderRadius);
 }
 
+async function addExternalProjectResource(dialog: Locator) {
+  const addResourcesButton = dialog.getByRole("button", { name: "Add resources" });
+  const createExternalResourceAction = dialog.getByRole("button", { name: /Create external resource/ });
+  await expect(async () => {
+    await addResourcesButton.click({ force: true });
+    await expect(createExternalResourceAction).toBeVisible({ timeout: 1_000 });
+  }).toPass();
+  await createExternalResourceAction.click();
+}
+
 function parseRgbChannels(value: string): [number, number, number] {
   const match = value.match(/\d+(?:\.\d+)?/g);
   if (!match || match.length < 3) {
@@ -253,12 +263,7 @@ test.describe("Primary rail create menu", () => {
     await expect(page.getByText(resourceHelpText)).toBeVisible();
 
     const addResourcesButton = dialog.getByRole("button", { name: "Add resources" });
-    const createExternalResourceAction = page.getByRole("button", { name: /Create external resource/ });
-    await expect(async () => {
-      await addResourcesButton.click({ force: true });
-      await expect(createExternalResourceAction).toBeVisible({ timeout: 1_000 });
-    }).toPass();
-    await createExternalResourceAction.click();
+    await addExternalProjectResource(dialog);
 
     const sharedControlRadius = await computedBorderRadius(addResourcesButton);
     const resourceNameInput = dialog.getByPlaceholder("Rudder repo");
@@ -318,6 +323,76 @@ test.describe("Primary rail create menu", () => {
     expect(detailRes.ok()).toBe(true);
     const detail = await detailRes.json() as { resources: Array<{ resource: { name: string } }> };
     expect(detail.resources.map((attachment) => attachment.resource.name)).toEqual(["Rudder repo"]);
+  });
+
+  test("keeps project creation actions reachable after adding multiple external resources", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1200, height: 760 });
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `PrimaryRail-Project-Resource-Overflow-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Create" }).click();
+    await page.getByRole("menuitem", { name: "Create new project" }).click();
+
+    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New project") }).first();
+    await expect(dialog).toBeVisible();
+    await dialog.getByPlaceholder("Project name").fill("Multi Resource Project");
+
+    await addExternalProjectResource(dialog);
+    await addExternalProjectResource(dialog);
+
+    const resourceNameInputs = dialog.getByPlaceholder("Rudder repo");
+    const resourceLocatorInputs = dialog.getByPlaceholder("~/projects/rudder or https://linear.app/acme/project/...");
+    await expect(resourceNameInputs).toHaveCount(2);
+    await resourceNameInputs.nth(0).fill("Rudder repo");
+    await resourceLocatorInputs.nth(0).fill("~/projects/rudder");
+    await resourceNameInputs.nth(1).fill("Company records");
+    await resourceLocatorInputs.nth(1).fill("~/projects/foundria/company-records");
+
+    const createProjectButton = dialog.getByRole("button", { name: "Create project" });
+    await expect(createProjectButton).toBeVisible();
+    await expect(createProjectButton).toBeEnabled();
+
+    const [dialogBox, buttonBox, viewportSize] = await Promise.all([
+      dialog.boundingBox(),
+      createProjectButton.boundingBox(),
+      page.viewportSize(),
+    ]);
+    expect(dialogBox).not.toBeNull();
+    expect(buttonBox).not.toBeNull();
+    expect(viewportSize).not.toBeNull();
+    expect(buttonBox!.y + buttonBox!.height).toBeLessThanOrEqual(viewportSize!.height);
+    expect(buttonBox!.y + buttonBox!.height).toBeLessThanOrEqual(dialogBox!.y + dialogBox!.height + 1);
+
+    await page.screenshot({
+      path: testInfo.outputPath("new-project-multiple-resources-footer.png"),
+      fullPage: true,
+    });
+
+    const createResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().includes(`/api/orgs/${organization.id}/projects`)
+      && response.ok(),
+    );
+    await createProjectButton.click();
+    const created = await (await createResponse).json() as {
+      resources: Array<{ resource: { name: string; locator: string } }>;
+    };
+
+    expect(created.resources.map((attachment) => attachment.resource.name)).toEqual([
+      "Rudder repo",
+      "Company records",
+    ]);
   });
 
   test("creates a project with a Library file attached as a path-based library resource", async ({ page }) => {

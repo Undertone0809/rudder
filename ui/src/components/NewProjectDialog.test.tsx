@@ -96,7 +96,11 @@ vi.mock("./MarkdownEditor", () => ({
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ open, children }: { open: boolean; children: ReactNode }) => (open ? <div>{children}</div> : null),
-  DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogContent: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <div className={className} data-slot="dialog-content">
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock("@/components/ui/popover", () => ({
@@ -210,6 +214,22 @@ describe("NewProjectDialog", () => {
     expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
     expect(scrollRegion?.className).toContain("overflow-y-auto");
     expect(scrollRegion?.className).toContain("overscroll-contain");
+  });
+
+  it("keeps the new project footer visible while resource drafts scroll inside the dialog", () => {
+    const container = renderDialog();
+    const dialogContent = container.querySelector('[data-slot="dialog-content"]');
+    const dialogScroll = container.querySelector('[data-testid="new-project-dialog-scroll"]');
+    const createButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Create project");
+
+    expect(dialogContent?.className).toContain("max-h-[min(860px,calc(100vh-2rem))]");
+    expect(dialogContent?.className).toContain("flex-col");
+    expect(dialogContent?.className).toContain("overflow-hidden");
+    expect(dialogScroll?.className).toContain("flex-1");
+    expect(dialogScroll?.className).toContain("overflow-y-auto");
+    expect(dialogScroll?.className).toContain("overscroll-contain");
+    expect(createButton?.parentElement?.className).toContain("shrink-0");
   });
 
   it("keeps resource draft project settings to a single note field", () => {

@@ -406,10 +406,13 @@ export function NewProjectDialog() {
     >
       <DialogContent
         showCloseButton={false}
-        className={cn("p-0 gap-0", expanded ? "sm:max-w-3xl" : "sm:max-w-xl")}
+        className={cn(
+          "flex max-h-[min(860px,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0",
+          expanded ? "sm:max-w-3xl" : "sm:max-w-xl",
+        )}
         onKeyDown={handleKeyDown}
       >
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             {selectedOrganization && (
               <span className="rounded-[calc(var(--radius-sm)-1px)] bg-muted px-1.5 py-0.5 text-xs font-medium">
@@ -439,103 +442,107 @@ export function NewProjectDialog() {
           </div>
         </div>
 
-        <div className="px-4 pt-4 pb-2 shrink-0">
-          <div className="flex items-center gap-3">
-            <Popover>
-              <PopoverTrigger asChild>
-                <ProjectIdentityTriggerButton
-                  projectColor={color}
-                  projectIcon={icon}
-                  label="Choose project identity"
-                  data-testid="new-project-identity-trigger"
-                />
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-auto p-0">
-                <ProjectIdentityPicker
-                  color={color}
-                  icon={icon}
-                  onColorChange={setColor}
-                  onIconChange={setIcon}
-                />
-              </PopoverContent>
-            </Popover>
-            <input
-              className="min-w-0 flex-1 bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground/50"
-              placeholder="Project name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Tab" && !e.shiftKey) {
-                  e.preventDefault();
-                  descriptionEditorRef.current?.focus();
-                }
-              }}
-              autoFocus
-            />
-          </div>
-        </div>
-
-        <div className="px-4 pb-2">
-          <MarkdownEditor
-            ref={descriptionEditorRef}
-            value={description}
-            onChange={setDescription}
-            placeholder="Add description..."
-            bordered={false}
-            contentClassName={cn("text-sm text-muted-foreground", expanded ? "min-h-[200px]" : "min-h-[120px]")}
-            imageUploadHandler={async (file) => {
-              const asset = await uploadDescriptionImage.mutateAsync(file);
-              return asset.contentPath;
-            }}
-          />
-        </div>
-
-        <div className="border-t border-border px-4 py-3 space-y-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-center gap-1.5">
-              <div className="text-sm font-medium">Project Context</div>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label="About project context"
-                  >
-                    <CircleHelp className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={8} className="max-w-[260px] px-3 py-2 text-xs leading-5">
-                  {libraryCopy("projectContextHelp", locale)}
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-              <Popover
-                open={addResourcesOpen}
-                onOpenChange={(open) => {
-                  setAddResourcesOpen(open);
-                  if (!open) {
-                    setLibrarySearch("");
-                    setResourceSearch("");
+        <div
+          data-testid="new-project-dialog-scroll"
+          className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        >
+          <div className="shrink-0 px-4 pb-2 pt-4">
+            <div className="flex items-center gap-3">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <ProjectIdentityTriggerButton
+                    projectColor={color}
+                    projectIcon={icon}
+                    label="Choose project identity"
+                    data-testid="new-project-identity-trigger"
+                  />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto p-0">
+                  <ProjectIdentityPicker
+                    color={color}
+                    icon={icon}
+                    onColorChange={setColor}
+                    onIconChange={setIcon}
+                  />
+                </PopoverContent>
+              </Popover>
+              <input
+                className="min-w-0 flex-1 bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground/50"
+                placeholder="Project name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Tab" && !e.shiftKey) {
+                    e.preventDefault();
+                    descriptionEditorRef.current?.focus();
                   }
                 }}
-              >
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    size="xs"
-                    className="h-7 rounded-[calc(var(--radius-sm)-1px)] px-2"
-                    disabled={!selectedOrganizationId}
-                  >
-                    <Plus className="mr-1.5 h-3 w-3" />
-                    Add resources
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="flex max-h-[min(420px,var(--radix-popover-content-available-height))] w-80 flex-col overflow-hidden p-1"
-                  align="end"
-                  disablePortal
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <div className="px-4 pb-2">
+            <MarkdownEditor
+              ref={descriptionEditorRef}
+              value={description}
+              onChange={setDescription}
+              placeholder="Add description..."
+              bordered={false}
+              contentClassName={cn("text-sm text-muted-foreground", expanded ? "min-h-[200px]" : "min-h-[120px]")}
+              imageUploadHandler={async (file) => {
+                const asset = await uploadDescriptionImage.mutateAsync(file);
+                return asset.contentPath;
+              }}
+            />
+          </div>
+
+          <div className="space-y-3 border-t border-border px-4 py-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="text-sm font-medium">Project Context</div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label="About project context"
+                    >
+                      <CircleHelp className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={8} className="max-w-[260px] px-3 py-2 text-xs leading-5">
+                    {libraryCopy("projectContextHelp", locale)}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <Popover
+                  open={addResourcesOpen}
+                  onOpenChange={(open) => {
+                    setAddResourcesOpen(open);
+                    if (!open) {
+                      setLibrarySearch("");
+                      setResourceSearch("");
+                    }
+                  }}
                 >
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      size="xs"
+                      className="h-7 rounded-[calc(var(--radius-sm)-1px)] px-2"
+                      disabled={!selectedOrganizationId}
+                    >
+                      <Plus className="mr-1.5 h-3 w-3" />
+                      Add resources
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="flex max-h-[min(420px,var(--radix-popover-content-available-height))] w-80 flex-col overflow-hidden p-1"
+                    align="end"
+                    disablePortal
+                  >
                   <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                     {libraryCopy("addFromLibrary", locale)}
                   </div>
@@ -641,24 +648,24 @@ export function NewProjectDialog() {
                       </span>
                     </button>
                   </div>
-                </PopoverContent>
-              </Popover>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
-          </div>
 
-          {resourceDrafts.length > 0 ? (
-            <div className="space-y-3">
-              {resourceDrafts.map((resource) => {
-                const key = draftResourceKey(resource);
-                const existingResource = resource.kind === "existing"
-                  ? existingResourceMap.get(resource.resourceId) ?? null
-                  : null;
+            {resourceDrafts.length > 0 ? (
+              <div className="space-y-3">
+                {resourceDrafts.map((resource) => {
+                  const key = draftResourceKey(resource);
+                  const existingResource = resource.kind === "existing"
+                    ? existingResourceMap.get(resource.resourceId) ?? null
+                    : null;
 
-                return (
-                  <div
-                    key={key}
-                    className="space-y-3 rounded-[var(--radius-sm)] border border-border/80 bg-[color:color-mix(in_oklab,var(--surface-inset)_52%,var(--surface-elevated))] px-3 py-3"
-                  >
+                  return (
+                    <div
+                      key={key}
+                      className="space-y-3 rounded-[var(--radius-sm)] border border-border/80 bg-[color:color-mix(in_oklab,var(--surface-inset)_52%,var(--surface-elevated))] px-3 py-3"
+                    >
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-0.5 min-w-0">
                         <div className="flex items-center gap-2 text-sm font-medium">
@@ -783,14 +790,15 @@ export function NewProjectDialog() {
                         New resources need both a name and a locator before you can create the project.
                       </p>
                     ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5 px-4 py-2 border-t border-border flex-wrap">
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-border px-4 py-2">
           <Popover open={statusOpen} onOpenChange={setStatusOpen}>
             <PopoverTrigger asChild>
               <button
@@ -885,7 +893,7 @@ export function NewProjectDialog() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border">
+        <div className="flex shrink-0 items-center justify-between border-t border-border px-4 py-2.5">
           {createProject.isError ? (
             <p className="text-xs text-destructive">Failed to create project.</p>
           ) : (
