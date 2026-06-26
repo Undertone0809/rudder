@@ -6,7 +6,7 @@ import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/compon
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import type { AgentRole, Issue, IssueSearchField, ReorderIssue } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpDown, Check, ChevronRight, CircleDot, Columns3, Filter, Layers, List, Pin, Plus, Search, SlidersHorizontal, User, X } from "lucide-react";
+import { ArrowUpDown, Check, ChevronRight, CircleDot, Columns3, Filter, Layers, List, Loader2, Pin, Plus, Search, SlidersHorizontal, User, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authApi } from "../api/auth";
 import { issuesApi } from "../api/issues";
@@ -277,6 +277,9 @@ interface IssuesListProps {
   onSearchChange?: (search: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
   onReorderIssue?: (data: ReorderIssue) => void;
+  hasMoreIssues?: boolean;
+  isLoadingMoreIssues?: boolean;
+  onLoadMoreIssues?: () => void;
 }
 
 type GroupedIssueContent = {
@@ -308,6 +311,9 @@ export function IssuesList({
   onSearchChange,
   onUpdateIssue,
   onReorderIssue,
+  hasMoreIssues = false,
+  isLoadingMoreIssues = false,
+  onLoadMoreIssues,
 }: IssuesListProps) {
   const { selectedOrganizationId } = useOrganization();
   const { openNewIssue } = useDialog();
@@ -1041,67 +1047,53 @@ export function IssuesList({
       )}
 
       {!isLoading && filtered.length > 0 && viewState.viewMode !== "board" && (
-        groupedContent.map((group) => (
-          <Collapsible
-            key={group.key}
-            open={!viewState.collapsedGroups.includes(group.key)}
-            onOpenChange={(open) => {
-              updateView({
-                collapsedGroups: open
-                  ? viewState.collapsedGroups.filter((k) => k !== group.key)
-                  : [...viewState.collapsedGroups, group.key],
-              });
-            }}
-          >
-            {group.label && (
-              <div className="flex items-center py-1.5 pl-1 pr-3">
-                <CollapsibleTrigger className="flex items-center gap-1.5">
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform [[data-state=open]>&]:rotate-90" />
-                  <span className="flex flex-col items-start gap-0.5 text-left">
-                    <span className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      {group.label}
-                    </span>
-                    {group.description ? (
-                      <span className="max-w-[68ch] text-xs font-normal normal-case tracking-normal text-muted-foreground/80">
-                        {group.description}
+        <>
+          {groupedContent.map((group) => (
+            <Collapsible
+              key={group.key}
+              open={!viewState.collapsedGroups.includes(group.key)}
+              onOpenChange={(open) => {
+                updateView({
+                  collapsedGroups: open
+                    ? viewState.collapsedGroups.filter((k) => k !== group.key)
+                    : [...viewState.collapsedGroups, group.key],
+                });
+              }}
+            >
+              {group.label && (
+                <div className="flex items-center py-1.5 pl-1 pr-3">
+                  <CollapsibleTrigger className="flex items-center gap-1.5">
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform [[data-state=open]>&]:rotate-90" />
+                    <span className="flex flex-col items-start gap-0.5 text-left">
+                      <span className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                        {group.label}
                       </span>
-                    ) : null}
-                  </span>
-                </CollapsibleTrigger>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="ml-auto text-muted-foreground"
-                  onClick={() => openNewIssue(newIssueDefaults(group.key))}
-                >
-                  <Plus className="h-3 w-3" />
-                </Button>
-              </div>
-            )}
-            <CollapsibleContent>
-              {group.items.map((issue) => (
-                <IssueRow
-                  key={issue.id}
-                  issue={issue}
-                  issueLinkState={issueLinkState}
-                  desktopLeadingSpacer
-                  mobileLeading={(
-                    <span
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                    >
-                      <StatusIcon
-                        status={issue.status}
-                        onChange={(s) => onUpdateIssue(issue.id, { status: s })}
-                      />
+                      {group.description ? (
+                        <span className="max-w-[68ch] text-xs font-normal normal-case tracking-normal text-muted-foreground/80">
+                          {group.description}
+                        </span>
+                      ) : null}
                     </span>
-                  )}
-                  desktopMetaLeading={(
-                    <>
+                  </CollapsibleTrigger>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="ml-auto text-muted-foreground"
+                    onClick={() => openNewIssue(newIssueDefaults(group.key))}
+                  >
+                    <Plus className="h-3 w-3" />
+                  </Button>
+                </div>
+              )}
+              <CollapsibleContent>
+                {group.items.map((issue) => (
+                  <IssueRow
+                    key={issue.id}
+                    issue={issue}
+                    issueLinkState={issueLinkState}
+                    desktopLeadingSpacer
+                    mobileLeading={(
                       <span
-                        className="hidden shrink-0 sm:inline-flex"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
@@ -1112,37 +1104,52 @@ export function IssuesList({
                           onChange={(s) => onUpdateIssue(issue.id, { status: s })}
                         />
                       </span>
-                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                        {issue.identifier ?? issue.id.slice(0, 8)}
-                      </span>
-                      {liveIssueIds?.has(issue.id) && (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-proposal)_80%,transparent)] px-1.5 py-0.5 sm:gap-1.5 sm:px-2">
-                          <span className="relative flex h-2 w-2">
-                            <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-[color:var(--accent-base)] opacity-75" />
-                            <span className="relative inline-flex h-2 w-2 rounded-full bg-[color:var(--accent-strong)]" />
-                          </span>
-                          <span className="hidden text-[11px] font-medium text-[color:var(--accent-strong)] sm:inline">
-                            Live
-                          </span>
+                    )}
+                    desktopMetaLeading={(
+                      <>
+                        <span
+                          className="hidden shrink-0 sm:inline-flex"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                        >
+                          <StatusIcon
+                            status={issue.status}
+                            onChange={(s) => onUpdateIssue(issue.id, { status: s })}
+                          />
                         </span>
-                      )}
-                    </>
-                  )}
-                  mobileMeta={timeAgo(issue.updatedAt)}
-                  desktopOverlayAction={onTogglePinnedIssue ? (
-                    <button
-                      type="button"
-                      className="absolute right-2 top-1.5 z-20 hidden h-6 w-6 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] bg-background/90 text-muted-foreground opacity-0 shadow-sm ring-1 ring-[color:var(--border-soft)] transition-[opacity,background-color,color] hover:bg-accent hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 sm:inline-flex"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onTogglePinnedIssue(issue.id);
-                      }}
-                      title={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
-                      aria-label={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
-                    >
-                      <Pin
-                        className={cn(
+                        <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                          {issue.identifier ?? issue.id.slice(0, 8)}
+                        </span>
+                        {liveIssueIds?.has(issue.id) && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-proposal)_80%,transparent)] px-1.5 py-0.5 sm:gap-1.5 sm:px-2">
+                            <span className="relative flex h-2 w-2">
+                              <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-[color:var(--accent-base)] opacity-75" />
+                              <span className="relative inline-flex h-2 w-2 rounded-full bg-[color:var(--accent-strong)]" />
+                            </span>
+                            <span className="hidden text-[11px] font-medium text-[color:var(--accent-strong)] sm:inline">
+                              Live
+                            </span>
+                          </span>
+                        )}
+                      </>
+                    )}
+                    mobileMeta={timeAgo(issue.updatedAt)}
+                    desktopOverlayAction={onTogglePinnedIssue ? (
+                      <button
+                        type="button"
+                        className="absolute right-2 top-1.5 z-20 hidden h-6 w-6 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] bg-background/90 text-muted-foreground opacity-0 shadow-sm ring-1 ring-[color:var(--border-soft)] transition-[opacity,background-color,color] hover:bg-accent hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 sm:inline-flex"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onTogglePinnedIssue(issue.id);
+                        }}
+                        title={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
+                        aria-label={pinnedIssueIds.includes(issue.id) ? "Unpin issue" : "Pin issue"}
+                      >
+                        <Pin
+                          className={cn(
                           "h-3.5 w-3.5",
                           pinnedIssueIds.includes(issue.id) && "fill-current text-[color:var(--accent-strong)]",
                         )}
@@ -1285,8 +1292,24 @@ export function IssuesList({
               ))}
             </CollapsibleContent>
           </Collapsible>
-        ))
+          ))}
+        </>
       )}
+
+      {!isLoading && hasMoreIssues && onLoadMoreIssues ? (
+        <div className="flex justify-center border-t border-[color:var(--border-soft)] py-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isLoadingMoreIssues}
+            onClick={onLoadMoreIssues}
+          >
+            {isLoadingMoreIssues ? <Loader2 className="h-4 w-4 animate-spin sm:mr-1" /> : null}
+            <span>{isLoadingMoreIssues ? "Loading..." : "Load more"}</span>
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

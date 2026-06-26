@@ -31,6 +31,9 @@ const MarkdownMentionsContext = createContext<MarkdownMentionsContextValue>({
   onMentionQueryChange: () => {},
 });
 
+const DEFAULT_MENTION_CATALOG_LIMIT = 40;
+const SEARCH_MENTION_CATALOG_LIMIT = 25;
+
 export function MarkdownMentionsProvider({ children }: { children: ReactNode }) {
   const { selectedOrganization, selectedOrganizationId } = useOrganization();
   const { viewedOrganization, viewedOrganizationId } = useViewedOrganization();
@@ -38,6 +41,9 @@ export function MarkdownMentionsProvider({ children }: { children: ReactNode }) 
   const organizationUrlKey = viewedOrganization?.urlKey ?? selectedOrganization?.urlKey ?? "organization";
   const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null);
   const normalizedLibraryFileMentionQuery = libraryFileMentionQuery?.trim() ?? "";
+  const mentionCatalogLimit = normalizedLibraryFileMentionQuery
+    ? SEARCH_MENTION_CATALOG_LIMIT
+    : DEFAULT_MENTION_CATALOG_LIMIT;
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(organizationId ?? "__none__"),
@@ -52,8 +58,16 @@ export function MarkdownMentionsProvider({ children }: { children: ReactNode }) 
   });
 
   const { data: issues } = useQuery({
-    queryKey: queryKeys.issues.mentionCatalog(organizationId ?? "__none__"),
-    queryFn: () => issuesApi.list(organizationId!, { includeAutomationExecutions: true }),
+    queryKey: [
+      ...queryKeys.issues.mentionCatalog(organizationId ?? "__none__"),
+      normalizedLibraryFileMentionQuery,
+      mentionCatalogLimit,
+    ],
+    queryFn: () => issuesApi.list(organizationId!, {
+      includeAutomationExecutions: Boolean(normalizedLibraryFileMentionQuery),
+      q: normalizedLibraryFileMentionQuery || undefined,
+      limit: mentionCatalogLimit,
+    }),
     enabled: Boolean(organizationId),
   });
 
@@ -64,8 +78,13 @@ export function MarkdownMentionsProvider({ children }: { children: ReactNode }) 
   });
 
   const { data: chats } = useQuery({
-    queryKey: queryKeys.chats.list(organizationId ?? "__none__", "all"),
-    queryFn: () => chatsApi.list(organizationId!, "all"),
+    queryKey: normalizedLibraryFileMentionQuery
+      ? queryKeys.chats.search(organizationId ?? "__none__", normalizedLibraryFileMentionQuery, "all")
+      : queryKeys.chats.listPreview(organizationId ?? "__none__", "all", mentionCatalogLimit),
+    queryFn: () => chatsApi.list(organizationId!, "all", {
+      q: normalizedLibraryFileMentionQuery || undefined,
+      limit: mentionCatalogLimit,
+    }),
     enabled: Boolean(organizationId),
   });
 

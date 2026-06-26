@@ -350,8 +350,8 @@ export function Layout() {
     refetchIntervalInBackground: true,
   });
   const { data: activeChats } = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!),
+    queryKey: queryKeys.chats.listPreview(selectedOrganizationId ?? "__none__", "active", 40),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active", { limit: 40 }),
     enabled: isChatRoute && !!selectedOrganizationId,
   });
   const { data: visibleProjects } = useQuery({

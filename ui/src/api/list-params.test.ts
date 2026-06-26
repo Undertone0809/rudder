@@ -28,10 +28,23 @@ describe("list API query parameters", () => {
       q: "skill",
       searchFields: ["title", "description", "comment"],
       limit: 20,
+      offset: 40,
     });
 
     expect(getMock).toHaveBeenCalledWith(
-      "/orgs/org-1/issues?q=skill&searchFields=title%2Cdescription%2Ccomment&limit=20",
+      "/orgs/org-1/issues?q=skill&searchFields=title%2Cdescription%2Ccomment&limit=20&offset=40",
+    );
+  });
+
+  it("passes server-side issue scope filters through to the API", async () => {
+    await issuesApi.list("org-1", {
+      followedByUserId: "me",
+      involvedUserId: "user-1",
+      limit: 25,
+    });
+
+    expect(getMock).toHaveBeenCalledWith(
+      "/orgs/org-1/issues?followedByUserId=me&involvedUserId=user-1&limit=25",
     );
   });
 });

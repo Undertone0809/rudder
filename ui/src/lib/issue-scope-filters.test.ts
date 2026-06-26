@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getIssueScopeFilters, isFollowingIssue } from "./issue-scope-filters";
+import { getIssueScopeFilters } from "./issue-scope-filters";
 
 describe("getIssueScopeFilters", () => {
   it("maps assigned scope to the current user's assignee filter", () => {
@@ -22,6 +22,20 @@ describe("getIssueScopeFilters", () => {
     });
   });
 
+  it("maps pinned scope to the server-side follow filter", () => {
+    expect(getIssueScopeFilters("pinned", "user-123")).toEqual({
+      followedByUserId: "me",
+      includeAutomationExecutions: true,
+    });
+  });
+
+  it("maps following scope to the server-side involvement filter", () => {
+    expect(getIssueScopeFilters("following", "user-123")).toEqual({
+      includeAutomationExecutions: true,
+      involvedUserId: "me",
+    });
+  });
+
   it("includes automation execution issues for ordinary board scopes", () => {
     expect(getIssueScopeFilters("recent", "user-123")).toEqual({
       includeAutomationExecutions: true,
@@ -29,25 +43,5 @@ describe("getIssueScopeFilters", () => {
     expect(getIssueScopeFilters("", "user-123")).toEqual({
       includeAutomationExecutions: true,
     });
-  });
-});
-
-
-describe("isFollowingIssue", () => {
-  it("returns true when the current user created the issue", () => {
-    expect(isFollowingIssue({ createdByUserId: "user-123", assigneeUserId: null, reviewerUserId: null }, "user-123")).toBe(true);
-  });
-
-  it("returns true when the current user is assigned the issue", () => {
-    expect(isFollowingIssue({ createdByUserId: null, assigneeUserId: "user-123", reviewerUserId: null }, "user-123")).toBe(true);
-  });
-
-  it("returns true when the current user is the reviewer", () => {
-    expect(isFollowingIssue({ createdByUserId: null, assigneeUserId: null, reviewerUserId: "user-123" }, "user-123")).toBe(true);
-  });
-
-  it("returns false for unrelated issues or missing user context", () => {
-    expect(isFollowingIssue({ createdByUserId: "user-456", assigneeUserId: "user-789", reviewerUserId: null }, "user-123")).toBe(false);
-    expect(isFollowingIssue({ createdByUserId: "user-123", assigneeUserId: null, reviewerUserId: null }, null)).toBe(false);
   });
 });

@@ -52,6 +52,7 @@ export const queryKeys = {
   },
   issues: {
     list: (orgId: string) => ["issues", orgId] as const,
+    listPreview: (orgId: string, limit: number) => ["issues", orgId, "preview", limit] as const,
     children: (orgId: string, parentId: string) => ["issues", orgId, "children", parentId] as const,
     follows: (orgId: string) => ["issues", orgId, "follows"] as const,
     search: (orgId: string, q: string, projectId?: string, searchFields: readonly string[] = ["title"]) =>
@@ -77,6 +78,8 @@ export const queryKeys = {
   chats: {
     list: (orgId: string, status: "active" | "resolved" | "archived" | "all" = "active") =>
       ["chats", orgId, status] as const,
+    listPreview: (orgId: string, status: "active" | "resolved" | "archived" | "all", limit: number) =>
+      ["chats", orgId, status, "preview", limit] as const,
     search: (orgId: string, q: string, status: "active" | "resolved" | "archived" | "all" = "all") =>
       ["chats", orgId, status, "search", q] as const,
     detail: (orgId: string, chatId: string) => ["chats", orgId, "detail", chatId] as const,

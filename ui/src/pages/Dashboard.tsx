@@ -37,6 +37,9 @@ import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTransc
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents, formatTokens } from "../lib/utils";
 
+const DASHBOARD_ACTIVITY_LIMIT = 40;
+const DASHBOARD_ISSUE_PREVIEW_LIMIT = 200;
+
 function getRecentIssues(issues: Issue[]): Issue[] {
   return [...issues]
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -163,14 +166,14 @@ export function Dashboard() {
   });
 
   const { data: activity } = useQuery({
-    queryKey: queryKeys.activity(selectedOrganizationId!),
-    queryFn: () => activityApi.list(selectedOrganizationId!),
+    queryKey: queryKeys.activity(selectedOrganizationId!, `limit:${DASHBOARD_ACTIVITY_LIMIT}`),
+    queryFn: async () => (await activityApi.listPage(selectedOrganizationId!, { limit: DASHBOARD_ACTIVITY_LIMIT })).items,
     enabled: !!selectedOrganizationId,
   });
 
   const { data: issues, isLoading: issuesLoading } = useQuery({
-    queryKey: queryKeys.issues.list(selectedOrganizationId!),
-    queryFn: () => issuesApi.list(selectedOrganizationId!),
+    queryKey: queryKeys.issues.listPreview(selectedOrganizationId!, DASHBOARD_ISSUE_PREVIEW_LIMIT),
+    queryFn: () => issuesApi.list(selectedOrganizationId!, { limit: DASHBOARD_ISSUE_PREVIEW_LIMIT }),
     enabled: !!selectedOrganizationId,
   });
 

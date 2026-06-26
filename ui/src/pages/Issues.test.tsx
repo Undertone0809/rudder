@@ -28,6 +28,14 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+  useInfiniteQuery: () => ({
+    data: { pages: [[]] },
+    error: null,
+    fetchNextPage: vi.fn(),
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    isLoading: false,
+  }),
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     if (queryKey[0] === "agents") return { data: mockState.agents, isLoading: false, error: null };
     if (queryKey[0] === "projects") return { data: mockState.projects, isLoading: false, error: null };

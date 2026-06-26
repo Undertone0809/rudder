@@ -25,6 +25,8 @@ export const issuesApi = {
       reviewerUserId?: string;
       touchedByUserId?: string;
       unreadForUserId?: string;
+      followedByUserId?: string;
+      involvedUserId?: string;
       labelId?: string;
       originKind?: string;
       originId?: string;
@@ -32,6 +34,7 @@ export const issuesApi = {
       q?: string;
       searchFields?: IssueSearchField[];
       limit?: number;
+      offset?: number;
     },
   ) => {
     const params = new URLSearchParams();
@@ -45,6 +48,8 @@ export const issuesApi = {
     if (filters?.reviewerUserId) params.set("reviewerUserId", filters.reviewerUserId);
     if (filters?.touchedByUserId) params.set("touchedByUserId", filters.touchedByUserId);
     if (filters?.unreadForUserId) params.set("unreadForUserId", filters.unreadForUserId);
+    if (filters?.followedByUserId) params.set("followedByUserId", filters.followedByUserId);
+    if (filters?.involvedUserId) params.set("involvedUserId", filters.involvedUserId);
     if (filters?.labelId) params.set("labelId", filters.labelId);
     if (filters?.originKind) params.set("originKind", filters.originKind);
     if (filters?.originId) params.set("originId", filters.originId);
@@ -53,6 +58,9 @@ export const issuesApi = {
     if (filters?.searchFields?.length) params.set("searchFields", filters.searchFields.join(","));
     if (typeof filters?.limit === "number" && Number.isFinite(filters.limit)) {
       params.set("limit", String(Math.max(1, Math.floor(filters.limit))));
+    }
+    if (typeof filters?.offset === "number" && Number.isFinite(filters.offset) && filters.offset > 0) {
+      params.set("offset", String(Math.floor(filters.offset)));
     }
     const qs = params.toString();
     return api.get<Issue[]>(`/orgs/${orgId}/issues${qs ? `?${qs}` : ""}`);

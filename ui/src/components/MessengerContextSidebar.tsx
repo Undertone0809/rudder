@@ -2546,10 +2546,11 @@ export function MessengerContextSidebar() {
   }, [model.selectedOrganizationId, queryClient, splitIssueNotifications]);
 
   const shouldLoadSidebarConversations = threadOrganizationRule === "project" || threadOrganizationRule === "agent";
+  const sidebarConversationLimit = 80;
 
   const chatsQuery = useQuery({
-    queryKey: queryKeys.chats.list(model.selectedOrganizationId ?? "__none__", "all"),
-    queryFn: () => chatsApi.list(model.selectedOrganizationId!, "all"),
+    queryKey: queryKeys.chats.listPreview(model.selectedOrganizationId ?? "__none__", "all", sidebarConversationLimit),
+    queryFn: () => chatsApi.list(model.selectedOrganizationId!, "all", { limit: sidebarConversationLimit }),
     enabled: !!model.selectedOrganizationId && shouldLoadSidebarConversations,
   });
 

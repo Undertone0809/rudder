@@ -4,7 +4,9 @@ type IssueScope = string;
 
 type IssueScopeFilters = {
   assigneeUserId?: string;
+  followedByUserId?: string;
   includeAutomationExecutions?: boolean;
+  involvedUserId?: string;
   reviewerUserId?: string;
 };
 
@@ -14,6 +16,12 @@ export function getIssueScopeFilters(issueScope: IssueScope, currentUserId: stri
   }
   if (issueScope === "reviewing" && currentUserId) {
     return { reviewerUserId: "me", includeAutomationExecutions: true };
+  }
+  if (issueScope === "pinned" && currentUserId) {
+    return { followedByUserId: "me", includeAutomationExecutions: true };
+  }
+  if (issueScope === "following" && currentUserId) {
+    return { involvedUserId: "me", includeAutomationExecutions: true };
   }
 
   return { includeAutomationExecutions: true };
