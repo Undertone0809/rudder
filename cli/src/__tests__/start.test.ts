@@ -413,6 +413,39 @@ describe("desktop start command helpers", () => {
     }
   });
 
+  it("treats server-only start as a first-class path that skips Desktop installation", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let output = "";
+    try {
+      await expect(runCli([
+        process.execPath,
+        "rudder",
+        "start",
+        "--server-only",
+        "--target-version",
+        "0.3.1",
+        "--dry-run",
+        "--no-version-check",
+      ])).resolves.toBe(0);
+      output = [
+        ...stdout.mock.calls.map((call) => String(call[0])),
+        ...stderr.mock.calls.map((call) => String(call[0])),
+      ].join("");
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+
+    expect(output).toContain("rudder start --server-only");
+    expect(output).toContain("Preparing Rudder runtime");
+    expect(output).toContain("Preparing persistent CLI");
+    expect(output).toContain("Server-only install");
+    expect(output).toContain("Desktop app installation was skipped");
+    expect(output).not.toContain("Installing desktop app");
+    expect(output).not.toContain("Would resolve, download, verify, install");
+  });
+
   it("uses the explicit desktop target version before the legacy start version option", async () => {
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);

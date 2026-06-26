@@ -47,6 +47,9 @@ Recommended defaults:
   persistent CLI exists, `rudder start` is the equivalent direct form. Both
   check for newer CLI releases and install/launch the matching portable Desktop
   asset from the GitHub Release when needed.
+- `npx @rudderhq/cli@latest start --server-only` is the public server-only
+  install form. It prepares the matching persistent CLI and server runtime cache
+  without resolving, downloading, installing, or launching Desktop assets.
 
 Low-frequency escape hatches:
 
@@ -261,6 +264,8 @@ falling back to the committed stable base version.
 Desktop artifacts are not published to npm. The CLI `start` command resolves
 the appropriate GitHub Release asset for the current platform, verifies
 `SHASUMS256.txt`, installs the app into a per-user location, and launches it.
+The CLI `start --server-only` path deliberately skips this Desktop asset flow
+and only prepares the npm-backed CLI/server runtime side.
 On macOS and Windows, `start` prefers the layered `shell` asset when the release
 publishes one. Shell assets keep the Electron shell and packaged desktop CLI,
 but load the server from the already prepared `~/.rudder/runtimes/<version>`

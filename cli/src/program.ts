@@ -82,6 +82,7 @@ export function createProgram(): Command {
   program
     .command("start")
     .description("Start Rudder Desktop and prepare the matching persistent CLI")
+    .option("--server-only", "Prepare the Rudder server runtime and persistent CLI without installing Desktop")
     .option("--no-cli", "Skip persistent CLI installation")
     .option("--no-runtime", "Skip Rudder runtime installation")
     .option("--no-desktop", "Skip desktop app installation")

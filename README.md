@@ -84,10 +84,18 @@ The fastest path installs the per-user portable Rudder Desktop app and prepares 
 npx @rudderhq/cli@latest start
 ```
 
+For a server or headless host where the Desktop app should not be installed,
+prepare only the server runtime and persistent CLI:
+
+```bash
+npx @rudderhq/cli@latest start --server-only
+```
+
 After the persistent CLI is available, the direct `rudder` form is the same command surface:
 
 ```bash
 rudder start
+rudder start --server-only
 ```
 
 ### Develop Rudder

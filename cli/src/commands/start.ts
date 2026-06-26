@@ -64,6 +64,7 @@ export type ChecksummedDesktopAssetCandidate = DesktopAssetCandidate & {
 interface StartCommandOptions {
   cli?: boolean;
   desktop?: boolean;
+  serverOnly?: boolean;
   runtime?: boolean;
   version?: string;
   targetVersion?: string;
@@ -1682,7 +1683,8 @@ async function runStartPhase<T>(
 
 export async function startCommand(opts: StartCommandOptions): Promise<void> {
   const installCli = opts.cli !== false;
-  const installDesktop = opts.desktop !== false;
+  const serverOnly = opts.serverOnly === true;
+  const installDesktop = !serverOnly && opts.desktop !== false;
   const installRuntime = opts.runtime !== false;
   const repo = opts.repo?.trim() || DEFAULT_DESKTOP_RELEASE_REPO;
   const version = opts.targetVersion?.trim() || opts.version?.trim() || resolveCurrentCliVersion();
@@ -1697,10 +1699,10 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
   }
 
   if (!installCli && !installDesktop && !installRuntime) {
-    throw new Error("Nothing to start. Remove --no-cli, --no-runtime, or --no-desktop.");
+    throw new Error("Nothing to start. Remove --no-cli, --no-runtime, --no-desktop, or --server-only.");
   }
 
-  p.intro(pc.bgCyan(pc.black(" rudder start ")));
+  p.intro(pc.bgCyan(pc.black(serverOnly ? " rudder start --server-only " : " rudder start ")));
 
   if (opts.versionCheck !== false) {
     const updateNotice = await getCliUpdateNotice(version);
@@ -1961,6 +1963,9 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         );
       }
     });
+  } else if (serverOnly) {
+    p.log.step("Server-only install");
+    p.log.message("Desktop app installation was skipped. Start the server with `rudder run` and open the printed local URL in a browser.");
   }
 
   p.outro(pc.green("Rudder start complete."));

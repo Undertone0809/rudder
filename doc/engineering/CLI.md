@@ -19,10 +19,22 @@ First-time install from npm:
 npx @rudderhq/cli@latest start
 ```
 
-This checks for newer Rudder CLI releases, prepares the matching persistent
-`rudder` CLI, and installs the matching per-user portable Rudder Desktop app
-from GitHub Release assets when needed. Desktop assets are checksum-verified
-before installation.
+This is the Desktop-first install path. It checks for newer Rudder CLI releases,
+prepares the matching persistent `rudder` CLI, installs the matching server
+runtime cache, and installs the per-user portable Rudder Desktop app from
+GitHub Release assets when needed. Desktop assets are checksum-verified before
+installation.
+
+Server-only install for hosts where the Desktop app should not be installed:
+
+```sh
+npx @rudderhq/cli@latest start --server-only
+```
+
+This prepares the matching persistent CLI and server runtime cache, but skips
+Desktop release resolution, Desktop asset download, portable app installation,
+launcher setup, and Desktop launch. Start the server with `rudder run` and open
+the printed local URL in a browser.
 
 Once the Rudder CLI process starts, `rudder start` shows progress for the
 Rudder-managed install stages, including Desktop checksum download, Desktop
@@ -46,6 +58,9 @@ Invocation forms are equivalent once they resolve to the same CLI version:
 ```sh
 npx @rudderhq/cli@latest start
 rudder start
+
+npx @rudderhq/cli@latest start --server-only
+rudder start --server-only
 
 npx @rudderhq/cli@latest onboard --yes
 rudder onboard --yes

@@ -135,6 +135,15 @@ persistent CLI, and uses checksum-verified GitHub Release assets for the
 per-user portable desktop app. Desktop binaries are intentionally not published
 to npm.
 
+For server or headless installs, the same npm CLI exposes a server-only path:
+
+```bash
+npx @rudderhq/cli@latest start --server-only
+```
+
+This path uses npm for the persistent CLI and server runtime cache, but does
+not resolve, download, install, or launch GitHub Release Desktop assets.
+
 `npx @rudderhq/cli@latest <command>` and `rudder <command>` are the same command
 surface once they resolve to the same CLI version. Public docs use the `npx`
 form for first-run setup; installed users can run `rudder start` directly.
