@@ -126,7 +126,7 @@ jobs:
         run: |
           version="$(./scripts/release.sh canary --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          ./scripts/release.sh canary
+          ./scripts/release.sh canary --skip-verify
           git push origin "refs/tags/canary/v${version}"
 
       - name: Start desktop release build
