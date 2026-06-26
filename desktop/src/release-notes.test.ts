@@ -57,13 +57,39 @@ describe("desktop release notes", () => {
     });
   });
 
-  it("tracks whether the current version has already been shown", async () => {
+  it("does not show release notes on first launch but records the baseline version", async () => {
     const root = await makeTempDir("rudder-release-notes-state-");
     cleanupDirs.add(root);
     const statePath = resolveReleaseNotesStatePath(root);
 
-    expect(shouldShowReleaseNotes({ statePath, version: "0.4.0" })).toBe(true);
+    expect(shouldShowReleaseNotes({ statePath, version: "0.4.0" })).toBe(false);
+    expect(JSON.parse(await fs.readFile(statePath, "utf8"))).toEqual({ lastKnownVersion: "0.4.0" });
+  });
+
+  it("shows release notes after an app update even when no prior release-note state exists", async () => {
+    const root = await makeTempDir("rudder-release-notes-state-");
+    cleanupDirs.add(root);
+    const statePath = resolveReleaseNotesStatePath(root);
+
+    expect(shouldShowReleaseNotes({ statePath, version: "0.4.0", updatedAfterInstall: true })).toBe(true);
+  });
+
+  it("tracks whether release notes should show after an update", async () => {
+    const root = await makeTempDir("rudder-release-notes-state-");
+    cleanupDirs.add(root);
+    const statePath = resolveReleaseNotesStatePath(root);
+
     markReleaseNotesShown({ statePath, version: "v0.4.0" });
+    expect(shouldShowReleaseNotes({ statePath, version: "0.4.0" })).toBe(false);
+    expect(shouldShowReleaseNotes({ statePath, version: "0.4.1" })).toBe(true);
+  });
+
+  it("keeps compatibility with release note state written before lastKnownVersion", async () => {
+    const root = await makeTempDir("rudder-release-notes-state-");
+    cleanupDirs.add(root);
+    const statePath = resolveReleaseNotesStatePath(root);
+    await fs.writeFile(statePath, `${JSON.stringify({ lastShownVersion: "0.4.0" }, null, 2)}\n`, "utf8");
+
     expect(shouldShowReleaseNotes({ statePath, version: "0.4.0" })).toBe(false);
     expect(shouldShowReleaseNotes({ statePath, version: "0.4.1" })).toBe(true);
   });
