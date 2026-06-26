@@ -11,6 +11,15 @@ const DEFAULT_EXPIRE_SECONDS = 600;
 const DEFAULT_REGISTRATION_SOURCE = "rudder/agent-integrations";
 const DEFAULT_FEISHU_DOMAIN = "accounts.feishu.cn";
 const DEFAULT_LARK_DOMAIN = "accounts.larksuite.com";
+const FEISHU_AGENT_APP_TENANT_SCOPES = [
+  "application:application:self_manage",
+  "application:bot.menu:readonly",
+  "application:bot.menu:write",
+  "application:app_slash_command:read",
+  "application:app_slash_command:write",
+  "im:message:send_as_bot",
+  "im:message.reactions:write_only",
+];
 
 export interface FeishuAppRegistrationResult {
   appId: string;
@@ -73,6 +82,7 @@ function mockRegistrarFromEnv(): FeishuAppRegistrar | null {
       const launcherOrigin = input.providerRegion === "lark_global"
         ? "https://open.larksuite.com"
         : "https://open.feishu.cn";
+      input.onStatusChange("Mock Feishu app authorized; Rudder quick command permissions requested");
       input.onSetupUrl({
         setupUrl: `${launcherOrigin}/page/launcher?from=sdk&name=${encodeURIComponent(input.suggestedBotName)}&source=node-sdk%2Frudder%2Fagent-integrations&tp=sdk`,
         expireInSeconds: DEFAULT_EXPIRE_SECONDS,
@@ -103,7 +113,7 @@ export function createFeishuNodeSdkAppRegistrar(): FeishuAppRegistrar {
         },
         addons: {
           scopes: {
-            tenant: ["im:message:send_as_bot", "im:message.reactions:write_only"],
+            tenant: FEISHU_AGENT_APP_TENANT_SCOPES,
           },
           events: {
             items: {
