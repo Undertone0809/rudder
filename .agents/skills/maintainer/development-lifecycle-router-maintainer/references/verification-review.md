@@ -11,6 +11,7 @@ For implementation workflows, use this order:
 writer implementation
 -> writer basic checks
 -> optional lightweight pre-review
+-> spawn availability probe if needed
 -> spawned verifier black-box acceptance
 -> final spawned reviewer gate
 -> handoff / commit / push
@@ -65,6 +66,13 @@ shell capture`.
 
 ## Verifier Gate
 
+Routed development work is `spawn-required` by default. The user does not need
+to say "spawn", "review", "subagent", or "black-box" for this policy to apply.
+After writer checks produce a concrete artifact, either spawn the verifier and
+reviewers in the required order or record a real spawn-tool/runtime blocker. Do
+not treat author-run tests, CI, screenshots, self-review, or serial personas as
+substitutes for the required child-agent gate.
+
 Default to `product-acceptance-verifier-maintainer` after implementation and
 writer checks when acceptance is required. The verifier may run commands, start
 services, use Browser or Computer Use, query API/DB state, and create disposable
@@ -92,6 +100,11 @@ verifier packet must include:
 - prior blockers, changed evidence since the last round, and whether this is a
   stage or final verifier gate
 - rule that the verifier may not edit repo files, stage, commit, push, or fix
+
+If no spawn tool is initially visible, perform an availability probe through
+tool discovery or the runtime spawn path before marking the gate blocked. A
+handoff that lacks either child verifier verdicts or explicit failed probe
+evidence is incomplete.
 
 For benchmark, performance, or skill-evaluation validation, avoid the user's
 real/prod Rudder data by default. Use static contract checks, disposable

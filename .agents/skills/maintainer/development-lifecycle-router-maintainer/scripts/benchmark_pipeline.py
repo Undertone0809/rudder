@@ -40,14 +40,28 @@ CHECKS = [
         "files": ["SKILL.md"],
         "patterns": [
             r"implementation, writer checks, verifier, final reviewers, reconciliation, and\s+handoff",
+            r"Development work enters `spawn-required` mode by default",
+            r"spawn availability probe",
             r"spawned verifier",
             r"spawned final reviewer",
+        ],
+    },
+    {
+        "name": "entrypoint_blocks_complete_handoff_without_spawn_gate",
+        "files": ["SKILL.md"],
+        "patterns": [
+            r"the user\s+does not need to separately ask for subagents, review, or verification",
+            r"blocked: spawned verifier/reviewer unavailable",
+            r"do not claim complete handoff, commit/push readiness, or review pass",
+            r"author-run tests, CI, screenshots, self-review, or serial personas",
         ],
     },
     {
         "name": "verification_reference_requires_default_development_verifier",
         "files": ["references/verification-review.md"],
         "patterns": [
+            r"Routed development work is `spawn-required` by default",
+            r"The user does not need\s+to say \"spawn\", \"review\", \"subagent\", or \"black-box\"",
             r"routed development work, acceptance is required by default",
             r"Small bug",
             r"product-acceptance-verifier-maintainer",
@@ -113,6 +127,9 @@ CHECKS = [
         "files": ["evals/evals.json"],
         "patterns": [
             r"small bug",
+            r"飞书的 stop 指令",
+            r"spawn-required mode",
+            r"author-run tests, CI, screenshots, self-review, or serial personas",
             r"spawned product verifier",
             r"functional, adversarial, and heuristic",
             r"verifier or reviewers",
@@ -349,6 +366,7 @@ def main() -> int:
     for idx, check in enumerate(CHECKS):
         eval_name = check["name"]
         eval_dir = ITERATION / f"eval-{idx}-{eval_name}"
+        eval_dir.mkdir(parents=True, exist_ok=True)
         (eval_dir / "eval_metadata.json").write_text(
             json.dumps(
                 {

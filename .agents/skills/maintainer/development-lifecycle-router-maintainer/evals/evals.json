@@ -563,6 +563,24 @@
         "The result labels whether the verdict is for a stage artifact or final handoff.",
         "The result still requires author-claimed versus reviewer-inspected proof separation."
       ]
+    },
+    {
+      "id": 43,
+      "prompt": "当前飞书的 stop 指令还是不符合预期：我发消息后马上发 /stop，但它还是等回复完才处理。按 development-lifecycle-router-maintainer 优化这个开发任务；我不想每次都额外提醒你 spawn agent。",
+      "expected_output": "Treats this as a routed development task in spawn-required mode by default. It routes through debug or implementation into verification and review, states the full loop before editing, fixes the Feishu runtime/workflow path narrowly, runs writer checks, then spawns a product verifier for black-box acceptance of the Feishu stop actor path before spawning final reviewers. It must not claim complete handoff from author-run tests, CI, screenshots, or self-review; if spawning is unavailable, it records the failed availability probe and blocks complete handoff.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/SKILL.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json"
+      ],
+      "expectations": [
+        "The result explicitly enters spawn-required mode for the development task without waiting for the user to say spawn, review, subagent, or black-box.",
+        "The result routes the Feishu stop failure through debug or implementation, then verification and review, rather than treating unit tests as complete acceptance.",
+        "The result names the actor path for black-box verifier evidence: Feishu inbound message, immediate /stop, runtime cancellation, and terminal surface or readback.",
+        "The result spawns or routes to product-acceptance-verifier-maintainer after writer checks, or records a real failed spawn availability probe.",
+        "The result spawns final reviewers after verifier PASS and reconciles their verdicts before handoff.",
+        "The result does not claim complete handoff, commit/push readiness, or review pass from author-run tests, CI, screenshots, self-review, or serial personas alone."
+      ]
     }
   ]
 }

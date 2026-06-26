@@ -40,7 +40,8 @@ Before editing files, running long checks, spawning reviewers, or committing:
 4. Name the artifact or proof required to leave the current stage.
 5. For development work, state the full loop before editing:
    implementation, writer checks, verifier, final reviewers, reconciliation, and
-   handoff.
+   handoff. Development work enters `spawn-required` mode by default; the user
+   does not need to separately ask for subagents, review, or verification.
 6. Decide which references are needed for this route and read only those.
 
 For obvious narrow requests, do not expand a lifecycle plan. Say the route,
@@ -64,13 +65,17 @@ handoff.
 
 Route first, then execute.
 
-State the lifecycle stage and acceptance bar before implementation. The normal
-implementation sandwich is:
+State the lifecycle stage and acceptance bar before implementation. Any routed
+development task enters `spawn-required` mode by default. This applies when the
+task changes user-visible, agent-visible, Desktop, release, runtime, CLI,
+workflow, or control-plane behavior, even if the user only says "fix",
+"optimize", or "推进". The normal implementation sandwich is:
 
 ```text
 writer implementation
 -> writer basic checks
 -> optional lightweight pre-review
+-> spawn availability probe if needed
 -> spawned verifier black-box acceptance
 -> spawned final reviewer gate
 -> handoff / commit / push
@@ -94,6 +99,17 @@ agent-visible, Desktop, release, runtime, CLI, workflow, and control-plane
 changes need the verifier plus final reviewer loop before complete handoff. If a
 route truly does not need that loop, say why it is `not applicable` rather than
 silently skipping it.
+
+`spawn-required` means:
+
+- after writer checks, probe the available spawn/subagent mechanism before
+  declaring verifier or reviewers unavailable
+- if spawning works, create the verifier and final reviewer agents and wait for
+  their verdicts before complete handoff
+- if spawning is unavailable, record the failed probe as
+  `blocked: spawned verifier/reviewer unavailable`
+- do not claim complete handoff, commit/push readiness, or review pass from
+  author-run tests, CI, screenshots, self-review, or serial personas alone
 
 ## Stage Classifier
 
