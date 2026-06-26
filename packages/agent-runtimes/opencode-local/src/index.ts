@@ -38,9 +38,9 @@ Notes:
   \`opencode models\` to list available options in provider/model format.
 - Rudder requires an explicit \`model\` value for \`opencode_local\` agents.
 - OpenCode runs keep HOME/USERPROFILE on the operator home for normal local CLI auth and host tooling state; RUDDER_OPERATOR_HOME records the same boundary.
-- OpenCode CLI currently exposes plugin loading and --pure but no verified skills-directory allowlist. Rudder runs OpenCode with --pure, points OPENCODE_CONFIG and OpenCode XDG state at sanitized adapter-managed runtime state, links selected skills into a Rudder-managed OpenCode sidecar, then injects only those selected SKILL.md files into the prompt.
+- OpenCode CLI currently exposes plugin loading but no verified skills-directory allowlist. Rudder points OPENCODE_CONFIG and OpenCode XDG state at sanitized adapter-managed runtime state, links selected skills into a Rudder-managed OpenCode sidecar, then injects only those selected SKILL.md files into the prompt.
 - Operator-home Claude/OpenCode skill directories are not used as Rudder runtime skill sources, and operator HOME does not authorize provider-native, project, global, stale, or unselected skills to become Rudder-loaded skills.
-- Runs are executed with: opencode run --pure --format json --dir <cwd> ...
+- Runs are executed with: opencode run --format json --dir <cwd> ...
 - Sessions are resumed with --session when stored session cwd matches current cwd.
 - dangerouslySkipPermissions is opt-in for OpenCode. New OpenCode agents do not inherit the global Claude-oriented dangerous permission default unless this field is explicitly true.
 - A zero-exit OpenCode run that writes files but emits no final text is marked degraded instead of reported as an empty successful Rudder result.

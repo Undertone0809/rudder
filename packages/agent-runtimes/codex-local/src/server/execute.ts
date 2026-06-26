@@ -183,6 +183,32 @@ function envStrings(envConfig: Record<string, unknown>): Record<string, string> 
   );
 }
 
+async function pruneProviderManagedMemoryState(codexHome: string, onLog: AgentRuntimeExecutionContext["onLog"]): Promise<void> {
+  const candidateHomes = new Set([codexHome]);
+  const parentDir = path.dirname(codexHome);
+  if (path.basename(parentDir) === "agents") {
+    candidateHomes.add(path.dirname(parentDir));
+  }
+
+  for (const home of candidateHomes) {
+    const memoriesDir = path.join(home, "memories");
+    if (!(await fs.access(memoriesDir).then(() => true).catch(() => false))) continue;
+
+    try {
+      await fs.rm(memoriesDir, { recursive: true, force: true });
+      await onLog(
+        "stdout",
+        `[rudder] Pruned provider-managed Codex memory state from ${memoriesDir}; Rudder controls agent memory separately.\n`,
+      );
+    } catch (err) {
+      await onLog(
+        "stderr",
+        `[rudder] Failed to prune provider-managed Codex memory state from ${memoriesDir}: ${err instanceof Error ? err.message : String(err)}\n`,
+      ).catch(() => {});
+    }
+  }
+}
+
 function resolveFallbackAgentHome(effectiveCodexHome: string, agentId: string): string {
   const orgRoot = path.dirname(path.dirname(path.dirname(effectiveCodexHome)));
   return path.join(orgRoot, "workspaces", "agents", agentId);
@@ -722,20 +748,24 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     };
   };
 
-  const initial = await runAttempt(sessionId);
-  if (
-    sessionId &&
-    !initial.proc.timedOut &&
-    (initial.proc.exitCode ?? 0) !== 0 &&
-    isCodexUnknownSessionError(initial.proc.stdout, initial.rawStderr)
-  ) {
-    await onLog(
-      "stdout",
-      `[rudder] Codex resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
-    );
-    const retry = await runAttempt(null);
-    return toResult(retry, true);
-  }
+  try {
+    const initial = await runAttempt(sessionId);
+    if (
+      sessionId &&
+      !initial.proc.timedOut &&
+      (initial.proc.exitCode ?? 0) !== 0 &&
+      isCodexUnknownSessionError(initial.proc.stdout, initial.rawStderr)
+    ) {
+      await onLog(
+        "stdout",
+        `[rudder] Codex resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
+      );
+      const retry = await runAttempt(null);
+      return toResult(retry, true);
+    }
 
-  return toResult(initial);
+    return toResult(initial);
+  } finally {
+    await pruneProviderManagedMemoryState(effectiveCodexHome, onLog);
+  }
 }

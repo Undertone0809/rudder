@@ -98,7 +98,7 @@ if (process.env.RUDDER_TEST_PI_SEMANTIC_ERROR === "1") {
     message: {
       role: "assistant",
       stopReason: "error",
-      errorMessage: "402 membership benefits unavailable",
+      errorMessage: "401 status code (no body)",
       text: "",
       usage: { input: 0, output: 0, cacheRead: 0, cost: { total: 0 } }
     }
@@ -595,7 +595,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.errorCode).toBe("pi_auth_required");
-      expect(result.errorMessage).toBe("402 membership benefits unavailable");
+      expect(result.errorMessage).toBe("401 status code (no body)");
       expect(result.summary).toBe("");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;

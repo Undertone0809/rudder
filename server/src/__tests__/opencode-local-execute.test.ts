@@ -22,6 +22,8 @@ if (process.argv[2] === "models") {
 }
 
 const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
+const fileFlagIndex = process.argv.indexOf("--file");
+const promptFilePath = fileFlagIndex >= 0 ? process.argv[fileFlagIndex + 1] : "";
 const payload = {
   argv: process.argv.slice(2),
   home: process.env.HOME || null,
@@ -31,7 +33,8 @@ const payload = {
   xdgConfigHome: process.env.XDG_CONFIG_HOME || null,
   xdgDataHome: process.env.XDG_DATA_HOME || null,
   xdgCacheHome: process.env.XDG_CACHE_HOME || null,
-  prompt: fs.readFileSync(0, "utf8"),
+  prompt: promptFilePath ? fs.readFileSync(promptFilePath, "utf8") : fs.readFileSync(0, "utf8"),
+  promptFilePath,
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
     .sort(),
@@ -253,7 +256,11 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(capture.userProfile).toBe(root);
       expect(capture.opencodeConfig).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "opencode-home", ".config", "opencode", "opencode.json"));
       expect(capture.rudderOperatorHome).toBe(root);
-      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--pure", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).toContain("Follow the attached Rudder runtime prompt file exactly.");
+      expect(capture.argv).toContain("--file");
+      expect(capture.argv).not.toContain(capture.prompt);
+      expect(capture.argv).not.toContain("--pure");
       expect(capture.argv).not.toContain("--dangerously-skip-permissions");
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
@@ -320,7 +327,10 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       });
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { argv: string[] };
-      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--pure", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).toContain("Follow the attached Rudder runtime prompt file exactly.");
+      expect(capture.argv).toContain("--file");
+      expect(capture.argv).not.toContain("--pure");
       expect(capture.argv).toContain("--dangerously-skip-permissions");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -561,7 +571,11 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(capture.xdgConfigHome).toBe(path.join(managedOpenCodeHome, ".config"));
       expect(capture.xdgDataHome).toBe(path.join(managedOpenCodeHome, ".local", "share"));
       expect(capture.xdgCacheHome).toBe(path.join(managedOpenCodeHome, ".cache"));
-      expect(capture.argv).toContain("--pure");
+      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).toContain("Follow the attached Rudder runtime prompt file exactly.");
+      expect(capture.argv).toContain("--file");
+      expect(capture.argv).not.toContain(capture.prompt);
+      expect(capture.argv).not.toContain("--pure");
       await expectNoOperatorHomeSentinelsInManagedHome(managedOpenCodeHome);
       const managedConfigDir = path.join(managedOpenCodeHome, ".config", "opencode");
       expect((await fs.lstat(managedConfigDir)).isSymbolicLink()).toBe(false);

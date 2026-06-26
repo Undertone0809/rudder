@@ -55,6 +55,7 @@ const SHARED_OPENCODE_HOME_ENTRIES = [
 ] as const;
 const OPENCODE_CONFIG_FILE_CANDIDATES = ["opencode.json", "opencode.jsonc"] as const;
 const MANAGED_OPENCODE_CONFIG_FILE = "opencode.json";
+const OPENCODE_PROMPT_FILE_MESSAGE = "Follow the attached Rudder runtime prompt file exactly.";
 const SAFE_OPENCODE_STRING_CONFIG_KEYS = [
   "$schema",
   "model",
@@ -554,26 +555,32 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
+  const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
+  await fs.mkdir(runtimeTmpDir, { recursive: true });
+  const promptFilePath = path.join(runtimeTmpDir, "rudder-prompt.md");
+  await fs.writeFile(promptFilePath, prompt, "utf8");
 
-  const buildArgs = (resumeSessionId: string | null) => {
-    const args = ["run", "--pure", "--format", "json", "--dir", cwd];
+  const buildArgs = (resumeSessionId: string | null, redactPromptFile: boolean) => {
+    const args = ["run", "--format", "json", "--dir", cwd];
+    args.push(OPENCODE_PROMPT_FILE_MESSAGE);
     if (resumeSessionId) args.push("--session", resumeSessionId);
     if (model) args.push("--model", model);
     if (variant) args.push("--variant", variant);
     if (dangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
     if (extraArgs.length > 0) args.push(...extraArgs);
+    args.push("--file", redactPromptFile ? `<rudder prompt file ${prompt.length} chars>` : promptFilePath);
     return args;
   };
 
   const runAttempt = async (resumeSessionId: string | null) => {
-    const args = buildArgs(resumeSessionId);
+    const args = buildArgs(resumeSessionId, false);
     if (onMeta) {
       await onMeta({
         agentRuntimeType: "opencode_local",
         command,
         cwd,
         commandNotes,
-        commandArgs: [...args, `<stdin prompt ${prompt.length} chars>`],
+        commandArgs: buildArgs(resumeSessionId, true),
         env: redactEnvForLogs(env),
         prompt,
         agentInstructionStack: prompt,
@@ -588,7 +595,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const proc = await runChildProcess(runId, command, args, {
       cwd,
       env: runtimeEnv,
-      stdin: prompt,
       timeoutSec,
       graceSec,
       onSpawn,

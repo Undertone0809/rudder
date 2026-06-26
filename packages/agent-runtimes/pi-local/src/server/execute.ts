@@ -45,7 +45,7 @@ const PI_PROTECTED_ENV_KEYS = new Set([
   "USERPROFILE",
 ]);
 const PI_AUTH_REQUIRED_RE =
-  /(?:auth(?:entication)?\s+required|api[-_\s]*key|invalid\s*api[-_\s]*key|x[-_\s]*api[-_\s]*key|not\s+logged\s+in|free\s+usage\s+exceeded|membership\s+benefits|membership\s+is\s+active)/i;
+  /(?:auth(?:entication)?\s+required|api[-_\s]*key|invalid\s*api[-_\s]*key|x[-_\s]*api[-_\s]*key|not\s+logged\s+in|free\s+usage\s+exceeded|membership\s+benefits|membership\s+is\s+active|\b401\b.*status\s+code|\b401\b.*unauthorized)/i;
 
 function firstNonEmptyLine(text: string): string {
   return (

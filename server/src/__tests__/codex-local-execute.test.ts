@@ -70,6 +70,29 @@ console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, c
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeMemoryGitCodexCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+
+process.stdin.resume();
+process.stdin.on("end", () => {
+  const memoriesGit = path.join(process.env.CODEX_HOME, "memories", ".git");
+  const orgMemoriesGit = path.join(path.dirname(path.dirname(process.env.CODEX_HOME)), "memories", ".git");
+  fs.mkdirSync(memoriesGit, { recursive: true });
+  fs.writeFileSync(path.join(memoriesGit, "HEAD"), "ref: refs/heads/main\\n", "utf8");
+  fs.mkdirSync(orgMemoriesGit, { recursive: true });
+  fs.writeFileSync(path.join(orgMemoriesGit, "HEAD"), "ref: refs/heads/main\\n", "utf8");
+  fs.mkdirSync(path.join(process.env.CODEX_HOME, "sessions", "2026"), { recursive: true });
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 async function writeUsageCodexCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 process.stdin.resume();
@@ -444,6 +467,177 @@ describe("codex execute", { timeout: 20_000 }, () => {
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousCodexHome;
       restoreGitEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes provider-managed Codex memory git state after execution", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-memory-git-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const operatorHome = path.join(root, "operator-home");
+    const sharedCodexHome = path.join(operatorHome, ".codex");
+    const paperclipHome = path.join(root, "rudder-home");
+    const managedCodexHome = managedCodexHomePath({ rudderHome: paperclipHome });
+    const managedOrgCodexHome = path.dirname(path.dirname(managedCodexHome));
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
+    await fs.writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
+    await writeMemoryGitCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousPaperclipHome = process.env.RUDDER_HOME;
+    const previousPaperclipInstanceId = process.env.RUDDER_INSTANCE_ID;
+    const previousPaperclipInWorktree = process.env.RUDDER_IN_WORKTREE;
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.HOME = operatorHome;
+    process.env.RUDDER_HOME = paperclipHome;
+    delete process.env.RUDDER_INSTANCE_ID;
+    delete process.env.RUDDER_IN_WORKTREE;
+    delete process.env.CODEX_HOME;
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-memory-git",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      expect(result.sessionId).toBe("codex-session-1");
+      await expect(fs.lstat(path.join(managedCodexHome, "memories"))).rejects.toThrow();
+      await expect(fs.lstat(path.join(managedOrgCodexHome, "memories"))).rejects.toThrow();
+      await expect(fs.lstat(path.join(managedCodexHome, "sessions", "2026"))).resolves.toBeTruthy();
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          stream: "stdout",
+          chunk: expect.stringContaining("Pruned provider-managed Codex memory state"),
+        }),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousPaperclipHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousPaperclipHome;
+      if (previousPaperclipInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousPaperclipInstanceId;
+      if (previousPaperclipInWorktree === undefined) delete process.env.RUDDER_IN_WORKTREE;
+      else process.env.RUDDER_IN_WORKTREE = previousPaperclipInWorktree;
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the Codex execution result when provider memory cleanup fails", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-memory-cleanup-fail-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const operatorHome = path.join(root, "operator-home");
+    const sharedCodexHome = path.join(operatorHome, ".codex");
+    const paperclipHome = path.join(root, "rudder-home");
+    const managedCodexHome = managedCodexHomePath({ rudderHome: paperclipHome });
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
+    await fs.writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
+    await writeMemoryGitCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousPaperclipHome = process.env.RUDDER_HOME;
+    const previousPaperclipInstanceId = process.env.RUDDER_INSTANCE_ID;
+    const previousPaperclipInWorktree = process.env.RUDDER_IN_WORKTREE;
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.HOME = operatorHome;
+    process.env.RUDDER_HOME = paperclipHome;
+    delete process.env.RUDDER_INSTANCE_ID;
+    delete process.env.RUDDER_IN_WORKTREE;
+    delete process.env.CODEX_HOME;
+
+    const originalRm = fs.rm;
+    try {
+      const logs: LogEntry[] = [];
+      let failOnce = true;
+      fs.rm = (async (target: fs.PathLike, options?: fs.RmOptions) => {
+        if (failOnce && String(target).startsWith(path.join(managedCodexHome, "memories"))) {
+          failOnce = false;
+          throw new Error("simulated cleanup failure");
+        }
+        return originalRm(target, options);
+      }) as typeof fs.rm;
+
+      const result = await execute({
+        runId: "run-memory-cleanup-fail",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      expect(result.summary).toBe("hello");
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          stream: "stderr",
+          chunk: expect.stringContaining("simulated cleanup failure"),
+        }),
+      );
+    } finally {
+      fs.rm = originalRm;
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousPaperclipHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousPaperclipHome;
+      if (previousPaperclipInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousPaperclipInstanceId;
+      if (previousPaperclipInWorktree === undefined) delete process.env.RUDDER_IN_WORKTREE;
+      else process.env.RUDDER_IN_WORKTREE = previousPaperclipInWorktree;
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

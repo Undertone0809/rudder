@@ -337,9 +337,10 @@ Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state. Cod
 Gemini, Cursor, and OpenCode local runs keep child `HOME` as the operator home and use
 Rudder-managed provider sidecars for runtime state and selected skills. Runtimes with a verified
 provider allowlist surface use it directly (`CODEX_HOME`, Claude `--add-dir`, Pi `--skill`, and
-Gemini `GEMINI_CLI_HOME` plus `--extensions ""`). OpenCode runs with `--pure` and injects selected
-Rudder `SKILL.md` content through Rudder's prompt path because its CLI does not expose a verified
-skill-directory allowlist. Cursor also uses prompt injection for selected Rudder `SKILL.md` content;
+Gemini `GEMINI_CLI_HOME` plus `--extensions ""`). OpenCode points `OPENCODE_CONFIG` and XDG state at
+Rudder-managed sanitized runtime state and injects selected Rudder `SKILL.md` content through
+Rudder's prompt path because its CLI does not expose a verified skill-directory allowlist. Cursor also
+uses prompt injection for selected Rudder `SKILL.md` content;
 native Cursor rule/plugin discovery is a known limitation until Cursor exposes a verifiable
 allowlist/disable surface.
 

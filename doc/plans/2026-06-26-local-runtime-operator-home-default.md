@@ -2,7 +2,7 @@
 title: Local runtime operator home default
 date: 2026-06-26
 kind: implementation
-status: in_progress
+status: completed
 area: agent_runtimes
 entities:
   - local_runtime_home
@@ -120,6 +120,49 @@ This implementation will:
   legacy generic bridge symlinks left by older runs.
 - Product logic documents the current operator-home default and the separate
   adapter-managed runtime state isolation boundary.
+
+## 2026-06-26 Validation Result
+
+The hard local validation slice used the user's real local CLIs for Codex,
+Claude Code, OpenCode, and Pi. It verified adapter `execute` and
+`testEnvironment` paths, not only bare CLI commands.
+
+Validated local versions:
+
+| Runtime | CLI path | Version | Result |
+| --- | --- | --- | --- |
+| Codex | `/Users/zeeland/.nvm/versions/node/v22.19.0/bin/codex` | `codex-cli 0.130.0` | `hello` run passed |
+| Claude Code | `/opt/homebrew/bin/claude` | `2.1.148 (Claude Code)` | `hello` run passed |
+| OpenCode | `/Users/zeeland/.nvm/versions/node/v22.19.0/bin/opencode` | `1.15.11` | `hello` run passed with prompt file attachment |
+| Pi | `/Users/zeeland/.nvm/versions/node/v22.19.0/bin/pi` | `0.76.0` | runtime boundary passed; provider auth blocked by `401 status code (no body)` |
+
+Observed runtime boundary:
+
+- All four adapters set child `HOME` and `USERPROFILE` to `/Users/zeeland`.
+- All four adapters exposed `RUDDER_OPERATOR_HOME=/Users/zeeland`.
+- Codex used managed `CODEX_HOME`; Claude used managed `CLAUDE_CONFIG_DIR`
+  and `RUDDER_CLAUDE_HOME`; OpenCode used managed `OPENCODE_CONFIG` plus XDG
+  state; Pi used managed `PI_CODING_AGENT_DIR` and
+  `PI_CODING_AGENT_SESSION_DIR`.
+- A deep forbidden-state scan of each managed runtime home found no `.git`,
+  `.npm`, `.vscode`, `.npmrc`, `.git-credentials`, `.ssh`, or `.config/gh`
+  entries after the run.
+
+Fixes completed in this slice:
+
+- Codex prunes provider-managed `memories` state after execution at both the
+  agent `CODEX_HOME` level and the organization Codex sidecar level, preserving
+  session state.
+- OpenCode writes the full Rudder prompt to a managed runtime temp file and
+  invokes `opencode run ... --file <prompt-file>` with a short fixed message,
+  so the full prompt is not exposed in process argv or recorded command args.
+- Pi classifies local provider responses shaped as `401 status code (no body)`
+  as `pi_auth_required` instead of a generic runtime failure.
+
+Product Logic Registry note: this plan proposed updating
+`doc/product/domains/agents/runtime-platform-permissions.md`, but that registry
+is guarded. No `doc/product/**` files were edited in this slice because the
+current user did not explicitly authorize a Product Logic Registry delta.
 
 ## Verification Plan
 
