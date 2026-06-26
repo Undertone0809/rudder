@@ -7,6 +7,7 @@ import {
   patchKeyboardShortcutSettingsSchema,
   patchOperatorProfileSettingsSchema,
   type DeploymentMode,
+  type LangfuseConfig,
   type PatchInstanceLangfuseSettings,
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
@@ -32,6 +33,14 @@ const LANGFUSE_ENV_KEYS = [
   "LANGFUSE_SECRET_KEY",
   "LANGFUSE_ENVIRONMENT",
 ] as const;
+type LangfuseSettingsSource = {
+  installed?: boolean;
+  enabled?: boolean;
+  baseUrl?: string;
+  publicKey?: string;
+  secretKey?: string;
+  environment?: string;
+};
 
 function assertCanManageInstanceSettings(req: Request) {
   if (req.actor.type !== "board") {
@@ -50,7 +59,7 @@ function assertLocalLangfuseSettings(deploymentMode: DeploymentMode) {
 }
 
 function isLangfuseManagedByEnv() {
-  return LANGFUSE_ENV_KEYS.some((key) => process.env[key] !== undefined);
+  return LANGFUSE_ENV_KEYS.some((key) => trimOptionalString(process.env[key]) !== undefined);
 }
 
 function trimOptionalString(value: string | undefined) {
@@ -58,20 +67,21 @@ function trimOptionalString(value: string | undefined) {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function getLangfuseSettings() {
-  const config = loadConfig();
+function getLangfuseSettings(langfuse: LangfuseSettingsSource | undefined = loadConfig().langfuse) {
   const localEnv = resolveEffectiveLocalEnvName();
   return {
-    enabled: config.langfuse.enabled,
-    baseUrl: config.langfuse.baseUrl,
-    publicKey: config.langfuse.publicKey ?? "",
-    environment: resolveLangfuseEnvironmentName(config.langfuse.environment, localEnv) ?? "",
-    secretKeyConfigured: Boolean(config.langfuse.secretKey),
+    installed: langfuse?.installed ?? false,
+    enabled: langfuse?.enabled ?? false,
+    baseUrl: langfuse?.baseUrl ?? LANGFUSE_BASE_URL_DEFAULT,
+    publicKey: langfuse?.publicKey ?? "",
+    environment: resolveLangfuseEnvironmentName(langfuse?.environment, localEnv) ?? "",
+    secretKeyConfigured: Boolean(langfuse?.secretKey),
     managedByEnv: isLangfuseManagedByEnv(),
   };
 }
 
 function applyLangfusePatch(current: Record<string, unknown> | undefined, patch: PatchInstanceLangfuseSettings) {
+  const installed = ((current?.installed as boolean | undefined) ?? false) || Object.keys(patch).length > 0;
   const nextEnabled = patch.enabled ?? (current?.enabled as boolean | undefined) ?? false;
   const nextBaseUrl =
     (Object.prototype.hasOwnProperty.call(patch, "baseUrl")
@@ -95,11 +105,27 @@ function applyLangfusePatch(current: Record<string, unknown> | undefined, patch:
   }
 
   return {
+    installed,
     enabled: nextEnabled,
     baseUrl: nextBaseUrl,
     ...(nextPublicKey ? { publicKey: nextPublicKey } : {}),
     ...(nextSecretKey ? { secretKey: nextSecretKey } : {}),
     ...(nextEnvironment ? { environment: nextEnvironment } : {}),
+  };
+}
+
+function installLangfuseIntegration(current: LangfuseConfig | undefined): LangfuseConfig {
+  if (!current) {
+    return {
+      installed: true,
+      enabled: false,
+      baseUrl: LANGFUSE_BASE_URL_DEFAULT,
+    };
+  }
+
+  return {
+    ...current,
+    installed: true,
   };
 }
 
@@ -189,6 +215,49 @@ export function instanceSettingsRoutes(
     res.json(getLangfuseSettings());
   });
 
+  router.post("/instance/settings/langfuse/install", async (req, res) => {
+    assertCanManageInstanceSettings(req);
+    assertLocalLangfuseSettings(opts.deploymentMode);
+    if (isLangfuseManagedByEnv()) {
+      throw conflict("Langfuse settings are managed by environment variables.");
+    }
+
+    const updatedConfig = updateConfigFile((current) => ({
+      ...current,
+      langfuse: installLangfuseIntegration(current.langfuse),
+    }));
+
+    const actor = getActorInfo(req);
+    const orgIds = await svc.listCompanyIds();
+    await Promise.all(
+      orgIds.map((orgId) =>
+        logActivity(db, {
+          orgId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "instance.settings.langfuse_installed",
+          entityType: "instance_settings",
+          entityId: "langfuse",
+          details: {
+            langfuse: {
+              installed: updatedConfig.langfuse?.installed ?? true,
+              enabled: updatedConfig.langfuse?.enabled ?? false,
+              baseUrl: updatedConfig.langfuse?.baseUrl ?? LANGFUSE_BASE_URL_DEFAULT,
+              publicKeyConfigured: Boolean(updatedConfig.langfuse?.publicKey),
+              secretKeyConfigured: Boolean(updatedConfig.langfuse?.secretKey),
+              environment: updatedConfig.langfuse?.environment ?? null,
+            },
+            changedKeys: ["installed"],
+          },
+        }),
+      ),
+    );
+
+    res.json(getLangfuseSettings(updatedConfig.langfuse));
+  });
+
   router.patch(
     "/instance/settings/langfuse",
     validate(patchInstanceLangfuseSettingsSchema),
@@ -219,6 +288,7 @@ export function instanceSettingsRoutes(
             entityId: "langfuse",
             details: {
               langfuse: {
+                installed: updatedConfig.langfuse?.installed ?? false,
                 enabled: updatedConfig.langfuse?.enabled ?? false,
                 baseUrl: updatedConfig.langfuse?.baseUrl ?? LANGFUSE_BASE_URL_DEFAULT,
                 publicKeyConfigured: Boolean(updatedConfig.langfuse?.publicKey),
@@ -231,7 +301,7 @@ export function instanceSettingsRoutes(
         ),
       );
 
-      res.json(getLangfuseSettings());
+      res.json(getLangfuseSettings(updatedConfig.langfuse));
     },
   );
 

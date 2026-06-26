@@ -14,6 +14,7 @@ export interface InstanceNotificationSettings {
 }
 
 export interface InstanceLangfuseSettings {
+  installed: boolean;
   enabled: boolean;
   baseUrl: string;
   publicKey: string;

@@ -100,6 +100,7 @@ export const secretsConfigSchema = z.object({
 });
 
 export const langfuseConfigSchema = z.object({
+  installed: z.boolean().optional(),
   enabled: z.boolean().default(false),
   baseUrl: z.string().url().default("http://localhost:3000"),
   publicKey: z.string().optional(),

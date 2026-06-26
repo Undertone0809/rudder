@@ -76,6 +76,7 @@ describe("server config env loading", () => {
 
     expect(config.databaseUrl).toBeUndefined();
     expect(config.langfuse).toMatchObject({
+      installed: true,
       enabled: true,
       baseUrl: "http://localhost:3000",
       publicKey: "pk-lf-root",
@@ -205,6 +206,7 @@ describe("server config env loading", () => {
     const config = loadConfig();
 
     expect(config.langfuse).toMatchObject({
+      installed: true,
       enabled: true,
       baseUrl: "https://us.cloud.langfuse.com",
       publicKey: "pk-lf-config",
@@ -263,12 +265,118 @@ describe("server config env loading", () => {
     const config = loadConfig();
 
     expect(config.langfuse).toMatchObject({
+      installed: true,
       enabled: true,
       baseUrl: "https://cloud.langfuse.com",
       publicKey: "pk-lf-env",
       secretKey: "sk-lf-env",
       environment: "prod",
     });
+  });
+
+  it("ignores blank langfuse env vars when inferring installation", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    const projectDir = path.join(tempDir, "repo");
+    fs.mkdirSync(projectDir, { recursive: true });
+    process.chdir(projectDir);
+    writeText(path.join(projectDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+
+    delete process.env.RUDDER_CONFIG;
+    process.env.RUDDER_LOCAL_ENV = "prod_local";
+    process.env.RUDDER_INSTANCE_ID = "default";
+    process.env.LANGFUSE_ENABLED = "";
+    process.env.LANGFUSE_BASE_URL = "";
+    process.env.LANGFUSE_PUBLIC_KEY = "";
+    process.env.LANGFUSE_SECRET_KEY = "";
+    process.env.LANGFUSE_ENVIRONMENT = "";
+    vi.doMock("../config-file.js", () => ({
+      readConfigFile: () => ({
+        $meta: {
+          version: 1,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          source: "configure",
+        },
+        database: { mode: "embedded-postgres", embeddedPostgresPort: 54329 },
+        logging: {},
+        server: {},
+        auth: { baseUrlMode: "auto", disableSignUp: false },
+        storage: {
+          provider: "local_disk",
+          localDisk: { baseDir: "~/.rudder/instances/default/data/storage" },
+          s3: { bucket: "rudder", region: "us-east-1", prefix: "", forcePathStyle: false },
+        },
+        secrets: {
+          provider: "local_encrypted",
+          strictMode: false,
+          localEncrypted: { keyFilePath: "~/.rudder/instances/default/secrets/master.key" },
+        },
+      }),
+    }));
+
+    const loadConfig = await importLoadConfig();
+    const config = loadConfig();
+
+    expect(config.langfuse).toMatchObject({
+      installed: false,
+      enabled: false,
+      baseUrl: "http://localhost:3000",
+    });
+    expect(config.langfuse.publicKey).toBeUndefined();
+    expect(config.langfuse.secretKey).toBeUndefined();
+  });
+
+  it("honors an explicit langfuse installed flag from config.json", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    const projectDir = path.join(tempDir, "repo");
+    fs.mkdirSync(projectDir, { recursive: true });
+    process.chdir(projectDir);
+    writeText(path.join(projectDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+
+    delete process.env.RUDDER_CONFIG;
+    delete process.env.LANGFUSE_ENABLED;
+    delete process.env.LANGFUSE_BASE_URL;
+    delete process.env.LANGFUSE_PUBLIC_KEY;
+    delete process.env.LANGFUSE_SECRET_KEY;
+    delete process.env.LANGFUSE_ENVIRONMENT;
+    process.env.RUDDER_LOCAL_ENV = "prod_local";
+    process.env.RUDDER_INSTANCE_ID = "default";
+    vi.doMock("../config-file.js", () => ({
+      readConfigFile: () => ({
+        $meta: {
+          version: 1,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          source: "configure",
+        },
+        database: { mode: "embedded-postgres", embeddedPostgresPort: 54329 },
+        logging: {},
+        server: {},
+        auth: { baseUrlMode: "auto", disableSignUp: false },
+        storage: {
+          provider: "local_disk",
+          localDisk: { baseDir: "~/.rudder/instances/default/data/storage" },
+          s3: { bucket: "rudder", region: "us-east-1", prefix: "", forcePathStyle: false },
+        },
+        secrets: {
+          provider: "local_encrypted",
+          strictMode: false,
+          localEncrypted: { keyFilePath: "~/.rudder/instances/default/secrets/master.key" },
+        },
+        langfuse: {
+          installed: false,
+          enabled: true,
+          baseUrl: "https://us.cloud.langfuse.com",
+          publicKey: "pk-lf-config",
+          secretKey: "sk-lf-config",
+          environment: "local",
+        },
+      }),
+    }));
+
+    const loadConfig = await importLoadConfig();
+    const config = loadConfig();
+
+    expect(config.langfuse.installed).toBe(false);
+    expect(config.langfuse.enabled).toBe(true);
   });
 
   it("defaults automatic database backup guard to 256 MiB", async () => {

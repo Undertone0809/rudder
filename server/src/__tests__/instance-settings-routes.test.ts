@@ -117,6 +117,7 @@ describe("instance settings routes", () => {
     mockPathPicker.pick.mockResolvedValue("/Users/test/project");
     mockLoadConfig.mockReturnValue({
       langfuse: {
+        installed: false,
         enabled: false,
         baseUrl: "http://localhost:3000",
         publicKey: "pk-lf-current",
@@ -134,6 +135,7 @@ describe("instance settings routes", () => {
       logging: {},
       server: {},
       langfuse: {
+        installed: false,
         enabled: false,
         baseUrl: "http://localhost:3000",
         publicKey: "pk-lf-current",
@@ -214,6 +216,7 @@ describe("instance settings routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
+      installed: false,
       enabled: false,
       baseUrl: "http://localhost:3000",
       publicKey: "pk-lf-current",
@@ -233,6 +236,7 @@ describe("instance settings routes", () => {
 
     mockLoadConfig.mockReturnValueOnce({
       langfuse: {
+        installed: true,
         enabled: true,
         baseUrl: "https://cloud.langfuse.com",
         publicKey: "pk-lf-next",
@@ -255,6 +259,7 @@ describe("instance settings routes", () => {
     expect(mockUpdateConfigFile).toHaveBeenCalledTimes(1);
     const updatedConfig = mockUpdateConfigFile.mock.results[0]?.value;
     expect(updatedConfig.langfuse).toEqual({
+      installed: true,
       enabled: true,
       baseUrl: "https://cloud.langfuse.com",
       publicKey: "pk-lf-next",
@@ -262,6 +267,7 @@ describe("instance settings routes", () => {
       environment: "prod",
     });
     expect(res.body).toEqual({
+      installed: true,
       enabled: true,
       baseUrl: "https://cloud.langfuse.com",
       publicKey: "pk-lf-next",
@@ -299,6 +305,7 @@ describe("instance settings routes", () => {
     expect(res.status).toBe(200);
     const updatedConfig = mockUpdateConfigFile.mock.results[0]?.value;
     expect(updatedConfig.langfuse).toEqual({
+      installed: true,
       enabled: false,
       baseUrl: "http://localhost:3000",
       publicKey: "pk-lf-current",
@@ -341,6 +348,61 @@ describe("instance settings routes", () => {
       error: "Langfuse settings are managed by environment variables.",
     });
     expect(mockUpdateConfigFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects langfuse install when env vars manage the runtime", async () => {
+    process.env.LANGFUSE_SECRET_KEY = "sk-lf-env";
+    const app = await createApp({
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const res = await request(app)
+      .post("/api/instance/settings/langfuse/install")
+      .send({});
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: "Langfuse settings are managed by environment variables.",
+    });
+    expect(mockUpdateConfigFile).not.toHaveBeenCalled();
+  });
+
+  it("marks the Rudder langfuse integration installed without changing credentials", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const res = await request(app)
+      .post("/api/instance/settings/langfuse/install")
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateConfigFile).toHaveBeenCalledTimes(1);
+    const updatedConfig = mockUpdateConfigFile.mock.results[0]?.value;
+    expect(updatedConfig.langfuse).toEqual({
+      installed: true,
+      enabled: false,
+      baseUrl: "http://localhost:3000",
+      publicKey: "pk-lf-current",
+      secretKey: "sk-lf-current",
+      environment: "local",
+    });
+    expect(res.body).toEqual({
+      installed: true,
+      enabled: false,
+      baseUrl: "http://localhost:3000",
+      publicKey: "pk-lf-current",
+      environment: "prod",
+      secretKeyConfigured: true,
+      managedByEnv: false,
+    });
+    expect(mockLogActivity).toHaveBeenCalledTimes(2);
   });
 
   it("allows board users to read and update profile settings without instance admin access", async () => {

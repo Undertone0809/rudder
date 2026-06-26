@@ -20,6 +20,7 @@ export const instanceNotificationSettingsSchema = z.object({
 export const patchInstanceNotificationSettingsSchema = instanceNotificationSettingsSchema.partial();
 
 export const instanceLangfuseSettingsSchema = z.object({
+  installed: z.boolean().default(false),
   enabled: z.boolean().default(false),
   baseUrl: z.string().url().default("http://localhost:3000"),
   publicKey: z.string().default(""),

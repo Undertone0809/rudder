@@ -33,6 +33,8 @@ export const instanceSettingsApi = {
     api.patch<InstanceNotificationSettings>("/instance/settings/notifications", patch),
   getLangfuse: () =>
     api.get<InstanceLangfuseSettings>("/instance/settings/langfuse"),
+  installLangfuse: () =>
+    api.post<InstanceLangfuseSettings>("/instance/settings/langfuse/install", {}),
   updateLangfuse: (patch: PatchInstanceLangfuseSettings) =>
     api.patch<InstanceLangfuseSettings>("/instance/settings/langfuse", patch),
   pickPath: (input: InstancePathPickerRequest) =>

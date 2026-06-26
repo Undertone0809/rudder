@@ -74,6 +74,10 @@ function loadDistinctEnvFileWithoutOverride(
   loadedPaths.add(filePath);
 }
 
+function hasNonEmptyEnv(key: string): boolean {
+  return (process.env[key]?.trim() ?? "").length > 0;
+}
+
 const RUDDER_ENV_FILE_PATH = resolveRudderEnvPath();
 const loadedEnvPaths = new Set<string>();
 loadDistinctEnvFileWithoutOverride(RUDDER_ENV_FILE_PATH, loadedEnvPaths);
@@ -130,6 +134,7 @@ export interface Config {
   heartbeatRunInactivityTimeoutMs: number;
   companyDeletionEnabled: boolean;
   langfuse: {
+    installed: boolean;
     enabled: boolean;
     baseUrl: string;
     publicKey: string | undefined;
@@ -315,6 +320,19 @@ export function loadConfig(): Config {
   const langfuseBaseUrl = process.env.LANGFUSE_BASE_URL?.trim() || fileLangfuse?.baseUrl?.trim() || "http://localhost:3000";
   const langfusePublicKey = process.env.LANGFUSE_PUBLIC_KEY?.trim() || fileLangfuse?.publicKey?.trim() || undefined;
   const langfuseSecretKey = process.env.LANGFUSE_SECRET_KEY?.trim() || fileLangfuse?.secretKey?.trim() || undefined;
+  const langfuseInstalled =
+    fileLangfuse?.installed
+    ?? Boolean(
+      fileLangfuse?.enabled
+        || fileLangfuse?.publicKey?.trim()
+        || fileLangfuse?.secretKey?.trim()
+        || fileLangfuse?.environment?.trim()
+        || hasNonEmptyEnv("LANGFUSE_ENABLED")
+        || hasNonEmptyEnv("LANGFUSE_BASE_URL")
+        || hasNonEmptyEnv("LANGFUSE_PUBLIC_KEY")
+        || hasNonEmptyEnv("LANGFUSE_SECRET_KEY")
+        || hasNonEmptyEnv("LANGFUSE_ENVIRONMENT"),
+    );
   const langfuseEnvironment =
     resolveLangfuseEnvironmentName(
       process.env.LANGFUSE_ENVIRONMENT?.trim() || fileLangfuse?.environment?.trim(),
@@ -384,7 +402,8 @@ export function loadConfig(): Config {
     heartbeatRunInactivityTimeoutMs,
     companyDeletionEnabled,
     langfuse: {
-      enabled: process.env.LANGFUSE_ENABLED !== undefined
+      installed: langfuseInstalled,
+      enabled: hasNonEmptyEnv("LANGFUSE_ENABLED")
         ? langfuseEnabled
         : (fileLangfuse?.enabled ?? false),
       baseUrl: langfuseBaseUrl,

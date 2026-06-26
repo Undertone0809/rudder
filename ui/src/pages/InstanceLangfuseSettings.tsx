@@ -16,7 +16,7 @@ import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ActivitySquare, AlertTriangle, KeyRound, Link2 } from "lucide-react";
+import { ActivitySquare, AlertTriangle, KeyRound, Link2, PackageCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 type FormState = {
@@ -116,6 +116,31 @@ export function InstanceLangfuseSettings() {
     },
   });
 
+  const installMutation = useMutation({
+    mutationFn: () => instanceSettingsApi.installLangfuse(),
+    onSuccess: async (next) => {
+      setActionError(null);
+      setForm(normalizeFormState(next));
+      setClearSecretKey(false);
+      queryClient.setQueryData(queryKeys.instance.langfuseSettings, next);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.instance.langfuseSettings });
+      pushToast({
+        title: t("langfuse.install.saved.title"),
+        body: t("langfuse.install.saved.body"),
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : t("langfuse.install.failed");
+      setActionError(message);
+      pushToast({
+        title: t("langfuse.install.failed"),
+        body: message,
+        tone: "error",
+      });
+    },
+  });
+
   const normalizedCurrent = useMemo(
     () => (settingsQuery.data ? normalizeFormState(settingsQuery.data) : null),
     [settingsQuery.data],
@@ -148,6 +173,65 @@ export function InstanceLangfuseSettings() {
 
   const settings = settingsQuery.data;
   if (!settings) return null;
+
+  if (!settings.installed) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-6 px-1 pb-6">
+        <SettingsPageHeader
+          icon={ActivitySquare}
+          title={t("langfuse.title")}
+          description={t("langfuse.description")}
+        />
+
+        <SettingsDivider />
+
+        <div className="space-y-5">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-border/70 bg-card/70">
+              <PackageCheck className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="min-w-0 space-y-2">
+              <h2 className="text-base font-semibold text-foreground">{t("langfuse.install.title")}</h2>
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                {t("langfuse.install.description")}
+              </p>
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                {t("langfuse.install.scope")}
+              </p>
+            </div>
+          </div>
+
+          {installMutation.isPending ? (
+            <div className="space-y-2 rounded-[var(--radius-md)] border border-border/70 bg-card/60 px-4 py-3">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium text-foreground">{t("langfuse.install.progress")}</span>
+                <span className="text-xs text-muted-foreground">{t("langfuse.install.installing")}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="h-full w-2/3 animate-pulse rounded-full bg-primary" />
+              </div>
+            </div>
+          ) : null}
+
+          {actionError ? (
+            <div className="rounded-[var(--radius-md)] border border-destructive/30 bg-destructive/8 px-4 py-3 text-sm text-destructive">
+              {actionError}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              onClick={() => installMutation.mutate()}
+              disabled={installMutation.isPending}
+            >
+              {installMutation.isPending ? t("langfuse.install.installing") : t("langfuse.install.action")}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const readOnly = saveMutation.isPending || settings.managedByEnv;
   const instanceTag = `instance:${healthQuery.data?.instanceId ?? "current-instance"}`;

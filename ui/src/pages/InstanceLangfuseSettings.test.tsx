@@ -11,6 +11,7 @@ import { InstanceLangfuseSettings } from "./InstanceLangfuseSettings";
 
 const queryState = {
   langfuse: {
+    installed: true,
     enabled: true,
     baseUrl: "https://cloud.langfuse.com",
     publicKey: "pk-lf-current",
@@ -35,6 +36,8 @@ const queryState = {
   },
 };
 
+const mockMutate = vi.hoisted(() => vi.fn());
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
     const key = queryKey.join(":");
@@ -58,8 +61,18 @@ vi.mock("@tanstack/react-query", () => ({
       error: null,
     };
   },
-  useMutation: () => ({
-    mutate: vi.fn(),
+  useMutation: ({ mutationFn, onSuccess, onError }: {
+    mutationFn: () => Promise<unknown> | unknown;
+    onSuccess?: (data: unknown) => Promise<void> | void;
+    onError?: (error: unknown) => void;
+  }) => ({
+    mutate: () => {
+      mockMutate();
+      Promise.resolve()
+        .then(() => mutationFn())
+        .then((data) => onSuccess?.(data))
+        .catch((error) => onError?.(error));
+    },
     isPending: false,
   }),
   useQueryClient: () => ({
@@ -84,6 +97,17 @@ vi.mock("@/context/I18nContext", () => ({
         "common.langfuse": "Langfuse",
         "langfuse.title": "Langfuse",
         "langfuse.description": "Langfuse settings",
+        "langfuse.install.title": "Install Langfuse integration",
+        "langfuse.install.description":
+          "Langfuse is an optional tracing integration for Rudder execution traces.",
+        "langfuse.install.scope":
+          "Rudder installs its Langfuse integration only. Configure your own Langfuse host and credentials separately.",
+        "langfuse.install.action": "Install Rudder Langfuse integration",
+        "langfuse.install.installing": "Installing...",
+        "langfuse.install.progress": "Installing Rudder Langfuse integration",
+        "langfuse.install.failed": "Failed to install Langfuse integration.",
+        "langfuse.install.saved.title": "Langfuse integration installed",
+        "langfuse.install.saved.body": "Langfuse configuration is now available.",
         "langfuse.loadFailed": "Failed to load Langfuse settings.",
         "langfuse.updateFailed": "Failed to save Langfuse settings.",
         "langfuse.section.connection.title": "Connection",
@@ -132,10 +156,22 @@ let cleanupFn: (() => void) | null = null;
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
+  queryState.langfuse.installed = true;
   queryState.langfuse.managedByEnv = false;
   queryState.health.devServer.restartRequired = false;
   queryState.health.devServer.envFileChanged = false;
 });
+
+vi.mock("@/api/instanceSettings", () => ({
+  instanceSettingsApi: {
+    getLangfuse: vi.fn(),
+    updateLangfuse: vi.fn(),
+    installLangfuse: vi.fn(async () => {
+      queryState.langfuse.installed = true;
+      return queryState.langfuse;
+    }),
+  },
+}));
 
 function renderPage() {
   const container = document.createElement("div");
@@ -157,6 +193,49 @@ function renderPage() {
 }
 
 describe("InstanceLangfuseSettings", () => {
+  it("shows an install introduction before revealing langfuse configuration", async () => {
+    queryState.langfuse.installed = false;
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Install Langfuse integration");
+    expect(container.textContent).toContain("optional tracing integration");
+    expect(container.textContent).toContain("Configure your own Langfuse host and credentials separately.");
+    expect(container.textContent).toContain("Install Rudder Langfuse integration");
+    expect(container.textContent).not.toContain("Connection");
+    expect(container.textContent).not.toContain("Base URL");
+    expect(container.textContent).not.toContain("Public key");
+    expect(container.textContent).not.toContain("Secret key");
+  });
+
+  it("reveals langfuse configuration after installing the Rudder integration", async () => {
+    queryState.langfuse.installed = false;
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const button = Array.from(container.querySelectorAll("button"))
+      .find((element) => element.textContent === "Install Rudder Langfuse integration");
+    expect(button).toBeTruthy();
+
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockMutate).toHaveBeenCalled();
+    expect(container.textContent).toContain("Connection");
+    expect(container.textContent).toContain("Base URL");
+    expect(container.textContent).toContain("Public key");
+    expect(container.textContent).toContain("Secret key");
+  });
+
   it("explains that trace environment is stage-only and shows automatic tags", async () => {
     const container = renderPage();
 

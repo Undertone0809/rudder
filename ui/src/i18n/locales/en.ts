@@ -408,6 +408,17 @@ export const en = {
   "langfuse.title": "Langfuse",
   "langfuse.description":
     "Configure bootstrap-time Langfuse tracing for this local Rudder instance. Changes are saved to the local instance config and apply only after restart.",
+  "langfuse.install.title": "Install Rudder Langfuse integration",
+  "langfuse.install.description":
+    "Langfuse is optional in Rudder. Use it when you want Rudder agent runs, chat turns, and evaluation signals to produce traces in your Langfuse project.",
+  "langfuse.install.scope":
+    "Rudder only installs its own Langfuse integration. Keep managing your Langfuse host, project keys, and local environment outside this installer.",
+  "langfuse.install.action": "Install integration",
+  "langfuse.install.installing": "Installing...",
+  "langfuse.install.progress": "Installing Rudder Langfuse integration",
+  "langfuse.install.failed": "Failed to install Langfuse integration.",
+  "langfuse.install.saved.title": "Langfuse integration installed",
+  "langfuse.install.saved.body": "Langfuse configuration is now available.",
   "langfuse.loadFailed": "Failed to load Langfuse settings.",
   "langfuse.updateFailed": "Failed to save Langfuse settings.",
   "langfuse.section.connection.title": "Connection",
