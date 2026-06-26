@@ -7,6 +7,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const targetDir = path.join(repoRoot, "desktop", ".packaged", "server-package");
 const postgresRuntimeDir = path.join(repoRoot, "desktop", ".packaged", "postgres-18.4");
+const preparePostgresRuntimeScript = path.join(scriptDir, "prepare-postgres-runtime.mjs");
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const sourceManifestRoots = ["packages", "server", "cli"];
 
@@ -150,6 +151,17 @@ async function execFileAsync(command, args) {
   });
 }
 
+async function preparePostgresRuntimeBinDir() {
+  const result = await execFileAsync(process.execPath, [preparePostgresRuntimeScript]);
+  const stdout = result.stdout.trim();
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const preparedBinDir = lines.at(-1);
+  if (!preparedBinDir) {
+    throw new Error("PostgreSQL 18.4 runtime preparation did not return a bin directory");
+  }
+  return preparedBinDir;
+}
+
 async function assertPostgresBinDirComplete(sourceBinDir) {
   const requiredBinaries = ["initdb", "pg_ctl", "postgres"];
   const missing = [];
@@ -170,12 +182,15 @@ async function assertPostgresBinDirComplete(sourceBinDir) {
 async function stagePostgresRuntimePayload() {
   await fs.rm(postgresRuntimeDir, { recursive: true, force: true });
 
-  const sourceBinDir = process.env.RUDDER_POSTGRES_BIN_DIR?.trim();
+  let sourceBinDir = process.env.RUDDER_POSTGRES_BIN_DIR?.trim();
   if (!sourceBinDir) {
-    if (process.env.RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES === "1") return;
-    throw new Error(
-      "Desktop production packaging requires RUDDER_POSTGRES_BIN_DIR pointing at PostgreSQL 18.4 production binaries. Set RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1 only for development fallback packaging.",
-    );
+    if (process.env.RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE === "1") {
+      if (process.env.RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES === "1") return;
+      throw new Error(
+        "Desktop production packaging requires RUDDER_POSTGRES_BIN_DIR pointing at PostgreSQL 18.4 production binaries. Unset RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE to let the build prepare it automatically, or set RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1 only for development fallback packaging.",
+      );
+    }
+    sourceBinDir = await preparePostgresRuntimeBinDir();
   }
 
   await assertPostgresBinDirComplete(sourceBinDir);

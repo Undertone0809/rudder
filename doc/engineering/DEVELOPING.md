@@ -439,7 +439,7 @@ Notes:
 - For low-frequency resident-shell debugging, use `RUDDER_DESKTOP_RESIDENT_SHELL=1 pnpm dev:watch`.
 - For low-frequency desktop-only debugging, use `pnpm --filter @rudderhq/desktop dev`.
 - Use `pnpm rudder ...` for CLI work in development.
-- `pnpm prod` builds the portable packaged app, runs packaged smoke boot, then opens the local artifact. It does not replace the persistent local `prod_local` runtime from `pnpm rudder run`.
+- `pnpm prod` builds the portable packaged app, runs packaged smoke boot, then opens the local artifact. If a PostgreSQL 18.4 runtime payload is not already configured, Desktop packaging downloads and caches one automatically. It does not replace the persistent local `prod_local` runtime from `pnpm rudder run`.
 
 Tailscale/private-auth dev mode:
 

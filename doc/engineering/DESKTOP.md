@@ -286,10 +286,13 @@ it into Electron resources during packaging. At startup, packaged Desktop uses
 an explicit operator-provided `RUDDER_POSTGRES_BIN_DIR` first, then a successfully
 loaded external runtime cache payload, then the bundled resources payload.
 
-Production staging fails when `RUDDER_POSTGRES_BIN_DIR` is missing or when
-`initdb`, `pg_ctl`, or `postgres` are missing, or when `postgres --version` is not PostgreSQL 18.4. Use
-`RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1` only for development fallback
-packaging.
+When `RUDDER_POSTGRES_BIN_DIR` is unset, Desktop staging prepares and caches a
+PostgreSQL 18.4 runtime payload automatically under the user's Rudder runtime
+payload cache. Staging still fails when `initdb`, `pg_ctl`, or `postgres` are
+missing, or when `postgres --version` is not PostgreSQL 18.4. Set
+`RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE=1` to disable automatic preparation;
+with that flag enabled, use `RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1` only for
+development fallback packaging.
 Downloaded Desktop assets are cached under `~/.rudder/desktop-assets/` by
 SHA-256 checksum so repeated installs or retries can reuse an already verified
 portable asset instead of downloading the full release again.

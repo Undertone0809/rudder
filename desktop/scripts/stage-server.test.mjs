@@ -20,6 +20,22 @@ function writeJson(filePath, value) {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function writeFakePostgresBinDir(binDir) {
+  mkdirSync(binDir, { recursive: true });
+  for (const binary of ["initdb", "pg_ctl"]) {
+    const binaryPath = join(binDir, process.platform === "win32" ? `${binary}.exe` : binary);
+    writeFileSync(binaryPath, "");
+    chmodSync(binaryPath, 0o755);
+  }
+  const postgresPath = join(binDir, process.platform === "win32" ? "postgres.exe" : "postgres");
+  if (process.platform === "win32") {
+    writeFileSync(postgresPath, "@echo off\r\necho PostgreSQL 18.4\r\n");
+  } else {
+    writeFileSync(postgresPath, "#!/bin/sh\necho 'PostgreSQL 18.4'\n");
+  }
+  chmodSync(postgresPath, 0o755);
+}
+
 function createStageServerRepo() {
   const repo = mkdtempSync(join(tmpdir(), "rudder-stage-server-test-"));
   tempRoots.push(repo);
@@ -28,6 +44,15 @@ function createStageServerRepo() {
   mkdirSync(join(repo, "packages", "shared"), { recursive: true });
   mkdirSync(join(repo, "server"), { recursive: true });
   cpSync(join(scriptsDir, "stage-server.mjs"), join(repo, "desktop", "scripts", "stage-server.mjs"));
+  writeFileSync(join(repo, "desktop", "scripts", "prepare-postgres-runtime.mjs"), [
+    "const configuredBinDir = process.env.RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR;",
+    "if (!configuredBinDir) {",
+    "  console.error('missing RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR');",
+    "  process.exit(1);",
+    "}",
+    "console.log(configuredBinDir);",
+    "",
+  ].join("\n"));
 
   const sharedManifestPath = join(repo, "packages", "shared", "package.json");
   const sharedManifest = {
@@ -123,7 +148,37 @@ afterEach(() => {
 });
 
 describe("desktop stage-server", () => {
-  it("fails production staging when no PostgreSQL 18.4 payload is configured", () => {
+  it("automatically prepares PostgreSQL 18.4 payload when no bin dir is configured", () => {
+    const { repo, binDir } = createStageServerRepo();
+    const pgBinDir = join(repo, "prepared-pg-bin");
+    writeFakePostgresBinDir(pgBinDir);
+
+    const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
+        RUDDER_POSTGRES_BIN_DIR: "",
+        RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "",
+        RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR: pgBinDir,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(repo, "desktop/.packaged/server-package/package.json"), "utf8")).toContain(
+      '"default": "./dist/index.js"',
+    );
+    expect(readFileSync(join(
+      repo,
+      "desktop/.packaged/postgres-18.4",
+      `${process.platform}-${process.arch}`,
+      "bin",
+      process.platform === "win32" ? "postgres.exe" : "postgres",
+    ), "utf8")).toContain("PostgreSQL 18.4");
+  });
+
+  it("fails production staging when automatic PostgreSQL preparation is disabled and no payload is configured", () => {
     const { repo, binDir } = createStageServerRepo();
 
     const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
@@ -133,6 +188,7 @@ describe("desktop stage-server", () => {
         PATH: `${binDir}${delimiter}${process.env.PATH}`,
         RUDDER_POSTGRES_BIN_DIR: "",
         RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "",
+        RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1",
       },
       encoding: "utf8",
     });
@@ -172,6 +228,7 @@ describe("desktop stage-server", () => {
         ...process.env,
         PATH: `${binDir}${delimiter}${process.env.PATH}`,
         RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1",
+        RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1",
       },
       encoding: "utf8",
     });
