@@ -1845,7 +1845,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(result.reply.generatedAttachments?.[0]?.body.equals(Buffer.from("fake-png"))).toBe(true);
   });
 
-  it("does not promote progress text to a final reply when the adapter omits the required result sentinel", async () => {
+  it("does not promote progress text to a final reply when there is no terminal result to repair", async () => {
     const svc = chatAssistantService({} as any);
 
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
@@ -1857,7 +1857,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
         })}\n`,
       );
       return {
-        summary: "I am still working.",
+        summary: "",
         resultJson: null,
         timedOut: false,
         exitCode: 0,
@@ -1872,10 +1872,11 @@ describe("chatAssistantService operator profile prompt injection", () => {
     })).rejects.toMatchObject({
       message: "Chat adapter completed without the required Rudder result sentinel",
       errorCode: "chat_result_missing_sentinel",
-      userMessage: "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.",
+      userMessage: "The assistant reply could not be completed. Rudder saved the attempt for diagnostics; retry when ready.",
       partialBody: "",
       partialBodyUserVisible: false,
     });
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
     expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
       "chat-run-1",
       expect.objectContaining({
@@ -1884,6 +1885,87 @@ describe("chatAssistantService operator profile prompt injection", () => {
         resultJson: expect.objectContaining({
           recoverable: true,
           fallbackEnvelope: true,
+        }),
+      }),
+    );
+  });
+
+  it("repairs a completed chat reply internally when the adapter exits successfully without the result sentinel", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute
+      .mockImplementationOnce(async (ctx) => {
+        await ctx.onMeta?.({
+          command: "codex",
+          commandNotes: ["primary chat invocation"],
+          context: { chatMode: true },
+        });
+        return {
+        summary: "I checked the deployment logs. The failing webhook secret has been rotated and the retry is safe.",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+        usage: { inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 },
+        };
+      })
+      .mockImplementationOnce(async (ctx) => {
+        await ctx.onMeta?.({
+          command: "codex",
+          commandNotes: ["repair invocation"],
+          context: { chatMode: true },
+        });
+        return {
+          summary: assistantSummary(ctx, "I checked the deployment logs. The failing webhook secret has been rotated and the retry is safe."),
+          resultJson: null,
+          timedOut: false,
+          exitCode: 0,
+          errorMessage: null,
+          usage: { inputTokens: 3, cachedInputTokens: 1, outputTokens: 4 },
+        };
+      });
+    const invocationMeta = vi.fn();
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      onInvocationMeta: invocationMeta,
+    })).resolves.toEqual({
+      outcome: "completed",
+      partialBody: "I checked the deployment logs. The failing webhook secret has been rotated and the retry is safe.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "I checked the deployment logs. The failing webhook secret has been rotated and the retry is safe.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(2);
+    expect(mockAdapter.execute.mock.calls[1]?.[0]?.context?.chatPrompt).toContain("Rudder internal repair request:");
+    expect(mockAdapter.execute.mock.calls[1]?.[0]?.context?.chatPrompt).toContain("Your previous chat turn ended without the required Rudder result sentinel.");
+    expect(mockAdapter.execute.mock.calls[1]?.[0]?.context).toMatchObject({
+      rudderChatResultRepair: true,
+    });
+    expect(invocationMeta).toHaveBeenCalledTimes(1);
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "succeeded",
+        resultJson: expect.objectContaining({
+          outcome: "completed",
+          kind: "message",
+          sentinelRepairAttempted: true,
+          sentinelRepairSucceeded: true,
+          repairReason: "missing_result_sentinel",
+        }),
+        usageJson: expect.objectContaining({
+          inputTokens: 13,
+          cachedInputTokens: 3,
+          outputTokens: 9,
+          primary: { inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 },
+          repair: { inputTokens: 3, cachedInputTokens: 1, outputTokens: 4 },
         }),
       }),
     );

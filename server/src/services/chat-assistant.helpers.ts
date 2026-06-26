@@ -135,7 +135,7 @@ export class ChatAssistantStreamError extends Error {
 
 export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
   if (code === "chat_result_missing_sentinel") {
-    return "The assistant finished without a final Rudder reply. Rudder saved the attempt and transcript; retry when ready.";
+    return "The assistant reply could not be completed. Rudder saved the attempt for diagnostics; retry when ready.";
   }
   if (code === "chat_result_malformed_json") {
     return "The assistant returned an incomplete final reply. Rudder saved the attempt and transcript; retry when ready.";
@@ -147,6 +147,27 @@ export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
     return "The assistant runtime failed before finishing. Rudder saved the attempt for diagnostics; retry when ready.";
   }
   return CHAT_ASSISTANT_RECOVERABLE_FAILURE_MESSAGE;
+}
+
+export function buildMissingResultSentinelRepairPrompt(input: {
+  resultSentinel: string;
+  priorText: string;
+}) {
+  const priorText = input.priorText.trim();
+  return [
+    "Rudder internal repair request:",
+    "- Your previous chat turn ended without the required Rudder result sentinel.",
+    "- Do not continue the task, browse, inspect files, ask questions, or add new analysis.",
+    "- Re-emit the final user-visible answer from your previous response as the required Rudder result envelope.",
+    "- Preserve the original result kind and structuredPayload when the previous response already contains a valid Rudder result JSON object.",
+    "- If the previous response is only plain user-visible text, use kind \"message\" with structuredPayload null.",
+    "- Output exactly one line and no text before it.",
+    `- The line must start with ${input.resultSentinel} followed immediately by JSON.`,
+    "- JSON shape: {\"kind\":\"message|ask_user|issue_proposal|operation_proposal|automation_create\",\"body\":\"<final answer>\",\"structuredPayload\":null|object}",
+    "",
+    "Previous response text:",
+    priorText || "(empty)",
+  ].join("\n");
 }
 
 export function safeTrim(value: string | null | undefined) {

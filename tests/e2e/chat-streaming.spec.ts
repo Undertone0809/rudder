@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
@@ -62,6 +63,41 @@ async function createStreamingOrgThatIgnoresStop(page: Page, name: string) {
     },
   });
   return { ...organization, chatAgent };
+}
+
+async function createMissingSentinelCodexStub() {
+  const stubPath = path.resolve(E2E_ROOT, "fixtures", `codex-missing-sentinel-${Date.now()}`);
+  await fs.mkdir(path.dirname(stubPath), { recursive: true });
+  await fs.writeFile(stubPath, `#!/usr/bin/env node
+let input = "";
+process.stdin.on("data", (chunk) => {
+  input += chunk.toString();
+});
+process.stdin.on("end", () => {
+  const match = input.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i);
+  const sentinel = match ? match[1] : "__RUDDER_RESULT_TEST__";
+  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "missing-sentinel-e2e", model: "gpt-5.4" }) + "\\n");
+  if (input.includes("Rudder internal repair request:")) {
+    process.stdout.write(JSON.stringify({
+      type: "turn.completed",
+      result: sentinel + JSON.stringify({
+        kind: "message",
+        body: "Recovered after internal sentinel repair.",
+        structuredPayload: null,
+      }),
+      usage: { input_tokens: 8, cached_input_tokens: 0, output_tokens: 7 },
+    }) + "\\n");
+    return;
+  }
+  process.stdout.write(JSON.stringify({
+    type: "turn.completed",
+    result: "Plain-text reply without the Rudder sentinel.",
+    usage: { input_tokens: 3, cached_input_tokens: 0, output_tokens: 5 },
+  }) + "\\n");
+});
+`, "utf8");
+  await fs.chmod(stubPath, 0o755);
+  return stubPath;
 }
 
 function currentChatId(pageUrl: string) {
@@ -216,6 +252,60 @@ test.describe("Chat streaming", () => {
     await expect(transcriptItem.locator('button[aria-label="Expand command details"]').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/__RUDDER_RESULT_/)).toHaveCount(0);
     await expect(page.getByText(/"kind":"message"/)).toHaveCount(0);
+  });
+
+  test("internally repairs a successful chat reply when the runtime omits the Rudder sentinel", async ({ page }) => {
+    const missingSentinelStub = await createMissingSentinelCodexStub();
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Missing-Sentinel-Chat-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Missing Sentinel Agent",
+      command: missingSentinelStub,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/chat?agentId=${chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("Return plain text without the sentinel");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+      "Recovered after internal sentinel repair.",
+      { timeout: 15_000 },
+    );
+    await expect(page.getByText("The assistant finished without a final Rudder reply", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("chat_result_missing_sentinel", { exact: false })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
+
+    const chatId = currentChatId(page.url());
+    const messagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
+    expect(messagesRes.ok()).toBe(true);
+    const messages = await messagesRes.json() as Array<{ role: string; body: string; runId: string | null }>;
+    const assistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
+    expect(assistantMessage?.body).toBe("Recovered after internal sentinel repair.");
+    expect(assistantMessage?.runId).toBeTruthy();
+
+    const run = await e2eDb.query.heartbeatRuns.findFirst({
+      where: (table, { eq }) => eq(table.id, assistantMessage!.runId!),
+    });
+    expect(run?.status).toBe("succeeded");
+    expect(run?.errorCode).toBeNull();
+    expect(run?.resultJson).toMatchObject({
+      outcome: "completed",
+      kind: "message",
+      sentinelRepairAttempted: true,
+      sentinelRepairSucceeded: true,
+      repairReason: "missing_result_sentinel",
+    });
   });
 
   test("highlights the chat composer boundary while an agent response is streaming", async ({ page }) => {

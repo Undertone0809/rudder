@@ -12,10 +12,26 @@ import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
-import { asString, buildConversationPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
 export * from "./chat-assistant.helpers.js";
+
+function combineChatUsage(
+  primary: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | null | undefined,
+  repair: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | null | undefined,
+) {
+  if (!primary && !repair) return null;
+  if (!repair) return primary ? { ...primary } : null;
+  if (!primary) return { ...repair };
+  return {
+    inputTokens: primary.inputTokens + repair.inputTokens,
+    outputTokens: primary.outputTokens + repair.outputTokens,
+    cachedInputTokens: (primary.cachedInputTokens ?? 0) + (repair.cachedInputTokens ?? 0),
+    primary: { ...primary },
+    repair: { ...repair },
+  };
+}
 
 export function chatAssistantService(db: Db, storage?: StorageService) {
   const agentsSvc = agentService(db);
@@ -314,6 +330,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     };
     const assistantTextAccumulator = createAssistantTextAccumulator();
     const sentinelStream = createSentinelStream(resultSentinel);
+    let cleanupPreparedAttachments: (() => Promise<void>) | null = null;
     try {
       let parser = adapter.parseStdoutLine;
       let stdoutLineBuffer = "";
@@ -331,6 +348,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         storage,
         runId,
       }));
+      cleanupPreparedAttachments = preparedAttachments.cleanup;
       const prompt = await guardActiveRun(() => buildConversationPrompt(
         input,
         runtimeSource,
@@ -412,87 +430,139 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         };
       });
 
-      const result = await guardActiveRun(async () => {
-        try {
-          return await executeAdapterWithModelFallbacks(adapter, {
-            runId,
-            agent: stubAgent({
-              orgId: input.conversation.orgId,
-              agentRuntimeType: runtimeAgentType,
-              agentRuntimeConfig: config,
-              sourceLabel: runtimeSource.descriptor.sourceLabel,
-              sourceId: runtimeAgentId,
-            }),
-            runtime: {
-              sessionId: null,
-              sessionParams: null,
-              sessionDisplayId: null,
-              taskKey: null,
-            },
-            config,
-            context: {
-              chatPrompt: prompt,
-              chatConversationId: input.conversation.id,
-              chatMode: true,
-              rudderScene,
-              rudderWorkspace,
-              rudderWorkspaces,
-              ...(chatAttachments.length > 0 ? { chatAttachments } : {}),
-              ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
-              ...(linkedProjectId ? { projectId: linkedProjectId } : {}),
-              ...(linkedIssueIds[0] ? { issueId: linkedIssueIds[0] } : {}),
-              ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
-            },
-            ...(media.length > 0 ? { media } : {}),
-            onMeta: async (meta) => {
-              await chatRunsSvc.appendAdapterInvoke(chatRun, meta, runtimeSource.runtimeSkills);
-              await input.onInvocationMeta?.({
-                ...meta,
-                loadedSkills: runtimeSource.runtimeSkills,
-              });
-            },
-            authToken: adapter.supportsLocalAgentJwt
-              ? createLocalAgentJwt(
-                runtimeAgentId,
-                input.conversation.orgId,
-                runtimeAgentType,
-                runId,
-              ) ?? undefined
-              : undefined,
-            abortSignal: input.abortSignal,
-            onLog: async (stream, chunk) => {
-              if (stream === "stdout") {
-                if (chunk.startsWith("[rudder]")) {
-                  const entry: TranscriptEntry = {
-                    kind: "stdout",
-                    ts: new Date().toISOString(),
-                    text: chunk,
-                  };
-                  await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, entry);
-                  await maybeEmitTranscriptEntry(input.onTranscriptEntry, entry);
-                  await chatRunsSvc.appendTranscriptEntry(chatRun, entry);
-                  return;
-                }
-                await flushStdoutChunk(chunk);
+      const executeChatAdapter = async (chatPrompt: string) => {
+        return executeAdapterWithModelFallbacks(adapter, {
+          runId,
+          agent: stubAgent({
+            orgId: input.conversation.orgId,
+            agentRuntimeType: runtimeAgentType,
+            agentRuntimeConfig: config,
+            sourceLabel: runtimeSource.descriptor.sourceLabel,
+            sourceId: runtimeAgentId,
+          }),
+          runtime: {
+            sessionId: null,
+            sessionParams: null,
+            sessionDisplayId: null,
+            taskKey: null,
+          },
+          config,
+          context: {
+            chatPrompt,
+            chatConversationId: input.conversation.id,
+            chatMode: true,
+            rudderScene,
+            rudderWorkspace,
+            rudderWorkspaces,
+            ...(chatAttachments.length > 0 ? { chatAttachments } : {}),
+            ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
+            ...(linkedProjectId ? { projectId: linkedProjectId } : {}),
+            ...(linkedIssueIds[0] ? { issueId: linkedIssueIds[0] } : {}),
+            ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
+          },
+          ...(media.length > 0 ? { media } : {}),
+          onMeta: async (meta) => {
+            await chatRunsSvc.appendAdapterInvoke(chatRun, meta, runtimeSource.runtimeSkills);
+            await input.onInvocationMeta?.({
+              ...meta,
+              loadedSkills: runtimeSource.runtimeSkills,
+            });
+          },
+          authToken: adapter.supportsLocalAgentJwt
+            ? createLocalAgentJwt(
+              runtimeAgentId,
+              input.conversation.orgId,
+              runtimeAgentType,
+              runId,
+            ) ?? undefined
+            : undefined,
+          abortSignal: input.abortSignal,
+          onLog: async (stream, chunk) => {
+            if (stream === "stdout") {
+              if (chunk.startsWith("[rudder]")) {
+                const entry: TranscriptEntry = {
+                  kind: "stdout",
+                  ts: new Date().toISOString(),
+                  text: chunk,
+                };
+                await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, entry);
+                await maybeEmitTranscriptEntry(input.onTranscriptEntry, entry);
+                await chatRunsSvc.appendTranscriptEntry(chatRun, entry);
+                return;
               }
-            },
-          }, {
-            resolveAdapter: findServerAdapter,
-            createAuthToken: (agentRuntimeType) =>
-              createLocalAgentJwt(
-                runtimeAgentId,
-                input.conversation.orgId,
-                agentRuntimeType,
-                runId,
-              ) ?? undefined,
-            onAttemptStart: (_attempt, attemptAdapter) => {
-              parser = attemptAdapter.parseStdoutLine;
-            },
-          });
-        } finally {
-          await preparedAttachments.cleanup();
-        }
-      });
+              await flushStdoutChunk(chunk);
+            }
+          },
+        }, {
+          resolveAdapter: findServerAdapter,
+          createAuthToken: (agentRuntimeType) =>
+            createLocalAgentJwt(
+              runtimeAgentId,
+              input.conversation.orgId,
+              agentRuntimeType,
+              runId,
+            ) ?? undefined,
+          onAttemptStart: (_attempt, attemptAdapter) => {
+            parser = attemptAdapter.parseStdoutLine;
+          },
+        });
+      };
+
+      const executeChatRepairAdapter = async (chatPrompt: string) => {
+        parser = adapter.parseStdoutLine;
+        return adapter.execute({
+          runId,
+          agent: stubAgent({
+            orgId: input.conversation.orgId,
+            agentRuntimeType: runtimeAgentType,
+            agentRuntimeConfig: config,
+            sourceLabel: runtimeSource.descriptor.sourceLabel,
+            sourceId: runtimeAgentId,
+          }),
+          runtime: {
+            sessionId: null,
+            sessionParams: null,
+            sessionDisplayId: null,
+            taskKey: null,
+          },
+          config,
+          context: {
+            chatPrompt,
+            chatConversationId: input.conversation.id,
+            chatMode: true,
+            rudderChatResultRepair: true,
+            rudderScene,
+            rudderWorkspace,
+            rudderWorkspaces,
+            ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
+            ...(linkedProjectId ? { projectId: linkedProjectId } : {}),
+            ...(linkedIssueIds[0] ? { issueId: linkedIssueIds[0] } : {}),
+            ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
+          },
+          onMeta: async (meta) => {
+            await chatRunsSvc.appendAdapterInvoke(chatRun, {
+              ...meta,
+              commandNotes: [...(meta.commandNotes ?? []), "internal chat result sentinel repair"],
+              context: {
+                ...(meta.context ?? {}),
+                rudderChatResultRepair: true,
+              },
+            }, runtimeSource.runtimeSkills);
+          },
+          authToken: adapter.supportsLocalAgentJwt
+            ? createLocalAgentJwt(
+              runtimeAgentId,
+              input.conversation.orgId,
+              runtimeAgentType,
+              runId,
+            ) ?? undefined
+            : undefined,
+          abortSignal: input.abortSignal,
+          onLog: async () => undefined,
+        });
+      };
+
+      const result = await guardActiveRun(() => executeChatAdapter(prompt));
 
       await guardActiveRun(() => flushStdoutChunk("", true));
       await guardActiveRun(() => maybeEmitAssistantDelta(input.onAssistantDelta, sentinelStream.finish()));
@@ -579,7 +649,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
       const raw = resultText(result) || assistantTextAccumulator.fullText;
       const generatedAttachments = extractGeneratedAttachments(result);
-      let reply: ChatAssistantResult;
+      let reply: ChatAssistantResult | null = null;
+      let sentinelRepairAttempted = false;
+      let sentinelRepairSucceeded = false;
+      let repairResultUsage = null as typeof result.usage | null | undefined;
       try {
         reply = parseCompletedAssistantReply(raw, resultSentinel, { requireSentinel: true });
       } catch (error) {
@@ -587,28 +660,73 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         const errorCode: ChatRecoverableFailureCode = errorMessage.includes("without the required Rudder result sentinel")
           ? "chat_result_missing_sentinel"
           : "chat_result_malformed_json";
-        await finalizeChatRun({
-          status: "failed",
-          error: errorMessage,
-          errorCode,
-          resultJson: {
-            outcome: "failed",
-            recoverable: true,
-            fallbackEnvelope: true,
+        if (errorCode === "chat_result_missing_sentinel" && !input.abortSignal?.aborted) {
+          const priorText = resultText(result);
+          if (priorText) {
+            sentinelRepairAttempted = true;
+            const repairPrompt = buildMissingResultSentinelRepairPrompt({
+              resultSentinel,
+              priorText,
+            });
+            const repairResult = await guardActiveRun(() => executeChatRepairAdapter(repairPrompt));
+            repairResultUsage = repairResult.usage;
+            if (!repairResult.timedOut && (repairResult.exitCode ?? 0) === 0 && !repairResult.errorMessage) {
+              try {
+                const repairedReply = parseCompletedAssistantReply(resultText(repairResult), resultSentinel, { requireSentinel: true });
+                if (
+                  repairedReply.body.includes(resultSentinel)
+                  || repairedReply.body.includes("Rudder internal repair request:")
+                ) {
+                  throw new Error("Repair response leaked internal result protocol text");
+                }
+                reply = repairedReply;
+                sentinelRepairSucceeded = true;
+              } catch {
+                reply = null;
+              }
+            } else {
+              reply = null;
+            }
+          }
+        }
+
+        if (!sentinelRepairSucceeded) {
+          const repairErrorMessage = sentinelRepairAttempted
+            ? "Chat adapter did not produce the required Rudder result sentinel after internal repair"
+            : errorMessage;
+          await finalizeChatRun({
+            status: "failed",
+            error: repairErrorMessage,
             errorCode,
-            userMessage: recoverableFailureMessage(errorCode),
-            partialBody: finalPartialBody,
-          },
-        });
-        throw new ChatAssistantStreamError(
-          errorMessage,
-          finalPartialBody,
-          generatedAttachments,
-          {
-            errorCode,
-            partialBodyUserVisible: Boolean(finalPartialBody),
-          },
-        );
+            resultJson: {
+              outcome: "failed",
+              recoverable: true,
+              fallbackEnvelope: true,
+              errorCode,
+              userMessage: recoverableFailureMessage(errorCode),
+              partialBody: finalPartialBody,
+              ...(sentinelRepairAttempted
+                ? {
+                  sentinelRepairAttempted: true,
+                  sentinelRepairSucceeded: false,
+                }
+                : {}),
+            },
+          });
+          throw new ChatAssistantStreamError(
+            repairErrorMessage,
+            finalPartialBody,
+            generatedAttachments,
+            {
+              errorCode,
+              partialBodyUserVisible: Boolean(finalPartialBody),
+              userMessage: recoverableFailureMessage(errorCode),
+            },
+          );
+        }
+      }
+      if (!reply) {
+        throw new Error("Chat adapter returned an invalid final reply");
       }
       const finalBody = reply.body;
       reply.replyingAgentId = runtimeAgentId;
@@ -617,7 +735,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       }
 
       const streamedBody = safeTrim(sentinelStream.visibleText) ?? "";
-      if (finalBody && finalBody !== streamedBody) {
+      if (!sentinelRepairSucceeded && finalBody && finalBody !== streamedBody) {
         await guardActiveRun(() => maybeEmitAssistantDelta(input.onAssistantDelta, finalBody));
       }
 
@@ -628,8 +746,15 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           kind: reply.kind,
           body: finalBody,
           generatedAttachmentCount: generatedAttachments.length,
+          ...(sentinelRepairAttempted
+            ? {
+              sentinelRepairAttempted: true,
+              sentinelRepairSucceeded,
+              repairReason: "missing_result_sentinel",
+            }
+            : {}),
         },
-        usageJson: result.usage ? { ...result.usage } : null,
+        usageJson: combineChatUsage(result.usage, repairResultUsage),
       });
 
       return {
@@ -653,6 +778,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           partialBodyUserVisible: false,
         },
       );
+    } finally {
+      await cleanupPreparedAttachments?.().catch(() => undefined);
     }
   }
 
