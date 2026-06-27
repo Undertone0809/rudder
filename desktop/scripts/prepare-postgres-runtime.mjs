@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const POSTGRES_VERSION = "18.4";
 const runtimeDirName = `postgres-${POSTGRES_VERSION}`;
@@ -20,6 +21,9 @@ function executableName(name) {
 }
 
 function archiveUrl() {
+  if (process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL) {
+    return process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL;
+  }
   if (platform === "win32") {
     if (arch !== "x64") throw new Error(`PostgreSQL ${POSTGRES_VERSION} Windows payload is only configured for x64; got ${arch}`);
     return `https://get.enterprisedb.com/postgresql/postgresql-${POSTGRES_VERSION}-1-windows-x64-binaries.zip`;
@@ -66,6 +70,11 @@ async function findBinDir(rootDir) {
 }
 
 async function downloadArchive(url, targetPath) {
+  if (url.startsWith("file://")) {
+    await copyFile(fileURLToPath(url), targetPath);
+    return;
+  }
+
   const abortController = new AbortController();
   const timeout = Number.isFinite(downloadTimeoutMs) && downloadTimeoutMs > 0
     ? setTimeout(() => abortController.abort(), downloadTimeoutMs)
@@ -115,7 +124,7 @@ async function main() {
   }
 
   const url = archiveUrl();
-  const workDir = path.join(runtimeRoot, ".download");
+  const workDir = path.join(path.dirname(runtimeRoot), `.${path.basename(runtimeRoot)}.download-${process.pid}`);
   const archivePath = path.join(workDir, `postgresql-${POSTGRES_VERSION}.zip`);
   const extractDir = path.join(workDir, "extract");
   await rm(workDir, { recursive: true, force: true });

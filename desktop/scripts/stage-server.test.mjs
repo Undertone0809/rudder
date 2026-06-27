@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -150,6 +151,35 @@ afterEach(() => {
 });
 
 describe("desktop stage-server", () => {
+  it.skipIf(process.platform === "win32")("caches prepared PostgreSQL runtime from a sibling work directory", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rudder-prepare-postgres-test-"));
+    tempRoots.push(root);
+
+    const sourceRoot = join(root, "source");
+    const pgBinDir = join(sourceRoot, "pgsql", "bin");
+    writeFakePostgresBinDir(pgBinDir);
+    const archivePath = join(root, "postgres-runtime.tar");
+    const tarResult = spawnSync("tar", ["-cf", archivePath, "-C", sourceRoot, "pgsql"], {
+      encoding: "utf8",
+    });
+    expect(tarResult.status, `${tarResult.stdout}\n${tarResult.stderr}`).toBe(0);
+
+    const cacheDir = join(root, "cache");
+    const result = spawnSync("node", [join(scriptsDir, "prepare-postgres-runtime.mjs")], {
+      env: {
+        ...process.env,
+        RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL: pathToFileURL(archivePath).href,
+        RUDDER_POSTGRES_RUNTIME_CACHE_DIR: cacheDir,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const preparedBinDir = result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+    expect(readFileSync(join(preparedBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"), "utf8")).toContain("PostgreSQL 18.4");
+    expect(readFileSync(join(preparedBinDir, "..", "lib", "libzstd.1.dylib"), "utf8")).toBe("runtime library\n");
+  });
+
   it("automatically prepares PostgreSQL 18.4 payload when no bin dir is configured", () => {
     const { repo, binDir } = createStageServerRepo();
     const pgBinDir = join(repo, "prepared-pg", "bin");
