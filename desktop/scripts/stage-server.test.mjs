@@ -163,6 +163,11 @@ describe("desktop stage-server", () => {
     writeFileSync(versionedLibPath, "runtime library via symlink\n");
     rmSync(join(sourceRoot, "pgsql", "lib", "libzstd.1.dylib"), { force: true });
     symlinkSync(versionedLibPath, join(sourceRoot, "pgsql", "lib", "libzstd.1.dylib"));
+    mkdirSync(join(sourceRoot, "pgsql", "pgAdmin 4.app", "Contents", "Frameworks"), { recursive: true });
+    symlinkSync(
+      join(sourceRoot, "pgsql", "missing-private-headers"),
+      join(sourceRoot, "pgsql", "pgAdmin 4.app", "Contents", "Frameworks", "PrivateHeaders"),
+    );
     const archivePath = join(root, "postgres-runtime.tar");
     const tarResult = spawnSync("tar", ["-cf", archivePath, "-C", sourceRoot, "pgsql"], {
       encoding: "utf8",

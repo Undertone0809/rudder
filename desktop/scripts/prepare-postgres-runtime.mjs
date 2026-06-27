@@ -176,7 +176,8 @@ async function main() {
   if (copyResult.status !== 0) {
     throw new Error(`failed to cache PostgreSQL runtime payload: ${copyResult.stderr || copyResult.stdout}`);
   }
-  await materializeSymlinks(runtimeRoot);
+  await materializeSymlinks(path.join(runtimeRoot, "bin"));
+  await materializeSymlinks(path.join(runtimeRoot, "lib"));
   await rm(workDir, { recursive: true, force: true });
 
   console.log(binDir);
