@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +67,29 @@ async function findBinDir(rootDir) {
     }
   }
   return null;
+}
+
+async function materializeSymlinks(currentDir) {
+  const entries = await readdir(currentDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const entryPath = path.join(currentDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      const resolvedPath = await realpath(entryPath);
+      const resolvedStats = await stat(resolvedPath);
+      await rm(entryPath, { recursive: true, force: true });
+      if (resolvedStats.isDirectory()) {
+        await cp(resolvedPath, entryPath, { recursive: true, dereference: true });
+        await materializeSymlinks(entryPath);
+      } else {
+        await copyFile(resolvedPath, entryPath);
+      }
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      await materializeSymlinks(entryPath);
+    }
+  }
 }
 
 async function downloadArchive(url, targetPath) {
@@ -153,6 +176,7 @@ async function main() {
   if (copyResult.status !== 0) {
     throw new Error(`failed to cache PostgreSQL runtime payload: ${copyResult.stderr || copyResult.stdout}`);
   }
+  await materializeSymlinks(runtimeRoot);
   await rm(workDir, { recursive: true, force: true });
 
   console.log(binDir);

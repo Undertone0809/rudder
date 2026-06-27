@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -158,6 +159,10 @@ describe("desktop stage-server", () => {
     const sourceRoot = join(root, "source");
     const pgBinDir = join(sourceRoot, "pgsql", "bin");
     writeFakePostgresBinDir(pgBinDir);
+    const versionedLibPath = join(sourceRoot, "pgsql", "lib", "libzstd.1.5.7.dylib");
+    writeFileSync(versionedLibPath, "runtime library via symlink\n");
+    rmSync(join(sourceRoot, "pgsql", "lib", "libzstd.1.dylib"), { force: true });
+    symlinkSync(versionedLibPath, join(sourceRoot, "pgsql", "lib", "libzstd.1.dylib"));
     const archivePath = join(root, "postgres-runtime.tar");
     const tarResult = spawnSync("tar", ["-cf", archivePath, "-C", sourceRoot, "pgsql"], {
       encoding: "utf8",
@@ -177,7 +182,7 @@ describe("desktop stage-server", () => {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const preparedBinDir = result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
     expect(readFileSync(join(preparedBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"), "utf8")).toContain("PostgreSQL 18.4");
-    expect(readFileSync(join(preparedBinDir, "..", "lib", "libzstd.1.dylib"), "utf8")).toBe("runtime library\n");
+    expect(readFileSync(join(preparedBinDir, "..", "lib", "libzstd.1.dylib"), "utf8")).toBe("runtime library via symlink\n");
   });
 
   it("automatically prepares PostgreSQL 18.4 payload when no bin dir is configured", () => {
