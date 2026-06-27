@@ -188,6 +188,7 @@ describe("desktop stage-server", () => {
     const preparedBinDir = result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
     expect(readFileSync(join(preparedBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"), "utf8")).toContain("PostgreSQL 18.4");
     expect(readFileSync(join(preparedBinDir, "..", "lib", "libzstd.1.dylib"), "utf8")).toBe("runtime library via symlink\n");
+    expect(() => readFileSync(join(preparedBinDir, "..", "pgAdmin 4.app"))).toThrow();
   });
 
   it("automatically prepares PostgreSQL 18.4 payload when no bin dir is configured", () => {

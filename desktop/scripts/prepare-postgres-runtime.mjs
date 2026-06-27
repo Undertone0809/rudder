@@ -166,10 +166,17 @@ async function main() {
 
   const extractedRuntimeRoot = path.dirname(extractedBinDir);
   await rm(runtimeRoot, { recursive: true, force: true });
-  await mkdir(path.dirname(runtimeRoot), { recursive: true });
+  await mkdir(runtimeRoot, { recursive: true });
   const copyResult = spawnSync(process.execPath, [
     "-e",
-    "require('node:fs').cpSync(process.argv[1], process.argv[2], { recursive: true, dereference: true })",
+    [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "for (const name of ['bin', 'lib']) {",
+      "  const source = path.join(process.argv[1], name);",
+      "  if (fs.existsSync(source)) fs.cpSync(source, path.join(process.argv[2], name), { recursive: true, dereference: true });",
+      "}",
+    ].join(" "),
     extractedRuntimeRoot,
     runtimeRoot,
   ], { encoding: "utf8" });
