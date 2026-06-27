@@ -132,13 +132,14 @@ async function main() {
   }
   verifyVersion(extractedBinDir);
 
-  await rm(binDir, { recursive: true, force: true });
-  await mkdir(path.dirname(binDir), { recursive: true });
+  const extractedRuntimeRoot = path.dirname(extractedBinDir);
+  await rm(runtimeRoot, { recursive: true, force: true });
+  await mkdir(path.dirname(runtimeRoot), { recursive: true });
   const copyResult = spawnSync(process.execPath, [
     "-e",
     "require('node:fs').cpSync(process.argv[1], process.argv[2], { recursive: true, dereference: true })",
-    extractedBinDir,
-    binDir,
+    extractedRuntimeRoot,
+    runtimeRoot,
   ], { encoding: "utf8" });
   if (copyResult.status !== 0) {
     throw new Error(`failed to cache PostgreSQL runtime payload: ${copyResult.stderr || copyResult.stdout}`);

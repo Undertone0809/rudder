@@ -201,9 +201,9 @@ async function stagePostgresRuntimePayload() {
     throw new Error(`RUDDER_POSTGRES_BIN_DIR must contain PostgreSQL 18.4 binaries; got ${versionOutput.trim() || "unknown version"}`);
   }
 
-  const targetBinDir = path.join(postgresRuntimeDir, postgresRuntimePlatformSegment(), "bin");
-  await fs.mkdir(path.dirname(targetBinDir), { recursive: true });
-  await fs.cp(path.resolve(sourceBinDir), targetBinDir, { recursive: true, dereference: true });
+  const targetRuntimeDir = path.join(postgresRuntimeDir, postgresRuntimePlatformSegment());
+  await fs.mkdir(path.dirname(targetRuntimeDir), { recursive: true });
+  await fs.cp(path.resolve(sourceBinDir, ".."), targetRuntimeDir, { recursive: true, dereference: true });
 }
 
 async function rewriteInternalPackages(targetDir) {

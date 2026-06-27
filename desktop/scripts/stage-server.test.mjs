@@ -22,6 +22,8 @@ function writeJson(filePath, value) {
 
 function writeFakePostgresBinDir(binDir) {
   mkdirSync(binDir, { recursive: true });
+  mkdirSync(join(binDir, "..", "lib"), { recursive: true });
+  writeFileSync(join(binDir, "..", "lib", "libzstd.1.dylib"), "runtime library\n");
   for (const binary of ["initdb", "pg_ctl"]) {
     const binaryPath = join(binDir, process.platform === "win32" ? `${binary}.exe` : binary);
     writeFileSync(binaryPath, "");
@@ -150,7 +152,7 @@ afterEach(() => {
 describe("desktop stage-server", () => {
   it("automatically prepares PostgreSQL 18.4 payload when no bin dir is configured", () => {
     const { repo, binDir } = createStageServerRepo();
-    const pgBinDir = join(repo, "prepared-pg-bin");
+    const pgBinDir = join(repo, "prepared-pg", "bin");
     writeFakePostgresBinDir(pgBinDir);
 
     const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
@@ -165,7 +167,7 @@ describe("desktop stage-server", () => {
       encoding: "utf8",
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(readFileSync(join(repo, "desktop/.packaged/server-package/package.json"), "utf8")).toContain(
       '"default": "./dist/index.js"',
     );
@@ -176,6 +178,13 @@ describe("desktop stage-server", () => {
       "bin",
       process.platform === "win32" ? "postgres.exe" : "postgres",
     ), "utf8")).toContain("PostgreSQL 18.4");
+    expect(readFileSync(join(
+      repo,
+      "desktop/.packaged/postgres-18.4",
+      `${process.platform}-${process.arch}`,
+      "lib",
+      "libzstd.1.dylib",
+    ), "utf8")).toBe("runtime library\n");
   });
 
   it("fails production staging when automatic PostgreSQL preparation is disabled and no payload is configured", () => {
