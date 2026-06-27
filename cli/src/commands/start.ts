@@ -352,7 +352,7 @@ export function runtimeSupportsDesktopShellAssets(
   version: string,
   runtime: Pick<RuntimeInstallResult, "packageSpec" | "postgresPayloadBinDir">,
 ): boolean {
-  return isExactRuntimePackageSpec(version, runtime.packageSpec) && Boolean(runtime.postgresPayloadBinDir);
+  return isExactRuntimePackageSpec(version, runtime.packageSpec);
 }
 
 export function resolveDesktopAssetTarget(

@@ -182,12 +182,15 @@ async function assertPostgresBinDirComplete(sourceBinDir) {
 async function stagePostgresRuntimePayload() {
   await fs.rm(postgresRuntimeDir, { recursive: true, force: true });
 
+  if (process.env.RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME !== "1") {
+    return;
+  }
+
   let sourceBinDir = process.env.RUDDER_POSTGRES_BIN_DIR?.trim();
   if (!sourceBinDir) {
     if (process.env.RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE === "1") {
-      if (process.env.RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES === "1") return;
       throw new Error(
-        "Desktop production packaging requires RUDDER_POSTGRES_BIN_DIR pointing at PostgreSQL 18.4 production binaries. Unset RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE to let the build prepare it automatically, or set RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1 only for development fallback packaging.",
+        "RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME=1 requires RUDDER_POSTGRES_BIN_DIR pointing at PostgreSQL 18.4 production binaries, or automatic preparation enabled.",
       );
     }
     sourceBinDir = await preparePostgresRuntimeBinDir();

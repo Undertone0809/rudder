@@ -789,7 +789,7 @@ describe("desktop start command helpers", () => {
     expect(runtimeSupportsDesktopShellAssets("0.3.1", {
       packageSpec: "@rudderhq/server@0.3.1",
       postgresPayloadBinDir: undefined,
-    })).toBe(false);
+    })).toBe(true);
     expect(runtimeSupportsDesktopShellAssets("0.3.1", {
       packageSpec: "@rudderhq/server@0.3.1",
       postgresPayloadBinDir: "/tmp/rudder/postgres-18.4/linux-x64/bin",
