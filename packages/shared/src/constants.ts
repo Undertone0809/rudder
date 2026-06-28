@@ -197,6 +197,24 @@ export type AgentIntegrationDropReason = (typeof AGENT_INTEGRATION_DROP_REASONS)
 export const AGENT_INTEGRATION_OUTBOUND_STATUSES = ["pending", "streaming", "final", "error"] as const;
 export type AgentIntegrationOutboundStatus = (typeof AGENT_INTEGRATION_OUTBOUND_STATUSES)[number];
 
+export const CUSTOM_INTEGRATION_KINDS = ["custom_api", "mcp_server"] as const;
+export type CustomIntegrationKind = (typeof CUSTOM_INTEGRATION_KINDS)[number];
+
+export const CUSTOM_INTEGRATION_SCOPES = ["organization", "agent"] as const;
+export type CustomIntegrationScope = (typeof CUSTOM_INTEGRATION_SCOPES)[number];
+
+export const CUSTOM_INTEGRATION_STATUSES = ["active", "disabled", "error", "revoked"] as const;
+export type CustomIntegrationStatus = (typeof CUSTOM_INTEGRATION_STATUSES)[number];
+
+export const CUSTOM_INTEGRATION_TOOL_STATUSES = ["active", "disabled", "error"] as const;
+export type CustomIntegrationToolStatus = (typeof CUSTOM_INTEGRATION_TOOL_STATUSES)[number];
+
+export const CUSTOM_INTEGRATION_BINDING_STATUSES = ["active", "revoked"] as const;
+export type CustomIntegrationBindingStatus = (typeof CUSTOM_INTEGRATION_BINDING_STATUSES)[number];
+
+export const CUSTOM_INTEGRATION_TOOL_CALL_STATUSES = ["success", "error", "blocked"] as const;
+export type CustomIntegrationToolCallStatus = (typeof CUSTOM_INTEGRATION_TOOL_CALL_STATUSES)[number];
+
 export const CALENDAR_SOURCE_TYPES = ["rudder_local", "google_calendar", "agent_work", "system"] as const;
 export type CalendarSourceType = (typeof CALENDAR_SOURCE_TYPES)[number];
 

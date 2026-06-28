@@ -1,14 +1,22 @@
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   AgentDetail,
   AgentIntegrationProviderRegion,
   AgentIntegrationSetupSession,
   AgentIntegrationSummary,
+  CreateCustomIntegration,
+  CustomIntegrationKind,
+  CustomIntegrationScope,
+  CustomIntegrationSummary,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Braces,
   CalendarDays,
+  CheckCircle2,
   ExternalLink,
   FileText,
   FolderOpen,
@@ -16,6 +24,7 @@ import {
   Inbox,
   Loader2,
   MessageSquareText,
+  PlugZap,
   ShieldCheck,
   Trash2,
   type LucideIcon,
@@ -156,6 +165,34 @@ function setupProviderName(providerRegion: AgentIntegrationProviderRegion) {
 const FEISHU_SUGGESTED_BOT_NAME_MAX_LENGTH = 32;
 const FEISHU_SUGGESTED_BOT_NAME_SUFFIX = " - Rudder";
 
+type CustomIntegrationFormState = {
+  kind: CustomIntegrationKind;
+  displayName: string;
+  description: string;
+  scope: CustomIntegrationScope;
+  endpointUrl: string;
+  authHeaderName: string;
+  credentialValue: string;
+  toolName: string;
+  toolDescription: string;
+};
+
+function defaultCustomIntegrationForm(kind: CustomIntegrationKind): CustomIntegrationFormState {
+  return {
+    kind,
+    displayName: kind === "mcp_server" ? "MCP Server" : "Custom API",
+    description: "",
+    scope: "agent",
+    endpointUrl: "",
+    authHeaderName: "Authorization",
+    credentialValue: "",
+    toolName: kind === "mcp_server" ? "call_tool" : "request",
+    toolDescription: kind === "mcp_server"
+      ? "Call an exposed MCP tool through Rudder."
+      : "Call the configured API through Rudder.",
+  };
+}
+
 function suggestedFeishuBotName(agentName: string) {
   const trimmed = agentName.trim();
   const base = trimmed || "Rudder Agent";
@@ -173,17 +210,25 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const { pushToast } = useToast();
   const [providerRegion, setProviderRegion] = useState<AgentIntegrationProviderRegion>("feishu_cn");
   const [setupSession, setSetupSession] = useState<AgentIntegrationSetupSession | null>(null);
+  const [customForm, setCustomForm] = useState<CustomIntegrationFormState | null>(null);
   const integrationsQuery = useQuery({
     queryKey: queryKeys.agents.integrations(agent.id),
     queryFn: () => agentsApi.listIntegrations(agent.id, orgId),
     initialData: agent.integrations ?? [],
   });
+  const customIntegrationsQuery = useQuery({
+    queryKey: queryKeys.agents.customIntegrations(agent.id),
+    queryFn: () => agentsApi.listCustomIntegrations(agent.id, orgId),
+    initialData: [] as CustomIntegrationSummary[],
+  });
   const integrations = integrationsQuery.data ?? [];
+  const customIntegrations = customIntegrationsQuery.data ?? [];
   const feishuIntegration = integrations.find((integration) => integration.provider === "feishu") ?? null;
   const state = getFeishuIntegrationState(feishuIntegration);
   const stateCopy = integrationStateCopy(state);
-  const availableCount = 1 + UPCOMING_INTEGRATIONS.length;
-  const configuredCount = integrations.filter((integration) => integration.status === "active").length;
+  const availableCount = 3 + UPCOMING_INTEGRATIONS.length;
+  const configuredCount = integrations.filter((integration) => integration.status === "active").length
+    + customIntegrations.filter((integration) => integration.status === "active" && integration.binding?.status === "active").length;
   const isActive = state === "active";
   const shouldShowSetupPrompt = !feishuIntegration || state !== "active";
   const openSetup = useMutation({
@@ -270,6 +315,66 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
       });
     },
   });
+  const createCustomIntegration = useMutation({
+    mutationFn: (form: CustomIntegrationFormState) => {
+      const credentialValue = form.credentialValue.trim();
+      const configKey = form.kind === "mcp_server" ? "serverUrl" : "baseUrl";
+      const payload: CreateCustomIntegration = {
+        scope: form.scope,
+        kind: form.kind,
+        displayName: form.displayName.trim(),
+        description: form.description.trim() || null,
+        config: {
+          [configKey]: form.endpointUrl.trim(),
+          ...(form.authHeaderName.trim() ? { authHeaderName: form.authHeaderName.trim() } : {}),
+        },
+        ...(credentialValue
+          ? { credential: { value: credentialValue } }
+          : {}),
+        tools: [
+          {
+            externalToolName: form.toolName.trim(),
+            description: form.toolDescription.trim() || null,
+          },
+        ],
+      };
+      return agentsApi.createCustomIntegration(agent.id, payload, orgId);
+    },
+    onSuccess: async () => {
+      pushToast({ title: "Custom integration connected", tone: "success" });
+      setCustomForm(null);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.customIntegrations(agent.id) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to connect custom integration",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
+  const revokeCustomIntegration = useMutation({
+    mutationFn: (integrationId: string) => agentsApi.revokeCustomIntegration(agent.id, integrationId, orgId),
+    onSuccess: async () => {
+      pushToast({ title: "Custom integration disconnected", tone: "success" });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.customIntegrations(agent.id) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to disconnect custom integration",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
+  const canSubmitCustomForm = customForm
+    ? customForm.displayName.trim().length > 0
+      && customForm.endpointUrl.trim().length > 0
+      && customForm.toolName.trim().length > 0
+      && !createCustomIntegration.isPending
+    : false;
 
   return (
     <div className="max-w-5xl space-y-4">
@@ -296,6 +401,46 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
         </div>
 
         <div className="divide-y divide-border">
+          <div className="space-y-3 px-4 py-4">
+            <div className="grid gap-3 lg:grid-cols-2">
+              <CustomIntegrationSetupCard
+                kind="custom_api"
+                active={customForm?.kind === "custom_api"}
+                onConfigure={() => setCustomForm(defaultCustomIntegrationForm("custom_api"))}
+              />
+              <CustomIntegrationSetupCard
+                kind="mcp_server"
+                active={customForm?.kind === "mcp_server"}
+                onConfigure={() => setCustomForm(defaultCustomIntegrationForm("mcp_server"))}
+              />
+            </div>
+            {customForm ? (
+              <CustomIntegrationForm
+                form={customForm}
+                disabled={createCustomIntegration.isPending}
+                canSubmit={canSubmitCustomForm}
+                onChange={setCustomForm}
+                onCancel={() => setCustomForm(null)}
+                onSubmit={() => {
+                  if (canSubmitCustomForm && customForm) createCustomIntegration.mutate(customForm);
+                }}
+              />
+            ) : null}
+            {customIntegrationsQuery.isLoading ? (
+              <IntegrationRowSkeleton />
+            ) : customIntegrations.length > 0 ? (
+              <div className="space-y-2">
+                {customIntegrations.map((integration) => (
+                  <CustomIntegrationRow
+                    key={integration.id}
+                    integration={integration}
+                    disabled={revokeCustomIntegration.isPending}
+                    onDisconnect={() => revokeCustomIntegration.mutate(integration.id)}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
           <div className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
             <div className="flex min-w-0 items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
@@ -396,6 +541,238 @@ function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) 
       </div>
       <Button variant="outline" size="sm" disabled aria-label={`${integration.name} setup coming soon`}>
         {integration.actionLabel}
+      </Button>
+    </div>
+  );
+}
+
+interface CustomIntegrationSetupCardProps {
+  kind: CustomIntegrationKind;
+  active: boolean;
+  onConfigure: () => void;
+}
+
+function customIntegrationKindLabel(kind: CustomIntegrationKind) {
+  return kind === "mcp_server" ? "MCP Server" : "Custom API";
+}
+
+function customIntegrationScopeLabel(scope: CustomIntegrationScope) {
+  return scope === "organization" ? "Organization shared" : "This agent only";
+}
+
+function CustomIntegrationSetupCard({ kind, active, onConfigure }: CustomIntegrationSetupCardProps) {
+  const Icon = kind === "mcp_server" ? PlugZap : Braces;
+  return (
+    <div className={cn(
+      "grid gap-3 rounded-md border bg-background/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+      active ? "border-primary/45 bg-primary/5" : "border-border",
+    )}>
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">{customIntegrationKindLabel(kind)}</p>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              Agent tools
+            </span>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {kind === "mcp_server"
+              ? "Expose a remote MCP server to this agent or the organization."
+              : "Register an internal or external HTTP API as a Rudder-mediated tool."}
+          </p>
+        </div>
+      </div>
+      <Button variant="outline" size="sm" onClick={onConfigure}>
+        <PlugZap className="h-3.5 w-3.5" />
+        Configure
+      </Button>
+    </div>
+  );
+}
+
+interface CustomIntegrationFormProps {
+  form: CustomIntegrationFormState;
+  disabled: boolean;
+  canSubmit: boolean;
+  onChange: (form: CustomIntegrationFormState) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}
+
+function CustomIntegrationForm({
+  form,
+  disabled,
+  canSubmit,
+  onChange,
+  onCancel,
+  onSubmit,
+}: CustomIntegrationFormProps) {
+  const endpointLabel = form.kind === "mcp_server" ? "Server URL" : "Base URL";
+  const fieldPrefix = `custom-integration-${form.kind}`;
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-foreground">Connect {customIntegrationKindLabel(form.kind)}</p>
+          <p className="text-xs text-muted-foreground">Credentials are stored as organization secrets and never shown again.</p>
+        </div>
+        <div className="inline-flex rounded-md border border-border bg-background p-0.5">
+          {(["agent", "organization"] as const).map((scope) => (
+            <button
+              key={scope}
+              type="button"
+              className={cn(
+                "h-7 rounded px-2.5 text-xs font-medium transition-colors",
+                form.scope === scope
+                  ? "bg-muted text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              disabled={disabled}
+              onClick={() => onChange({ ...form, scope })}
+            >
+              {scope === "agent" ? "This agent" : "Organization"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-display-name`}>Display name</label>
+          <Input
+            id={`${fieldPrefix}-display-name`}
+            value={form.displayName}
+            disabled={disabled}
+            onChange={(event) => onChange({ ...form, displayName: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-endpoint`}>{endpointLabel}</label>
+          <Input
+            id={`${fieldPrefix}-endpoint`}
+            value={form.endpointUrl}
+            disabled={disabled}
+            placeholder={form.kind === "mcp_server" ? "https://mcp.example.com" : "https://api.example.com"}
+            onChange={(event) => onChange({ ...form, endpointUrl: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-auth-header`}>Auth header</label>
+          <Input
+            id={`${fieldPrefix}-auth-header`}
+            value={form.authHeaderName}
+            disabled={disabled}
+            onChange={(event) => onChange({ ...form, authHeaderName: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-credential`}>Credential value</label>
+          <Input
+            id={`${fieldPrefix}-credential`}
+            type="password"
+            value={form.credentialValue}
+            disabled={disabled}
+            placeholder="Optional token or API key"
+            onChange={(event) => onChange({ ...form, credentialValue: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-tool-name`}>Tool name</label>
+          <Input
+            id={`${fieldPrefix}-tool-name`}
+            value={form.toolName}
+            disabled={disabled}
+            onChange={(event) => onChange({ ...form, toolName: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-tool-description`}>Tool description</label>
+          <Input
+            id={`${fieldPrefix}-tool-description`}
+            value={form.toolDescription}
+            disabled={disabled}
+            onChange={(event) => onChange({ ...form, toolDescription: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground md:col-span-2">
+          <label htmlFor={`${fieldPrefix}-description`}>Notes</label>
+          <Textarea
+            id={`${fieldPrefix}-description`}
+            value={form.description}
+            disabled={disabled}
+            rows={2}
+            onChange={(event) => onChange({ ...form, description: event.target.value })}
+          />
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onCancel} disabled={disabled}>
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          onClick={onSubmit}
+          disabled={!canSubmit}
+          aria-label={`Connect ${customIntegrationKindLabel(form.kind)}`}
+        >
+          {disabled ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          Connect
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+interface CustomIntegrationRowProps {
+  integration: CustomIntegrationSummary;
+  disabled: boolean;
+  onDisconnect: () => void;
+}
+
+function CustomIntegrationRow({ integration, disabled, onDisconnect }: CustomIntegrationRowProps) {
+  const enabledTools = integration.tools.filter((tool) => tool.enabled);
+  const Icon = integration.kind === "mcp_server" ? PlugZap : Braces;
+  return (
+    <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">{integration.displayName}</p>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              {customIntegrationKindLabel(integration.kind)}
+            </span>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              {customIntegrationScopeLabel(integration.scope)}
+            </span>
+            <span className={cn(
+              "rounded-md border px-1.5 py-0.5 text-xs",
+              integration.binding?.status === "active" && integration.status === "active"
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "border-border bg-muted text-muted-foreground",
+            )}>
+              {integration.binding?.status === "active" && integration.status === "active" ? "Connected" : "Disconnected"}
+            </span>
+          </div>
+          <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+            <IntegrationMeta label="Tools" value={enabledTools.length > 0 ? enabledTools.map((tool) => tool.rudderToolName).join(", ") : "No tools enabled"} />
+            <IntegrationMeta label="Credentials" value={integration.hasCredentialSecret ? "Credential stored" : "No credential"} />
+            <IntegrationMeta label="Updated" value={formatDateTime(integration.updatedAt)} />
+          </dl>
+        </div>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onDisconnect}
+        disabled={disabled || integration.binding?.status !== "active"}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        Disconnect
       </Button>
     </div>
   );

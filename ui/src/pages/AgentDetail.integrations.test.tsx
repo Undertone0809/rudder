@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { AgentDetail, AgentIntegrationSummary } from "@rudderhq/shared";
+import type { AgentDetail, AgentIntegrationSummary, CustomIntegrationSummary } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -12,15 +12,18 @@ import { AgentIntegrationsTab, getFeishuIntegrationState } from "./AgentDetail.i
 const mockWindowOpen = vi.fn();
 
 const mockInvalidateQueries = vi.hoisted(() => vi.fn());
+const mockCustomIntegrationsData = vi.hoisted(() => ({
+  rows: [] as CustomIntegrationSummary[],
+}));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: ({ initialData }: { initialData?: unknown }) => ({
-    data: initialData,
+  useQuery: ({ initialData, queryKey }: { initialData?: unknown; queryKey?: readonly unknown[] }) => ({
+    data: queryKey?.includes("custom-integrations") ? mockCustomIntegrationsData.rows : initialData,
     isLoading: false,
   }),
-  useMutation: (options: { mutationFn?: () => Promise<unknown>; onSuccess?: (result: unknown) => void | Promise<void> }) => ({
-    mutate: vi.fn(async () => {
-      const result = await options.mutationFn?.();
+  useMutation: (options: { mutationFn?: (arg?: unknown) => Promise<unknown>; onSuccess?: (result: unknown) => void | Promise<void> }) => ({
+    mutate: vi.fn(async (arg?: unknown) => {
+      const result = await options.mutationFn?.(arg);
       await options.onSuccess?.(result);
     }),
     isPending: false,
@@ -69,6 +72,9 @@ vi.mock("../api/agents", () => ({
     }),
     listIntegrations: vi.fn(),
     revokeIntegration: vi.fn(),
+    listCustomIntegrations: vi.fn(),
+    createCustomIntegration: vi.fn(),
+    revokeCustomIntegration: vi.fn(),
   },
 }));
 
@@ -87,6 +93,7 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
+  mockCustomIntegrationsData.rows = [];
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -162,13 +169,62 @@ function integration(overrides: Partial<AgentIntegrationSummary> = {}): AgentInt
   };
 }
 
+function customIntegration(overrides: Partial<CustomIntegrationSummary> = {}): CustomIntegrationSummary {
+  return {
+    id: "custom-integration-1",
+    orgId: "org-1",
+    ownerAgentId: "agent-1",
+    scope: "agent",
+    kind: "mcp_server",
+    slug: "linear-mcp",
+    displayName: "Linear MCP",
+    description: null,
+    status: "active",
+    config: {},
+    hasCredentialSecret: true,
+    binding: {
+      id: "binding-1",
+      orgId: "org-1",
+      agentId: "agent-1",
+      integrationId: "custom-integration-1",
+      status: "active",
+      enabledToolIds: ["tool-1"],
+      createdAt: new Date("2026-06-18T01:00:00.000Z"),
+      updatedAt: new Date("2026-06-18T01:00:00.000Z"),
+      revokedAt: null,
+    },
+    tools: [
+      {
+        id: "tool-1",
+        orgId: "org-1",
+        integrationId: "custom-integration-1",
+        externalToolName: "search_issues",
+        rudderToolName: "custom.linear-mcp.search_issues",
+        description: "Search issues",
+        inputSchema: {},
+        config: {},
+        status: "active",
+        enabled: true,
+        createdAt: new Date("2026-06-18T01:00:00.000Z"),
+        updatedAt: new Date("2026-06-18T01:00:00.000Z"),
+      },
+    ],
+    createdAt: new Date("2026-06-18T01:00:00.000Z"),
+    updatedAt: new Date("2026-06-18T01:00:00.000Z"),
+    revokedAt: null,
+    ...overrides,
+  };
+}
+
 describe("AgentIntegrationsTab", () => {
   it("renders a stable Feishu row when the agent has no integration", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
 
     expect(container.textContent).toContain("Integrations");
     expect(container.textContent).toContain("Connect the external tools this agent can use during work loops.");
-    expect(container.textContent).toContain("0 of 8 connected");
+    expect(container.textContent).toContain("0 of 10 connected");
+    expect(container.textContent).toContain("Custom API");
+    expect(container.textContent).toContain("MCP Server");
     expect(container.textContent).toContain("Feishu / Lark");
     expect(container.textContent).toContain("Not configured");
     expect(container.textContent).toContain("Connect");
@@ -315,7 +371,7 @@ describe("AgentIntegrationsTab", () => {
     const container = render(<AgentIntegrationsTab agent={agent({ integrations: [integration()] })} orgId="org-1" />);
 
     expect(container.textContent).toContain("Connected");
-    expect(container.textContent).toContain("1 of 8 connected");
+    expect(container.textContent).toContain("1 of 10 connected");
     expect(container.textContent).toContain("cli_a_app");
     expect(container.textContent).toContain("ou_bot");
     expect(container.textContent).toContain("Feishu CN");
@@ -326,6 +382,33 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Automatic creation of the Feishu Quick Command menu is not enabled");
     expect(container.textContent).not.toContain("secret-1");
     expect(container.textContent).toContain("Disconnect");
+  });
+
+  it("renders the custom API configuration form with agent-scoped defaults", () => {
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const configureButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Configure"));
+
+    act(() => {
+      configureButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("Connect Custom API");
+    expect(container.textContent).toContain("This agent");
+    expect(container.textContent).toContain("Organization");
+    expect(container.textContent).toContain("Base URL");
+    expect(container.textContent).toContain("Credential value");
+    expect(container.querySelector('input[placeholder="https://api.example.com"]')).toBeTruthy();
+  });
+
+  it("renders connected custom integration scope and tool metadata", () => {
+    mockCustomIntegrationsData.rows = [customIntegration()];
+    const withCustom = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+
+    expect(withCustom.textContent).toContain("Linear MCP");
+    expect(withCustom.textContent).toContain("This agent only");
+    expect(withCustom.textContent).toContain("custom.linear-mcp.search_issues");
+    expect(withCustom.textContent).toContain("Credential stored");
   });
 });
 

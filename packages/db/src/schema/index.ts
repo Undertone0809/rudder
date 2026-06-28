@@ -33,6 +33,12 @@ export { chatQueuedMessages } from "./chat_queued_messages.js";
 export { cliAuthChallenges } from "./cli_auth_challenges.js";
 export { costEvents } from "./cost_events.js";
 export { costMonthlySpendRollups } from "./cost_monthly_spend_rollups.js";
+export {
+  agentCustomIntegrationBindings,
+  customIntegrationToolCalls,
+  customIntegrationTools,
+  customIntegrations
+} from "./custom_integrations.js";
 export { documentRevisions } from "./document_revisions.js";
 export { documents } from "./documents.js";
 export { executionWorkspaces } from "./execution_workspaces.js";

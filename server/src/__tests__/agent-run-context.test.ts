@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../home-paths.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../home-paths.js")>();
@@ -34,6 +34,7 @@ vi.mock("../services/agents.js", () => ({
 const mockResolveAdapterConfigForRuntime = vi.fn();
 const mockGetEnabledSkillKeysForAgent = vi.fn();
 const mockListRealizedSkillEntriesForAgent = vi.fn();
+const mockListRuntimeToolsForAgent = vi.fn();
 
 vi.mock("../services/secrets.js", () => ({
   secretService: () => ({
@@ -45,6 +46,12 @@ vi.mock("../services/organization-skills.js", () => ({
   organizationSkillService: () => ({
     getEnabledSkillKeysForAgent: mockGetEnabledSkillKeysForAgent,
     listRealizedSkillEntriesForAgent: mockListRealizedSkillEntriesForAgent,
+  }),
+}));
+
+vi.mock("../services/integrations/custom-integrations.js", () => ({
+  customIntegrationService: () => ({
+    listRuntimeToolsForAgent: mockListRuntimeToolsForAgent,
   }),
 }));
 
@@ -94,6 +101,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     mockResolveAdapterConfigForRuntime.mockReset();
     mockGetEnabledSkillKeysForAgent.mockReset();
     mockListRealizedSkillEntriesForAgent.mockReset();
+    mockListRuntimeToolsForAgent.mockReset();
     if (originalRudderHome === undefined) delete process.env.RUDDER_HOME;
     else process.env.RUDDER_HOME = originalRudderHome;
     if (originalRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
@@ -313,16 +321,22 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
 });
 
 describe("agentRunContextService buildSceneContext", () => {
+  beforeEach(() => {
+    mockListRuntimeToolsForAgent.mockResolvedValue([]);
+  });
+
   afterEach(() => {
     mockResolveAdapterConfigForRuntime.mockReset();
     mockGetEnabledSkillKeysForAgent.mockReset();
     mockListRealizedSkillEntriesForAgent.mockReset();
+    mockListRuntimeToolsForAgent.mockReset();
     mockListOrganizationResources.mockReset();
     mockListProjectResourceAttachments.mockReset();
     mockBuildAgentStartupContext.mockReset();
   });
 
   function mockEmptyStartupContext() {
+    mockListRuntimeToolsForAgent.mockResolvedValue([]);
     mockBuildAgentStartupContext.mockReturnValue({
       buildForRun: vi.fn(async () => ({
         markdown: "",

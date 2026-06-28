@@ -110,6 +110,22 @@ export {
 } from "./work-product.js";
 
 export {
+  createCustomIntegrationSchema,
+  createCustomIntegrationToolCallSchema,
+  customIntegrationBindingStatusSchema,
+  customIntegrationKindSchema,
+  customIntegrationScopeSchema,
+  customIntegrationStatusSchema,
+  customIntegrationToolCallStatusSchema,
+  customIntegrationToolInputSchema,
+  customIntegrationToolStatusSchema,
+  updateCustomIntegrationBindingSchema,
+  type CreateCustomIntegration,
+  type CreateCustomIntegrationToolCall,
+  type UpdateCustomIntegrationBinding
+} from "./custom-integration.js";
+
+export {
   executionWorkspaceStatusSchema, runWorkspaceStatusSchema, updateExecutionWorkspaceSchema, updateRunWorkspaceSchema, type UpdateExecutionWorkspace, type UpdateRunWorkspace
 } from "./execution-workspace.js";
 

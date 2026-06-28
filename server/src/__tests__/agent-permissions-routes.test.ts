@@ -6,6 +6,9 @@ import { agentRoutes } from "../routes/agents.js";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 const orgId = "22222222-2222-4222-8222-222222222222";
+const peerAgentId = "33333333-3333-4333-8333-333333333333";
+const customIntegrationId = "44444444-4444-4444-8444-444444444444";
+const customToolId = "55555555-5555-4555-8555-555555555555";
 
 const baseAgent = {
   id: agentId,
@@ -90,6 +93,13 @@ const mockAgentIntegrationService = vi.hoisted(() => ({
   create: vi.fn(),
   revokeForAgent: vi.fn(),
 }));
+const mockCustomIntegrationService = vi.hoisted(() => ({
+  listForAgent: vi.fn(),
+  createForAgent: vi.fn(),
+  updateBindingForAgent: vi.fn(),
+  revokeForAgent: vi.fn(),
+  recordToolCall: vi.fn(),
+}));
 const mockCompanySkillService = vi.hoisted(() => ({
   listRuntimeSkillEntries: vi.fn(),
   resolveRequestedSkillKeys: vi.fn(),
@@ -126,6 +136,10 @@ vi.mock("../services/index.js", () => ({
 vi.mock("../services/integrations/agent-integrations.js", () => ({
   agentIntegrationService: () => mockAgentIntegrationService,
   summarizeAgentIntegration: vi.fn((row) => row),
+}));
+
+vi.mock("../services/integrations/custom-integrations.js", () => ({
+  customIntegrationService: () => mockCustomIntegrationService,
 }));
 
 function createDbStub(options?: {
@@ -214,6 +228,11 @@ describe("agent permission routes", () => {
     );
     mockAgentInstructionsService.getBundle.mockResolvedValue({ mode: "managed" });
     mockAgentIntegrationService.listForAgent.mockResolvedValue([]);
+    mockCustomIntegrationService.listForAgent.mockResolvedValue([]);
+    mockCustomIntegrationService.createForAgent.mockResolvedValue({ id: customIntegrationId });
+    mockCustomIntegrationService.updateBindingForAgent.mockResolvedValue({ id: customIntegrationId });
+    mockCustomIntegrationService.revokeForAgent.mockResolvedValue({ id: customIntegrationId });
+    mockCustomIntegrationService.recordToolCall.mockResolvedValue({ id: "66666666-6666-4666-8666-666666666666" });
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([]);
     mockCompanySkillService.resolveRequestedSkillKeys.mockImplementation(
       async (_companyId: string, requested: string[]) => requested,
@@ -504,6 +523,69 @@ describe("agent permission routes", () => {
     expect(res.body).toEqual({ error: "Missing permission: can create agents" });
     expect(mockAccessService.hasPermission).not.toHaveBeenCalled();
     expect(mockAgentService.list).not.toHaveBeenCalled();
+  });
+
+  it("does not let same-org non-owner agent keys access another agent's custom integrations", async () => {
+    const app = createApp({
+      type: "agent",
+      agentId: peerAgentId,
+      orgId,
+      runId: "run-1",
+    });
+
+    const createPayload = {
+      scope: "agent",
+      kind: "custom_api",
+      displayName: "Private API",
+      tools: [{ externalToolName: "lookup" }],
+    };
+    const bindPayload = { enabledToolIds: [customToolId] };
+    const callPayload = { toolId: customToolId, input: { query: "acme" } };
+
+    const listRes = await request(app).get(`/api/agents/${agentId}/custom-integrations`);
+    const createRes = await request(app).post(`/api/agents/${agentId}/custom-integrations`).send(createPayload);
+    const bindRes = await request(app)
+      .patch(`/api/agents/${agentId}/custom-integrations/${customIntegrationId}/binding`)
+      .send(bindPayload);
+    const revokeRes = await request(app).delete(`/api/agents/${agentId}/custom-integrations/${customIntegrationId}`);
+    const callRes = await request(app)
+      .post(`/api/agents/${agentId}/custom-integrations/${customIntegrationId}/tool-calls`)
+      .send(callPayload);
+
+    expect(listRes.status).toBe(403);
+    expect(createRes.status).toBe(403);
+    expect(bindRes.status).toBe(403);
+    expect(revokeRes.status).toBe(403);
+    expect(callRes.status).toBe(403);
+    expect(mockCustomIntegrationService.listForAgent).not.toHaveBeenCalled();
+    expect(mockCustomIntegrationService.createForAgent).not.toHaveBeenCalled();
+    expect(mockCustomIntegrationService.updateBindingForAgent).not.toHaveBeenCalled();
+    expect(mockCustomIntegrationService.revokeForAgent).not.toHaveBeenCalled();
+    expect(mockCustomIntegrationService.recordToolCall).not.toHaveBeenCalled();
+  });
+
+  it("lets an owner agent key access only its own custom integration runtime surface", async () => {
+    const app = createApp({
+      type: "agent",
+      agentId,
+      orgId,
+      runId: "run-1",
+    });
+
+    const listRes = await request(app).get(`/api/agents/${agentId}/custom-integrations`);
+    const callRes = await request(app)
+      .post(`/api/agents/${agentId}/custom-integrations/${customIntegrationId}/tool-calls`)
+      .send({ toolId: customToolId, input: { query: "acme" } });
+
+    expect(listRes.status).toBe(200);
+    expect(callRes.status).toBe(202);
+    expect(mockCustomIntegrationService.listForAgent).toHaveBeenCalledWith(orgId, agentId);
+    expect(mockCustomIntegrationService.recordToolCall).toHaveBeenCalledWith(
+      orgId,
+      agentId,
+      customIntegrationId,
+      { toolId: customToolId, input: { query: "acme" } },
+    );
   });
 
   it("does not let a legacy agents:create grant update another agent after explicit denial", async () => {

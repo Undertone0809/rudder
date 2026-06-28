@@ -64,6 +64,14 @@ export type {
   ChatStreamTranscriptTodoItemStatus, ChatTranscriptSummary
 } from "./chat.js";
 export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
+export type {
+  AgentCustomIntegrationBinding,
+  CustomIntegration,
+  CustomIntegrationSummary,
+  CustomIntegrationTool,
+  CustomIntegrationToolCall,
+  CustomIntegrationToolSummary
+} from "./custom-integration.js";
 export type { DashboardSummary } from "./dashboard.js";
 export type { FinanceByBiller, FinanceByKind, FinanceEvent, FinanceSummary } from "./finance.js";
 export type { Goal, GoalDependencies, GoalDependencyPreview } from "./goal.js";

@@ -415,17 +415,22 @@ contracts:
   AGENT.CUSTOM.INTEGRATIONS.001:
     owner: product
     domain: agents
-    status: proposed
+    status: active
     spec_depth: logic_contract
     docs:
       - doc/product/domains/agents/custom-integrations.md
     related_code:
-      - packages/db/src/schema/agent_integrations.ts
+      - packages/db/src/schema/custom_integrations.ts
+      - packages/shared/src/types/custom-integration.ts
+      - packages/shared/src/validators/custom-integration.ts
+      - server/src/services/integrations/custom-integrations.ts
+      - server/src/routes/agents.ts
       - packages/shared/src/constants.ts
       - server/src/services/agent-run-context.ts
-      - server/src/services/chat-assistant.ts
       - ui/src/pages/AgentDetail.integrations.tsx
-    related_tests: []
+    related_tests:
+      - server/src/__tests__/custom-integrations-service.test.ts
+      - ui/src/pages/AgentDetail.integrations.test.tsx
     related_plans:
       - doc/plans/2026-06-27-agent-custom-integrations.md
   ORG.GOAL.001:

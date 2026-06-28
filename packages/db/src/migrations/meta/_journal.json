@@ -673,6 +673,13 @@
       "when": 1782115200000,
       "tag": "0095_chat_conversation_forks",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1782583200000,
+      "tag": "0096_agent_custom_integrations",
+      "breakpoints": true
     }
   ]
 }
