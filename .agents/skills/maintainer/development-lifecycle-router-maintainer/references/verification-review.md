@@ -106,6 +106,15 @@ tool discovery or the runtime spawn path before marking the gate blocked. A
 handoff that lacks either child verifier verdicts or explicit failed probe
 evidence is incomplete.
 
+Before spawning another verifier or reviewer round, compare the current target
+SHA or artifact basis, provider/runtime scope, acceptance bundle, prior
+blockers, and changed evidence against the previous round. If the same
+acceptance bundle already failed, no code/artifact changed, and the blocker is
+unchanged, do not start another broad spawn fanout. Reuse or close the prior
+gate state, work the blocker first, and spawn again only after a real changed
+evidence delta exists. When a delta is narrow, spawn the smallest targeted
+verifier/reviewer packet that can judge that delta.
+
 For benchmark, performance, or skill-evaluation validation, avoid the user's
 real/prod Rudder data by default. Use static contract checks, disposable
 fixtures, temp databases, or explicit read-only inspection unless the user
@@ -235,6 +244,9 @@ Spawning reviewers is not the same as passing review. Before handoff:
 - read actual reviewer outputs, not only child-thread creation
 - record each verdict, blockers, and proof status
 - treat open child sessions as incomplete when they have no final verdict
+- close or reuse prior reviewer/verifier gate state when the target, artifact
+  basis, acceptance bundle, and blocker are unchanged
+- require changed evidence before spawning a repeat reviewer or verifier round
 - treat `conditional accept`, `needs more evidence`, and `reject` as unresolved
   until the blocker is fixed or the user lowers the bar
 - do not upgrade stage accept into final handoff accept

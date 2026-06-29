@@ -155,6 +155,19 @@ CHECKS = [
         ],
     },
     {
+        "name": "verification_reference_requires_gate_reuse_for_unchanged_failures",
+        "files": ["references/verification-review.md", "evals/evals.json"],
+        "patterns": [
+            r"same acceptance bundle already failed",
+            r"no code/artifact changed",
+            r"blocker is unchanged",
+            r"do not start another broad spawn fanout",
+            r"Reuse or close the prior\s+gate state",
+            r"spawn again only after a real changed\s+evidence delta exists",
+            r"target SHA or artifact basis, provider/runtime scope, acceptance bundle, prior blockers, and changed evidence",
+        ],
+    },
+    {
         "name": "verification_reference_has_real_data_guard",
         "files": ["references/verification-review.md"],
         "patterns": [

@@ -1,6 +1,6 @@
 ---
 name: development-lifecycle-router-maintainer
-description: "Use for any Rudder development requests where the correct lifecycle stage or owner is unclear: requirements, advisor/product analysis, UI design, implementation, verification, review, release, recovery, runtime contracts, performance, component lab, or handoff. Use when deciding whether a named maintainer skill needs skill-creator work. Choose the earliest blocking stage, state the exit bar, then route to the smallest capable maintainer. Do not trigger for review-only verdicts or when a narrow maintainer/skill-creator clearly owns the next artifact."
+description: "Use when a Rudder development request has an unclear lifecycle stage or owner: requirements, advisor/product analysis, UI design, implementation, verification, review, release, recovery, runtime contracts, performance, component lab, handoff, or named-skill optimization. Do not trigger for review-only verdicts or when a narrow maintainer clearly owns the next artifact."
 ---
 
 # Development Lifecycle Router Maintainer

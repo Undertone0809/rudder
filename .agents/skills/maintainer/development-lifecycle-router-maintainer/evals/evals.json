@@ -581,6 +581,23 @@
         "The result spawns final reviewers after verifier PASS and reconciles their verdicts before handoff.",
         "The result does not claim complete handoff, commit/push readiness, or review pass from author-run tests, CI, screenshots, self-review, or serial personas alone."
       ]
+    },
+    {
+      "id": 44,
+      "prompt": "同一个 runtime-contract review，target SHA、artifact basis、provider scope、acceptance bundle 和 blocker 都没变。上一轮 verifier 已经因为缺少 real-local Feishu proof 失败了，还有一个 reviewer child open。继续推进，但不要又开一堆 reviewer，先把这个验收 blocker 处理掉。",
+      "expected_output": "Treats this as a verification blocker continuation, not a fresh full fanout. It compares the current target SHA or artifact basis, provider/runtime scope, acceptance bundle, prior blockers, and changed evidence against the previous round. Because the same acceptance bundle already failed, no code or artifact changed, and the blocker is unchanged, it reuses or closes the prior verifier/reviewer gate state, works the real-local Feishu proof blocker first, and spawns again only after a real changed evidence delta exists. Any later child packet is the smallest targeted verifier/reviewer packet needed for that delta, not a broad repeat reviewer fanout.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/evals/evals.json",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/scripts/benchmark_pipeline.py"
+      ],
+      "expectations": [
+        "The result does not treat spawn-required mode as permission to start another broad reviewer fanout for an unchanged failed acceptance bundle.",
+        "The result compares target SHA or artifact basis, provider/runtime scope, acceptance bundle, prior blockers, and changed evidence before spawning again.",
+        "The result recognizes that no code/artifact changed and the prior real-local Feishu proof blocker is unchanged.",
+        "The result reuses or closes prior verifier/reviewer gate state and works the blocker first.",
+        "The result spawns again only after a real changed evidence delta exists, using the smallest targeted verifier/reviewer packet needed for that delta."
+      ]
     }
   ]
 }
