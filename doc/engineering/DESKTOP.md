@@ -269,34 +269,23 @@ and only prepares the npm-backed CLI/server runtime side.
 On macOS and Windows, `start` prefers the layered `shell` asset when the release
 publishes one. Shell assets keep the Electron shell and packaged desktop CLI,
 but load the server from the already prepared `~/.rudder/runtimes/<version>`
-cache instead of carrying the full packaged server and embedded PostgreSQL
-payload on every Desktop update. The shell asset is eligible only when that
-runtime cache includes a complete PostgreSQL payload at
-`postgres-18.4/<platform>-<arch>/`, including `bin/` and
-`share/postgresql/postgres.bki`; otherwise `start` falls back to the full
-portable asset. If the shell asset is missing, unchecked, or cannot be
-downloaded, `start` also falls back to the full portable asset.
+cache instead of carrying the full packaged server on every Desktop update. The
+shell asset is eligible when the exact versioned runtime cache has been prepared.
+If the shell asset is missing, unchecked, or cannot be downloaded, `start` falls
+back to the full portable asset.
 Launching a shell asset directly without the matching runtime cache is not a
 supported install path; rerun `rudder start` so the CLI can prepare the runtime
 cache first, or install the full portable asset.
 
-Full portable Desktop assets include a PostgreSQL 18.4 production runtime
-payload under `postgres-18.4/<platform>-<arch>/`, for example
-`postgres-18.4/win32-x64/`. The payload must include `bin/`, `lib/`, and
-`share/postgresql/postgres.bki` so first-run `initdb` works without files from
-the build machine. The staging source is `desktop/.packaged/postgres-18.4/`, and
-`desktop/scripts/after-pack.mjs` copies it into Electron resources during
-packaging. At startup, packaged Desktop uses an explicit operator-provided
-`RUDDER_POSTGRES_BIN_DIR` first, then a successfully loaded external runtime
-cache payload, then the bundled resources payload.
-
-When `RUDDER_POSTGRES_BIN_DIR` is unset, Desktop staging prepares and caches a
-PostgreSQL 18.4 runtime payload automatically under the user's Rudder runtime
-payload cache. Staging still fails when `initdb`, `pg_ctl`, `postgres`, or
-`postgres.bki` are missing, or when `postgres --version` is not PostgreSQL 18.4. Set
-`RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE=1` to disable automatic preparation;
-with that flag enabled, use `RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1` only for
-development fallback packaging.
+Desktop assets do not bundle a PostgreSQL runtime by default. Local database
+startup uses an explicit operator-provided `RUDDER_POSTGRES_BIN_DIR` first, then
+the server runtime's npm-backed embedded PostgreSQL dependency. This keeps app
+downloads smaller and leaves database runtime ownership with the CLI/server
+runtime cache instead of the Electron shell. For a targeted escape hatch,
+setting `RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME=1` during staging prepares a
+PostgreSQL 18.4 payload under `desktop/.packaged/postgres-18.4/`; that explicit
+mode fails when `initdb`, `pg_ctl`, or `postgres` are missing, or when
+`postgres --version` is not PostgreSQL 18.4.
 `desktop/scripts/stage-server.mjs` runs `pnpm deploy` with the legacy deploy
 config scoped to that child process so pnpm 10+ and 11+ can still package the
 server from a workspace that does not use injected workspace packages.
@@ -337,6 +326,6 @@ validation.
 
 This is a layered asset replacement path, not a binary-delta patcher. Fresh
 installs still download the server runtime and a Desktop app, but routine
-macOS/Windows Desktop updates avoid redownloading the embedded PostgreSQL
-payload when the release provides a shell asset and the matching runtime cache
-has already been prepared.
+macOS/Windows Desktop updates avoid redownloading the server runtime when the
+release provides a shell asset and the matching runtime cache has already been
+prepared.

@@ -184,6 +184,7 @@ async function createShellAppCopy(platform, arch, productName) {
   await fs.mkdir(shellRoot, { recursive: true });
   await fs.cp(sourceAppDir, shellAppDir, { recursive: true, verbatimSymlinks: true });
   await pruneShellServerPackage(path.join(resourcesDir, "server-package"));
+  await fs.rm(path.join(resourcesDir, "postgres-18.4"), { recursive: true, force: true });
   return shellAppDir;
 }
 

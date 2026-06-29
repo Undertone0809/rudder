@@ -199,7 +199,7 @@ describe("desktop stage-server", () => {
     expect(() => readFileSync(join(preparedBinDir, "..", "pgAdmin 4.app"))).toThrow();
   });
 
-  it("automatically prepares PostgreSQL 18.4 payload when no bin dir is configured", () => {
+  it("does not bundle PostgreSQL runtime by default", () => {
     const { repo, binDir } = createStageServerRepo();
     const pgBinDir = join(repo, "prepared-pg", "bin");
     writeFakePostgresBinDir(pgBinDir);
@@ -210,7 +210,6 @@ describe("desktop stage-server", () => {
         ...process.env,
         PATH: `${binDir}${delimiter}${process.env.PATH}`,
         RUDDER_POSTGRES_BIN_DIR: "",
-        RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "",
         RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR: pgBinDir,
       },
       encoding: "utf8",
@@ -220,6 +219,27 @@ describe("desktop stage-server", () => {
     expect(readFileSync(join(repo, "desktop/.packaged/server-package/package.json"), "utf8")).toContain(
       '"default": "./dist/index.js"',
     );
+    expect(() => readFileSync(join(repo, "desktop/.packaged/postgres-18.4"))).toThrow();
+  });
+
+  it("optionally prepares PostgreSQL 18.4 payload when bundling is explicitly enabled", () => {
+    const { repo, binDir } = createStageServerRepo();
+    const pgBinDir = join(repo, "prepared-pg", "bin");
+    writeFakePostgresBinDir(pgBinDir);
+
+    const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
+        RUDDER_POSTGRES_BIN_DIR: "",
+        RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME: "1",
+        RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR: pgBinDir,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(readFileSync(join(
       repo,
       "desktop/.packaged/postgres-18.4",
@@ -252,7 +272,7 @@ describe("desktop stage-server", () => {
     ), "utf8")).toBe("postgres description\n");
   });
 
-  it("fails production staging when automatic PostgreSQL preparation is disabled and no payload is configured", () => {
+  it("fails PostgreSQL bundling when automatic preparation is disabled and no payload is configured", () => {
     const { repo, binDir } = createStageServerRepo();
 
     const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
@@ -261,14 +281,14 @@ describe("desktop stage-server", () => {
         ...process.env,
         PATH: `${binDir}${delimiter}${process.env.PATH}`,
         RUDDER_POSTGRES_BIN_DIR: "",
-        RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "",
+        RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME: "1",
         RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1",
       },
       encoding: "utf8",
     });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("requires RUDDER_POSTGRES_BIN_DIR");
+    expect(result.stderr).toContain("RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME=1 requires RUDDER_POSTGRES_BIN_DIR");
   });
 
   it("fails production staging when the PostgreSQL payload is incomplete", () => {
@@ -283,7 +303,7 @@ describe("desktop stage-server", () => {
         ...process.env,
         PATH: `${binDir}${delimiter}${process.env.PATH}`,
         RUDDER_POSTGRES_BIN_DIR: pgBinDir,
-        RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "",
+        RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME: "1",
       },
       encoding: "utf8",
     });
@@ -308,6 +328,7 @@ describe("desktop stage-server", () => {
         PATH: `${binDir}${delimiter}${process.env.PATH}`,
         RUDDER_POSTGRES_BIN_DIR: pgBinDir,
         RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "",
+        RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME: "1",
       },
       encoding: "utf8",
     });
@@ -327,7 +348,6 @@ describe("desktop stage-server", () => {
       env: {
         ...process.env,
         PATH: `${binDir}${delimiter}${process.env.PATH}`,
-        RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1",
         RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1",
       },
       encoding: "utf8",
