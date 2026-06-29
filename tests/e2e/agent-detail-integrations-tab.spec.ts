@@ -29,8 +29,8 @@ test.describe("Agent detail integrations tab", () => {
     });
 
     await expect(page.getByRole("heading", { name: "Integration Scout", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Integrations", exact: true })).toBeVisible();
-    await expect(page.getByText("Connect the external tools this agent can use during work loops.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Integrations", exact: true })).toHaveCount(0);
+    await expect(page.getByText("Connect the external tools this agent can use during work loops.")).toHaveCount(0);
     await expect(page.getByText("0 of 10 connected")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Discover" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Manage" })).toBeVisible();
@@ -40,6 +40,8 @@ test.describe("Agent detail integrations tab", () => {
     await expect(page.getByRole("heading", { name: "Developer" })).toBeVisible();
     await expect(page.getByText("Custom API", { exact: true })).toBeVisible();
     await expect(page.getByText("MCP Server", { exact: true })).toBeVisible();
+    await expect(page.getByText("Custom API", { exact: true }).locator("xpath=ancestor::div[contains(@class,'border-dashed')][1]")).toBeVisible();
+    await expect(page.getByText("MCP Server", { exact: true }).locator("xpath=ancestor::div[contains(@class,'border-dashed')][1]")).toBeVisible();
     await expect(page.getByText("Feishu / Lark")).toBeVisible();
     await expect(page.getByText("Not configured")).toBeVisible();
     await expect(page.getByText("Create a Feishu bot named Integration Scout - Rudder")).toHaveCount(0);
@@ -67,6 +69,7 @@ test.describe("Agent detail integrations tab", () => {
 
     await expect(page.getByText("Feishu Workspace", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Coming soon")).toHaveCount(6);
+    await expect(page.getByRole("button", { name: "GitHub setup" })).toHaveText("Coming soon");
     await page.getByRole("button", { name: "Gmail setup" }).click();
     const gmailDialog = page.getByRole("dialog", { name: "Gmail" });
     await expect(gmailDialog).toBeVisible();
@@ -125,6 +128,7 @@ test.describe("Agent detail integrations tab", () => {
     const customApiDialog = page.getByRole("dialog", { name: "Connect Custom API" });
     await expect(customApiDialog).toBeVisible();
     await expect(customApiDialog.getByText("Choose whether this integration is limited to this agent")).toBeVisible();
+    await expect(customApiDialog.locator(".md\\:grid-cols-2")).toHaveCount(0);
     await customApiDialog.getByLabel("Display name").fill("Internal CRM");
     await customApiDialog.getByLabel("Base URL").fill("https://crm.example.test");
     await customApiDialog.getByLabel("Tool name").fill("lookup_contact");

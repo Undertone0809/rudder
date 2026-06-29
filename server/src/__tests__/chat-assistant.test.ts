@@ -426,6 +426,42 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(mockAgentService.getInternalById).not.toHaveBeenCalled();
   });
 
+  it("points process chat agents to model configuration instead of runtime details", async () => {
+    const svc = chatAssistantService({} as any);
+    mockAgentService.getInternalById.mockResolvedValueOnce({
+      id: "agent-1",
+      orgId: "organization-1",
+      name: "Navigator",
+      status: "idle",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      metadata: null,
+    });
+
+    const availability = await svc.getChatAssistantAvailability(makeConversation({
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Navigator",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "process",
+        model: null,
+        available: false,
+        error: null,
+      },
+    }));
+
+    expect(availability).toEqual({
+      sourceType: "agent",
+      sourceLabel: "Navigator",
+      runtimeAgentId: "agent-1",
+      agentRuntimeType: "process",
+      model: null,
+      available: false,
+      error: "The current user has not configured a chat model yet.",
+    });
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
+
   it("refuses to generate a reply without a preferred agent", async () => {
     const svc = chatAssistantService({} as any);
 

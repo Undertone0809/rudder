@@ -42,7 +42,18 @@ async function isCompleteBinDir(candidateBinDir) {
       return false;
     }
   }
-  return true;
+  for (const candidatePath of [
+    path.join(candidateBinDir, "..", "share", "postgresql", "postgres.bki"),
+    path.join(candidateBinDir, "..", "share", "postgres.bki"),
+  ]) {
+    try {
+      await stat(candidatePath);
+      return true;
+    } catch {
+      // Try the next supported PostgreSQL archive layout.
+    }
+  }
+  return false;
 }
 
 function verifyVersion(candidateBinDir) {
@@ -172,7 +183,7 @@ async function main() {
     [
       "const fs = require('node:fs');",
       "const path = require('node:path');",
-      "for (const name of ['bin', 'lib']) {",
+      "for (const name of ['bin', 'lib', 'share']) {",
       "  const source = path.join(process.argv[1], name);",
       "  if (fs.existsSync(source)) fs.cpSync(source, path.join(process.argv[2], name), { recursive: true, dereference: true });",
       "}",
@@ -185,6 +196,7 @@ async function main() {
   }
   await materializeSymlinks(path.join(runtimeRoot, "bin"));
   await materializeSymlinks(path.join(runtimeRoot, "lib"));
+  await materializeSymlinks(path.join(runtimeRoot, "share"));
   await rm(workDir, { recursive: true, force: true });
 
   console.log(binDir);

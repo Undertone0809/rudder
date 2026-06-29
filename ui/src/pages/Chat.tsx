@@ -177,6 +177,8 @@ const CHAT_LIST_PREVIEW_LIMIT = 40;
 const CHAT_ISSUE_MENTION_LIMIT = 50;
 const CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD = 5;
 const CHAT_SCROLL_MAP_MAX_MARKERS = 64;
+const CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT = 96;
+const CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT = 180;
 
 function countScrollMapUserMessages(messages: ChatMessage[]) {
   return messages.filter((message) =>
@@ -197,6 +199,22 @@ function chatScrollMapPreviewText(message: ChatMessage) {
   if (message.kind === "operation_proposal") return "Operation proposal";
   if (message.kind === "ask_user") return "Question for the operator";
   return "Empty message";
+}
+
+function chatScrollMapPreviewParts(message: ChatMessage) {
+  const body = message.body.replace(/\s+/g, " ").trim();
+  if (body) {
+    const summarySource = body.length > CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT
+      ? body.slice(CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT).trim()
+      : "";
+    return {
+      title: body,
+      summary: summarySource.length > CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT
+        ? `${summarySource.slice(0, CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT - 3)}...`
+        : summarySource,
+    };
+  }
+  return { title: chatScrollMapPreviewText(message), summary: "" };
 }
 
 function chatScrollMapRoleLabel(message: ChatMessage) {
@@ -233,15 +251,15 @@ function ChatScrollMap({
   const hoveredMessage = hoveredMessageId
     ? mapMessages.find((message) => message.id === hoveredMessageId) ?? null
     : null;
+  const hoveredPreview = hoveredMessage ? chatScrollMapPreviewParts(hoveredMessage) : null;
   if (mapMessages.length === 0) return null;
   return (
     <div
       data-testid="chat-scroll-map"
       aria-label="Conversation message map"
-      className="pointer-events-none absolute left-1 top-4 z-20 hidden h-[calc(100%-2rem)] w-20 md:block"
+      className="pointer-events-none absolute left-3 top-4 z-20 hidden h-[calc(100%-2rem)] w-7 md:block"
     >
-      <div className="relative flex h-full w-8 items-center justify-center">
-        <div className="absolute left-3.5 top-0 h-full w-px bg-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)]" aria-hidden />
+      <div className="relative flex h-full w-7 items-center justify-center">
         <div className="flex h-full w-full flex-col justify-between py-2">
           {mapMessages.map((message) => (
             <button
@@ -250,9 +268,9 @@ function ChatScrollMap({
               data-testid={`chat-scroll-map-marker-${message.id}`}
               aria-label={`Jump to ${chatScrollMapRoleLabel(message)} message: ${chatScrollMapPreviewText(message)}`}
               className={cn(
-                "pointer-events-auto relative z-10 h-3 w-8 rounded-[var(--radius-xs)] border border-transparent bg-transparent px-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
-                "before:absolute before:left-2 before:top-1/2 before:h-0.5 before:w-3 before:-translate-y-1/2 before:rounded-full before:bg-[color:color-mix(in_oklab,var(--muted-foreground)_42%,transparent)] before:transition-all",
-                "hover:before:w-5 hover:before:bg-[color:var(--foreground)]",
+                "pointer-events-auto relative z-10 h-3 w-7 rounded-[var(--radius-xs)] border border-transparent bg-transparent px-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                "before:absolute before:left-0 before:top-1/2 before:h-0.5 before:w-3 before:-translate-y-1/2 before:rounded-full before:bg-[color:color-mix(in_oklab,var(--muted-foreground)_36%,transparent)] before:transition-all",
+                "hover:before:w-6 hover:before:bg-[color:var(--foreground)]",
                 message.role === "assistant" && "before:bg-[color:color-mix(in_oklab,var(--accent-base)_48%,var(--muted-foreground))]",
                 message.kind !== "message" && "before:h-1 before:bg-[color:color-mix(in_oklab,var(--accent-strong)_70%,transparent)]",
               )}
@@ -268,15 +286,16 @@ function ChatScrollMap({
       {hoveredMessage ? (
         <div
           data-testid="chat-scroll-map-preview"
-          className="pointer-events-none absolute left-9 top-1/2 w-72 -translate-y-1/2 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-overlay)] px-3 py-2 text-left shadow-[var(--shadow-md)]"
+          className="pointer-events-none absolute left-7 top-1/2 w-[36rem] max-w-[calc(100vw-32rem)] -translate-y-1/2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-overlay)] px-4 py-3 text-left shadow-[var(--shadow-md)]"
         >
-          <div className="mb-1 flex items-center gap-2 text-xs font-medium text-foreground">
-            <span>{chatScrollMapRoleLabel(hoveredMessage)}</span>
-            <span className="text-muted-foreground">Message map</span>
+          <div className="line-clamp-1 text-sm font-semibold leading-6 text-foreground">
+            {hoveredPreview?.title}
           </div>
-          <div className="line-clamp-3 text-xs leading-5 text-muted-foreground">
-            {chatScrollMapPreviewText(hoveredMessage)}
-          </div>
+          {hoveredPreview?.summary ? (
+            <div className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
+              {hoveredPreview.summary}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -1585,7 +1604,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         <div className="chat-warning mt-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-sm">
           {composerUnavailableMessage}{" "}
           <Link to="/agents" className="underline underline-offset-4 hover:text-foreground">
-            Open agents </Link> </div> ) : null}
+            Configure model </Link> </div> ) : null}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
@@ -1929,7 +1948,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   <ChatScrollMap messages={visibleMessages} onJump={jumpToChatMessage} />
                 ) : null}
                 <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto" >
-                  <div data-testid="chat-messages-content" className={cn("mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1", showChatScrollMap && "md:pl-16")} >
+                  <div data-testid="chat-messages-content" className={cn("mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1", showChatScrollMap && "md:pl-6")} >
                       {renamingConversationId === selectedConversation.id ? (
                         <form
                           data-testid="chat-title-rename-form"

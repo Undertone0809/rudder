@@ -84,11 +84,39 @@ test.describe("Chat message scroll map", () => {
     const scrollMap = page.getByTestId("chat-scroll-map");
     await expect(scrollMap).toBeVisible({ timeout: 15_000 });
     await expect(scrollMap.locator("[data-testid^='chat-scroll-map-marker-']")).toHaveCount(12);
+    const compactRailGeometry = await page.evaluate(() => {
+      const rail = document.querySelector<HTMLElement>('[data-testid="chat-scroll-map"]');
+      const content = document.querySelector<HTMLElement>('[data-testid="chat-messages-content"]');
+      if (!rail || !content) return null;
+      return {
+        railWidth: rail.getBoundingClientRect().width,
+        contentPaddingLeft: Number.parseFloat(window.getComputedStyle(content).paddingLeft),
+      };
+    });
+    expect(compactRailGeometry).not.toBeNull();
+    expect(compactRailGeometry?.railWidth).toBeLessThanOrEqual(40);
+    expect(compactRailGeometry?.contentPaddingLeft).toBeLessThanOrEqual(32);
 
     const targetMessage = messages[10];
     const targetMarker = page.getByTestId(`chat-scroll-map-marker-${targetMessage.id}`);
     await targetMarker.hover();
-    await expect(page.getByTestId("chat-scroll-map-preview")).toContainText("Checkpoint 11");
+    const preview = page.getByTestId("chat-scroll-map-preview");
+    await expect(preview).toContainText("Checkpoint 11");
+    await expect(preview).not.toContainText("Message map");
+    const floatingPreviewGeometry = await page.evaluate(() => {
+      const rail = document.querySelector<HTMLElement>('[data-testid="chat-scroll-map"]');
+      const previewCard = document.querySelector<HTMLElement>('[data-testid="chat-scroll-map-preview"]');
+      if (!rail || !previewCard) return null;
+      const railBounds = rail.getBoundingClientRect();
+      const previewBounds = previewCard.getBoundingClientRect();
+      return {
+        previewOffsetFromRail: previewBounds.left - railBounds.right,
+        previewWidth: previewBounds.width,
+      };
+    });
+    expect(floatingPreviewGeometry).not.toBeNull();
+    expect(floatingPreviewGeometry?.previewOffsetFromRail).toBeLessThanOrEqual(8);
+    expect(floatingPreviewGeometry?.previewWidth).toBeGreaterThanOrEqual(440);
     await page.screenshot({ path: "/tmp/rudder-chat-scroll-map-preview.png", fullPage: true });
 
     await targetMarker.click();

@@ -23,7 +23,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Braces,
   CalendarDays,
-  CheckCircle2,
   ExternalLink,
   FileText,
   FolderOpen,
@@ -72,7 +71,7 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Gmail",
     description: "Read, search, draft, and send email from agent work.",
     connectionScope: "Personal",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
     category: "message",
     logoSrc: "/brands/gmail-logo.svg",
     Icon: Inbox,
@@ -82,7 +81,7 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Google Calendar",
     description: "View and edit calendar events for scheduling work.",
     connectionScope: "Personal",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
     category: "productivity",
     logoSrc: "/brands/google-calendar-logo.svg",
     Icon: CalendarDays,
@@ -92,7 +91,7 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Google Drive",
     description: "Browse Drive files and attach workspace context.",
     connectionScope: "Workspace",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
     category: "productivity",
     logoSrc: "/brands/google-drive-logo.svg",
     Icon: FolderOpen,
@@ -102,7 +101,7 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Notion",
     description: "Search pages, databases, and operating notes.",
     connectionScope: "Workspace",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
     category: "productivity",
     logoSrc: "/brands/notion-logo.svg",
     Icon: FileText,
@@ -112,7 +111,7 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "GitHub",
     description: "Clone and inspect repositories during agent runs.",
     connectionScope: "Developer",
-    actionLabel: "Manage",
+    actionLabel: "Coming soon",
     category: "developer",
     logoSrc: "/brands/github-logo.svg",
     Icon: Github,
@@ -122,7 +121,7 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Linear",
     description: "Link delivery issues and sync engineering work state.",
     connectionScope: "Developer",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
     category: "developer",
     logoSrc: "/brands/linear-logo.svg",
     Icon: MessageSquareText,
@@ -401,34 +400,27 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const hasManagedIntegrations = Boolean(managedFeishuIntegration) || managedCustomIntegrations.length > 0;
 
   return (
-    <div className="max-w-5xl space-y-4">
-      <div className="rounded-lg border border-border bg-card">
-        <div className="border-b border-border px-4 py-3">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-foreground">Integrations</h2>
-            <p className="text-sm text-muted-foreground">Connect the external tools this agent can use during work loops.</p>
-          </div>
-          <div className="mt-3 inline-flex rounded-md border border-border bg-muted/30 p-0.5">
-            {(["discover", "manage"] as const).map((view) => (
-              <button
-                key={view}
-                type="button"
-                className={cn(
-                  "h-8 rounded px-3 text-sm font-medium transition-colors",
-                  integrationsView === view
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-                onClick={() => setIntegrationsView(view)}
-              >
-                {view === "discover" ? "Discover" : "Manage"}
-              </button>
-            ))}
-          </div>
-        </div>
+    <div className="max-w-5xl space-y-5">
+      <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+        {(["discover", "manage"] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            className={cn(
+              "h-8 rounded px-3 text-sm font-medium transition-colors",
+              integrationsView === view
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => setIntegrationsView(view)}
+          >
+            {view === "discover" ? "Discover" : "Manage"}
+          </button>
+        ))}
+      </div>
 
-        {integrationsView === "discover" ? (
-          <div className="space-y-6 px-4 py-4">
+      {integrationsView === "discover" ? (
+          <div className="space-y-6">
             <IntegrationCategorySection title="Custom tools">
               <CustomIntegrationSetupCard
                 kind="custom_api"
@@ -481,7 +473,7 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
             </IntegrationCategorySection>
           </div>
         ) : (
-          <div className="space-y-4 px-4 py-4">
+          <div className="space-y-4">
             {integrationsQuery.isLoading || customIntegrationsQuery.isLoading ? (
               <IntegrationRowSkeleton />
             ) : hasManagedIntegrations ? (
@@ -520,14 +512,13 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
             )}
           </div>
         )}
-      </div>
       <Dialog
         open={Boolean(customForm)}
         onOpenChange={(open) => {
           if (!open && !createCustomIntegration.isPending) setCustomForm(null);
         }}
       >
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-xl">
           {customForm ? (
             <>
               <DialogHeader>
@@ -611,7 +602,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                 </Button>
               ) : (
                 <Button type="button" size="sm" onClick={() => openSetup.mutate()} disabled={openSetup.isPending}>
-                  {openSetup.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
                   {openSetup.isPending ? "Opening" : "Connect"}
                 </Button>
               )}
@@ -773,9 +763,6 @@ function UpcomingIntegrationCard({ integration, onConfigure }: UpcomingIntegrati
             <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
               {integration.connectionScope}
             </span>
-            <span className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-xs text-muted-foreground">
-              Coming soon
-            </span>
           </div>
           <p className="text-sm text-muted-foreground">{integration.description}</p>
         </div>
@@ -852,8 +839,8 @@ function CustomIntegrationSetupCard({ kind, active, onConfigure }: CustomIntegra
   const Icon = kind === "mcp_server" ? PlugZap : Braces;
   return (
     <div className={cn(
-      "grid gap-3 rounded-md border bg-background/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
-      active ? "border-primary/45 bg-primary/5" : "border-border",
+      "grid gap-3 rounded-md border border-dashed bg-background/30 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+      active ? "border-primary/55 bg-primary/5" : "border-border",
     )}>
       <div className="flex min-w-0 items-start gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
@@ -874,7 +861,6 @@ function CustomIntegrationSetupCard({ kind, active, onConfigure }: CustomIntegra
         </div>
       </div>
       <Button variant="outline" size="sm" onClick={onConfigure}>
-        <PlugZap className="h-3.5 w-3.5" />
         Configure
       </Button>
     </div>
@@ -923,7 +909,7 @@ function CustomIntegrationForm({
           ))}
         </div>
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="space-y-3">
         <div className="space-y-1 text-xs font-medium text-muted-foreground">
           <label htmlFor={`${fieldPrefix}-display-name`}>Display name</label>
           <Input
@@ -981,7 +967,7 @@ function CustomIntegrationForm({
             onChange={(event) => onChange({ ...form, toolDescription: event.target.value })}
           />
         </div>
-        <div className="space-y-1 text-xs font-medium text-muted-foreground md:col-span-2">
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
           <label htmlFor={`${fieldPrefix}-description`}>Notes</label>
           <Textarea
             id={`${fieldPrefix}-description`}
@@ -1002,8 +988,7 @@ function CustomIntegrationForm({
           disabled={!canSubmit}
           aria-label={`Connect ${customIntegrationKindLabel(form.kind)}`}
         >
-          {disabled ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-          Connect
+          {disabled ? "Connecting" : "Connect"}
         </Button>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import {
-  agentCustomIntegrationBindings,
   activityLog,
+  agentCustomIntegrationBindings,
   agents,
   applyPendingMigrations,
   createDb,

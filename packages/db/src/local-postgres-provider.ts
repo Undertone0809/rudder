@@ -1,4 +1,4 @@
-import { execFile, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -61,9 +61,59 @@ export function resolveOfficialPostgresBinaries(binDir: string): {
   };
 }
 
+export function resolveOfficialPostgresRuntimeFiles(binDir: string): {
+  postgresBkiCandidates: string[];
+} {
+  return {
+    postgresBkiCandidates: [
+      path.join(binDir, "..", "share", "postgresql", "postgres.bki"),
+      path.join(binDir, "..", "share", "postgres.bki"),
+    ],
+  };
+}
+
+function debianSharedirCandidate(binDir: string): string | null {
+  const normalized = path.resolve(binDir);
+  const parts = normalized.split(path.sep);
+  const libIndex = parts.lastIndexOf("lib");
+  if (libIndex < 0) return null;
+  if (parts[libIndex + 1] !== "postgresql") return null;
+  const version = parts[libIndex + 2];
+  if (!version || parts[libIndex + 3] !== "bin") return null;
+  const prefix = parts.slice(0, libIndex).join(path.sep) || path.sep;
+  return path.join(prefix, "share", "postgresql", version);
+}
+
+export function resolveOfficialPostgresTemplateDir(binDir: string): string | null {
+  const { postgresBkiCandidates } = resolveOfficialPostgresRuntimeFiles(binDir);
+  for (const candidatePath of postgresBkiCandidates) {
+    if (existsSync(candidatePath)) return path.dirname(candidatePath);
+  }
+
+  const debianSharedir = debianSharedirCandidate(binDir);
+  if (debianSharedir && existsSync(path.join(debianSharedir, "postgres.bki"))) {
+    return debianSharedir;
+  }
+
+  const pgConfigPath = path.join(binDir, process.platform === "win32" ? "pg_config.exe" : "pg_config");
+  if (!existsSync(pgConfigPath)) return null;
+  try {
+    const sharedir = execFileSync(pgConfigPath, ["--sharedir"], { encoding: "utf8" }).trim();
+    if (!sharedir) return null;
+    const postgresBkiPath = path.join(sharedir, "postgres.bki");
+    return existsSync(postgresBkiPath) ? sharedir : null;
+  } catch {
+    return null;
+  }
+}
+
 export function validateOfficialPostgresBinDir(binDir: string): { ok: true } | { ok: false; missing: string[] } {
   const binaries = resolveOfficialPostgresBinaries(binDir);
+  const runtimeFiles = resolveOfficialPostgresRuntimeFiles(binDir);
   const missing = Object.values(binaries).filter((binaryPath) => !existsSync(binaryPath));
+  if (!resolveOfficialPostgresTemplateDir(binDir)) {
+    missing.push(runtimeFiles.postgresBkiCandidates[0]);
+  }
   return missing.length === 0 ? { ok: true } : { ok: false, missing };
 }
 
@@ -132,6 +182,16 @@ export function buildOfficialPostgresInitdbArgs(options: LocalPostgresInstanceOp
   ];
 }
 
+function buildOfficialPostgresInitdbArgsForBinDir(
+  binDir: string,
+  options: LocalPostgresInstanceOptions,
+  passwordFilePath: string,
+): string[] {
+  const args = buildOfficialPostgresInitdbArgs(options, passwordFilePath);
+  const templateDir = resolveOfficialPostgresTemplateDir(binDir);
+  return templateDir ? [...args, "-L", templateDir] : args;
+}
+
 function buildOfficialPostgresCommandEnv(
   binDir: string,
   password: string,
@@ -187,7 +247,7 @@ export function createOfficialPostgresInstance(
         await writeFile(passwordFilePath, `${options.password}\n`, { encoding: "utf8", mode: 0o600 });
         await run(
           binaries.initdb,
-          buildOfficialPostgresInitdbArgs(options, passwordFilePath),
+          buildOfficialPostgresInitdbArgsForBinDir(binDir, options, passwordFilePath),
           "initdb",
         );
       } finally {

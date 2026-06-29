@@ -155,7 +155,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           runtimeAgentId: agent.id,
           agentRuntimeType: agentAdapterType,
           model: modelLabel(agentAdapterConfig) ?? null,
-          error: `${agent.name} uses ${agentAdapterType}, which does not support chat conversations.`,
+          error: "The current user has not configured a chat model yet.",
         }),
         runtimeAgent: {
           id: agent.id,

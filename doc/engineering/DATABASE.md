@@ -49,11 +49,11 @@ Production local and packaged Desktop builds should use PostgreSQL 18.4 producti
 RUDDER_POSTGRES_BIN_DIR=/path/to/postgresql-18.4/bin pnpm rudder run
 ```
 
-When `RUDDER_POSTGRES_BIN_DIR` is set, Rudder validates `initdb`, `pg_ctl`, and `postgres`, requires `postgres --version` to report PostgreSQL 18.4, and then manages the local cluster with those production binaries. If the variable is unset, development shells can still fall back to the legacy `embedded-postgres` wrapper for compatibility.
+When `RUDDER_POSTGRES_BIN_DIR` is set, Rudder validates `initdb`, `pg_ctl`, `postgres`, and the `initdb` template file `postgres.bki`, requires `postgres --version` to report PostgreSQL 18.4, and then manages the local cluster with those production binaries. If the variable is unset, development shells can still fall back to the legacy `embedded-postgres` wrapper for compatibility.
 
-Desktop packaging prepares and caches a PostgreSQL 18.4 payload automatically when `RUDDER_POSTGRES_BIN_DIR` is unset, then stages it under `postgres-18.4/<platform>-<arch>/bin`. Set `RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE=1` only when you need packaging to fail instead of downloading the payload, or pair it with `RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1` for a development fallback package.
+Desktop packaging prepares and caches a PostgreSQL 18.4 payload automatically when `RUDDER_POSTGRES_BIN_DIR` is unset, then stages it under `postgres-18.4/<platform>-<arch>/` with `bin/`, `lib/`, and `share/postgresql/postgres.bki`. Set `RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE=1` only when you need packaging to fail instead of downloading the payload, or pair it with `RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES=1` for a development fallback package.
 
-The CLI runtime cache can also stage a `postgres-18.4/<platform>-<arch>/bin` payload when `RUDDER_POSTGRES_BIN_DIR` is available. The Desktop release workflow uses the same payload preparation script before packaging so release assets do not silently fall back to the legacy wrapper.
+The CLI runtime cache can also stage a `postgres-18.4/<platform>-<arch>/` payload when `RUDDER_POSTGRES_BIN_DIR` is available. The Desktop release workflow uses the same payload preparation script before packaging so release assets do not silently fall back to the legacy wrapper.
 
 ## 2. Local PostgreSQL (Docker)
 

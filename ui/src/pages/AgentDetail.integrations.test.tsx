@@ -220,8 +220,7 @@ describe("AgentIntegrationsTab", () => {
   it("renders a stable Feishu row when the agent has no integration", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
 
-    expect(container.textContent).toContain("Integrations");
-    expect(container.textContent).toContain("Connect the external tools this agent can use during work loops.");
+    expect(container.textContent).not.toContain("Connect the external tools this agent can use during work loops.");
     expect(container.textContent).toContain("Discover");
     expect(container.textContent).toContain("Manage");
     expect(container.textContent).toContain("Custom API");
@@ -229,6 +228,7 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Feishu / Lark");
     expect(container.textContent).toContain("Not configured");
     expect(container.textContent).toContain("Set up");
+    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(6);
     expect(container.textContent).not.toContain("0 of 10 connected");
     expect(container.textContent).not.toContain("Create a Feishu bot named Wesley - Rudder");
   });
@@ -488,6 +488,8 @@ describe("AgentIntegrationsTab", () => {
     expect(dialog?.textContent).toContain("Base URL");
     expect(dialog?.textContent).toContain("Credential value");
     expect(dialog?.querySelector('input[placeholder="https://api.example.com"]')).toBeTruthy();
+    expect(dialog?.querySelector(".md\\:grid-cols-2")).toBeNull();
+    expect(dialog?.querySelector('button[aria-label="Connect Custom API"] svg')).toBeNull();
 
     const cancelButton = [...dialog!.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Cancel"));
