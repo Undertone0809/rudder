@@ -218,6 +218,7 @@ vi.mock("@/components/MarkdownEditor", async () => {
 });
 
 let cleanupFn: (() => void) | null = null;
+let scrollIntoViewMock: ReturnType<typeof vi.fn>;
 let storageState: Record<string, string> = {};
 
 function chat(overrides: Partial<ChatConversation> = {}): ChatConversation {
@@ -432,6 +433,21 @@ function pendingAskUser(overrides: Partial<ChatMessage> = {}): ChatMessage {
     createdAt: new Date("2026-05-12T09:03:00.000Z"),
     updatedAt: new Date("2026-05-12T09:03:00.000Z"),
     ...overrides,
+  });
+}
+
+function longConversationMessages(count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const messageNumber = index + 1;
+    const isUserMessage = index % 2 === 0;
+    return message({
+      id: `long-message-${messageNumber}`,
+      role: isUserMessage ? "user" : "assistant",
+      body: `Checkpoint ${messageNumber}: ${isUserMessage ? "operator context" : "assistant progress"} for a long conversation.`,
+      replyingAgentId: isUserMessage ? null : "agent-1",
+      createdAt: new Date(`2026-05-12T10:${String(messageNumber).padStart(2, "0")}:00.000Z`),
+      updatedAt: new Date(`2026-05-12T10:${String(messageNumber).padStart(2, "0")}:00.000Z`),
+    });
   });
 }
 
@@ -694,6 +710,11 @@ beforeEach(() => {
     configurable: true,
     value: vi.fn(),
   });
+  scrollIntoViewMock = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: scrollIntoViewMock,
+  });
 });
 
 afterEach(() => {
@@ -814,6 +835,56 @@ describe("Chat route loading", () => {
     expect(container.querySelector("[data-testid='chat-composer-toolbar']")).toBeNull();
     expect(container.querySelector("[data-testid='chat-empty-state-tabs']")).toBeNull();
     expect(container.textContent).not.toContain("Scope a new feature");
+  });
+});
+
+describe("Chat message scroll map", () => {
+  it("stays hidden until a conversation has more than five user messages", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": longConversationMessages(10),
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-scroll-map']")).toBeNull();
+  });
+
+  it("previews long conversation positions and jumps to the selected message", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": longConversationMessages(12),
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const scrollMap = container.querySelector<HTMLElement>("[data-testid='chat-scroll-map']");
+    expect(scrollMap).not.toBeNull();
+    expect(scrollMap?.querySelectorAll("[data-testid^='chat-scroll-map-marker-']")).toHaveLength(12);
+
+    const marker = container.querySelector<HTMLButtonElement>("[data-testid='chat-scroll-map-marker-long-message-7']");
+    expect(marker).not.toBeNull();
+
+    await act(async () => {
+      marker?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const preview = container.querySelector<HTMLElement>("[data-testid='chat-scroll-map-preview']");
+    expect(preview?.textContent).toContain("Checkpoint 7");
+    expect(preview?.textContent).toContain("operator context");
+
+    await act(async () => {
+      marker?.click();
+      await Promise.resolve();
+    });
+
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
+    expect(container.querySelector("[data-message-id='long-message-7']")?.className).toContain("chat-message-jump-highlight");
   });
 });
 
