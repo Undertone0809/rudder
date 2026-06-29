@@ -23,6 +23,9 @@ related_code:
   - server/src/services/knowledge-portability/organization-portability.export.ts
   - server/src/services/knowledge-portability/organization-portability.import.ts
   - server/src/services/export-jobs.ts
+  - ui/index.html
+  - ui/src/context/ThemeContext.tsx
+  - ui/src/pages/InstanceAppearanceSettings.tsx
   - ui/src/pages/InstanceSettings.tsx
   - ui/src/pages/OrganizationSettings.tsx
   - ui/src/pages/OrganizationExport.tsx
@@ -38,8 +41,11 @@ related_tests:
   - server/src/__tests__/organization-intelligence-profiles.test.ts
   - server/src/__tests__/organization-intelligence-profiles-routes.test.ts
   - server/src/__tests__/export-jobs.test.ts
+  - ui/src/context/ThemeContext.test.tsx
+  - ui/src/pages/InstanceAppearanceSettings.test.tsx
   - ui/src/components/DesktopReleaseNotesDialog.test.tsx
   - tests/e2e/onboarding.spec.ts
+  - tests/e2e/settings-appearance.spec.ts
   - tests/e2e/settings-sidebar.spec.ts
   - tests/e2e/organization-export-build-job.spec.ts
   - tests/e2e/profile-context-import.spec.ts
@@ -62,21 +68,44 @@ Product model:
 - Instance settings are deployment/local-shell scoped.
 - Operator profile settings are user-scoped.
 - Organization settings and intelligence profiles are organization-scoped.
+- Appearance settings are presentation-only local shell/browser preferences.
+  They do not mutate organization records, agent behavior, runtime behavior, or
+  shared operator profile state.
 - Settings surfaces may be route-backed overlays, but persistence belongs to the
-  corresponding service/table.
+  corresponding service/table unless the setting is explicitly presentation-only
+  local UI state.
+- Appearance exposes four independent controls:
+  - color mode: `light`, `system`, `dark`
+  - design style: `default`, `mira`, `luma`
+  - base color: `neutral`, `stone`, `zinc`, `mauve`, `olive`, `mist`, `taupe`
+  - theme color: `neutral`, `amber`, `blue`, `cyan`, `emerald`, `fuchsia`,
+    `green`, `indigo`, `lime`, `orange`, `pink`
 
 Flow:
 
 1. Operator opens Settings from shell or organization routes.
 2. UI loads current instance/operator/org configuration.
-3. Save mutates the owning settings service and invalidates relevant UI caches.
-4. Affected workflows read settings through their own domain service.
+3. Service-backed pages save through the owning settings service and invalidate
+   relevant UI caches.
+4. Appearance choices apply immediately by setting root DOM attributes and the
+   resolved browser theme color, then persist to local storage so the next app
+   boot can apply the same presentation before React finishes loading.
+5. Affected workflows read settings through their own domain service; workflow
+   behavior must not depend on presentation-only appearance values.
 
 Invariants:
 
 - Settings must not silently cross organization or user boundaries.
 - Route-backed settings overlays must preserve the previous work surface when
   the shell uses contextual settings.
+- Appearance state must remain reversible and local: selecting a color mode,
+  design style, base color, or theme color must not change any durable work
+  object, organization setting, runtime config, agent instruction, or review
+  outcome.
+- Stored appearance values outside the supported option sets must fall back to
+  the default presentation instead of leaving the app in an undefined style.
+- The app shell must apply persisted appearance values early enough to avoid a
+  first-paint mismatch between the saved local preference and the hydrated UI.
 
 Evidence:
 
@@ -84,6 +113,13 @@ Evidence:
   `server/src/__tests__/instance-settings-routes.test.ts`, and
   `server/src/__tests__/operator-profile-service.test.ts` cover settings
   persistence and profile behavior.
+- `ui/src/context/ThemeContext.test.tsx` covers supported appearance values,
+  DOM attributes, local storage persistence, and Desktop shell appearance
+  bridging.
+- `ui/src/pages/InstanceAppearanceSettings.test.tsx` covers the visible
+  Appearance settings choices.
+- `tests/e2e/settings-appearance.spec.ts` covers the user-visible Appearance
+  workflow, including persistence for expanded base and theme color options.
 - `tests/e2e/settings-sidebar.spec.ts` covers visible settings navigation.
 - Known gap: each new settings subpage should add focused coverage when it
   changes a user-visible workflow.
