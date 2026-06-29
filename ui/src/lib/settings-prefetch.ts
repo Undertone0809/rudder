@@ -85,6 +85,10 @@ export function listSettingsPrefetchQueryKeys(target: string, organizationId: st
     return keys;
   }
 
+  if (target.startsWith("/instance/settings/appearance")) {
+    return keys;
+  }
+
   if (target.startsWith("/instance/settings/notifications")) {
     keys.push([...queryKeys.instance.notificationSettings]);
     return keys;
@@ -181,6 +185,10 @@ export function prefetchSettingsQueries(
         staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
       }),
     );
+    return Promise.allSettled(jobs);
+  }
+
+  if (target.startsWith("/instance/settings/appearance")) {
     return Promise.allSettled(jobs);
   }
 

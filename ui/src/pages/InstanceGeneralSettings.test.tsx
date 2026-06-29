@@ -181,14 +181,14 @@ describe("InstanceGeneralSettings", () => {
   });
 
 
-  it("renders appearance as a single color mode item", async () => {
+  it("keeps color mode out of general settings", async () => {
     const container = renderPage();
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Color mode");
+    expect(container.textContent).not.toContain("Color mode");
     expect(container.textContent).not.toContain("Appearance");
     expect(container.textContent).not.toContain("Appearance section");
     expect(container.textContent).not.toContain("Theme behavior");

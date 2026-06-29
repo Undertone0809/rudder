@@ -3,6 +3,7 @@ import {
   DEFAULT_INSTANCE_SETTINGS_PATH,
   DEFAULT_SETTINGS_PATH,
   INSTANCE_SETTINGS_ABOUT_PATH,
+  INSTANCE_SETTINGS_APPEARANCE_PATH,
   INSTANCE_SETTINGS_LANGFUSE_PATH,
   INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
   INSTANCE_SETTINGS_PROFILE_PATH,
@@ -23,6 +24,9 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/general")).toBe(
       "/instance/settings/general",
+    );
+    expect(normalizeRememberedInstanceSettingsPath("/instance/settings/appearance")).toBe(
+      INSTANCE_SETTINGS_APPEARANCE_PATH,
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/notifications")).toBe(
       INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
@@ -70,6 +74,9 @@ describe("normalizeRememberedSettingsPath", () => {
     expect(normalizeRememberedSettingsPath("/organization/settings")).toBe("/organization/settings");
     expect(normalizeRememberedSettingsPath("/org")).toBe("/org");
     expect(normalizeRememberedSettingsPath("/instance/settings/general")).toBe("/instance/settings/general");
+    expect(normalizeRememberedSettingsPath("/instance/settings/appearance")).toBe(
+      INSTANCE_SETTINGS_APPEARANCE_PATH,
+    );
     expect(normalizeRememberedSettingsPath("/instance/settings/notifications")).toBe(
       INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
     );

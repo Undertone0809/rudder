@@ -50,6 +50,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { GoalDetail } from "./pages/GoalDetail";
 import { Goals } from "./pages/Goals";
 import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
+import { InstanceAppearanceSettings } from "./pages/InstanceAppearanceSettings";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceLangfuseSettings } from "./pages/InstanceLangfuseSettings";
 import { InstanceNotificationsSettings } from "./pages/InstanceNotificationsSettings";
@@ -546,6 +547,7 @@ export function App() {
             <Route path="profile" element={<InstanceProfileSettings />} />
             <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
+            <Route path="appearance" element={<InstanceAppearanceSettings />} />
             <Route path="notifications" element={<InstanceNotificationsSettings />} />
             <Route path="langfuse" element={<InstanceLangfuseSettings />} />
             <Route path="about" element={<InstanceAboutSettings />} />
@@ -607,6 +609,7 @@ export function App() {
               <Route path="profile" element={<InstanceProfileSettings />} />
               <Route path="shortcuts" element={<InstanceShortcutsSettings />} />
               <Route path="general" element={<InstanceGeneralSettings />} />
+              <Route path="appearance" element={<InstanceAppearanceSettings />} />
               <Route path="notifications" element={<InstanceNotificationsSettings />} />
               <Route path="langfuse" element={<InstanceLangfuseSettings />} />
               <Route path="about" element={<InstanceAboutSettings />} />

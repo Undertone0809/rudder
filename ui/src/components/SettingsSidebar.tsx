@@ -25,6 +25,7 @@ import {
   IdCard,
   Info,
   Keyboard,
+  Palette,
   Puzzle,
   Settings,
   ShieldCheck,
@@ -209,6 +210,14 @@ export function SettingsSidebar({
                 state={overlayState}
                 label={t("common.general")}
                 icon={SlidersHorizontal}
+                end
+                variant={modalVariant ? "compact" : "default"}
+              />
+              <SidebarNavItem
+                to="/instance/settings/appearance"
+                state={overlayState}
+                label={t("general.appearance.title")}
+                icon={Palette}
                 end
                 variant={modalVariant ? "compact" : "default"}
               />

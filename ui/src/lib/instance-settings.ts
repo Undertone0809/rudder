@@ -1,6 +1,7 @@
 export const INSTANCE_SETTINGS_PROFILE_PATH = "/instance/settings/profile";
 export const INSTANCE_SETTINGS_SHORTCUTS_PATH = "/instance/settings/shortcuts";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
+export const INSTANCE_SETTINGS_APPEARANCE_PATH = "/instance/settings/appearance";
 export const INSTANCE_SETTINGS_NOTIFICATIONS_PATH = "/instance/settings/notifications";
 export const INSTANCE_SETTINGS_LANGFUSE_PATH = "/instance/settings/langfuse";
 export const INSTANCE_SETTINGS_ABOUT_PATH = "/instance/settings/about";
@@ -40,6 +41,7 @@ export function normalizeRememberedInstanceSettingsPath(
     canManageAdminSettings &&
     (
       pathname === INSTANCE_SETTINGS_GENERAL_PATH ||
+      pathname === INSTANCE_SETTINGS_APPEARANCE_PATH ||
       pathname === INSTANCE_SETTINGS_NOTIFICATIONS_PATH ||
       pathname === INSTANCE_SETTINGS_LANGFUSE_PATH ||
       pathname === INSTANCE_SETTINGS_ABOUT_PATH ||
@@ -91,6 +93,7 @@ export function normalizeRememberedSettingsPath(
     canManageAdminSettings &&
     (
       pathname === INSTANCE_SETTINGS_GENERAL_PATH ||
+      pathname === INSTANCE_SETTINGS_APPEARANCE_PATH ||
       pathname === INSTANCE_SETTINGS_NOTIFICATIONS_PATH ||
       pathname === INSTANCE_SETTINGS_LANGFUSE_PATH ||
       pathname === INSTANCE_SETTINGS_ABOUT_PATH ||

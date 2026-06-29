@@ -16,6 +16,7 @@ import {
   ExternalLink,
   IdCard,
   Info,
+  Palette,
   Puzzle,
   Settings,
   ShieldCheck,
@@ -133,6 +134,12 @@ export function InstanceSidebar() {
               {t("common.desktopApp")}
             </div>
             <SettingsNavLink to="/instance/settings/general" label={t("common.general")} icon={SlidersHorizontal} end />
+            <SettingsNavLink
+              to="/instance/settings/appearance"
+              label={t("general.appearance.title")}
+              icon={Palette}
+              end
+            />
             <SettingsNavLink
               to="/instance/settings/notifications"
               label={t("common.systemPermissions")}
