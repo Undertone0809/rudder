@@ -168,6 +168,56 @@ const RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT = 5;
 const RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT = 10;
 const CHAT_LIST_PREVIEW_LIMIT = 40;
 const CHAT_ISSUE_MENTION_LIMIT = 50;
+export const REQUIREMENTS_REVIEW_USER_MESSAGE_THRESHOLD = 5;
+export const REQUIREMENTS_REVIEW_PROMPT =
+  "Please organize my requirements before continuing. Return a concise breakdown covering goal, confirmed requirements, open questions, and suggested next steps.";
+export function countRequirementsReviewUserMessages(messages: ChatMessage[]) {
+  return messages.filter((message) =>
+    message.role === "user"
+    && message.kind === "message"
+    && !message.supersededAt
+    && (message.body.trim().length > 0 || message.attachments.length > 0)
+  ).length;
+}
+export function ChatRequirementsReviewPrompt({
+  userMessageCount,
+  onApply,
+}: {
+  userMessageCount: number;
+  onApply: () => void;
+}) {
+  return (
+    <div
+      data-testid="chat-requirements-review-prompt"
+      className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_94%,transparent)] px-3 py-2.5 shadow-sm"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-active)] text-muted-foreground">
+            <ListChecks className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground">Clarify requirements</div>
+            <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+              {userMessageCount} user notes in this chat. Organize the thread before the next run.
+            </div>
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="chat-requirements-review-action"
+          onClick={onApply}
+          className="shrink-0"
+        >
+          <ListChecks className="mr-2 h-4 w-4" />
+          Draft request
+        </Button>
+      </div>
+    </div>
+  );
+}
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
   const {
     abortChatStream,
@@ -911,7 +961,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     hasConversation: Boolean(selectedConversation),
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
     hasMessages: rawMessages.length > 0,
-    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeEditCutoffMs === null ? displayedMessages : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs); const visibleMessages = activeStream ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const pendingAskUserMessage = useMemo(
+    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeEditCutoffMs === null ? displayedMessages : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs); const visibleMessages = activeStream ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const requirementsReviewUserMessageCount = useMemo(
+    () => countRequirementsReviewUserMessages(visibleMessages), [visibleMessages],
+  ); const pendingAskUserMessage = useMemo(
     () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
   useEffect(() => { if (!pendingAskUserRequest) return; closeComposerContextMenus(); }, [closeComposerContextMenus, pendingAskUserRequest]);
   useEffect(() => { const chatId = selectedConversation?.id ?? null; if (!chatId || showMessagesLoading) return; if (initialScrolledConversationRef.current === chatId) return; initialScrolledConversationRef.current = chatId; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; scrollChatMessagesToBottom(scrollElement); }); return () => cancelAnimationFrame(frame); }, [selectedConversation?.id, showMessagesLoading, visibleMessages.length]);
@@ -1071,7 +1123,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       try { await navigator.clipboard.writeText(text); pushToast({ title: "Copied to clipboard", tone: "success" });
       } catch {
         pushToast({ title: "Could not copy", tone: "error" }); } }, [pushToast], ); const beginEditUserMessage = useCallback((message: ChatMessage) => { setInlineEditUserMessageId(message.id); setInlineEditDraft(message.body); closeComposerContextMenus();
-    requestAnimationFrame(() => { inlineEditEditorRef.current?.focus(); }); }, [closeComposerContextMenus]); const cancelInlineEditUserMessage = useCallback(() => { setInlineEditUserMessageId(null); setInlineEditDraft(""); }, []); const submitInlineEditUserMessage = useCallback((message: ChatMessage) => { if (!selectedConversation) return; const body = inlineEditDraft.trim();
+    requestAnimationFrame(() => { inlineEditEditorRef.current?.focus(); }); }, [closeComposerContextMenus]); const cancelInlineEditUserMessage = useCallback(() => { setInlineEditUserMessageId(null); setInlineEditDraft(""); }, []); const applyRequirementsReviewDraft = useCallback(() => {
+    setInlineEditUserMessageId(null);
+    setInlineEditDraft("");
+    setBranchPreview(null);
+    setDraft(REQUIREMENTS_REVIEW_PROMPT);
+    requestAnimationFrame(() => { composerEditorRef.current?.focus(); });
+  }, []); const submitInlineEditUserMessage = useCallback((message: ChatMessage) => { if (!selectedConversation) return; const body = inlineEditDraft.trim();
     if (!body) { pushToast({ title: "Message cannot be empty", tone: "error" });
       return; } setInlineEditUserMessageId(null); setInlineEditDraft(""); setBranchPreview(null);
     void sendMessage({
@@ -1209,6 +1267,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const sendButtonDisabled = selectedConversationExternalBound || composerUnavailable || sendButtonMode === "sending" || ((sendButtonMode === "send" || sendButtonMode === "queue") && draft.trim().length === 0);
   const canStopSelectedConversationReply = Boolean(selectedConversation && (activeSendInFlight || queueQuery.data?.activeGenerationId));
   const composerStreaming = Boolean(activeStream) || activeSendInFlight || newConversationSendInFlight;
+  const showRequirementsReviewPrompt = Boolean(
+    selectedConversation
+    && !selectedConversationExternalBound
+    && !activeStream
+    && requirementsReviewUserMessageCount > REQUIREMENTS_REVIEW_USER_MESSAGE_THRESHOLD
+    && !pendingAskUserMessage
+    && !hasActionableApprovals
+    && !hasPendingLightweightProposal
+  );
   useEffect(() => {
     if (!expandedEmptyStatePrompt) { setEmptyStatePromptPanelEntered(false);
       return; } setEmptyStatePromptPanelEntered(false); const frame = requestAnimationFrame(() => { setEmptyStatePromptPanelEntered(true); }); return () => cancelAnimationFrame(frame); }, [expandedEmptyStatePrompt]); useEffect(() => {
@@ -1929,7 +1996,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                 conversation={selectedConversation}
                                 agents={agents} onCopyMessageText={copyChatMessageText}
                                 skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick} /> </> ) : null} </>
-                      )} </div> </div>
+                      )}
+                      {showRequirementsReviewPrompt ? (
+                        <ChatRequirementsReviewPrompt
+                          userMessageCount={requirementsReviewUserMessageCount}
+                          onApply={applyRequirementsReviewDraft}
+                        />
+                      ) : null} </div> </div>
                 {hasActionableApprovals || hasPendingLightweightProposal ? null : (
                   <div className="mx-auto w-full max-w-4xl shrink-0 space-y-4">
                     {selectedConversationExternalBound ? (

@@ -817,6 +817,75 @@ describe("Chat route loading", () => {
   });
 });
 
+describe("Chat requirements review prompt", () => {
+  function userMessages(count: number) {
+    return Array.from({ length: count }, (_, index) =>
+      message({
+        id: `user-message-${index + 1}`,
+        body: `Requirement note ${index + 1}`,
+        createdAt: new Date(`2026-05-12T09:${String(index + 1).padStart(2, "0")}:00.000Z`),
+        updatedAt: new Date(`2026-05-12T09:${String(index + 1).padStart(2, "0")}:00.000Z`),
+      })
+    );
+  }
+
+  it("stays hidden until a conversation has more than five user messages", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": userMessages(5),
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-requirements-review-prompt']")).toBeNull();
+  });
+
+  it("offers to organize requirements after more than five user messages", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": userMessages(6),
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const prompt = container.querySelector<HTMLElement>("[data-testid='chat-requirements-review-prompt']");
+    expect(prompt).not.toBeNull();
+    expect(prompt?.textContent).toContain("Clarify requirements");
+    expect(prompt?.textContent).toContain("6 user notes");
+  });
+
+  it("prefills the composer with a requirements-clarification request", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": userMessages(6),
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const action = container.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-requirements-review-action']",
+    );
+    expect(action).not.toBeNull();
+
+    await act(async () => {
+      action?.click();
+      await Promise.resolve();
+    });
+
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(textarea?.value).toContain("organize my requirements");
+    expect(textarea?.value).toContain("goal");
+    expect(textarea?.value).toContain("open questions");
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+  });
+});
+
 describe("Chat streaming controls", () => {
   it("highlights the composer boundary while an agent response is streaming", () => {
     mockState.messagesByChatId = {
