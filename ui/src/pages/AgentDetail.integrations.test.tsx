@@ -233,6 +233,14 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).not.toContain("Create a Feishu bot named Wesley - Rudder");
   });
 
+  it("uses the larger integration action radius on catalog buttons", () => {
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const githubButton = [...container.querySelectorAll("button")]
+      .find((button) => button.getAttribute("aria-label") === "GitHub setup");
+
+    expect(githubButton?.className).toContain("rounded-[var(--radius-md)]");
+  });
+
   it("opens Feishu setup in a modal from the unified card", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const setupButton = [...container.querySelectorAll("button")]

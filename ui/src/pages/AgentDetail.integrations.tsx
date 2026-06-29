@@ -34,7 +34,7 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
 import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
 import { useToast } from "../context/ToastContext";
@@ -715,6 +715,15 @@ function IntegrationBrandIcon({
   );
 }
 
+function IntegrationActionButton({ className, ...props }: ComponentProps<typeof Button>) {
+  return (
+    <Button
+      className={cn("rounded-[var(--radius-md)]", className)}
+      {...props}
+    />
+  );
+}
+
 function FeishuIntegrationCard({
   state,
   disabled,
@@ -743,9 +752,9 @@ function FeishuIntegrationCard({
           <p className="text-sm text-muted-foreground">Chat with this agent through a Feishu or Lark bot.</p>
         </div>
       </div>
-      <Button variant="outline" size="sm" onClick={onConfigure} disabled={disabled}>
+      <IntegrationActionButton variant="outline" size="sm" onClick={onConfigure} disabled={disabled}>
         {state === "active" ? "Manage" : "Set up"}
-      </Button>
+      </IntegrationActionButton>
     </div>
   );
 }
@@ -767,9 +776,9 @@ function UpcomingIntegrationCard({ integration, onConfigure }: UpcomingIntegrati
           <p className="text-sm text-muted-foreground">{integration.description}</p>
         </div>
       </div>
-      <Button variant="outline" size="sm" onClick={onConfigure} aria-label={`${integration.name} setup`}>
+      <IntegrationActionButton variant="outline" size="sm" onClick={onConfigure} aria-label={`${integration.name} setup`}>
         {integration.actionLabel}
-      </Button>
+      </IntegrationActionButton>
     </div>
   );
 }
@@ -809,13 +818,13 @@ function FeishuManageRow({
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 md:justify-end">
-        <Button variant="outline" size="sm" onClick={onConfigure} disabled={disabled}>
+        <IntegrationActionButton variant="outline" size="sm" onClick={onConfigure} disabled={disabled}>
           Manage
-        </Button>
-        <Button variant="outline" size="sm" onClick={onDisconnect} disabled={disabled || integration.status !== "active"}>
+        </IntegrationActionButton>
+        <IntegrationActionButton variant="outline" size="sm" onClick={onDisconnect} disabled={disabled || integration.status !== "active"}>
           <Trash2 className="h-3.5 w-3.5" />
           Disconnect
-        </Button>
+        </IntegrationActionButton>
       </div>
     </div>
   );
@@ -860,9 +869,9 @@ function CustomIntegrationSetupCard({ kind, active, onConfigure }: CustomIntegra
           </p>
         </div>
       </div>
-      <Button variant="outline" size="sm" onClick={onConfigure}>
+      <IntegrationActionButton variant="outline" size="sm" onClick={onConfigure}>
         Configure
-      </Button>
+      </IntegrationActionButton>
     </div>
   );
 }
@@ -1035,7 +1044,7 @@ function CustomIntegrationRow({ integration, disabled, onDisconnect }: CustomInt
           </dl>
         </div>
       </div>
-      <Button
+      <IntegrationActionButton
         variant="outline"
         size="sm"
         onClick={onDisconnect}
@@ -1043,7 +1052,7 @@ function CustomIntegrationRow({ integration, disabled, onDisconnect }: CustomInt
       >
         <Trash2 className="h-3.5 w-3.5" />
         Disconnect
-      </Button>
+      </IntegrationActionButton>
     </div>
   );
 }
