@@ -864,7 +864,11 @@ describe("Chat message scroll map", () => {
 
     const scrollMap = container.querySelector<HTMLElement>("[data-testid='chat-scroll-map']");
     expect(scrollMap).not.toBeNull();
-    expect(scrollMap?.querySelectorAll("[data-testid^='chat-scroll-map-marker-']")).toHaveLength(12);
+    expect(scrollMap?.querySelectorAll("[data-testid^='chat-scroll-map-marker-']")).toHaveLength(6);
+    expect(scrollMap?.className).toContain("w-4");
+    expect(scrollMap?.className).toContain("gap-0.5");
+    expect(container.querySelector<HTMLElement>("[data-testid='chat-messages-shell']")?.className).toContain("relative");
+    expect(container.querySelector<HTMLElement>("[data-testid='chat-messages-content']")?.className).not.toContain("ml-5");
 
     const marker = container.querySelector<HTMLButtonElement>("[data-testid='chat-scroll-map-marker-long-message-7']");
     expect(marker).not.toBeNull();
@@ -874,7 +878,8 @@ describe("Chat message scroll map", () => {
       await Promise.resolve();
     });
 
-    const preview = container.querySelector<HTMLElement>("[data-testid='chat-scroll-map-preview']");
+    const preview = document.body.querySelector<HTMLElement>("[data-testid='chat-scroll-map-preview']");
+    expect(preview).not.toBeNull();
     expect(preview?.textContent).toContain("Checkpoint 7");
     expect(preview?.textContent).toContain("operator context");
 

@@ -179,6 +179,10 @@ const CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD = 5;
 const CHAT_SCROLL_MAP_MAX_MARKERS = 64;
 const CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT = 96;
 const CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT = 180;
+const CHAT_SCROLL_MAP_RAIL_WIDTH_PX = 16;
+const CHAT_SCROLL_MAP_RAIL_GAP_PX = 8;
+const CHAT_SCROLL_MAP_PREVIEW_WIDTH_PX = 576;
+const CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX = 16;
 
 function countScrollMapUserMessages(messages: ChatMessage[]) {
   return messages.filter((message) =>
@@ -224,7 +228,12 @@ function chatScrollMapRoleLabel(message: ChatMessage) {
 }
 
 function chatScrollMapVisibleMessages(messages: ChatMessage[]) {
-  const visible = messages.filter((message) => !message.supersededAt);
+  const visible = messages.filter((message) =>
+    message.role === "user"
+    && message.kind === "message"
+    && !message.supersededAt
+    && (message.body.trim().length > 0 || message.attachments.length > 0)
+  );
   if (visible.length <= CHAT_SCROLL_MAP_MAX_MARKERS) return visible;
   const sampled: ChatMessage[] = [];
   const seen = new Set<string>();
@@ -246,21 +255,84 @@ function ChatScrollMap({
   messages: ChatMessage[];
   onJump: (messageId: string) => void;
 }) {
+  const railRef = useRef<HTMLDivElement | null>(null);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const [previewPosition, setPreviewPosition] = useState<{ left: number; top: number } | null>(null);
+  const [railLeft, setRailLeft] = useState<number | null>(null);
   const mapMessages = useMemo(() => chatScrollMapVisibleMessages(messages), [messages]);
   const hoveredMessage = hoveredMessageId
     ? mapMessages.find((message) => message.id === hoveredMessageId) ?? null
     : null;
   const hoveredPreview = hoveredMessage ? chatScrollMapPreviewParts(hoveredMessage) : null;
+  useEffect(() => {
+    const rail = railRef.current;
+    const shell = rail?.closest<HTMLElement>("[data-testid='chat-messages-shell']");
+    if (!rail || !shell) return;
+
+    let frame = 0;
+    const updateRailPlacement = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const messageIds = new Set(mapMessages.map((message) => message.id));
+        const bubbleBounds = Array.from(shell.querySelectorAll<HTMLElement>("[data-testid='chat-user-message'][data-message-id]"))
+          .filter((element) => messageIds.has(element.dataset.messageId ?? ""))
+          .map((element) => element.querySelector<HTMLElement>("[data-testid='chat-user-message-bubble']") ?? element)
+          .map((element) => element.getBoundingClientRect())
+          .filter((bounds) => bounds.width > 0 && bounds.height > 0);
+        const shellBounds = shell.getBoundingClientRect();
+        const maxLeft = Math.max(
+          CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX,
+          window.innerWidth - CHAT_SCROLL_MAP_RAIL_WIDTH_PX - CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX,
+        );
+        const minLeft = Math.max(CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX, shellBounds.left);
+        const anchorLeft = bubbleBounds.length > 0
+          ? Math.min(...bubbleBounds.map((bounds) => bounds.left)) - CHAT_SCROLL_MAP_RAIL_WIDTH_PX - CHAT_SCROLL_MAP_RAIL_GAP_PX
+          : shellBounds.left;
+        const nextLeft = Math.round(Math.min(Math.max(anchorLeft, minLeft), maxLeft));
+        setRailLeft((current) => current === nextLeft ? current : nextLeft);
+      });
+    };
+
+    updateRailPlacement();
+    const scrollRegion = shell.closest<HTMLElement>("[data-testid='chat-messages-scroll-region']");
+    window.addEventListener("resize", updateRailPlacement);
+    scrollRegion?.addEventListener("scroll", updateRailPlacement, { passive: true });
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateRailPlacement);
+    resizeObserver?.observe(shell);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updateRailPlacement);
+      scrollRegion?.removeEventListener("scroll", updateRailPlacement);
+      resizeObserver?.disconnect();
+    };
+  }, [mapMessages]);
+  const updatePreviewPosition = useCallback((target: HTMLElement) => {
+    const bounds = target.getBoundingClientRect();
+    setPreviewPosition({
+      left: Math.min(
+        bounds.right + CHAT_SCROLL_MAP_RAIL_GAP_PX,
+        Math.max(
+          CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX,
+          window.innerWidth - CHAT_SCROLL_MAP_PREVIEW_WIDTH_PX - CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX,
+        ),
+      ),
+      top: Math.min(Math.max(bounds.top + bounds.height / 2, 80), window.innerHeight - 80),
+    });
+  }, []);
+  const showPreview = Boolean(hoveredMessage && hoveredPreview && previewPosition);
   if (mapMessages.length === 0) return null;
   return (
-    <div
-      data-testid="chat-scroll-map"
-      aria-label="Conversation message map"
-      className="pointer-events-none absolute left-3 top-4 z-20 hidden h-[calc(100%-2rem)] w-7 md:block"
-    >
-      <div className="relative flex h-full w-7 items-center justify-center">
-        <div className="flex h-full w-full flex-col justify-between py-2">
+    <>
+      <div
+        ref={railRef}
+        data-testid="chat-scroll-map"
+        aria-label="Conversation message map"
+        className={cn(
+          "pointer-events-none fixed top-1/2 z-20 hidden w-4 -translate-y-1/2 flex-col items-end gap-0.5 md:flex",
+          railLeft === null && "invisible",
+        )}
+        style={{ left: railLeft ?? 0 }}
+      >
           {mapMessages.map((message) => (
             <button
               key={message.id}
@@ -268,25 +340,35 @@ function ChatScrollMap({
               data-testid={`chat-scroll-map-marker-${message.id}`}
               aria-label={`Jump to ${chatScrollMapRoleLabel(message)} message: ${chatScrollMapPreviewText(message)}`}
               className={cn(
-                "pointer-events-auto relative z-10 h-3 w-7 rounded-[var(--radius-xs)] border border-transparent bg-transparent px-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
-                "before:absolute before:left-0 before:top-1/2 before:h-0.5 before:w-3 before:-translate-y-1/2 before:rounded-full before:bg-[color:color-mix(in_oklab,var(--muted-foreground)_36%,transparent)] before:transition-all",
-                "hover:before:w-6 hover:before:bg-[color:var(--foreground)]",
-                message.role === "assistant" && "before:bg-[color:color-mix(in_oklab,var(--accent-base)_48%,var(--muted-foreground))]",
-                message.kind !== "message" && "before:h-1 before:bg-[color:color-mix(in_oklab,var(--accent-strong)_70%,transparent)]",
+                "pointer-events-auto relative z-10 h-2.5 w-4 rounded-[var(--radius-xs)] border border-transparent bg-transparent px-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                "before:absolute before:right-0 before:top-1/2 before:h-0.5 before:w-2.5 before:-translate-y-1/2 before:rounded-full before:bg-[color:color-mix(in_oklab,var(--muted-foreground)_36%,transparent)] before:transition-all",
+                "hover:before:w-4 hover:before:bg-[color:var(--foreground)]",
               )}
-              onMouseEnter={() => setHoveredMessageId(message.id)}
-              onFocus={() => setHoveredMessageId(message.id)}
-              onMouseLeave={() => setHoveredMessageId((current) => current === message.id ? null : current)}
-              onBlur={() => setHoveredMessageId((current) => current === message.id ? null : current)}
+              onMouseEnter={(event) => {
+                setHoveredMessageId(message.id);
+                updatePreviewPosition(event.currentTarget);
+              }}
+              onFocus={(event) => {
+                setHoveredMessageId(message.id);
+                updatePreviewPosition(event.currentTarget);
+              }}
+              onMouseLeave={() => {
+                setHoveredMessageId((current) => current === message.id ? null : current);
+                setPreviewPosition(null);
+              }}
+              onBlur={() => {
+                setHoveredMessageId((current) => current === message.id ? null : current);
+                setPreviewPosition(null);
+              }}
               onClick={() => onJump(message.id)}
             />
           ))}
-        </div>
       </div>
-      {hoveredMessage ? (
+      {showPreview ? createPortal(
         <div
           data-testid="chat-scroll-map-preview"
-          className="pointer-events-none absolute left-7 top-1/2 w-[36rem] max-w-[calc(100vw-32rem)] -translate-y-1/2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-overlay)] px-4 py-3 text-left shadow-[var(--shadow-md)]"
+          className="pointer-events-none fixed z-50 w-[36rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-overlay)] px-4 py-3 text-left shadow-[var(--shadow-md)]"
+          style={{ left: previewPosition!.left, top: previewPosition!.top }}
         >
           <div className="line-clamp-1 text-sm font-semibold leading-6 text-foreground">
             {hoveredPreview?.title}
@@ -296,9 +378,10 @@ function ChatScrollMap({
               {hoveredPreview.summary}
             </div>
           ) : null}
-        </div>
+        </div>,
+        document.body,
       ) : null}
-    </div>
+    </>
   );
 }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
@@ -1954,11 +2037,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           <Plus className="mr-2 h-4 w-4" />
                           New chat </DropdownMenuItem> </DropdownMenuContent> </DropdownMenu> </div> </div> ) : null}
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-5">
-                {showChatScrollMap && !showMessagesLoading ? (
-                  <ChatScrollMap messages={visibleMessages} onJump={jumpToChatMessage} />
-                ) : null}
                 <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto" >
-                  <div data-testid="chat-messages-content" className={cn("mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1", showChatScrollMap && "md:pl-6")} >
+                  <div data-testid="chat-messages-shell" className="relative mx-auto w-full max-w-4xl">
+                    {showChatScrollMap && !showMessagesLoading ? (
+                      <ChatScrollMap messages={visibleMessages} onJump={jumpToChatMessage} />
+                    ) : null}
+                    <div data-testid="chat-messages-content" className="mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1" >
                       {renamingConversationId === selectedConversation.id ? (
                         <form
                           data-testid="chat-title-rename-form"
@@ -2083,7 +2167,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                 conversation={selectedConversation}
                                 agents={agents} onCopyMessageText={copyChatMessageText}
                                 skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick} /> </> ) : null} </>
-                      )} </div> </div>
+                      )} </div> </div> </div>
                 {hasActionableApprovals || hasPendingLightweightProposal ? null : (
                   <div className="mx-auto w-full max-w-4xl shrink-0 space-y-4">
                     {selectedConversationExternalBound ? (
