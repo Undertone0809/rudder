@@ -8,7 +8,9 @@ import {
   approvals,
   assets,
   chatConversations,
+  chatGenerations,
   chatMessages,
+  chatQueuedMessages,
   createDb,
   documents,
   ensurePostgresDatabase,
@@ -137,7 +139,9 @@ describe("messengerService and issue follows", () => {
     await db.delete(messengerCustomGroupEntries);
     await db.delete(messengerCustomGroups);
     await db.delete(messengerThreadUserStates);
+    await db.delete(chatQueuedMessages);
     await db.delete(chatMessages);
+    await db.delete(chatGenerations);
     await db.delete(agentIntegrationChatBindings);
     await db.delete(chatConversations);
     await db.delete(assets);
@@ -163,6 +167,116 @@ describe("messengerService and issue follows", () => {
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("keeps queue snapshots read-only when a DB active generation has no local owner", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+    const queuedMessageId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Stale Generation Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Stale Generation Org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Stale generation chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "active",
+    });
+    await db.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId,
+      conversationId,
+      role: "assistant",
+      kind: "message",
+      status: "streaming",
+      body: "",
+    });
+    await db.insert(chatQueuedMessages).values({
+      id: queuedMessageId,
+      orgId,
+      conversationId,
+      position: 1,
+      status: "queued",
+      clientMutationId: "stale-generation-follow-up",
+      expectedGenerationId: generationId,
+      payload: { body: "Run this after recovery" },
+    });
+
+    const snapshot = await chatSvc.getQueueSnapshot(conversationId, null);
+
+    expect(snapshot.activeGenerationId).toBe(generationId);
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]?.id).toBe(queuedMessageId);
+    expect(snapshot.items[0]?.payload.body).toBe("Run this after recovery");
+
+    const [generation] = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generationId));
+    expect(generation).toMatchObject({
+      status: "active",
+      terminalReason: null,
+    });
+    expect(generation?.completedAt).toBeNull();
+
+    const [message] = await db.select().from(chatMessages).where(eq(chatMessages.conversationId, conversationId));
+    expect(message).toMatchObject({
+      status: "streaming",
+      body: "",
+    });
+  });
+
+  it("does not overwrite a stopped chat generation with a later terminal status", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const generationId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Terminal Race Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Terminal Race Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Terminal race chat",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    await db.insert(chatGenerations).values({
+      id: generationId,
+      orgId,
+      conversationId,
+      status: "active",
+    });
+
+    const stopped = await chatSvc.markGenerationTerminal(generationId, "stopped");
+    const completed = await chatSvc.markGenerationTerminal(generationId, "completed");
+
+    expect(stopped).toMatchObject({
+      id: generationId,
+      status: "stopped",
+      terminalReason: "stopped",
+    });
+    expect(completed).toBeNull();
+
+    const [generation] = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generationId));
+    expect(generation).toMatchObject({
+      status: "stopped",
+      terminalReason: "stopped",
+    });
   });
 
   it("paginates Messenger thread summaries with stable cursors", async () => {

@@ -835,6 +835,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         body: error instanceof Error ? error.message : "Try again.",
         tone: "error", }); }, }); const stopStreaming = useCallback((chatId: string) => { stopRequestedChatIdsRef.current.add(chatId);
     void chatsApi.stopMessageStream(chatId).then(() => {
+      if (selectedOrganizationId) {
+        queryClient.setQueryData(
+          queryKeys.chats.queue(selectedOrganizationId, chatId),
+          (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
+            activeGenerationId: null,
+            items: current?.items ?? [],
+          }),
+        );
+        void queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) });
+      }
       pushToast({
         title: "Response stopped",
         body: "Rudder interrupted the current reply.",
@@ -843,7 +853,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }).catch((error) => {
       pushToast({
         title: "Failed to stop streaming",
-        body: error instanceof Error ? error.message : "Try again.", tone: "error", }); }); abortChatStream(chatId); setStreamDraftForChat(chatId, (current) => (current ? { ...current, state: "stopped" } : current)); }, [abortChatStream, pushToast, setStreamDraftForChat]); const readComposerDraft = useCallback(
+        body: error instanceof Error ? error.message : "Try again.", tone: "error", }); }); abortChatStream(chatId); setStreamDraftForChat(chatId, (current) => (current ? { ...current, state: "stopped" } : current)); }, [abortChatStream, pushToast, queryClient, selectedOrganizationId, setStreamDraftForChat]); const readComposerDraft = useCallback(
     () => composerEditorRef.current?.getMarkdown?.() ?? draft,
     [draft],
   );

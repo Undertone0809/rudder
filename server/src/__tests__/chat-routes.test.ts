@@ -1026,6 +1026,46 @@ describe("chat routes", () => {
     }));
   });
 
+  it("uses the persisted active generation when queue snapshots have no in-memory generation", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueueSnapshot.mockResolvedValueOnce({
+      activeGenerationId: "10000000-0000-4000-8000-000000000001",
+      items: [],
+    });
+
+    const res = await request(createApp())
+      .get("/api/chats/chat-1/queue");
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.getQueueSnapshot).toHaveBeenCalledWith("chat-1", null);
+    expect(res.body).toEqual({ activeGenerationId: "10000000-0000-4000-8000-000000000001", items: [] });
+  });
+
+  it("passes the in-memory generation to queue snapshots while a reply is active", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueueSnapshot.mockResolvedValueOnce({
+      activeGenerationId: "10000000-0000-4000-8000-000000000001",
+      items: [],
+    });
+    const release = claimChatGeneration(conversation.id, null, "10000000-0000-4000-8000-000000000001");
+
+    try {
+      const res = await request(createApp())
+        .get("/api/chats/chat-1/queue");
+
+      expect(res.status).toBe(200);
+      expect(mockChatService.getQueueSnapshot).toHaveBeenCalledWith("chat-1", "10000000-0000-4000-8000-000000000001");
+      expect(res.body).toEqual({
+        activeGenerationId: "10000000-0000-4000-8000-000000000001",
+        items: [],
+      });
+    } finally {
+      release?.();
+    }
+  });
+
   it("does not mutate Feishu-bound chat messages while listing messages", async () => {
     const conversation = createFeishuBackedConversation();
     const message = createMessage("message-feishu", "user", "message", "Message from Feishu");
@@ -3567,6 +3607,7 @@ describe("chat routes", () => {
     expect(stopRes.status).toBe(200);
     expect(stopRes.body).toEqual({ stopped: true });
     expect(capturedSignal?.aborted).toBe(true);
+    expect(mockChatService.markGenerationTerminal).toHaveBeenCalledWith("generation-1", "stopped");
 
     releaseAssistant();
     const streamRes = await streamPromise;
@@ -3579,6 +3620,35 @@ describe("chat routes", () => {
       type: "final",
       messages: [expect.objectContaining({ id: "message-stopped", status: "stopped" })],
     });
+  });
+
+  it("stops a persisted active generation when no local stream owner remains", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockResolvedValueOnce({ id: "generation-stale" });
+
+    const stopRes = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+
+    expect(stopRes.status).toBe(200);
+    expect(stopRes.body).toEqual({ stopped: true });
+    expect(mockChatService.getLatestActiveGeneration).toHaveBeenCalledWith("chat-1");
+    expect(mockChatService.markGenerationTerminal).toHaveBeenCalledWith("generation-stale", "stopped");
+  });
+
+  it("returns stopped false when no local stream or persisted generation is active", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockResolvedValueOnce(null);
+
+    const stopRes = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+
+    expect(stopRes.status).toBe(200);
+    expect(stopRes.body).toEqual({ stopped: false });
+    expect(mockChatService.markGenerationTerminal).not.toHaveBeenCalled();
   });
 
   it("rejects stopping active streams for Feishu-bound chat conversations", async () => {

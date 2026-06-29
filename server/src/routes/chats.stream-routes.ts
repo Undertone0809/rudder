@@ -626,7 +626,16 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
     assertChatLocalMutationAllowed(conversation as ChatConversation);
 
-    res.json({ stopped: cancelActiveChatGeneration(conversation.id) });
+    const active = getActiveChatGeneration(conversation.id);
+    const latestActiveGeneration = active?.generationId
+      ? null
+      : await svc.getLatestActiveGeneration(conversation.id);
+    const stopped = cancelActiveChatGeneration(conversation.id);
+    const generationId = active?.generationId ?? latestActiveGeneration?.id ?? null;
+    if (stopped || generationId) {
+      await svc.markGenerationTerminal(generationId, "stopped");
+    }
+    res.json({ stopped: stopped || Boolean(generationId) });
   });
 
   router.post("/orgs/:orgId/chats/:chatId/attachments", async (req, res) => {

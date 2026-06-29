@@ -689,7 +689,12 @@ export function chatService(db: Db) {
         completedAt: now,
         updatedAt: now,
       })
-      .where(eq(chatGenerations.id, generationId))
+      .where(
+        and(
+          eq(chatGenerations.id, generationId),
+          inArray(chatGenerations.status, ["active", "tool_busy", "closing"]),
+        ),
+      )
       .returning();
     return row ?? null;
   }
