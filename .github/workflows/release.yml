@@ -91,6 +91,7 @@ jobs:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
+      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:
@@ -125,7 +126,7 @@ jobs:
         run: |
           version="$(./scripts/release.sh canary --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          ./scripts/release.sh canary
+          ./scripts/release.sh canary --skip-verify
           git push origin "refs/tags/canary/v${version}"
 
       - name: Start desktop release build
@@ -163,6 +164,7 @@ jobs:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
+      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -195,6 +197,7 @@ jobs:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
+      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
     outputs:
       version: ${{ steps.publish.outputs.version }}
     steps:

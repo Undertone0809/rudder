@@ -190,9 +190,20 @@ export function parseIntegrationIssueCommand(commandBody: string): ParsedIntegra
 
 export function parseFeishuQuickCommand(commandBody: string): ParsedFeishuQuickCommand | null {
   const [command] = commandBody.trim().toLowerCase().split(/\s+/, 1);
-  if (command === "/new") return { kind: "new" };
-  if (command === "/stop") return { kind: "stop" };
+  if (isRepeatedSlashCommand(command, "/new")) return { kind: "new" };
+  if (isRepeatedSlashCommand(command, "/stop")) return { kind: "stop" };
   return null;
+}
+
+function isRepeatedSlashCommand(input: string | undefined, command: "/new" | "/stop") {
+  if (!input) return false;
+  let remaining = input;
+  let count = 0;
+  while (remaining.startsWith(command)) {
+    count += 1;
+    remaining = remaining.slice(command.length);
+  }
+  return count > 0 && remaining.length === 0;
 }
 
 export async function dispatchFeishuInboundMessage(

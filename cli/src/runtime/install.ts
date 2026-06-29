@@ -636,6 +636,54 @@ function runtimePostgresExecutableName(baseName: "initdb" | "pg_ctl" | "postgres
   return process.platform === "win32" ? `${baseName}.exe` : baseName;
 }
 
+function debianSharedirCandidate(binDir: string): string | null {
+  const normalized = path.resolve(binDir);
+  const parts = normalized.split(path.sep);
+  const libIndex = parts.lastIndexOf("lib");
+  if (libIndex < 0) return null;
+  if (parts[libIndex + 1] !== "postgresql") return null;
+  const version = parts[libIndex + 2];
+  if (!version || parts[libIndex + 3] !== "bin") return null;
+  const prefix = parts.slice(0, libIndex).join(path.sep) || path.sep;
+  return path.join(prefix, "share", "postgresql", version);
+}
+
+async function resolveRuntimePostgresTemplateDir(binDir: string): Promise<string | null> {
+  for (const candidatePath of [
+    path.join(binDir, "..", "share", "postgresql", "postgres.bki"),
+    path.join(binDir, "..", "share", "postgres.bki"),
+  ]) {
+    try {
+      await stat(candidatePath);
+      return path.dirname(candidatePath);
+    } catch {
+      // Try the next supported PostgreSQL archive layout.
+    }
+  }
+
+  const debianSharedir = debianSharedirCandidate(binDir);
+  if (debianSharedir) {
+    try {
+      await stat(path.join(debianSharedir, "postgres.bki"));
+      return debianSharedir;
+    } catch {
+      // Fall through to pg_config.
+    }
+  }
+
+  const pgConfigPath = path.join(binDir, process.platform === "win32" ? "pg_config.exe" : "pg_config");
+  try {
+    await stat(pgConfigPath);
+    const sharedir = execFileSync(pgConfigPath, ["--sharedir"], { encoding: "utf8" }).trim();
+    if (!sharedir) return null;
+    const candidatePath = path.join(sharedir, "postgres.bki");
+    await stat(candidatePath);
+    return sharedir;
+  } catch {
+    return null;
+  }
+}
+
 async function assertRuntimePostgresBinDirComplete(cacheDir: string, binDir: string): Promise<void> {
   const requiredBinaries = ["initdb", "pg_ctl", "postgres"] as const;
   const missing: string[] = [];
@@ -647,9 +695,12 @@ async function assertRuntimePostgresBinDirComplete(cacheDir: string, binDir: str
       missing.push(binaryPath);
     }
   }
+  const expectedTemplatePath = path.join(binDir, "..", "share", "postgresql", "postgres.bki");
+  const templateDir = await resolveRuntimePostgresTemplateDir(binDir);
+  if (!templateDir) missing.push(expectedTemplatePath);
   if (missing.length > 0) {
     throw new RuntimeInstallError(
-      `${RUDDER_POSTGRES_BIN_DIR_ENV} must contain PostgreSQL 18.4 initdb, pg_ctl, and postgres binaries; missing ${missing.join(", ")}`,
+      `${RUDDER_POSTGRES_BIN_DIR_ENV} must contain PostgreSQL 18.4 initdb, pg_ctl, postgres binaries, and initdb template files; missing ${missing.join(", ")}`,
       { cacheDir, command: "validate PostgreSQL 18.4 runtime payload", output: "" },
     );
   }
@@ -667,8 +718,9 @@ async function isRuntimePostgresPayloadUsable(cacheDir: string, binDir: string):
 }
 
 async function stageRuntimePostgresPayload(cacheDir: string, enabled: boolean): Promise<RuntimePostgresPayloadStageResult> {
-  const targetRuntimeDir = path.join(cacheDir, RUNTIME_POSTGRES_PAYLOAD_DIR);
+  const targetPayloadRoot = path.join(cacheDir, RUNTIME_POSTGRES_PAYLOAD_DIR);
   const targetBinDir = resolveRuntimePostgresPayloadBinDir(cacheDir);
+  const targetRuntimeDir = path.dirname(targetBinDir);
   if (await isRuntimePostgresPayloadUsable(cacheDir, targetBinDir)) {
     return { output: "", binDir: targetBinDir };
   }
@@ -678,6 +730,13 @@ async function stageRuntimePostgresPayload(cacheDir: string, enabled: boolean): 
 
   const resolvedSourceBinDir = path.resolve(sourceBinDir);
   await assertRuntimePostgresBinDirComplete(cacheDir, resolvedSourceBinDir);
+  const sourceTemplateDir = await resolveRuntimePostgresTemplateDir(resolvedSourceBinDir);
+  if (!sourceTemplateDir) {
+    throw new RuntimeInstallError(
+      `${RUDDER_POSTGRES_BIN_DIR_ENV} must contain PostgreSQL 18.4 initdb template files`,
+      { cacheDir, command: "validate PostgreSQL 18.4 runtime payload", output: "" },
+    );
+  }
   const postgresBinary = path.join(resolvedSourceBinDir, runtimePostgresExecutableName("postgres"));
   const result = execFileSync(postgresBinary, ["--version"], { encoding: "utf8" });
   if (!/\bPostgreSQL\)?\s+18\.4\b/i.test(result)) {
@@ -687,9 +746,14 @@ async function stageRuntimePostgresPayload(cacheDir: string, enabled: boolean): 
     );
   }
 
-  await rm(targetRuntimeDir, { recursive: true, force: true });
+  await rm(targetPayloadRoot, { recursive: true, force: true });
   await mkdir(path.dirname(targetBinDir), { recursive: true });
-  await cp(resolvedSourceBinDir, targetBinDir, { recursive: true });
+  await cp(path.resolve(resolvedSourceBinDir, ".."), targetRuntimeDir, { recursive: true });
+  const targetShareDir = path.join(targetRuntimeDir, "share");
+  const targetTemplateDir = path.join(targetShareDir, "postgresql");
+  await rm(targetShareDir, { recursive: true, force: true });
+  await mkdir(path.dirname(targetTemplateDir), { recursive: true });
+  await cp(sourceTemplateDir, targetTemplateDir, { recursive: true });
   return { output: `staged PostgreSQL 18.4 runtime payload at ${targetBinDir}`, binDir: targetBinDir };
 }
 

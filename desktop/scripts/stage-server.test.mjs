@@ -6,11 +6,12 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -22,6 +23,11 @@ function writeJson(filePath, value) {
 
 function writeFakePostgresBinDir(binDir) {
   mkdirSync(binDir, { recursive: true });
+  mkdirSync(join(binDir, "..", "lib"), { recursive: true });
+  mkdirSync(join(binDir, "..", "share", "postgresql"), { recursive: true });
+  writeFileSync(join(binDir, "..", "lib", "libzstd.1.dylib"), "runtime library\n");
+  writeFileSync(join(binDir, "..", "share", "postgresql", "postgres.bki"), "postgres template\n");
+  writeFileSync(join(binDir, "..", "share", "postgresql", "postgres.description"), "postgres description\n");
   for (const binary of ["initdb", "pg_ctl"]) {
     const binaryPath = join(binDir, process.platform === "win32" ? `${binary}.exe` : binary);
     writeFileSync(binaryPath, "");
@@ -107,6 +113,10 @@ function createStageServerRepo() {
     "  console.error('pnpm deploy --legacy is no longer supported');",
     "  process.exit(42);",
     "}",
+    "if (process.env.PNPM_CONFIG_FORCE_LEGACY_DEPLOY !== 'true') {",
+    "  console.error('pnpm deploy requires force-legacy-deploy config for non-injected workspace packages');",
+    "  process.exit(43);",
+    "}",
     "const target = process.argv.at(-1);",
     "const publishedShared = {",
     "  name: '@rudderhq/shared',",
@@ -148,9 +158,50 @@ afterEach(() => {
 });
 
 describe("desktop stage-server", () => {
+  it.skipIf(process.platform === "win32")("caches prepared PostgreSQL runtime from a sibling work directory", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rudder-prepare-postgres-test-"));
+    tempRoots.push(root);
+
+    const sourceRoot = join(root, "source");
+    const pgBinDir = join(sourceRoot, "pgsql", "bin");
+    writeFakePostgresBinDir(pgBinDir);
+    const versionedLibPath = join(sourceRoot, "pgsql", "lib", "libzstd.1.5.7.dylib");
+    writeFileSync(versionedLibPath, "runtime library via symlink\n");
+    rmSync(join(sourceRoot, "pgsql", "lib", "libzstd.1.dylib"), { force: true });
+    symlinkSync(versionedLibPath, join(sourceRoot, "pgsql", "lib", "libzstd.1.dylib"));
+    mkdirSync(join(sourceRoot, "pgsql", "pgAdmin 4.app", "Contents", "Frameworks"), { recursive: true });
+    symlinkSync(
+      join(sourceRoot, "pgsql", "missing-private-headers"),
+      join(sourceRoot, "pgsql", "pgAdmin 4.app", "Contents", "Frameworks", "PrivateHeaders"),
+    );
+    const archivePath = join(root, "postgres-runtime.tar");
+    const tarResult = spawnSync("tar", ["-cf", archivePath, "-C", sourceRoot, "pgsql"], {
+      encoding: "utf8",
+    });
+    expect(tarResult.status, `${tarResult.stdout}\n${tarResult.stderr}`).toBe(0);
+
+    const cacheDir = join(root, "cache");
+    const result = spawnSync("node", [join(scriptsDir, "prepare-postgres-runtime.mjs")], {
+      env: {
+        ...process.env,
+        RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL: pathToFileURL(archivePath).href,
+        RUDDER_POSTGRES_RUNTIME_CACHE_DIR: cacheDir,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const preparedBinDir = result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+    expect(readFileSync(join(preparedBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"), "utf8")).toContain("PostgreSQL 18.4");
+    expect(readFileSync(join(preparedBinDir, "..", "lib", "libzstd.1.dylib"), "utf8")).toBe("runtime library via symlink\n");
+    expect(readFileSync(join(preparedBinDir, "..", "share", "postgresql", "postgres.bki"), "utf8")).toBe("postgres template\n");
+    expect(readFileSync(join(preparedBinDir, "..", "share", "postgresql", "postgres.description"), "utf8")).toBe("postgres description\n");
+    expect(() => readFileSync(join(preparedBinDir, "..", "pgAdmin 4.app"))).toThrow();
+  });
+
   it("automatically prepares PostgreSQL 18.4 payload when no bin dir is configured", () => {
     const { repo, binDir } = createStageServerRepo();
-    const pgBinDir = join(repo, "prepared-pg-bin");
+    const pgBinDir = join(repo, "prepared-pg", "bin");
     writeFakePostgresBinDir(pgBinDir);
 
     const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
@@ -165,7 +216,7 @@ describe("desktop stage-server", () => {
       encoding: "utf8",
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(readFileSync(join(repo, "desktop/.packaged/server-package/package.json"), "utf8")).toContain(
       '"default": "./dist/index.js"',
     );
@@ -176,6 +227,29 @@ describe("desktop stage-server", () => {
       "bin",
       process.platform === "win32" ? "postgres.exe" : "postgres",
     ), "utf8")).toContain("PostgreSQL 18.4");
+    expect(readFileSync(join(
+      repo,
+      "desktop/.packaged/postgres-18.4",
+      `${process.platform}-${process.arch}`,
+      "lib",
+      "libzstd.1.dylib",
+    ), "utf8")).toBe("runtime library\n");
+    expect(readFileSync(join(
+      repo,
+      "desktop/.packaged/postgres-18.4",
+      `${process.platform}-${process.arch}`,
+      "share",
+      "postgresql",
+      "postgres.bki",
+    ), "utf8")).toBe("postgres template\n");
+    expect(readFileSync(join(
+      repo,
+      "desktop/.packaged/postgres-18.4",
+      `${process.platform}-${process.arch}`,
+      "share",
+      "postgresql",
+      "postgres.description",
+    ), "utf8")).toBe("postgres description\n");
   });
 
   it("fails production staging when automatic PostgreSQL preparation is disabled and no payload is configured", () => {
@@ -199,7 +273,7 @@ describe("desktop stage-server", () => {
 
   it("fails production staging when the PostgreSQL payload is incomplete", () => {
     const { repo, binDir } = createStageServerRepo();
-    const pgBinDir = join(repo, "fake-pg-bin");
+    const pgBinDir = join(repo, "fake-pg", "bin");
     mkdirSync(pgBinDir, { recursive: true });
     writeFileSync(join(pgBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"), "");
 
@@ -215,8 +289,34 @@ describe("desktop stage-server", () => {
     });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("must contain PostgreSQL 18.4 initdb, pg_ctl, and postgres binaries");
+    expect(result.stderr).toContain("must include PostgreSQL 18.4");
+    expect(result.stderr).toContain("initdb");
+    expect(result.stderr).toContain("pg_ctl");
+    expect(result.stderr).toContain("postgres.bki");
   });
+
+  it("fails production staging when the PostgreSQL initdb template is missing", () => {
+    const { repo, binDir } = createStageServerRepo();
+    const pgBinDir = join(repo, "fake-pg", "bin");
+    writeFakePostgresBinDir(pgBinDir);
+    rmSync(join(pgBinDir, "..", "share"), { recursive: true, force: true });
+
+    const result = spawnSync("node", ["desktop/scripts/stage-server.mjs"], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
+        RUDDER_POSTGRES_BIN_DIR: pgBinDir,
+        RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must include PostgreSQL 18.4");
+    expect(result.stderr).toContain("initdb template files");
+    expect(result.stderr).toContain("postgres.bki");
+  }, 15_000);
 
   it("restores source package manifests after pnpm deploy rewrites them", () => {
     const { repo, binDir, sharedManifestPath } = createStageServerRepo();

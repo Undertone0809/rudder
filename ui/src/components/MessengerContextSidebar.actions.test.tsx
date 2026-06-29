@@ -1225,8 +1225,8 @@ describe("MessengerContextSidebar chat actions", () => {
     const editor = document.querySelector('[data-testid="messenger-custom-group-editor"]');
     expect(editor).toBeTruthy();
     const nameInput = editor?.querySelector<HTMLInputElement>('input[aria-label="Group name"]');
-    const projectIconPicker = editor?.querySelector('[aria-label="Group icons project icons"]');
-    const iconButtonLabels = Array.from(projectIconPicker?.querySelectorAll("button") ?? [])
+    const iconPicker = editor?.querySelector('[aria-label="Group icons options"]');
+    const iconButtonLabels = Array.from(iconPicker?.querySelectorAll("button") ?? [])
       .map((button) => button.getAttribute("aria-label"))
       .filter((label): label is string => Boolean(label?.startsWith("Select ")));
     const iconButton = editor?.querySelector<HTMLButtonElement>('[aria-label="Select rocket project icon"]');
@@ -1236,7 +1236,9 @@ describe("MessengerContextSidebar chat actions", () => {
       .find((button) => button.textContent === "Create") as HTMLButtonElement | undefined;
 
     expect(nameInput).toBeTruthy();
+    expect(iconPicker).toBeTruthy();
     expect(leafEmojiButton).toBeTruthy();
+    expect(leafEmojiButton?.parentElement).toBe(iconPicker);
     expect(iconButtonLabels.length).toBeGreaterThan(36);
     expect(iconButtonLabels).toContain("Select folder project icon");
     expect(iconButtonLabels).toContain("Select stethoscope project icon");
@@ -1341,16 +1343,18 @@ describe("MessengerContextSidebar chat actions", () => {
     const changeIconTrigger = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Change icon") as HTMLButtonElement | undefined;
     const iconButton = document.querySelector<HTMLButtonElement>('[aria-label="Select rocket project icon"]');
-    const projectIconPicker = document.querySelector('[aria-label="Group icons project icons"]');
-    const iconButtonLabels = Array.from(projectIconPicker?.querySelectorAll("button") ?? [])
+    const iconPicker = document.querySelector('[aria-label="Group icons options"]');
+    const iconButtonLabels = Array.from(iconPicker?.querySelectorAll("button") ?? [])
       .map((button) => button.getAttribute("aria-label"))
       .filter((label): label is string => Boolean(label?.startsWith("Select ")));
     const leafEmojiButton = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "🌿") as HTMLButtonElement | undefined;
 
     expect(changeIconTrigger).toBeTruthy();
+    expect(iconPicker).toBeTruthy();
     expect(iconButton).toBeTruthy();
     expect(leafEmojiButton).toBeTruthy();
+    expect(leafEmojiButton?.parentElement).toBe(iconPicker);
     expect(leafEmojiButton?.getAttribute("aria-pressed")).toBe("true");
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Select folder project icon"]')?.getAttribute("aria-pressed")).toBe("false");
     expect(iconButtonLabels.length).toBeGreaterThan(36);
@@ -2298,6 +2302,62 @@ describe("MessengerContextSidebar chat actions", () => {
 
     const text = document.body.textContent ?? "";
     expect(text.indexOf("Older pinned group")).toBeLessThan(text.indexOf("Recent regular group"));
+  });
+
+  it("renders pinned custom groups before loose pinned threads", () => {
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Pinned group above loose pin",
+        icon: "folder::amber",
+        sortOrder: 0,
+        collapsed: false,
+        pinnedAt: "2026-04-11T09:30:00.000Z",
+        createdAt: "2026-04-11T09:30:00.000Z",
+        updatedAt: "2026-04-11T09:30:00.000Z",
+        entries: [],
+      },
+      {
+        id: "group-2",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Regular group below pins",
+        icon: "folder::slate",
+        sortOrder: 1,
+        collapsed: false,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:55:00.000Z",
+        updatedAt: "2026-04-11T09:55:00.000Z",
+        entries: [],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:pinned-loose",
+          kind: "chat",
+          title: "Loose pinned thread",
+          preview: "Pinned thread outside groups.",
+          subtitle: null,
+          href: "/messenger/chat/pinned-loose",
+          latestActivityAt: "2026-04-11T09:50:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: true,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const text = document.body.textContent ?? "";
+    expect(text.indexOf("Pinned")).toBeLessThan(text.indexOf("Pinned group above loose pin"));
+    expect(text.indexOf("Pinned group above loose pin")).toBeLessThan(text.indexOf("Loose pinned thread"));
+    expect(text.indexOf("Loose pinned thread")).toBeLessThan(text.indexOf("Regular group below pins"));
   });
 
   it("keeps pinned custom groups first when manual custom order puts an unpinned group first", () => {

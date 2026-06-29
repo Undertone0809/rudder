@@ -18,7 +18,7 @@ related_code:
   - packages/db/src/schema/agent_integrations.ts
   - packages/shared/src/constants.ts
   - server/src/services/agent-run-context.ts
-  - server/src/services/chat-host-tools.ts
+  - server/src/services/chat-assistant.ts
   - ui/src/pages/AgentDetail.integrations.tsx
 commit_refs: []
 updated_at: 2026-06-27

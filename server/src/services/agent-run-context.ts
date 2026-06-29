@@ -15,6 +15,7 @@ import {
 } from "../home-paths.js";
 import { agentInstructionsService } from "./agent-instructions.js";
 import { agentStartupContextService } from "./agent-startup-context.js";
+import { customIntegrationService } from "./integrations/custom-integrations.js";
 import { organizationSkillService } from "./organization-skills.js";
 import { listProjectResourceAttachments } from "./resource-catalog.js";
 import { secretService } from "./secrets.js";
@@ -98,6 +99,15 @@ type AgentAutomationPromptItem = {
   outputMode: string;
   lastTriggeredAt: Date | null;
   triggers: AgentAutomationPromptTrigger[];
+};
+
+type CustomIntegrationToolPromptItem = {
+  integrationName: string;
+  kind: string;
+  scope: string;
+  toolName: string;
+  externalToolName: string;
+  description: string | null;
 };
 
 function readNonEmptyString(value: unknown): string | null {
@@ -210,13 +220,43 @@ function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
 function buildCompiledResourcesPrompt(
   projectResources: ProjectResourceAttachment[],
   agentAutomations: AgentAutomationPromptItem[],
+  customIntegrationTools: CustomIntegrationToolPromptItem[],
 ) {
   return [
     buildProjectResourcesPrompt(projectResources),
+    buildCustomIntegrationToolsPrompt(customIntegrationTools),
     buildAgentAutomationsPrompt(agentAutomations),
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function buildCustomIntegrationToolsPrompt(
+  customIntegrationTools: CustomIntegrationToolPromptItem[],
+) {
+  if (customIntegrationTools.length === 0) return "";
+  const lines = [
+    "## Connected Custom Integration Tools",
+    "",
+    "These tools are configured for this agent. Use only Rudder-mediated tool calls for them; never ask the operator for stored secrets or credentials.",
+    "",
+  ];
+  appendMarkdownTable(lines, [
+    "Tool",
+    "Integration",
+    "Kind",
+    "Scope",
+    "External name",
+    "Description",
+  ], customIntegrationTools.map((tool) => [
+    markdownCodeCell(tool.toolName),
+    markdownTableCell(tool.integrationName),
+    markdownTableCell(tool.kind.replace(/_/g, " ")),
+    markdownTableCell(tool.scope),
+    markdownCodeCell(tool.externalToolName),
+    markdownTableCell(tool.description),
+  ]));
+  return lines.join("\n").trim();
 }
 
 function buildAgentAutomationsPrompt(
@@ -709,6 +749,10 @@ export function agentRunContextService(db: Db) {
       input.agent.orgId,
       input.agent.id,
     );
+    const customIntegrationTools = await customIntegrationService(db).listRuntimeToolsForAgent(
+      input.agent.orgId,
+      input.agent.id,
+    );
     const startupContext = await startupContextSvc.buildForRun({
       orgId: input.agent.orgId,
       agentId: input.agent.id,
@@ -721,7 +765,7 @@ export function agentRunContextService(db: Db) {
     });
     const compiledResourcesPrompt =
       [
-        buildCompiledResourcesPrompt(projectResources, agentAutomations),
+        buildCompiledResourcesPrompt(projectResources, agentAutomations, customIntegrationTools),
         startupContext.markdown,
       ]
         .filter(Boolean)

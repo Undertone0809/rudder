@@ -140,6 +140,45 @@ async function expectMessengerThreadStartsAtBottom(page: Page, heading: string) 
   }).toBeLessThanOrEqual(8);
 }
 
+async function expectCustomGroupIconPickerKeepsEmojiInGrid(page: Page) {
+  const picker = page.locator('[aria-label="Group icons options"]');
+  await expect(picker).toBeVisible();
+
+  const packageIcon = picker.getByRole("button", { name: "Select package project icon" });
+  const leafEmoji = picker.getByRole("button", { name: "Select 🌿 group emoji" });
+  await expect(packageIcon).toBeVisible();
+  await expect(leafEmoji).toBeVisible();
+
+  await expect.poll(async () => {
+    const [packageBox, leafBox] = await Promise.all([
+      packageIcon.boundingBox(),
+      leafEmoji.boundingBox(),
+    ]);
+    if (!packageBox || !leafBox) return null;
+    return {
+      topDelta: Math.abs(packageBox.y - leafBox.y),
+      xDelta: leafBox.x - packageBox.x,
+      heightDelta: Math.abs(packageBox.height - leafBox.height),
+    };
+  }).toEqual(expect.objectContaining({
+    topDelta: expect.any(Number),
+    xDelta: expect.any(Number),
+    heightDelta: expect.any(Number),
+  }));
+
+  const geometry = await Promise.all([
+    packageIcon.boundingBox(),
+    leafEmoji.boundingBox(),
+  ]);
+  const [packageBox, leafBox] = geometry;
+  expect(packageBox).toBeTruthy();
+  expect(leafBox).toBeTruthy();
+  expect(Math.abs(packageBox!.y - leafBox!.y)).toBeLessThanOrEqual(2);
+  expect(Math.abs(packageBox!.height - leafBox!.height)).toBeLessThanOrEqual(2);
+  expect(leafBox!.x).toBeGreaterThan(packageBox!.x);
+  await page.screenshot({ path: "/tmp/rudder-custom-group-icon-picker-grid.png", fullPage: true });
+}
+
 async function clickMessengerViewCheckbox(page: Page, name: string) {
   const item = page.getByRole("menuitemcheckbox", { name });
   if (!await item.isVisible().catch(() => false)) {
@@ -1155,6 +1194,7 @@ test.describe("Messenger unified threads contract", () => {
     await issuesRow.hover();
     await issuesRow.getByRole("button", { name: "Thread actions" }).click();
     await page.getByRole("menuitem", { name: "New group" }).click();
+    await expectCustomGroupIconPickerKeepsEmojiInGrid(page);
     await page.getByLabel("Group name").fill("Issue row group");
 
     const createGroupResponse = page.waitForResponse((response) =>
@@ -1312,6 +1352,12 @@ test.describe("Messenger unified threads contract", () => {
 
     const pinCandidateChat = await createChat("Older pin candidate tab");
     await page.waitForTimeout(25);
+    const loosePinnedChat = await createChat("Loose pinned tab");
+    const loosePinRes = await page.request.post(`/api/chats/${loosePinnedChat.id}/user-state`, {
+      data: { pinned: true },
+    });
+    expect(loosePinRes.ok()).toBe(true);
+    await page.waitForTimeout(25);
     const regularChat = await createChat("Newer regular tab");
     const pinCandidateGroup = await createGroup(
       "Pin candidate",
@@ -1336,10 +1382,15 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
 
     const pinCandidateSectionId = `messenger-thread-section-custom-group-${pinCandidateGroup.id}`;
+    const loosePinnedSectionId = "messenger-thread-section-custom-pinned";
     const regularSectionId = `messenger-thread-section-custom-group-${regularGroup.id}`;
+    const loosePinnedThreadId = threadTestId(`chat:${loosePinnedChat.id}`);
     const pinCandidateSection = page.getByTestId(pinCandidateSectionId);
     await expect(pinCandidateSection).toContainText("Pin candidate", { timeout: 15_000 });
+    await expect(page.getByTestId(loosePinnedThreadId)).toContainText("Loose pinned tab");
     await expect(page.getByTestId(regularSectionId)).toContainText("Regular group");
+    await expect(page.getByTestId(`${loosePinnedSectionId}-content`)).toContainText("Pin candidate");
+    await expect(page.getByTestId(`${loosePinnedSectionId}-content`)).toContainText("Loose pinned tab");
 
     await expect.poll(async () => {
       const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
@@ -1354,12 +1405,14 @@ test.describe("Messenger unified threads contract", () => {
       regularPinnedAt: null,
     });
 
-    await expectTestIdsInDomOrder(page, [pinCandidateSectionId, regularSectionId]);
+    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, pinCandidateSectionId, loosePinnedThreadId, regularSectionId]);
 
     await page.reload({ waitUntil: "commit" });
 
     await expect(page.getByTestId(pinCandidateSectionId)).toBeVisible({ timeout: 15_000 });
-    await expectTestIdsInDomOrder(page, [pinCandidateSectionId, regularSectionId]);
+    await expect(page.getByTestId(loosePinnedThreadId)).toContainText("Loose pinned tab");
+    await expect(page.getByTestId(`${loosePinnedSectionId}-content`)).toContainText("Pin candidate");
+    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, pinCandidateSectionId, loosePinnedThreadId, regularSectionId]);
 
     await page.getByTestId(pinCandidateSectionId).hover();
     await page.getByTestId(pinCandidateSectionId).getByRole("button", { name: "Group actions" }).click();

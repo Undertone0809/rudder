@@ -308,10 +308,13 @@ contracts:
       - doc/product/domains/execution/agent-runs.md
     related_code:
       - server/src/services/chat-agent-runs.ts
+      - server/src/services/chat-assistant.ts
       - ui/src/pages/AgentDetail.chat-context.tsx
     related_tests:
       - server/src/__tests__/chat-agent-runs.test.ts
+      - server/src/__tests__/chat-assistant.test.ts
       - tests/e2e/agent-detail-chat-run-context.spec.ts
+      - tests/e2e/chat-streaming.spec.ts
     related_plans:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
   AGENT.IDENTITY.CONFIG.001:
@@ -382,8 +385,12 @@ contracts:
       - server/src/services/agent-enabled-skills.ts
       - server/src/services/knowledge-portability/organization-skills.ts
       - server/src/services/knowledge-portability/organization-skills.catalog.ts
+      - packages/shared/src/organization-skill-reference.ts
       - ui/src/pages/AgentDetail.skills.tsx
     related_tests:
+      - server/src/__tests__/organization-skills-reference.test.ts
+      - server/src/__tests__/organization-skills-prune.test.ts
+      - desktop/scripts/smoke.mjs
       - server/src/__tests__/agent-skill-contract.test.ts
       - tests/e2e/organization-agent-skills.spec.ts
     related_plans:
@@ -415,17 +422,23 @@ contracts:
   AGENT.CUSTOM.INTEGRATIONS.001:
     owner: product
     domain: agents
-    status: proposed
+    status: active
     spec_depth: logic_contract
     docs:
       - doc/product/domains/agents/custom-integrations.md
     related_code:
-      - packages/db/src/schema/agent_integrations.ts
+      - packages/db/src/schema/custom_integrations.ts
+      - packages/shared/src/types/custom-integration.ts
+      - packages/shared/src/validators/custom-integration.ts
+      - server/src/services/integrations/custom-integrations.ts
+      - server/src/routes/agents.ts
       - packages/shared/src/constants.ts
       - server/src/services/agent-run-context.ts
-      - server/src/services/chat-host-tools.ts
       - ui/src/pages/AgentDetail.integrations.tsx
-    related_tests: []
+    related_tests:
+      - server/src/__tests__/custom-integrations-service.test.ts
+      - ui/src/pages/AgentDetail.integrations.test.tsx
+      - tests/e2e/agent-detail-integrations-tab.spec.ts
     related_plans:
       - doc/plans/2026-06-27-agent-custom-integrations.md
   ORG.GOAL.001:
@@ -614,11 +627,14 @@ contracts:
       - server/src/routes/chats.ts
       - server/src/services/chats.ts
       - server/src/services/chat-agent-runs.ts
+      - server/src/services/chat-assistant.ts
+      - server/src/services/chat-assistant.helpers.ts
       - ui/src/pages/Chat.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/chat-assistant.test.ts
       - tests/e2e/chat-rich-references.spec.ts
+      - tests/e2e/chat-streaming.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   CHAT.TITLE.GENERATION.001:
@@ -716,6 +732,7 @@ contracts:
     docs:
       - doc/product/domains/collaboration/chat-messenger-im.md
     related_code:
+      - server/src/routes/onboarding.ts
       - server/src/services/messenger.ts
       - server/src/routes/sidebar-badges.ts
       - ui/src/pages/Messenger.tsx
@@ -723,6 +740,7 @@ contracts:
       - server/src/__tests__/messenger-service.test.ts
       - server/src/__tests__/sidebar-badges-service.test.ts
       - tests/e2e/messenger-contract.spec.ts
+      - tests/e2e/onboarding.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   MESSENGER.CUSTOM.GROUPS.001:
@@ -731,6 +749,7 @@ contracts:
     docs:
       - doc/product/domains/collaboration/chat-messenger-im.md
     related_code:
+      - server/src/routes/onboarding.ts
       - server/src/services/messenger.ts
       - ui/src/components/MessengerContextSidebar.tsx
       - ui/src/pages/Messenger.tsx
@@ -739,6 +758,7 @@ contracts:
       - ui/src/components/MessengerContextSidebar.test.tsx
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
       - tests/e2e/messenger-contract.spec.ts
+      - tests/e2e/onboarding.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   IM.FEISHU.001:
@@ -774,6 +794,7 @@ contracts:
     related_tests:
       - server/src/__tests__/agent-integration-routes.test.ts
       - server/src/__tests__/agent-integration-inbound-dispatcher.test.ts
+      - server/src/__tests__/agent-integration-feishu-app-registration.test.ts
       - server/src/__tests__/agent-integration-feishu-db-dispatcher.test.ts
       - server/src/__tests__/agent-integration-feishu-inbound-normalizer.test.ts
       - server/src/__tests__/agent-integration-setup-url-routes.test.ts
@@ -974,6 +995,8 @@ contracts:
     docs:
       - doc/product/domains/organizations-and-goals/settings-onboarding-portability.md
     related_code:
+      - packages/db/src/schema/messenger_custom_groups.ts
+      - packages/db/src/schema/messenger_thread_user_states.ts
       - server/src/routes/onboarding.ts
       - server/src/routes/access-onboarding.helpers.ts
       - ui/src/pages/InviteLanding.tsx

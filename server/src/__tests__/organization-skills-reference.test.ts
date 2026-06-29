@@ -189,24 +189,24 @@ describe("organization skill references", () => {
 
     const skills = await skillSvc.list(orgId);
 
-    expect(skills.slice(0, 7).map((skill) => skill.key)).toEqual([
+    expect(skills.slice(0, 5).map((skill) => skill.key)).toEqual([
       "rudder/para-memory-files",
       "rudder/rudder",
       "rudder/rudder-create-agent",
       "rudder/rudder-create-plugin",
       "rudder/skill-creator",
-      "rudder/skill-optimizer",
-      "rudder/conversation-to-skill",
     ]);
 
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
       "rudder/rudder",
       "rudder/rudder-create-agent",
       "rudder/skill-creator",
-      "rudder/skill-optimizer",
-      "rudder/conversation-to-skill",
       `organization/${orgId}/deep-research`,
       `organization/${orgId}/software-product-advisor`,
+    ]));
+    expect(skills.map((skill) => skill.key)).not.toEqual(expect.arrayContaining([
+      "rudder/skill-optimizer",
+      "rudder/conversation-to-skill",
     ]));
 
     expect(skills.find((skill) => skill.slug === "deep-research")).toMatchObject({

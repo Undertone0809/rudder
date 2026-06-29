@@ -1745,6 +1745,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.prompt).toContain("# Agent Soul");
       expect(capture.prompt).toContain("# Agent Tools");
       expect(capture.prompt).toContain("# Tacit Memory");
+      expect(capture.prompt).toContain("# Enabled Rudder Skills");
+      expect(capture.prompt).toContain("Only skills listed in this section are enabled by Rudder for this run.");
+      expect(capture.prompt).toContain("- rudder");
+      expect(capture.prompt).not.toContain("- rudder: rudder/rudder");
       expect(capture.prompt).toContain("## Your Current Automations");
       expect(capture.prompt.match(/## Your Current Automations/g)).toHaveLength(1);
       expect(capture.prompt).toContain("# Rudder Heartbeat Instruction");
@@ -1762,6 +1766,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(agentInstructionStack).toContain("# Agent Soul");
       expect(agentInstructionStack).toContain("# Agent Tools");
       expect(agentInstructionStack).toContain("# Tacit Memory");
+      expect(agentInstructionStack).toContain("# Enabled Rudder Skills");
       expect(agentInstructionStack).not.toContain("## Agent Instruction:");
       expect(agentInstructionStack).toContain("## Your Current Automations");
       expect(agentInstructionStack).not.toContain("[startup context omitted from persisted prompt]");
@@ -1775,6 +1780,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(promptMetrics.runtimeHeartbeatChars).toBeGreaterThan(0);
       expect(promptMetrics.heartbeatFileChars).toBe(0);
       expect(promptMetrics.heartbeatChars).toBe(promptMetrics.runtimeHeartbeatChars);
+      expect(promptMetrics.skillBoundaryPromptChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
       expect(loadedSkills).toEqual([
         expect.objectContaining({

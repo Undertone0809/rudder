@@ -151,6 +151,38 @@ async function verifyModuleResolution(serverPackageDir) {
   }
 }
 
+function packagedRuntimeSegment() {
+  const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
+  return `${process.platform}-${targetArch}`;
+}
+
+async function verifyPostgresRuntimePayload(serverPackageDir) {
+  const resourcesDir = path.dirname(serverPackageDir);
+  const runtimeDir = path.join(resourcesDir, "postgres-18.4", packagedRuntimeSegment());
+  const binDir = path.join(runtimeDir, "bin");
+  const executable = (name) => process.platform === "win32" ? `${name}.exe` : name;
+  const requiredPaths = [
+    path.join(binDir, executable("initdb")),
+    path.join(binDir, executable("pg_ctl")),
+    path.join(binDir, executable("postgres")),
+    path.join(runtimeDir, "share", "postgresql", "postgres.bki"),
+  ];
+
+  const missing = [];
+  for (const requiredPath of requiredPaths) {
+    if (!(await exists(requiredPath))) missing.push(requiredPath);
+  }
+
+  if (missing.length > 0) {
+    for (const missingPath of missing) {
+      error(`PostgreSQL 18.4 runtime payload missing: ${missingPath}`);
+    }
+    return;
+  }
+
+  ok(`PostgreSQL 18.4 runtime payload checked (${path.relative(resourcesDir, runtimeDir)})`);
+}
+
 /**
  * @param {string} serverPackageDir
  */
@@ -239,6 +271,9 @@ async function verifyServerPackage(serverPackageDir) {
 
   // 5. Module resolution
   await verifyModuleResolution(serverPackageDir);
+
+  // 6. PostgreSQL runtime payload required by packaged Desktop local startup.
+  await verifyPostgresRuntimePayload(serverPackageDir);
 }
 
 async function findPackagedServerPackage() {

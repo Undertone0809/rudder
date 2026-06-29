@@ -164,10 +164,143 @@ function findChatMessageElement(root: HTMLElement, messageId: string) {
   const candidates = root.querySelectorAll<HTMLElement>("[data-message-id]");
   return Array.from(candidates).find((element) => element.dataset.messageId === messageId) ?? null;
 }
+function revealChatMessageElement(target: HTMLElement) {
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.classList.remove("chat-message-jump-highlight");
+  void target.offsetWidth;
+  target.classList.add("chat-message-jump-highlight");
+  window.setTimeout(() => { target.classList.remove("chat-message-jump-highlight"); }, 1800);
+}
 const RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT = 5;
 const RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT = 10;
 const CHAT_LIST_PREVIEW_LIMIT = 40;
 const CHAT_ISSUE_MENTION_LIMIT = 50;
+const CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD = 5;
+const CHAT_SCROLL_MAP_MAX_MARKERS = 64;
+const CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT = 96;
+const CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT = 180;
+
+function countScrollMapUserMessages(messages: ChatMessage[]) {
+  return messages.filter((message) =>
+    message.role === "user"
+    && message.kind === "message"
+    && !message.supersededAt
+    && (message.body.trim().length > 0 || message.attachments.length > 0)
+  ).length;
+}
+
+function chatScrollMapPreviewText(message: ChatMessage) {
+  const body = message.body.replace(/\s+/g, " ").trim();
+  if (body) return body.length > 140 ? `${body.slice(0, 137)}...` : body;
+  if (message.attachments.length > 0) {
+    return `${message.attachments.length} attachment${message.attachments.length === 1 ? "" : "s"}`;
+  }
+  if (message.kind === "issue_proposal") return "Issue proposal";
+  if (message.kind === "operation_proposal") return "Operation proposal";
+  if (message.kind === "ask_user") return "Question for the operator";
+  return "Empty message";
+}
+
+function chatScrollMapPreviewParts(message: ChatMessage) {
+  const body = message.body.replace(/\s+/g, " ").trim();
+  if (body) {
+    const summarySource = body.length > CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT
+      ? body.slice(CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT).trim()
+      : "";
+    return {
+      title: body,
+      summary: summarySource.length > CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT
+        ? `${summarySource.slice(0, CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT - 3)}...`
+        : summarySource,
+    };
+  }
+  return { title: chatScrollMapPreviewText(message), summary: "" };
+}
+
+function chatScrollMapRoleLabel(message: ChatMessage) {
+  if (message.role === "user") return "You";
+  if (message.role === "assistant") return "Assistant";
+  return "System";
+}
+
+function chatScrollMapVisibleMessages(messages: ChatMessage[]) {
+  const visible = messages.filter((message) => !message.supersededAt);
+  if (visible.length <= CHAT_SCROLL_MAP_MAX_MARKERS) return visible;
+  const sampled: ChatMessage[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < CHAT_SCROLL_MAP_MAX_MARKERS; index += 1) {
+    const sourceIndex = Math.round((index / (CHAT_SCROLL_MAP_MAX_MARKERS - 1)) * (visible.length - 1));
+    const message = visible[sourceIndex];
+    if (message && !seen.has(message.id)) {
+      seen.add(message.id);
+      sampled.push(message);
+    }
+  }
+  return sampled;
+}
+
+function ChatScrollMap({
+  messages,
+  onJump,
+}: {
+  messages: ChatMessage[];
+  onJump: (messageId: string) => void;
+}) {
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const mapMessages = useMemo(() => chatScrollMapVisibleMessages(messages), [messages]);
+  const hoveredMessage = hoveredMessageId
+    ? mapMessages.find((message) => message.id === hoveredMessageId) ?? null
+    : null;
+  const hoveredPreview = hoveredMessage ? chatScrollMapPreviewParts(hoveredMessage) : null;
+  if (mapMessages.length === 0) return null;
+  return (
+    <div
+      data-testid="chat-scroll-map"
+      aria-label="Conversation message map"
+      className="pointer-events-none absolute left-3 top-4 z-20 hidden h-[calc(100%-2rem)] w-7 md:block"
+    >
+      <div className="relative flex h-full w-7 items-center justify-center">
+        <div className="flex h-full w-full flex-col justify-between py-2">
+          {mapMessages.map((message) => (
+            <button
+              key={message.id}
+              type="button"
+              data-testid={`chat-scroll-map-marker-${message.id}`}
+              aria-label={`Jump to ${chatScrollMapRoleLabel(message)} message: ${chatScrollMapPreviewText(message)}`}
+              className={cn(
+                "pointer-events-auto relative z-10 h-3 w-7 rounded-[var(--radius-xs)] border border-transparent bg-transparent px-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                "before:absolute before:left-0 before:top-1/2 before:h-0.5 before:w-3 before:-translate-y-1/2 before:rounded-full before:bg-[color:color-mix(in_oklab,var(--muted-foreground)_36%,transparent)] before:transition-all",
+                "hover:before:w-6 hover:before:bg-[color:var(--foreground)]",
+                message.role === "assistant" && "before:bg-[color:color-mix(in_oklab,var(--accent-base)_48%,var(--muted-foreground))]",
+                message.kind !== "message" && "before:h-1 before:bg-[color:color-mix(in_oklab,var(--accent-strong)_70%,transparent)]",
+              )}
+              onMouseEnter={() => setHoveredMessageId(message.id)}
+              onFocus={() => setHoveredMessageId(message.id)}
+              onMouseLeave={() => setHoveredMessageId((current) => current === message.id ? null : current)}
+              onBlur={() => setHoveredMessageId((current) => current === message.id ? null : current)}
+              onClick={() => onJump(message.id)}
+            />
+          ))}
+        </div>
+      </div>
+      {hoveredMessage ? (
+        <div
+          data-testid="chat-scroll-map-preview"
+          className="pointer-events-none absolute left-7 top-1/2 w-[36rem] max-w-[calc(100vw-32rem)] -translate-y-1/2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-overlay)] px-4 py-3 text-left shadow-[var(--shadow-md)]"
+        >
+          <div className="line-clamp-1 text-sm font-semibold leading-6 text-foreground">
+            {hoveredPreview?.title}
+          </div>
+          {hoveredPreview?.summary ? (
+            <div className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
+              {hoveredPreview.summary}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
   const {
     abortChatStream,
@@ -911,14 +1044,22 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     hasConversation: Boolean(selectedConversation),
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
     hasMessages: rawMessages.length > 0,
-    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeEditCutoffMs === null ? displayedMessages : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs); const visibleMessages = activeStream ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const pendingAskUserMessage = useMemo(
+    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeEditCutoffMs === null ? displayedMessages : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs); const visibleMessages = activeStream ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const scrollMapUserMessageCount = useMemo(
+    () => countScrollMapUserMessages(visibleMessages), [visibleMessages],
+  ); const showChatScrollMap = scrollMapUserMessageCount > CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD; const jumpToChatMessage = useCallback((messageId: string) => {
+    const scrollElement = chatMessagesScrollElementRef.current;
+    if (!scrollElement) return;
+    const target = findChatMessageElement(scrollElement, messageId);
+    if (!target) return;
+    revealChatMessageElement(target);
+  }, []); const pendingAskUserMessage = useMemo(
     () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
   useEffect(() => { if (!pendingAskUserRequest) return; closeComposerContextMenus(); }, [closeComposerContextMenus, pendingAskUserRequest]);
   useEffect(() => { const chatId = selectedConversation?.id ?? null; if (!chatId || showMessagesLoading) return; if (initialScrolledConversationRef.current === chatId) return; initialScrolledConversationRef.current = chatId; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; scrollChatMessagesToBottom(scrollElement); }); return () => cancelAnimationFrame(frame); }, [selectedConversation?.id, showMessagesLoading, visibleMessages.length]);
-  useEffect(() => { if (!conversationId || !pendingTargetMessageId || showMessagesLoading) return; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; const target = findChatMessageElement(scrollElement, pendingTargetMessageId); if (!target) return; target.scrollIntoView({ block: "center", behavior: "smooth" }); target.classList.remove("chat-message-jump-highlight"); void target.offsetWidth; target.classList.add("chat-message-jump-highlight"); const nextSearch = new URLSearchParams(searchParams); nextSearch.delete("messageId"); nextSearch.delete("targetMessageId"); navigate({
+  useEffect(() => { if (!conversationId || !pendingTargetMessageId || showMessagesLoading) return; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; const target = findChatMessageElement(scrollElement, pendingTargetMessageId); if (!target) return; revealChatMessageElement(target); const nextSearch = new URLSearchParams(searchParams); nextSearch.delete("messageId"); nextSearch.delete("targetMessageId"); navigate({
         pathname: chatConversationPath(conversationId),
         search: nextSearch.toString() ? `?${nextSearch.toString()}` : "",
-      }, { replace: true }); window.setTimeout(() => { target.classList.remove("chat-message-jump-highlight"); }, 1800); }); return () => cancelAnimationFrame(frame); }, [chatConversationPath, conversationId, navigate, pendingTargetMessageId, searchParams, showMessagesLoading, visibleMessages.length]);
+      }, { replace: true }); }); return () => cancelAnimationFrame(frame); }, [chatConversationPath, conversationId, navigate, pendingTargetMessageId, searchParams, showMessagesLoading, visibleMessages.length]);
   useEffect(() => { if (!selectedConversation?.id || !latestIncomingMessageId) return; if (typeof document !== "undefined" && document.visibilityState !== "visible") return; const shouldMarkRead = selectedConversation.isUnread || latestIncomingMessageId !== lastMarkedReadKeyRef.current?.split(":")[1]; if (!shouldMarkRead) return; const nextKey = `${selectedConversation.id}:${latestIncomingMessageId}`; if (manuallyMarkedUnreadKeyRef.current === nextKey) return; if (manuallyMarkedUnreadKeyRef.current?.startsWith(`${selectedConversation.id}:`)) {
       manuallyMarkedUnreadKeyRef.current = null;
     } const shouldDecrementSidebarBadge = selectedConversation.isUnread && optimisticReadBadgeMarkerRef.current !== nextKey; if (selectedOrganizationId) {
@@ -1463,7 +1604,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         <div className="chat-warning mt-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-sm">
           {composerUnavailableMessage}{" "}
           <Link to="/agents" className="underline underline-offset-4 hover:text-foreground">
-            Open agents </Link> </div> ) : null}
+            Configure model </Link> </div> ) : null}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
@@ -1802,9 +1943,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           }} >
                           <Plus className="mr-2 h-4 w-4" />
                           New chat </DropdownMenuItem> </DropdownMenuContent> </DropdownMenu> </div> </div> ) : null}
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-5">
+              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-5">
+                {showChatScrollMap && !showMessagesLoading ? (
+                  <ChatScrollMap messages={visibleMessages} onJump={jumpToChatMessage} />
+                ) : null}
                 <div ref={chatMessagesScrollRef} data-testid="chat-messages-scroll-region" className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto" >
-                  <div data-testid="chat-messages-content" className="mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1" >
+                  <div data-testid="chat-messages-content" className={cn("mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1", showChatScrollMap && "md:pl-6")} >
                       {renamingConversationId === selectedConversation.id ? (
                         <form
                           data-testid="chat-title-rename-form"

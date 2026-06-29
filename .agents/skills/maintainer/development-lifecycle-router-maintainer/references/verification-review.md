@@ -121,6 +121,10 @@ Reconcile the verifier result before review or handoff:
   `doc/product/**` contracts resolve the ambiguity
 
 Reviewer approval does not convert verifier `FAIL` into acceptance.
+Verifier wording also does not convert missing required proof into acceptance:
+if the verifier says `PASS` but its evidence says the required real/local/live
+surface was not run, the parent must treat the gate as not passed and record the
+missing proof as handoff-blocking.
 
 ## Hard Real-Local Validation
 
@@ -141,6 +145,21 @@ Rudder instance when safe:
 
 If a later runtime/agent step fails outside the UI path, separate that failure
 from the UI validation result.
+
+For hard real-local validation, the verifier gate cannot pass on substituted
+proof. DB-backed tests, mock integrations, isolated temp databases, code
+inspection, CI, author-run checks, and spawned reviewer approval are supporting
+evidence only. If the requested real/local/live surface was not exercised, record
+the verifier result as `blocked/substituted: real environment not run` even if
+the child verifier wrote `PASS`. Do not proceed to final handoff as complete
+unless the user explicitly lowers the acceptance bar.
+
+When the challenged surface is an external integration such as Feishu, Slack,
+GitHub, npm, or a live Desktop install, name the exact real surface in the
+verifier packet. Example: `real local Feishu long-connection chat: send message,
+immediately send /stop, observe Feishu reply and Rudder state`. If credentials,
+tunnel, callback, app installation, or user action are missing, return with that
+blocker instead of substituting unit or DB-backed tests for acceptance.
 
 ## Spawned Reviewer Policy
 

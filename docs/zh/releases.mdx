@@ -18,6 +18,30 @@ npx @rudderhq/cli@latest start
 
 这个页面只记录稳定版本。Canary 会更频繁地用于验证和 Desktop 资产测试；如果需要查看预发布历史，可以看 [GitHub Releases](https://github.com/Undertone0809/rudder/releases)。
 
+## v0.4.1
+
+发布时间：2026-06-27
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.4.1)
+
+### New Features
+
+- 增加 Feishu quick commands 和更完整的 Feishu chat interactions，包括更清晰的 setup guidance，以及更安全的 stop command 处理。
+- 增加 `npx @rudderhq/cli@latest start` 的 server-only install path，让 headless 环境可以跳过 Desktop asset resolution。
+- 在 app 中增加 release-note links，并在 agent setup flow 中展示 agent integration options。
+
+### Improvements
+
+- 改善 Desktop 与 runtime startup reliability，包括自动准备 embedded Postgres payload、将 Desktop workspaces 移到 Documents，并收紧 local runtime home boundaries。
+- 改善 Messenger 和 chat readability，包括可 dismiss 的 unread indicators、更清晰的 search result timestamps、更好的 jump highlights，以及更稳定的 unread selection。
+- 通过 bounded navigation payloads 和更严格的 spawned lifecycle gates，改善 control-plane performance 与 operator safeguards。
+
+### Bug Fixes
+
+- 修复 pinned pnpm version 拒绝 legacy desktop server staging flag 后导致的 CI 和 release verification 问题。
+- 修复 Feishu integration 的 logo display、stop-command handling 和 quick-command setup boundaries。
+- 修复 chat 与 runtime 的边界问题，包括 missing result sentinels、recoverable run failures、Codex terminal summaries、Windows Codex startup failures，以及 release notes 在 update 真正应用前提前出现的问题。
+
 ## v0.4.0
 
 发布时间：2026-06-24

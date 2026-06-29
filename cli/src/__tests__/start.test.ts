@@ -65,6 +65,7 @@ import {
   pruneRuntimeCache,
   readRuntimeInstallMetadata,
   resolveRuntimeCacheDir,
+  resolveRuntimePostgresPayloadBinDir,
   RUNTIME_METADATA_FILE,
   type RuntimeInstallError,
 } from "../runtime/install.js";
@@ -96,6 +97,27 @@ function writeRuntimePackageSync(cacheDir: string, packageName: string, version 
   mkdirSync(packageDir, { recursive: true });
   writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ name: packageName, version }), "utf8");
   writeFileSync(path.join(packageDir, "index.js"), "", "utf8");
+}
+
+async function writeFakePostgresRuntime(root: string): Promise<string> {
+  const binDir = path.join(root, "pgsql", "bin");
+  await mkdir(binDir, { recursive: true });
+  await mkdir(path.join(root, "pgsql", "lib"), { recursive: true });
+  await mkdir(path.join(root, "pgsql", "share", "postgresql"), { recursive: true });
+  for (const binary of ["initdb", "pg_ctl"]) {
+    await writeFile(path.join(binDir, process.platform === "win32" ? `${binary}.exe` : binary), "", "utf8");
+  }
+  const postgresPath = path.join(binDir, process.platform === "win32" ? "postgres.exe" : "postgres");
+  await writeFile(
+    postgresPath,
+    process.platform === "win32" ? "@echo off\r\necho PostgreSQL 18.4\r\n" : "#!/bin/sh\necho 'PostgreSQL 18.4'\n",
+    "utf8",
+  );
+  await chmod(postgresPath, 0o755);
+  await writeFile(path.join(root, "pgsql", "lib", "libpq.5.dylib"), "runtime lib", "utf8");
+  await writeFile(path.join(root, "pgsql", "share", "postgresql", "postgres.bki"), "postgres template", "utf8");
+  await writeFile(path.join(root, "pgsql", "share", "postgresql", "postgres.description"), "postgres description", "utf8");
+  return binDir;
 }
 
 async function writeRuntimeCacheEntry(
@@ -1725,6 +1747,35 @@ describe("runtime install helpers", () => {
         },
       );
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stages a complete PostgreSQL payload for layered Desktop shell assets", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-postgres-payload-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    try {
+      process.env.RUDDER_POSTGRES_BIN_DIR = await writeFakePostgresRuntime(root);
+      const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" }));
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+        preparePostgresPayload: true,
+      });
+
+      const payloadBinDir = resolveRuntimePostgresPayloadBinDir(result.cacheDir);
+      expect(result.postgresPayloadBinDir).toBe(payloadBinDir);
+      await expect(access(path.join(payloadBinDir, process.platform === "win32" ? "postgres.exe" : "postgres"))).resolves.toBeUndefined();
+      await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgres.bki"))).resolves.toBeUndefined();
+      await expect(access(path.join(payloadBinDir, "..", "share", "postgresql", "postgres.description"))).resolves.toBeUndefined();
+    } finally {
+      if (previousPostgresBinDir === undefined) {
+        delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      } else {
+        process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      }
       await rm(root, { recursive: true, force: true });
     }
   });

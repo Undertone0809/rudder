@@ -18,12 +18,19 @@ async function makeTempRoot(): Promise<string> {
   return root;
 }
 
-async function makePostgresBinDir(root: string, segment = desktopPostgresPlatformSegment()): Promise<string> {
+async function makePostgresBinDir(root: string, segment = desktopPostgresPlatformSegment(), options: {
+  includeTemplate?: boolean;
+} = {}): Promise<string> {
   const binDir = path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "bin");
   await mkdir(binDir, { recursive: true });
   const platform = segment.split("-")[0] as NodeJS.Platform;
   for (const binary of ["initdb", "pg_ctl", "postgres"]) {
     await writeFile(path.join(binDir, platform === "win32" ? `${binary}.exe` : binary), "");
+  }
+  if (options.includeTemplate !== false) {
+    const templatePath = path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, segment, "share", "postgresql", "postgres.bki");
+    await mkdir(path.dirname(templatePath), { recursive: true });
+    await writeFile(templatePath, "postgres template");
   }
   return binDir;
 }
@@ -49,6 +56,13 @@ describe("desktop PostgreSQL runtime payload", () => {
     const root = await makeTempRoot();
     const binDir = path.join(root, DESKTOP_POSTGRES_RUNTIME_DIR, "win32-x64", "bin");
     await mkdir(binDir, { recursive: true });
+
+    expect(resolveDesktopPostgresBinDir(root, { platform: "win32", arch: "x64", validateVersion: false })).toBeNull();
+  });
+
+  it("ignores PostgreSQL payload directories without initdb template files", async () => {
+    const root = await makeTempRoot();
+    await makePostgresBinDir(root, "win32-x64", { includeTemplate: false });
 
     expect(resolveDesktopPostgresBinDir(root, { platform: "win32", arch: "x64", validateVersion: false })).toBeNull();
   });

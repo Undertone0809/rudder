@@ -16,8 +16,11 @@ import type {
   AgentTaskSession,
   Approval,
   ConnectAgentIntegration,
+  CreateCustomIntegration,
+  CustomIntegrationSummary,
   HeartbeatRun,
   OrganizationSkillCreateRequest,
+  UpdateCustomIntegrationBinding,
 } from "@rudderhq/shared";
 import { isUuidLike, normalizeAgentUrlKey } from "@rudderhq/shared";
 import { ApiError, api } from "./client";
@@ -141,6 +144,24 @@ export const agentsApi = {
   revokeIntegration: (id: string, integrationId: string, orgId?: string) =>
     api.delete<AgentIntegrationSummary>(
       agentPath(id, orgId, `/integrations/${encodeURIComponent(integrationId)}`),
+    ),
+  listCustomIntegrations: (id: string, orgId?: string) =>
+    api.get<CustomIntegrationSummary[]>(agentPath(id, orgId, "/custom-integrations")),
+  createCustomIntegration: (id: string, data: CreateCustomIntegration, orgId?: string) =>
+    api.post<CustomIntegrationSummary>(agentPath(id, orgId, "/custom-integrations"), data),
+  updateCustomIntegrationBinding: (
+    id: string,
+    integrationId: string,
+    data: UpdateCustomIntegrationBinding,
+    orgId?: string,
+  ) =>
+    api.patch<CustomIntegrationSummary>(
+      agentPath(id, orgId, `/custom-integrations/${encodeURIComponent(integrationId)}/binding`),
+      data,
+    ),
+  revokeCustomIntegration: (id: string, integrationId: string, orgId?: string) =>
+    api.delete<CustomIntegrationSummary>(
+      agentPath(id, orgId, `/custom-integrations/${encodeURIComponent(integrationId)}`),
     ),
   listConfigRevisions: (id: string, orgId?: string) =>
     api.get<AgentConfigRevision[]>(agentPath(id, orgId, "/config-revisions")),

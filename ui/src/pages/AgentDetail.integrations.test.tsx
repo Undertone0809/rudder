@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { AgentDetail, AgentIntegrationSummary } from "@rudderhq/shared";
+import type { AgentDetail, AgentIntegrationSummary, CustomIntegrationSummary } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -12,15 +12,18 @@ import { AgentIntegrationsTab, getFeishuIntegrationState } from "./AgentDetail.i
 const mockWindowOpen = vi.fn();
 
 const mockInvalidateQueries = vi.hoisted(() => vi.fn());
+const mockCustomIntegrationsData = vi.hoisted(() => ({
+  rows: [] as CustomIntegrationSummary[],
+}));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: ({ initialData }: { initialData?: unknown }) => ({
-    data: initialData,
+  useQuery: ({ initialData, queryKey }: { initialData?: unknown; queryKey?: readonly unknown[] }) => ({
+    data: queryKey?.includes("custom-integrations") ? mockCustomIntegrationsData.rows : initialData,
     isLoading: false,
   }),
-  useMutation: (options: { mutationFn?: () => Promise<unknown>; onSuccess?: (result: unknown) => void | Promise<void> }) => ({
-    mutate: vi.fn(async () => {
-      const result = await options.mutationFn?.();
+  useMutation: (options: { mutationFn?: (arg?: unknown) => Promise<unknown>; onSuccess?: (result: unknown) => void | Promise<void> }) => ({
+    mutate: vi.fn(async (arg?: unknown) => {
+      const result = await options.mutationFn?.(arg);
       await options.onSuccess?.(result);
     }),
     isPending: false,
@@ -69,6 +72,9 @@ vi.mock("../api/agents", () => ({
     }),
     listIntegrations: vi.fn(),
     revokeIntegration: vi.fn(),
+    listCustomIntegrations: vi.fn(),
+    createCustomIntegration: vi.fn(),
+    revokeCustomIntegration: vi.fn(),
   },
 }));
 
@@ -87,6 +93,7 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
+  mockCustomIntegrationsData.rows = [];
   vi.clearAllMocks();
   vi.useRealTimers();
 });
@@ -162,27 +169,93 @@ function integration(overrides: Partial<AgentIntegrationSummary> = {}): AgentInt
   };
 }
 
+function customIntegration(overrides: Partial<CustomIntegrationSummary> = {}): CustomIntegrationSummary {
+  return {
+    id: "custom-integration-1",
+    orgId: "org-1",
+    ownerAgentId: "agent-1",
+    scope: "agent",
+    kind: "mcp_server",
+    slug: "linear-mcp",
+    displayName: "Linear MCP",
+    description: null,
+    status: "active",
+    config: {},
+    hasCredentialSecret: true,
+    binding: {
+      id: "binding-1",
+      orgId: "org-1",
+      agentId: "agent-1",
+      integrationId: "custom-integration-1",
+      status: "active",
+      enabledToolIds: ["tool-1"],
+      createdAt: new Date("2026-06-18T01:00:00.000Z"),
+      updatedAt: new Date("2026-06-18T01:00:00.000Z"),
+      revokedAt: null,
+    },
+    tools: [
+      {
+        id: "tool-1",
+        orgId: "org-1",
+        integrationId: "custom-integration-1",
+        externalToolName: "search_issues",
+        rudderToolName: "custom.linear-mcp.search_issues",
+        description: "Search issues",
+        inputSchema: {},
+        config: {},
+        status: "active",
+        enabled: true,
+        createdAt: new Date("2026-06-18T01:00:00.000Z"),
+        updatedAt: new Date("2026-06-18T01:00:00.000Z"),
+      },
+    ],
+    createdAt: new Date("2026-06-18T01:00:00.000Z"),
+    updatedAt: new Date("2026-06-18T01:00:00.000Z"),
+    revokedAt: null,
+    ...overrides,
+  };
+}
+
 describe("AgentIntegrationsTab", () => {
   it("renders a stable Feishu row when the agent has no integration", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
 
-    expect(container.textContent).toContain("Integrations");
-    expect(container.textContent).toContain("Connect the external tools this agent can use during work loops.");
-    expect(container.textContent).toContain("0 of 8 connected");
+    expect(container.textContent).not.toContain("Connect the external tools this agent can use during work loops.");
+    expect(container.textContent).toContain("Discover");
+    expect(container.textContent).toContain("Manage");
+    expect(container.textContent).toContain("Custom API");
+    expect(container.textContent).toContain("MCP Server");
     expect(container.textContent).toContain("Feishu / Lark");
     expect(container.textContent).toContain("Not configured");
-    expect(container.textContent).toContain("Connect");
-    expect(container.textContent).toContain("Create a Feishu bot named Wesley - Rudder");
-    expect(container.textContent).toContain("opens Feishu with the bot name prefilled");
-    expect(container.textContent).toContain("Quick Commands");
-    expect(container.textContent).toContain("requests Feishu bot menu and Slash Command permissions");
-    expect(container.textContent).toContain("handles /new and /stop messages from");
-    expect(container.textContent).toContain("Automatic creation of the Feishu Quick Command menu is not enabled");
-    expect(container.textContent).toContain("Feishu CN");
-    expect(container.textContent).toContain("Lark Global");
+    expect(container.textContent).toContain("Set up");
+    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(6);
+    expect(container.textContent).not.toContain("0 of 10 connected");
+    expect(container.textContent).not.toContain("Create a Feishu bot named Wesley - Rudder");
   });
 
-  it("renders the planned agent tool integrations as disabled setup cards", () => {
+  it("opens Feishu setup in a modal from the unified card", () => {
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const setupButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Set up"));
+
+    act(() => {
+      setupButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog).toBeTruthy();
+    expect(dialog?.textContent).toContain("Connect Feishu / Lark");
+    expect(dialog?.textContent).toContain("Create a Feishu bot named Wesley - Rudder");
+    expect(dialog?.textContent).toContain("opens Feishu with the bot name prefilled");
+    expect(dialog?.textContent).toContain("Quick Commands");
+    expect(dialog?.textContent).toContain("requests Feishu bot menu and Slash Command permissions");
+    expect(dialog?.textContent).toContain("handles /new and /stop messages from");
+    expect(dialog?.textContent).toContain("Automatic creation of the Feishu Quick Command menu is not enabled");
+    expect(dialog?.textContent).toContain("Feishu CN");
+    expect(dialog?.textContent).toContain("Lark Global");
+  });
+
+  it("opens a modal for planned agent tool integrations", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
 
     for (const name of [
@@ -190,7 +263,6 @@ describe("AgentIntegrationsTab", () => {
       "Google Calendar",
       "Google Drive",
       "Notion",
-      "Feishu Workspace",
       "GitHub",
       "Linear",
     ]) {
@@ -200,21 +272,40 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("View and edit calendar events for scheduling work.");
     expect(container.textContent).toContain("Browse Drive files and attach workspace context.");
     expect(container.textContent).toContain("Search pages, databases, and operating notes.");
-    expect(container.textContent).toContain("Access Feishu docs, messages, and workspace data.");
     expect(container.textContent).toContain("Clone and inspect repositories during agent runs.");
     expect(container.textContent).toContain("Link delivery issues and sync engineering work state.");
-    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(7);
-    expect([...container.querySelectorAll("button[disabled]")]
-      .filter((button) => button.getAttribute("aria-label")?.endsWith("setup coming soon"))).toHaveLength(7);
+    expect(container.textContent).not.toContain("Feishu Workspace");
+    expect(container.textContent?.match(/Coming soon/g)?.length).toBe(6);
+
+    const gmailButton = [...container.querySelectorAll("button")]
+      .find((button) => button.getAttribute("aria-label") === "Gmail setup");
+    expect(gmailButton).toBeTruthy();
+    expect(gmailButton?.hasAttribute("disabled")).toBe(false);
+    act(() => {
+      gmailButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog).toBeTruthy();
+    expect(dialog?.textContent).toContain("Gmail");
+    expect(dialog?.textContent).toContain("This connector is listed in the integration catalog");
+    expect(dialog?.textContent).toContain("Coming soon");
   });
 
   it("renders a Feishu-safe prefilled bot name for long agent names", () => {
     const container = render(<AgentIntegrationsTab agent={agent({
       name: "ZST613 Bot 1782103161531",
     })} orgId="org-1" />);
+    const setupButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Set up"));
 
-    expect(container.textContent).toContain("Create a Feishu bot named ZST613 Bot 178210316153 - Rudder");
-    expect(container.textContent).not.toContain("ZST613 Bot 1782103161531 - Rudde");
+    act(() => {
+      setupButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("Create a Feishu bot named ZST613 Bot 178210316153 - Rudder");
+    expect(dialog?.textContent).not.toContain("ZST613 Bot 1782103161531 - Rudde");
   });
 
   it("shows a reconnect prompt when a previous Feishu integration is revoked", () => {
@@ -229,16 +320,53 @@ describe("AgentIntegrationsTab", () => {
       })}
       orgId="org-1"
     />);
+    const setupButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Set up"));
+
+    act(() => {
+      setupButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const dialog = document.body.querySelector('[role="dialog"]');
 
     expect(container.textContent).toContain("Disconnected");
-    expect(container.textContent).toContain("Reconnect a Feishu bot named Wesley - Rudder");
-    expect(container.textContent).toContain("Connect");
-    expect(container.textContent).toContain("cli_a_app");
+    expect(dialog?.textContent).toContain("Reconnect a Feishu bot named Wesley - Rudder");
+    expect(dialog?.textContent).toContain("Connect");
+    expect(dialog?.textContent).toContain("cli_a_app");
+  });
+
+  it("does not list revoked Feishu integrations in manage view", () => {
+    const container = render(<AgentIntegrationsTab
+      agent={agent({
+        integrations: [
+          integration({
+            status: "revoked",
+            revokedAt: new Date("2026-06-18T02:00:00.000Z"),
+          }),
+        ],
+      })}
+      orgId="org-1"
+    />);
+    const manageButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage");
+
+    act(() => {
+      manageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("No connected integrations");
+    expect(container.textContent).not.toContain("cli_a_app");
   });
 
   it("opens the Feishu setup URL from the agent detail tab", async () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
-    const connectButton = [...container.querySelectorAll("button")]
+    const setupButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Set up"));
+    act(() => {
+      setupButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const dialog = document.body.querySelector('[role="dialog"]');
+    const connectButton = [...dialog!.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Connect"));
 
     expect(connectButton).toBeTruthy();
@@ -258,8 +386,8 @@ describe("AgentIntegrationsTab", () => {
       "_blank",
       "noopener,noreferrer",
     );
-    expect(container.textContent).toContain("Waiting for Feishu authorization");
-    expect(container.textContent).toContain("Finish setup");
+    expect(dialog?.textContent).toContain("Waiting for Feishu authorization");
+    expect(dialog?.textContent).toContain("Finish setup");
   });
 
   it("polls the setup session and refreshes agent integration state after Feishu authorization", async () => {
@@ -280,7 +408,14 @@ describe("AgentIntegrationsTab", () => {
       }),
     });
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
-    const connectButton = [...container.querySelectorAll("button")]
+    const setupButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Set up"));
+
+    act(() => {
+      setupButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const dialog = document.body.querySelector('[role="dialog"]');
+    const connectButton = [...dialog!.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Connect"));
 
     await act(async () => {
@@ -299,7 +434,13 @@ describe("AgentIntegrationsTab", () => {
 
   it("updates setup copy when Lark Global is selected", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
-    const larkButton = [...container.querySelectorAll("button")]
+    const setupButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Set up"));
+    act(() => {
+      setupButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const dialog = document.body.querySelector('[role="dialog"]');
+    const larkButton = [...dialog!.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Lark Global"));
 
     expect(larkButton).toBeTruthy();
@@ -307,25 +448,72 @@ describe("AgentIntegrationsTab", () => {
       larkButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(container.textContent).toContain("Create a Lark bot named Wesley - Rudder");
-    expect(container.textContent).toContain("opens Lark with the bot name prefilled");
+    expect(dialog?.textContent).toContain("Create a Lark bot named Wesley - Rudder");
+    expect(dialog?.textContent).toContain("opens Lark with the bot name prefilled");
   });
 
-  it("renders configured Feishu integration metadata and actions", () => {
+  it("renders configured Feishu integration metadata and actions in manage view", () => {
     const container = render(<AgentIntegrationsTab agent={agent({ integrations: [integration()] })} orgId="org-1" />);
+    const manageButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage");
+
+    act(() => {
+      manageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
 
     expect(container.textContent).toContain("Connected");
-    expect(container.textContent).toContain("1 of 8 connected");
+    expect(container.textContent).not.toContain("1 of 10 connected");
     expect(container.textContent).toContain("cli_a_app");
     expect(container.textContent).toContain("ou_bot");
     expect(container.textContent).toContain("Feishu CN");
-    expect(container.textContent).toContain("Credential stored");
-    expect(container.textContent).toContain("Quick Commands");
-    expect(container.textContent).toContain("requests Feishu bot menu and Slash Command permissions");
-    expect(container.textContent).toContain("handles /new and /stop messages from");
-    expect(container.textContent).toContain("Automatic creation of the Feishu Quick Command menu is not enabled");
     expect(container.textContent).not.toContain("secret-1");
     expect(container.textContent).toContain("Disconnect");
+  });
+
+  it("opens the custom API configuration form in a modal with agent-scoped defaults", () => {
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const configureButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Configure"));
+
+    act(() => {
+      configureButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog).toBeTruthy();
+    expect(dialog?.textContent).toContain("Connect Custom API");
+    expect(dialog?.textContent).toContain("Choose whether this integration is limited to this agent");
+    expect(dialog?.textContent).toContain("This agent");
+    expect(dialog?.textContent).toContain("Organization");
+    expect(dialog?.textContent).toContain("Base URL");
+    expect(dialog?.textContent).toContain("Credential value");
+    expect(dialog?.querySelector('input[placeholder="https://api.example.com"]')).toBeTruthy();
+    expect(dialog?.querySelector(".md\\:grid-cols-2")).toBeNull();
+    expect(dialog?.querySelector('button[aria-label="Connect Custom API"] svg')).toBeNull();
+
+    const cancelButton = [...dialog!.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Cancel"));
+    act(() => {
+      cancelButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("renders connected custom integration scope and tool metadata", () => {
+    mockCustomIntegrationsData.rows = [customIntegration()];
+    const withCustom = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const manageButton = [...withCustom.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage");
+
+    act(() => {
+      manageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(withCustom.textContent).toContain("Linear MCP");
+    expect(withCustom.textContent).toContain("This agent only");
+    expect(withCustom.textContent).toContain("custom.linear-mcp.search_issues");
+    expect(withCustom.textContent).toContain("Credential stored");
   });
 });
 

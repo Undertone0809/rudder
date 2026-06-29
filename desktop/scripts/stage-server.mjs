@@ -11,12 +11,13 @@ const preparePostgresRuntimeScript = path.join(scriptDir, "prepare-postgres-runt
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const sourceManifestRoots = ["packages", "server", "cli"];
 
-function run(command, args, cwd) {
+function run(command, args, cwd, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
       stdio: "inherit",
       shell: process.platform === "win32",
+      env: options.env ? { ...process.env, ...options.env } : process.env,
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
@@ -162,6 +163,58 @@ async function preparePostgresRuntimeBinDir() {
   return preparedBinDir;
 }
 
+function debianSharedirCandidate(sourceBinDir) {
+  const normalized = path.resolve(sourceBinDir);
+  const parts = normalized.split(path.sep);
+  const libIndex = parts.lastIndexOf("lib");
+  if (libIndex < 0) return null;
+  if (parts[libIndex + 1] !== "postgresql") return null;
+  const version = parts[libIndex + 2];
+  if (!version || parts[libIndex + 3] !== "bin") return null;
+  const prefix = parts.slice(0, libIndex).join(path.sep) || path.sep;
+  return path.join(prefix, "share", "postgresql", version);
+}
+
+async function resolvePostgresTemplateDir(sourceBinDir) {
+  for (const candidatePath of [
+    path.join(sourceBinDir, "..", "share", "postgresql", "postgres.bki"),
+    path.join(sourceBinDir, "..", "share", "postgres.bki"),
+  ]) {
+    try {
+      await fs.access(candidatePath);
+      return path.dirname(candidatePath);
+    } catch {
+      // Try the next supported PostgreSQL archive layout.
+    }
+  }
+
+  const debianSharedir = debianSharedirCandidate(sourceBinDir);
+  if (debianSharedir) {
+    try {
+      await fs.access(path.join(debianSharedir, "postgres.bki"));
+      return debianSharedir;
+    } catch {
+      // Fall through to pg_config.
+    }
+  }
+
+  const pgConfigPath = path.join(sourceBinDir, process.platform === "win32" ? "pg_config.exe" : "pg_config");
+  try {
+    await fs.access(pgConfigPath);
+    const result = await execFileAsync(pgConfigPath, ["--sharedir"]);
+    const sharedir = result.stdout.trim();
+    if (sharedir) {
+      const candidatePath = path.join(sharedir, "postgres.bki");
+      await fs.access(candidatePath);
+      return sharedir;
+    }
+  } catch {
+    // Fall through to the standard missing-template error.
+  }
+
+  return null;
+}
+
 async function assertPostgresBinDirComplete(sourceBinDir) {
   const requiredBinaries = ["initdb", "pg_ctl", "postgres"];
   const missing = [];
@@ -174,9 +227,17 @@ async function assertPostgresBinDirComplete(sourceBinDir) {
       missing.push(binaryPath);
     }
   }
+  const templateDir = await resolvePostgresTemplateDir(sourceBinDir);
+  const expectedTemplatePath = path.join(sourceBinDir, "..", "share", "postgresql", "postgres.bki");
+  if (!templateDir) missing.push(expectedTemplatePath);
   if (missing.length > 0) {
-    throw new Error(`RUDDER_POSTGRES_BIN_DIR must contain PostgreSQL 18.4 initdb, pg_ctl, and postgres binaries; missing ${missing.join(", ")}`);
+    const hasMissingTemplate = missing.includes(expectedTemplatePath);
+    const requirement = hasMissingTemplate
+      ? "initdb, pg_ctl, postgres binaries, and PostgreSQL 18.4 initdb template files"
+      : "initdb, pg_ctl, and postgres binaries";
+    throw new Error(`RUDDER_POSTGRES_BIN_DIR must include PostgreSQL 18.4 ${requirement}; missing ${missing.join(", ")}`);
   }
+  return { templateDir };
 }
 
 async function stagePostgresRuntimePayload() {
@@ -193,7 +254,7 @@ async function stagePostgresRuntimePayload() {
     sourceBinDir = await preparePostgresRuntimeBinDir();
   }
 
-  await assertPostgresBinDirComplete(sourceBinDir);
+  const { templateDir } = await assertPostgresBinDirComplete(sourceBinDir);
   const postgresBinary = path.join(sourceBinDir, process.platform === "win32" ? "postgres.exe" : "postgres");
   const versionResult = await execFileAsync(postgresBinary, ["--version"]);
   const versionOutput = [versionResult.stdout, versionResult.stderr].filter(Boolean).join("\n");
@@ -201,9 +262,14 @@ async function stagePostgresRuntimePayload() {
     throw new Error(`RUDDER_POSTGRES_BIN_DIR must contain PostgreSQL 18.4 binaries; got ${versionOutput.trim() || "unknown version"}`);
   }
 
-  const targetBinDir = path.join(postgresRuntimeDir, postgresRuntimePlatformSegment(), "bin");
-  await fs.mkdir(path.dirname(targetBinDir), { recursive: true });
-  await fs.cp(path.resolve(sourceBinDir), targetBinDir, { recursive: true, dereference: true });
+  const targetRuntimeDir = path.join(postgresRuntimeDir, postgresRuntimePlatformSegment());
+  await fs.mkdir(path.dirname(targetRuntimeDir), { recursive: true });
+  await fs.cp(path.resolve(sourceBinDir, ".."), targetRuntimeDir, { recursive: true, dereference: true });
+  const targetShareDir = path.join(targetRuntimeDir, "share");
+  const targetTemplateDir = path.join(targetShareDir, "postgresql");
+  await fs.rm(targetShareDir, { recursive: true, force: true });
+  await fs.mkdir(path.dirname(targetTemplateDir), { recursive: true });
+  await fs.cp(templateDir, targetTemplateDir, { recursive: true, dereference: true });
 }
 
 async function rewriteInternalPackages(targetDir) {
@@ -224,7 +290,11 @@ async function main() {
 
   const sourceManifestSnapshots = await snapshotSourcePackageManifests();
   try {
-    await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot);
+    await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot, {
+      env: {
+        PNPM_CONFIG_FORCE_LEGACY_DEPLOY: "true",
+      },
+    });
   } finally {
     await restoreSourcePackageManifests(sourceManifestSnapshots);
   }

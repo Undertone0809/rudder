@@ -12,8 +12,15 @@ import {
   parseObject,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import path from "node:path";
 import { discoverPiModelsCached } from "./models.js";
+import {
+  ensurePiOpenCodeAnonymousModelsConfig,
+  parsePiModelId,
+  parsePiModelProvider,
+} from "./opencode-anonymous-config.js";
 import { parsePiJsonl } from "./parse.js";
+import { resolveManagedPiHomeDir } from "./skills.js";
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -124,7 +131,19 @@ export async function testEnvironment(
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
   }
+  const configuredModel = asString(config.model, "").trim();
   const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
+  const managedPiAgentDir = path.join(resolveManagedPiHomeDir({ env: runtimeEnv }, ctx.orgId), ".pi", "agent");
+  if (configuredModel) {
+    await ensurePiOpenCodeAnonymousModelsConfig({
+      modelProvider: parsePiModelProvider(configuredModel),
+      modelId: parsePiModelId(configuredModel),
+      piAgentDir: managedPiAgentDir,
+      sourceEnv: process.env,
+      runtimeEnv,
+    });
+    runtimeEnv.PI_CODING_AGENT_DIR = managedPiAgentDir;
+  }
 
   const cwdInvalid = checks.some((check) => check.code === "pi_cwd_invalid");
   if (cwdInvalid) {
@@ -182,7 +201,6 @@ export async function testEnvironment(
     }
   }
 
-  const configuredModel = asString(config.model, "").trim();
   const configuredModelHasProvider = isProviderModelFormat(configuredModel);
   if (!configuredModel) {
     checks.push({

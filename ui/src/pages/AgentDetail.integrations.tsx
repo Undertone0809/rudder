@@ -1,13 +1,27 @@
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   AgentDetail,
   AgentIntegrationProviderRegion,
   AgentIntegrationSetupSession,
   AgentIntegrationSummary,
+  CreateCustomIntegration,
+  CustomIntegrationKind,
+  CustomIntegrationScope,
+  CustomIntegrationSummary,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Braces,
   CalendarDays,
   ExternalLink,
   FileText,
@@ -16,11 +30,11 @@ import {
   Inbox,
   Loader2,
   MessageSquareText,
-  ShieldCheck,
+  PlugZap,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { agentsApi } from "../api/agents";
 import { FeishuLogoIcon } from "../components/FeishuLogoIcon";
 import { useToast } from "../context/ToastContext";
@@ -34,9 +48,11 @@ type UpcomingIntegrationId =
   | "google_calendar"
   | "google_drive"
   | "notion"
-  | "feishu_workspace"
   | "github"
   | "linear";
+
+type IntegrationCategory = "message" | "productivity" | "developer";
+type IntegrationsView = "discover" | "manage";
 
 interface UpcomingIntegrationDefinition {
   id: UpcomingIntegrationId;
@@ -44,6 +60,8 @@ interface UpcomingIntegrationDefinition {
   description: string;
   connectionScope: "Personal" | "Workspace" | "Developer";
   actionLabel: string;
+  category: IntegrationCategory;
+  logoSrc: string;
   Icon: LucideIcon | typeof FeishuLogoIcon;
 }
 
@@ -53,7 +71,9 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Gmail",
     description: "Read, search, draft, and send email from agent work.",
     connectionScope: "Personal",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
+    category: "message",
+    logoSrc: "/brands/gmail-logo.svg",
     Icon: Inbox,
   },
   {
@@ -61,7 +81,9 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Google Calendar",
     description: "View and edit calendar events for scheduling work.",
     connectionScope: "Personal",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
+    category: "productivity",
+    logoSrc: "/brands/google-calendar-logo.svg",
     Icon: CalendarDays,
   },
   {
@@ -69,7 +91,9 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Google Drive",
     description: "Browse Drive files and attach workspace context.",
     connectionScope: "Workspace",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
+    category: "productivity",
+    logoSrc: "/brands/google-drive-logo.svg",
     Icon: FolderOpen,
   },
   {
@@ -77,23 +101,19 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Notion",
     description: "Search pages, databases, and operating notes.",
     connectionScope: "Workspace",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
+    category: "productivity",
+    logoSrc: "/brands/notion-logo.svg",
     Icon: FileText,
-  },
-  {
-    id: "feishu_workspace",
-    name: "Feishu Workspace",
-    description: "Access Feishu docs, messages, and workspace data.",
-    connectionScope: "Workspace",
-    actionLabel: "Set up",
-    Icon: FeishuLogoIcon,
   },
   {
     id: "github",
     name: "GitHub",
     description: "Clone and inspect repositories during agent runs.",
     connectionScope: "Developer",
-    actionLabel: "Manage",
+    actionLabel: "Coming soon",
+    category: "developer",
+    logoSrc: "/brands/github-logo.svg",
     Icon: Github,
   },
   {
@@ -101,10 +121,18 @@ const UPCOMING_INTEGRATIONS: UpcomingIntegrationDefinition[] = [
     name: "Linear",
     description: "Link delivery issues and sync engineering work state.",
     connectionScope: "Developer",
-    actionLabel: "Set up",
+    actionLabel: "Coming soon",
+    category: "developer",
+    logoSrc: "/brands/linear-logo.svg",
     Icon: MessageSquareText,
   },
 ];
+
+const INTEGRATION_CATEGORY_LABELS: Record<IntegrationCategory, string> = {
+  message: "Message",
+  productivity: "Productivity",
+  developer: "Developer",
+};
 
 function integrationStateCopy(state: IntegrationState) {
   switch (state) {
@@ -156,6 +184,34 @@ function setupProviderName(providerRegion: AgentIntegrationProviderRegion) {
 const FEISHU_SUGGESTED_BOT_NAME_MAX_LENGTH = 32;
 const FEISHU_SUGGESTED_BOT_NAME_SUFFIX = " - Rudder";
 
+type CustomIntegrationFormState = {
+  kind: CustomIntegrationKind;
+  displayName: string;
+  description: string;
+  scope: CustomIntegrationScope;
+  endpointUrl: string;
+  authHeaderName: string;
+  credentialValue: string;
+  toolName: string;
+  toolDescription: string;
+};
+
+function defaultCustomIntegrationForm(kind: CustomIntegrationKind): CustomIntegrationFormState {
+  return {
+    kind,
+    displayName: kind === "mcp_server" ? "MCP Server" : "Custom API",
+    description: "",
+    scope: "agent",
+    endpointUrl: "",
+    authHeaderName: "Authorization",
+    credentialValue: "",
+    toolName: kind === "mcp_server" ? "call_tool" : "request",
+    toolDescription: kind === "mcp_server"
+      ? "Call an exposed MCP tool through Rudder."
+      : "Call the configured API through Rudder.",
+  };
+}
+
 function suggestedFeishuBotName(agentName: string) {
   const trimmed = agentName.trim();
   const base = trimmed || "Rudder Agent";
@@ -173,17 +229,24 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const { pushToast } = useToast();
   const [providerRegion, setProviderRegion] = useState<AgentIntegrationProviderRegion>("feishu_cn");
   const [setupSession, setSetupSession] = useState<AgentIntegrationSetupSession | null>(null);
+  const [customForm, setCustomForm] = useState<CustomIntegrationFormState | null>(null);
+  const [integrationsView, setIntegrationsView] = useState<IntegrationsView>("discover");
+  const [feishuDialogOpen, setFeishuDialogOpen] = useState(false);
+  const [upcomingIntegration, setUpcomingIntegration] = useState<UpcomingIntegrationDefinition | null>(null);
   const integrationsQuery = useQuery({
     queryKey: queryKeys.agents.integrations(agent.id),
     queryFn: () => agentsApi.listIntegrations(agent.id, orgId),
     initialData: agent.integrations ?? [],
   });
+  const customIntegrationsQuery = useQuery({
+    queryKey: queryKeys.agents.customIntegrations(agent.id),
+    queryFn: () => agentsApi.listCustomIntegrations(agent.id, orgId),
+    initialData: [] as CustomIntegrationSummary[],
+  });
   const integrations = integrationsQuery.data ?? [];
+  const customIntegrations = customIntegrationsQuery.data ?? [];
   const feishuIntegration = integrations.find((integration) => integration.provider === "feishu") ?? null;
   const state = getFeishuIntegrationState(feishuIntegration);
-  const stateCopy = integrationStateCopy(state);
-  const availableCount = 1 + UPCOMING_INTEGRATIONS.length;
-  const configuredCount = integrations.filter((integration) => integration.status === "active").length;
   const isActive = state === "active";
   const shouldShowSetupPrompt = !feishuIntegration || state !== "active";
   const openSetup = useMutation({
@@ -270,77 +333,265 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
       });
     },
   });
+  const createCustomIntegration = useMutation({
+    mutationFn: (form: CustomIntegrationFormState) => {
+      const credentialValue = form.credentialValue.trim();
+      const configKey = form.kind === "mcp_server" ? "serverUrl" : "baseUrl";
+      const payload: CreateCustomIntegration = {
+        scope: form.scope,
+        kind: form.kind,
+        displayName: form.displayName.trim(),
+        description: form.description.trim() || null,
+        config: {
+          [configKey]: form.endpointUrl.trim(),
+          ...(form.authHeaderName.trim() ? { authHeaderName: form.authHeaderName.trim() } : {}),
+        },
+        ...(credentialValue
+          ? { credential: { value: credentialValue } }
+          : {}),
+        tools: [
+          {
+            externalToolName: form.toolName.trim(),
+            description: form.toolDescription.trim() || null,
+          },
+        ],
+      };
+      return agentsApi.createCustomIntegration(agent.id, payload, orgId);
+    },
+    onSuccess: async () => {
+      pushToast({ title: "Custom integration connected", tone: "success" });
+      setCustomForm(null);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.customIntegrations(agent.id) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to connect custom integration",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
+  const revokeCustomIntegration = useMutation({
+    mutationFn: (integrationId: string) => agentsApi.revokeCustomIntegration(agent.id, integrationId, orgId),
+    onSuccess: async () => {
+      pushToast({ title: "Custom integration disconnected", tone: "success" });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.customIntegrations(agent.id) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to disconnect custom integration",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
+  const canSubmitCustomForm = customForm
+    ? customForm.displayName.trim().length > 0
+      && customForm.endpointUrl.trim().length > 0
+      && customForm.toolName.trim().length > 0
+      && !createCustomIntegration.isPending
+    : false;
+  const managedFeishuIntegration = feishuIntegration?.status === "active" ? feishuIntegration : null;
+  const managedCustomIntegrations = customIntegrations.filter((integration) => (
+    integration.status === "active" && integration.binding?.status === "active"
+  ));
+  const hasManagedIntegrations = Boolean(managedFeishuIntegration) || managedCustomIntegrations.length > 0;
 
   return (
-    <div className="max-w-5xl space-y-4">
-      <div className="rounded-lg border border-border bg-card">
-        <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-foreground">Integrations</h2>
-            <p className="text-sm text-muted-foreground">Connect the external tools this agent can use during work loops.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-              {configuredCount} of {availableCount} connected
-            </span>
-            <span
-              className={cn(
-                "inline-flex w-fit items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium",
-                stateCopy.tone,
-              )}
-            >
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Feishu / Lark {stateCopy.label}
-            </span>
-          </div>
-        </div>
+    <div className="max-w-5xl space-y-5">
+      <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+        {(["discover", "manage"] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            className={cn(
+              "h-8 rounded px-3 text-sm font-medium transition-colors",
+              integrationsView === view
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => setIntegrationsView(view)}
+          >
+            {view === "discover" ? "Discover" : "Manage"}
+          </button>
+        ))}
+      </div>
 
-        <div className="divide-y divide-border">
-          <div className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
-                <FeishuLogoIcon className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-semibold text-foreground">Feishu / Lark</p>
-                  <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-                    Long connection
-                  </span>
-                </div>
-                {integrationsQuery.isLoading ? (
-                  <IntegrationRowSkeleton />
-                ) : shouldShowSetupPrompt ? (
-                  <FeishuSetupPrompt
-                    suggestedBotName={suggestedFeishuBotName(agent.name)}
-                    providerRegion={providerRegion}
-                    onProviderRegionChange={setProviderRegion}
-                    disabled={openSetup.isPending}
-                    setupSession={setupSession}
-                    existingIntegration={feishuIntegration}
+      {integrationsView === "discover" ? (
+          <div className="space-y-6">
+            <IntegrationCategorySection title="Custom tools">
+              <CustomIntegrationSetupCard
+                kind="custom_api"
+                active={customForm?.kind === "custom_api"}
+                onConfigure={() => setCustomForm(defaultCustomIntegrationForm("custom_api"))}
+              />
+              <CustomIntegrationSetupCard
+                kind="mcp_server"
+                active={customForm?.kind === "mcp_server"}
+                onConfigure={() => setCustomForm(defaultCustomIntegrationForm("mcp_server"))}
+              />
+            </IntegrationCategorySection>
+            <IntegrationCategorySection title="Message">
+              <FeishuIntegrationCard
+                state={state}
+                disabled={openSetup.isPending || integrationsQuery.isLoading}
+                onConfigure={() => setFeishuDialogOpen(true)}
+              />
+              {UPCOMING_INTEGRATIONS
+                .filter((integration) => integration.category === "message")
+                .map((integration) => (
+                  <UpcomingIntegrationCard
+                    key={integration.id}
+                    integration={integration}
+                    onConfigure={() => setUpcomingIntegration(integration)}
                   />
-                ) : feishuIntegration ? (
-                  <IntegrationMetadata integration={feishuIntegration} />
+                ))}
+            </IntegrationCategorySection>
+            <IntegrationCategorySection title="Productivity">
+              {UPCOMING_INTEGRATIONS
+                .filter((integration) => integration.category === "productivity")
+                .map((integration) => (
+                  <UpcomingIntegrationCard
+                    key={integration.id}
+                    integration={integration}
+                    onConfigure={() => setUpcomingIntegration(integration)}
+                  />
+                ))}
+            </IntegrationCategorySection>
+            <IntegrationCategorySection title="Developer">
+              {UPCOMING_INTEGRATIONS
+                .filter((integration) => integration.category === "developer")
+                .map((integration) => (
+                  <UpcomingIntegrationCard
+                    key={integration.id}
+                    integration={integration}
+                    onConfigure={() => setUpcomingIntegration(integration)}
+                  />
+                ))}
+            </IntegrationCategorySection>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {integrationsQuery.isLoading || customIntegrationsQuery.isLoading ? (
+              <IntegrationRowSkeleton />
+            ) : hasManagedIntegrations ? (
+              <div className="space-y-5">
+                {managedFeishuIntegration ? (
+                  <IntegrationManageGroup
+                    title="Message"
+                    count={1}
+                  >
+                    <FeishuManageRow
+                      integration={managedFeishuIntegration}
+                      disabled={revokeIntegration.isPending || openSetup.isPending}
+                      onConfigure={() => setFeishuDialogOpen(true)}
+                      onDisconnect={() => revokeIntegration.mutate(managedFeishuIntegration.id)}
+                    />
+                  </IntegrationManageGroup>
                 ) : null}
-                {feishuIntegration && shouldShowSetupPrompt ? (
-                  <div className="pt-1">
-                    <IntegrationMetadata integration={feishuIntegration} />
-                  </div>
+                {managedCustomIntegrations.length > 0 ? (
+                  <IntegrationManageGroup title="Custom tools" count={managedCustomIntegrations.length}>
+                    {managedCustomIntegrations.map((integration) => (
+                      <CustomIntegrationRow
+                        key={integration.id}
+                        integration={integration}
+                        disabled={revokeCustomIntegration.isPending}
+                        onDisconnect={() => revokeCustomIntegration.mutate(integration.id)}
+                      />
+                    ))}
+                  </IntegrationManageGroup>
                 ) : null}
               </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 md:justify-end">
+            ) : (
+              <div className="rounded-md border border-dashed border-border bg-background/30 px-4 py-8 text-center">
+                <p className="text-sm font-medium text-foreground">No connected integrations</p>
+                <p className="mt-1 text-sm text-muted-foreground">Use Discover to connect tools for this agent.</p>
+              </div>
+            )}
+          </div>
+        )}
+      <Dialog
+        open={Boolean(customForm)}
+        onOpenChange={(open) => {
+          if (!open && !createCustomIntegration.isPending) setCustomForm(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          {customForm ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Connect {customIntegrationKindLabel(customForm.kind)}</DialogTitle>
+                <DialogDescription>
+                  Choose whether this integration is limited to this agent or shared across the organization.
+                  Credentials are stored as organization secrets and never shown again.
+                </DialogDescription>
+              </DialogHeader>
+              <CustomIntegrationForm
+                form={customForm}
+                disabled={createCustomIntegration.isPending}
+                canSubmit={canSubmitCustomForm}
+                onChange={setCustomForm}
+                onCancel={() => setCustomForm(null)}
+                onSubmit={() => {
+                  if (canSubmitCustomForm && customForm) createCustomIntegration.mutate(customForm);
+                }}
+              />
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={feishuDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !openSetup.isPending && !revokeIntegration.isPending) setFeishuDialogOpen(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{isActive ? "Manage Feishu / Lark" : "Connect Feishu / Lark"}</DialogTitle>
+            <DialogDescription>
+              Connect a Feishu or Lark bot for this agent's chat workflow.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {shouldShowSetupPrompt ? (
+              <>
+                <FeishuSetupPrompt
+                  suggestedBotName={suggestedFeishuBotName(agent.name)}
+                  providerRegion={providerRegion}
+                  onProviderRegionChange={setProviderRegion}
+                  disabled={openSetup.isPending}
+                  setupSession={setupSession}
+                  existingIntegration={feishuIntegration}
+                />
+                {feishuIntegration ? <IntegrationMetadata integration={feishuIntegration} /> : null}
+              </>
+            ) : feishuIntegration ? (
+              <IntegrationMetadata integration={feishuIntegration} />
+            ) : null}
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setFeishuDialogOpen(false)}
+                disabled={openSetup.isPending || revokeIntegration.isPending}
+              >
+                Cancel
+              </Button>
               {feishuIntegration?.manageUrl ? (
                 <Button variant="outline" size="sm" asChild>
                   <a href={feishuIntegration.manageUrl} target="_blank" rel="noreferrer">
                     <ExternalLink className="h-3.5 w-3.5" />
-                    Manage
+                    Provider settings
                   </a>
                 </Button>
               ) : null}
               {isActive && feishuIntegration ? (
                 <Button
+                  type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => revokeIntegration.mutate(feishuIntegration.id)}
@@ -350,52 +601,448 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                   {revokeIntegration.isPending ? "Disconnecting" : "Disconnect"}
                 </Button>
               ) : (
-                <Button variant="outline" size="sm" onClick={() => openSetup.mutate()} disabled={openSetup.isPending}>
-                  {openSetup.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                <Button type="button" size="sm" onClick={() => openSetup.mutate()} disabled={openSetup.isPending}>
                   {openSetup.isPending ? "Opening" : "Connect"}
                 </Button>
               )}
             </div>
           </div>
-          <div className="grid gap-3 px-4 py-4 lg:grid-cols-2">
-            {UPCOMING_INTEGRATIONS.map((integration) => (
-              <UpcomingIntegrationCard key={integration.id} integration={integration} />
-            ))}
-          </div>
-        </div>
-      </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(upcomingIntegration)}
+        onOpenChange={(open) => {
+          if (!open) setUpcomingIntegration(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          {upcomingIntegration ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>{upcomingIntegration.name}</DialogTitle>
+                <DialogDescription>
+                  This connector is listed in the integration catalog and will use the same setup flow when enabled.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3">
+                <IntegrationBrandIcon
+                  src={upcomingIntegration.logoSrc}
+                  name={upcomingIntegration.name}
+                  Icon={upcomingIntegration.Icon}
+                />
+                <div className="min-w-0 space-y-2">
+                  <p className="text-sm font-medium text-foreground">{upcomingIntegration.description}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+                      {upcomingIntegration.connectionScope}
+                    </span>
+                    <span className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-xs text-muted-foreground">
+                      Coming soon
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button type="button" size="sm" variant="outline" onClick={() => setUpcomingIntegration(null)}>
+                  Close
+                </Button>
+              </div>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 interface UpcomingIntegrationCardProps {
   integration: UpcomingIntegrationDefinition;
+  onConfigure: () => void;
 }
 
-function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) {
+function IntegrationCategorySection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      <div className="grid gap-3 lg:grid-cols-2">{children}</div>
+    </section>
+  );
+}
+
+function IntegrationManageGroup({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <span className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+          {count}
+        </span>
+      </div>
+      <div className="space-y-2">{children}</div>
+    </section>
+  );
+}
+
+function IntegrationBrandIcon({
+  src,
+  name,
+  Icon,
+}: {
+  src?: string;
+  name: string;
+  Icon?: LucideIcon | typeof FeishuLogoIcon;
+}) {
+  const imageClassName = cn(
+    "h-5 w-5 shrink-0",
+    name === "GitHub" || name === "Notion" ? "dark:invert" : undefined,
+  );
+  return (
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
+      {src ? (
+        <img src={src} alt="" className={imageClassName} />
+      ) : Icon ? (
+        <Icon className="h-5 w-5" />
+      ) : null}
+    </div>
+  );
+}
+
+function FeishuIntegrationCard({
+  state,
+  disabled,
+  onConfigure,
+}: {
+  state: IntegrationState;
+  disabled: boolean;
+  onConfigure: () => void;
+}) {
+  const stateCopy = integrationStateCopy(state);
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+      <div className="flex min-w-0 items-start gap-3">
+        <IntegrationBrandIcon src="/brands/feishu-logo.svg" name="Feishu / Lark" />
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">Feishu / Lark</p>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              Personal
+            </span>
+            <span className={cn("rounded-md border px-1.5 py-0.5 text-xs", stateCopy.tone)}>
+              {stateCopy.label}
+            </span>
+          </div>
+          <p className="text-sm text-muted-foreground">Chat with this agent through a Feishu or Lark bot.</p>
+        </div>
+      </div>
+      <Button variant="outline" size="sm" onClick={onConfigure} disabled={disabled}>
+        {state === "active" ? "Manage" : "Set up"}
+      </Button>
+    </div>
+  );
+}
+
+function UpcomingIntegrationCard({ integration, onConfigure }: UpcomingIntegrationCardProps) {
   const { Icon } = integration;
 
   return (
     <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <div className="flex min-w-0 items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
-          <Icon className="h-5 w-5" />
-        </div>
+        <IntegrationBrandIcon src={integration.logoSrc} name={integration.name} Icon={Icon} />
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-foreground">{integration.name}</p>
             <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
               {integration.connectionScope}
             </span>
-            <span className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-xs text-muted-foreground">
-              Coming soon
-            </span>
           </div>
           <p className="text-sm text-muted-foreground">{integration.description}</p>
         </div>
       </div>
-      <Button variant="outline" size="sm" disabled aria-label={`${integration.name} setup coming soon`}>
+      <Button variant="outline" size="sm" onClick={onConfigure} aria-label={`${integration.name} setup`}>
         {integration.actionLabel}
+      </Button>
+    </div>
+  );
+}
+
+function FeishuManageRow({
+  integration,
+  disabled,
+  onConfigure,
+  onDisconnect,
+}: {
+  integration: AgentIntegrationSummary;
+  disabled: boolean;
+  onConfigure: () => void;
+  onDisconnect: () => void;
+}) {
+  const stateCopy = integrationStateCopy(getFeishuIntegrationState(integration));
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+      <div className="flex min-w-0 items-start gap-3">
+        <IntegrationBrandIcon src="/brands/feishu-logo.svg" name="Feishu / Lark" />
+        <div className="min-w-0 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">Feishu / Lark</p>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              {regionLabel(integration.providerRegion)}
+            </span>
+            <span className={cn("rounded-md border px-1.5 py-0.5 text-xs", stateCopy.tone)}>
+              {stateCopy.label}
+            </span>
+          </div>
+          <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+            <IntegrationMeta label="App ID" value={integration.externalAppId} />
+            <IntegrationMeta label="Bot" value={integration.externalBotOpenId ?? "Any bot"} />
+            <IntegrationMeta label="Installed" value={formatDateTime(integration.installedAt)} />
+          </dl>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 md:justify-end">
+        <Button variant="outline" size="sm" onClick={onConfigure} disabled={disabled}>
+          Manage
+        </Button>
+        <Button variant="outline" size="sm" onClick={onDisconnect} disabled={disabled || integration.status !== "active"}>
+          <Trash2 className="h-3.5 w-3.5" />
+          Disconnect
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+interface CustomIntegrationSetupCardProps {
+  kind: CustomIntegrationKind;
+  active: boolean;
+  onConfigure: () => void;
+}
+
+function customIntegrationKindLabel(kind: CustomIntegrationKind) {
+  return kind === "mcp_server" ? "MCP Server" : "Custom API";
+}
+
+function customIntegrationScopeLabel(scope: CustomIntegrationScope) {
+  return scope === "organization" ? "Organization shared" : "This agent only";
+}
+
+function CustomIntegrationSetupCard({ kind, active, onConfigure }: CustomIntegrationSetupCardProps) {
+  const Icon = kind === "mcp_server" ? PlugZap : Braces;
+  return (
+    <div className={cn(
+      "grid gap-3 rounded-md border border-dashed bg-background/30 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+      active ? "border-primary/55 bg-primary/5" : "border-border",
+    )}>
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">{customIntegrationKindLabel(kind)}</p>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              Agent tools
+            </span>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {kind === "mcp_server"
+              ? "Expose a remote MCP server to this agent or the organization."
+              : "Register an internal or external HTTP API as a Rudder-mediated tool."}
+          </p>
+        </div>
+      </div>
+      <Button variant="outline" size="sm" onClick={onConfigure}>
+        Configure
+      </Button>
+    </div>
+  );
+}
+
+interface CustomIntegrationFormProps {
+  form: CustomIntegrationFormState;
+  disabled: boolean;
+  canSubmit: boolean;
+  onChange: (form: CustomIntegrationFormState) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}
+
+function CustomIntegrationForm({
+  form,
+  disabled,
+  canSubmit,
+  onChange,
+  onCancel,
+  onSubmit,
+}: CustomIntegrationFormProps) {
+  const endpointLabel = form.kind === "mcp_server" ? "Server URL" : "Base URL";
+  const fieldPrefix = `custom-integration-${form.kind}`;
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Scope</p>
+        <div className="inline-flex rounded-md border border-border bg-background p-0.5">
+          {(["agent", "organization"] as const).map((scope) => (
+            <button
+              key={scope}
+              type="button"
+              className={cn(
+                "h-7 rounded px-2.5 text-xs font-medium transition-colors",
+                form.scope === scope
+                  ? "bg-muted text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              disabled={disabled}
+              onClick={() => onChange({ ...form, scope })}
+            >
+              {scope === "agent" ? "This agent" : "Organization"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-3">
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-display-name`}>Display name</label>
+          <Input
+            id={`${fieldPrefix}-display-name`}
+            value={form.displayName}
+            disabled={disabled}
+            onChange={(event) => onChange({ ...form, displayName: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-endpoint`}>{endpointLabel}</label>
+          <Input
+            id={`${fieldPrefix}-endpoint`}
+            value={form.endpointUrl}
+            disabled={disabled}
+            placeholder={form.kind === "mcp_server" ? "https://mcp.example.com" : "https://api.example.com"}
+            onChange={(event) => onChange({ ...form, endpointUrl: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-auth-header`}>Auth header</label>
+          <Input
+            id={`${fieldPrefix}-auth-header`}
+            value={form.authHeaderName}
+            disabled={disabled}
+            onChange={(event) => onChange({ ...form, authHeaderName: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-credential`}>Credential value</label>
+          <Input
+            id={`${fieldPrefix}-credential`}
+            type="password"
+            value={form.credentialValue}
+            disabled={disabled}
+            placeholder="Optional token or API key"
+            onChange={(event) => onChange({ ...form, credentialValue: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-tool-name`}>Tool name</label>
+          <Input
+            id={`${fieldPrefix}-tool-name`}
+            value={form.toolName}
+            disabled={disabled}
+            onChange={(event) => onChange({ ...form, toolName: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-tool-description`}>Tool description</label>
+          <Input
+            id={`${fieldPrefix}-tool-description`}
+            value={form.toolDescription}
+            disabled={disabled}
+            onChange={(event) => onChange({ ...form, toolDescription: event.target.value })}
+          />
+        </div>
+        <div className="space-y-1 text-xs font-medium text-muted-foreground">
+          <label htmlFor={`${fieldPrefix}-description`}>Notes</label>
+          <Textarea
+            id={`${fieldPrefix}-description`}
+            value={form.description}
+            disabled={disabled}
+            rows={2}
+            onChange={(event) => onChange({ ...form, description: event.target.value })}
+          />
+        </div>
+      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onCancel} disabled={disabled}>
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          onClick={onSubmit}
+          disabled={!canSubmit}
+          aria-label={`Connect ${customIntegrationKindLabel(form.kind)}`}
+        >
+          {disabled ? "Connecting" : "Connect"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+interface CustomIntegrationRowProps {
+  integration: CustomIntegrationSummary;
+  disabled: boolean;
+  onDisconnect: () => void;
+}
+
+function CustomIntegrationRow({ integration, disabled, onDisconnect }: CustomIntegrationRowProps) {
+  const enabledTools = integration.tools.filter((tool) => tool.enabled);
+  const Icon = integration.kind === "mcp_server" ? PlugZap : Braces;
+  return (
+    <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">{integration.displayName}</p>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              {customIntegrationKindLabel(integration.kind)}
+            </span>
+            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+              {customIntegrationScopeLabel(integration.scope)}
+            </span>
+            <span className={cn(
+              "rounded-md border px-1.5 py-0.5 text-xs",
+              integration.binding?.status === "active" && integration.status === "active"
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "border-border bg-muted text-muted-foreground",
+            )}>
+              {integration.binding?.status === "active" && integration.status === "active" ? "Connected" : "Disconnected"}
+            </span>
+          </div>
+          <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+            <IntegrationMeta label="Tools" value={enabledTools.length > 0 ? enabledTools.map((tool) => tool.rudderToolName).join(", ") : "No tools enabled"} />
+            <IntegrationMeta label="Credentials" value={integration.hasCredentialSecret ? "Credential stored" : "No credential"} />
+            <IntegrationMeta label="Updated" value={formatDateTime(integration.updatedAt)} />
+          </dl>
+        </div>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onDisconnect}
+        disabled={disabled || integration.binding?.status !== "active"}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        Disconnect
       </Button>
     </div>
   );

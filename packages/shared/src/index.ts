@@ -3,7 +3,7 @@ export {
   AGENT_ROLE_LABELS, AGENT_RUNTIME_TYPES, AGENT_RUN_CONCURRENCY_DEFAULT, AGENT_RUN_CONCURRENCY_MAX, AGENT_RUN_CONCURRENCY_MIN, AGENT_RUN_SCENES, AGENT_RUN_TARGET_TYPES, AGENT_STATUSES, APPROVAL_STATUSES, APPROVAL_TYPES, AUTH_BASE_URL_MODES, AUTOMATION_CATCH_UP_POLICIES, AUTOMATION_CONCURRENCY_POLICIES, AUTOMATION_OUTPUT_MODES, AUTOMATION_RUN_SOURCES, AUTOMATION_RUN_STATUSES, AUTOMATION_STATUSES, AUTOMATION_TRIGGER_KINDS,
   AUTOMATION_TRIGGER_SIGNING_MODES, BILLING_TYPES, BUDGET_INCIDENT_RESOLUTION_ACTIONS, BUDGET_INCIDENT_STATUSES, BUDGET_METRICS, BUDGET_SCOPE_TYPES, BUDGET_THRESHOLD_TYPES, BUDGET_WINDOW_KINDS, CALENDAR_EVENT_KINDS,
   CALENDAR_EVENT_STATUSES, CALENDAR_OWNER_TYPES, CALENDAR_SOURCE_MODES, CALENDAR_SOURCE_STATUSES, CALENDAR_SOURCE_TYPES, CALENDAR_VISIBILITIES, CHAT_CONTEXT_ENTITY_TYPES, CHAT_CONVERSATION_MUTABILITIES, CHAT_CONVERSATION_STATUSES,
-  CHAT_ISSUE_CREATION_MODES, CHAT_MESSAGE_KINDS, CHAT_MESSAGE_ROLES, CHAT_MESSAGE_STATUSES, DEFAULT_PROJECT_ICON, DEPLOYMENT_EXPOSURES, DEPLOYMENT_MODES, FINANCE_DIRECTIONS, FINANCE_EVENT_KINDS, FINANCE_UNITS, GOAL_LEVELS,
+  CHAT_ISSUE_CREATION_MODES, CHAT_MESSAGE_KINDS, CHAT_MESSAGE_ROLES, CHAT_MESSAGE_STATUSES, CUSTOM_INTEGRATION_BINDING_STATUSES, CUSTOM_INTEGRATION_KINDS, CUSTOM_INTEGRATION_SCOPES, CUSTOM_INTEGRATION_STATUSES, CUSTOM_INTEGRATION_TOOL_CALL_STATUSES, CUSTOM_INTEGRATION_TOOL_STATUSES, DEFAULT_PROJECT_ICON, DEPLOYMENT_EXPOSURES, DEPLOYMENT_MODES, FINANCE_DIRECTIONS, FINANCE_EVENT_KINDS, FINANCE_UNITS, GOAL_LEVELS,
   GOAL_STATUSES, HEARTBEAT_INVOCATION_SOURCES,
   HEARTBEAT_RUN_STATUSES, INSTANCE_USER_ROLES, INVITE_JOIN_TYPES, INVITE_TYPES, ISSUE_ORIGIN_KINDS, ISSUE_PRIORITIES, ISSUE_STATUSES, JOIN_REQUEST_STATUSES, JOIN_REQUEST_TYPES, LIVE_EVENT_TYPES, MEMBERSHIP_STATUSES, MESSENGER_CUSTOM_GROUP_EMOJI_ICONS, MESSENGER_FORK_GROUP_DEFAULT_ICON, MESSENGER_SYSTEM_THREAD_KINDS, MESSENGER_THREAD_KINDS, ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES,
   ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES, ORGANIZATION_RESOURCE_KINDS,
@@ -15,7 +15,7 @@ export {
   STORAGE_PROVIDERS, WAKEUP_REQUEST_STATUSES, WAKEUP_TRIGGER_DETAILS, type AgentAvatarBackgroundPresetId, type AgentIconName, type AgentIntegrationChatType, type AgentIntegrationDropReason, type AgentIntegrationOutboundStatus, type AgentIntegrationProvider, type AgentIntegrationProviderRegion, type AgentIntegrationStatus, type AgentIntegrationTransport, type AgentRole, type AgentRunScene, type AgentRunTargetType, type AgentRuntimeType, type AgentStatus, type ApprovalStatus, type ApprovalType, type AuthBaseUrlMode, type AutomationCatchUpPolicy, type AutomationConcurrencyPolicy, type AutomationOutputMode, type AutomationRunSource, type AutomationRunStatus, type AutomationStatus, type AutomationTriggerKind,
   type AutomationTriggerSigningMode, type BillingType, type BudgetIncidentResolutionAction, type BudgetIncidentStatus, type BudgetMetric, type BudgetScopeType, type BudgetThresholdType, type BudgetWindowKind, type CalendarEventKind,
   type CalendarEventStatus, type CalendarOwnerType, type CalendarSourceMode, type CalendarSourceStatus, type CalendarSourceType, type CalendarVisibility, type ChatContextEntityType, type ChatConversationMutability, type ChatConversationStatus,
-  type ChatIssueCreationMode, type ChatMessageKind, type ChatMessageRole, type ChatMessageStatus, type DeploymentExposure, type DeploymentMode, type FinanceDirection, type FinanceEventKind, type FinanceUnit, type GoalLevel,
+  type ChatIssueCreationMode, type ChatMessageKind, type ChatMessageRole, type ChatMessageStatus, type CustomIntegrationBindingStatus, type CustomIntegrationKind, type CustomIntegrationScope, type CustomIntegrationStatus, type CustomIntegrationToolCallStatus, type CustomIntegrationToolStatus, type DeploymentExposure, type DeploymentMode, type FinanceDirection, type FinanceEventKind, type FinanceUnit, type GoalLevel,
   type GoalStatus, type HeartbeatInvocationSource,
   type HeartbeatRunStatus, type InstanceUserRole, type InviteJoinType, type InviteType, type IssueOriginKind, type IssuePriority, type IssueStatus, type JoinRequestStatus, type JoinRequestType, type LiveEventType, type MembershipStatus, type MessengerSystemThreadKind, type MessengerThreadKind, type OrganizationIntelligenceProfilePurpose,
   type OrganizationIntelligenceProfileStatus, type OrganizationResourceKind,
@@ -32,6 +32,31 @@ export {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS
 } from "./types/workspace-backup.js";
+
+export type {
+  AgentCustomIntegrationBinding,
+  CustomIntegration,
+  CustomIntegrationSummary,
+  CustomIntegrationTool,
+  CustomIntegrationToolCall,
+  CustomIntegrationToolSummary
+} from "./types/custom-integration.js";
+
+export {
+  createCustomIntegrationSchema,
+  createCustomIntegrationToolCallSchema,
+  customIntegrationBindingStatusSchema,
+  customIntegrationKindSchema,
+  customIntegrationScopeSchema,
+  customIntegrationStatusSchema,
+  customIntegrationToolCallStatusSchema,
+  customIntegrationToolInputSchema,
+  customIntegrationToolStatusSchema,
+  updateCustomIntegrationBindingSchema,
+  type CreateCustomIntegration,
+  type CreateCustomIntegrationToolCall,
+  type UpdateCustomIntegrationBinding
+} from "./validators/custom-integration.js";
 
 
 export type {

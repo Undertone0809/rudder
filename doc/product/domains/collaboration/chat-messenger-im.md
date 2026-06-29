@@ -83,6 +83,10 @@ Why:
 - Chat is where humans clarify intent, run lightweight assistant turns, draft
   issue/automation proposals, and attach context before work becomes durable
   tracked execution.
+- Issue proposal drafting is operator-intent gated. A chat assistant may draft
+  an issue proposal only when the latest operator-authored user request
+  explicitly asks to create an issue, convert the chat to an issue, or draft an
+  issue proposal.
 
 Product model:
 
@@ -103,13 +107,19 @@ Flow:
 3. Server persists user message and context links.
 4. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
    streams/persists assistant messages.
-5. Chat can convert or propose conversion into issue/automation/approval work.
+5. Chat can convert or propose conversion into issue/automation/approval work
+   when the operator asks for that conversion/proposal path. The assistant must
+   not emit an issue proposal merely because the work is large, durable,
+   assignable, or issue-shaped.
 
 Invariants:
 
 - Chat messages must remain tied to their conversation and organization.
 - Chat proposals/structured payloads must not be confused with plain user
   instructions or automation run input.
+- Assistant-created issue proposals must be grounded in an explicit latest
+  operator-authored request for issue creation, chat-to-issue conversion, or
+  issue-proposal drafting.
 - Agent attribution is visible enough to navigate from message to run/agent.
 
 Evidence:
@@ -567,20 +577,27 @@ Product model:
 - Threads support read/unread state, previews, pin/archive/delete where the
   underlying thread type supports it, custom groups, and stable navigation.
 - Issue thread entries derive from issue comments/activity and read markers.
+- System-authored onboarding starter issues may be initialized with read
+  markers because they are seeded starter content, not fresh operator-directed
+  activity.
 
 Flow:
 
 1. Domain event or message creates/updates a Messenger-relevant thread.
 2. Messenger service computes preview, ordering, unread state, group membership,
    and attention badge state.
-3. Opening a thread clears relevant read markers when appropriate.
-4. Actions such as pin/archive/delete route to the owning chat/thread behavior.
+3. Onboarding seed may create issue threads and write read markers at seed time
+   so starter work does not appear as new unread attention.
+4. Opening a thread clears relevant read markers when appropriate.
+5. Actions such as pin/archive/delete route to the owning chat/thread behavior.
 
 Invariants:
 
 - Messenger must cite or route to owning domain contracts; it must not redefine
   issue, approval, run, or automation state.
 - Unread/attention counts must be organization-scoped and user-scoped.
+- Seeded onboarding issue threads must remain read for the seeded operator
+  until later issue activity occurs after the seed read marker.
 
 Evidence:
 
@@ -619,6 +636,8 @@ Product model:
   attention count temporarily drops to zero. The visible hydrated member may be
   absent while the row is empty, but the group must not silently lose the
   membership.
+- Onboarding may create or reuse an operator-scoped `Getting Started` custom
+  group and add seeded starter issue threads such as `issue:<id>` to it.
 - Custom group titles can be explicit operator titles or Fast
   Intelligence-generated titles. Automatic group title generation only runs
   when a drag/drop merge creates a new group from existing Messenger members.
@@ -628,7 +647,8 @@ Product model:
 Flow:
 
 1. The operator creates a custom group, moves a Messenger item into a group, or
-   drags an item between groups.
+   drags an item between groups. Onboarding seed may also create the
+   `Getting Started` group for starter work.
 2. Rudder writes the operator-scoped membership using the item's Messenger
    thread key.
 3. When drag/drop merges loose members into a new group, Rudder sends the
@@ -656,14 +676,17 @@ Invariants:
 - Grouped issue rows must clear the same issue read markers as loose issue
   rows when opened. Split issue rows and aggregate issue rows must not require a
   different user gesture to become read.
+- Onboarding-created `Getting Started` group entries must preserve seed order,
+  hydrate as the same split issue summaries as loose `issue:<id>` rows, and
+  start with unread count and attention state cleared for the seeded operator.
 - Grouped chat rows must clear the same chat read state as loose chat rows when
   opened.
 - A grouped member's read/unread badge, unread count, attention state, preview,
   and last-activity ordering must not diverge from the source Messenger
   summary after local optimistic updates settle.
-- Loose pinned threads render first. Pinned custom groups render immediately
-  after that top pinned-thread section. Unpinned groups and loose unpinned
-  issue, chat, approval, and synthetic attention rows follow.
+- Pinned custom groups render inside the `Pinned` section immediately under
+  the section header and before loose pinned threads. Unpinned groups and loose
+  unpinned issue, chat, approval, and synthetic attention rows follow.
 - Pinning a custom group does not pin every member individually, and pinning a
   member does not remove it from its group.
 - Removing an item from a group returns that item to the loose Messenger
@@ -692,7 +715,8 @@ Evidence:
   regenerated output is unusable.
 - Messenger E2E covers aggregate issue grouping, split issue grouping,
   synthetic membership, drag/drop grouping, row-action group creation, and
-  custom group pin/order behavior.
+  custom group pin/order behavior, including pinned groups rendering above
+  loose pinned threads after reload.
 
 ## IM.FEISHU.001
 
@@ -720,6 +744,9 @@ Product model:
   Feishu identity to the Rudder user for the new integration.
 - Active Feishu integrations use long-connection chat by default. Operators may
   disable that runtime only with an explicit environment override.
+- Newly registered Feishu/Lark apps request message send, message reaction,
+  self-management, bot menu, quick-command, and message receive permissions
+  needed by the setup, inbound, outbound, and working-reaction flows.
 - Group messages require explicit bot addressing unless provider policy says
   otherwise.
 - Feishu-bound conversations carry provider source metadata into Messenger
@@ -758,6 +785,28 @@ Inbound flow:
 7. Messenger summary metadata records that the conversation came from Feishu,
    and Feishu-created chat runs persist matching source metadata.
 8. Outbound placeholder/status is recorded and sent to Feishu.
+
+Accepted reply flow:
+
+1. A normal accepted Feishu message appends the inbound user chat message and
+   returns from event handling without waiting for the assistant reply to finish.
+2. Rudder claims a chat generation for the Feishu-bound conversation before
+   starting the background assistant reply.
+3. When the Feishu sender supports reactions, Rudder adds an `OnIt` working
+   reaction to the inbound Feishu message while the background reply is running.
+4. The background task invokes the chat assistant without streaming to Rudder UI,
+   persists the assistant message, sends or patches the final Feishu outbound
+   reply, links the assistant message to the chat run, and marks the generation
+   completed.
+5. If the reply is stopped or aborted before a durable final response exists,
+   Rudder marks the generation stopped and removes any assistant message created
+   after the stop.
+6. If setup or reply completion fails after the message was accepted, Rudder
+   marks the generation failed and, when possible, sends a safe fallback response
+   back to Feishu.
+7. Rudder removes the `OnIt` working reaction after reply completion, stop, or
+   failure. Reaction add/remove failures are logged but must not fail the
+   Feishu message handling path.
 
 Outbound flow:
 
@@ -799,6 +848,15 @@ Invariants:
   blocked or hidden for the bound source conversation.
 - Feishu inbound dispatch and Feishu runtime outbound delivery remain the only
   paths that write back to the external Feishu chat binding.
+- Accepted Feishu event handling must not block behind the full assistant reply;
+  `/stop` and other follow-up commands must be able to arrive while the reply is
+  still generating.
+- The working `OnIt` reaction is a transient provider-side progress signal. It
+  must not be treated as durable Rudder message state, and failure to add/remove
+  it must not hide or corrupt the persisted chat/run/outbound evidence.
+- Background accepted-reply generation must end in a terminal generation state:
+  completed, failed, or stopped. Stopped replies must not leave a final assistant
+  message or outbound final response that was created after the stop signal.
 - Forked conversations from Feishu-bound sources must not carry
   `sourceMetadata` or create `agentIntegrationOutboundMessages` for future local
   messages.
@@ -814,7 +872,11 @@ Evidence:
 - Feishu DB/runtime dispatcher tests cover setup-session completion,
   credential secrecy, revoked integration reactivation, installer auto-binding,
   SDK normalized long-connection events, hydrated chat message attachments,
-  source metadata propagation, and per-event runtime failure containment.
+  source metadata propagation, per-event runtime failure containment, background
+  accepted-reply handling, stopped reply cleanup, and `OnIt` working reaction
+  add/remove behavior.
+- Feishu app registration tests cover the permissions requested for message,
+  reaction, self-management, bot menu, quick-command, and receive-event flows.
 - Agent Detail Feishu E2E covers setup-session launcher flow, polling,
   persisted integration state, and credential redaction with a mocked Feishu
   app-registration provider.

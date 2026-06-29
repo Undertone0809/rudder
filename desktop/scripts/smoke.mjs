@@ -20,13 +20,11 @@ const smokeMode = smokeModeArg?.slice("--mode=".length) ?? process.env.RUDDER_DE
 const smokeScenario = smokeScenarioArg?.slice("--scenario=".length) ?? process.env.RUDDER_DESKTOP_SMOKE_SCENARIO ?? null;
 const tmpRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-desktop-smoke-"));
 const REQUIRED_BUNDLED_SKILLS = [
-  "conversation-to-skill",
   "para-memory-files",
   "rudder",
   "rudder-create-agent",
   "rudder-create-plugin",
   "skill-creator",
-  "skill-optimizer",
 ];
 console.log(`[desktop-smoke] temp root: ${tmpRoot}`);
 

@@ -426,6 +426,42 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(mockAgentService.getInternalById).not.toHaveBeenCalled();
   });
 
+  it("points process chat agents to model configuration instead of runtime details", async () => {
+    const svc = chatAssistantService({} as any);
+    mockAgentService.getInternalById.mockResolvedValueOnce({
+      id: "agent-1",
+      orgId: "organization-1",
+      name: "Navigator",
+      status: "idle",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      metadata: null,
+    });
+
+    const availability = await svc.getChatAssistantAvailability(makeConversation({
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Navigator",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "process",
+        model: null,
+        available: false,
+        error: null,
+      },
+    }));
+
+    expect(availability).toEqual({
+      sourceType: "agent",
+      sourceLabel: "Navigator",
+      runtimeAgentId: "agent-1",
+      agentRuntimeType: "process",
+      model: null,
+      available: false,
+      error: "The current user has not configured a chat model yet.",
+    });
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
+
   it("refuses to generate a reply without a preferred agent", async () => {
     const svc = chatAssistantService({} as any);
 
@@ -1105,6 +1141,23 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("include labelIds with at least one best-fit label id");
     expect(prompt).toContain('"labelIds": [');
     expect(prompt).toContain("assigneeUnassignedReason");
+  });
+
+  it("instructs chat agents not to propose issues unless the operator asks for issue creation", async () => {
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("Do not emit issue_proposal just because work is large");
+    expect(prompt).toContain("the latest operator-authored user request explicitly asks");
+    expect(prompt).toContain("creating an issue");
+    expect(prompt).toContain("converting the chat to an issue");
   });
 
   it("rejects issue proposal results without an explicit owner decision", () => {

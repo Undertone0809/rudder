@@ -21,11 +21,14 @@ import {
   agentSkillEnableSchema,
   agentSkillSyncSchema,
   connectAgentIntegrationSchema,
+  createCustomIntegrationSchema,
+  createCustomIntegrationToolCallSchema,
   deriveAgentUrlKey,
   isUuidLike,
   organizationSkillCreateSchema,
   resetAgentSessionSchema,
   testAgentRuntimeEnvironmentSchema,
+  updateCustomIntegrationBindingSchema,
   type AgentIntegrationProviderRegion,
   type AgentIntegrationSetupSession,
   type AgentSkillAnalytics,
@@ -67,6 +70,7 @@ import {
 } from "../services/index.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { agentIntegrationService, summarizeAgentIntegration } from "../services/integrations/agent-integrations.js";
+import { customIntegrationService } from "../services/integrations/custom-integrations.js";
 import type { FeishuAppRegistrationResult } from "../services/integrations/feishu/app-registration.js";
 import { defaultFeishuAppRegistrationSessions } from "../services/integrations/feishu/app-registration.js";
 import {
@@ -249,6 +253,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   const assets = assetService(db);
   const access = accessService(db);
   const integrationsSvc = agentIntegrationService(db);
+  const customIntegrationsSvc = customIntegrationService(db);
   const feishuAppRegistrationSessions = defaultFeishuAppRegistrationSessions;
   const feishuUserBindings = feishuIntegrationUserBindingService(db);
   const approvalsSvc = approvalService(db);
@@ -647,6 +652,15 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const actorAgent = await svc.getById(req.actor.agentId);
     if (!actorAgent || actorAgent.orgId !== targetAgent.orgId) {
       throw forbidden("Agent key cannot access another organization");
+    }
+  }
+
+  async function assertCanAccessAgentCustomIntegrations(req: Request, targetAgent: { id: string; orgId: string }) {
+    assertCompanyAccess(req, targetAgent.orgId);
+    if (req.actor.type === "board") return;
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+    if (req.actor.agentId !== targetAgent.id) {
+      throw forbidden("Agent keys can only access custom integrations for their own agent");
     }
   }
 
@@ -1688,6 +1702,87 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     });
     res.json(summarizeAgentIntegration(revoked));
   });
+
+  router.get("/agents/:id/custom-integrations", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanAccessAgentCustomIntegrations(req, agent);
+    res.json(await customIntegrationsSvc.listForAgent(agent.orgId, agent.id));
+  });
+
+  router.post("/agents/:id/custom-integrations", validate(createCustomIntegrationSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanAccessAgentCustomIntegrations(req, agent);
+    const actor = getActorInfo(req);
+    const created = await customIntegrationsSvc.createForAgent(agent.orgId, agent.id, req.body, {
+      userId: actor.actorType === "user" ? actor.actorId : null,
+      agentId: actor.actorType === "agent" ? actor.actorId : null,
+    });
+    res.status(201).json(created);
+  });
+
+  router.patch(
+    "/agents/:id/custom-integrations/:integrationId/binding",
+    validate(updateCustomIntegrationBindingSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const integrationId = req.params.integrationId as string;
+      const agent = await svc.getById(id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      await assertCanAccessAgentCustomIntegrations(req, agent);
+      res.json(await customIntegrationsSvc.updateBindingForAgent(agent.orgId, agent.id, integrationId, req.body));
+    },
+  );
+
+  router.delete("/agents/:id/custom-integrations/:integrationId", async (req, res) => {
+    const id = req.params.id as string;
+    const integrationId = req.params.integrationId as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanAccessAgentCustomIntegrations(req, agent);
+    const actor = getActorInfo(req);
+    const revoked = await customIntegrationsSvc.revokeForAgent(agent.orgId, agent.id, integrationId, {
+      userId: actor.actorType === "user" ? actor.actorId : null,
+      agentId: actor.actorType === "agent" ? actor.actorId : null,
+    });
+    if (!revoked) {
+      res.status(404).json({ error: "Custom integration not found" });
+      return;
+    }
+    res.json(revoked);
+  });
+
+  router.post(
+    "/agents/:id/custom-integrations/:integrationId/tool-calls",
+    validate(createCustomIntegrationToolCallSchema),
+    async (req, res) => {
+      const id = req.params.id as string;
+      const agent = await svc.getById(id);
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      await assertCanAccessAgentCustomIntegrations(req, agent);
+      const integrationId = req.params.integrationId as string;
+      const call = await customIntegrationsSvc.recordToolCall(agent.orgId, agent.id, integrationId, req.body);
+      res.status(202).json(call);
+    },
+  );
 
   router.get("/agents/:id/config-revisions", async (req, res) => {
     const id = req.params.id as string;

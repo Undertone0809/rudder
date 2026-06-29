@@ -812,6 +812,20 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain(">@PAP-123 auth flow</a>");
   });
 
+  it("decodes HTML entity spacing in issue mention labels", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[ZST-646&#x20;改回 AGENT HOME](${buildIssueMentionHref("issue-646", "ZST-646")}) 看看这个`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+    const mention = container.querySelector('[data-mention-kind="issue"]');
+
+    expect(mention?.textContent).toBe("ZST-646 改回 AGENT HOME");
+    expect(container.textContent).not.toContain("&#x20;");
+  });
+
   it("prefixes special mention links with the active organization route", () => {
     window.history.pushState({}, "", "/ZST/issues/ZST-559");
 

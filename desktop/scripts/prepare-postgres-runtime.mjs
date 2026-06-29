@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const POSTGRES_VERSION = "18.4";
 const runtimeDirName = `postgres-${POSTGRES_VERSION}`;
@@ -20,6 +21,9 @@ function executableName(name) {
 }
 
 function archiveUrl() {
+  if (process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL) {
+    return process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL;
+  }
   if (platform === "win32") {
     if (arch !== "x64") throw new Error(`PostgreSQL ${POSTGRES_VERSION} Windows payload is only configured for x64; got ${arch}`);
     return `https://get.enterprisedb.com/postgresql/postgresql-${POSTGRES_VERSION}-1-windows-x64-binaries.zip`;
@@ -38,7 +42,18 @@ async function isCompleteBinDir(candidateBinDir) {
       return false;
     }
   }
-  return true;
+  for (const candidatePath of [
+    path.join(candidateBinDir, "..", "share", "postgresql", "postgres.bki"),
+    path.join(candidateBinDir, "..", "share", "postgres.bki"),
+  ]) {
+    try {
+      await stat(candidatePath);
+      return true;
+    } catch {
+      // Try the next supported PostgreSQL archive layout.
+    }
+  }
+  return false;
 }
 
 function verifyVersion(candidateBinDir) {
@@ -65,7 +80,35 @@ async function findBinDir(rootDir) {
   return null;
 }
 
+async function materializeSymlinks(currentDir) {
+  const entries = await readdir(currentDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const entryPath = path.join(currentDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      const resolvedPath = await realpath(entryPath);
+      const resolvedStats = await stat(resolvedPath);
+      await rm(entryPath, { recursive: true, force: true });
+      if (resolvedStats.isDirectory()) {
+        await cp(resolvedPath, entryPath, { recursive: true, dereference: true });
+        await materializeSymlinks(entryPath);
+      } else {
+        await copyFile(resolvedPath, entryPath);
+      }
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      await materializeSymlinks(entryPath);
+    }
+  }
+}
+
 async function downloadArchive(url, targetPath) {
+  if (url.startsWith("file://")) {
+    await copyFile(fileURLToPath(url), targetPath);
+    return;
+  }
+
   const abortController = new AbortController();
   const timeout = Number.isFinite(downloadTimeoutMs) && downloadTimeoutMs > 0
     ? setTimeout(() => abortController.abort(), downloadTimeoutMs)
@@ -115,7 +158,7 @@ async function main() {
   }
 
   const url = archiveUrl();
-  const workDir = path.join(runtimeRoot, ".download");
+  const workDir = path.join(path.dirname(runtimeRoot), `.${path.basename(runtimeRoot)}.download-${process.pid}`);
   const archivePath = path.join(workDir, `postgresql-${POSTGRES_VERSION}.zip`);
   const extractDir = path.join(workDir, "extract");
   await rm(workDir, { recursive: true, force: true });
@@ -132,17 +175,28 @@ async function main() {
   }
   verifyVersion(extractedBinDir);
 
-  await rm(binDir, { recursive: true, force: true });
-  await mkdir(path.dirname(binDir), { recursive: true });
+  const extractedRuntimeRoot = path.dirname(extractedBinDir);
+  await rm(runtimeRoot, { recursive: true, force: true });
+  await mkdir(runtimeRoot, { recursive: true });
   const copyResult = spawnSync(process.execPath, [
     "-e",
-    "require('node:fs').cpSync(process.argv[1], process.argv[2], { recursive: true, dereference: true })",
-    extractedBinDir,
-    binDir,
+    [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "for (const name of ['bin', 'lib', 'share']) {",
+      "  const source = path.join(process.argv[1], name);",
+      "  if (fs.existsSync(source)) fs.cpSync(source, path.join(process.argv[2], name), { recursive: true, dereference: true });",
+      "}",
+    ].join(" "),
+    extractedRuntimeRoot,
+    runtimeRoot,
   ], { encoding: "utf8" });
   if (copyResult.status !== 0) {
     throw new Error(`failed to cache PostgreSQL runtime payload: ${copyResult.stderr || copyResult.stdout}`);
   }
+  await materializeSymlinks(path.join(runtimeRoot, "bin"));
+  await materializeSymlinks(path.join(runtimeRoot, "lib"));
+  await materializeSymlinks(path.join(runtimeRoot, "share"));
   await rm(workDir, { recursive: true, force: true });
 
   console.log(binDir);

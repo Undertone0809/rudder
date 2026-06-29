@@ -321,6 +321,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       await expectNoOperatorHomeSentinelsInManagedHome(managedPiHome);
       expect(capture.argv).toEqual(expect.arrayContaining(["--print", "--mode", "json"]));
       expect(capture.argv).not.toContain("rpc");
+      expect(capture.argv).toEqual(expect.arrayContaining(["--no-skills", "--skill", path.join(managedPiAgentDir, "skills")]));
       expect(capture.argv).toEqual(expect.arrayContaining(["--skill", path.join(managedPiAgentDir, "skills")]));
       expect(capture.argv.at(-1)).toContain("Follow the rudder heartbeat.");
       expect(capture.stdin).toBe("");
@@ -333,6 +334,12 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(systemPrompt).toContain("# Tacit Memory");
       expect(systemPrompt).toContain("## Your Current Automations");
       expect(systemPrompt).toContain("# Rudder Heartbeat Instruction");
+      expect(systemPrompt).toContain("# Enabled Rudder Skills");
+      expect(systemPrompt).toContain("Only skills listed in this section are enabled by Rudder for this run.");
+      expect(systemPrompt).toContain("Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes.");
+      expect(systemPrompt).toContain("If exactly one skill is listed, answer exactly that runtime skill name and nothing else.");
+      expect(systemPrompt).toContain("- ascii-heart");
+      expect(systemPrompt).not.toContain("- ascii-heart: ascii-heart");
       expect(systemPrompt.match(/## Your Current Automations/g)).toHaveLength(1);
       expect(systemPrompt.indexOf("# Agent Instructions")).toBeLessThan(systemPrompt.indexOf("# Agent Soul"));
       expect(systemPrompt.indexOf("# Agent Soul")).toBeLessThan(systemPrompt.indexOf("# Agent Tools"));
@@ -346,6 +353,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(agentInstructionStack).toContain("# Agent Soul");
       expect(agentInstructionStack).toContain("# Agent Tools");
       expect(agentInstructionStack).toContain("# Tacit Memory");
+      expect(agentInstructionStack).toContain("# Enabled Rudder Skills");
       expect(agentInstructionStack).not.toContain("## Agent Instruction:");
       expect(agentInstructionStack).toContain("## Your Current Automations");
       expect(agentInstructionStack).not.toContain("[startup context omitted from persisted prompt]");
@@ -356,6 +364,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
+      expect(promptMetrics.skillBoundaryPromptChars).toBeGreaterThan(0);
       expect(loadedSkills).toEqual([
         expect.objectContaining({
           key: "ascii-heart",
@@ -478,6 +487,122 @@ describe("pi execute", { timeout: 20_000 }, () => {
       else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
       if (previousLocalEnv === undefined) delete process.env.RUDDER_LOCAL_ENV;
       else process.env.RUDDER_LOCAL_ENV = previousLocalEnv;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prepares managed OpenCode anonymous model config for Pi without writing operator Pi config", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-opencode-models-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "pi");
+    const capturePath = path.join(root, "capture.json");
+    const operatorModelsPath = path.join(root, ".pi", "agent", "models.json");
+    const operatorSettingsPath = path.join(root, ".pi", "agent", "settings.json");
+    const managedPiHome = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "pi-home",
+    );
+    const managedPiAgentDir = path.join(managedPiHome, ".pi", "agent");
+    const managedModelsPath = path.join(managedPiAgentDir, "models.json");
+    const managedSettingsPath = path.join(managedPiAgentDir, "settings.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(operatorModelsPath), { recursive: true });
+    await fs.writeFile(
+      operatorModelsPath,
+      JSON.stringify({
+        providers: {
+          privateProvider: { apiKey: "PRIVATE_OPERATOR_KEY" },
+        },
+      }),
+      "utf8",
+    );
+    await fs.writeFile(operatorSettingsPath, JSON.stringify({ packages: ["operator-only-package"] }), "utf8");
+    await writeFakePiCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    const previousRudderHome = process.env.RUDDER_HOME;
+    const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+    const previousOpenCodeApiKey = process.env.OPENCODE_API_KEY;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+    process.env.RUDDER_HOME = path.join(root, ".rudder");
+    process.env.RUDDER_INSTANCE_ID = "default";
+    delete process.env.OPENCODE_API_KEY;
+
+    try {
+      const result = await execute({
+        runId: "run-pi-opencode-models",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Pi Agent",
+          agentRuntimeType: "pi",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "opencode/deepseek-v4-flash-free",
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv).toEqual(expect.arrayContaining(["--provider", "opencode", "--model", "deepseek-v4-flash-free"]));
+      expect((await fs.lstat(managedModelsPath)).isSymbolicLink()).toBe(false);
+      const managedModels = JSON.parse(await fs.readFile(managedModelsPath, "utf8"));
+      expect(managedModels).toEqual({
+        providers: {
+          opencode: {
+            apiKey: "RUDDER_OPENCODE_ANONYMOUS",
+            authHeader: false,
+            headers: {
+              Authorization: "",
+            },
+          },
+        },
+      });
+      const operatorModels = JSON.parse(await fs.readFile(operatorModelsPath, "utf8"));
+      expect(operatorModels).toEqual({
+        providers: {
+          privateProvider: { apiKey: "PRIVATE_OPERATOR_KEY" },
+        },
+      });
+      await expect(fs.lstat(managedSettingsPath)).rejects.toMatchObject({ code: "ENOENT" });
+      const operatorSettings = JSON.parse(await fs.readFile(operatorSettingsPath, "utf8"));
+      expect(operatorSettings).toEqual({ packages: ["operator-only-package"] });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
+      if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+      if (previousOpenCodeApiKey === undefined) delete process.env.OPENCODE_API_KEY;
+      else process.env.OPENCODE_API_KEY = previousOpenCodeApiKey;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

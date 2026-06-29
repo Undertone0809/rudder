@@ -28,7 +28,7 @@ Rudder does not assume every lesson is automatically promoted into a new skill o
 
 The most useful way to work with agents is closer to the way humans coordinate with each other.
 
-People do not operate through one giant shared prompt. They work through shared goals, explicit roles, durable work objects, context attached to the task, clear handoffs, and escalation paths when judgment or approval is needed. Teams also need visibility: what is moving, what is blocked, what it costs, and where intervention matters.
+People work through shared goals, explicit roles, durable work objects, context attached to the task, clear handoffs, and escalation paths when judgment or approval is needed. Teams also need visibility: what is moving, what is blocked, what it costs, and where intervention matters.
 
 Rudder turns those coordination patterns into product primitives for agent teams:
 

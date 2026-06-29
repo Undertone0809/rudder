@@ -19,6 +19,13 @@ function postgresExecutableName(
   return platform === "win32" ? `${baseName}.exe` : baseName;
 }
 
+function postgresTemplateCandidates(binDir: string): string[] {
+  return [
+    path.join(binDir, "..", "share", "postgresql", "postgres.bki"),
+    path.join(binDir, "..", "share", "postgres.bki"),
+  ];
+}
+
 function isCompletePostgresBinDir(binDir: string, options: {
   platform?: NodeJS.Platform;
   validateVersion?: boolean;
@@ -27,6 +34,7 @@ function isCompletePostgresBinDir(binDir: string, options: {
   for (const binary of ["initdb", "pg_ctl", "postgres"] as const) {
     if (!fs.existsSync(path.join(binDir, postgresExecutableName(binary, platform)))) return false;
   }
+  if (!postgresTemplateCandidates(binDir).some((candidatePath) => fs.existsSync(candidatePath))) return false;
   if (options.validateVersion === false) return true;
   try {
     const postgresBinary = path.join(binDir, postgresExecutableName("postgres", platform));
