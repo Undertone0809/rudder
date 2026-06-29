@@ -161,8 +161,8 @@ export function InstanceGeneralSettings() {
       <SettingsDivider />
 
       <SettingsSection title={t("general.basics.title")}>
-        <div className="overflow-hidden rounded-[calc(var(--radius-md)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_58%,transparent)]">
-          <div className="space-y-3.5 px-3 py-3.5">
+        <div>
+          <div className="space-y-3.5 pb-4">
             <div className="text-sm font-medium text-foreground">{t("general.language.title")}</div>
             <div className="flex flex-wrap gap-2.5">
               <SettingsChoiceCard
@@ -195,7 +195,7 @@ export function InstanceGeneralSettings() {
           <SettingsRow
             title={t("general.productTour.title")}
             description={t("general.productTour.description")}
-            className="px-3 py-4"
+            className="pt-4"
             action={
               <Button
                 type="button"

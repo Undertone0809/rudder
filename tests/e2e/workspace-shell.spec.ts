@@ -1584,7 +1584,13 @@ test.describe("Workspace shell", () => {
 
     await expect(modal).toBeVisible();
     await expect(modalSidebar).toBeVisible();
-    await expect(page.getByText("Choose the language used across the board UI for this Rudder instance.")).toBeVisible();
+    await expect(modal.getByText("Language", { exact: true })).toBeVisible();
+    await expect(modal.getByText("Default product language", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        "Choose the language used across the board UI for this Rudder instance.",
+      ),
+    ).toHaveCount(0);
     await expect(
       page.getByText(
         "This is an instance-wide UI language. It applies to the board shell and settings pages for everyone using this instance.",
@@ -1613,7 +1619,8 @@ test.describe("Workspace shell", () => {
     await updateLocaleResponse;
 
     await expect(modal.getByRole("heading", { name: "通用", exact: true })).toBeVisible();
-    await expect(modal.getByText("这些系统偏好会应用到当前设备上的控制台界面和开发者工具。")).toBeVisible();
+    await expect(modal.getByText("这台设备上的核心应用偏好。")).toBeVisible();
+    await expect(modal.getByText("中文界面", { exact: true })).toBeVisible();
     await expect(modal.getByText("Choose the language used across the board UI for this Rudder instance.")).toHaveCount(0);
     await expect(
       modal.getByText("这是实例级界面语言，会影响所有使用这个实例的用户看到的控制台外壳和设置页面。"),
