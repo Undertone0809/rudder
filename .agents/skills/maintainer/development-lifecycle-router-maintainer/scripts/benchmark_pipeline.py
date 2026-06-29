@@ -36,24 +36,28 @@ SKILL_REL = SKILL_DIR.relative_to(REPO_ROOT)
 
 CHECKS = [
     {
-        "name": "entrypoint_names_full_development_loop",
+        "name": "entrypoint_uses_writing_skills_template",
         "files": ["SKILL.md"],
         "patterns": [
-            r"implementation, writer checks, verifier, final reviewers, reconciliation, and\s+handoff",
-            r"Development work enters `spawn-required` mode by default",
-            r"spawn availability probe",
-            r"spawned verifier",
-            r"spawned final reviewer",
+            r"## Overview",
+            r"## When To Use",
+            r"## Core Pattern",
+            r"## Quick Reference",
+            r"## Implementation",
+            r"## Common Mistakes",
         ],
     },
     {
-        "name": "entrypoint_blocks_complete_handoff_without_spawn_gate",
+        "name": "entrypoint_stays_thin_but_names_gate_contract",
         "files": ["SKILL.md"],
         "patterns": [
-            r"the user\s+does not need to separately ask for subagents, review, or verification",
+            r"description: \"Use when a Rudder development request has an unclear lifecycle stage or owner",
+            r"This skill is a thin router",
+            r"Load only the reference file needed for that route",
+            r"spawned verifier black-box acceptance",
+            r"final spawned reviewer gate",
             r"blocked: spawned verifier/reviewer unavailable",
-            r"do not claim complete handoff, commit/push readiness, or review pass",
-            r"author-run tests, CI, screenshots, self-review, or serial personas",
+            r"references/verification-review\.md",
         ],
     },
     {
