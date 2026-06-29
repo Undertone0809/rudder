@@ -100,6 +100,9 @@ Product model:
 
 - Onboarding can create or select organization, seed starter context, expose
   invite/onboarding instructions, and guide runtime configuration.
+- Getting Started onboarding seed creates starter project/issues and mirrors
+  those issue threads into the operator's Messenger directory as a grouped,
+  already-read starter set.
 - Invite landing surfaces can show onboarding skill/text instruction links for
   external agents.
 
@@ -108,13 +111,19 @@ Flow:
 1. Fresh user or invited actor enters onboarding/invite route.
 2. Server exposes safe onboarding metadata and required setup state.
 3. UI guides organization/agent/runtime setup.
-4. User lands in the organization work surface with starter work or clear next
+4. Server seeds starter work when needed, including any Messenger grouping and
+   read-state markers required for the starter set.
+5. User lands in the organization work surface with starter work or clear next
    action.
 
 Invariants:
 
 - Onboarding should end in a real Rudder work surface, not a detached marketing
   page.
+- Seeded Getting Started issues are starter content, not new operator
+  attention. They should appear under a `Getting Started` Messenger custom
+  group for the operator and should not create unread Messenger or sidebar
+  badge debt at first landing.
 - Auth/deployment mode constraints remain respected.
 
 Evidence:

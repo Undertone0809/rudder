@@ -567,20 +567,27 @@ Product model:
 - Threads support read/unread state, previews, pin/archive/delete where the
   underlying thread type supports it, custom groups, and stable navigation.
 - Issue thread entries derive from issue comments/activity and read markers.
+- System-authored onboarding starter issues may be initialized with read
+  markers because they are seeded starter content, not fresh operator-directed
+  activity.
 
 Flow:
 
 1. Domain event or message creates/updates a Messenger-relevant thread.
 2. Messenger service computes preview, ordering, unread state, group membership,
    and attention badge state.
-3. Opening a thread clears relevant read markers when appropriate.
-4. Actions such as pin/archive/delete route to the owning chat/thread behavior.
+3. Onboarding seed may create issue threads and write read markers at seed time
+   so starter work does not appear as new unread attention.
+4. Opening a thread clears relevant read markers when appropriate.
+5. Actions such as pin/archive/delete route to the owning chat/thread behavior.
 
 Invariants:
 
 - Messenger must cite or route to owning domain contracts; it must not redefine
   issue, approval, run, or automation state.
 - Unread/attention counts must be organization-scoped and user-scoped.
+- Seeded onboarding issue threads must remain read for the seeded operator
+  until later issue activity occurs after the seed read marker.
 
 Evidence:
 
@@ -619,6 +626,8 @@ Product model:
   attention count temporarily drops to zero. The visible hydrated member may be
   absent while the row is empty, but the group must not silently lose the
   membership.
+- Onboarding may create or reuse an operator-scoped `Getting Started` custom
+  group and add seeded starter issue threads such as `issue:<id>` to it.
 - Custom group titles can be explicit operator titles or Fast
   Intelligence-generated titles. Automatic group title generation only runs
   when a drag/drop merge creates a new group from existing Messenger members.
@@ -628,7 +637,8 @@ Product model:
 Flow:
 
 1. The operator creates a custom group, moves a Messenger item into a group, or
-   drags an item between groups.
+   drags an item between groups. Onboarding seed may also create the
+   `Getting Started` group for starter work.
 2. Rudder writes the operator-scoped membership using the item's Messenger
    thread key.
 3. When drag/drop merges loose members into a new group, Rudder sends the
@@ -656,6 +666,9 @@ Invariants:
 - Grouped issue rows must clear the same issue read markers as loose issue
   rows when opened. Split issue rows and aggregate issue rows must not require a
   different user gesture to become read.
+- Onboarding-created `Getting Started` group entries must preserve seed order,
+  hydrate as the same split issue summaries as loose `issue:<id>` rows, and
+  start with unread count and attention state cleared for the seeded operator.
 - Grouped chat rows must clear the same chat read state as loose chat rows when
   opened.
 - A grouped member's read/unread badge, unread count, attention state, preview,
