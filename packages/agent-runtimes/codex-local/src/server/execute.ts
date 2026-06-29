@@ -154,12 +154,7 @@ function renderCodexRudderSkillBoundaryPrompt(
   loadedSkills: Array<{ key: string; runtimeName?: string | null; name?: string | null }>,
 ): string {
   const skillLines = loadedSkills.length > 0
-    ? loadedSkills.map((entry) => {
-        const label = entry.name && entry.name !== entry.runtimeName
-          ? `${entry.runtimeName ?? entry.key} (${entry.name})`
-          : entry.runtimeName ?? entry.key;
-        return `- ${label}: ${entry.key}`;
-      })
+    ? loadedSkills.map((entry) => `- ${entry.runtimeName ?? entry.key}`)
     : ["- None. No optional Rudder skills are enabled for this run."];
 
   return [
@@ -167,7 +162,7 @@ function renderCodexRudderSkillBoundaryPrompt(
     "",
     "Rudder is the source of truth for runtime skill enablement.",
     "Only skills listed in this section are enabled by Rudder for this run. Codex built-in/provider-native skills, repo instructions, host-global skills, and the current Codex client session may expose other capabilities, but they are not Rudder-enabled skills and must not be described as this agent's Rudder skills unless listed here.",
-    "When the user asks what skills are enabled, loaded, or available in Rudder, answer from this section and say provider-native Codex skills are separate if relevant.",
+    "When the user asks what skills are enabled, loaded, available, or what skills you have in Rudder, answer with only the runtime skill names listed in this section. Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes. If exactly one skill is listed, answer exactly that runtime skill name and nothing else. Do not list, summarize, or explain provider-native Codex skills, repo instructions, host-global skills, or current-session capabilities in that answer.",
     "",
     ...skillLines,
   ].join("\n");

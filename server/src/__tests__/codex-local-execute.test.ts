@@ -1747,7 +1747,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.prompt).toContain("# Tacit Memory");
       expect(capture.prompt).toContain("# Enabled Rudder Skills");
       expect(capture.prompt).toContain("Only skills listed in this section are enabled by Rudder for this run.");
-      expect(capture.prompt).toContain("- rudder: rudder/rudder");
+      expect(capture.prompt).toContain("- rudder");
+      expect(capture.prompt).not.toContain("- rudder: rudder/rudder");
       expect(capture.prompt).toContain("## Your Current Automations");
       expect(capture.prompt.match(/## Your Current Automations/g)).toHaveLength(1);
       expect(capture.prompt).toContain("# Rudder Heartbeat Instruction");

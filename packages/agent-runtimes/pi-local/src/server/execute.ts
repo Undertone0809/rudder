@@ -267,6 +267,24 @@ function resolvePiSkillsDir(homeDir: string): string {
   return path.join(resolvePiRoot(homeDir), "agent", "skills");
 }
 
+function renderPiRudderSkillBoundaryPrompt(
+  loadedSkills: Array<{ key: string; runtimeName?: string | null; name?: string | null }>,
+): string {
+  const skillLines = loadedSkills.length > 0
+    ? loadedSkills.map((entry) => `- ${entry.runtimeName ?? entry.key}`)
+    : ["- None. No optional Rudder skills are enabled for this run."];
+
+  return [
+    "# Enabled Rudder Skills",
+    "",
+    "Rudder is the source of truth for runtime skill enablement.",
+    "Only skills listed in this section are enabled by Rudder for this run. Pi built-in/provider-native skills, operator-home skills, project skills, host-global skills, bundled skills, vendor-default skills, and the current Pi client session may expose other capabilities, but they are not Rudder-enabled skills and must not be described as this agent's Rudder skills unless listed here.",
+    "When the user asks what skills are enabled, loaded, available, or what skills you have in Rudder, answer with only the runtime skill names listed in this section. Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes. If exactly one skill is listed, answer exactly that runtime skill name and nothing else. Do not list, summarize, or explain provider-native Pi skills, operator-home skills, project skills, host-global skills, bundled skills, vendor-default skills, or current-session capabilities in that answer.",
+    "",
+    ...skillLines,
+  ].join("\n");
+}
+
 async function syncPiSharedHomeEntries(sourceHome: string, targetHome: string) {
   const sourcePiDir = resolvePiRoot(sourceHome);
   const targetPiDir = resolvePiRoot(targetHome);
@@ -445,6 +463,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     name: entry.name ?? null,
     description: entry.description ?? null,
   }));
+  const skillBoundaryPrompt = renderPiRudderSkillBoundaryPrompt(loadedSkills);
   await ensurePiSkillsInjected(onLog, piSkillEntries, skillsDir, desiredPiSkillNames);
 
   // Build environment
@@ -631,7 +650,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     wakeReason: context.wakeReason ?? null,
     wakeSource: context.wakeSource ?? null,
   };
-  const renderedSystemPromptExtension = renderTemplate(systemPromptExtension, templateData);
+  const renderedSystemPromptExtension = joinPromptSections([
+    renderTemplate(systemPromptExtension, templateData),
+    skillBoundaryPrompt,
+  ]);
   const renderedHeartbeatPrompt = renderTemplate(promptTemplate, templateData);
   const renderedBootstrapPrompt =
     !canResumeSession && bootstrapPromptTemplate.trim().length > 0
@@ -651,6 +673,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     systemPromptChars: renderedSystemPromptExtension.length,
     promptChars: userPrompt.length,
     ...loadedInstructions.metrics,
+    skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedHeartbeatPrompt.length,
@@ -686,8 +709,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     args.push("--tools", "read,bash,edit,write,grep,find,ls");
     args.push("--session", sessionFile);
 
-    // Add Rudder skills directory so Pi can load the rudder skill
-    args.push("--skill", skillsDir);
+    // Disable Pi's default user/project skill discovery, then add only Rudder's
+    // selected managed skill directory for this run.
+    args.push("--no-skills", "--skill", skillsDir);
 
     if (extraArgs.length > 0) args.push(...extraArgs);
 

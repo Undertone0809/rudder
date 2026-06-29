@@ -321,6 +321,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       await expectNoOperatorHomeSentinelsInManagedHome(managedPiHome);
       expect(capture.argv).toEqual(expect.arrayContaining(["--print", "--mode", "json"]));
       expect(capture.argv).not.toContain("rpc");
+      expect(capture.argv).toEqual(expect.arrayContaining(["--no-skills", "--skill", path.join(managedPiAgentDir, "skills")]));
       expect(capture.argv).toEqual(expect.arrayContaining(["--skill", path.join(managedPiAgentDir, "skills")]));
       expect(capture.argv.at(-1)).toContain("Follow the rudder heartbeat.");
       expect(capture.stdin).toBe("");
@@ -333,6 +334,12 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(systemPrompt).toContain("# Tacit Memory");
       expect(systemPrompt).toContain("## Your Current Automations");
       expect(systemPrompt).toContain("# Rudder Heartbeat Instruction");
+      expect(systemPrompt).toContain("# Enabled Rudder Skills");
+      expect(systemPrompt).toContain("Only skills listed in this section are enabled by Rudder for this run.");
+      expect(systemPrompt).toContain("Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes.");
+      expect(systemPrompt).toContain("If exactly one skill is listed, answer exactly that runtime skill name and nothing else.");
+      expect(systemPrompt).toContain("- ascii-heart");
+      expect(systemPrompt).not.toContain("- ascii-heart: ascii-heart");
       expect(systemPrompt.match(/## Your Current Automations/g)).toHaveLength(1);
       expect(systemPrompt.indexOf("# Agent Instructions")).toBeLessThan(systemPrompt.indexOf("# Agent Soul"));
       expect(systemPrompt.indexOf("# Agent Soul")).toBeLessThan(systemPrompt.indexOf("# Agent Tools"));
@@ -346,6 +353,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(agentInstructionStack).toContain("# Agent Soul");
       expect(agentInstructionStack).toContain("# Agent Tools");
       expect(agentInstructionStack).toContain("# Tacit Memory");
+      expect(agentInstructionStack).toContain("# Enabled Rudder Skills");
       expect(agentInstructionStack).not.toContain("## Agent Instruction:");
       expect(agentInstructionStack).toContain("## Your Current Automations");
       expect(agentInstructionStack).not.toContain("[startup context omitted from persisted prompt]");
@@ -356,6 +364,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
+      expect(promptMetrics.skillBoundaryPromptChars).toBeGreaterThan(0);
       expect(loadedSkills).toEqual([
         expect.objectContaining({
           key: "ascii-heart",
