@@ -31,26 +31,51 @@ test.describe("Agent detail integrations tab", () => {
     await expect(page.getByRole("heading", { name: "Integration Scout", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Integrations", exact: true })).toBeVisible();
     await expect(page.getByText("Connect the external tools this agent can use during work loops.")).toBeVisible();
-    await expect(page.getByText("0 of 10 connected")).toBeVisible();
+    await expect(page.getByText("0 of 10 connected")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Discover" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Manage" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Custom tools" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Message" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Productivity" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Developer" })).toBeVisible();
     await expect(page.getByText("Custom API", { exact: true })).toBeVisible();
     await expect(page.getByText("MCP Server", { exact: true })).toBeVisible();
-    await expect(page.getByText("Feishu / Lark Not configured")).toBeVisible();
-    await expect(page.getByText("Create a Feishu bot named Integration Scout - Rudder")).toBeVisible();
+    await expect(page.getByText("Feishu / Lark")).toBeVisible();
+    await expect(page.getByText("Not configured")).toBeVisible();
+    await expect(page.getByText("Create a Feishu bot named Integration Scout - Rudder")).toHaveCount(0);
+    await expect(page.locator('img[src="/brands/gmail-logo.svg"]')).toBeVisible();
+    await expect(page.locator('img[src="/brands/google-calendar-logo.svg"]')).toBeVisible();
+    await expect(page.locator('img[src="/brands/github-logo.svg"]')).toBeVisible();
+
+    await page.getByRole("button", { name: /^Set up$/ }).first().click();
+    const feishuDialog = page.getByRole("dialog", { name: "Connect Feishu / Lark" });
+    await expect(feishuDialog).toBeVisible();
+    await expect(feishuDialog.getByText("Create a Feishu bot named Integration Scout - Rudder")).toBeVisible();
+    await feishuDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(feishuDialog).toBeHidden();
 
     for (const name of [
       "Gmail",
       "Google Calendar",
       "Google Drive",
       "Notion",
-      "Feishu Workspace",
       "GitHub",
       "Linear",
     ]) {
       await expect(page.getByText(name, { exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: `${name} setup coming soon` })).toBeDisabled();
     }
 
-    await expect(page.getByText("Coming soon")).toHaveCount(7);
+    await expect(page.getByText("Feishu Workspace", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Coming soon")).toHaveCount(6);
+    await page.getByRole("button", { name: "Gmail setup" }).click();
+    const gmailDialog = page.getByRole("dialog", { name: "Gmail" });
+    await expect(gmailDialog).toBeVisible();
+    await expect(gmailDialog.getByText("This connector is listed in the integration catalog")).toBeVisible();
+    await gmailDialog.getByRole("button", { name: "Close" }).first().click();
+    await expect(gmailDialog).toBeHidden();
+
+    await page.getByRole("button", { name: "Manage" }).click();
+    await expect(page.getByText("No connected integrations")).toBeVisible();
   });
 
   test("creates custom integrations with agent and organization scope boundaries", async ({ page }) => {
@@ -97,11 +122,16 @@ test.describe("Agent detail integrations tab", () => {
     });
 
     await page.getByRole("button", { name: "Configure" }).first().click();
-    await page.getByLabel("Display name").fill("Internal CRM");
-    await page.getByLabel("Base URL").fill("https://crm.example.test");
-    await page.getByLabel("Tool name").fill("lookup_contact");
-    await page.getByRole("button", { name: "Connect Custom API" }).click();
+    const customApiDialog = page.getByRole("dialog", { name: "Connect Custom API" });
+    await expect(customApiDialog).toBeVisible();
+    await expect(customApiDialog.getByText("Choose whether this integration is limited to this agent")).toBeVisible();
+    await customApiDialog.getByLabel("Display name").fill("Internal CRM");
+    await customApiDialog.getByLabel("Base URL").fill("https://crm.example.test");
+    await customApiDialog.getByLabel("Tool name").fill("lookup_contact");
+    await customApiDialog.getByRole("button", { name: "Connect Custom API" }).click();
+    await expect(customApiDialog).toBeHidden();
 
+    await page.getByRole("button", { name: "Manage" }).click();
     await expect(page.getByText("Internal CRM")).toBeVisible();
     await expect(page.getByText("This agent only")).toBeVisible();
     await expect(page.getByText("custom.internal-crm.lookup_contact")).toBeVisible();
