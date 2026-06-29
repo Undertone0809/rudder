@@ -41,15 +41,43 @@ vi.mock("../context/I18nContext", () => ({
         "general.appearance.luma.label": "Luma",
         "general.appearance.luma.description": "Soft spacious controls",
         "general.appearance.baseColor": "Base color",
-        "general.appearance.neutralBase.label": "Neutral",
-        "general.appearance.neutralBase.description": "Balanced gray surfaces",
-        "general.appearance.oliveBase.label": "Olive",
-        "general.appearance.oliveBase.description": "Muted olive surfaces",
+        "general.appearance.base.neutral.label": "Neutral",
+        "general.appearance.base.neutral.description": "Balanced gray surfaces",
+        "general.appearance.base.stone.label": "Stone",
+        "general.appearance.base.stone.description": "Warm mineral surfaces",
+        "general.appearance.base.zinc.label": "Zinc",
+        "general.appearance.base.zinc.description": "Cool gray surfaces",
+        "general.appearance.base.mauve.label": "Mauve",
+        "general.appearance.base.mauve.description": "Muted rose-gray surfaces",
+        "general.appearance.base.olive.label": "Olive",
+        "general.appearance.base.olive.description": "Muted olive surfaces",
+        "general.appearance.base.mist.label": "Mist",
+        "general.appearance.base.mist.description": "Soft blue-gray surfaces",
+        "general.appearance.base.taupe.label": "Taupe",
+        "general.appearance.base.taupe.description": "Warm taupe surfaces",
         "general.appearance.themeColor": "Theme",
-        "general.appearance.neutralTheme.label": "Neutral",
-        "general.appearance.neutralTheme.description": "Monochrome actions",
-        "general.appearance.emeraldTheme.label": "Emerald",
-        "general.appearance.emeraldTheme.description": "Green action color",
+        "general.appearance.theme.neutral.label": "Neutral",
+        "general.appearance.theme.neutral.description": "Monochrome actions",
+        "general.appearance.theme.amber.label": "Amber",
+        "general.appearance.theme.amber.description": "Amber action color",
+        "general.appearance.theme.blue.label": "Blue",
+        "general.appearance.theme.blue.description": "Blue action color",
+        "general.appearance.theme.cyan.label": "Cyan",
+        "general.appearance.theme.cyan.description": "Cyan action color",
+        "general.appearance.theme.emerald.label": "Emerald",
+        "general.appearance.theme.emerald.description": "Jewel green action color",
+        "general.appearance.theme.fuchsia.label": "Fuchsia",
+        "general.appearance.theme.fuchsia.description": "Fuchsia action color",
+        "general.appearance.theme.green.label": "Green",
+        "general.appearance.theme.green.description": "Green action color",
+        "general.appearance.theme.indigo.label": "Indigo",
+        "general.appearance.theme.indigo.description": "Indigo action color",
+        "general.appearance.theme.lime.label": "Lime",
+        "general.appearance.theme.lime.description": "Lime action color",
+        "general.appearance.theme.orange.label": "Orange",
+        "general.appearance.theme.orange.description": "Orange action color",
+        "general.appearance.theme.pink.label": "Pink",
+        "general.appearance.theme.pink.description": "Pink action color",
       };
       return messages[key] ?? key;
     },
@@ -160,8 +188,10 @@ describe("InstanceAppearanceSettings", () => {
 
     expect(container.textContent).toContain("Base color");
     expect(container.textContent).toContain("Muted olive surfaces");
+    expect(container.textContent).toContain("Warm taupe surfaces");
     expect(container.textContent).toContain("Theme");
-    expect(container.textContent).toContain("Green action color");
+    expect(container.textContent).toContain("Jewel green action color");
+    expect(container.textContent).toContain("Pink action color");
     expect(Array.from(container.querySelectorAll("button[aria-pressed='true']")).some((button) => (
       button.textContent?.includes("Neutral")
     ))).toBe(true);
@@ -169,15 +199,23 @@ describe("InstanceAppearanceSettings", () => {
     const buttons = Array.from(container.querySelectorAll("button"));
     const oliveButton = buttons.find((button) => button.textContent?.includes("Olive"));
     const emeraldButton = buttons.find((button) => button.textContent?.includes("Emerald"));
+    const taupeButton = buttons.find((button) => button.textContent?.includes("Taupe"));
+    const pinkButton = buttons.find((button) => button.textContent?.includes("Pink"));
     expect(oliveButton).toBeDefined();
     expect(emeraldButton).toBeDefined();
+    expect(taupeButton).toBeDefined();
+    expect(pinkButton).toBeDefined();
 
     act(() => {
       oliveButton?.click();
       emeraldButton?.click();
+      taupeButton?.click();
+      pinkButton?.click();
     });
 
     expect(setBaseColor).toHaveBeenCalledWith("olive");
     expect(setAccentTheme).toHaveBeenCalledWith("emerald");
+    expect(setBaseColor).toHaveBeenCalledWith("taupe");
+    expect(setAccentTheme).toHaveBeenCalledWith("pink");
   });
 });

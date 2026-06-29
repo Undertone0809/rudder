@@ -28,12 +28,24 @@
         const lightThemeColor = "#f1f0ef";
         const darkBaseThemeColors = {
           neutral: darkThemeColor,
+          stone: "#151412",
+          zinc: "#141416",
+          mauve: "#181316",
           olive: "#050604",
+          mist: "#101617",
+          taupe: "#1a1411",
         };
         const lightBaseThemeColors = {
           neutral: lightThemeColor,
+          stone: "#f3f1ed",
+          zinc: "#f2f2f4",
+          mauve: "#f4eff3",
           olive: "#f2f1e7",
+          mist: "#eef3f3",
+          taupe: "#f1ece8",
         };
+        const baseColors = ["neutral", "stone", "zinc", "mauve", "olive", "mist", "taupe"];
+        const accentThemes = ["neutral", "amber", "blue", "cyan", "emerald", "fuchsia", "green", "indigo", "lime", "orange", "pink"];
         let theme = "system";
         let isDark = true;
         let baseColor = "neutral";
@@ -45,11 +57,11 @@
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           theme = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
           isDark = theme === "system" ? prefersDark : theme === "dark";
-          baseColor = storedBaseColor === "olive" ? "olive" : "neutral";
+          baseColor = baseColors.includes(storedBaseColor) ? storedBaseColor : "neutral";
           document.documentElement.dataset.style =
             storedStyle === "mira" || storedStyle === "luma" ? storedStyle : "default";
           document.documentElement.dataset.baseColor = baseColor;
-          document.documentElement.dataset.themeColor = storedAccentTheme === "emerald" ? "emerald" : "neutral";
+          document.documentElement.dataset.themeColor = accentThemes.includes(storedAccentTheme) ? storedAccentTheme : "neutral";
           document.documentElement.classList.toggle("dark", isDark);
           document.documentElement.style.colorScheme = isDark ? "dark" : "light";
           const themeColorMeta = document.querySelector('meta[name="theme-color"]');

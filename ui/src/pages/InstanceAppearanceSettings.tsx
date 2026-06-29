@@ -11,8 +11,34 @@ import { useI18n } from "../context/I18nContext";
 import { useTheme } from "../context/ThemeContext";
 
 type DesignStyle = "default" | "mira" | "luma";
-type BaseColor = "neutral" | "olive";
-type AccentTheme = "neutral" | "emerald";
+type BaseColor = "neutral" | "stone" | "zinc" | "mauve" | "olive" | "mist" | "taupe";
+type AccentTheme =
+  | "neutral"
+  | "amber"
+  | "blue"
+  | "cyan"
+  | "emerald"
+  | "fuchsia"
+  | "green"
+  | "indigo"
+  | "lime"
+  | "orange"
+  | "pink";
+
+const BASE_COLOR_OPTIONS: BaseColor[] = ["neutral", "stone", "zinc", "mauve", "olive", "mist", "taupe"];
+const ACCENT_THEME_OPTIONS: AccentTheme[] = [
+  "neutral",
+  "amber",
+  "blue",
+  "cyan",
+  "emerald",
+  "fuchsia",
+  "green",
+  "indigo",
+  "lime",
+  "orange",
+  "pink",
+];
 
 function ThemePreview({ mode }: { mode: "light" | "system" | "dark" }) {
   return (
@@ -189,6 +215,30 @@ function BaseColorPreview({ baseColor }: { baseColor: BaseColor }) {
       ink: "#383632",
       chart: "#7b776e",
     },
+    stone: {
+      page: "#f3f1ed",
+      shell: "#e9e5de",
+      inset: "#ddd8cf",
+      border: "#c2baae",
+      ink: "#3d3832",
+      chart: "#776f63",
+    },
+    zinc: {
+      page: "#f2f2f4",
+      shell: "#e7e7eb",
+      inset: "#dbdbe2",
+      border: "#bcbcc6",
+      ink: "#39393f",
+      chart: "#70707b",
+    },
+    mauve: {
+      page: "#f4eff3",
+      shell: "#ebe2e9",
+      inset: "#ded3dc",
+      border: "#c3b5bf",
+      ink: "#40363d",
+      chart: "#7b6974",
+    },
     olive: {
       page: "#f2f1e7",
       shell: "#e5e4d4",
@@ -196,6 +246,22 @@ function BaseColorPreview({ baseColor }: { baseColor: BaseColor }) {
       border: "#b9b89f",
       ink: "#303328",
       chart: "#76785f",
+    },
+    mist: {
+      page: "#eef3f3",
+      shell: "#e0eaea",
+      inset: "#d0dddd",
+      border: "#b0c1c1",
+      ink: "#344041",
+      chart: "#668083",
+    },
+    taupe: {
+      page: "#f1ece8",
+      shell: "#e8ddd6",
+      inset: "#d9cbc1",
+      border: "#c0b1a5",
+      ink: "#40362f",
+      chart: "#7d695b",
     },
   };
   const token = tokens[baseColor];
@@ -228,11 +294,65 @@ function AccentThemePreview({ accentTheme }: { accentTheme: AccentTheme }) {
       ring: "#8c887f",
       foreground: "#f6f5f2",
     },
+    amber: {
+      primary: "#d97706",
+      soft: "#fef3c7",
+      ring: "#f59e0b",
+      foreground: "#fffbeb",
+    },
+    blue: {
+      primary: "#2563eb",
+      soft: "#dbeafe",
+      ring: "#3b82f6",
+      foreground: "#eff6ff",
+    },
+    cyan: {
+      primary: "#0891b2",
+      soft: "#cffafe",
+      ring: "#06b6d4",
+      foreground: "#ecfeff",
+    },
     emerald: {
       primary: "#047857",
       soft: "#d6efe5",
       ring: "#10b981",
       foreground: "#ecfdf5",
+    },
+    fuchsia: {
+      primary: "#c026d3",
+      soft: "#fae8ff",
+      ring: "#d946ef",
+      foreground: "#fdf4ff",
+    },
+    green: {
+      primary: "#15803d",
+      soft: "#dcfce7",
+      ring: "#22c55e",
+      foreground: "#f0fdf4",
+    },
+    indigo: {
+      primary: "#4f46e5",
+      soft: "#e0e7ff",
+      ring: "#6366f1",
+      foreground: "#eef2ff",
+    },
+    lime: {
+      primary: "#65a30d",
+      soft: "#ecfccb",
+      ring: "#84cc16",
+      foreground: "#f7fee7",
+    },
+    orange: {
+      primary: "#ea580c",
+      soft: "#ffedd5",
+      ring: "#f97316",
+      foreground: "#fff7ed",
+    },
+    pink: {
+      primary: "#db2777",
+      soft: "#fce7f3",
+      ring: "#ec4899",
+      foreground: "#fdf2f8",
     },
   };
   const token = tokens[accentTheme];
@@ -337,39 +457,31 @@ export function InstanceAppearanceSettings() {
 
       <SettingsSection title={t("general.appearance.baseColor")}>
         <div className="flex flex-wrap gap-2.5">
-          <SettingsChoiceCard
-            label={t("general.appearance.neutralBase.label")}
-            description={t("general.appearance.neutralBase.description")}
-            selected={baseColor === "neutral"}
-            onClick={() => setBaseColor("neutral")}
-            preview={<BaseColorPreview baseColor="neutral" />}
-          />
-          <SettingsChoiceCard
-            label={t("general.appearance.oliveBase.label")}
-            description={t("general.appearance.oliveBase.description")}
-            selected={baseColor === "olive"}
-            onClick={() => setBaseColor("olive")}
-            preview={<BaseColorPreview baseColor="olive" />}
-          />
+          {BASE_COLOR_OPTIONS.map((option) => (
+            <SettingsChoiceCard
+              key={option}
+              label={t(`general.appearance.base.${option}.label`)}
+              description={t(`general.appearance.base.${option}.description`)}
+              selected={baseColor === option}
+              onClick={() => setBaseColor(option)}
+              preview={<BaseColorPreview baseColor={option} />}
+            />
+          ))}
         </div>
       </SettingsSection>
 
       <SettingsSection title={t("general.appearance.themeColor")}>
         <div className="flex flex-wrap gap-2.5">
-          <SettingsChoiceCard
-            label={t("general.appearance.neutralTheme.label")}
-            description={t("general.appearance.neutralTheme.description")}
-            selected={accentTheme === "neutral"}
-            onClick={() => setAccentTheme("neutral")}
-            preview={<AccentThemePreview accentTheme="neutral" />}
-          />
-          <SettingsChoiceCard
-            label={t("general.appearance.emeraldTheme.label")}
-            description={t("general.appearance.emeraldTheme.description")}
-            selected={accentTheme === "emerald"}
-            onClick={() => setAccentTheme("emerald")}
-            preview={<AccentThemePreview accentTheme="emerald" />}
-          />
+          {ACCENT_THEME_OPTIONS.map((option) => (
+            <SettingsChoiceCard
+              key={option}
+              label={t(`general.appearance.theme.${option}.label`)}
+              description={t(`general.appearance.theme.${option}.description`)}
+              selected={accentTheme === option}
+              onClick={() => setAccentTheme(option)}
+              preview={<AccentThemePreview accentTheme={option} />}
+            />
+          ))}
         </div>
       </SettingsSection>
     </div>

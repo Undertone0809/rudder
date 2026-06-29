@@ -79,8 +79,8 @@ function ThemeProbe() {
       <button type="button" onClick={() => setTheme("light")}>Light</button>
       <button type="button" onClick={() => setTheme("system")}>System</button>
       <button type="button" onClick={() => setDesignStyle("mira")}>Mira</button>
-      <button type="button" onClick={() => setBaseColor("olive")}>Olive</button>
-      <button type="button" onClick={() => setAccentTheme("emerald")}>Emerald</button>
+      <button type="button" onClick={() => setBaseColor("taupe")}>Taupe</button>
+      <button type="button" onClick={() => setAccentTheme("pink")}>Pink</button>
       <span data-testid="theme">{theme}</span>
       <span data-testid="resolved">{resolvedTheme}</span>
       <span data-testid="design-style">{designStyle}</span>
@@ -171,32 +171,32 @@ describe("ThemeProvider desktop shell bridge", () => {
     installMatchMedia(true);
     localStorage.setItem("rudder.theme", "dark");
     localStorage.setItem("rudder.designStyle", "luma");
-    localStorage.setItem("rudder.baseColor", "olive");
-    localStorage.setItem("rudder.accentTheme", "emerald");
+    localStorage.setItem("rudder.baseColor", "taupe");
+    localStorage.setItem("rudder.accentTheme", "pink");
 
     const container = renderThemeProvider();
 
     expect(container.querySelector("[data-testid='design-style']")?.textContent).toBe("luma");
-    expect(container.querySelector("[data-testid='base-color']")?.textContent).toBe("olive");
-    expect(container.querySelector("[data-testid='accent-theme']")?.textContent).toBe("emerald");
+    expect(container.querySelector("[data-testid='base-color']")?.textContent).toBe("taupe");
+    expect(container.querySelector("[data-testid='accent-theme']")?.textContent).toBe("pink");
     expect(document.documentElement.dataset.style).toBe("luma");
-    expect(document.documentElement.dataset.baseColor).toBe("olive");
-    expect(document.documentElement.dataset.themeColor).toBe("emerald");
+    expect(document.documentElement.dataset.baseColor).toBe("taupe");
+    expect(document.documentElement.dataset.themeColor).toBe("pink");
 
     const miraButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Mira");
-    const oliveButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Olive");
-    const emeraldButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Emerald");
+    const taupeButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Taupe");
+    const pinkButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Pink");
     act(() => {
       miraButton?.click();
-      oliveButton?.click();
-      emeraldButton?.click();
+      taupeButton?.click();
+      pinkButton?.click();
     });
 
     expect(document.documentElement.dataset.style).toBe("mira");
-    expect(document.documentElement.dataset.baseColor).toBe("olive");
-    expect(document.documentElement.dataset.themeColor).toBe("emerald");
+    expect(document.documentElement.dataset.baseColor).toBe("taupe");
+    expect(document.documentElement.dataset.themeColor).toBe("pink");
     expect(localStorage.getItem("rudder.designStyle")).toBe("mira");
-    expect(localStorage.getItem("rudder.baseColor")).toBe("olive");
-    expect(localStorage.getItem("rudder.accentTheme")).toBe("emerald");
+    expect(localStorage.getItem("rudder.baseColor")).toBe("taupe");
+    expect(localStorage.getItem("rudder.accentTheme")).toBe("pink");
   });
 });

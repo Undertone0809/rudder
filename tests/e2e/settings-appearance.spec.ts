@@ -83,6 +83,8 @@ test.describe("Settings appearance", () => {
     const sidebar = modal.getByTestId("workspace-sidebar");
     await sidebar.locator('a[href$="/instance/settings/appearance"]').click();
     await expect(modal.getByRole("heading", { name: "Appearance" })).toBeVisible();
+    await expect(modal.getByRole("button", { name: /^Taupe Warm taupe surfaces$/ })).toBeVisible();
+    await expect(modal.getByRole("button", { name: /^Pink Pink action color$/ })).toBeVisible();
 
     const beforeTokens = await page.evaluate(() => {
       const styles = getComputedStyle(document.documentElement);
@@ -100,12 +102,24 @@ test.describe("Settings appearance", () => {
     await modal.getByRole("button", { name: /^Light Warm paper surfaces$/ }).click();
     await modal.getByRole("button", { name: /^Mira Compact cards and controls$/ }).click();
     await modal.getByRole("button", { name: /^Olive Muted olive surfaces$/ }).click();
-    await modal.getByRole("button", { name: /^Emerald Green action color$/ }).click();
+    await modal.getByRole("button", { name: /^Emerald Jewel green action color$/ }).click();
 
     await expect(page.locator("html")).toHaveAttribute("data-style", "mira");
     await expect(page.locator("html")).toHaveAttribute("data-base-color", "olive");
     await expect(page.locator("html")).toHaveAttribute("data-theme-color", "emerald");
     await expect(page.locator("html")).not.toHaveClass(/dark/);
+
+    await modal.getByRole("button", { name: /^Taupe Warm taupe surfaces$/ }).click();
+    await modal.getByRole("button", { name: /^Pink Pink action color$/ }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-base-color", "taupe");
+    await expect(page.locator("html")).toHaveAttribute("data-theme-color", "pink");
+    await expect.poll(async () => page.evaluate(() => window.localStorage.getItem("rudder.baseColor"))).toBe("taupe");
+    await expect.poll(async () => page.evaluate(() => window.localStorage.getItem("rudder.accentTheme"))).toBe("pink");
+
+    await modal.getByRole("button", { name: /^Olive Muted olive surfaces$/ }).click();
+    await modal.getByRole("button", { name: /^Emerald Jewel green action color$/ }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-base-color", "olive");
+    await expect(page.locator("html")).toHaveAttribute("data-theme-color", "emerald");
 
     const afterTokens = await page.evaluate(() => {
       const styles = getComputedStyle(document.documentElement);

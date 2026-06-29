@@ -11,8 +11,19 @@ import {
 type Theme = "light" | "dark" | "system";
 type ResolvedTheme = "light" | "dark";
 type DesignStyle = "default" | "mira" | "luma";
-type BaseColor = "neutral" | "olive";
-type AccentTheme = "neutral" | "emerald";
+type BaseColor = "neutral" | "stone" | "zinc" | "mauve" | "olive" | "mist" | "taupe";
+type AccentTheme =
+  | "neutral"
+  | "amber"
+  | "blue"
+  | "cyan"
+  | "emerald"
+  | "fuchsia"
+  | "green"
+  | "indigo"
+  | "lime"
+  | "orange"
+  | "pink";
 type DesktopShellThemeBridge = {
   setAppearance?: (theme: Theme) => Promise<void> | void;
 };
@@ -38,12 +49,36 @@ const DARK_THEME_COLOR = "#1f1f1d";
 const LIGHT_THEME_COLOR = "#f1f0ef";
 const LIGHT_BASE_THEME_COLORS: Record<BaseColor, string> = {
   neutral: LIGHT_THEME_COLOR,
+  stone: "#f3f1ed",
+  zinc: "#f2f2f4",
+  mauve: "#f4eff3",
   olive: "#f2f1e7",
+  mist: "#eef3f3",
+  taupe: "#f1ece8",
 };
 const DARK_BASE_THEME_COLORS: Record<BaseColor, string> = {
   neutral: DARK_THEME_COLOR,
+  stone: "#151412",
+  zinc: "#141416",
+  mauve: "#181316",
   olive: "#050604",
+  mist: "#101617",
+  taupe: "#1a1411",
 };
+const BASE_COLORS: BaseColor[] = ["neutral", "stone", "zinc", "mauve", "olive", "mist", "taupe"];
+const ACCENT_THEMES: AccentTheme[] = [
+  "neutral",
+  "amber",
+  "blue",
+  "cyan",
+  "emerald",
+  "fuchsia",
+  "green",
+  "indigo",
+  "lime",
+  "orange",
+  "pink",
+];
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 function readDesktopShell(): DesktopShellThemeBridge | null {
@@ -86,8 +121,8 @@ function getStoredBaseColorPreference(): BaseColor {
   if (typeof window === "undefined") return "neutral";
   try {
     const stored = window.localStorage.getItem(BASE_COLOR_STORAGE_KEY);
-    if (stored === "neutral" || stored === "olive") {
-      return stored;
+    if (BASE_COLORS.includes(stored as BaseColor)) {
+      return stored as BaseColor;
     }
   } catch {
     // Ignore local storage read failures in restricted environments.
@@ -99,8 +134,8 @@ function getStoredAccentThemePreference(): AccentTheme {
   if (typeof window === "undefined") return "neutral";
   try {
     const stored = window.localStorage.getItem(ACCENT_THEME_STORAGE_KEY);
-    if (stored === "neutral" || stored === "emerald") {
-      return stored;
+    if (ACCENT_THEMES.includes(stored as AccentTheme)) {
+      return stored as AccentTheme;
     }
   } catch {
     // Ignore local storage read failures in restricted environments.
