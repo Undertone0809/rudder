@@ -288,8 +288,9 @@ async function renderSelectedOpenCodeSkillPrompt(
   return [
     "# Enabled Rudder Skills",
     "",
-    "These skill instructions come only from this agent's Rudder Skills enabled selections.",
-    "Do not load OpenCode, Claude-compatible, operator-home, project, bundled, or vendor-default skills unless Rudder enabled them for this agent.",
+    "Rudder is the source of truth for runtime skill enablement.",
+    "Only skills listed in this section are enabled by Rudder for this run. OpenCode built-in/provider-native skills, Claude-compatible operator-home skills, project skills, host-global skills, bundled skills, vendor-default skills, and the current OpenCode client session may expose other capabilities, but they are not Rudder-enabled skills and must not be described as this agent's Rudder skills unless listed here.",
+    "When the user asks what skills are enabled, loaded, available, or what skills you have in Rudder, answer from this section only and say provider-native OpenCode skills are separate if relevant.",
     "",
     sections.join("\n\n"),
   ].join("\n");

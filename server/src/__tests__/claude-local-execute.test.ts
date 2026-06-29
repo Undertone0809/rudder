@@ -307,6 +307,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(systemPrompt).toContain("# Enabled Rudder Skills");
       expect(systemPrompt).toContain("No optional Rudder skills are enabled for this run.");
       expect(systemPrompt).toContain("Claude Code built-in/provider-native skills");
+      expect(systemPrompt).toContain("Do not list provider-native Claude Code skills in that answer.");
       expect(systemPrompt.match(/## Your Current Automations/g)).toHaveLength(1);
       expect(systemPrompt.indexOf("# Agent Instructions")).toBeLessThan(systemPrompt.indexOf("# Agent Soul"));
       expect(systemPrompt.indexOf("# Agent Soul")).toBeLessThan(systemPrompt.indexOf("# Agent Tools"));
@@ -704,6 +705,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(capture.appendedSystemPrompt).toContain("# Enabled Rudder Skills");
       expect(capture.appendedSystemPrompt).toContain("No optional Rudder skills are enabled for this run.");
       expect(capture.appendedSystemPrompt).toContain("Claude Code built-in/provider-native skills");
+      expect(capture.appendedSystemPrompt).toContain("Do not list provider-native Claude Code skills in that answer.");
       expect(capture.appendedSystemPrompt).not.toContain("host-global-skill");
       expect(capture.appendedSystemPrompt).not.toContain("user-skill");
       expect(commandNotes).toContain("Injected Rudder enabled-skill boundary via --append-system-prompt-file.");

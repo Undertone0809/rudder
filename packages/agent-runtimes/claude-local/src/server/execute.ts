@@ -112,7 +112,7 @@ function renderClaudeRudderSkillBoundaryPrompt(
     "",
     "Rudder is the source of truth for runtime skill enablement.",
     "Only skills listed in this section are enabled by Rudder for this run. Claude Code built-in/provider-native skills or slash commands may appear in Claude's own runtime metadata, but they are not Rudder-enabled skills and must not be described as this agent's Rudder skills unless listed here.",
-    "When the user asks what skills are enabled, loaded, or available in Rudder, answer from this section and say provider-native Claude Code skills are separate if relevant.",
+    "When the user asks what skills are enabled, loaded, available, or what skills you have in Rudder, answer from this section only. Do not list provider-native Claude Code skills in that answer.",
     "",
     ...skillLines,
   ].join("\n");

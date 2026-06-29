@@ -150,6 +150,29 @@ function runtimeImagePaths(media: AgentRuntimeExecutionContext["media"]): string
     .filter((value) => value.trim().length > 0);
 }
 
+function renderCodexRudderSkillBoundaryPrompt(
+  loadedSkills: Array<{ key: string; runtimeName?: string | null; name?: string | null }>,
+): string {
+  const skillLines = loadedSkills.length > 0
+    ? loadedSkills.map((entry) => {
+        const label = entry.name && entry.name !== entry.runtimeName
+          ? `${entry.runtimeName ?? entry.key} (${entry.name})`
+          : entry.runtimeName ?? entry.key;
+        return `- ${label}: ${entry.key}`;
+      })
+    : ["- None. No optional Rudder skills are enabled for this run."];
+
+  return [
+    "# Enabled Rudder Skills",
+    "",
+    "Rudder is the source of truth for runtime skill enablement.",
+    "Only skills listed in this section are enabled by Rudder for this run. Codex built-in/provider-native skills, repo instructions, host-global skills, and the current Codex client session may expose other capabilities, but they are not Rudder-enabled skills and must not be described as this agent's Rudder skills unless listed here.",
+    "When the user asks what skills are enabled, loaded, or available in Rudder, answer from this section and say provider-native Codex skills are separate if relevant.",
+    "",
+    ...skillLines,
+  ].join("\n");
+}
+
 function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
   const raw = env[key];
   return typeof raw === "string" && raw.trim().length > 0;
@@ -329,6 +352,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     name: entry.name ?? null,
     description: entry.description ?? null,
   }));
+  const skillBoundaryPrompt = renderCodexRudderSkillBoundaryPrompt(loadedSkills);
   await realizeManagedCodexSkillEntries(
     {
       ...codexTargetEnv,
@@ -586,6 +610,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
   const prompt = joinPromptSections([
     instructionsPrefix,
+    skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,
@@ -593,6 +618,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
