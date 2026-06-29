@@ -422,7 +422,7 @@
       "expected_output": "Classifies the turn as skill_optimization and uses skill-creator as the primary workflow. It treats the Mintlify/docs screenshot as evidence for a release-process changelog rule, identifies release-maintainer and release docs as the smallest durable owner, and does not broaden the lifecycle router into a docs-site route or start editing unrelated UI surfaces.",
       "files": [
         ".agents/skills/maintainer/release-maintainer/SKILL.md",
-        "doc/RELEASING.md",
+        "doc/engineering/RELEASING.md",
         ".agents/skills/maintainer/release-maintainer/evals/evals.json"
       ],
       "expectations": [

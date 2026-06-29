@@ -1,0 +1,243 @@
+# rudder-desktop-dev-recovery-maintainer Runbook
+
+This file preserves the detailed pre-template maintainer instructions. Load it when the thin `SKILL.md` entrypoint does not contain enough operational detail for the active route.
+
+---
+
+# Rudder Desktop Dev Recovery Maintainer
+
+Use this skill to get the local Rudder Desktop development path back to a known
+working state.
+
+This is not the release runbook. It is the recovery layer for local Desktop
+startup, dev-shell runtime, embedded database state, update/install smoke, and
+the handoff point before release work.
+
+## Use When
+
+Use this skill for prompts like:
+
+- "`pnpm dev` 好像桌面端跑不起来了"
+- "Desktop dev shell 起不来"
+- "API 能访问，但桌面端没起来"
+- "`pnpm dev` starts the API but Electron exits during a UI build/typecheck"
+- "embedded Postgres / `~/.rudder` 状态是不是乱了"
+- "update 最新版失败，先 debug 一下"
+- "桌面端问题修完之后再发版"
+- "我本地 Desktop 是不是指到错的 instance"
+
+Also use this when a release request is blocked by local Desktop validation.
+Fix the local Desktop blocker first, then route the release to
+`release-maintainer`.
+
+## Do Not Use When
+
+Do not use this skill for:
+
+- npm/GitHub Release/tag/dist-tag publishing; use `release-maintainer`
+- packaged-app verification after code changes with no startup failure; follow
+  the normal Desktop validation workflow
+- stopping only a known repo-local dev runtime; use
+  `stop-rudder-dev-maintainer`
+- ordinary web UI data diagnosis; use `rudder-data-path-diagnostician-maintainer`
+- review-only of a Desktop feature; use `agent-work-reviewer-maintainer`
+
+If the user's first request is "发版" and Desktop is already healthy, do not
+route through this skill.
+
+## Default Workflow
+
+### 1. Classify the failure mode
+
+Start with a short state packet:
+
+- `git status --short --branch`
+- requested command, for example `pnpm dev`, `pnpm desktop:dev`, or
+  `pnpm desktop:verify`
+- whether the failure is API server, Vite middleware, Electron shell, embedded
+  Postgres, UI build/typecheck, packaged smoke, update download, or app launch
+- exact stderr/stdout excerpt and exit code
+- currently listening ports around `3100`
+- relevant `~/.rudder/instances/*` path when the process prints one
+- whether the failing file is committed, modified, untracked, or part of a
+  broader dirty feature set
+
+Do not guess from memory when the command can be rerun safely.
+
+### 2. Read the local Desktop contract
+
+Read only the relevant docs and scripts:
+
+- `doc/engineering/DEVELOPING.md`
+- `doc/engineering/DESKTOP.md`
+- `doc/README.md` for navigation when needed
+- `desktop/package.json`
+- root `package.json` scripts
+- `desktop/scripts/smoke.mjs` for packaged-smoke expectations
+- `scripts/prod-desktop.mjs` only when the failure is prod-local or installer
+  related
+
+When docs and scripts disagree, scripts are the executable truth for the active
+diagnosis. Record the mismatch as a docs follow-up if it matters.
+
+### 3. Verify the active runtime before repairing
+
+Check the local server and org list when the API is expected to be running:
+
+```bash
+curl -sS http://127.0.0.1:3100/api/health
+curl -sS http://127.0.0.1:3100/api/orgs
+```
+
+If the Desktop shell is pointed at another base URL, use that URL instead.
+
+Common causes to distinguish:
+
+- no server process is running
+- wrong port or stale process owns the port
+- embedded Postgres failed to initialize
+- dev server is up but Electron did not launch
+- Electron launched but cannot reach the server
+- API/server is healthy, but Desktop launch is blocked because `@rudderhq/ui`
+  build/typecheck fails on dirty WIP, incomplete fixtures, or an untracked
+  companion feature file
+- Desktop profile or instance id points to unexpected data
+- update metadata resolves but asset download/checksum/install fails
+- update helper or CLI child process writes progress after its parent pipe is
+  closed, causing `EPIPE`, `ERR_STREAM_DESTROYED`, `broken pipe`, or an Electron
+  main-process error dialog during restart
+- packaged smoke differs from dev-shell behavior
+
+### 4. Repair narrowly
+
+Prefer the smallest repair that matches the cause:
+
+- stop only the repo-local stale process when it blocks the port
+- reinstall dependencies only when package state or lockfile evidence points
+  there
+- fix script/config code when the failure is reproducible from a clean command
+- for dirty-WIP compile failures, build a changed-file ownership packet before
+  editing: failing path, related untracked files, likely source session or
+  feature group, and whether a narrow fixture repair would leave a companion
+  feature half-committed
+- reset `~/.rudder/instances/dev` only when the user accepts data loss or the
+  instance is disposable and the task explicitly targets dev state
+- keep release publishing untouched until local Desktop state is green
+
+Do not delete `~/.rudder`, change npm auth, move GitHub dist-tags, or install a
+new app globally as a "dev recovery" shortcut.
+
+If the compile blocker belongs to a larger unrelated feature already dirty in
+the worktree, fix only the minimum needed to unblock the requested dev run, and
+do not commit a lone companion file unless the whole feature group is in scope.
+If a safe narrow repair is not possible, report the ownership packet and the
+exact blocked command instead of sweeping unrelated WIP into the recovery.
+
+### 5. Validate the right path
+
+Validation depends on what failed:
+
+- dev server/API: health and org API calls
+- Desktop dev shell: launch evidence plus logs that the shell reached the API
+- dirty-WIP compile failure: rerun the failing package build or typecheck and
+  the original startup command far enough to prove the blocked layer has moved
+- packaged startup, profile isolation, migrations, installer assets, or
+  prod-local data path: `pnpm desktop:verify`
+- update/download path: dry-run is not enough when the issue is download,
+  checksum, extraction, or launch; run the strongest safe non-dry-run local
+  check available and state platform limitations
+- update restart path: if the failure appears after clicking "Restart to
+  update", reproduce or simulate the pipe lifecycle. Check the old app process,
+  update child process, progress JSON/stdout/stderr handling, installed app path,
+  and whether the child handles closed output streams as a normal shutdown case.
+
+If code changed, run the narrow relevant tests first, then the repo baseline
+when feasible:
+
+```bash
+pnpm -r typecheck
+pnpm test:run
+pnpm build
+```
+
+For Desktop startup, migration, profile routing, or packaging changes, do not
+claim done without packaged verification or an explicit blocker.
+
+#### Closed Progress Pipe / Update Child Recovery
+
+Use this branch when the UI update flow starts a helper process or CLI mode and
+the error appears after the parent app exits or restarts.
+
+Evidence to collect:
+
+- installed app path, for example `/Users/zeeland/Applications/Rudder.app`
+- exact update action clicked: automatic prompt, About check, download, or
+  "Restart to update"
+- old version, target version, and whether the app reopened
+- stderr/dialog text including `EPIPE`, `ERR_STREAM_DESTROYED`, `write after
+  end`, `broken pipe`, or uncaught exception text
+- code paths that write progress JSON, flush stdout/stderr, or install/relaunch
+  the app
+
+Repair pattern:
+
+- Treat closed stdout/stderr/progress pipes during update handoff as expected
+  when the parent app has exited.
+- Add a shared broken-pipe predicate rather than scattering string checks.
+- Guard process-level `uncaughtException` and `unhandledRejection` only for
+  known broken-pipe shutdown errors; do not swallow arbitrary exceptions.
+- Add a regression test that closes or destroys the progress reader before the
+  helper writes/flushed output, and assert the update path exits quietly or
+  reports success as appropriate.
+- Finish with packaged or installed-app verification. If a full in-app update
+  drill is too expensive, state that limitation and provide the strongest local
+  substitute plus the exact remaining manual drill.
+
+### 6. Handoff or escalate
+
+If the user also asked to release after recovery:
+
+1. finish the local Desktop repair
+2. record validation evidence
+3. route the release portion to `release-maintainer`
+
+Keep the handoff concrete:
+
+```markdown
+Root cause: ...
+
+Repair:
+- ...
+
+Validation:
+- ...
+
+Next route:
+- release-maintainer for version ...
+```
+
+## Common Failure Modes
+
+- Treating local `pnpm dev` breakage as a release problem before reproducing the
+  local command.
+- Resetting `~/.rudder` too early and losing the user's useful local state.
+- Looking only at API health when the Electron shell is the broken layer.
+- Looking only at Electron logs when embedded Postgres never started.
+- Claiming update install is fixed from a dry-run that never downloads or
+  launches the app.
+- Treating `EPIPE` during update restart as a generic release failure before
+  checking whether the parent progress pipe intentionally closed.
+- Treating a dirty-WIP TypeScript or fixture failure as Desktop/Postgres
+  corruption just because it surfaced during `pnpm dev`.
+- Mixing unrelated dirty package changes into a Desktop recovery commit.
+
+## Safety Rules
+
+- Preserve unrelated dirty worktree files.
+- Do not destroy local Rudder data without explicit authorization.
+- Do not publish, tag, move dist-tags, or create GitHub Releases from this
+  skill.
+- Prefer exact command output and log excerpts over guesses.
+- If the fix changes Desktop startup, profile routing, migrations, packaging,
+  or update behavior, require packaged verification before final handoff unless
+  blocked.

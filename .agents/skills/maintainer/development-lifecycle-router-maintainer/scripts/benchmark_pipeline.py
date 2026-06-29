@@ -40,7 +40,7 @@ CHECKS = [
         "files": ["SKILL.md"],
         "patterns": [
             r"## Overview",
-            r"## When To Use",
+            r"## When to Use",
             r"## Core Pattern",
             r"## Quick Reference",
             r"## Implementation",

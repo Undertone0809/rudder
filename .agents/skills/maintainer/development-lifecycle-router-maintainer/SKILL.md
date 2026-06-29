@@ -14,7 +14,7 @@ This skill is a thin router. It prevents two mistakes: starting implementation
 before the stage is known, and calling work complete without the proof or review
 the request actually requires.
 
-## When To Use
+## When to Use
 
 Use this skill when the request is about Rudder development and the next owner
 or lifecycle stage is unclear:
@@ -87,6 +87,9 @@ substituting self-review.
 Reference files are part of the skill contract. Load them only when their route
 is active:
 
+- `references/runbook.md`: detailed legacy workflow, examples, validation
+  cases, and command-level guidance. Before executing high-risk actions or final
+  judgments, load this file plus the route-specific reference below.
 - `references/route-selection.md`: stage classifier, narrow routing,
   meta-request precedence, scope guard, and skill-optimization packet.
 - `references/verification-review.md`: verifier gate, spawned reviewer policy,
