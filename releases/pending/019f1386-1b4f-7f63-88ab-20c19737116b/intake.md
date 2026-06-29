@@ -8,10 +8,10 @@ changelog instead of listing it as a raw asset.
 
 Suggested release-note context:
 
-- Appearance customization is now visible in Settings, with selectable design
-  styles, base colors, and action themes.
-- The screenshot shows the Appearance preferences surface with the Mira style,
-  Olive base color, and Emerald action theme selected.
+- Appearance customization now supports a much wider set of theme controls,
+  including selectable base color palettes and action color themes.
+- The screenshot shows the expanded Appearance preferences surface with multiple
+  base colors and theme options available in Settings.
 
 Files:
 
