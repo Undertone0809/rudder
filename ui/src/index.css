@@ -78,6 +78,33 @@
   --radius-md: 0.8rem;
   --radius-lg: 1.05rem;
   --radius-xl: 1.35rem;
+  --control-height-xs: 2rem;
+  --control-height-sm: 2.25rem;
+  --control-height: 2.5rem;
+  --control-height-lg: 2.75rem;
+  --control-padding-x-sm: 0.75rem;
+  --control-padding-x: 1rem;
+  --control-gap: 0.5rem;
+  --control-radius: calc(var(--radius-sm) - 1px);
+  --control-font-size: 0.875rem;
+  --control-icon-size: 1rem;
+  --input-background: color-mix(in oklab, var(--surface-elevated) 98%, transparent);
+  --input-border-color: var(--border-base);
+  --menu-min-width: 8rem;
+  --menu-radius: calc(var(--radius-sm) + 2px);
+  --menu-padding: 0.25rem;
+  --menu-item-min-height: 2rem;
+  --menu-item-radius: calc(var(--radius-sm) - 2px);
+  --menu-item-padding-y: 0.375rem;
+  --menu-item-font-size: 0.875rem;
+  --settings-choice-min-width: 7.75rem;
+  --settings-choice-radius: calc(var(--radius-md) - 1px);
+  --settings-choice-preview-radius: calc(var(--radius-md) - 4px);
+  --settings-choice-padding-x: 0.625rem;
+  --settings-choice-padding-y: 0.625rem;
+  --settings-choice-gap: 0.5rem;
+  --settings-choice-label-size: 0.75rem;
+  --settings-choice-description-size: 0.6875rem;
   --surface-page: oklch(0.982 0.002 95);
   --surface-shell: oklch(0.963 0.003 95);
   --surface-inset: oklch(0.947 0.004 95);
@@ -211,6 +238,214 @@
   --sidebar-accent-foreground: var(--ink-strong);
   --sidebar-border: color-mix(in oklab, var(--border-soft) 94%, black);
   --sidebar-ring: var(--ring);
+}
+
+:root[data-style="mira"] {
+  --radius: 0.72rem;
+  --radius-sm: 0.42rem;
+  --radius-md: 0.6rem;
+  --radius-lg: 0.78rem;
+  --radius-xl: 1rem;
+  --desktop-workspace-radius: calc(var(--radius-sm) - 1px);
+  --control-height-xs: 1.75rem;
+  --control-height-sm: 2rem;
+  --control-height: 2.25rem;
+  --control-height-lg: 2.5rem;
+  --control-padding-x-sm: 0.625rem;
+  --control-padding-x: 0.75rem;
+  --control-gap: 0.375rem;
+  --control-radius: var(--radius-md);
+  --control-font-size: 0.75rem;
+  --control-icon-size: 0.875rem;
+  --input-background: color-mix(in oklab, var(--surface-elevated) 84%, transparent);
+  --menu-min-width: 8rem;
+  --menu-radius: var(--radius-lg);
+  --menu-padding: 0.25rem;
+  --menu-item-min-height: 1.75rem;
+  --menu-item-radius: var(--radius-md);
+  --menu-item-padding-y: 0.25rem;
+  --menu-item-font-size: 0.75rem;
+  --settings-choice-min-width: 7.25rem;
+  --settings-choice-radius: var(--radius-lg);
+  --settings-choice-preview-radius: calc(var(--radius-md) - 1px);
+  --settings-choice-padding-x: 0.5rem;
+  --settings-choice-padding-y: 0.5rem;
+  --settings-choice-gap: 0.375rem;
+  --settings-choice-label-size: 0.75rem;
+  --settings-choice-description-size: 0.6875rem;
+  --shadow-sm: 0 8px 18px -16px rgb(20 20 20 / 0.14);
+  --shadow-md: 0 16px 34px -26px rgb(20 20 20 / 0.16);
+  --shadow-lg: 0 26px 58px -38px rgb(20 20 20 / 0.2);
+}
+
+:root[data-style="luma"] {
+  --radius: 1.25rem;
+  --radius-sm: 0.95rem;
+  --radius-md: 1.25rem;
+  --radius-lg: 1.55rem;
+  --radius-xl: 1.9rem;
+  --desktop-workspace-radius: calc(var(--radius-md) - 2px);
+  --control-height-xs: 2.25rem;
+  --control-height-sm: 2.5rem;
+  --control-height: 2.75rem;
+  --control-height-lg: 3rem;
+  --control-padding-x-sm: 0.95rem;
+  --control-padding-x: 1.15rem;
+  --control-gap: 0.5rem;
+  --control-radius: 999px;
+  --control-font-size: 0.875rem;
+  --control-icon-size: 1rem;
+  --input-background: color-mix(in oklab, var(--surface-elevated) 70%, var(--surface-inset));
+  --input-border-color: color-mix(in oklab, var(--border-base) 52%, transparent);
+  --menu-min-width: 12rem;
+  --menu-radius: var(--radius-lg);
+  --menu-padding: 0.375rem;
+  --menu-item-min-height: 2.25rem;
+  --menu-item-radius: calc(var(--radius-md) - 2px);
+  --menu-item-padding-y: 0.5rem;
+  --menu-item-font-size: 0.875rem;
+  --settings-choice-min-width: 8.5rem;
+  --settings-choice-radius: var(--radius-lg);
+  --settings-choice-preview-radius: var(--radius-md);
+  --settings-choice-padding-x: 0.75rem;
+  --settings-choice-padding-y: 0.75rem;
+  --settings-choice-gap: 0.625rem;
+  --settings-choice-label-size: 0.8125rem;
+  --settings-choice-description-size: 0.75rem;
+  --shadow-sm: 0 16px 34px -24px rgb(20 20 20 / 0.18);
+  --shadow-md: 0 28px 62px -38px rgb(20 20 20 / 0.22);
+  --shadow-lg: 0 44px 96px -52px rgb(20 20 20 / 0.28);
+}
+
+:root[data-base-color="olive"] {
+  --desktop-window-wash: rgb(242 241 231 / 0.34);
+  --desktop-content-surface-light: #f6f5eb;
+  --desktop-content-surface-light-alt: #f2f1e7;
+  --desktop-content-border-light: rgb(191 190 163 / 0.84);
+  --surface-page: #f2f1e7;
+  --surface-shell: #e7e6d8;
+  --surface-inset: #dad9c8;
+  --surface-elevated: #faf9ef;
+  --surface-overlay: #f6f5eb;
+  --surface-active: #cbcbb4;
+  --surface-proposal: #dcebdd;
+  --panel-subtle: color-mix(in oklab, var(--surface-elevated) 92%, white);
+  --panel-strong: color-mix(in oklab, var(--surface-shell) 74%, var(--surface-elevated));
+  --ink-strong: #24261e;
+  --ink-base: #383a2f;
+  --ink-muted: #646655;
+  --ink-faint: #85866f;
+  --border-soft: #d2d1be;
+  --border-base: #bbb9a1;
+  --border-strong: #959378;
+  --accent: color-mix(in oklab, var(--surface-active) 88%, white);
+  --chart-1: #3d3f32;
+  --chart-2: #565842;
+  --chart-3: #72745a;
+  --chart-4: #8b8d70;
+  --chart-5: #a7a888;
+  --sidebar: color-mix(in oklab, var(--surface-shell) 94%, white);
+  --sidebar-foreground: var(--ink-base);
+  --sidebar-accent: color-mix(in oklab, var(--surface-active) 88%, white);
+  --sidebar-border: color-mix(in oklab, var(--border-soft) 90%, white);
+}
+
+:root[data-theme-color="neutral"] {
+  --accent-soft: color-mix(in oklab, var(--surface-active) 72%, white);
+  --accent-base: #4a4944;
+  --accent-strong: #2d2c29;
+  --primary: #2d2c29;
+  --primary-foreground: #f6f5f2;
+  --secondary: color-mix(in oklab, var(--surface-inset) 88%, white);
+  --secondary-foreground: var(--ink-strong);
+  --ring: color-mix(in oklab, #4a4944 42%, white);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+}
+
+.dark[data-base-color="olive"] {
+  --desktop-window-wash: rgb(5 6 4 / 0.48);
+  --surface-page: #050604;
+  --surface-shell: #11120e;
+  --surface-inset: #24251d;
+  --desktop-content-surface-dark: #1a1b15;
+  --desktop-content-surface-dark-alt: #202119;
+  --desktop-content-border-dark: rgb(49 50 41 / 0.88);
+  --surface-elevated: #1a1b15;
+  --surface-overlay: #202119;
+  --surface-active: #2a2b22;
+  --surface-proposal: #122a22;
+  --code-surface: #11120f;
+  --code-surface-subtle: #090a08;
+  --code-surface-elevated: #1f2019;
+  --code-border: rgb(82 83 68 / 0.66);
+  --code-foreground: #dedbd0;
+  --code-muted: #918e80;
+  --panel-subtle: color-mix(in oklab, var(--surface-elevated) 92%, black);
+  --panel-strong: color-mix(in oklab, var(--surface-shell) 66%, var(--surface-elevated));
+  --ink-strong: #f4f1e9;
+  --ink-base: #dedbd0;
+  --ink-muted: #aaa79b;
+  --ink-faint: #747167;
+  --border-soft: #2b2c24;
+  --border-base: #313229;
+  --border-strong: #4c4d40;
+  --accent: color-mix(in oklab, var(--surface-active) 92%, black);
+  --chart-1: #8b8b76;
+  --chart-2: #a0a08a;
+  --chart-3: #6f705f;
+  --chart-4: #c0c0ad;
+  --chart-5: #777864;
+  --sidebar: #11120e;
+  --sidebar-accent: #24251d;
+  --sidebar-border: #2b2c24;
+}
+
+.dark[data-theme-color="neutral"] {
+  --accent-soft: color-mix(in oklab, var(--surface-active) 82%, black);
+  --accent-base: #b7b4aa;
+  --accent-strong: #e7e3d8;
+  --primary: #e7e3d8;
+  --primary-foreground: #24231f;
+  --secondary: color-mix(in oklab, var(--surface-inset) 88%, black);
+  --secondary-foreground: var(--ink-strong);
+  --ring: color-mix(in oklab, #b7b4aa 42%, white);
+}
+
+:root[data-theme-color="emerald"] {
+  --accent-soft: #d6efe5;
+  --accent-base: #047857;
+  --accent-strong: #065f46;
+  --primary: #047857;
+  --primary-foreground: #ecfdf5;
+  --secondary: #d9efe6;
+  --secondary-foreground: #064e3b;
+  --ring: color-mix(in oklab, #10b981 48%, white);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+}
+
+.dark[data-theme-color="emerald"] {
+  --accent-soft: #123329;
+  --accent-base: #10b981;
+  --accent-strong: #34d399;
+  --primary: #34d399;
+  --primary-foreground: #04251b;
+  --secondary: #123329;
+  --secondary-foreground: #d1fae5;
+  --ring: color-mix(in oklab, #10b981 44%, white);
+}
+
+.dark[data-style="mira"] {
+  --shadow-sm: 0 10px 22px -18px rgb(0 0 0 / 0.48);
+  --shadow-md: 0 22px 46px -34px rgb(0 0 0 / 0.58);
+  --shadow-lg: 0 34px 74px -48px rgb(0 0 0 / 0.68);
+}
+
+.dark[data-style="luma"] {
+  --shadow-sm: 0 18px 36px -24px rgb(0 0 0 / 0.58);
+  --shadow-md: 0 32px 68px -40px rgb(0 0 0 / 0.66);
+  --shadow-lg: 0 48px 106px -56px rgb(0 0 0 / 0.72);
 }
 
 @layer base {

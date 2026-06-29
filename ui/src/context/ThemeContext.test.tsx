@@ -63,13 +63,29 @@ function installMatchMedia(initialDark: boolean) {
 }
 
 function ThemeProbe() {
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const {
+    theme,
+    resolvedTheme,
+    designStyle,
+    baseColor,
+    accentTheme,
+    setTheme,
+    setDesignStyle,
+    setBaseColor,
+    setAccentTheme,
+  } = useTheme();
   return (
     <div>
       <button type="button" onClick={() => setTheme("light")}>Light</button>
       <button type="button" onClick={() => setTheme("system")}>System</button>
+      <button type="button" onClick={() => setDesignStyle("mira")}>Mira</button>
+      <button type="button" onClick={() => setBaseColor("olive")}>Olive</button>
+      <button type="button" onClick={() => setAccentTheme("emerald")}>Emerald</button>
       <span data-testid="theme">{theme}</span>
       <span data-testid="resolved">{resolvedTheme}</span>
+      <span data-testid="design-style">{designStyle}</span>
+      <span data-testid="base-color">{baseColor}</span>
+      <span data-testid="accent-theme">{accentTheme}</span>
     </div>
   );
 }
@@ -80,6 +96,9 @@ beforeEach(() => {
   installLocalStorage().clear();
   document.documentElement.className = "";
   document.documentElement.removeAttribute("style");
+  delete document.documentElement.dataset.style;
+  delete document.documentElement.dataset.baseColor;
+  delete document.documentElement.dataset.themeColor;
 });
 
 afterEach(() => {
@@ -146,5 +165,38 @@ describe("ThemeProvider desktop shell bridge", () => {
 
     expect(setAppearance).toHaveBeenLastCalledWith("system");
     expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("applies and persists the selected appearance choices on the root element", () => {
+    installMatchMedia(true);
+    localStorage.setItem("rudder.theme", "dark");
+    localStorage.setItem("rudder.designStyle", "luma");
+    localStorage.setItem("rudder.baseColor", "olive");
+    localStorage.setItem("rudder.accentTheme", "emerald");
+
+    const container = renderThemeProvider();
+
+    expect(container.querySelector("[data-testid='design-style']")?.textContent).toBe("luma");
+    expect(container.querySelector("[data-testid='base-color']")?.textContent).toBe("olive");
+    expect(container.querySelector("[data-testid='accent-theme']")?.textContent).toBe("emerald");
+    expect(document.documentElement.dataset.style).toBe("luma");
+    expect(document.documentElement.dataset.baseColor).toBe("olive");
+    expect(document.documentElement.dataset.themeColor).toBe("emerald");
+
+    const miraButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Mira");
+    const oliveButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Olive");
+    const emeraldButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Emerald");
+    act(() => {
+      miraButton?.click();
+      oliveButton?.click();
+      emeraldButton?.click();
+    });
+
+    expect(document.documentElement.dataset.style).toBe("mira");
+    expect(document.documentElement.dataset.baseColor).toBe("olive");
+    expect(document.documentElement.dataset.themeColor).toBe("emerald");
+    expect(localStorage.getItem("rudder.designStyle")).toBe("mira");
+    expect(localStorage.getItem("rudder.baseColor")).toBe("olive");
+    expect(localStorage.getItem("rudder.accentTheme")).toBe("emerald");
   });
 });

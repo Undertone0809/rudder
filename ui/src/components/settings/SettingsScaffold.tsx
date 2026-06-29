@@ -120,8 +120,9 @@ export function SettingsChoiceCard({
   return (
     <button
       type="button"
+      aria-pressed={selected}
       className={cn(
-        "group flex min-w-[7.75rem] flex-col gap-2 rounded-[calc(var(--radius-md)-1px)] border px-2.5 py-2.5 text-left transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)]",
+        "group flex min-w-[var(--settings-choice-min-width)] flex-col gap-[var(--settings-choice-gap)] rounded-[var(--settings-choice-radius)] border px-[var(--settings-choice-padding-x)] py-[var(--settings-choice-padding-y)] text-left text-[length:var(--settings-choice-label-size)] transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)]",
         selected
           ? "border-[color:color-mix(in_oklab,var(--accent-base)_82%,white)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)] shadow-[0_0_0_1px_color-mix(in_oklab,var(--accent-base)_42%,transparent)]"
           : "border-[color:color-mix(in_oklab,var(--border-soft)_92%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_92%,transparent)]",
@@ -129,12 +130,16 @@ export function SettingsChoiceCard({
       )}
       {...props}
     >
-      <div className="overflow-hidden rounded-[calc(var(--radius-md)-4px)]">
+      <div className="overflow-hidden rounded-[var(--settings-choice-preview-radius)]">
         {preview}
       </div>
       <div className="space-y-0.5">
-        <div className="text-[12px] font-medium text-foreground">{label}</div>
-        {description ? <div className="text-[11px] leading-4 text-muted-foreground">{description}</div> : null}
+        <div className="font-medium text-foreground">{label}</div>
+        {description ? (
+          <div className="text-[length:var(--settings-choice-description-size)] leading-4 text-muted-foreground">
+            {description}
+          </div>
+        ) : null}
       </div>
     </button>
   );

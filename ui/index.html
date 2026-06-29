@@ -21,21 +21,46 @@
     <script>
       (() => {
         const key = "rudder.theme";
+        const styleKey = "rudder.designStyle";
+        const baseColorKey = "rudder.baseColor";
+        const accentThemeKey = "rudder.accentTheme";
         const darkThemeColor = "#1f1f1d";
         const lightThemeColor = "#f1f0ef";
+        const darkBaseThemeColors = {
+          neutral: darkThemeColor,
+          olive: "#050604",
+        };
+        const lightBaseThemeColors = {
+          neutral: lightThemeColor,
+          olive: "#f2f1e7",
+        };
+        let theme = "system";
+        let isDark = true;
+        let baseColor = "neutral";
         try {
           const stored = window.localStorage.getItem(key);
+          const storedStyle = window.localStorage.getItem(styleKey);
+          const storedBaseColor = window.localStorage.getItem(baseColorKey);
+          const storedAccentTheme = window.localStorage.getItem(accentThemeKey);
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-          const theme = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
-          const isDark = theme === "system" ? prefersDark : theme === "dark";
+          theme = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+          isDark = theme === "system" ? prefersDark : theme === "dark";
+          baseColor = storedBaseColor === "olive" ? "olive" : "neutral";
+          document.documentElement.dataset.style =
+            storedStyle === "mira" || storedStyle === "luma" ? storedStyle : "default";
+          document.documentElement.dataset.baseColor = baseColor;
+          document.documentElement.dataset.themeColor = storedAccentTheme === "emerald" ? "emerald" : "neutral";
           document.documentElement.classList.toggle("dark", isDark);
           document.documentElement.style.colorScheme = isDark ? "dark" : "light";
           const themeColorMeta = document.querySelector('meta[name="theme-color"]');
           if (themeColorMeta) {
-            themeColorMeta.setAttribute("content", isDark ? darkThemeColor : lightThemeColor);
+            themeColorMeta.setAttribute("content", isDark ? darkBaseThemeColors[baseColor] : lightBaseThemeColors[baseColor]);
           }
         } catch {
           document.documentElement.classList.add("dark");
+          document.documentElement.dataset.style = "default";
+          document.documentElement.dataset.baseColor = "neutral";
+          document.documentElement.dataset.themeColor = "neutral";
           document.documentElement.style.colorScheme = "dark";
         }
 
@@ -46,7 +71,7 @@
         document.documentElement.classList.toggle("desktop-shell-macos", isMacDesktopShell);
         document.documentElement.style.backgroundColor = isMacDesktopShell
           ? "transparent"
-          : (document.documentElement.classList.contains("dark") ? darkThemeColor : lightThemeColor);
+          : (isDark ? darkBaseThemeColors[baseColor] : lightBaseThemeColors[baseColor]);
         if (isMacDesktopShell && typeof window.desktopShell?.setAppearance === "function") {
           void window.desktopShell.setAppearance(theme);
         }

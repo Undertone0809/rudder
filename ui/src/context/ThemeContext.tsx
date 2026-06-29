@@ -10,6 +10,9 @@ import {
 
 type Theme = "light" | "dark" | "system";
 type ResolvedTheme = "light" | "dark";
+type DesignStyle = "default" | "mira" | "luma";
+type BaseColor = "neutral" | "olive";
+type AccentTheme = "neutral" | "emerald";
 type DesktopShellThemeBridge = {
   setAppearance?: (theme: Theme) => Promise<void> | void;
 };
@@ -17,13 +20,30 @@ type DesktopShellThemeBridge = {
 interface ThemeContextValue {
   theme: Theme;
   resolvedTheme: ResolvedTheme;
+  designStyle: DesignStyle;
+  baseColor: BaseColor;
+  accentTheme: AccentTheme;
   setTheme: (theme: Theme) => void;
+  setDesignStyle: (style: DesignStyle) => void;
+  setBaseColor: (baseColor: BaseColor) => void;
+  setAccentTheme: (accentTheme: AccentTheme) => void;
   toggleTheme: () => void;
 }
 
 const THEME_STORAGE_KEY = "rudder.theme";
+const DESIGN_STYLE_STORAGE_KEY = "rudder.designStyle";
+const BASE_COLOR_STORAGE_KEY = "rudder.baseColor";
+const ACCENT_THEME_STORAGE_KEY = "rudder.accentTheme";
 const DARK_THEME_COLOR = "#1f1f1d";
 const LIGHT_THEME_COLOR = "#f1f0ef";
+const LIGHT_BASE_THEME_COLORS: Record<BaseColor, string> = {
+  neutral: LIGHT_THEME_COLOR,
+  olive: "#f2f1e7",
+};
+const DARK_BASE_THEME_COLORS: Record<BaseColor, string> = {
+  neutral: DARK_THEME_COLOR,
+  olive: "#050604",
+};
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 function readDesktopShell(): DesktopShellThemeBridge | null {
@@ -49,33 +69,95 @@ function getStoredThemePreference(): Theme {
   return "system";
 }
 
+function getStoredDesignStylePreference(): DesignStyle {
+  if (typeof window === "undefined") return "default";
+  try {
+    const stored = window.localStorage.getItem(DESIGN_STYLE_STORAGE_KEY);
+    if (stored === "default" || stored === "mira" || stored === "luma") {
+      return stored;
+    }
+  } catch {
+    // Ignore local storage read failures in restricted environments.
+  }
+  return "default";
+}
+
+function getStoredBaseColorPreference(): BaseColor {
+  if (typeof window === "undefined") return "neutral";
+  try {
+    const stored = window.localStorage.getItem(BASE_COLOR_STORAGE_KEY);
+    if (stored === "neutral" || stored === "olive") {
+      return stored;
+    }
+  } catch {
+    // Ignore local storage read failures in restricted environments.
+  }
+  return "neutral";
+}
+
+function getStoredAccentThemePreference(): AccentTheme {
+  if (typeof window === "undefined") return "neutral";
+  try {
+    const stored = window.localStorage.getItem(ACCENT_THEME_STORAGE_KEY);
+    if (stored === "neutral" || stored === "emerald") {
+      return stored;
+    }
+  } catch {
+    // Ignore local storage read failures in restricted environments.
+  }
+  return "neutral";
+}
+
 function resolveThemePreference(theme: Theme): ResolvedTheme {
   return theme === "system" ? getSystemTheme() : theme;
 }
 
-function applyTheme(theme: Theme) {
+function resolveThemeColor(resolvedTheme: ResolvedTheme, baseColor: BaseColor) {
+  return resolvedTheme === "dark" ? DARK_BASE_THEME_COLORS[baseColor] : LIGHT_BASE_THEME_COLORS[baseColor];
+}
+
+function applyTheme(theme: Theme, designStyle: DesignStyle, baseColor: BaseColor, accentTheme: AccentTheme) {
   if (typeof document === "undefined") return;
   const resolvedTheme = resolveThemePreference(theme);
   const isDark = resolvedTheme === "dark";
+  const themeColor = resolveThemeColor(resolvedTheme, baseColor);
   const root = document.documentElement;
   root.classList.toggle("dark", isDark);
+  root.dataset.style = designStyle;
+  root.dataset.baseColor = baseColor;
+  root.dataset.themeColor = accentTheme;
   root.style.colorScheme = isDark ? "dark" : "light";
   root.style.backgroundColor = root.classList.contains("desktop-shell-macos")
     ? "transparent"
-    : (isDark ? DARK_THEME_COLOR : LIGHT_THEME_COLOR);
+    : themeColor;
   const themeColorMeta = document.querySelector('meta[name="theme-color"]');
   if (themeColorMeta instanceof HTMLMetaElement) {
-    themeColorMeta.setAttribute("content", isDark ? DARK_THEME_COLOR : LIGHT_THEME_COLOR);
+    themeColorMeta.setAttribute("content", themeColor);
   }
   void readDesktopShell()?.setAppearance?.(theme);
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => getStoredThemePreference());
+  const [designStyle, setDesignStyleState] = useState<DesignStyle>(() => getStoredDesignStylePreference());
+  const [baseColor, setBaseColorState] = useState<BaseColor>(() => getStoredBaseColorPreference());
+  const [accentTheme, setAccentThemeState] = useState<AccentTheme>(() => getStoredAccentThemePreference());
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveThemePreference(getStoredThemePreference()));
 
   const setTheme = useCallback((nextTheme: Theme) => {
     setThemeState(nextTheme);
+  }, []);
+
+  const setDesignStyle = useCallback((nextStyle: DesignStyle) => {
+    setDesignStyleState(nextStyle);
+  }, []);
+
+  const setBaseColor = useCallback((nextBaseColor: BaseColor) => {
+    setBaseColorState(nextBaseColor);
+  }, []);
+
+  const setAccentTheme = useCallback((nextAccentTheme: AccentTheme) => {
+    setAccentThemeState(nextAccentTheme);
   }, []);
 
   const toggleTheme = useCallback(() => {
@@ -86,14 +168,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    applyTheme(theme);
+    applyTheme(theme, designStyle, baseColor, accentTheme);
     setResolvedTheme(resolveThemePreference(theme));
     try {
       localStorage.setItem(THEME_STORAGE_KEY, theme);
+      localStorage.setItem(DESIGN_STYLE_STORAGE_KEY, designStyle);
+      localStorage.setItem(BASE_COLOR_STORAGE_KEY, baseColor);
+      localStorage.setItem(ACCENT_THEME_STORAGE_KEY, accentTheme);
     } catch {
       // Ignore local storage write failures in restricted environments.
     }
-  }, [theme]);
+  }, [theme, designStyle, baseColor, accentTheme]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -102,22 +187,39 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       if (theme !== "system") return;
       const nextResolvedTheme = getSystemTheme();
       setResolvedTheme(nextResolvedTheme);
-      applyTheme("system");
+      applyTheme("system", designStyle, baseColor, accentTheme);
     };
     media.addEventListener("change", handleChange);
     return () => {
       media.removeEventListener("change", handleChange);
     };
-  }, [theme]);
+  }, [theme, designStyle, baseColor, accentTheme]);
 
   const value = useMemo(
     () => ({
       theme,
       resolvedTheme,
+      designStyle,
+      baseColor,
+      accentTheme,
       setTheme,
+      setDesignStyle,
+      setBaseColor,
+      setAccentTheme,
       toggleTheme,
     }),
-    [theme, resolvedTheme, setTheme, toggleTheme],
+    [
+      theme,
+      resolvedTheme,
+      designStyle,
+      baseColor,
+      accentTheme,
+      setTheme,
+      setDesignStyle,
+      setBaseColor,
+      setAccentTheme,
+      toggleTheme,
+    ],
   );
 
   return (
