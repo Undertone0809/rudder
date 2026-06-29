@@ -89,6 +89,13 @@ Name the actor, trigger, system effect, and terminal surface:
 - terminal surface: UI route, packaged Desktop shell, CLI output, API readback,
   run-intelligence view, npm/GitHub release state, or screenshot
 
+Also decide whether the request requires real-environment proof. Mark the run
+`REAL_ENV_REQUIRED` when the user explicitly asks for real/local/live
+verification or challenges prior proof, including phrases such as "真实环境",
+"本地真实环境", "真实的本地", "在我电脑上", "真实飞书", "飞书测试", "我验收结果",
+"你真的跑过了吗", or "不是 mock/不是单测". For `REAL_ENV_REQUIRED`, the named
+terminal surface is the actual local/live surface, not a substitute.
+
 ### 2. Run the product path
 
 Use the strongest safe path available:
@@ -107,6 +114,16 @@ Use the strongest safe path available:
 
 Unit tests, typecheck, build, CI, or diff review are supporting evidence. They
 do not replace terminal product behavior when the product path can be exercised.
+
+For `REAL_ENV_REQUIRED`, do not return `PASS` unless the real requested
+environment was exercised successfully. Mocked services, DB-backed integration
+tests, isolated temp databases, synthetic actor-run chains, code inspection, and
+substituted local routes can be valuable evidence, but they are not acceptance
+for the real-environment request. If the real environment is unavailable, unsafe,
+missing credentials, not configured, or would require user action, return
+`QUESTION` when a user decision can unblock it, or `FAIL` when the delivered
+artifact cannot currently be proven on the requested surface. Label the evidence
+as `substituted`, not `PASS`.
 
 ### 3. Check regressions in the nearest old flow
 
@@ -140,6 +157,10 @@ Return exactly one top-level verdict:
 - `QUESTION`: acceptance criteria are missing, contradictory, or unsafe to
   infer.
 
+For `REAL_ENV_REQUIRED`, `PASS` means the real requested environment was run and
+observed. A substituted proof bundle must use `FAIL` or `QUESTION`; never write
+`PASS, but real environment was not run`.
+
 Use this shape:
 
 ```markdown
@@ -170,6 +191,8 @@ Mutation ledger:
 
 Do not hide skipped checks. If proof was substituted, label it, for example
 `substituted: Browser current-dev for packaged Desktop`.
+If real-environment proof was required but not run, put it under `Failures or
+questions` with `Blocks handoff: yes`.
 
 ## Validation Cases
 
@@ -229,3 +252,24 @@ or UI evidence. Stop without editing files.
 
 Must not:
 Patch the API, stage files, commit, push, or continue as the writer.
+
+### Case: Real Feishu Stop Verification Required
+
+Input:
+The writer fixed a Feishu `/stop` regression and produced DB-backed runtime
+tests. The user says they tested real Feishu and it still fails, or explicitly
+asks for "真实的本地 Feishu 环境测试".
+
+Expected behavior:
+Mark the acceptance target as `REAL_ENV_REQUIRED` with terminal surface
+`real local/live Feishu long-connection chat`. Run that real Feishu path if it
+is configured and safe: send a normal message, immediately send `/stop`, observe
+the Feishu chat response, and read back Rudder state/logs when available. Return
+`PASS` only if that real Feishu path works. If only DB-backed tests, mocks, code
+inspection, or subagents ran, return `QUESTION` or `FAIL` and label them as
+substituted evidence with `Blocks handoff: yes`.
+
+Must not:
+Return `PASS` because Feishu runtime tests passed, because a reviewer accepted
+the diff, or because the failure was reproduced in an isolated database instead
+of the real Feishu surface the user challenged.
