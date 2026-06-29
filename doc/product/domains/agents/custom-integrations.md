@@ -18,6 +18,7 @@ related_code:
 related_tests:
   - server/src/__tests__/custom-integrations-service.test.ts
   - ui/src/pages/AgentDetail.integrations.test.tsx
+  - tests/e2e/agent-detail-integrations-tab.spec.ts
 related_plans:
   - doc/plans/2026-06-27-agent-custom-integrations.md
 edit_policy: user_confirmed_only
@@ -145,6 +146,9 @@ Rudder persists:
   integration id and receives no usable integration.
 - Runtime prompt assembly includes an enabled tool and excludes disabled,
   revoked, or non-allowlisted tools.
+- Agent Detail Integrations shows Custom API and MCP Server controls alongside
+  fixed-provider setup rows, and E2E covers agent-scoped, organization-scoped,
+  and cross-organization boundary behavior from that surface.
 
 ### Invariants / Non-Goals
 

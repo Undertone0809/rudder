@@ -103,6 +103,14 @@ Product model:
 - Getting Started onboarding seed creates starter project/issues and mirrors
   those issue threads into the operator's Messenger directory as a grouped,
   already-read starter set.
+- The full tutorial seed creates a `Getting Started` project with one welcome
+  issue and eleven numbered tutorial issues. The experienced-user seed may
+  create only the welcome issue.
+- Seeded tutorial issues carry grouped status/priority intent: the welcome issue
+  starts done, core-loop issues start todo, and later recommended/advanced
+  issues start backlog.
+- Seeded issue descriptions may include next-issue links and chat CTA links that
+  prefill a prompt, selected project, and first available agent.
 - Invite landing surfaces can show onboarding skill/text instruction links for
   external agents.
 
@@ -111,8 +119,9 @@ Flow:
 1. Fresh user or invited actor enters onboarding/invite route.
 2. Server exposes safe onboarding metadata and required setup state.
 3. UI guides organization/agent/runtime setup.
-4. Server seeds starter work when needed, including any Messenger grouping and
-   read-state markers required for the starter set.
+4. Server seeds starter work when needed, including the `Getting Started`
+   project, tutorial issues, next-step links, chat CTA links, Messenger grouping,
+   and read-state markers required for the starter set.
 5. User lands in the organization work surface with starter work or clear next
    action.
 
@@ -124,11 +133,21 @@ Invariants:
   attention. They should appear under a `Getting Started` Messenger custom
   group for the operator and should not create unread Messenger or sidebar
   badge debt at first landing.
+- Getting Started issue links must stay organization-route-aware so next-step
+  links and chat CTAs open inside the newly created organization, not a global
+  or stale organization route.
+- Onboarding seed must be idempotent for an existing active `Getting Started`
+  project: repeated seed calls reuse matching starter issues instead of creating
+  duplicates.
 - Auth/deployment mode constraints remain respected.
 
 Evidence:
 
 - `tests/e2e/onboarding.spec.ts` covers the onboarding UI path.
+- `tests/e2e/onboarding.spec.ts` covers Getting Started project creation,
+  tutorial issue grouping/statuses, next-issue links, chat CTA prefill with
+  project/agent context, Messenger custom group membership, and cleared unread
+  sidebar state for seeded starter issues.
 - `server/src/__tests__/invite-onboarding-text.test.ts` covers invite/onboarding
   instruction text behavior.
 - Known gap: release-smoke onboarding evidence still belongs to release/Desktop

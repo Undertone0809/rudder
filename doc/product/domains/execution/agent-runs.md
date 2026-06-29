@@ -157,8 +157,16 @@ Flow:
 1. A user sends a chat message to a runtime-backed agent.
 2. Rudder creates an Agent Run with chat scene and conversation target.
 3. Only one active run should own a conversation turn at a time.
-4. The assistant message stores a reverse link to the run.
-5. Agent Detail Run context and Messenger can navigate between run evidence and
+4. Runtime output must end with the Rudder chat result sentinel. If the primary
+   runtime output has useful text but is missing that sentinel, Rudder may run an
+   internal same-adapter repair call marked as chat result repair.
+5. When repair succeeds, Rudder persists the repaired assistant message as the
+   successful chat result, combines primary and repair usage, and records repair
+   evidence on the run result.
+6. When repair is not attempted or fails, Rudder records a recoverable failed
+   chat result with any safe partial body.
+7. The assistant message stores a reverse link to the run.
+8. Agent Detail Run context and Messenger can navigate between run evidence and
    chat transcript.
 
 Invariants:
@@ -166,21 +174,36 @@ Invariants:
 - A chat-native run is not an issue-backed run unless the workflow explicitly
   converts or proposes tracked issue work.
 - Chat run audit must preserve conversation and message identity.
+- Internal repair prompts, repair protocol text, and repair transcript logs must
+  not be surfaced as normal assistant chat content.
+- Missing-result-sentinel repair is only for recovering a runtime response that
+  otherwise completed successfully. Timeout, nonzero exit, adapter error, or
+  malformed result JSON remain failed chat outcomes.
+- Repaired successful runs must preserve evidence that repair occurred, including
+  `sentinelRepairAttempted`, `sentinelRepairSucceeded`, and
+  `repairReason: "missing_result_sentinel"`.
 
 Evidence:
 
 - Chat assistant messages expose run attribution.
 - Agent Detail Run context can open the source conversation.
+- Chat assistant tests cover missing-result-sentinel repair, persisted repair
+  metadata, and primary/repair usage aggregation.
+- Chat streaming E2E covers a missing-result-sentinel turn recovering into a
+  succeeded assistant message without exposing the internal protocol failure.
 
 Related code:
 
 - `server/src/services/chat-agent-runs.ts`
+- `server/src/services/chat-assistant.ts`
 - `ui/src/pages/AgentDetail.chat-context.tsx`
 
 Related tests:
 
 - `server/src/__tests__/chat-agent-runs.test.ts`
+- `server/src/__tests__/chat-assistant.test.ts`
 - `tests/e2e/agent-detail-chat-run-context.spec.ts`
+- `tests/e2e/chat-streaming.spec.ts`
 
 ## RUN.EXECUTION.001
 

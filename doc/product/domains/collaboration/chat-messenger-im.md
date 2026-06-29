@@ -734,6 +734,9 @@ Product model:
   Feishu identity to the Rudder user for the new integration.
 - Active Feishu integrations use long-connection chat by default. Operators may
   disable that runtime only with an explicit environment override.
+- Newly registered Feishu/Lark apps request message send, message reaction,
+  self-management, bot menu, quick-command, and message receive permissions
+  needed by the setup, inbound, outbound, and working-reaction flows.
 - Group messages require explicit bot addressing unless provider policy says
   otherwise.
 - Feishu-bound conversations carry provider source metadata into Messenger
@@ -772,6 +775,28 @@ Inbound flow:
 7. Messenger summary metadata records that the conversation came from Feishu,
    and Feishu-created chat runs persist matching source metadata.
 8. Outbound placeholder/status is recorded and sent to Feishu.
+
+Accepted reply flow:
+
+1. A normal accepted Feishu message appends the inbound user chat message and
+   returns from event handling without waiting for the assistant reply to finish.
+2. Rudder claims a chat generation for the Feishu-bound conversation before
+   starting the background assistant reply.
+3. When the Feishu sender supports reactions, Rudder adds an `OnIt` working
+   reaction to the inbound Feishu message while the background reply is running.
+4. The background task invokes the chat assistant without streaming to Rudder UI,
+   persists the assistant message, sends or patches the final Feishu outbound
+   reply, links the assistant message to the chat run, and marks the generation
+   completed.
+5. If the reply is stopped or aborted before a durable final response exists,
+   Rudder marks the generation stopped and removes any assistant message created
+   after the stop.
+6. If setup or reply completion fails after the message was accepted, Rudder
+   marks the generation failed and, when possible, sends a safe fallback response
+   back to Feishu.
+7. Rudder removes the `OnIt` working reaction after reply completion, stop, or
+   failure. Reaction add/remove failures are logged but must not fail the
+   Feishu message handling path.
 
 Outbound flow:
 
@@ -813,6 +838,15 @@ Invariants:
   blocked or hidden for the bound source conversation.
 - Feishu inbound dispatch and Feishu runtime outbound delivery remain the only
   paths that write back to the external Feishu chat binding.
+- Accepted Feishu event handling must not block behind the full assistant reply;
+  `/stop` and other follow-up commands must be able to arrive while the reply is
+  still generating.
+- The working `OnIt` reaction is a transient provider-side progress signal. It
+  must not be treated as durable Rudder message state, and failure to add/remove
+  it must not hide or corrupt the persisted chat/run/outbound evidence.
+- Background accepted-reply generation must end in a terminal generation state:
+  completed, failed, or stopped. Stopped replies must not leave a final assistant
+  message or outbound final response that was created after the stop signal.
 - Forked conversations from Feishu-bound sources must not carry
   `sourceMetadata` or create `agentIntegrationOutboundMessages` for future local
   messages.
@@ -828,7 +862,11 @@ Evidence:
 - Feishu DB/runtime dispatcher tests cover setup-session completion,
   credential secrecy, revoked integration reactivation, installer auto-binding,
   SDK normalized long-connection events, hydrated chat message attachments,
-  source metadata propagation, and per-event runtime failure containment.
+  source metadata propagation, per-event runtime failure containment, background
+  accepted-reply handling, stopped reply cleanup, and `OnIt` working reaction
+  add/remove behavior.
+- Feishu app registration tests cover the permissions requested for message,
+  reaction, self-management, bot menu, quick-command, and receive-event flows.
 - Agent Detail Feishu E2E covers setup-session launcher flow, polling,
   persisted integration state, and credential redaction with a mocked Feishu
   app-registration provider.

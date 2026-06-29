@@ -308,10 +308,13 @@ contracts:
       - doc/product/domains/execution/agent-runs.md
     related_code:
       - server/src/services/chat-agent-runs.ts
+      - server/src/services/chat-assistant.ts
       - ui/src/pages/AgentDetail.chat-context.tsx
     related_tests:
       - server/src/__tests__/chat-agent-runs.test.ts
+      - server/src/__tests__/chat-assistant.test.ts
       - tests/e2e/agent-detail-chat-run-context.spec.ts
+      - tests/e2e/chat-streaming.spec.ts
     related_plans:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
   AGENT.IDENTITY.CONFIG.001:
@@ -431,6 +434,7 @@ contracts:
     related_tests:
       - server/src/__tests__/custom-integrations-service.test.ts
       - ui/src/pages/AgentDetail.integrations.test.tsx
+      - tests/e2e/agent-detail-integrations-tab.spec.ts
     related_plans:
       - doc/plans/2026-06-27-agent-custom-integrations.md
   ORG.GOAL.001:
@@ -619,11 +623,13 @@ contracts:
       - server/src/routes/chats.ts
       - server/src/services/chats.ts
       - server/src/services/chat-agent-runs.ts
+      - server/src/services/chat-assistant.ts
       - ui/src/pages/Chat.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/chat-assistant.test.ts
       - tests/e2e/chat-rich-references.spec.ts
+      - tests/e2e/chat-streaming.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   CHAT.TITLE.GENERATION.001:
@@ -783,6 +789,7 @@ contracts:
     related_tests:
       - server/src/__tests__/agent-integration-routes.test.ts
       - server/src/__tests__/agent-integration-inbound-dispatcher.test.ts
+      - server/src/__tests__/agent-integration-feishu-app-registration.test.ts
       - server/src/__tests__/agent-integration-feishu-db-dispatcher.test.ts
       - server/src/__tests__/agent-integration-feishu-inbound-normalizer.test.ts
       - server/src/__tests__/agent-integration-setup-url-routes.test.ts
@@ -983,6 +990,8 @@ contracts:
     docs:
       - doc/product/domains/organizations-and-goals/settings-onboarding-portability.md
     related_code:
+      - packages/db/src/schema/messenger_custom_groups.ts
+      - packages/db/src/schema/messenger_thread_user_states.ts
       - server/src/routes/onboarding.ts
       - server/src/routes/access-onboarding.helpers.ts
       - ui/src/pages/InviteLanding.tsx
