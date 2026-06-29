@@ -49,6 +49,7 @@ import { feishuCallbackCredentialService } from "../services/integrations/feishu
 import { createFeishuInboundDispatcherDbDeps } from "../services/integrations/feishu/inbound-dispatcher-db.js";
 import {
   dispatchFeishuInboundMessage,
+  parseFeishuQuickCommand,
   type FeishuInboundMessage,
 } from "../services/integrations/feishu/inbound-dispatcher.js";
 import { isFeishuLongConnectionEnabled } from "../services/integrations/feishu/runtime-registry.js";
@@ -192,6 +193,14 @@ async function waitUntil(assertion: () => void | Promise<void>, timeoutMs = 1000
 }
 
 describe("Feishu inbound dispatcher DB deps", () => {
+  it("parses repeated Feishu quick command text without matching command prefixes", () => {
+    expect(parseFeishuQuickCommand("/stop")).toEqual({ kind: "stop" });
+    expect(parseFeishuQuickCommand("/stop/stop")).toEqual({ kind: "stop" });
+    expect(parseFeishuQuickCommand("/stopit")).toBeNull();
+    expect(parseFeishuQuickCommand("/new/new")).toEqual({ kind: "new" });
+    expect(parseFeishuQuickCommand("/newton")).toBeNull();
+  });
+
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
@@ -782,6 +791,50 @@ describe("Feishu inbound dispatcher DB deps", () => {
       { role: "system", kind: "system_event", body: "Feishu session stop requested." },
     ]);
     await expect(db.select().from(heartbeatRuns)).resolves.toHaveLength(1);
+  });
+
+  it("handles repeated Feishu /stop quick command text without appending it as a user prompt", async () => {
+    const seeded = await seedIntegration();
+    const accepted = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_before_repeated_stop",
+        eventId: "event_before_repeated_stop",
+        body: "start a session before a repeated stop command",
+      }),
+      createFeishuInboundDispatcherDbDeps(db),
+    );
+    expect(accepted.status).toBe("accepted");
+    if (accepted.status !== "accepted") throw new Error("Expected accepted result");
+
+    const generation = await chatService(db).createGeneration(seeded.orgId, accepted.conversationId);
+    const release = claimChatGeneration(accepted.conversationId, new AbortController(), generation.id);
+    expect(release).toEqual(expect.any(Function));
+
+    const result = await dispatchFeishuInboundMessage(
+      inboundEvent({
+        messageId: "om_repeated_stop_command",
+        eventId: "event_repeated_stop_command",
+        body: "/stop/stop",
+        commandBody: "/stop/stop",
+      }),
+      createFeishuInboundDispatcherDbDeps(db),
+    );
+
+    expect(result.status).toBe("quick_command");
+    if (result.status !== "quick_command") throw new Error("Expected quick_command result");
+    expect(result.command).toBe("stop");
+    expect(result.outbound.text).toBe("Stop requested.");
+
+    const [updatedGeneration] = await db.select().from(chatGenerations).where(eq(chatGenerations.id, generation.id));
+    expect(updatedGeneration).toMatchObject({
+      status: "stopped",
+      terminalReason: "stopped",
+    });
+    const messages = await db.select().from(chatMessages);
+    expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
+      { role: "user", kind: "message", body: "start a session before a repeated stop command" },
+      { role: "system", kind: "system_event", body: "Feishu session stop requested." },
+    ]);
   });
 
   it("does not claim Feishu /stop success for a stale DB-only active generation", async () => {
