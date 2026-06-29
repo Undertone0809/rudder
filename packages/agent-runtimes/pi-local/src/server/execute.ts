@@ -31,6 +31,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
+import {
+  ensurePiOpenCodeAnonymousModelsConfig,
+  parsePiModelId,
+  parsePiModelProvider,
+} from "./opencode-anonymous-config.js";
 import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
 import { resolveManagedPiHomeDir } from "./skills.js";
 
@@ -207,20 +212,6 @@ function sanitizePiStdout(stdout: string): string {
     .join("\n");
   if (Buffer.byteLength(sanitized, "utf8") <= MAX_PI_RESULT_STDOUT_BYTES) return sanitized;
   return `${sanitized.slice(0, MAX_PI_RESULT_STDOUT_BYTES)}\n[rudder] Pi stdout sanitized and truncated for persistence.`;
-}
-
-function parseModelProvider(model: string | null): string | null {
-  if (!model) return null;
-  const trimmed = model.trim();
-  if (!trimmed.includes("/")) return null;
-  return trimmed.slice(0, trimmed.indexOf("/")).trim() || null;
-}
-
-function parseModelId(model: string | null): string | null {
-  if (!model) return null;
-  const trimmed = model.trim();
-  if (!trimmed.includes("/")) return trimmed || null;
-  return trimmed.slice(trimmed.indexOf("/") + 1).trim() || null;
 }
 
 function nonEmpty(value: string | undefined): string | null {
@@ -403,8 +394,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const thinking = asString(config.thinking, "").trim();
 
   // Parse model into provider and model id
-  const provider = parseModelProvider(model);
-  const modelId = parseModelId(model);
+  const provider = parsePiModelProvider(model);
+  const modelId = parsePiModelId(model);
 
   const workspaceContext = parseObject(context.rudderWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
@@ -538,6 +529,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
   applyGitIdentityPreparationEnv(env, preparedGitIdentity);
   applyGitCredentialHelperPolicyEnv(env);
+  const piModelConfigNotes = await ensurePiOpenCodeAnonymousModelsConfig({
+    modelProvider: provider,
+    modelId,
+    piAgentDir: env.PI_CODING_AGENT_DIR,
+    sourceEnv,
+    runtimeEnv: env,
+    onLog,
+  });
   
   const runtimeEnv = Object.fromEntries(
     Object.entries(ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })))
@@ -680,15 +679,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
 
   const commandNotes = (() => {
+    const baseNotes = [
+      ...loadedInstructions.commandNotes,
+      ...piModelConfigNotes,
+    ];
     if (!resolvedInstructionsFilePath) {
       return [
-        ...loadedInstructions.commandNotes,
+        ...baseNotes,
         "Appended Rudder operating contract to system prompt.",
       ];
     }
-    if (loadedInstructions.readFailed) return loadedInstructions.commandNotes;
+    if (loadedInstructions.readFailed) return baseNotes;
     return [
-      ...loadedInstructions.commandNotes,
+      ...baseNotes,
       `Appended instructions + path directive to system prompt (relative references from ${instructionsFileDir}).`,
     ];
   })();

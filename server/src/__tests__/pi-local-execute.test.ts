@@ -491,6 +491,122 @@ describe("pi execute", { timeout: 20_000 }, () => {
     }
   });
 
+  it("prepares managed OpenCode anonymous model config for Pi without writing operator Pi config", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-opencode-models-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "pi");
+    const capturePath = path.join(root, "capture.json");
+    const operatorModelsPath = path.join(root, ".pi", "agent", "models.json");
+    const operatorSettingsPath = path.join(root, ".pi", "agent", "settings.json");
+    const managedPiHome = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "pi-home",
+    );
+    const managedPiAgentDir = path.join(managedPiHome, ".pi", "agent");
+    const managedModelsPath = path.join(managedPiAgentDir, "models.json");
+    const managedSettingsPath = path.join(managedPiAgentDir, "settings.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(operatorModelsPath), { recursive: true });
+    await fs.writeFile(
+      operatorModelsPath,
+      JSON.stringify({
+        providers: {
+          privateProvider: { apiKey: "PRIVATE_OPERATOR_KEY" },
+        },
+      }),
+      "utf8",
+    );
+    await fs.writeFile(operatorSettingsPath, JSON.stringify({ packages: ["operator-only-package"] }), "utf8");
+    await writeFakePiCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    const previousRudderHome = process.env.RUDDER_HOME;
+    const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
+    const previousOpenCodeApiKey = process.env.OPENCODE_API_KEY;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+    process.env.RUDDER_HOME = path.join(root, ".rudder");
+    process.env.RUDDER_INSTANCE_ID = "default";
+    delete process.env.OPENCODE_API_KEY;
+
+    try {
+      const result = await execute({
+        runId: "run-pi-opencode-models",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Pi Agent",
+          agentRuntimeType: "pi",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "opencode/deepseek-v4-flash-free",
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv).toEqual(expect.arrayContaining(["--provider", "opencode", "--model", "deepseek-v4-flash-free"]));
+      expect((await fs.lstat(managedModelsPath)).isSymbolicLink()).toBe(false);
+      const managedModels = JSON.parse(await fs.readFile(managedModelsPath, "utf8"));
+      expect(managedModels).toEqual({
+        providers: {
+          opencode: {
+            apiKey: "RUDDER_OPENCODE_ANONYMOUS",
+            authHeader: false,
+            headers: {
+              Authorization: "",
+            },
+          },
+        },
+      });
+      const operatorModels = JSON.parse(await fs.readFile(operatorModelsPath, "utf8"));
+      expect(operatorModels).toEqual({
+        providers: {
+          privateProvider: { apiKey: "PRIVATE_OPERATOR_KEY" },
+        },
+      });
+      await expect(fs.lstat(managedSettingsPath)).rejects.toMatchObject({ code: "ENOENT" });
+      const operatorSettings = JSON.parse(await fs.readFile(operatorSettingsPath, "utf8"));
+      expect(operatorSettings).toEqual({ packages: ["operator-only-package"] });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
+      if (previousInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousInstanceId;
+      if (previousOpenCodeApiKey === undefined) delete process.env.OPENCODE_API_KEY;
+      else process.env.OPENCODE_API_KEY = previousOpenCodeApiKey;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps final text from realistic Pi JSON while sanitizing noisy stdout persistence", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-execute-realistic-"));
     const workspace = path.join(root, "workspace");
