@@ -27,6 +27,8 @@ import { type AgentRunContextAgent } from "./agent-run-context.js";
 
 export const CHAT_UNSUPPORTED_ADAPTER_TYPES = new Set<AgentRuntimeType>(["process", "http"]);
 export const CHAT_RESULT_SENTINEL_PREFIX = "__RUDDER_RESULT_";
+export const CHAT_RESULT_TEXT_BLOCK_BEGIN = "RUDDER_RESULT_BEGIN";
+export const CHAT_RESULT_TEXT_BLOCK_END = "RUDDER_RESULT_END";
 export const CHAT_ASSISTANT_USER_ERROR_MESSAGE =
   "The assistant hit a system-level issue. Rudder saved the details for diagnostics; retry when ready.";
 export const CHAT_ASSISTANT_RECOVERABLE_FAILURE_MESSAGE =
@@ -159,11 +161,11 @@ export function buildMissingResultSentinelRepairPrompt(input: {
     "- Your previous chat turn ended without the required Rudder result sentinel.",
     "- Do not continue the task, browse, inspect files, ask questions, or add new analysis.",
     "- Re-emit the final user-visible answer from your previous response as the required Rudder result envelope.",
-    "- Preserve the original result kind and structuredPayload when the previous response already contains a valid Rudder result JSON object.",
-    "- If the previous response is only plain user-visible text, use kind \"message\" with structuredPayload null.",
-    "- Output exactly one line and no text before it.",
-    `- The line must start with ${input.resultSentinel} followed immediately by JSON.`,
-    "- JSON shape: {\"kind\":\"message|ask_user|issue_proposal|operation_proposal|automation_create\",\"body\":\"<final answer>\",\"structuredPayload\":null|object}",
+    `- If the previous response is only plain user-visible text, output exactly ${CHAT_RESULT_TEXT_BLOCK_BEGIN} on its own line, then the final answer body, then ${CHAT_RESULT_TEXT_BLOCK_END} on its own line.`,
+    "- Preserve the original result kind and structuredPayload only when the previous response already contains a valid Rudder result JSON object.",
+    `- For structured non-message results only, output exactly one line that starts with ${input.resultSentinel} followed immediately by JSON.`,
+    "- Structured JSON shape: {\"kind\":\"ask_user|issue_proposal|operation_proposal|automation_create\",\"body\":\"<final answer>\",\"structuredPayload\":object}",
+    "- Do not output anything before or after the result envelope.",
     "",
     "Previous response text:",
     priorText || "(empty)",
@@ -489,9 +491,22 @@ export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntime
     "For automation_create, include structuredPayload.automationCreate with title, instructions, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to assign the automation to the selected chat agent. Use outputMode 'track_issue' so each run creates reviewable board-tracked work.",
     "Reply in two phases.",
     "Phase 1: while you work, write concise progress updates in Markdown with no JSON fences. These are process transcript entries, not the final answer.",
-    `Phase 2: on a new line, emit exactly ${resultSentinel} followed immediately by one JSON object. The JSON body is the final user-visible answer.`,
-    "Do not output anything after that JSON object.",
+    `Phase 2 for ordinary message replies: emit ${CHAT_RESULT_TEXT_BLOCK_BEGIN} on its own line, then the final user-visible answer body only, then ${CHAT_RESULT_TEXT_BLOCK_END} on its own line.`,
+    `Phase 2 for ask_user, issue_proposal, operation_proposal, or automation_create replies: emit exactly ${resultSentinel} followed immediately by one JSON object.`,
+    `Do not output anything after ${CHAT_RESULT_TEXT_BLOCK_END} or after the JSON object.`,
   ];
+}
+
+export function buildTerminalResultEnvelopePromptSection(resultSentinel: string) {
+  return [
+    "Final Rudder result reminder:",
+    "For an ordinary message reply, end this chat turn with this exact shape:",
+    CHAT_RESULT_TEXT_BLOCK_BEGIN,
+    "<final answer body only>",
+    CHAT_RESULT_TEXT_BLOCK_END,
+    `Only use ${resultSentinel} plus JSON when the result kind is ask_user, issue_proposal, operation_proposal, or automation_create.`,
+    `Do not write anything after ${CHAT_RESULT_TEXT_BLOCK_END} or after the JSON object.`,
+  ].join("\n");
 }
 
 export function buildPlanModePromptSection() {
@@ -506,10 +521,10 @@ export function buildPlanModePromptSection() {
 
 export function buildResponseSchemaPromptSection(planMode: boolean) {
   return [
-    "JSON shape:",
+    "Structured JSON shape only for ask_user, issue_proposal, operation_proposal, or automation_create replies:",
     JSON.stringify(
       {
-        kind: "message",
+        kind: "ask_user|issue_proposal|operation_proposal|automation_create",
         body: "final user-visible answer only, not progress updates",
         structuredPayload: {
           summary: "optional short summary",
@@ -879,6 +894,7 @@ export function buildConversationPrompt(
     ...(currentUserAttachmentSection ? [currentUserAttachmentSection] : []),
     "Conversation input:",
     buildPrompt(input, attachmentReferences),
+    buildTerminalResultEnvelopePromptSection(resultSentinel),
   ].join("\n\n");
 }
 
@@ -1163,12 +1179,37 @@ export function parseAssistantEnvelope(rawText: string, resultSentinel: string) 
   };
 }
 
+export function parseAssistantTextBlock(rawText: string) {
+  const beginIndex = rawText.indexOf(CHAT_RESULT_TEXT_BLOCK_BEGIN);
+  if (beginIndex === -1) return null;
+
+  const bodyStart = beginIndex + CHAT_RESULT_TEXT_BLOCK_BEGIN.length;
+  const endIndex = rawText.indexOf(CHAT_RESULT_TEXT_BLOCK_END, bodyStart);
+  if (endIndex === -1) return null;
+
+  const visibleBody = rawText.slice(0, beginIndex).trim();
+  const body = safeTrim(rawText.slice(bodyStart, endIndex));
+  if (!body) return null;
+  return {
+    visibleBody,
+    body,
+  };
+}
+
 export function parseCompletedAssistantReply(
   rawText: string,
   resultSentinel: string,
   options: { requireSentinel?: boolean } = {},
 ): ChatAssistantResult {
   const enveloped = parseAssistantEnvelope(rawText, resultSentinel);
+  const textBlock = parseAssistantTextBlock(rawText);
+  if (textBlock) {
+    return {
+      kind: "message",
+      body: textBlock.body,
+      structuredPayload: null,
+    };
+  }
   if (options.requireSentinel && !enveloped.usedSentinel) {
     throw new Error("Chat adapter completed without the required Rudder result sentinel");
   }
@@ -1198,10 +1239,14 @@ export function parseCompletedAssistantReply(
 }
 
 export function partialBodyFromRawAssistantText(rawText: string, resultSentinel: string) {
-  return safeTrim(parseAssistantEnvelope(rawText, resultSentinel).visibleBody) ?? "";
+  return safeTrim(parseAssistantTextBlock(rawText)?.visibleBody)
+    ?? safeTrim(parseAssistantEnvelope(rawText, resultSentinel).visibleBody)
+    ?? "";
 }
 
 export function finalBodyFromRawAssistantText(rawText: string, resultSentinel: string) {
+  const textBlock = parseAssistantTextBlock(rawText);
+  if (textBlock) return textBlock.body;
   const enveloped = parseAssistantEnvelope(rawText, resultSentinel);
   if (!enveloped.usedSentinel || !enveloped.jsonPayload) return "";
   const body = typeof enveloped.jsonPayload.body === "string" ? enveloped.jsonPayload.body : "";

@@ -12,7 +12,7 @@ import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
-import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
 export * from "./chat-assistant.helpers.js";
@@ -363,7 +363,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             const delta = assistantTextAccumulator.push(entry.text, entry.delta === true);
             if (!delta) continue;
             const visibleDelta = sentinelStream.push(delta);
-            if (visibleDelta) {
+            const textBlock = parseAssistantTextBlock(assistantTextAccumulator.fullText);
+            if (visibleDelta && !textBlock) {
               const assistantTranscriptEntry: TranscriptEntry = {
                 kind: "assistant",
                 ts: entry.ts,
@@ -690,7 +691,25 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           }
         }
 
-        if (!sentinelRepairSucceeded) {
+        if (
+          !sentinelRepairSucceeded
+          && errorCode === "chat_result_missing_sentinel"
+          && safeTrim(resultText(result))
+        ) {
+          const fallbackBody = safeTrim(resultText(result)) ?? "";
+          if (
+            !fallbackBody.includes(resultSentinel)
+            && !fallbackBody.includes("Rudder internal repair request:")
+          ) {
+            reply = {
+              kind: "message",
+              body: fallbackBody,
+              structuredPayload: null,
+            };
+          }
+        }
+
+        if (!reply && !sentinelRepairSucceeded) {
           const repairErrorMessage = sentinelRepairAttempted
             ? "Chat adapter did not produce the required Rudder result sentinel after internal repair"
             : errorMessage;

@@ -56,6 +56,7 @@ const SHARED_OPENCODE_HOME_ENTRIES = [
 const OPENCODE_CONFIG_FILE_CANDIDATES = ["opencode.json", "opencode.jsonc"] as const;
 const MANAGED_OPENCODE_CONFIG_FILE = "opencode.json";
 const OPENCODE_PROMPT_FILE_MESSAGE = "Follow the attached Rudder runtime prompt file exactly.";
+const CHAT_MODE_DEFAULT_TIMEOUT_SEC = 60;
 const SAFE_OPENCODE_STRING_CONFIG_KEYS = [
   "$schema",
   "model",
@@ -78,6 +79,7 @@ const UNSAFE_OPENCODE_CONFIG_ENTRIES = [
   "hooks",
   "mcp",
 ] as const;
+const UNSAFE_OPENCODE_CONFIG_ENTRY_SET = new Set<string>(UNSAFE_OPENCODE_CONFIG_ENTRIES);
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -144,9 +146,38 @@ function sanitizeOpenCodeConfig(rawConfig: unknown): Record<string, unknown> {
     const value = source[key];
     if (typeof value === "string") sanitized[key] = value;
   }
+  const provider = sanitizeOpenCodeProviderConfig(source.provider);
+  if (provider) sanitized.provider = provider;
   sanitized.autoupdate = false;
   if (typeof sanitized.$schema !== "string") {
     sanitized.$schema = "https://opencode.ai/config.json";
+  }
+  return sanitized;
+}
+
+function sanitizeOpenCodeProviderConfig(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const sanitized = sanitizeOpenCodeProviderValue(value);
+  if (!sanitized || typeof sanitized !== "object" || Array.isArray(sanitized)) return null;
+  return Object.keys(sanitized).length > 0 ? sanitized as Record<string, unknown> : null;
+}
+
+function sanitizeOpenCodeProviderValue(value: unknown): unknown {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => sanitizeOpenCodeProviderValue(entry))
+      .filter((entry) => entry !== undefined);
+  }
+  if (typeof value !== "object") return undefined;
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (UNSAFE_OPENCODE_CONFIG_ENTRY_SET.has(key)) continue;
+    const next = sanitizeOpenCodeProviderValue(entry);
+    if (next !== undefined) sanitized[key] = next;
   }
   return sanitized;
 }
@@ -415,7 +446,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   applyGitCredentialHelperPolicyEnv(env);
   const openCodeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredOpenCodeSkillNames = resolveRudderDesiredSkillNames(config, openCodeSkillEntries);
-  const selectedOpenCodeSkillEntries = openCodeSkillEntries.filter((entry) => desiredOpenCodeSkillNames.includes(entry.key));
+  const isChatResultRepair = context.rudderChatResultRepair === true;
+  const selectedOpenCodeSkillEntries = isChatResultRepair
+    ? []
+    : openCodeSkillEntries.filter((entry) => desiredOpenCodeSkillNames.includes(entry.key));
   const loadedSkills = openCodeSkillEntries
     .filter((entry) => desiredOpenCodeSkillNames.includes(entry.key))
     .map((entry) => ({
@@ -444,7 +478,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   validateOpenCodeModelConfig({ model });
 
-  const timeoutSec = asNumber(config.timeoutSec, 0);
+  const configuredTimeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);
   const extraArgs = (() => {
     const fromExtraArgs = asStringArray(config.extraArgs);
@@ -560,16 +594,29 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   await fs.mkdir(runtimeTmpDir, { recursive: true });
   const promptFilePath = path.join(runtimeTmpDir, "rudder-prompt.md");
   await fs.writeFile(promptFilePath, prompt, "utf8");
+  const useStdinPrompt = context.chatMode === true;
+  const hasChatModeTimeoutFallback = useStdinPrompt && configuredTimeoutSec <= 0;
+  const timeoutSec = hasChatModeTimeoutFallback
+    ? CHAT_MODE_DEFAULT_TIMEOUT_SEC
+    : configuredTimeoutSec;
+  const effectiveCommandNotes = hasChatModeTimeoutFallback
+    ? [
+        ...commandNotes,
+        `Applied ${CHAT_MODE_DEFAULT_TIMEOUT_SEC}s default timeout for OpenCode chat mode because timeoutSec was unset.`,
+      ]
+    : commandNotes;
 
   const buildArgs = (resumeSessionId: string | null, redactPromptFile: boolean) => {
     const args = ["run", "--format", "json", "--dir", cwd];
-    args.push(OPENCODE_PROMPT_FILE_MESSAGE);
+    if (!useStdinPrompt) args.push(OPENCODE_PROMPT_FILE_MESSAGE);
     if (resumeSessionId) args.push("--session", resumeSessionId);
     if (model) args.push("--model", model);
     if (variant) args.push("--variant", variant);
     if (dangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
     if (extraArgs.length > 0) args.push(...extraArgs);
-    args.push("--file", redactPromptFile ? `<rudder prompt file ${prompt.length} chars>` : promptFilePath);
+    if (!useStdinPrompt) {
+      args.push("--file", redactPromptFile ? `<rudder prompt file ${prompt.length} chars>` : promptFilePath);
+    }
     return args;
   };
 
@@ -580,7 +627,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         agentRuntimeType: "opencode_local",
         command,
         cwd,
-        commandNotes,
+        commandNotes: effectiveCommandNotes,
         commandArgs: buildArgs(resumeSessionId, true),
         env: redactEnvForLogs(env),
         prompt,
@@ -598,6 +645,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       env: runtimeEnv,
       timeoutSec,
       graceSec,
+      stdin: useStdinPrompt ? prompt : undefined,
       onSpawn,
       abortSignal: ctx.abortSignal,
       onLog,

@@ -462,8 +462,22 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         },
         autoupdate: true,
         provider: {
+          deepseek: {
+            id: "deepseek",
+            name: "DeepSeek",
+            api: "deepseek-key",
+            options: {
+              apiKey: "deepseek-key",
+              baseURL: "https://api.deepseek.com/v1",
+            },
+          },
           localDanger: {
+            api: "local-danger-key",
             command: ["printf", forbiddenConfigMarker],
+            options: {
+              apiKey: "local-danger-key",
+              plugin: ["./plugins/forbidden-plugin.js"],
+            },
           },
         },
         keybinds: {
@@ -596,8 +610,28 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       );
       const managedConfig = JSON.parse(await fs.readFile(path.join(managedConfigDir, "opencode.json"), "utf8")) as {
         autoupdate?: unknown;
+        provider?: Record<string, unknown>;
       };
       expect(managedConfig.autoupdate).toBe(false);
+      expect(managedConfig.provider).toMatchObject({
+        deepseek: {
+          id: "deepseek",
+          name: "DeepSeek",
+          api: "deepseek-key",
+          options: {
+            apiKey: "deepseek-key",
+            baseURL: "https://api.deepseek.com/v1",
+          },
+        },
+        localDanger: {
+          api: "local-danger-key",
+          options: {
+            apiKey: "local-danger-key",
+          },
+        },
+      });
+      expect(JSON.stringify(managedConfig.provider)).not.toContain("command");
+      expect(JSON.stringify(managedConfig.provider)).not.toContain("plugin");
       expect((await fs.lstat(path.join(managedSkillsHome, "ascii-heart"))).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(path.join(managedSkillsHome, "ascii-heart"))).toBe(
         await fs.realpath(asciiHeartDir),
@@ -743,6 +777,217 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       else process.env.XDG_DATA_HOME = previousXdgDataHome;
       if (previousXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
       else process.env.XDG_CACHE_HOME = previousXdgCacheHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits injected skill prompt text during internal chat result repair", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-repair-skill-prompt-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    const capturePath = path.join(root, "capture.json");
+    const runtimeSkillsRoot = path.join(root, "runtime-skills");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    const previousRudderHome = process.env.RUDDER_HOME;
+    const previousRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+    process.env.RUDDER_HOME = path.join(root, ".rudder");
+    process.env.RUDDER_INSTANCE_ID = "default";
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-repair-skill-prompt",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          rudderRuntimeSkills: [
+            {
+              name: "ascii-heart",
+              source: asciiHeartDir,
+            },
+          ],
+          rudderSkillSync: {
+            desiredSkills: ["ascii-heart"],
+          },
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "{{context.chatPrompt}}",
+        },
+        context: {
+          chatMode: true,
+          rudderChatResultRepair: true,
+          chatPrompt: "Rudder internal repair request: emit the result envelope.",
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { prompt: string };
+      expect(capture.prompt).toContain("Rudder internal repair request: emit the result envelope.");
+      expect(capture.prompt).not.toContain("# Enabled Rudder Skills");
+      expect(capture.prompt).not.toContain("## Skill: ascii-heart");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
+      if (previousRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousRudderInstanceId;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes chat prompts through stdin instead of an attached prompt file", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-chat-stdin-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-chat-stdin",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "{{context.chatPrompt}}",
+        },
+        context: {
+          chatMode: true,
+          chatPrompt: "Chat prompt with final result envelope.",
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { argv: string[]; prompt: string; promptFilePath: string };
+      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).not.toContain("Follow the attached Rudder runtime prompt file exactly.");
+      expect(capture.argv).not.toContain("--file");
+      expect(capture.promptFilePath).toBe("");
+      expect(capture.prompt).toContain("Chat prompt with final result envelope.");
+      expect(capture.argv).not.toContain(capture.prompt);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies a finite default timeout for chat mode when timeoutSec is unset", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-chat-timeout-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+
+    let commandNotes: string[] = [];
+    try {
+      const result = await execute({
+        runId: "run-opencode-chat-timeout",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          timeoutSec: 0,
+          env: {
+            ...clearInheritedGitIdentityEnv,
+          },
+          promptTemplate: "{{context.chatPrompt}}",
+        },
+        context: {
+          chatMode: true,
+          chatPrompt: "Chat prompt with timeout fallback.",
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          commandNotes = meta.commandNotes ?? [];
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(commandNotes).toContain(
+        "Applied 60s default timeout for OpenCode chat mode because timeoutSec was unset.",
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

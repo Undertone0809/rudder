@@ -1323,6 +1323,14 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(invocationMeta[0]).toEqual(expect.objectContaining({
       prompt: expect.stringContaining("Conversation input:"),
     }));
+    const prompt = String((invocationMeta[0] as { prompt?: unknown }).prompt ?? "");
+    const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1];
+    expect(sentinel).toBeTruthy();
+    expect(prompt.lastIndexOf("Conversation input:")).toBeLessThan(
+      prompt.lastIndexOf("Final Rudder result reminder:"),
+    );
+    expect(prompt.trim()).toContain("RUDDER_RESULT_BEGIN\n<final answer body only>\nRUDDER_RESULT_END");
+    expect(prompt.trim()).toContain(`Only use ${sentinel} plus JSON when the result kind is ask_user`);
   });
 
   it("finalizes a chat run when setup fails after creation so the conversation can retry immediately", async () => {
@@ -1898,6 +1906,52 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(result.reply.generatedAttachments?.[0]?.body.equals(Buffer.from("fake-png"))).toBe(true);
   });
 
+  it("parses plain text result blocks for ordinary message replies", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute.mockImplementationOnce(async () => ({
+      summary: [
+        "Preparing the final chat reply.",
+        "RUDDER_RESULT_BEGIN",
+        "OPENCODE_CHAT_OK",
+        "RUDDER_RESULT_END",
+      ].join("\n"),
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+    }));
+
+    const result = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    });
+
+    expect(result).toEqual({
+      outcome: "completed",
+      partialBody: "OPENCODE_CHAT_OK",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "OPENCODE_CHAT_OK",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "succeeded",
+        resultJson: expect.objectContaining({
+          outcome: "completed",
+          kind: "message",
+          body: "OPENCODE_CHAT_OK",
+        }),
+      }),
+    );
+  });
+
   it("does not promote progress text to a final reply when there is no terminal result to repair", async () => {
     const svc = chatAssistantService({} as any);
 
@@ -2019,6 +2073,106 @@ describe("chatAssistantService operator profile prompt injection", () => {
           outputTokens: 9,
           primary: { inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 },
           repair: { inputTokens: 3, cachedInputTokens: 1, outputTokens: 4 },
+        }),
+      }),
+    );
+  });
+
+  it("repairs a completed plain-text chat reply with a text result block", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute
+      .mockImplementationOnce(async () => ({
+        summary: "OPENCODE_CHAT_OK",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      }))
+      .mockImplementationOnce(async (ctx) => {
+        expect(ctx.context?.chatPrompt).toContain("RUDDER_RESULT_BEGIN");
+        return {
+          summary: "RUDDER_RESULT_BEGIN\nOPENCODE_CHAT_OK\nRUDDER_RESULT_END",
+          resultJson: null,
+          timedOut: false,
+          exitCode: 0,
+          errorMessage: null,
+        };
+      });
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).resolves.toEqual({
+      outcome: "completed",
+      partialBody: "OPENCODE_CHAT_OK",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "OPENCODE_CHAT_OK",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "succeeded",
+        resultJson: expect.objectContaining({
+          sentinelRepairAttempted: true,
+          sentinelRepairSucceeded: true,
+          repairReason: "missing_result_sentinel",
+        }),
+      }),
+    );
+  });
+
+  it("falls back to a plain final summary when an adapter ignores the message result block", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute
+      .mockImplementationOnce(async () => ({
+        summary: "OPENCODE_CHAT_OK",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      }))
+      .mockImplementationOnce(async () => ({
+        summary: "",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      }));
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).resolves.toEqual({
+      outcome: "completed",
+      partialBody: "OPENCODE_CHAT_OK",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "OPENCODE_CHAT_OK",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(2);
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "succeeded",
+        resultJson: expect.objectContaining({
+          outcome: "completed",
+          kind: "message",
+          body: "OPENCODE_CHAT_OK",
+          sentinelRepairAttempted: true,
+          sentinelRepairSucceeded: false,
         }),
       }),
     );
