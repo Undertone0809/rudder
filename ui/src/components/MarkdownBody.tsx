@@ -91,6 +91,19 @@ function mentionFallbackLabel(mention: ParsedMentionChip) {
   return mention.title?.trim() || basenameFromPath(mention.directoryPath) || compactMentionId(mention.directoryPath);
 }
 
+function decodeHtmlEntityText(value: string) {
+  if (!/[&][#a-z\d]+;/iu.test(value)) return value;
+  if (typeof document === "undefined") return value;
+
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = value;
+  return textarea.value;
+}
+
+function mentionDisplayLabel(value: string) {
+  return decodeHtmlEntityText(value).replace(/\s+/gu, " ").trim();
+}
+
 function currentOrganizationPrefixFromLocation(): string | null {
   if (typeof window === "undefined") return null;
   return extractOrganizationPrefixFromPath(window.location.pathname);
@@ -900,7 +913,7 @@ export function MarkdownBody({
     a: ({ node, href, children: linkChildren }) => {
       const parsed = href ? parseMentionChipHref(href) : null;
       if (parsed) {
-        const fallbackMentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren)).trim();
+        const fallbackMentionLabel = mentionDisplayLabel(stripMentionChipLabelPrefix(flattenText(linkChildren)));
         const mention = (() => {
           if (parsed.kind === "agent") {
             return {
@@ -947,6 +960,7 @@ export function MarkdownBody({
           if (mention.kind === "library_directory") return libraryDirectoryMentionByPath.get(mention.directoryPath)?.name ?? fallbackMentionLabel;
           return fallbackMentionLabel;
         })() || mentionFallbackLabel(mention);
+        const displayMentionLabel = mentionDisplayLabel(mentionLabel);
         const targetHref = applyOrganizationPrefix(mentionChipNavigationPath(mention), organizationPrefix);
         const mentionLink = (
           <a
@@ -963,15 +977,15 @@ export function MarkdownBody({
             style={mentionChipInlineStyle(mention)}
             {...markdownSourceAttributes(node)}
             onClick={(event) => {
-              handleMarkdownLinkClick(event, targetHref, mentionLabel);
+              handleMarkdownLinkClick(event, targetHref, displayMentionLabel);
             }}
           >
-            {mentionLabel}
+            {displayMentionLabel}
           </a>
         );
         if (mention.kind === "automation" || mention.kind === "chat") return mentionLink;
         return (
-          <RudderEntityPreview mention={mention} label={mentionLabel}>
+          <RudderEntityPreview mention={mention} label={displayMentionLabel}>
             {mentionLink}
           </RudderEntityPreview>
         );
@@ -1001,7 +1015,7 @@ export function MarkdownBody({
           commentId: null,
           status: internalIssueMention.issueStatus ?? null,
         };
-        const mentionLabel = internalIssueMention.name || linkLabel.trim() || mentionFallbackLabel(mention);
+        const mentionLabel = mentionDisplayLabel(internalIssueMention.name || linkLabel || mentionFallbackLabel(mention));
         const mentionLink = (
           <a
             href={internalHref}

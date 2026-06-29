@@ -42,6 +42,17 @@ describe("index.css motion rules", () => {
     expect(indexCss).not.toContain('.rudder-markdown a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-status="done"]::after {\n  content: none;');
   });
 
+  it("keeps rendered ordinary issue mentions text-only while preserving comment status icons", () => {
+    const ordinaryIssueIconReset = cssBlock('a.rudder-mention-chip[data-mention-kind="issue"]:not(.rudder-mention-chip--with-status-icon)::before');
+    const statusIssueIconBlock =
+      indexCss.match(/\n\.rudder-mdxeditor-content \.rudder-mention-chip--with-status-icon\[data-mention-kind="issue"]::before,[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(ordinaryIssueIconReset).toContain("content: none");
+    expect(ordinaryIssueIconReset).toContain("display: none");
+    expect(statusIssueIconBlock).toContain('a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"]::before');
+    expect(statusIssueIconBlock).toContain("var(--rudder-mention-status-mask)");
+  });
+
   it("uses a dedicated automation icon for rendered and editor mention chips", () => {
     const automationIconBlock =
       indexCss.match(/\n\.rudder-mdxeditor-content \.rudder-mention-chip\[data-mention-kind="automation"]::before,[\s\S]*?\n\}/)?.[0] ?? "";

@@ -4375,7 +4375,7 @@ a.rudder-mention-chip--with-status-icon[data-mention-kind="issue"][data-mention-
   --rudder-mention-status-color: #f87171;
 }
 
-.rudder-markdown a.rudder-mention-chip[data-mention-kind="issue"]:not(.rudder-mention-chip--with-status-icon)::before {
+a.rudder-mention-chip[data-mention-kind="issue"]:not(.rudder-mention-chip--with-status-icon)::before {
   content: none;
   display: none;
   mask: none;
