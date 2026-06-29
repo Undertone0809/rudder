@@ -180,6 +180,10 @@ test.describe("Organization and agent skills", () => {
       expect.stringMatching(/software-product-advisor$/),
       expect.stringMatching(/alpha-test$/),
     ]));
+    expect(skills.map((skill) => skill.key)).not.toEqual(expect.arrayContaining([
+      "rudder/conversation-to-skill",
+      "rudder/skill-optimizer",
+    ]));
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -204,8 +208,10 @@ test.describe("Organization and agent skills", () => {
     const skillsMain = page.locator("#main-content");
     await expect(skillsMain.getByRole("heading", { name: "Skills" })).toBeVisible();
     await expect(skillsMain.getByText("Bundled, community preset, and imported skills for this organization.")).toBeVisible();
-    await expect(skillsMain.getByText("para-memory-files")).toBeVisible();
-    await expect(skillsMain.getByText("rudder-create-agent")).toBeVisible();
+    await expect(skillsMain.getByRole("link", { name: /para-memory-files/ })).toBeVisible();
+    await expect(skillsMain.getByRole("link", { name: /rudder-create-agent/ })).toBeVisible();
+    await expect(skillsMain.getByText("conversation-to-skill")).toHaveCount(0);
+    await expect(skillsMain.getByText("skill-optimizer")).toHaveCount(0);
     await expect(skillsMain.getByText("deep-research").first()).toBeVisible();
     await expect(skillsMain.getByText("Community preset").first()).toBeVisible();
     await expect(skillsMain.getByText("Bundled by Rudder").first()).toBeVisible();
@@ -214,12 +220,14 @@ test.describe("Organization and agent skills", () => {
     const agentMain = page.locator("#main-content");
     await expect(agentMain.getByPlaceholder("Search skills")).toBeVisible();
     await expect(agentMain.getByText("Rudder always loads the bundled Rudder skills. Agent, organization, global, and adapter skills load only when enabled on this page.")).toBeVisible();
-    await expect(agentMain.getByText("Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Library.")).toBeVisible();
+    await expect(agentMain.getByText(/Bundled Rudder skills are locked on/)).toBeVisible();
     await expect(agentMain.getByText("Available in this organization")).toHaveCount(0);
     await expect(agentMain.getByText("Bundled by Rudder").first()).toBeVisible();
     await expect(agentMain.getByText("Community preset").first()).toBeVisible();
     await expect(agentMain.getByText("deep-research").first()).toBeVisible();
     await expect(agentMain.getByText("Alpha test skill.")).toBeVisible();
+    await expect(agentMain.getByRole("switch", { name: "conversation-to-skill" })).toHaveCount(0);
+    await expect(agentMain.getByRole("switch", { name: "skill-optimizer" })).toHaveCount(0);
     await expect(agentMain.getByText("Will be mounted into the ephemeral Claude skill directory on the next run.")).toHaveCount(0);
     await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toBeDisabled();
     await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toHaveAttribute("aria-checked", "true");

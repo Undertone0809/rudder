@@ -385,8 +385,12 @@ contracts:
       - server/src/services/agent-enabled-skills.ts
       - server/src/services/knowledge-portability/organization-skills.ts
       - server/src/services/knowledge-portability/organization-skills.catalog.ts
+      - packages/shared/src/organization-skill-reference.ts
       - ui/src/pages/AgentDetail.skills.tsx
     related_tests:
+      - server/src/__tests__/organization-skills-reference.test.ts
+      - server/src/__tests__/organization-skills-prune.test.ts
+      - desktop/scripts/smoke.mjs
       - server/src/__tests__/agent-skill-contract.test.ts
       - tests/e2e/organization-agent-skills.spec.ts
     related_plans:

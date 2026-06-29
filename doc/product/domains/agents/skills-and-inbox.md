@@ -15,6 +15,9 @@ related_code:
   - packages/agent-runtime-utils/src/server-utils.prompts.ts
   - ui/src/pages/AgentDetail.skills.tsx
 related_tests:
+  - server/src/__tests__/organization-skills-reference.test.ts
+  - server/src/__tests__/organization-skills-prune.test.ts
+  - desktop/scripts/smoke.mjs
   - server/src/__tests__/agent-skill-contract.test.ts
   - server/src/__tests__/heartbeat-skill-analytics.test.ts
   - server/src/__tests__/agent-inbox-reviewer.test.ts
@@ -39,6 +42,12 @@ Product model:
 
 - Skill sources include bundled skills, organization skill library, agent home,
   global/user skill roots, and adapter-native skill directories when supported.
+- The current always-enabled bundled Rudder baseline is `para-memory-files`,
+  `rudder`, `rudder-create-agent`, `rudder-create-plugin`, and
+  `skill-creator`. Other repo-owned skill packages, including
+  `conversation-to-skill` and `skill-optimizer`, are not part of the default
+  Rudder-resolved set unless they are introduced through a non-bundled
+  selection path.
 - Skill state distinguishes discovered, installed, desired, enabled,
   materialized, native, prompt-injected, and unavailable entries.
 - Desired skills are scoped by organization, agent, runtime type, and runtime
@@ -65,6 +74,10 @@ Flow:
 Invariants:
 
 - Bundled Rudder skills are not disabled by normal optional-skill toggles.
+- Repo-owned skill packages outside the canonical bundled baseline must not be
+  seeded as locked-on organization skills, counted as required bundled skills,
+  or auto-loaded into runtime skill metadata merely because their source files
+  remain in the repository.
 - A discovered skill is absent from runtime prompt text, provider-visible skill
   directories, provider-native config, and loaded-skill metadata until Rudder
   resolves it as enabled or always-enabled for that invocation.
