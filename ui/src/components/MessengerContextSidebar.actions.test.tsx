@@ -1225,8 +1225,8 @@ describe("MessengerContextSidebar chat actions", () => {
     const editor = document.querySelector('[data-testid="messenger-custom-group-editor"]');
     expect(editor).toBeTruthy();
     const nameInput = editor?.querySelector<HTMLInputElement>('input[aria-label="Group name"]');
-    const projectIconPicker = editor?.querySelector('[aria-label="Group icons project icons"]');
-    const iconButtonLabels = Array.from(projectIconPicker?.querySelectorAll("button") ?? [])
+    const iconPicker = editor?.querySelector('[aria-label="Group icons options"]');
+    const iconButtonLabels = Array.from(iconPicker?.querySelectorAll("button") ?? [])
       .map((button) => button.getAttribute("aria-label"))
       .filter((label): label is string => Boolean(label?.startsWith("Select ")));
     const iconButton = editor?.querySelector<HTMLButtonElement>('[aria-label="Select rocket project icon"]');
@@ -1236,7 +1236,9 @@ describe("MessengerContextSidebar chat actions", () => {
       .find((button) => button.textContent === "Create") as HTMLButtonElement | undefined;
 
     expect(nameInput).toBeTruthy();
+    expect(iconPicker).toBeTruthy();
     expect(leafEmojiButton).toBeTruthy();
+    expect(leafEmojiButton?.parentElement).toBe(iconPicker);
     expect(iconButtonLabels.length).toBeGreaterThan(36);
     expect(iconButtonLabels).toContain("Select folder project icon");
     expect(iconButtonLabels).toContain("Select stethoscope project icon");
@@ -1341,16 +1343,18 @@ describe("MessengerContextSidebar chat actions", () => {
     const changeIconTrigger = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "Change icon") as HTMLButtonElement | undefined;
     const iconButton = document.querySelector<HTMLButtonElement>('[aria-label="Select rocket project icon"]');
-    const projectIconPicker = document.querySelector('[aria-label="Group icons project icons"]');
-    const iconButtonLabels = Array.from(projectIconPicker?.querySelectorAll("button") ?? [])
+    const iconPicker = document.querySelector('[aria-label="Group icons options"]');
+    const iconButtonLabels = Array.from(iconPicker?.querySelectorAll("button") ?? [])
       .map((button) => button.getAttribute("aria-label"))
       .filter((label): label is string => Boolean(label?.startsWith("Select ")));
     const leafEmojiButton = Array.from(document.querySelectorAll("button"))
       .find((button) => button.textContent?.trim() === "🌿") as HTMLButtonElement | undefined;
 
     expect(changeIconTrigger).toBeTruthy();
+    expect(iconPicker).toBeTruthy();
     expect(iconButton).toBeTruthy();
     expect(leafEmojiButton).toBeTruthy();
+    expect(leafEmojiButton?.parentElement).toBe(iconPicker);
     expect(leafEmojiButton?.getAttribute("aria-pressed")).toBe("true");
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Select folder project icon"]')?.getAttribute("aria-pressed")).toBe("false");
     expect(iconButtonLabels.length).toBeGreaterThan(36);

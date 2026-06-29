@@ -5,7 +5,7 @@ import { ApiError } from "@/api/client";
 import { messengerApi } from "@/api/messenger";
 import { organizationsApi } from "@/api/orgs";
 import { AgentIcon } from "@/components/AgentAvatar";
-import { ProjectIcon, ProjectIconGrid } from "@/components/ProjectIdentity";
+import { ProjectIcon } from "@/components/ProjectIdentity";
 import { StatusIcon } from "@/components/StatusIcon";
 import {
   DropdownMenu,
@@ -46,6 +46,7 @@ import {
 } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { projectColorCssVars } from "@/lib/project-colors";
+import { getProjectIconComponent } from "@/lib/project-icons";
 import {
   getProjectOrderStorageKey,
   PROJECT_ORDER_UPDATED_EVENT,
@@ -661,13 +662,29 @@ function CustomGroupIconPicker({
   const currentIcon = customGroupIconLabel(icon);
   return (
     <div className="space-y-1.5" aria-label={ariaLabel}>
-      <ProjectIconGrid
-        icon={customGroupProjectIconName(icon)}
-        selectedIcon={currentIcon && isProjectIconName(currentIcon) ? currentIcon : null}
-        ariaLabel={`${ariaLabel} project icons`}
-        onIconChange={onIconChange}
-      />
-      <div className="grid grid-cols-6 gap-1.5" aria-label={`${ariaLabel} emoji icons`}>
+      <div className="grid grid-cols-6 gap-1.5" aria-label={`${ariaLabel} options`}>
+        {PROJECT_ICONS.map((candidate) => {
+          const Icon = getProjectIconComponent(candidate);
+          const selected = currentIcon && isProjectIconName(currentIcon) ? candidate === currentIcon : false;
+          return (
+            <button
+              key={candidate}
+              type="button"
+              className={cn(
+                "relative inline-flex h-9 w-9 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] border text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                selected
+                  ? "border-[color:color-mix(in_oklab,var(--project-accent-color)_54%,var(--border-base))] bg-muted/55 text-[color:var(--project-accent-color)]"
+                  : "border-border/70 bg-transparent",
+              )}
+              aria-label={`Select ${candidate} project icon`}
+              aria-pressed={selected}
+              onClick={() => onIconChange(candidate)}
+            >
+              <Icon className="h-5 w-5" strokeWidth={2.2} />
+              {selected ? <Check className="absolute h-2.5 w-2.5 translate-x-3 translate-y-3 text-[color:var(--project-accent-color)]" /> : null}
+            </button>
+          );
+        })}
         {MESSENGER_CUSTOM_GROUP_EMOJI_ICONS.map((candidate) => {
           const selected = candidate === currentIcon;
           return (
