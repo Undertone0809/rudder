@@ -191,6 +191,55 @@ test.describe("Onboarding wizard", () => {
       expect(issue.assigneeUserId).toBeTruthy();
     }
 
+    const messengerGroupsRes = await page.request.get(
+      `${baseUrl}/api/orgs/${organization.id}/messenger/groups`,
+    );
+    expect(messengerGroupsRes.ok()).toBe(true);
+    const messengerGroups = await messengerGroupsRes.json() as {
+      groups: Array<{
+        name: string;
+        entries: Array<{
+          threadKey: string;
+          thread: {
+            threadKey: string;
+            unreadCount: number;
+            needsAttention: boolean;
+            metadata?: { issueId?: string };
+          };
+        }>;
+      }>;
+    };
+    const gettingStartedGroup = messengerGroups.groups.find((group) => group.name === "Getting Started");
+    expect(gettingStartedGroup).toBeTruthy();
+    expect(gettingStartedGroup!.entries.map((entry) => entry.threadKey)).toEqual(
+      issues.map((issue) => `issue:${issue.id}`),
+    );
+    expect(gettingStartedGroup!.entries.every((entry) => entry.thread.unreadCount === 0)).toBe(true);
+    expect(gettingStartedGroup!.entries.every((entry) => entry.thread.needsAttention === false)).toBe(true);
+
+    const messengerThreadsRes = await page.request.get(
+      `${baseUrl}/api/orgs/${organization.id}/messenger/threads?splitIssues=true`,
+    );
+    expect(messengerThreadsRes.ok()).toBe(true);
+    const messengerThreads = await messengerThreadsRes.json() as Array<{
+      threadKey: string;
+      unreadCount: number;
+      needsAttention: boolean;
+    }>;
+    const seededIssueThreadKeys = new Set(issues.map((issue) => `issue:${issue.id}`));
+    const seededIssueThreads = messengerThreads.filter((thread) => seededIssueThreadKeys.has(thread.threadKey));
+    expect(seededIssueThreads).toHaveLength(issues.length);
+    expect(seededIssueThreads.every((thread) => thread.unreadCount === 0)).toBe(true);
+    expect(seededIssueThreads.every((thread) => thread.needsAttention === false)).toBe(true);
+
+    const sidebarBadgesRes = await page.request.get(
+      `${baseUrl}/api/orgs/${organization.id}/sidebar-badges`,
+    );
+    expect(sidebarBadgesRes.ok()).toBe(true);
+    const sidebarBadges = await sidebarBadgesRes.json() as { unreadTouchedIssues: number; inbox: number };
+    expect(sidebarBadges.unreadTouchedIssues).toBe(0);
+    expect(sidebarBadges.inbox).toBe(0);
+
     await page.goto(`/${organization.issuePrefix}/issues?projectId=${gettingStartedProject.id}`);
     await expect(page.getByText("Welcome", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Core loop", { exact: true })).toBeVisible();
@@ -274,6 +323,17 @@ test.describe("Onboarding wizard", () => {
     expect(issues.map((issue: { title: string }) => issue.title)).toEqual([
       "👋 Welcome to Rudder — work with agents like a team",
     ]);
+
+    const messengerGroupsRes = await page.request.get(
+      `${baseUrl}/api/orgs/${organization.id}/messenger/groups`,
+    );
+    expect(messengerGroupsRes.ok()).toBe(true);
+    const messengerGroups = await messengerGroupsRes.json() as {
+      groups: Array<{ name: string; entries: Array<{ threadKey: string; thread: { unreadCount: number } }> }>;
+    };
+    const gettingStartedGroup = messengerGroups.groups.find((group) => group.name === "Getting Started");
+    expect(gettingStartedGroup?.entries).toHaveLength(1);
+    expect(gettingStartedGroup?.entries[0]?.thread.unreadCount).toBe(0);
   });
 
   test("existing organization onboarding starts at agent and runtime test stays valid", async ({

@@ -1,9 +1,18 @@
 import type { Db } from "@rudderhq/db";
+import {
+  activityLog,
+  issues as issueRows,
+  messengerCustomGroupEntries,
+  messengerCustomGroups,
+  messengerThreadUserStates,
+} from "@rudderhq/db";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router } from "express";
 import { agentService, issueService, logActivity, organizationService, projectService } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 const ONBOARDING_PROJECT_NAME = "Getting Started";
+const ONBOARDING_MESSENGER_GROUP_ICON = "folder::teal";
 const ONBOARDING_PROJECT_DESCRIPTION = `Learn how Rudder works by completing one guided collaboration loop.
 
 This project is not a generic product tour. It teaches the core Rudder workflow:
@@ -464,6 +473,158 @@ function appendActionLinks(
   return `${description.trim()}\n\n${lines.join("\n")}`;
 }
 
+function normalizeDate(value: Date | string | null | undefined) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function seedGettingStartedMessengerState(
+  db: Db,
+  input: {
+    orgId: string;
+    userId: string;
+    issues: Array<{ id: string }>;
+  },
+) {
+  const issueIds = [...new Set(input.issues.map((issue) => issue.id))];
+  if (issueIds.length === 0) return;
+
+  const now = new Date();
+  let [group] = await db
+    .select()
+    .from(messengerCustomGroups)
+    .where(and(
+      eq(messengerCustomGroups.orgId, input.orgId),
+      eq(messengerCustomGroups.userId, input.userId),
+      eq(messengerCustomGroups.name, ONBOARDING_PROJECT_NAME),
+    ))
+    .orderBy(asc(messengerCustomGroups.createdAt))
+    .limit(1);
+
+  if (!group) {
+    const [lastGroup] = await db
+      .select({ sortOrder: messengerCustomGroups.sortOrder })
+      .from(messengerCustomGroups)
+      .where(and(
+        eq(messengerCustomGroups.orgId, input.orgId),
+        eq(messengerCustomGroups.userId, input.userId),
+      ))
+      .orderBy(desc(messengerCustomGroups.sortOrder))
+      .limit(1);
+
+    [group] = await db
+      .insert(messengerCustomGroups)
+      .values({
+        orgId: input.orgId,
+        userId: input.userId,
+        name: ONBOARDING_PROJECT_NAME,
+        icon: ONBOARDING_MESSENGER_GROUP_ICON,
+        sortOrder: (lastGroup?.sortOrder ?? -1) + 1,
+        pinnedAt: now,
+        updatedAt: now,
+      })
+      .returning();
+  }
+
+  if (!group) return;
+
+  const latestIssueActivityRows = (await db.execute(sql<{ issueId: string; latestActivityAt: Date | string | null }>`
+    select
+      ${issueRows.id} as "issueId",
+      greatest(
+        ${issueRows.createdAt},
+        ${issueRows.updatedAt},
+        coalesce(max(${activityLog.createdAt}), ${issueRows.createdAt})
+      ) as "latestActivityAt"
+    from ${issueRows}
+    left join ${activityLog}
+      on ${activityLog.orgId} = ${issueRows.orgId}
+      and ${activityLog.entityType} = 'issue'
+      and ${activityLog.entityId} = ${issueRows.id}::text
+    where ${issueRows.orgId} = ${input.orgId}
+      and ${inArray(issueRows.id, issueIds)}
+    group by ${issueRows.id}, ${issueRows.createdAt}, ${issueRows.updatedAt}
+  `)) as Array<{ issueId: string; latestActivityAt: Date | string | null }>;
+  const latestActivityByIssueId = new Map(
+    latestIssueActivityRows.map((row) => [row.issueId, normalizeDate(row.latestActivityAt) ?? now]),
+  );
+  const aggregateReadAt = [...latestActivityByIssueId.values()]
+    .sort((a, b) => b.getTime() - a.getTime())[0] ?? now;
+
+  await db.transaction(async (tx) => {
+    for (const [index, issueId] of issueIds.entries()) {
+      const threadKey = `issue:${issueId}`;
+      const readAt = latestActivityByIssueId.get(issueId) ?? aggregateReadAt;
+      await tx
+        .insert(messengerCustomGroupEntries)
+        .values({
+          orgId: input.orgId,
+          userId: input.userId,
+          groupId: group.id,
+          threadKey,
+          sortOrder: index,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            messengerCustomGroupEntries.orgId,
+            messengerCustomGroupEntries.userId,
+            messengerCustomGroupEntries.threadKey,
+          ],
+          set: {
+            groupId: group.id,
+            sortOrder: index,
+            updatedAt: now,
+          },
+        });
+
+      await tx
+        .insert(messengerThreadUserStates)
+        .values({
+          orgId: input.orgId,
+          userId: input.userId,
+          threadKey,
+          lastReadAt: readAt,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            messengerThreadUserStates.orgId,
+            messengerThreadUserStates.threadKey,
+            messengerThreadUserStates.userId,
+          ],
+          set: {
+            lastReadAt: readAt,
+            updatedAt: now,
+          },
+        });
+    }
+
+    await tx
+      .insert(messengerThreadUserStates)
+      .values({
+        orgId: input.orgId,
+        userId: input.userId,
+        threadKey: "issues",
+        lastReadAt: aggregateReadAt,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          messengerThreadUserStates.orgId,
+          messengerThreadUserStates.threadKey,
+          messengerThreadUserStates.userId,
+        ],
+        set: {
+          lastReadAt: aggregateReadAt,
+          updatedAt: now,
+        },
+      });
+  });
+}
+
 export function onboardingRoutes(db: Db) {
   const router = Router();
   const projects = projectService(db);
@@ -588,6 +749,12 @@ export function onboardingRoutes(db: Db) {
         }
       }
     }
+
+    await seedGettingStartedMessengerState(db, {
+      orgId,
+      userId: operatorUserId,
+      issues: seededIssues,
+    });
 
     res.status(createdProject || createdIssueCount > 0 ? 201 : 200).json({
       project,
