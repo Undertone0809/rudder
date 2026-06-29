@@ -83,6 +83,10 @@ Why:
 - Chat is where humans clarify intent, run lightweight assistant turns, draft
   issue/automation proposals, and attach context before work becomes durable
   tracked execution.
+- Issue proposal drafting is operator-intent gated. A chat assistant may draft
+  an issue proposal only when the latest operator-authored user request
+  explicitly asks to create an issue, convert the chat to an issue, or draft an
+  issue proposal.
 
 Product model:
 
@@ -103,13 +107,19 @@ Flow:
 3. Server persists user message and context links.
 4. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
    streams/persists assistant messages.
-5. Chat can convert or propose conversion into issue/automation/approval work.
+5. Chat can convert or propose conversion into issue/automation/approval work
+   when the operator asks for that conversion/proposal path. The assistant must
+   not emit an issue proposal merely because the work is large, durable,
+   assignable, or issue-shaped.
 
 Invariants:
 
 - Chat messages must remain tied to their conversation and organization.
 - Chat proposals/structured payloads must not be confused with plain user
   instructions or automation run input.
+- Assistant-created issue proposals must be grounded in an explicit latest
+  operator-authored request for issue creation, chat-to-issue conversion, or
+  issue-proposal drafting.
 - Agent attribution is visible enough to navigate from message to run/agent.
 
 Evidence:

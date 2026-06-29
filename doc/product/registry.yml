@@ -628,6 +628,7 @@ contracts:
       - server/src/services/chats.ts
       - server/src/services/chat-agent-runs.ts
       - server/src/services/chat-assistant.ts
+      - server/src/services/chat-assistant.helpers.ts
       - ui/src/pages/Chat.tsx
     related_tests:
       - server/src/__tests__/chat-routes.test.ts
