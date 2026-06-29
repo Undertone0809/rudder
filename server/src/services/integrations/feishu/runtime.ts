@@ -447,6 +447,7 @@ export function feishuIntegrationRuntimeService(
     chatMessageId?: string | null;
     runId?: string | null;
     issueId?: string | null;
+    abortSignal?: AbortSignal | null;
   }) {
     const [record] = await db
       .insert(agentIntegrationOutboundMessages)
@@ -462,6 +463,15 @@ export function feishuIntegrationRuntimeService(
       })
       .returning();
     try {
+      if (input.abortSignal?.aborted) {
+        if (record) {
+          await db
+            .update(agentIntegrationOutboundMessages)
+            .set({ status: "error", updatedAt: new Date() })
+            .where(eq(agentIntegrationOutboundMessages.id, record.id));
+        }
+        return null;
+      }
       const sent = await sender.sendText({
         region: input.integration.providerRegion,
         appId: input.credential.appId ?? input.integration.externalAppId,
@@ -514,8 +524,22 @@ export function feishuIntegrationRuntimeService(
     if (!conversation || !userMessage) {
       throw new Error("Feishu accepted inbound message is missing its Rudder chat conversation or user message");
     }
+    const activeConversation = conversation;
+
+    async function deleteAssistantMessageIfStopped(messageId: string) {
+      if (!activeGeneration.abortController.signal.aborted) return false;
+      await db
+        .delete(chatMessages)
+        .where(and(
+          eq(chatMessages.id, messageId),
+          eq(chatMessages.conversationId, activeConversation.id),
+          eq(chatMessages.role, "assistant"),
+        ));
+      return true;
+    }
 
     let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
+    let assistantMessage: ChatMessage | null = null;
     try {
       let activeRunId: string | null = null;
       const streamed = await assistant.streamChatAssistantReply({
@@ -533,8 +557,12 @@ export function feishuIntegrationRuntimeService(
         generationTerminalStatus = "stopped";
         return;
       }
+      if (activeGeneration.abortController.signal.aborted) {
+        generationTerminalStatus = "stopped";
+        return;
+      }
       const reply = streamed.reply;
-      const assistantMessage = await chats.addMessage(conversation.id, {
+      assistantMessage = await chats.addMessage(conversation.id, {
         orgId: conversation.orgId,
         role: "assistant",
         kind: persistableAssistantKind(reply.kind),
@@ -543,11 +571,15 @@ export function feishuIntegrationRuntimeService(
         runId: activeRunId,
         replyingAgentId: reply.replyingAgentId ?? integration.agentId,
       }) as ChatMessage;
-      if (activeRunId) {
-        await chatRuns.linkAssistantMessage(activeRunId, conversation.id, assistantMessage.id);
+      if (await deleteAssistantMessageIfStopped(assistantMessage.id)) {
+        generationTerminalStatus = "stopped";
+        return;
       }
-      generationTerminalStatus = "completed";
-      await sendAndRecord({
+      if (activeGeneration.abortController.signal.aborted) {
+        generationTerminalStatus = "stopped";
+        return;
+      }
+      const sent = await sendAndRecord({
         integration,
         credential,
         chatId: event.chatId,
@@ -556,9 +588,25 @@ export function feishuIntegrationRuntimeService(
         chatMessageId: assistantMessage.id,
         runId: activeRunId ?? result.runId,
         issueId: result.issueId,
+        abortSignal: activeGeneration.abortController.signal,
       });
+      if (!sent && await deleteAssistantMessageIfStopped(assistantMessage.id)) {
+        generationTerminalStatus = "stopped";
+        return;
+      }
+      if (activeRunId) {
+        await chatRuns.linkAssistantMessage(activeRunId, conversation.id, assistantMessage.id);
+      }
+      if (await deleteAssistantMessageIfStopped(assistantMessage.id)) {
+        generationTerminalStatus = "stopped";
+        return;
+      }
+      generationTerminalStatus = "completed";
     } catch (error) {
       if (activeGeneration.abortController.signal.aborted) {
+        if (assistantMessage) {
+          await deleteAssistantMessageIfStopped(assistantMessage.id);
+        }
         generationTerminalStatus = "stopped";
         return;
       }
@@ -569,6 +617,63 @@ export function feishuIntegrationRuntimeService(
         logger.warn({ err: error, generationId: activeGeneration.generationId }, "failed to mark Feishu chat generation terminal");
       });
       activeGeneration.release();
+    }
+  }
+
+  async function runAcceptedReplyInBackground(
+    integration: FeishuRuntimeIntegration,
+    credential: FeishuCredential,
+    event: FeishuInboundMessage,
+    result: Extract<AgentIntegrationInboundDispatchResult, { status: "accepted" }>,
+    activeGeneration: {
+      abortController: AbortController;
+      generationId: string;
+      release: () => void;
+    },
+  ) {
+    let didEnterReplyCompletion = false;
+    try {
+      await withWorkingReaction(sender, integration, credential, event, async () => {
+        didEnterReplyCompletion = true;
+        try {
+          await completeAcceptedReply(integration, credential, event, result, activeGeneration);
+        } catch (error) {
+          activeGeneration.release();
+          const body = error instanceof ChatAssistantStreamError && error.partialBody
+            ? error.partialBody
+            : "Rudder accepted your message, but the agent reply failed before a final response was produced.";
+          await sendAndRecord({
+            integration,
+            credential,
+            chatId: event.chatId,
+            text: body,
+            conversationId: result.conversationId,
+            chatMessageId: result.chatMessageId,
+            runId: result.runId,
+            issueId: result.issueId,
+          });
+          throw error;
+        }
+      });
+    } catch (error) {
+      if (!didEnterReplyCompletion) {
+        activeGeneration.release();
+        const terminalStatus = activeGeneration.abortController.signal.aborted ? "stopped" : "failed";
+        await chats.markGenerationTerminal(activeGeneration.generationId, terminalStatus).catch((markError: unknown) => {
+          logger.warn({
+            err: markError,
+            generationId: activeGeneration.generationId,
+          }, "failed to mark Feishu chat generation terminal after background reply setup failure");
+        });
+      }
+      if (!activeGeneration.abortController.signal.aborted) {
+        logger.error({
+          err: error,
+          integrationId: integration.id,
+          conversationId: result.conversationId,
+          chatMessageId: result.chatMessageId,
+        }, "Feishu accepted reply background task failed");
+      }
     }
   }
 
@@ -625,44 +730,11 @@ export function feishuIntegrationRuntimeService(
         throw error;
       }
       setActiveChatGenerationId(conversation.id, generation.id);
-      let didEnterReplyCompletion = false;
-      try {
-        await withWorkingReaction(sender, integration, credential, event, async () => {
-          didEnterReplyCompletion = true;
-          try {
-            await completeAcceptedReply(integration, credential, event, result, {
-              abortController,
-              generationId: generation.id,
-              release: releaseGeneration,
-            });
-          } catch (error) {
-            releaseGeneration();
-            const body = error instanceof ChatAssistantStreamError && error.partialBody
-              ? error.partialBody
-              : "Rudder accepted your message, but the agent reply failed before a final response was produced.";
-            await sendAndRecord({
-              integration,
-              credential,
-              chatId: event.chatId,
-              text: body,
-              conversationId: result.conversationId,
-              chatMessageId: result.chatMessageId,
-              runId: result.runId,
-              issueId: result.issueId,
-            });
-            throw error;
-          }
-        });
-      } catch (error) {
-        if (!didEnterReplyCompletion) {
-          releaseGeneration();
-          const terminalStatus = abortController.signal.aborted ? "stopped" : "failed";
-          await chats.markGenerationTerminal(generation.id, terminalStatus).catch((markError: unknown) => {
-            logger.warn({ err: markError, generationId: generation.id }, "failed to mark Feishu chat generation failed");
-          });
-        }
-        throw error;
-      }
+      void runAcceptedReplyInBackground(integration, credential, event, result, {
+        abortController,
+        generationId: generation.id,
+        release: releaseGeneration,
+      });
     }
     return result;
   }
