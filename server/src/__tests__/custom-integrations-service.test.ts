@@ -4,6 +4,7 @@ import {
   agents,
   applyPendingMigrations,
   createDb,
+  createLocalPostgresInstance,
   customIntegrationToolCalls,
   customIntegrationTools,
   customIntegrations,
@@ -11,6 +12,7 @@ import {
   organizationSecretVersions,
   organizationSecrets,
   organizations,
+  type LocalPostgresInstance,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { randomUUID } from "node:crypto";
@@ -20,28 +22,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { customIntegrationService } from "../services/integrations/custom-integrations.js";
-
-type EmbeddedPostgresInstance = {
-  initialise(): Promise<void>;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-};
-
-type EmbeddedPostgresCtor = new (opts: {
-  databaseDir: string;
-  user: string;
-  password: string;
-  port: number;
-  persistent: boolean;
-  initdbFlags?: string[];
-  onLog?: (message: unknown) => void;
-  onError?: (message: unknown) => void;
-}) => EmbeddedPostgresInstance;
-
-async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
-  const mod = await import("embedded-postgres");
-  return mod.default as EmbeddedPostgresCtor;
-}
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -66,8 +46,7 @@ async function getAvailablePort(): Promise<number> {
 async function startTempDatabase() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-custom-integrations-"));
   const port = await getAvailablePort();
-  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
-  const instance = new EmbeddedPostgres({
+  const { instance } = await createLocalPostgresInstance({
     databaseDir: dataDir,
     user: "rudder",
     password: "rudder",
@@ -150,7 +129,7 @@ async function seedOrgAndAgents(db: ReturnType<typeof createDb>) {
 describe("customIntegrationService", () => {
   let db!: ReturnType<typeof createDb>;
   let svc!: ReturnType<typeof customIntegrationService>;
-  let instance: EmbeddedPostgresInstance | null = null;
+  let instance: LocalPostgresInstance | null = null;
   let dataDir = "";
 
   beforeAll(async () => {
@@ -175,6 +154,7 @@ describe("customIntegrationService", () => {
   });
 
   afterAll(async () => {
+    await db?.$client.end({ timeout: 5 });
     await instance?.stop();
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });

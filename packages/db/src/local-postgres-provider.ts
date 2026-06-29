@@ -1,9 +1,14 @@
-import { execFile, execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import postgres from "postgres";
+import {
+  cleanupStaleSysvSharedMemorySegments,
+  isEmbeddedPostgresSharedMemoryError,
+} from "./embedded-postgres-recovery.js";
 
 export const RUDDER_POSTGRES_BIN_DIR_ENV = "RUDDER_POSTGRES_BIN_DIR";
 export const RUDDER_PRODUCTION_POSTGRES_VERSION = "18.4";
@@ -202,6 +207,27 @@ function buildOfficialPostgresCommandEnv(
   return env;
 }
 
+async function waitForOfficialPostgresReady(options: LocalPostgresInstanceOptions): Promise<void> {
+  const connectionString = `postgres://${encodeURIComponent(options.user)}:${encodeURIComponent(options.password)}@127.0.0.1:${options.port}/postgres`;
+  const deadline = Date.now() + 10_000;
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    const sql = postgres(connectionString, { max: 1, connect_timeout: 1, onnotice: () => {} });
+    try {
+      await sql`select 1`;
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      await sql.end({ timeout: 0 }).catch(() => {});
+    }
+  }
+  throw new Error(
+    `PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} start did not become ready on port ${options.port}: ${lastError instanceof Error ? lastError.message : String(lastError ?? "timed out")}`,
+  );
+}
+
 export function createOfficialPostgresInstance(
   binDir: string,
   options: LocalPostgresInstanceOptions,
@@ -223,29 +249,26 @@ export function createOfficialPostgresInstance(
       );
     }
   };
-  const runControlCommand = async (command: string, args: string[], phase: string): Promise<void> => {
-    const result = spawnSync(command, args, {
-      env: buildOfficialPostgresCommandEnv(binDir, options.password),
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    if (result.error) {
-      throw new Error(`PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} ${phase} failed: ${result.error.message}`);
-    }
-    if (result.status !== 0) {
-      throw new Error(
-        `PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} ${phase} failed with ${result.signal ? `signal ${result.signal}` : `exit code ${result.status}`}`,
+  const runWithSharedMemoryRecovery = async (command: string, args: string[], phase: string): Promise<void> => {
+    try {
+      await run(command, args, phase);
+    } catch (error) {
+      if (!isEmbeddedPostgresSharedMemoryError(error)) throw error;
+      const recovered = await cleanupStaleSysvSharedMemorySegments();
+      if (recovered.removedIds.length === 0) throw error;
+      process.emitWarning(
+        `Recovered ${recovered.removedIds.length} stale SysV shared memory segment(s) before retrying PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} ${phase}.`,
       );
+      await run(command, args, phase);
     }
   };
-
   return {
     async initialise() {
       const tempDir = await mkdtemp(path.join(os.tmpdir(), "rudder-pg-init-"));
       const passwordFilePath = path.join(tempDir, "pwfile");
       try {
         await writeFile(passwordFilePath, `${options.password}\n`, { encoding: "utf8", mode: 0o600 });
-        await run(
+        await runWithSharedMemoryRecovery(
           binaries.initdb,
           buildOfficialPostgresInitdbArgsForBinDir(binDir, options, passwordFilePath),
           "initdb",
@@ -255,18 +278,35 @@ export function createOfficialPostgresInstance(
       }
     },
     async start() {
-      await runControlCommand(
-        binaries.pgCtl,
-        [
-          "-D",
-          options.databaseDir,
-          "-o",
-          `-h 127.0.0.1 -p ${options.port}`,
-          "-w",
-          "start",
-        ],
-        "start",
-      );
+      const startPostgres = () => {
+        const child = spawn(
+          binaries.postgres,
+          ["-D", options.databaseDir, "-h", "127.0.0.1", "-p", String(options.port)],
+          {
+            env: buildOfficialPostgresCommandEnv(binDir, options.password),
+            stdio: ["ignore", "ignore", "pipe"],
+            windowsHide: true,
+            detached: process.platform !== "win32",
+          },
+        );
+        child.stderr?.on("data", (chunk) => appendProcessOutput(chunk, options.onError));
+        child.unref();
+        return child;
+      };
+
+      startPostgres();
+      try {
+        await waitForOfficialPostgresReady(options);
+      } catch (error) {
+        if (!isEmbeddedPostgresSharedMemoryError(error)) throw error;
+        const recovered = await cleanupStaleSysvSharedMemorySegments();
+        if (recovered.removedIds.length === 0) throw error;
+        process.emitWarning(
+          `Recovered ${recovered.removedIds.length} stale SysV shared memory segment(s) before retrying PostgreSQL ${RUDDER_PRODUCTION_POSTGRES_VERSION} start.`,
+        );
+        startPostgres();
+        await waitForOfficialPostgresReady(options);
+      }
     },
     async stop() {
       await run(binaries.pgCtl, ["-D", options.databaseDir, "-m", "fast", "-w", "stop"], "stop");
