@@ -195,6 +195,18 @@
       "destination": "/"
     },
     {
+      "source": "/en",
+      "destination": "/"
+    },
+    {
+      "source": "/en/:path*",
+      "destination": "/:path*"
+    },
+    {
+      "source": "/manifest.json",
+      "destination": "/site.webmanifest"
+    },
+    {
       "source": "/concepts/messenger-approvals",
       "destination": "/concepts/chat-messenger"
     },

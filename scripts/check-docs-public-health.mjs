@@ -18,6 +18,7 @@ const REQUIRED_PATHS = [
   { path: "/about", status: 200, bodyIncludes: ["Rudder", "control plane"], canonical: `${CANONICAL_ORIGIN}/about` },
   { path: "/contact", status: 200, bodyIncludes: ["GitHub", "Report a bug"], canonical: `${CANONICAL_ORIGIN}/contact` },
   { path: "/home", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },
+  { path: "/en", status: 200, bodyIncludes: ["Rudder"], canonical: CANONICAL_ORIGIN, finalPath: "/" },
   { path: "/get-started/installation", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/get-started/installation` },
   { path: "/zh", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/zh` },
   { path: "/zh/get-started/installation", status: 200, bodyIncludes: ["Rudder"], canonical: `${CANONICAL_ORIGIN}/zh/get-started/installation` },
@@ -26,6 +27,11 @@ const REQUIRED_PATHS = [
   { path: "/llms.txt", status: 200, bodyIncludes: [CANONICAL_ORIGIN] },
   { path: "/favicon.svg", status: 200 },
   { path: "/favicon.ico", status: 200 },
+  { path: "/favicon.png", status: 200 },
+  { path: "/apple-touch-icon.png", status: 200 },
+  { path: "/apple-touch-icon-precomposed.png", status: 200 },
+  { path: "/site.webmanifest", status: 200, bodyIncludes: ["Rudder Docs", "/apple-touch-icon.png"] },
+  { path: "/manifest.json", status: 200, bodyIncludes: ["Rudder Docs", "/apple-touch-icon.png"], finalPath: "/site.webmanifest" },
 ];
 
 function parseArgs(argv) {
