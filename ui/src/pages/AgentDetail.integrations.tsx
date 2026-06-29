@@ -232,7 +232,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const [customForm, setCustomForm] = useState<CustomIntegrationFormState | null>(null);
   const [integrationsView, setIntegrationsView] = useState<IntegrationsView>("discover");
   const [feishuDialogOpen, setFeishuDialogOpen] = useState(false);
-  const [upcomingIntegration, setUpcomingIntegration] = useState<UpcomingIntegrationDefinition | null>(null);
   const integrationsQuery = useQuery({
     queryKey: queryKeys.agents.integrations(agent.id),
     queryFn: () => agentsApi.listIntegrations(agent.id, orgId),
@@ -445,7 +444,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                   <UpcomingIntegrationCard
                     key={integration.id}
                     integration={integration}
-                    onConfigure={() => setUpcomingIntegration(integration)}
                   />
                 ))}
             </IntegrationCategorySection>
@@ -456,7 +454,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                   <UpcomingIntegrationCard
                     key={integration.id}
                     integration={integration}
-                    onConfigure={() => setUpcomingIntegration(integration)}
                   />
                 ))}
             </IntegrationCategorySection>
@@ -467,7 +464,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
                   <UpcomingIntegrationCard
                     key={integration.id}
                     integration={integration}
-                    onConfigure={() => setUpcomingIntegration(integration)}
                   />
                 ))}
             </IntegrationCategorySection>
@@ -609,55 +605,12 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
           </div>
         </DialogContent>
       </Dialog>
-      <Dialog
-        open={Boolean(upcomingIntegration)}
-        onOpenChange={(open) => {
-          if (!open) setUpcomingIntegration(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          {upcomingIntegration ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>{upcomingIntegration.name}</DialogTitle>
-                <DialogDescription>
-                  This connector is listed in the integration catalog and will use the same setup flow when enabled.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3">
-                <IntegrationBrandIcon
-                  src={upcomingIntegration.logoSrc}
-                  name={upcomingIntegration.name}
-                  Icon={upcomingIntegration.Icon}
-                />
-                <div className="min-w-0 space-y-2">
-                  <p className="text-sm font-medium text-foreground">{upcomingIntegration.description}</p>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-                      {upcomingIntegration.connectionScope}
-                    </span>
-                    <span className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-xs text-muted-foreground">
-                      Coming soon
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <Button type="button" size="sm" variant="outline" onClick={() => setUpcomingIntegration(null)}>
-                  Close
-                </Button>
-              </div>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
 
 interface UpcomingIntegrationCardProps {
   integration: UpcomingIntegrationDefinition;
-  onConfigure: () => void;
 }
 
 function IntegrationCategorySection({ title, children }: { title: string; children: ReactNode }) {
@@ -759,7 +712,7 @@ function FeishuIntegrationCard({
   );
 }
 
-function UpcomingIntegrationCard({ integration, onConfigure }: UpcomingIntegrationCardProps) {
+function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) {
   const { Icon } = integration;
 
   return (
@@ -776,7 +729,7 @@ function UpcomingIntegrationCard({ integration, onConfigure }: UpcomingIntegrati
           <p className="text-sm text-muted-foreground">{integration.description}</p>
         </div>
       </div>
-      <IntegrationActionButton variant="outline" size="sm" onClick={onConfigure} aria-label={`${integration.name} setup`}>
+      <IntegrationActionButton variant="outline" size="sm" disabled aria-label={`${integration.name} coming soon`}>
         {integration.actionLabel}
       </IntegrationActionButton>
     </div>

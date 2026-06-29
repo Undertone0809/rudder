@@ -69,13 +69,10 @@ test.describe("Agent detail integrations tab", () => {
 
     await expect(page.getByText("Feishu Workspace", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Coming soon")).toHaveCount(6);
-    await expect(page.getByRole("button", { name: "GitHub setup" })).toHaveText("Coming soon");
-    await page.getByRole("button", { name: "Gmail setup" }).click();
-    const gmailDialog = page.getByRole("dialog", { name: "Gmail" });
-    await expect(gmailDialog).toBeVisible();
-    await expect(gmailDialog.getByText("This connector is listed in the integration catalog")).toBeVisible();
-    await gmailDialog.getByRole("button", { name: "Close" }).first().click();
-    await expect(gmailDialog).toBeHidden();
+    await expect(page.getByRole("button", { name: "GitHub coming soon" })).toHaveText("Coming soon");
+    await expect(page.getByRole("button", { name: "GitHub coming soon" })).toBeDisabled();
+    await page.getByRole("button", { name: "Gmail coming soon" }).click({ force: true });
+    await expect(page.getByRole("dialog", { name: "Gmail" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Manage" }).click();
     await expect(page.getByText("No connected integrations")).toBeVisible();

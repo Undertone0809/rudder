@@ -236,7 +236,7 @@ describe("AgentIntegrationsTab", () => {
   it("uses the larger integration action radius on catalog buttons", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const githubButton = [...container.querySelectorAll("button")]
-      .find((button) => button.getAttribute("aria-label") === "GitHub setup");
+      .find((button) => button.getAttribute("aria-label") === "GitHub coming soon");
 
     expect(githubButton?.className).toContain("rounded-[var(--radius-md)]");
   });
@@ -263,7 +263,7 @@ describe("AgentIntegrationsTab", () => {
     expect(dialog?.textContent).toContain("Lark Global");
   });
 
-  it("opens a modal for planned agent tool integrations", () => {
+  it("renders planned agent tool integrations as disabled coming soon actions", () => {
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
 
     for (const name of [
@@ -286,18 +286,14 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent?.match(/Coming soon/g)?.length).toBe(6);
 
     const gmailButton = [...container.querySelectorAll("button")]
-      .find((button) => button.getAttribute("aria-label") === "Gmail setup");
+      .find((button) => button.getAttribute("aria-label") === "Gmail coming soon");
     expect(gmailButton).toBeTruthy();
-    expect(gmailButton?.hasAttribute("disabled")).toBe(false);
+    expect(gmailButton?.hasAttribute("disabled")).toBe(true);
     act(() => {
       gmailButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    const dialog = document.body.querySelector('[role="dialog"]');
-    expect(dialog).toBeTruthy();
-    expect(dialog?.textContent).toContain("Gmail");
-    expect(dialog?.textContent).toContain("This connector is listed in the integration catalog");
-    expect(dialog?.textContent).toContain("Coming soon");
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("renders a Feishu-safe prefilled bot name for long agent names", () => {
