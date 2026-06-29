@@ -699,7 +699,12 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(managedSettings.env).not.toHaveProperty("ENABLE_TOOL_SEARCH");
       expect(managedSettings.enabledPlugins).toBeUndefined();
       expect(managedSettings.hooks).toBeUndefined();
-      expect(managedSettings.mcpServers).toBeUndefined();
+      expect(managedSettings.mcpServers).toMatchObject({
+        "rudder-control-plane": {
+          command: expect.any(String),
+          args: ["mcp-server"],
+        },
+      });
       expect(managedSettings.permissions).toBeUndefined();
       expect(capture.managedClaudeJsonPath).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/.claude.json");
       expect(capture.managedClaudeJsonExists).toBe(false);
@@ -719,6 +724,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(loadedSkills).toEqual([]);
       expect(realizedSkills).toEqual([]);
       expect(nativeDiscoverableSkills).toBeUndefined();
+      expect(commandNotes).toContain("Configured first-party Rudder MCP tools for Claude Code.");
     } finally {
       restoreEnv();
       await fs.rm(path.join(root, ".rudder"), { recursive: true, force: true });

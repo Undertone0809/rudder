@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   buildAgentCliCapabilitiesManifest,
+  buildAgentV1McpToolsManifest,
   renderAgentCliReferenceMarkdown,
 } from "../agent-v1-registry.js";
 
@@ -127,6 +128,39 @@ describe("agent-v1 registry", () => {
       requiresAgentId: true,
       attachesRunIdWhenAvailable: true,
     });
+  });
+
+  it("builds stable MCP tool metadata for every agent-v1 capability", () => {
+    const cliManifest = buildAgentCliCapabilitiesManifest("agent-v1");
+    const mcpManifest = buildAgentV1McpToolsManifest("agent-v1");
+
+    expect(mcpManifest.schema).toBe("rudder.agent-mcp-tools/v1");
+    expect(mcpManifest.contract).toBe("agent-v1");
+    expect(mcpManifest.tools).toHaveLength(cliManifest.capabilities.length);
+    expect(mcpManifest.tools.map((tool) => tool.capabilityId)).toEqual(
+      cliManifest.capabilities.map((entry) => entry.id),
+    );
+    expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_issue_checkout");
+    expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_runs_errors");
+    expect(mcpManifest.tools.find((tool) => tool.capabilityId === "issue.checkout")).toMatchObject({
+      name: "rudder_issue_checkout",
+      mutating: true,
+      attachesRunIdWhenAvailable: true,
+    });
+    expect(mcpManifest.tools.find((tool) => tool.capabilityId === "agent.me")).toMatchObject({
+      name: "rudder_agent_me",
+      mutating: false,
+      attachesRunIdWhenAvailable: false,
+    });
+  });
+
+  it("keeps compat commands out of the MCP manifest even when CLI capabilities include all", () => {
+    const allCliManifest = buildAgentCliCapabilitiesManifest("all");
+    const mcpManifest = buildAgentV1McpToolsManifest("agent-v1");
+
+    expect(allCliManifest.capabilities.map((entry) => entry.id)).toContain("agent.list");
+    expect(mcpManifest.tools.map((tool) => tool.capabilityId)).not.toContain("agent.list");
+    expect(mcpManifest.tools.every((tool) => tool.contract === "agent-v1")).toBe(true);
   });
 
   it("keeps the CLI reference doc in sync with the registry", () => {

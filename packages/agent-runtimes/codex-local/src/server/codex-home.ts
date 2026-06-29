@@ -1,4 +1,9 @@
-import { resolveOrganizationStorageKey, type AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
+import {
+  RUDDER_MCP_SERVER_NAME,
+  resolveOrganizationStorageKey,
+  rudderMcpCliCommand,
+  type AgentRuntimeExecutionContext,
+} from "@rudderhq/agent-runtime-utils";
 import { resolveLocalOperatorHome } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -219,6 +224,15 @@ function renderDisabledCodexSkillConfigEntries(skillPaths: string[]): string {
       "enabled = false",
     ].join("\n"))
     .join("\n\n");
+}
+
+function renderRudderMcpCodexConfig(): string {
+  const server = rudderMcpCliCommand();
+  return [
+    `[mcp_servers.${RUDDER_MCP_SERVER_NAME}]`,
+    `command = ${JSON.stringify(server.command)}`,
+    `args = ${JSON.stringify(server.args)}`,
+  ].join("\n");
 }
 
 function sanitizeCodexConfigToml(content: string): {
@@ -521,7 +535,7 @@ async function syncManagedCodexConfigToml(
   const pluginsDisabled = ensureCodexPluginsDisabled(bundledSkillsDisabled.content);
   const baseContent = pluginsDisabled.content.replace(/\s+$/u, "");
   const disabledSkillConfigEntries = renderDisabledCodexSkillConfigEntries(isolationSurface.disabledSkillPaths);
-  const mergedContent = [baseContent, disabledSkillConfigEntries].filter((part) => part.length > 0).join("\n\n");
+  const mergedContent = [baseContent, renderRudderMcpCodexConfig(), disabledSkillConfigEntries].filter((part) => part.length > 0).join("\n\n");
   const nextContent = mergedContent.length > 0 ? `${mergedContent}\n` : "";
 
   if (existingTargetContent === null || nextContent !== existingTargetContent) {

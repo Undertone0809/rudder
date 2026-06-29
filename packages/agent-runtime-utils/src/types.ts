@@ -164,6 +164,12 @@ export interface AgentRuntimeInvocationMeta {
    * Optional marker scan result for global/repo decoy skill controls.
    */
   forbiddenMarkerObserved?: boolean;
+  rudderMcp?: {
+    available: boolean;
+    serverName: string;
+    toolCount: number;
+    fallbackReason?: string | null;
+  };
   context?: Record<string, unknown>;
 }
 

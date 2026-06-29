@@ -1,4 +1,11 @@
-import { resolveOrganizationStorageKey, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import {
+  RUDDER_MCP_SERVER_NAME,
+  resolveOrganizationStorageKey,
+  rudderMcpCliCommand,
+  rudderMcpRuntimeMetadata,
+  type AgentRuntimeExecutionContext,
+  type AgentRuntimeExecutionResult,
+} from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
@@ -160,7 +167,13 @@ async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: stri
     if (typeof value === "string" && value.trim().length > 0) authEnv[key] = value;
   }
 
-  const sanitized = Object.keys(authEnv).length > 0 ? { env: authEnv } : {};
+  const rudderMcp = rudderMcpCliCommand();
+  const sanitized = {
+    ...(Object.keys(authEnv).length > 0 ? { env: authEnv } : {}),
+    mcpServers: {
+      [RUDDER_MCP_SERVER_NAME]: rudderMcp,
+    },
+  };
   await fs.mkdir(path.dirname(targetSettingsPath), { recursive: true });
   await fs.writeFile(targetSettingsPath, `${JSON.stringify(sanitized, null, 2)}\n`, "utf8");
   return targetSettingsPath;
@@ -611,9 +624,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     effectiveInstructionsFilePath = combinedPath;
   }
   const commandNotes = (() => {
+    const rudderMcpNote = "Configured first-party Rudder MCP tools for Claude Code.";
     if (!instructionsFilePath) {
       return [
         ...loadedInstructions.commandNotes,
+        rudderMcpNote,
         "Injected Rudder operating contract via --append-system-prompt-file.",
         "Injected Rudder enabled-skill boundary via --append-system-prompt-file.",
         ...(imageAttachmentNote ? [imageAttachmentNote] : []),
@@ -622,11 +637,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (!loadedInstructions.prefix) {
       return [
         ...loadedInstructions.commandNotes,
+        rudderMcpNote,
         ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       ];
     }
     return [
       ...loadedInstructions.commandNotes,
+      rudderMcpNote,
       `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended; relative references from ${instructionsFileDir}).`,
       "Injected Rudder enabled-skill boundary via --append-system-prompt-file.",
       ...(imageAttachmentNote ? [imageAttachmentNote] : []),
@@ -759,6 +776,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
+        rudderMcp: rudderMcpRuntimeMetadata(),
         context,
       });
     }

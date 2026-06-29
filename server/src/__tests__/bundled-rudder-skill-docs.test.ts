@@ -33,7 +33,7 @@ describe("bundled rudder skill docs", () => {
     expect(contents).toContain("ownership, checkout, approvals, comments, reviews, Library handoffs, and");
     expect(contents).toContain("## Control-Plane Rails");
     expect(contents).toContain("## Essential Commands");
-    expect(contents).toContain("Use `references/cli-reference.md` for the stable command catalog");
+    expect(contents).toContain("Use `references/cli-reference.md` for the stable MCP + CLI fallback catalog");
     expect(contents).toContain("read `references/organization-skills.md`");
   });
 

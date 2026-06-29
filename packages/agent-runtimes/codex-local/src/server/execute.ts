@@ -1,4 +1,9 @@
-import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import {
+  inferOpenAiCompatibleBiller,
+  rudderMcpRuntimeMetadata,
+  type AgentRuntimeExecutionContext,
+  type AgentRuntimeExecutionResult,
+} from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asBoolean,
@@ -534,9 +539,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? `Attached ${imagePaths.length} image attachment${imagePaths.length === 1 ? "" : "s"} to the initial Codex prompt via --image.`
       : null;
   const commandNotes = (() => {
+    const rudderMcpNote = "Configured first-party Rudder MCP tools for Codex.";
     if (!instructionsFilePath) {
       return [
         ...loadedInstructions.commandNotes,
+        rudderMcpNote,
         "Prepended Rudder operating contract to stdin prompt.",
         ...(imageAttachmentNote ? [imageAttachmentNote] : []),
         repoAgentsNote,
@@ -545,6 +552,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (instructionsPrefix.length > 0) {
       return [
         ...loadedInstructions.commandNotes,
+        rudderMcpNote,
         `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
         ...(imageAttachmentNote ? [imageAttachmentNote] : []),
         repoAgentsNote,
@@ -552,6 +560,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
     return [
       ...loadedInstructions.commandNotes,
+      rudderMcpNote,
       ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       repoAgentsNote,
     ];
@@ -656,6 +665,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
+        rudderMcp: rudderMcpRuntimeMetadata(),
         context,
       });
     }

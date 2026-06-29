@@ -1502,6 +1502,9 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfigContents).toContain("enabled = false");
       expect(managedConfigContents).toContain("[features]");
       expect(managedConfigContents).toContain("plugins = false");
+      expect(managedConfigContents).toContain("[mcp_servers.rudder-control-plane]");
+      expect(managedConfigContents).toContain("command =");
+      expect(managedConfigContents).toContain('args = ["mcp-server"]');
       expect(managedConfigContents).not.toContain("notify =");
       expect(managedConfigContents).not.toContain("plugins = true");
       expect(managedConfigContents).not.toContain("[mcp_servers.linear]");
@@ -1527,6 +1530,76 @@ describe("codex execute", { timeout: 20_000 }, () => {
       else process.env.RUDDER_INSTANCE_ID = previousPaperclipInstanceId;
       if (previousPaperclipInWorktree === undefined) delete process.env.RUDDER_IN_WORKTREE;
       else process.env.RUDDER_IN_WORKTREE = previousPaperclipInWorktree;
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("records Rudder MCP availability in Codex runtime metadata", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-mcp-meta-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const paperclipHome = path.join(root, "rudder-home");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
+    await fs.writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousPaperclipHome = process.env.RUDDER_HOME;
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.CODEX_HOME = sharedCodexHome;
+
+    try {
+      let mcpMetadata: unknown;
+      const result = await execute({
+        runId: "run-mcp-meta",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          mcpMetadata = meta.rudderMcp;
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(mcpMetadata).toMatchObject({
+        available: true,
+        serverName: "rudder-control-plane",
+        toolCount: 69,
+      });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousPaperclipHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousPaperclipHome;
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousCodexHome;
       await fs.rm(root, { recursive: true, force: true });

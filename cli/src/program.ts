@@ -1,4 +1,5 @@
 import { Command, CommanderError } from "commander";
+import { runMcpStdioServer } from "./agent-v1-mcp-server.js";
 import { addAllowedHostname } from "./commands/allowed-hostname.js";
 import { bootstrapCeoInvite } from "./commands/auth-bootstrap-ceo.js";
 import { registerActivityCommands } from "./commands/client/activity.js";
@@ -126,6 +127,13 @@ export function createProgram(): Command {
     .option("-c, --config <path>", "Path to config file")
     .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
     .action(envCommand);
+
+  program
+    .command("mcp-server")
+    .description("Run the first-party Rudder Agent V1 MCP server over stdio")
+    .action(async () => {
+      await runMcpStdioServer();
+    });
 
   program
     .command("configure")

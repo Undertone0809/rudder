@@ -1,9 +1,10 @@
 # Rudder Agent CLI Reference
 
-Stable CLI contract for agents using the bundled `rudder` skill. Prefer these commands over direct `/api` calls.
+Stable compatibility contract for agents using the bundled `rudder` skill. Prefer first-party Rudder MCP tools when the runtime exposes them; use these CLI commands as fallback when MCP is unavailable or a Rudder MCP tool returns a transport/configuration error.
 
 ## Defaults
 
+- First-party MCP tools use the stable `rudder_<capability_id>` naming convention, for example `rudder_issue_checkout` for `issue.checkout`.
 - All commands support `--json`.
 - CLI output renders IDs as short IDs by default; `rudder runs ...` commands accept short run IDs. Add `--full-ids` only when a debugging or compatibility workflow needs raw UUIDs.
 - `--org-id` defaults to `RUDDER_ORG_ID` when relevant.
@@ -18,77 +19,77 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 
 ## Agent V1 Commands
 
-| Command | Description | Mutating | Org | Agent | Run ID |
-| --- | --- | --- | --- | --- | --- |
-| `rudder agent me` | Show the authenticated agent identity, budget, and chain of command. | no | no | no | no |
-| `rudder agent inbox` | List the compact assignee and reviewer work inbox for the authenticated agent. | no | no | no | no |
-| `rudder agent capabilities` | List the stable Rudder agent command contract. | no | no | no | no |
-| `rudder agent update [agent-id] [--title <title>] [--description <text>]` | Update an agent's control-plane identity fields; defaults to the authenticated agent. | yes | no | no | attached when available |
-| `rudder agent skills create [agent-id] --name <name> [--enable]` | Create an agent-private skill package under AGENT_HOME/skills. | yes | no | no | attached when available |
-| `rudder agent skills enable <agent-id> <selection-ref...>` | Add skill selections to an agent without replacing existing enabled skills. | yes | no | no | attached when available |
-| `rudder agent skills sync <agent-id>` | Sync the desired enabled skill set for an agent. | yes | no | no | attached when available |
-| `rudder issue get <issue>` | Read a full issue by UUID or identifier. | no | no | no | no |
-| `rudder issue search <query> [--org-id <id>]` | Search issues with the server-side issue index across title, identifier, description, and comments. | no | required | no | no |
-| `rudder issue context <issue> [--wake-comment-id <comment-id-or-cmt-ref>]` | Read the compact heartbeat context for an issue; wake comments may be addressed by full id or cmt_<uuid-prefix>. | no | no | no | no |
-| `rudder issue checkout <issue>` | Atomically checkout an issue for the current or specified agent. | yes | no | required | attached when available |
-| `rudder issue comment <issue> --body-file <path> [--image <path>]` | Add a comment to an issue, optionally uploading images and appending Markdown image links. | yes | no | no | attached when available |
-| `rudder issue comments list <issue> [--after <comment-id-or-cmt-ref>]` | List issue comments, optionally only newer comments after a full comment id or cmt_<uuid-prefix> with --after. | no | no | no | no |
-| `rudder issue comments get <issue> <comment-id-or-cmt-ref>` | Read one issue comment by full id or cmt_<uuid-prefix> scoped to the issue. | no | no | no | no |
-| `rudder issue update <issue> ... [--comment-file <path>] [--image <path>]` | Apply generic issue updates when workflow commands are not enough, optionally uploading images for the update comment. | yes | no | no | attached when available |
-| `rudder issue review <issue> --decision <decision> --comment-file <path>` | Record a structured reviewer decision with a required comment. | yes | no | no | attached when available |
-| `rudder issue commit <issue> --sha <sha> --message <subject>` | Report a code commit created during issue work as structured issue activity. | yes | no | no | attached when available |
-| `rudder issue done <issue> --comment-file <path> [--image <path>]` | Mark an issue done with a required completion comment, optionally uploading images. | yes | no | no | attached when available |
-| `rudder issue block <issue> --comment-file <path> [--image <path>]` | Mark an issue blocked with a required blocker comment, optionally uploading images. | yes | no | no | attached when available |
-| `rudder project list --org-id <id>` | List projects in an organization. | no | required | no | no |
-| `rudder project get <project-id-or-shortname> [--org-id <id>]` | Read one project by ID or shortname. | no | no | no | no |
-| `rudder project create --org-id <id> --name <name>` | Create a project in the organization. | yes | required | no | attached when available |
-| `rudder project update <project-id-or-shortname> [--org-id <id>]` | Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt. | yes | no | no | attached when available |
-| `rudder user activity --user me --since today --json` | Read a user-centered activity ledger with safe excerpts and provenance across chats, issue comments, approval comments, and user actor activity. | no | required | no | no |
-| `rudder library file list [directory]` | List Library files and folders; file rows include `libraryEntryId` when a strong reference can be generated. | no | required | no | no |
-| `rudder library file get <path>` | Fallback read when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. | no | required | no | no |
-| `rudder library file ref <path>` | Return the stable Markdown reference for one Library file without printing file content. | no | required | no | no |
-| `rudder library file link <path>` | Compatibility alias for `rudder library file ref <path>`. | no | required | no | no |
-| `rudder library file put <path> --body-file <path>` | Fallback create/update when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. | yes | required | no | attached when available |
-| `rudder approval get <approval-id>` | Read one approval request. | no | no | no | no |
-| `rudder approval issues <approval-id>` | List the issues linked to an approval. | no | no | no | no |
-| `rudder approval comment <approval-id> --body-file <path>` | Add a comment to an approval. | yes | no | no | attached when available |
-| `rudder skill list --org-id <id>` | List organization-visible skills. | no | required | no | no |
-| `rudder skill get <skill-id> --org-id <id>` | Read one organization skill detail. | no | required | no | no |
-| `rudder skill file <skill-id> --org-id <id> [--path SKILL.md]` | Read one file from an organization skill package. | no | required | no | no |
-| `rudder skill import --org-id <id> --source <source>` | Import a skill package into the organization skill library. | yes | required | no | attached when available |
-| `rudder skill scan-local --org-id <id> [--roots <csv>]` | Scan local roots for skill packages and import new ones. | yes | required | no | attached when available |
-| `rudder skill scan-projects --org-id <id> [--project-ids <csv>] [--workspace-ids <csv>]` | Scan the org workspace and any legacy project workspace records for skill packages and import new ones. | yes | required | no | attached when available |
-| `rudder automation list --org-id <id>` | List automations for an organization with compact local filters. | no | required | no | no |
-| `rudder automation get <automation-id>` | Read one automation detail including triggers and recent runs. | no | no | no | no |
-| `rudder automation runs <automation-id>` | List recent runs for one automation. | no | no | no | no |
-| `rudder automation triggers list <automation-id>` | List triggers configured for one automation. | no | no | no | no |
-| `rudder automation triggers create <automation-id> --kind <kind>` | Create a schedule, webhook, or API trigger through the governed automation API. | yes | no | no | attached when available |
-| `rudder automation triggers update <trigger-id>` | Update an automation trigger through the governed automation API. | yes | no | no | attached when available |
-| `rudder automation triggers delete <trigger-id>` | Delete an automation trigger through the governed automation API. | yes | no | no | attached when available |
-| `rudder automation triggers rotate-secret <trigger-id>` | Rotate an automation webhook trigger secret through the governed automation API. | yes | no | no | attached when available |
-| `rudder automation create --org-id <id> --title <title> --assignee-agent-id <id>` | Create an automation through the governed automation API. | yes | required | no | attached when available |
-| `rudder automation update <automation-id>` | Update automation fields through the governed automation API. | yes | no | no | attached when available |
-| `rudder automation enable <automation-id>` | Enable an automation by setting status to active. | yes | no | no | attached when available |
-| `rudder automation disable <automation-id>` | Disable an automation by setting status to paused. | yes | no | no | attached when available |
-| `rudder automation run <automation-id>` | Trigger a manual automation run. | yes | no | no | attached when available |
-| `rudder chat list --org-id <id>` | List chat conversations without dumping full message history. | no | required | no | no |
-| `rudder chat search <query> --org-id <id>` | Search chats with bounded snippets and optional scope filtering. | no | required | no | no |
-| `rudder chat get <chat-id>` | Read one chat conversation record. | no | no | no | no |
-| `rudder chat messages <chat-id> [--limit <n>] [--cursor <cursor>] [--include-transcript]` | Read bounded chat messages with page cursors; transcript output is omitted unless requested. | no | no | no | no |
-| `rudder chat transcript <chat-id> [--limit <n>] [--cursor <cursor>] [--max-output-chars <n>]` | Read paginated chat messages with assistant transcript entries clipped in human output. | no | no | no | no |
-| `rudder chat read <chat-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read a bounded recent-message snapshot for one chat with page cursors. | no | no | no | no |
-| `rudder chat create --org-id <id>` | Create a chat conversation. | yes | required | no | attached when available |
-| `rudder chat send <chat-id> --body <text>` | Send an agent-authored message directly to the operator in a chat. | yes | no | required | attached when available |
-| `rudder chat archive <chat-id>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
-| `rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>]` | List observed agent runs with filters for status, agent, issue, runtime, time, and skill evidence; used-skill means actual usage and loaded-skill is opt-in. | no | required | no | no |
-| `rudder runs by-skill <skill> --org-id <id> [--evidence <used-or-loaded>]` | Build a skill evidence packet from recent runs; defaults to actual usage and returns status counts, agents, issues, common errors, rows, and transcript/errors follow-up commands. | no | required | no | no |
-| `rudder runs get <run-id>` | Read one observed run detail. | no | no | no | no |
-| `rudder runs events <run-id>` | List persisted run events. | no | no | no | no |
-| `rudder runs log <run-id>` | Read stored run log content with clipped human output. | no | no | no | no |
-| `rudder runs transcript <run-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read the server-normalized run transcript; human output is compact and JSON includes full entries. | no | no | no | no |
-| `rudder runs errors <run-id>` | List failed tool calls, stderr, runtime failures, and jump-to-context commands. | no | no | no | no |
-| `rudder runs cancel <run-id>` | Cancel a heartbeat run through the governed server route. | yes | no | no | attached when available |
-| `rudder runs retry <run-id>` | Retry a failed, timed out, or cancelled run through the governed server route. | yes | no | no | attached when available |
+| MCP Tool | CLI Fallback | Description | Mutating | Org | Agent | Run ID |
+| --- | --- | --- | --- | --- | --- | --- |
+| `rudder_agent_me` | `rudder agent me` | Show the authenticated agent identity, budget, and chain of command. | no | no | no | no |
+| `rudder_agent_inbox` | `rudder agent inbox` | List the compact assignee and reviewer work inbox for the authenticated agent. | no | no | no | no |
+| `rudder_agent_capabilities` | `rudder agent capabilities` | List the stable Rudder agent command contract. | no | no | no | no |
+| `rudder_agent_update` | `rudder agent update [agent-id] [--title <title>] [--description <text>]` | Update an agent's control-plane identity fields; defaults to the authenticated agent. | yes | no | no | attached when available |
+| `rudder_agent_skills_create` | `rudder agent skills create [agent-id] --name <name> [--enable]` | Create an agent-private skill package under AGENT_HOME/skills. | yes | no | no | attached when available |
+| `rudder_agent_skills_enable` | `rudder agent skills enable <agent-id> <selection-ref...>` | Add skill selections to an agent without replacing existing enabled skills. | yes | no | no | attached when available |
+| `rudder_agent_skills_sync` | `rudder agent skills sync <agent-id>` | Sync the desired enabled skill set for an agent. | yes | no | no | attached when available |
+| `rudder_issue_get` | `rudder issue get <issue>` | Read a full issue by UUID or identifier. | no | no | no | no |
+| `rudder_issue_search` | `rudder issue search <query> [--org-id <id>]` | Search issues with the server-side issue index across title, identifier, description, and comments. | no | required | no | no |
+| `rudder_issue_context` | `rudder issue context <issue> [--wake-comment-id <comment-id-or-cmt-ref>]` | Read the compact heartbeat context for an issue; wake comments may be addressed by full id or cmt_<uuid-prefix>. | no | no | no | no |
+| `rudder_issue_checkout` | `rudder issue checkout <issue>` | Atomically checkout an issue for the current or specified agent. | yes | no | required | attached when available |
+| `rudder_issue_comment` | `rudder issue comment <issue> --body-file <path> [--image <path>]` | Add a comment to an issue, optionally uploading images and appending Markdown image links. | yes | no | no | attached when available |
+| `rudder_issue_comments_list` | `rudder issue comments list <issue> [--after <comment-id-or-cmt-ref>]` | List issue comments, optionally only newer comments after a full comment id or cmt_<uuid-prefix> with --after. | no | no | no | no |
+| `rudder_issue_comments_get` | `rudder issue comments get <issue> <comment-id-or-cmt-ref>` | Read one issue comment by full id or cmt_<uuid-prefix> scoped to the issue. | no | no | no | no |
+| `rudder_issue_update` | `rudder issue update <issue> ... [--comment-file <path>] [--image <path>]` | Apply generic issue updates when workflow commands are not enough, optionally uploading images for the update comment. | yes | no | no | attached when available |
+| `rudder_issue_review` | `rudder issue review <issue> --decision <decision> --comment-file <path>` | Record a structured reviewer decision with a required comment. | yes | no | no | attached when available |
+| `rudder_issue_commit` | `rudder issue commit <issue> --sha <sha> --message <subject>` | Report a code commit created during issue work as structured issue activity. | yes | no | no | attached when available |
+| `rudder_issue_done` | `rudder issue done <issue> --comment-file <path> [--image <path>]` | Mark an issue done with a required completion comment, optionally uploading images. | yes | no | no | attached when available |
+| `rudder_issue_block` | `rudder issue block <issue> --comment-file <path> [--image <path>]` | Mark an issue blocked with a required blocker comment, optionally uploading images. | yes | no | no | attached when available |
+| `rudder_project_list` | `rudder project list --org-id <id>` | List projects in an organization. | no | required | no | no |
+| `rudder_project_get` | `rudder project get <project-id-or-shortname> [--org-id <id>]` | Read one project by ID or shortname. | no | no | no | no |
+| `rudder_project_create` | `rudder project create --org-id <id> --name <name>` | Create a project in the organization. | yes | required | no | attached when available |
+| `rudder_project_update` | `rudder project update <project-id-or-shortname> [--org-id <id>]` | Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt. | yes | no | no | attached when available |
+| `rudder_user_activity` | `rudder user activity --user me --since today --json` | Read a user-centered activity ledger with safe excerpts and provenance across chats, issue comments, approval comments, and user actor activity. | no | required | no | no |
+| `rudder_library_file_list` | `rudder library file list [directory]` | List Library files and folders; file rows include `libraryEntryId` when a strong reference can be generated. | no | required | no | no |
+| `rudder_library_file_get` | `rudder library file get <path>` | Fallback read when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. | no | required | no | no |
+| `rudder_library_file_ref` | `rudder library file ref <path>` | Return the stable Markdown reference for one Library file without printing file content. | no | required | no | no |
+| `rudder_library_file_link` | `rudder library file link <path>` | Compatibility alias for `rudder library file ref <path>`. | no | required | no | no |
+| `rudder_library_file_put` | `rudder library file put <path> --body-file <path>` | Fallback create/update when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. | yes | required | no | attached when available |
+| `rudder_approval_get` | `rudder approval get <approval-id>` | Read one approval request. | no | no | no | no |
+| `rudder_approval_issues` | `rudder approval issues <approval-id>` | List the issues linked to an approval. | no | no | no | no |
+| `rudder_approval_comment` | `rudder approval comment <approval-id> --body-file <path>` | Add a comment to an approval. | yes | no | no | attached when available |
+| `rudder_skill_list` | `rudder skill list --org-id <id>` | List organization-visible skills. | no | required | no | no |
+| `rudder_skill_get` | `rudder skill get <skill-id> --org-id <id>` | Read one organization skill detail. | no | required | no | no |
+| `rudder_skill_file` | `rudder skill file <skill-id> --org-id <id> [--path SKILL.md]` | Read one file from an organization skill package. | no | required | no | no |
+| `rudder_skill_import` | `rudder skill import --org-id <id> --source <source>` | Import a skill package into the organization skill library. | yes | required | no | attached when available |
+| `rudder_skill_scan_local` | `rudder skill scan-local --org-id <id> [--roots <csv>]` | Scan local roots for skill packages and import new ones. | yes | required | no | attached when available |
+| `rudder_skill_scan_projects` | `rudder skill scan-projects --org-id <id> [--project-ids <csv>] [--workspace-ids <csv>]` | Scan the org workspace and any legacy project workspace records for skill packages and import new ones. | yes | required | no | attached when available |
+| `rudder_automation_list` | `rudder automation list --org-id <id>` | List automations for an organization with compact local filters. | no | required | no | no |
+| `rudder_automation_get` | `rudder automation get <automation-id>` | Read one automation detail including triggers and recent runs. | no | no | no | no |
+| `rudder_automation_runs` | `rudder automation runs <automation-id>` | List recent runs for one automation. | no | no | no | no |
+| `rudder_automation_triggers_list` | `rudder automation triggers list <automation-id>` | List triggers configured for one automation. | no | no | no | no |
+| `rudder_automation_triggers_create` | `rudder automation triggers create <automation-id> --kind <kind>` | Create a schedule, webhook, or API trigger through the governed automation API. | yes | no | no | attached when available |
+| `rudder_automation_triggers_update` | `rudder automation triggers update <trigger-id>` | Update an automation trigger through the governed automation API. | yes | no | no | attached when available |
+| `rudder_automation_triggers_delete` | `rudder automation triggers delete <trigger-id>` | Delete an automation trigger through the governed automation API. | yes | no | no | attached when available |
+| `rudder_automation_triggers_rotate_secret` | `rudder automation triggers rotate-secret <trigger-id>` | Rotate an automation webhook trigger secret through the governed automation API. | yes | no | no | attached when available |
+| `rudder_automation_create` | `rudder automation create --org-id <id> --title <title> --assignee-agent-id <id>` | Create an automation through the governed automation API. | yes | required | no | attached when available |
+| `rudder_automation_update` | `rudder automation update <automation-id>` | Update automation fields through the governed automation API. | yes | no | no | attached when available |
+| `rudder_automation_enable` | `rudder automation enable <automation-id>` | Enable an automation by setting status to active. | yes | no | no | attached when available |
+| `rudder_automation_disable` | `rudder automation disable <automation-id>` | Disable an automation by setting status to paused. | yes | no | no | attached when available |
+| `rudder_automation_run` | `rudder automation run <automation-id>` | Trigger a manual automation run. | yes | no | no | attached when available |
+| `rudder_chat_list` | `rudder chat list --org-id <id>` | List chat conversations without dumping full message history. | no | required | no | no |
+| `rudder_chat_search` | `rudder chat search <query> --org-id <id>` | Search chats with bounded snippets and optional scope filtering. | no | required | no | no |
+| `rudder_chat_get` | `rudder chat get <chat-id>` | Read one chat conversation record. | no | no | no | no |
+| `rudder_chat_messages` | `rudder chat messages <chat-id> [--limit <n>] [--cursor <cursor>] [--include-transcript]` | Read bounded chat messages with page cursors; transcript output is omitted unless requested. | no | no | no | no |
+| `rudder_chat_transcript` | `rudder chat transcript <chat-id> [--limit <n>] [--cursor <cursor>] [--max-output-chars <n>]` | Read paginated chat messages with assistant transcript entries clipped in human output. | no | no | no | no |
+| `rudder_chat_read` | `rudder chat read <chat-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read a bounded recent-message snapshot for one chat with page cursors. | no | no | no | no |
+| `rudder_chat_create` | `rudder chat create --org-id <id>` | Create a chat conversation. | yes | required | no | attached when available |
+| `rudder_chat_send` | `rudder chat send <chat-id> --body <text>` | Send an agent-authored message directly to the operator in a chat. | yes | no | required | attached when available |
+| `rudder_chat_archive` | `rudder chat archive <chat-id>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
+| `rudder_runs_list` | `rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>]` | List observed agent runs with filters for status, agent, issue, runtime, time, and skill evidence; used-skill means actual usage and loaded-skill is opt-in. | no | required | no | no |
+| `rudder_runs_by_skill` | `rudder runs by-skill <skill> --org-id <id> [--evidence <used-or-loaded>]` | Build a skill evidence packet from recent runs; defaults to actual usage and returns status counts, agents, issues, common errors, rows, and transcript/errors follow-up commands. | no | required | no | no |
+| `rudder_runs_get` | `rudder runs get <run-id>` | Read one observed run detail. | no | no | no | no |
+| `rudder_runs_events` | `rudder runs events <run-id>` | List persisted run events. | no | no | no | no |
+| `rudder_runs_log` | `rudder runs log <run-id>` | Read stored run log content with clipped human output. | no | no | no | no |
+| `rudder_runs_transcript` | `rudder runs transcript <run-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read the server-normalized run transcript; human output is compact and JSON includes full entries. | no | no | no | no |
+| `rudder_runs_errors` | `rudder runs errors <run-id>` | List failed tool calls, stderr, runtime failures, and jump-to-context commands. | no | no | no | no |
+| `rudder_runs_cancel` | `rudder runs cancel <run-id>` | Cancel a heartbeat run through the governed server route. | yes | no | no | attached when available |
+| `rudder_runs_retry` | `rudder runs retry <run-id>` | Retry a failed, timed out, or cancelled run through the governed server route. | yes | no | no | attached when available |
 
 ## Issue Close-Out Signals
 

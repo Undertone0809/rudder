@@ -40,6 +40,24 @@ export interface AgentCliCapabilitiesManifest {
   capabilities: AgentCliCapabilitiesManifestEntry[];
 }
 
+export interface AgentV1McpToolManifestEntry extends AgentCliCapabilitiesManifestEntry {
+  capabilityId: string;
+  name: string;
+  inputSchema: {
+    type: "object";
+    additionalProperties: boolean;
+    properties: Record<string, unknown>;
+  };
+  outputMode: "json";
+}
+
+export interface AgentV1McpToolsManifest {
+  schema: "rudder.agent-mcp-tools/v1";
+  contract: AgentCliCapabilityContract | "all";
+  serverName: "rudder-control-plane";
+  tools: AgentV1McpToolManifestEntry[];
+}
+
 const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   {
     id: "agent.me",
@@ -1065,15 +1083,118 @@ export function buildAgentCliCapabilitiesManifest(
   };
 }
 
+export function agentCliCapabilityIdToMcpToolName(id: string): string {
+  return `rudder_${id.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "")}`;
+}
+
+function mcpString(description: string): Record<string, unknown> {
+  return { type: "string", description };
+}
+
+function mcpBoolean(description: string): Record<string, unknown> {
+  return { type: "boolean", description };
+}
+
+function mcpNumber(description: string): Record<string, unknown> {
+  return { type: "number", description };
+}
+
+function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["inputSchema"] {
+  const properties: Record<string, unknown> = {};
+  const add = (key: string, value: Record<string, unknown>) => {
+    properties[key] = value;
+  };
+
+  if (id.startsWith("issue.")) {
+    add("issue", mcpString("Issue UUID, identifier, or short reference."));
+    add("body", mcpString("Direct Markdown body for issue comments or close-out notes."));
+    add("comment", mcpString("Direct Markdown review, blocker, or completion comment."));
+    add("images", { type: "array", items: { type: "string" }, description: "Local image paths to attach when supported." });
+  }
+  if (id.startsWith("project.")) add("project", mcpString("Project UUID or shortname."));
+  if (id.startsWith("library.file.")) {
+    add("path", mcpString("Library-relative file or directory path."));
+    add("body", mcpString("Direct file content for put operations."));
+  }
+  if (id.startsWith("approval.")) {
+    add("approval", mcpString("Approval UUID or short reference."));
+    add("body", mcpString("Direct Markdown approval comment body."));
+  }
+  if (id.startsWith("skill.")) {
+    add("skill", mcpString("Organization skill id."));
+    add("path", mcpString("Skill package file path, such as SKILL.md."));
+  }
+  if (id.startsWith("automation.")) {
+    add("automation", mcpString("Automation id."));
+    add("trigger", mcpString("Automation trigger id."));
+    add("payload", { type: ["object", "string"], description: "JSON payload object or JSON string." });
+  }
+  if (id.startsWith("chat.")) {
+    add("chat", mcpString("Chat conversation id."));
+    add("body", mcpString("Agent-authored chat message body."));
+  }
+  if (id.startsWith("runs.")) add("run", mcpString("Run id or short run id."));
+  if (id.startsWith("agent.skills.")) {
+    add("selectionRefs", { type: "array", items: { type: "string" }, description: "Skill selection refs." });
+    add("desiredSkills", mcpString("Comma-separated desired skill refs for sync."));
+  }
+
+  for (const [key, description] of Object.entries({
+    query: "Search query.",
+    decision: "Structured review decision.",
+    title: "Title.",
+    name: "Name.",
+    description: "Description or summary text.",
+    status: "Status filter or new status.",
+    limit: "Page size or result limit.",
+    cursor: "Pagination cursor.",
+    source: "Source path or source label.",
+    kind: "Trigger kind.",
+  })) {
+    add(key, key === "limit" ? mcpNumber(description) : mcpString(description));
+  }
+  for (const key of ["enable", "enabled", "disabled", "reopen", "planMode", "includeTranscript", "includeOutput", "notifyOnIssueCreated"]) {
+    add(key, mcpBoolean(`Boolean option ${key}.`));
+  }
+
+  return {
+    type: "object",
+    additionalProperties: true,
+    properties,
+  };
+}
+
+export function buildAgentV1McpToolsManifest(
+  contract: AgentCliCapabilityContract | "all" = "agent-v1",
+): AgentV1McpToolsManifest {
+  const capabilities = buildAgentCliCapabilitiesManifest(contract).capabilities;
+
+  return {
+    schema: "rudder.agent-mcp-tools/v1",
+    contract,
+    serverName: "rudder-control-plane",
+    tools: capabilities.map((entry) => ({
+      ...entry,
+      capabilityId: entry.id,
+      name: agentCliCapabilityIdToMcpToolName(entry.id),
+      inputSchema: mcpInputSchemaForCapability(entry.id),
+      outputMode: "json",
+    })),
+  };
+}
+
 export function renderAgentCliReferenceMarkdown(): string {
   const manifest = buildAgentCliCapabilitiesManifest("agent-v1");
+  const mcpManifest = buildAgentV1McpToolsManifest("agent-v1");
+  const mcpByCapability = new Map(mcpManifest.tools.map((tool) => [tool.capabilityId, tool]));
   const lines: string[] = [
     "# Rudder Agent CLI Reference",
     "",
-    "Stable CLI contract for agents using the bundled `rudder` skill. Prefer these commands over direct `/api` calls.",
+    "Stable compatibility contract for agents using the bundled `rudder` skill. Prefer first-party Rudder MCP tools when the runtime exposes them; use these CLI commands as fallback when MCP is unavailable or a Rudder MCP tool returns a transport/configuration error.",
     "",
     "## Defaults",
     "",
+    "- First-party MCP tools use the stable `rudder_<capability_id>` naming convention, for example `rudder_issue_checkout` for `issue.checkout`.",
     "- All commands support `--json`.",
     "- CLI output renders IDs as short IDs by default; `rudder runs ...` commands accept short run IDs. Add `--full-ids` only when a debugging or compatibility workflow needs raw UUIDs.",
     "- `--org-id` defaults to `RUDDER_ORG_ID` when relevant.",
@@ -1088,13 +1209,14 @@ export function renderAgentCliReferenceMarkdown(): string {
     "",
     "## Agent V1 Commands",
     "",
-    "| Command | Description | Mutating | Org | Agent | Run ID |",
-    "| --- | --- | --- | --- | --- | --- |",
+    "| MCP Tool | CLI Fallback | Description | Mutating | Org | Agent | Run ID |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
   ];
 
   for (const capability of manifest.capabilities) {
+    const tool = mcpByCapability.get(capability.id);
     lines.push(
-      `| \`${capability.command}\` | ${capability.description} | ${capability.mutating ? "yes" : "no"} | ${
+      `| \`${tool?.name ?? agentCliCapabilityIdToMcpToolName(capability.id)}\` | \`${capability.command}\` | ${capability.description} | ${capability.mutating ? "yes" : "no"} | ${
         capability.requiresOrgId ? "required" : "no"
       } | ${capability.requiresAgentId ? "required" : "no"} | ${
         capability.requiresRunId ? "required" : capability.attachesRunIdWhenAvailable ? "attached when available" : "no"

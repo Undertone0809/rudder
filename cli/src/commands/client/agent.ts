@@ -19,6 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildAgentCliCapabilitiesManifest,
+  buildAgentV1McpToolsManifest,
   formatAgentCliCapabilitiesHumanReadable,
   getAgentCliCapabilities,
   getAgentCliCapabilityById,
@@ -318,7 +319,10 @@ export function registerAgentCommands(program: Command): void {
             contract === "all" ? true : entry.contract === contract);
 
           if (opts.json) {
-            printOutput(buildAgentCliCapabilitiesManifest(contract), { json: true });
+            printOutput({
+              ...buildAgentCliCapabilitiesManifest(contract),
+              mcp: buildAgentV1McpToolsManifest("agent-v1"),
+            }, { json: true });
             return;
           }
 

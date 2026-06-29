@@ -18,6 +18,13 @@ export {
   resolveOrganizationStorageKey
 } from "./organization-storage.js";
 export {
+  RUDDER_MCP_SERVER_NAME,
+  RUDDER_MCP_TOOL_COUNT,
+  rudderMcpCliCommand,
+  rudderMcpRuntimeMetadata,
+  type RudderMcpRuntimeMetadata
+} from "./rudder-mcp.js";
+export {
   AGENT_RUNTIME_SESSION_MANAGEMENT,
   LEGACY_SESSIONED_AGENT_RUNTIME_TYPES,
   getAgentRuntimeSessionManagement, hasSessionCompactionThresholds, readSessionCompactionOverride,
