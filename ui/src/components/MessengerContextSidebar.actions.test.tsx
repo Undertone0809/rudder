@@ -2304,6 +2304,62 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(text.indexOf("Older pinned group")).toBeLessThan(text.indexOf("Recent regular group"));
   });
 
+  it("renders pinned custom groups before loose pinned threads", () => {
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Pinned group above loose pin",
+        icon: "folder::amber",
+        sortOrder: 0,
+        collapsed: false,
+        pinnedAt: "2026-04-11T09:30:00.000Z",
+        createdAt: "2026-04-11T09:30:00.000Z",
+        updatedAt: "2026-04-11T09:30:00.000Z",
+        entries: [],
+      },
+      {
+        id: "group-2",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Regular group below pins",
+        icon: "folder::slate",
+        sortOrder: 1,
+        collapsed: false,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:55:00.000Z",
+        updatedAt: "2026-04-11T09:55:00.000Z",
+        entries: [],
+      },
+    ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [
+        {
+          threadKey: "chat:pinned-loose",
+          kind: "chat",
+          title: "Loose pinned thread",
+          preview: "Pinned thread outside groups.",
+          subtitle: null,
+          href: "/messenger/chat/pinned-loose",
+          latestActivityAt: "2026-04-11T09:50:00.000Z",
+          lastReadAt: null,
+          unreadCount: 0,
+          needsAttention: false,
+          isPinned: true,
+        },
+      ],
+    };
+
+    renderSidebar();
+
+    const text = document.body.textContent ?? "";
+    expect(text.indexOf("Pinned")).toBeLessThan(text.indexOf("Pinned group above loose pin"));
+    expect(text.indexOf("Pinned group above loose pin")).toBeLessThan(text.indexOf("Loose pinned thread"));
+    expect(text.indexOf("Loose pinned thread")).toBeLessThan(text.indexOf("Regular group below pins"));
+  });
+
   it("keeps pinned custom groups first when manual custom order puts an unpinned group first", () => {
     installLocalStorage({
       "rudder.messengerDefaultThreadOrder:org-1:local-board": JSON.stringify([

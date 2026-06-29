@@ -1352,6 +1352,12 @@ test.describe("Messenger unified threads contract", () => {
 
     const pinCandidateChat = await createChat("Older pin candidate tab");
     await page.waitForTimeout(25);
+    const loosePinnedChat = await createChat("Loose pinned tab");
+    const loosePinRes = await page.request.post(`/api/chats/${loosePinnedChat.id}/user-state`, {
+      data: { pinned: true },
+    });
+    expect(loosePinRes.ok()).toBe(true);
+    await page.waitForTimeout(25);
     const regularChat = await createChat("Newer regular tab");
     const pinCandidateGroup = await createGroup(
       "Pin candidate",
@@ -1376,10 +1382,15 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
 
     const pinCandidateSectionId = `messenger-thread-section-custom-group-${pinCandidateGroup.id}`;
+    const loosePinnedSectionId = "messenger-thread-section-custom-pinned";
     const regularSectionId = `messenger-thread-section-custom-group-${regularGroup.id}`;
+    const loosePinnedThreadId = threadTestId(`chat:${loosePinnedChat.id}`);
     const pinCandidateSection = page.getByTestId(pinCandidateSectionId);
     await expect(pinCandidateSection).toContainText("Pin candidate", { timeout: 15_000 });
+    await expect(page.getByTestId(loosePinnedThreadId)).toContainText("Loose pinned tab");
     await expect(page.getByTestId(regularSectionId)).toContainText("Regular group");
+    await expect(page.getByTestId(`${loosePinnedSectionId}-content`)).toContainText("Pin candidate");
+    await expect(page.getByTestId(`${loosePinnedSectionId}-content`)).toContainText("Loose pinned tab");
 
     await expect.poll(async () => {
       const groupsRes = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
@@ -1394,12 +1405,14 @@ test.describe("Messenger unified threads contract", () => {
       regularPinnedAt: null,
     });
 
-    await expectTestIdsInDomOrder(page, [pinCandidateSectionId, regularSectionId]);
+    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, pinCandidateSectionId, loosePinnedThreadId, regularSectionId]);
 
     await page.reload({ waitUntil: "commit" });
 
     await expect(page.getByTestId(pinCandidateSectionId)).toBeVisible({ timeout: 15_000 });
-    await expectTestIdsInDomOrder(page, [pinCandidateSectionId, regularSectionId]);
+    await expect(page.getByTestId(loosePinnedThreadId)).toContainText("Loose pinned tab");
+    await expect(page.getByTestId(`${loosePinnedSectionId}-content`)).toContainText("Pin candidate");
+    await expectTestIdsInDomOrder(page, [loosePinnedSectionId, pinCandidateSectionId, loosePinnedThreadId, regularSectionId]);
 
     await page.getByTestId(pinCandidateSectionId).hover();
     await page.getByTestId(pinCandidateSectionId).getByRole("button", { name: "Group actions" }).click();

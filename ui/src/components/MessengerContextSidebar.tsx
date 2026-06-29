@@ -2110,6 +2110,7 @@ interface OrganizedThreadSection {
   isPinned?: boolean;
   pending?: boolean;
   entries: OrganizedThreadEntry[];
+  childSections?: OrganizedThreadSection[];
 }
 
 function isPinnedEntry(entry: OrganizedThreadEntry) {
@@ -2775,9 +2776,13 @@ export function MessengerContextSidebar() {
         [...groupSections, ...ungroupedSections].sort(compareCustomLayoutSections),
         defaultThreadOrderKeys,
       );
+      const pinnedGroupSections = topLevelSections.filter((section) => section.isPinned);
+      const remainingTopLevelSections = topLevelSections.filter((section) => !section.isPinned);
       return [
-        ...(orderedPinnedEntries.length > 0 ? [{ key: "custom:pinned", label: "Pinned", entries: orderedPinnedEntries }] : []),
-        ...topLevelSections,
+        ...(pinnedGroupSections.length > 0 || orderedPinnedEntries.length > 0
+          ? [{ key: "custom:pinned", label: "Pinned", entries: orderedPinnedEntries, childSections: pinnedGroupSections }]
+          : []),
+        ...remainingTopLevelSections,
       ];
     }
     const entries = threadSummaries.map((thread) => {
@@ -3645,6 +3650,15 @@ export function MessengerContextSidebar() {
       && !customGroup
       && (section.label === null || isPinnedCustomSection)
       && visibleEntries.length === 1;
+    const renderedChildSections = section.childSections?.length ? (
+      <div className="flex flex-col gap-1">
+        {section.childSections.map((childSection) => (
+          <div key={childSection.key} className="flex shrink-0 flex-col gap-1">
+            {renderThreadSection(childSection)}
+          </div>
+        ))}
+      </div>
+    ) : null;
     const renderedEntries = canSortCustomEntries ? (
       <SortableContext
         items={visibleEntries.map((entry) => entry.thread.threadKey)}
@@ -3670,6 +3684,7 @@ export function MessengerContextSidebar() {
     );
     const sectionBody = (
       <>
+        {renderedChildSections}
         <div className="flex flex-col gap-1">
           {renderedEntries}
         </div>
