@@ -661,9 +661,9 @@ Invariants:
 - A grouped member's read/unread badge, unread count, attention state, preview,
   and last-activity ordering must not diverge from the source Messenger
   summary after local optimistic updates settle.
-- Loose pinned threads render first. Pinned custom groups render immediately
-  after that top pinned-thread section. Unpinned groups and loose unpinned
-  issue, chat, approval, and synthetic attention rows follow.
+- Pinned custom groups render inside the `Pinned` section immediately under
+  the section header and before loose pinned threads. Unpinned groups and loose
+  unpinned issue, chat, approval, and synthetic attention rows follow.
 - Pinning a custom group does not pin every member individually, and pinning a
   member does not remove it from its group.
 - Removing an item from a group returns that item to the loose Messenger
@@ -692,7 +692,8 @@ Evidence:
   regenerated output is unusable.
 - Messenger E2E covers aggregate issue grouping, split issue grouping,
   synthetic membership, drag/drop grouping, row-action group creation, and
-  custom group pin/order behavior.
+  custom group pin/order behavior, including pinned groups rendering above
+  loose pinned threads after reload.
 
 ## IM.FEISHU.001
 
