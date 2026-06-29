@@ -1614,7 +1614,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         <div className="chat-warning mt-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-sm">
           {composerUnavailableMessage}{" "}
           <Link to="/agents" className="underline underline-offset-4 hover:text-foreground">
-            Configure model </Link> </div> ) : null}
+            Open agents </Link> </div> ) : null}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
