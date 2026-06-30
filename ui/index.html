@@ -22,6 +22,7 @@
       (() => {
         const key = "rudder.theme";
         const styleKey = "rudder.designStyle";
+        const defaultDesignStyle = "luma";
         const baseColorKey = "rudder.baseColor";
         const accentThemeKey = "rudder.accentTheme";
         const darkThemeColor = "#1f1f1d";
@@ -59,7 +60,7 @@
           isDark = theme === "system" ? prefersDark : theme === "dark";
           baseColor = baseColors.includes(storedBaseColor) ? storedBaseColor : "neutral";
           document.documentElement.dataset.style =
-            storedStyle === "mira" || storedStyle === "luma" ? storedStyle : "default";
+            storedStyle === "default" || storedStyle === "mira" || storedStyle === "luma" ? storedStyle : defaultDesignStyle;
           document.documentElement.dataset.baseColor = baseColor;
           document.documentElement.dataset.themeColor = accentThemes.includes(storedAccentTheme) ? storedAccentTheme : "neutral";
           document.documentElement.classList.toggle("dark", isDark);
@@ -70,7 +71,7 @@
           }
         } catch {
           document.documentElement.classList.add("dark");
-          document.documentElement.dataset.style = "default";
+          document.documentElement.dataset.style = defaultDesignStyle;
           document.documentElement.dataset.baseColor = "neutral";
           document.documentElement.dataset.themeColor = "neutral";
           document.documentElement.style.colorScheme = "dark";

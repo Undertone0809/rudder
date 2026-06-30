@@ -295,7 +295,7 @@ export const zhCN: Messages = {
   "general.appearance.dark.label": "深色",
   "general.appearance.dark.description": "低眩光工作区",
   "general.appearance.designStyle": "设计风格",
-  "general.appearance.defaultStyle.label": "默认",
+  "general.appearance.defaultStyle.label": "Rudder",
   "general.appearance.defaultStyle.description": "Rudder 低眩光界面",
   "general.appearance.mira.label": "Mira",
   "general.appearance.mira.description": "紧凑卡片与控件",

@@ -131,6 +131,27 @@ function renderThemeProvider() {
 }
 
 describe("ThemeProvider desktop shell bridge", () => {
+  it("uses Luma as the design style when no stored preference exists", () => {
+    installMatchMedia(true);
+
+    const container = renderThemeProvider();
+
+    expect(container.querySelector("[data-testid='design-style']")?.textContent).toBe("luma");
+    expect(document.documentElement.dataset.style).toBe("luma");
+    expect(localStorage.getItem("rudder.designStyle")).toBe("luma");
+  });
+
+  it("falls back to Luma when the stored design style is unsupported", () => {
+    installMatchMedia(true);
+    localStorage.setItem("rudder.designStyle", "unsupported");
+
+    const container = renderThemeProvider();
+
+    expect(container.querySelector("[data-testid='design-style']")?.textContent).toBe("luma");
+    expect(document.documentElement.dataset.style).toBe("luma");
+    expect(localStorage.getItem("rudder.designStyle")).toBe("luma");
+  });
+
   it("passes the stored light preference to the desktop shell even when the system is dark", () => {
     installMatchMedia(true);
     localStorage.setItem("rudder.theme", "light");

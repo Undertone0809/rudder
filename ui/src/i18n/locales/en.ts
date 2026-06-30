@@ -317,7 +317,7 @@ export const en = {
   "general.appearance.dark.label": "Dark",
   "general.appearance.dark.description": "Low-glare workspace",
   "general.appearance.designStyle": "Design style",
-  "general.appearance.defaultStyle.label": "Default",
+  "general.appearance.defaultStyle.label": "Rudder",
   "general.appearance.defaultStyle.description": "Rudder low-glare surfaces",
   "general.appearance.mira.label": "Mira",
   "general.appearance.mira.description": "Compact cards and controls",

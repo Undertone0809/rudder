@@ -43,6 +43,7 @@ interface ThemeContextValue {
 
 const THEME_STORAGE_KEY = "rudder.theme";
 const DESIGN_STYLE_STORAGE_KEY = "rudder.designStyle";
+const DEFAULT_DESIGN_STYLE: DesignStyle = "luma";
 const BASE_COLOR_STORAGE_KEY = "rudder.baseColor";
 const ACCENT_THEME_STORAGE_KEY = "rudder.accentTheme";
 const DARK_THEME_COLOR = "#1f1f1d";
@@ -105,7 +106,7 @@ function getStoredThemePreference(): Theme {
 }
 
 function getStoredDesignStylePreference(): DesignStyle {
-  if (typeof window === "undefined") return "default";
+  if (typeof window === "undefined") return DEFAULT_DESIGN_STYLE;
   try {
     const stored = window.localStorage.getItem(DESIGN_STYLE_STORAGE_KEY);
     if (stored === "default" || stored === "mira" || stored === "luma") {
@@ -114,7 +115,7 @@ function getStoredDesignStylePreference(): DesignStyle {
   } catch {
     // Ignore local storage read failures in restricted environments.
   }
-  return "default";
+  return DEFAULT_DESIGN_STYLE;
 }
 
 function getStoredBaseColorPreference(): BaseColor {

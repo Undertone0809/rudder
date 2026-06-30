@@ -34,7 +34,7 @@ vi.mock("../context/I18nContext", () => ({
         "general.appearance.dark.label": "Dark",
         "general.appearance.dark.description": "Low-glare workspace",
         "general.appearance.designStyle": "Design style",
-        "general.appearance.defaultStyle.label": "Default",
+        "general.appearance.defaultStyle.label": "Rudder",
         "general.appearance.defaultStyle.description": "Rudder low-glare surfaces",
         "general.appearance.mira.label": "Mira",
         "general.appearance.mira.description": "Compact cards and controls",
@@ -87,7 +87,7 @@ vi.mock("../context/I18nContext", () => ({
 vi.mock("../context/ThemeContext", () => ({
   useTheme: () => ({
     theme: "system",
-    designStyle: "default",
+    designStyle: "luma",
     baseColor: "neutral",
     accentTheme: "neutral",
     setTheme,
@@ -157,11 +157,11 @@ describe("InstanceAppearanceSettings", () => {
     });
 
     expect(container.textContent).toContain("Design style");
-    expect(container.textContent).toContain("Default");
+    expect(container.textContent).toContain("Rudder");
     expect(container.textContent).toContain("Mira");
     expect(container.textContent).toContain("Luma");
     expect(Array.from(container.querySelectorAll("button[aria-pressed='true']")).some((button) => (
-      button.textContent?.includes("Default")
+      button.textContent?.includes("Luma")
     ))).toBe(true);
 
     const buttons = Array.from(container.querySelectorAll("button"));
