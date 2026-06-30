@@ -6,13 +6,16 @@ This file preserves the detailed pre-template maintainer instructions. Load it w
 
 # Advisor Review Loop Maintainer
 
-This skill chains two existing Rudder maintainer practices:
+This skill chains existing Rudder maintainer practices:
 
 - `build-advisor`: turn fuzzy dissatisfaction or a high-stakes request into a
   grounded scenario analysis, requirement map, options, and recommended plan.
 - `agent-work-reviewer-maintainer`: independently judge whether the result
   solved the right product problem with sufficient behavior, evidence, and
   validation.
+- `product-acceptance-verifier-maintainer`: when the loop evaluates delivered
+  product behavior rather than a proposal artifact, prove black-box acceptance
+  before final review.
 
 Use this skill when the work should not be accepted after one author pass. The
 goal is to create a reviewable proposal or implementation, expose it to
@@ -105,6 +108,8 @@ Collect the smallest set of evidence that can support real judgment:
 - the two source skills when this workflow depends on their contracts:
   `.agents/skills/build-advisor/SKILL.md` and
   `.agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md`
+- `.agents/skills/maintainer/product-acceptance-verifier-maintainer/SKILL.md`
+  when the artifact is delivered behavior that needs black-box acceptance
 
 For Rudder product or workflow work, read the relevant subset of
 `doc/product/GOAL.md`, `doc/product/PRODUCT.md`, `doc/product/README.md` plus relevant `doc/product/domains/**`, and
@@ -130,38 +135,82 @@ Do not claim literal "100% certainty." Instead, state the coverage boundary:
 what scenarios were considered, what evidence supports them, and what new
 evidence would change the conclusion.
 
-### 3. Spawn two independent reviewer agents
+### 3. Choose reviewer lenses
 
-When subagents are available and the user asked for reviewer agents, spawn both
-reviewers in the same turn so they evaluate independently. Record the review
-execution mode as `spawned reviewers`.
+Reviewer count follows risk, not habit.
 
-Reviewer A owns scenario and demand correctness:
+Use three distinct reviewer lenses for consequential proposals, workflow
+changes, skills, agent-visible contracts, UI/product journeys, architecture,
+release readiness, Desktop/runtime/CLI decisions, prior failed handoffs, or any
+task where the user explicitly asks for adversarial or heuristic pressure:
+
+- functional trust: contracts, evidence, validation, org scoping, control-plane
+  invariants, implementation feasibility, and handoff trust
+- adversarial: hidden assumptions, wrong abstraction level, weak proof,
+  overfitting, conflicting docs, untested actor paths, and product-wrong
+  outcomes
+- heuristic/product-systems: whether this is the right problem, smallest
+  durable slice, missing actor journey, teachable contract, second-order
+  consequences, and future maintenance shape
+
+For narrow proposal review, mechanical skill/doc changes, or low-risk
+non-product artifacts, two reviewers are acceptable only when one owns
+functional trust and the other is explicitly adversarial or heuristic. Record
+which lens was omitted and why.
+
+If the artifact is delivered product behavior rather than an advisory/proposal
+artifact, run or route black-box acceptance through
+`product-acceptance-verifier-maintainer` before final reviewer acceptance. A
+reviewer verdict does not convert missing acceptance proof into product proof.
+
+### 4. Spawn independent reviewer agents
+
+When subagents are available and the user asked for reviewer agents, spawn the
+selected reviewers in the same turn so they evaluate independently. Record the
+review execution mode as `spawned reviewers`.
+
+Functional trust reviewer:
 
 ```text
 Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
 
-Review this artifact from first principles as the scenario and demand reviewer.
-Focus on actors, user jobs, lifecycle states, requirement classes, non-goals,
-corner cases, and whether the proposed solution solves the right product
-problem. Give accept / conditional accept / reject, blocking gaps, and the
-smallest changes needed to pass.
+Review this artifact as the functional trust reviewer. Focus on contracts,
+evidence, validation, org scoping, control-plane invariants, implementation
+feasibility, rollback/recovery, and handoff trust. Separate author-claimed proof
+from proof you inspected. Give accept / conditional accept / needs more
+evidence / reject, blocking gaps, and the smallest changes needed to pass.
 ```
 
-Reviewer B owns delivery and trust correctness:
+Adversarial reviewer:
 
 ```text
 Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
 
-Review this artifact as the implementation, workflow, and validation reviewer.
-Focus on object model, scope discipline, org scoping, contracts, validation,
-tests, UI evidence when relevant, rollback/recovery, and handoff quality. Give
-accept / conditional accept / reject, blocking gaps, and the smallest changes
-needed to pass.
+Review this artifact as the adversarial reviewer. Try to break the framing,
+requirement map, evidence, and proposed execution. Focus on hidden assumptions,
+wrong abstraction level, path dependence, weak proof, overfitting to examples,
+conflicting docs, untested actor behavior, and product-wrong outcomes. Give
+accept / conditional accept / needs more evidence / reject, blocking gaps, and
+the smallest changes needed to pass.
+```
+
+Heuristic/product-systems reviewer:
+
+```text
+Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
+
+Review this artifact as the heuristic/product-systems reviewer. Judge whether
+the work solves the right problem in the smallest durable way. Focus on missing
+actor journeys, better questions, teachable contracts, future-proofing path,
+second-order consequences, and whether a narrower or different slice would
+better serve Rudder's agent-work loop. Give accept / conditional accept / needs
+more evidence / reject, blocking gaps, and the smallest changes needed to pass.
 ```
 
 Include the same evidence packet, target artifact, user request, and evaluation
-rubric in both prompts. Tell reviewers they are not implementers; they should
+rubric in each prompt. Also include the target artifact basis, prior blockers,
+changed evidence since the last round, and whether this is a stage review or a
+final handoff review. Tell reviewers they are not implementers; they should
 judge and identify gaps.
 
 If subagents are unavailable, distinguish two cases:
@@ -172,20 +221,21 @@ If subagents are unavailable, distinguish two cases:
   artifact and local validation evidence, but do not call the review gate
   passed unless the user explicitly lowers the bar for this turn.
 - When the task only needs advisory pressure and the user did not require a
-  spawned-reviewer gate, you may run the two reviews serially yourself. Record
-  the review execution mode as `serial two-role fallback`, do not claim that two
-  agents were spawned, and treat independence confidence as lower. Keep the
-  roles separate and label them so the author pass does not silently grade
-  itself.
+  spawned-reviewer gate, you may run the selected lens reviews serially
+  yourself. Record the review execution mode as `serial lens fallback`, do not
+  claim that agents were spawned, and treat independence confidence as lower.
+  Keep the lenses separate and label them so the author pass does not silently
+  grade itself.
 
-### 4. Merge findings into a rework list
+### 5. Merge findings into a rework list
 
-After both reviews return:
+After the lens reviews return:
 
 - normalize verdicts into `accept`, `conditional accept`, `reject`, or
   `needs more evidence`
 - separate blocking gaps from non-blocking suggestions
-- identify reviewer disagreements and decide which requirement owns the tie
+- identify reviewer disagreements and decide which scenario, invariant, or
+  validation gap owns the tie
 - revise the artifact only for gaps that improve correctness or evidence
 - avoid overfitting to one reviewer phrasing when a more general skill,
   workflow, or product rule is needed
@@ -194,20 +244,21 @@ In `review-only` mode, stop here with the merged findings and smallest rework
 list. Do not revise the artifact or run another round unless the user explicitly
 switches from review to rework.
 
-If either reviewer rejects the artifact or names a blocking gap, do not hand off
-as final. Rework first.
+If any selected reviewer rejects the artifact or names a blocking gap, do not
+hand off as final. Rework first.
 
-### 5. Run a second review round
+### 6. Run a targeted next review round
 
 For high-stakes tasks, skill creation, workflow changes, or when the user asks
 for two iterations, run a second reviewer round after the first revision.
 
-The second-round prompt should include:
+The next-round prompt should include:
 
 - the revised artifact
 - round-one findings
 - a short change log explaining what was changed
 - explicit request to judge whether blockers were actually resolved
+- unchanged blockers that should not trigger a broad new review fanout
 
 If round two still produces a rejection or unresolved blocker, do another
 targeted rework and repeat the review loop until either:
@@ -216,15 +267,22 @@ targeted rework and repeat the review loop until either:
 - the remaining gap requires new user judgment or external evidence
 - continued iteration is no longer producing meaningful improvement
 
-### 6. Final handoff
+Before starting another broad reviewer round, compare target artifact basis,
+acceptance bundle, prior blockers, and changed evidence. If the same blocker is
+unchanged and no artifact or proof changed, reuse the prior gate state and work
+the blocker first. When the delta is narrow, route only the lens that can judge
+that delta.
+
+### 7. Final handoff
 
 The final answer should be compact but must include:
 
 - final artifact path or summary
-- review execution mode: spawned reviewers or serial two-role fallback
+- review execution mode: spawned reviewers or serial lens fallback
 - advisor coverage boundary: scenarios, requirements, non-goals, and key corner
   cases considered
-- reviewer round summaries and verdicts
+- reviewer lens summaries and verdicts
+- omitted reviewer lens and reason, if a smaller lens set was used
 - what changed between rounds
 - validation performed and what remains unverified
 - residual risks or decisions that still need human judgment
@@ -243,8 +301,11 @@ Treat the result as not ready when any of these are true:
 - requirement classes do not trace back to scenarios or failure modes
 - reviewer prompts lack the evidence packet, causing shallow opinion review
 - reviewers are asked to rubber-stamp instead of reject when needed
-- the second round does not explicitly verify that first-round blockers were
-  fixed
+- multiple reviewers run the same checklist instead of distinct functional,
+  adversarial, and heuristic pressure
+- the next round does not explicitly verify that first-round blockers were fixed
+- a broad new review round is spawned with the same artifact, unchanged
+  blockers, and no changed evidence
 - user-visible workflow changes lack E2E or rendered evidence where the repo
   requires it
 - the final handoff does not disclose whether review used spawned subagents or
@@ -264,6 +325,8 @@ Treat the result as not ready when any of these are true:
   not begin implementation without confirmation.
 - User asked for review only: stop at verdicts and smallest changes needed. Do
   not rework the artifact until the user asks you to switch into rework.
+- User asks for adversarial or heuristic review: treat that as a request for
+  explicit reviewer lenses, not a generic second opinion.
 - User provides a fresh worktree or says to experiment and solve it after an
   advisor answer: switch to evidence-producing implementation. Do not keep
   debating the same architecture point unless the new experiment finds a
@@ -299,9 +362,9 @@ Advisor 覆盖：
 - 关键 corner cases：...
 
 Review 轮次：
-- Round 1: Reviewer A ..., Reviewer B ...
-- Round 2: Reviewer A ..., Reviewer B ...
-- Execution mode: spawned reviewers / serial two-role fallback
+- Round 1: functional ..., adversarial ..., heuristic ...
+- Round 2: targeted lenses ..., omitted lens ...
+- Execution mode: spawned reviewers / serial lens fallback
 
 返工摘要：
 - ...

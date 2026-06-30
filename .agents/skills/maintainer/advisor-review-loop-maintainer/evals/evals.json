@@ -4,11 +4,11 @@
     {
       "id": 0,
       "prompt": "把 Build Advisor 和 Agent Work Reviewer Maintainer 连起来用，先从用户场景和需求出发设计一个 Rudder UI 工作流方案，然后 spawn 两个 reviewer agent 审，没通过就返工，至少两轮后给我最终方案。",
-      "expected_output": "Runs an advisor-first workflow, creates a scenario and requirement map before solution details, sends the artifact to two distinct reviewer roles, revises based on blockers, and reports two review rounds before final handoff.",
+      "expected_output": "Runs an advisor-first workflow, creates a scenario and requirement map before solution details, sends the artifact to distinct reviewer lenses, revises based on blockers, and reports two review rounds before final handoff.",
       "files": [],
       "expectations": [
         "The result uses Build Advisor-style scenario and requirement analysis before judging or implementing.",
-        "The result defines two independent reviewer roles rather than a single self-review, and states whether actual reviewers were spawned or a serial fallback was used.",
+        "The result defines independent reviewer lenses rather than a single self-review, and states whether actual reviewers were spawned or a serial fallback was used.",
         "The result includes at least two review rounds or clearly explains why a blocker prevents completing the loop.",
         "The result states coverage boundaries and avoids claiming literal 100% certainty."
       ]
@@ -30,11 +30,11 @@
     {
       "id": 2,
       "prompt": "我只想写 proposal，不要实现。先用 build-advisor 出方案，再用两个 reviewer 从产品场景和工程可执行性上审两轮。最后直接输出 proposal 和 review 结果。",
-      "expected_output": "Keeps the task proposal-only, does not implement, uses two reviewer perspectives for two iterations, and returns a decision-ready proposal plus evidence of review and remaining risks.",
+      "expected_output": "Keeps the task proposal-only, does not implement, uses two clearly distinct reviewer lenses for two iterations, records any omitted lens when the full three-lens set is not used, and returns a decision-ready proposal plus evidence of review and remaining risks.",
       "files": [],
       "expectations": [
         "The result respects proposal-only scope and does not start implementation.",
-        "The result separates product scenario review from engineering execution review.",
+        "The result separates product scenario review from engineering execution review and explains why a third adversarial or heuristic lens is not required.",
         "The result finalizes with a proposal, review verdicts, and residual decisions rather than a code-change handoff."
       ]
     },
@@ -107,6 +107,19 @@
         "The result does not claim the explicit reviewer-agent acceptance gate passed without spawned reviewers.",
         "The result clearly states what artifact and local evidence can still be provided while the reviewer gate is blocked.",
         "The result proceeds only if the user explicitly changes the review bar."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "这个 proposal 很关键，别只找两个 reviewer rubber stamp。用 advisor-review-loop-maintainer 先出 advisor artifact，然后 spawn functional trust、adversarial、heuristic/product-systems 三个 reviewer。adversarial 要主动找 hidden assumptions，heuristic 要判断是不是最小 durable slice；如果只是同一份 checklist 就算没过。",
+      "expected_output": "Builds the advisor artifact first, then routes the review gate through three distinct lenses: functional trust, adversarial, and heuristic/product-systems. It rejects or reruns the gate if reviewers duplicate the same checklist, and it converts blocking findings into targeted rework before handoff.",
+      "files": [],
+      "expectations": [
+        "The result does not spawn reviewers before a reviewable advisor artifact exists.",
+        "The result uses three named reviewer lenses: functional trust, adversarial, and heuristic/product-systems.",
+        "The adversarial lens attacks hidden assumptions, weak proof, wrong abstraction level, and untested actor paths.",
+        "The heuristic/product-systems lens judges smallest durable slice, missing actor journeys, second-order consequences, and whether the work solves the right problem.",
+        "The result treats duplicate checklist reviews as an unresolved review-gate failure rather than acceptance."
       ]
     }
   ]
