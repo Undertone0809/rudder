@@ -20,8 +20,12 @@ export {
 export {
   RUDDER_MCP_SERVER_NAME,
   RUDDER_MCP_TOOL_COUNT,
+  pickRudderMcpManagedEnv,
   rudderMcpCliCommand,
   rudderMcpRuntimeMetadata,
+  type RudderMcpManagedEnv,
+  type RudderMcpManagedEnvKey,
+  type RudderMcpCliCommand,
   type RudderMcpRuntimeMetadata
 } from "./rudder-mcp.js";
 export {

@@ -1,13 +1,15 @@
 import {
   RUDDER_MCP_SERVER_NAME,
   resolveOrganizationStorageKey,
-  rudderMcpCliCommand,
   type AgentRuntimeExecutionContext,
+  type RudderMcpManagedEnv,
 } from "@rudderhq/agent-runtime-utils";
+import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import { resolveLocalOperatorHome } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const TRUTHY_ENV_RE = /^(1|true|yes|on)$/i;
 const COPIED_SHARED_FILES = ["config.json", "config.toml", "instructions.md"] as const;
@@ -226,12 +228,23 @@ function renderDisabledCodexSkillConfigEntries(skillPaths: string[]): string {
     .join("\n\n");
 }
 
-function renderRudderMcpCodexConfig(): string {
-  const server = rudderMcpCliCommand();
+async function renderRudderMcpCodexConfig(moduleDir: string, managedEnv: RudderMcpManagedEnv = {}): Promise<string> {
+  const server = await resolveRudderMcpCliCommand(moduleDir);
+  const serverEnv = {
+    ...(server.env ?? {}),
+    ...managedEnv,
+  };
   return [
     `[mcp_servers.${RUDDER_MCP_SERVER_NAME}]`,
     `command = ${JSON.stringify(server.command)}`,
     `args = ${JSON.stringify(server.args)}`,
+    ...(Object.keys(serverEnv).length > 0
+      ? [
+          "",
+          `[mcp_servers.${RUDDER_MCP_SERVER_NAME}.env]`,
+          ...Object.entries(serverEnv).map(([key, value]) => `${key} = ${JSON.stringify(value)}`),
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -516,6 +529,8 @@ async function syncManagedCodexConfigToml(
   source: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
   isolationSurface: CodexSkillIsolationSurface = { disabledSkillPaths: [] },
+  moduleDir: string = path.dirname(fileURLToPath(import.meta.url)),
+  mcpEnv: RudderMcpManagedEnv = {},
 ): Promise<void> {
   const existingTarget = await fs.lstat(target).catch(() => null);
   const existingTargetContent = existingTarget ? await fs.readFile(target, "utf8") : null;
@@ -535,7 +550,7 @@ async function syncManagedCodexConfigToml(
   const pluginsDisabled = ensureCodexPluginsDisabled(bundledSkillsDisabled.content);
   const baseContent = pluginsDisabled.content.replace(/\s+$/u, "");
   const disabledSkillConfigEntries = renderDisabledCodexSkillConfigEntries(isolationSurface.disabledSkillPaths);
-  const mergedContent = [baseContent, renderRudderMcpCodexConfig(), disabledSkillConfigEntries].filter((part) => part.length > 0).join("\n\n");
+  const mergedContent = [baseContent, await renderRudderMcpCodexConfig(moduleDir, mcpEnv), disabledSkillConfigEntries].filter((part) => part.length > 0).join("\n\n");
   const nextContent = mergedContent.length > 0 ? `${mergedContent}\n` : "";
 
   if (existingTargetContent === null || nextContent !== existingTargetContent) {
@@ -628,6 +643,8 @@ export async function prepareManagedCodexHome(
   orgId?: string,
   agentId?: string,
   isolationSurface: CodexSkillIsolationSurface = { disabledSkillPaths: [] },
+  moduleDir: string = path.dirname(fileURLToPath(import.meta.url)),
+  mcpEnv: RudderMcpManagedEnv = {},
 ): Promise<string> {
   const targetHome = resolveManagedCodexHomeDir(env, orgId, agentId);
 
@@ -648,7 +665,7 @@ export async function prepareManagedCodexHome(
       const source = path.join(sourceHome, name);
       if (!(await pathExists(source))) continue;
       if (name === "config.toml") {
-        await syncManagedCodexConfigToml(path.join(targetHome, name), source, onLog, isolationSurface);
+        await syncManagedCodexConfigToml(path.join(targetHome, name), source, onLog, isolationSurface, moduleDir, mcpEnv);
         continue;
       }
       await ensureCopiedFile(path.join(targetHome, name), source);
@@ -731,12 +748,14 @@ export async function realizeManagedCodexSkillEntries(
   skillSources: string[],
   onLog: AgentRuntimeExecutionContext["onLog"],
   isolationSurface: CodexSkillIsolationSurface = { disabledSkillPaths: [] },
+  moduleDir: string = path.dirname(fileURLToPath(import.meta.url)),
+  mcpEnv: RudderMcpManagedEnv = {},
 ): Promise<void> {
   await withCodexHomeMutationLock(codexHome, async () => {
     const sourceHome = resolveSharedCodexHomeDir(env);
     const sourceConfig = path.join(sourceHome, "config.toml");
     const targetConfig = path.join(codexHome, "config.toml");
-    await syncManagedCodexConfigToml(targetConfig, sourceConfig, onLog, isolationSurface);
+    await syncManagedCodexConfigToml(targetConfig, sourceConfig, onLog, isolationSurface, moduleDir, mcpEnv);
     await syncManagedCodexSkillsHome(codexHome, skillSources, onLog);
   });
 }

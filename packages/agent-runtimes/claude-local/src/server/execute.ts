@@ -1,12 +1,14 @@
 import {
   RUDDER_MCP_SERVER_NAME,
+  pickRudderMcpManagedEnv,
   resolveOrganizationStorageKey,
-  rudderMcpCliCommand,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
+  type RudderMcpManagedEnv,
 } from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
+import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   asBoolean,
@@ -156,6 +158,26 @@ async function readJsonObject(filePath: string): Promise<Record<string, unknown>
   }
 }
 
+async function writePrivateJsonFile(filePath: string, value: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await fs.chmod(filePath, 0o600);
+}
+
+async function resolveRudderMcpServerConfig(managedEnv: RudderMcpManagedEnv = {}): Promise<Record<string, unknown>> {
+  const rudderMcp = await resolveRudderMcpCliCommand(__moduleDir);
+  const env = {
+    ...(rudderMcp.env ?? {}),
+    ...managedEnv,
+  };
+  return {
+    type: "stdio",
+    command: rudderMcp.command,
+    args: rudderMcp.args,
+    ...(Object.keys(env).length > 0 ? { env } : {}),
+  };
+}
+
 async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: string): Promise<string> {
   const sourceSettings = await readJsonObject(path.join(sourceHome, ".claude", "settings.json"));
   const targetSettingsPath = path.join(targetHome, ".claude", "settings.json");
@@ -167,16 +189,26 @@ async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: stri
     if (typeof value === "string" && value.trim().length > 0) authEnv[key] = value;
   }
 
-  const rudderMcp = rudderMcpCliCommand();
+  const rudderMcp = await resolveRudderMcpServerConfig();
   const sanitized = {
     ...(Object.keys(authEnv).length > 0 ? { env: authEnv } : {}),
     mcpServers: {
       [RUDDER_MCP_SERVER_NAME]: rudderMcp,
     },
   };
-  await fs.mkdir(path.dirname(targetSettingsPath), { recursive: true });
-  await fs.writeFile(targetSettingsPath, `${JSON.stringify(sanitized, null, 2)}\n`, "utf8");
+  await writePrivateJsonFile(targetSettingsPath, sanitized);
   return targetSettingsPath;
+}
+
+async function writeManagedClaudeMcpConfig(targetHome: string, managedEnv: RudderMcpManagedEnv = {}): Promise<string> {
+  const configPath = path.join(targetHome, ".claude", "rudder-mcp.json");
+  const rudderMcp = await resolveRudderMcpServerConfig(managedEnv);
+  await writePrivateJsonFile(configPath, {
+    mcpServers: {
+      [RUDDER_MCP_SERVER_NAME]: rudderMcp,
+    },
+  });
+  return configPath;
 }
 
 async function resolveClaudeExtraArgs(
@@ -208,7 +240,7 @@ async function prepareManagedClaudeHome(
   operatorHome: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
-): Promise<{ home: string; configDir: string; settingsPath: string }> {
+): Promise<{ home: string; configDir: string; settingsPath: string; mcpConfigPath: string }> {
   const sourceHome = path.resolve(operatorHome);
   const targetHome = resolveManagedClaudeHomeDir(env, orgId);
   const configDir = path.join(targetHome, ".claude");
@@ -217,6 +249,7 @@ async function prepareManagedClaudeHome(
       home: targetHome,
       configDir,
       settingsPath: path.join(configDir, "settings.json"),
+      mcpConfigPath: path.join(configDir, "rudder-mcp.json"),
     };
   }
 
@@ -227,6 +260,7 @@ async function prepareManagedClaudeHome(
   await fs.rm(path.join(targetHome, ".claude.json"), { force: true });
   await fs.mkdir(path.join(configDir, "skills"), { recursive: true });
   const settingsPath = await writeSanitizedClaudeSettings(sourceHome, targetHome);
+  const mcpConfigPath = await writeManagedClaudeMcpConfig(targetHome);
 
   for (const relativeEntry of SHARED_CLAUDE_HOME_ENTRIES) {
     const source = path.join(sourceHome, relativeEntry);
@@ -238,7 +272,7 @@ async function prepareManagedClaudeHome(
     "stdout",
     `[rudder] Using adapter-managed Claude runtime state "${targetHome}" with operator HOME "${sourceHome}".\n`,
   );
-  return { home: targetHome, configDir, settingsPath };
+  return { home: targetHome, configDir, settingsPath, mcpConfigPath };
 }
 
 interface ClaudeExecutionInput {
@@ -262,6 +296,7 @@ interface ClaudeRuntimeConfig {
   extraArgs: string[];
   permissionMode: string;
   settingsPath: string;
+  mcpConfigPath: string;
   runtimeTmpDir: string;
 }
 
@@ -469,6 +504,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
   }
+  await writeManagedClaudeMcpConfig(managedHome, pickRudderMcpManagedEnv(env));
   env.HOME = operatorHome;
   env.USERPROFILE = operatorHome;
   env.CLAUDE_CONFIG_DIR = managedClaudeHome.configDir;
@@ -500,6 +536,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     extraArgs,
     permissionMode,
     settingsPath: managedClaudeHome.settingsPath,
+    mcpConfigPath: managedClaudeHome.mcpConfigPath,
     runtimeTmpDir,
   };
 }
@@ -574,6 +611,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     extraArgs,
     permissionMode,
     settingsPath,
+    mcpConfigPath,
     runtimeTmpDir,
   } = runtimeConfig;
   const effectiveEnv = Object.fromEntries(
@@ -738,7 +776,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (effectiveInstructionsFilePath) {
       args.push("--append-system-prompt-file", effectiveInstructionsFilePath);
     }
-    args.push("--settings", settingsPath, "--setting-sources", "user", "--strict-mcp-config");
+    args.push("--settings", settingsPath, "--setting-sources", "user", "--mcp-config", mcpConfigPath, "--strict-mcp-config");
     args.push("--add-dir", skillsDir);
     args.push("--add-dir", runtimeTmpDir);
     if (extraArgs.length > 0) args.push(...extraArgs);
