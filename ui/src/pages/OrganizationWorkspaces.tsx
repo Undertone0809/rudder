@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuRadioGroup,
@@ -58,6 +59,7 @@ import {
   MoreHorizontal,
   PackageOpen,
   PanelLeftClose,
+  PanelRight,
   Pencil,
   Plus,
   Terminal,
@@ -3949,6 +3951,7 @@ export function OrganizationWorkspaceBrowser({
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialSafeSelectedFilePath);
   const [htmlFileMode, setHtmlFileMode] = useState<"preview" | "source">("preview");
   const [csvFileMode, setCsvFileMode] = useState<"table" | "source">("table");
+  const [showHiddenMarkdownSections, setShowHiddenMarkdownSections] = useState(false);
   const [openFilePaths, setOpenFilePaths] = useState<string[]>(
     () => normalizeWorkspaceOpenFilePaths([...initialOpenFileTabState.openFilePaths, initialSafeSelectedFilePath])
       .filter((filePath) => !isLegacyAgentHeartbeatInstructionPath(filePath)),
@@ -5255,9 +5258,16 @@ export function OrganizationWorkspaceBrowser({
   const selectedHtmlPreviewSrcDoc = selectedFileCanRenderHtml
     ? buildWorkspaceHtmlPreviewSrcDoc(selectedEditorContent)
     : "";
-  const selectedMarkdownOutline = selectedFileUsesMarkdownEditor
-    ? extractDocumentOutline(selectedMarkdownParts.body)
+  const selectedMarkdownOutlineWithHidden = selectedFileUsesMarkdownEditor
+    ? extractDocumentOutline(selectedMarkdownParts.body, { includeHidden: true })
     : [];
+  const selectedMarkdownHasHiddenOutlineItems = selectedMarkdownOutlineWithHidden.some((item) => item.hidden);
+  const selectedMarkdownOutline = selectedFileUsesMarkdownEditor
+    ? showHiddenMarkdownSections
+      ? selectedMarkdownOutlineWithHidden
+      : selectedMarkdownOutlineWithHidden.filter((item) => !item.hidden)
+    : [];
+  const showSelectedMarkdownOutlinePanel = selectedMarkdownOutline.length > 0 || selectedMarkdownHasHiddenOutlineItems;
   const selectedDirectoryPath = !selectedFilePath && !selectedProjectResource
     ? requestedDirectoryPath
     : null;
@@ -6169,7 +6179,7 @@ export function OrganizationWorkspaceBrowser({
                       <div
                         className={cn(
                           "mx-auto min-h-full w-full px-8 py-8",
-                          selectedMarkdownOutline.length > 0
+                          showSelectedMarkdownOutlinePanel
                             ? "max-w-[1180px] xl:grid xl:grid-cols-[minmax(0,880px)_220px] xl:gap-8"
                             : "max-w-[880px]",
                         )}
@@ -6214,28 +6224,62 @@ export function OrganizationWorkspaceBrowser({
                             contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"
                           />
                         </div>
-                        {selectedMarkdownOutline.length > 0 ? (
+                        {showSelectedMarkdownOutlinePanel ? (
                           <aside
                             aria-label="Document sections"
                             data-testid="org-workspaces-document-outline"
                             className="hidden min-w-0 xl:block"
                           >
                             <div className="sticky top-6 border-l border-border/60 py-1 pl-4">
-                              <div className="mb-2 text-xs font-medium text-muted-foreground">Sections</div>
-                              <nav className="space-y-0.5">
-                                {selectedMarkdownOutline.map((item) => (
-                                  <button
-                                    key={item.id}
-                                    type="button"
-                                    className="block w-full truncate rounded px-2 py-1 text-left text-xs leading-5 text-muted-foreground hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                                    style={{ paddingLeft: `${8 + Math.max(0, item.level - 1) * 10}px` }}
-                                    title={item.title}
-                                    onClick={() => scrollToSelectedMarkdownOutlineItem(item)}
-                                  >
-                                    {item.title}
-                                  </button>
-                                ))}
-                              </nav>
+                              <div className="mb-2 flex items-center justify-between gap-2">
+                                <div className="text-xs font-medium text-muted-foreground">Sections</div>
+                                {selectedMarkdownHasHiddenOutlineItems ? (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <button
+                                        type="button"
+                                        className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                                        aria-label="Section display options"
+                                      >
+                                        <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="w-48">
+                                      <DropdownMenuCheckboxItem
+                                        checked={showHiddenMarkdownSections}
+                                        onCheckedChange={(checked) => setShowHiddenMarkdownSections(checked === true)}
+                                      >
+                                        Show hidden sections
+                                      </DropdownMenuCheckboxItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                ) : null}
+                              </div>
+                              {selectedMarkdownOutline.length > 0 ? (
+                                <nav className="space-y-0.5">
+                                  {selectedMarkdownOutline.map((item) => (
+                                    <button
+                                      key={item.id}
+                                      type="button"
+                                      className="flex w-full min-w-0 items-center gap-1 rounded px-2 py-1 text-left text-xs leading-5 text-muted-foreground hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                                      style={{ paddingLeft: `${8 + Math.max(0, item.level - 1) * 10}px` }}
+                                      title={item.title}
+                                      onClick={() => scrollToSelectedMarkdownOutlineItem(item)}
+                                    >
+                                      <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                                      {item.hidden ? (
+                                        <span className="shrink-0 rounded-[3px] bg-muted px-1 py-0 text-[10px] leading-4 text-muted-foreground">
+                                          Hidden
+                                        </span>
+                                      ) : null}
+                                    </button>
+                                  ))}
+                                </nav>
+                              ) : (
+                                <div className="px-2 py-1 text-xs leading-5 text-muted-foreground">
+                                  Hidden sections are off.
+                                </div>
+                              )}
                             </div>
                           </aside>
                         ) : null}

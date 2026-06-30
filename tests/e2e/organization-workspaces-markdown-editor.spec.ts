@@ -414,3 +414,49 @@ test("Library markdown section jumps align headings to the top of the editor vie
     return Math.round(headingBox.y - scrollBox.y);
   }).toBeLessThan(48);
 });
+
+test("Library markdown section options can reveal hidden headings", async ({ page }) => {
+  const organization = await createOrg(page, "Library-Markdown-Hidden-Outline");
+  const filePath = "docs/hidden-outline.md";
+  const filler = Array.from({ length: 28 }, (_, index) => `Intro ${index + 1}`).join("\n\n");
+  await writeWorkspaceFile(
+    page,
+    organization.id,
+    filePath,
+    [
+      "# Visible Outline",
+      "",
+      filler,
+      "",
+      "<!-- rudder-outline-hidden -->",
+      "## Hidden Notes",
+      "",
+      "Details kept out of the normal section list.",
+    ].join("\n"),
+  );
+  await selectOrg(page, organization.id);
+  await page.setViewportSize({ width: 1491, height: 926 });
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+
+  const outline = page.getByTestId("org-workspaces-document-outline");
+  await expect(outline).toBeVisible();
+  await expect(outline.getByRole("button", { name: "Visible Outline", exact: true })).toBeVisible();
+  await expect(outline.getByRole("button", { name: /Hidden Notes/ })).toHaveCount(0);
+
+  await outline.getByRole("button", { name: "Section display options" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Show hidden sections" }).click();
+
+  const hiddenSectionButton = outline.getByRole("button", { name: /Hidden Notes/ });
+  await expect(hiddenSectionButton).toBeVisible();
+  await expect(hiddenSectionButton).toContainText("Hidden");
+
+  const editorScroll = page.getByTestId("org-workspaces-markdown-editor");
+  const hiddenHeading = editorScroll.locator("h2", { hasText: "Hidden Notes" });
+  await hiddenSectionButton.click();
+  await expect.poll(async () => {
+    const scrollBox = await editorScroll.boundingBox();
+    const headingBox = await hiddenHeading.boundingBox();
+    if (!scrollBox || !headingBox) return 999;
+    return Math.round(headingBox.y - scrollBox.y);
+  }).toBeLessThan(48);
+});
