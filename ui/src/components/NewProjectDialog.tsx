@@ -539,9 +539,10 @@ export function NewProjectDialog() {
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent
-                    className="flex max-h-[min(420px,var(--radix-popover-content-available-height))] w-80 flex-col overflow-hidden p-1"
+                    className="z-[60] flex max-h-[min(420px,calc(100dvh-2rem),var(--radix-popover-content-available-height))] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden p-1"
                     align="end"
-                    disablePortal
+                    collisionPadding={16}
+                    sideOffset={8}
                   >
                   <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                     {libraryCopy("addFromLibrary", locale)}

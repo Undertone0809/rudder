@@ -203,14 +203,16 @@ describe("NewProjectDialog", () => {
     expect(buttons.some((text) => text.includes("New resource"))).toBe(false);
   });
 
-  it("keeps the add resources list scrollable inside the project dialog", () => {
+  it("keeps the add resources list scrollable without clipping against the project dialog", () => {
     const container = renderDialog();
     const scrollRegion = container.querySelector('[data-testid="new-project-add-resources-popover-scroll"]');
     const popoverContent = scrollRegion?.parentElement;
 
-    expect(popoverContent?.getAttribute("data-disable-portal")).toBe("true");
+    expect(popoverContent?.getAttribute("data-disable-portal")).toBeNull();
     expect(popoverContent?.className).toContain("overflow-hidden");
-    expect(popoverContent?.className).toContain("max-h-[min(420px,var(--radix-popover-content-available-height))]");
+    expect(popoverContent?.className).toContain("z-[60]");
+    expect(popoverContent?.className).toContain("max-h-[min(420px,calc(100dvh-2rem),var(--radix-popover-content-available-height))]");
+    expect(popoverContent?.className).toContain("w-[min(20rem,calc(100vw-2rem))]");
     expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
     expect(scrollRegion?.className).toContain("overflow-y-auto");
     expect(scrollRegion?.className).toContain("overscroll-contain");
