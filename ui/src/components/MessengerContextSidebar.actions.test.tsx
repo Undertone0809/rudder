@@ -1356,6 +1356,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(leafEmojiButton).toBeTruthy();
     expect(leafEmojiButton?.parentElement).toBe(iconPicker);
     expect(leafEmojiButton?.getAttribute("aria-pressed")).toBe("true");
+    expect(leafEmojiButton?.querySelector("svg")).toBeNull();
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Select folder project icon"]')?.getAttribute("aria-pressed")).toBe("false");
     expect(iconButtonLabels.length).toBeGreaterThan(36);
     expect(iconButtonLabels).toContain("Select folder project icon");
@@ -1370,6 +1371,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "group-1", {
       icon: "rocket::amber",
     });
+    expect(iconButton?.querySelectorAll("svg")).toHaveLength(1);
 
     mockUpdateCustomGroup.mockClear();
 

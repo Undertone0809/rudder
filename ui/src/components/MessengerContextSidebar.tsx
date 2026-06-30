@@ -78,7 +78,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Archive,
-  Check,
   ChevronDown,
   ChevronRight,
   CircleCheckBig,
@@ -681,7 +680,6 @@ function CustomGroupIconPicker({
               onClick={() => onIconChange(candidate)}
             >
               <Icon className="h-5 w-5" strokeWidth={2.2} />
-              {selected ? <Check className="absolute h-2.5 w-2.5 translate-x-3 translate-y-3 text-[color:var(--project-accent-color)]" /> : null}
             </button>
           );
         })}
@@ -702,7 +700,6 @@ function CustomGroupIconPicker({
               onClick={() => onIconChange(candidate)}
             >
               <span aria-hidden>{candidate}</span>
-              {selected ? <Check className="absolute h-2.5 w-2.5 translate-x-3 translate-y-3 text-[color:var(--project-accent-color)]" /> : null}
             </button>
           );
         })}
