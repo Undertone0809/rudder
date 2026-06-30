@@ -248,11 +248,10 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).not.toContain("Connect the external tools this agent can use during work loops.");
     expect(container.textContent).toContain("Discover");
     expect(container.textContent).toContain("Manage");
-    expect(container.textContent).toContain("Built-in");
-    expect(container.textContent).toContain("Rudder MCP tools");
-    expect(container.textContent).toContain("rudder-control-plane");
-    expect(container.textContent).toContain(`${RUDDER_AGENT_V1_MCP_TOOL_NAMES.length} tools`);
-    expect(container.textContent).toContain("runtime-managed auth");
+    expect(container.textContent).not.toContain("Built-in");
+    expect(container.textContent).not.toContain("Rudder MCP tools");
+    expect(container.textContent).not.toContain("rudder-control-plane");
+    expect(container.textContent).not.toContain("runtime-managed auth");
     expect(container.textContent).toContain("Custom API");
     expect(container.textContent).toContain("MCP Server");
     expect(container.textContent).toContain("Feishu / Lark");
@@ -281,6 +280,7 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("rudder_issue_checkout");
     expect(container.textContent).not.toContain("No connected integrations");
     expect(container.textContent).not.toContain("Credential stored");
+    expect(container.querySelector('img[src="/rudder-logo.png"]')).toBeTruthy();
   });
 
   it("uses the larger integration action radius on catalog buttons", () => {

@@ -52,6 +52,13 @@ runtime semantics. Custom integrations need explicit organization, owner-agent,
 binding, tool, credential, and audit records so Rudder can enforce scope before
 any prompt or tool-call surface sees them.
 
+Rudder's first-party control-plane MCP server is not a custom integration. It is
+runtime-owned built-in infrastructure exposed as `rudder-control-plane` during
+supported agent runs. Agent Detail may show this built-in control-plane tool
+surface so operators understand what the runtime can call, but operators do not
+configure its URL, credentials, binding, or tool allowlist from the custom
+integration setup flow.
+
 ### Actors / Objects / State
 
 - Board operator: creates, configures, binds, and revokes custom integrations
@@ -64,6 +71,8 @@ any prompt or tool-call surface sees them.
 - Agent custom integration binding: per-agent status and enabled-tool allowlist.
 - Custom integration tool call: sanitized audit evidence for attempted custom
   tool dispatch.
+- Rudder MCP tools: built-in, runtime-managed control-plane tools represented
+  as a read-only Agent Detail Manage row, not persisted custom integration rows.
 
 ### Entry Points / Inputs
 
@@ -78,6 +87,8 @@ any prompt or tool-call surface sees them.
 - `POST /api/agents/:id/custom-integrations/:integrationId/tool-calls` records
   a validated blocked audit event for the first implementation slice.
 - Agent Detail Integrations exposes Custom API and MCP Server setup controls.
+- Agent Detail Integrations Manage exposes a read-only built-in `Rudder MCP
+  tools` row for the first-party `rudder-control-plane` Agent V1 MCP server.
 
 ### Product Logic Flow
 
@@ -97,6 +108,10 @@ any prompt or tool-call surface sees them.
    secret values, or raw credential material.
 8. Tool-call audit creation validates organization, agent, integration, binding,
    and enabled-tool ownership before persisting a sanitized blocked event.
+9. Separately, Agent Detail Manage can show built-in Rudder MCP tools using the
+   Rudder logo, server name, runtime-managed auth label, and full exposed tool
+   list. This row is informational and cannot be configured or disconnected
+   through custom integration actions.
 
 ### Decision Table
 
@@ -110,6 +125,8 @@ any prompt or tool-call surface sees them.
 | Credential value is provided on create | Stored as an organization secret; not returned in API summaries. |
 | Both `credential` and `credentialSecretId` are provided | Rejected. |
 | Tool dispatch is requested in this implementation slice | Validated and recorded as `blocked` with `dispatch_not_implemented`. |
+| Operator opens Discover | Shows Custom API, MCP Server, fixed-provider setup, and planned provider cards; does not show built-in Rudder MCP tools. |
+| Operator opens Manage | Shows active fixed/custom integrations plus the built-in Rudder MCP tools row when available. |
 
 ### Actor-Visible Input
 
@@ -123,7 +140,10 @@ summaries for enabled tools.
 Agent Detail Integrations shows Custom API and MCP Server setup controls,
 connected custom integration rows, scope labels, enabled tool names, credential
 presence, status, and disconnect actions. It does not display secret ids or
-secret values.
+secret values. The Manage view also shows built-in Rudder MCP tools with the
+Rudder logo, `rudder-control-plane` server name, runtime-managed auth, tool
+count, and complete tool-name list. The Discover view does not show that
+built-in row because it is not something the operator connects.
 
 ### Persisted Evidence
 
@@ -149,6 +169,9 @@ Rudder persists:
 - Agent Detail Integrations shows Custom API and MCP Server controls alongside
   fixed-provider setup rows, and E2E covers agent-scoped, organization-scoped,
   and cross-organization boundary behavior from that surface.
+- Agent Detail Integrations Manage shows the built-in Rudder MCP row with the
+  Rudder logo and representative Agent V1 tool names, while Discover keeps that
+  row hidden.
 
 ### Invariants / Non-Goals
 
@@ -161,6 +184,10 @@ Rudder persists:
   trusted for authorization.
 - Tool names exposed to agents are Rudder-namespaced and organization-unique.
 - Tool-call logs and prompt text must not expose secrets.
+- First-party Rudder MCP tools are runtime-managed and must stay separate from
+  Custom API / MCP Server integrations. They do not create custom integration
+  rows, do not need operator-supplied credentials, and are not configurable from
+  Discover.
 - The current implementation does not perform real remote MCP discovery,
   external HTTP dispatch, server-side credential injection into outbound calls,
   or result normalization. Those remain follow-up work.

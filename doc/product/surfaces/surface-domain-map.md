@@ -39,9 +39,9 @@ owning domain contract.
   `RUN.EXECUTION.001`, `RUN.RESULT.001`.
 - Assigned and reviewable issue attention: `ROUTING.ASSIGNMENT.001`,
   `ROUTING.REVIEWER.001`, `ROUTING.ATTENTION.001`.
-- Integrations tab for Feishu/IM setup, custom agent integrations, and Feishu
-  source badges on chat-origin run details: `IM.FEISHU.001`,
-  `AGENT.CUSTOM.INTEGRATIONS.001`.
+- Integrations tab for Feishu/IM setup, custom agent integrations, built-in
+  Rudder MCP control-plane visibility, and Feishu source badges on chat-origin
+  run details: `IM.FEISHU.001`, `AGENT.CUSTOM.INTEGRATIONS.001`.
 
 ## Issues List
 

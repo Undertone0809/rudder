@@ -429,10 +429,11 @@ contracts:
     related_code:
       - packages/db/src/schema/custom_integrations.ts
       - packages/shared/src/types/custom-integration.ts
+      - packages/shared/src/types/agent-integration.ts
       - packages/shared/src/validators/custom-integration.ts
+      - packages/shared/src/constants.ts
       - server/src/services/integrations/custom-integrations.ts
       - server/src/routes/agents.ts
-      - packages/shared/src/constants.ts
       - server/src/services/agent-run-context.ts
       - ui/src/pages/AgentDetail.integrations.tsx
     related_tests:

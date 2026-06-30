@@ -33,7 +33,6 @@ import {
   Loader2,
   MessageSquareText,
   PlugZap,
-  ShieldCheck,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
@@ -425,11 +424,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
 
       {integrationsView === "discover" ? (
           <div className="space-y-6">
-            {rudderMcpIntegration ? (
-              <IntegrationCategorySection title="Built-in">
-                <RudderMcpIntegrationCard integration={rudderMcpIntegration} />
-              </IntegrationCategorySection>
-            ) : null}
             <IntegrationCategorySection title="Custom tools">
               <CustomIntegrationSetupCard
                 kind="custom_api"
@@ -730,38 +724,6 @@ function FeishuIntegrationCard({
   );
 }
 
-function RudderMcpIntegrationCard({ integration }: { integration: AgentControlPlaneIntegrationSummary }) {
-  return (
-    <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-      <div className="flex min-w-0 items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
-          <ShieldCheck className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold text-foreground">{integration.displayName}</p>
-            <span className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-              Built-in
-            </span>
-            <span className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-300">
-              Available
-            </span>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            First-party control-plane MCP server for this agent's Rudder work loop.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {integration.serverName} · {integration.toolCount} tools · runtime-managed auth
-          </p>
-        </div>
-      </div>
-      <IntegrationActionButton variant="outline" size="sm" disabled aria-label="Rudder MCP tools are built in">
-        Built in
-      </IntegrationActionButton>
-    </div>
-  );
-}
-
 function UpcomingIntegrationCard({ integration }: UpcomingIntegrationCardProps) {
   const { Icon } = integration;
 
@@ -790,9 +752,7 @@ function RudderMcpManageRow({ integration }: { integration: AgentControlPlaneInt
   return (
     <div className="grid gap-3 rounded-md border border-border bg-background/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
       <div className="flex min-w-0 items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted">
-          <ShieldCheck className="h-5 w-5" />
-        </div>
+        <IntegrationBrandIcon src="/rudder-logo.png" name="Rudder" />
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-foreground">{integration.displayName}</p>
