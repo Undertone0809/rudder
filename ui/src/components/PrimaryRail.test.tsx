@@ -383,8 +383,8 @@ describe("PrimaryRail active motion indicator", () => {
     await renderPrimaryRail();
 
     const searchButton = document.querySelector('button[aria-label="common.search"]');
-    const dashboardLink = Array.from(document.querySelectorAll("a"))
-      .find((link) => link.textContent?.includes("Dashboard"));
+    const organizationLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Organization"));
     const organizationSwitcher = Array.from(document.querySelectorAll("div"))
       .find((element) =>
         element.textContent === "Organization switcher"
@@ -392,7 +392,7 @@ describe("PrimaryRail active motion indicator", () => {
       );
 
     expect(searchButton?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
-    expect(dashboardLink?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
+    expect(organizationLink?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
     expect(organizationSwitcher?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
   });
 
@@ -445,27 +445,27 @@ describe("PrimaryRail active motion indicator", () => {
     expect(mockState.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "threads", "preview"] });
   });
 
-  it("positions the rail indicator on the active dashboard item", async () => {
+  it("positions the rail indicator on the organization item for dashboard routes", async () => {
     await renderPrimaryRail();
 
     const nav = document.querySelector(".motion-rail-nav");
     const indicator = document.querySelector('[data-testid="primary-rail-active-indicator"]');
 
-    expect(nav?.getAttribute("data-active-index")).toBe("1");
+    expect(nav?.getAttribute("data-active-index")).toBe("4");
     expect(indicator).not.toBeNull();
   });
 
-  it("keeps calendar nested under the dashboard rail item", async () => {
+  it("keeps calendar nested under the organization rail item", async () => {
     mockState.pathname = "/dashboard/calendar";
 
     await renderPrimaryRail();
 
     const nav = document.querySelector(".motion-rail-nav");
-    const calendarLink = Array.from(document.querySelectorAll("a"))
-      .find((link) => link.textContent?.includes("Calendar"));
+    const dashboardLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Dashboard"));
 
-    expect(nav?.getAttribute("data-active-index")).toBe("1");
-    expect(calendarLink).toBeUndefined();
+    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(dashboardLink).toBeUndefined();
   });
 
   it("moves the rail indicator to issue routes", async () => {
@@ -475,7 +475,7 @@ describe("PrimaryRail active motion indicator", () => {
 
     const nav = document.querySelector(".motion-rail-nav");
 
-    expect(nav?.getAttribute("data-active-index")).toBe("2");
+    expect(nav?.getAttribute("data-active-index")).toBe("1");
   });
 
   it("surfaces Library as a primary rail destination", async () => {
@@ -488,7 +488,7 @@ describe("PrimaryRail active motion indicator", () => {
       .find((link) => link.textContent?.includes("Library"));
 
     expect(libraryLink?.getAttribute("href")).toBe("/library");
-    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(nav?.getAttribute("data-active-index")).toBe("3");
   });
 
   it("keeps the legacy resources route active under Library", async () => {
@@ -498,17 +498,16 @@ describe("PrimaryRail active motion indicator", () => {
 
     const nav = document.querySelector(".motion-rail-nav");
 
-    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(nav?.getAttribute("data-active-index")).toBe("3");
   });
 
   it("uses remembered section paths as primary rail destinations", async () => {
     mockState.primaryRailPaths = {
       messenger: "/messenger/issues/ZST-200",
-      dashboard: "/dashboard/calendar",
       issues: "/issues/ZST-586",
       agents: "/agents/wesley/runs/run-1",
       library: "/library?path=projects%2Frudder",
-      organization: "/projects/rudder/issues",
+      organization: "/dashboard/calendar",
       automations: "/automations/weekly-ci",
     };
 
@@ -518,11 +517,10 @@ describe("PrimaryRail active motion indicator", () => {
     const linkHref = (label: string) => links.find((link) => link.textContent?.includes(label))?.getAttribute("href");
 
     expect(linkHref("Messenger")).toBe("/messenger/issues/ZST-200");
-    expect(linkHref("Dashboard")).toBe("/dashboard/calendar");
     expect(linkHref("Issue")).toBe("/issues/ZST-586");
     expect(linkHref("Agents")).toBe("/agents/wesley/runs/run-1");
     expect(linkHref("Library")).toBe("/library?path=projects%2Frudder");
-    expect(linkHref("Organization")).toBe("/projects/rudder/issues");
+    expect(linkHref("Organization")).toBe("/dashboard/calendar");
     expect(linkHref("Automations")).toBe("/automations/weekly-ci");
   });
 });

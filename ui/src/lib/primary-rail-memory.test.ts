@@ -39,7 +39,7 @@ describe("primary rail memory", () => {
   it("maps nested routes to their primary rail section", () => {
     expect(resolvePrimaryRailSection("/issues/ZST-586")).toBe("issues");
     expect(resolvePrimaryRailSection("/agents/wesley/runs/run-1")).toBe("agents");
-    expect(resolvePrimaryRailSection("/dashboard/calendar")).toBe("dashboard");
+    expect(resolvePrimaryRailSection("/dashboard/calendar")).toBe("organization");
     expect(resolvePrimaryRailSection("/projects/rudder/issues")).toBe("organization");
     expect(resolvePrimaryRailSection("/automations/weekly-ci")).toBe("automations");
     expect(resolvePrimaryRailSection("/organization/settings")).toBeNull();
@@ -75,7 +75,7 @@ describe("primary rail memory", () => {
   it("falls back when no safe path exists for the section", () => {
     rememberPrimaryRailPath("org-1", "/issues/ZST-586");
 
-    expect(readRememberedPrimaryRailPath("org-1", "dashboard", "/dashboard")).toBe("/dashboard");
+    expect(readRememberedPrimaryRailPath("org-1", "organization", "/dashboard")).toBe("/dashboard");
     expect(readRememberedPrimaryRailPath(null, "issues", "/issues")).toBe("/issues");
   });
 });

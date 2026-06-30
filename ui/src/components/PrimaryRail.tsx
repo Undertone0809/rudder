@@ -32,7 +32,6 @@ import {
   FolderKanban,
   Inbox,
   Inbox as InboxIcon,
-  LayoutDashboard,
   LibraryBig,
   MessageCirclePlus,
   MessageSquare,
@@ -188,14 +187,13 @@ export function PrimaryRail({
   const previousInboxCountRef = useRef<number | null>(null);
   const previousInboxOrgRef = useRef<string | null | undefined>(selectedOrganizationId);
   const requestedNotificationPermissionRef = useRef(false);
-  const orgGroupActive = /^\/(?:org|projects|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const orgGroupActive = /^\/(?:dashboard|calendar|org|projects|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
   const messengerEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "messenger", "/messenger");
-  const dashboardEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "dashboard", "/dashboard");
   const issuesEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "issues", issueEntryPath);
   const agentsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "agents", "/agents");
   const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
-  const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/org");
+  const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/dashboard");
   const automationsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "automations", "/automations");
   const railItems: RailItem[] = [
     {
@@ -207,13 +205,6 @@ export function PrimaryRail({
       badgeTone: "danger",
       badgeTestId: "rail-badge-messenger",
       active: /^\/(?:messenger|chat)(?:\/|$)/.test(relativePath),
-    },
-    {
-      key: "dashboard",
-      to: dashboardEntryPath,
-      label: "Dashboard",
-      icon: LayoutDashboard,
-      active: /^\/(?:dashboard|calendar)(?:\/|$)/.test(relativePath),
     },
     {
       key: "issues",

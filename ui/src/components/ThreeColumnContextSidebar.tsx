@@ -64,6 +64,7 @@ import {
   Eye,
   EyeOff,
   History,
+  LayoutDashboard,
   MessageSquare,
   MoreHorizontal,
   Network,
@@ -216,7 +217,7 @@ function resolveContextColumnHeader(relativePath: string): { title: string; desc
   if (/^\/calendar(?:\/|$)/.test(relativePath)) {
     return { title: "Calendar", description: "Sources and filters" };
   }
-  if (/^\/(?:org|projects|library|resources|workspaces|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
+  if (/^\/(?:dashboard|org|projects|library|resources|workspaces|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
     return { title: "Org", description: "Organization surfaces" };
   }
   return { title: "Agents", description: "" };
@@ -755,7 +756,7 @@ export function ThreeColumnContextSidebar() {
   const isCalendarRoute = /^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath);
   const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
   const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
-  const isOrgWorkspaceRoute = /^\/(?:org|projects|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const isOrgWorkspaceRoute = /^\/(?:dashboard|org|projects|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
   const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isOrgWorkspaceRoute && !isChatRoute;
   const { selectedOrganizationId } = useOrganization();
@@ -1010,6 +1011,7 @@ export function ThreeColumnContextSidebar() {
     return selectedProjectId === project.id || activeProjectRef === routeRef;
   });
   const orgContextItems = [
+    { key: "dashboard", to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", active: /^\/dashboard(?:\/|$)/.test(relativePath) },
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
     { key: "heartbeats", to: "/heartbeats", icon: Clock3, label: "Heartbeats", active: /^\/heartbeats(?:\/|$)/.test(relativePath) },
     { key: "goals", to: "/goals", icon: Target, label: "Goals", active: /^\/goals(?:\/|$)/.test(relativePath) },

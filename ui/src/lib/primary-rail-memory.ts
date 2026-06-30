@@ -2,7 +2,6 @@ const STORAGE_KEY = "rudder.primaryRailLastPaths";
 
 export type PrimaryRailSection =
   | "messenger"
-  | "dashboard"
   | "issues"
   | "agents"
   | "library"
@@ -45,11 +44,10 @@ export function resolvePrimaryRailSection(path: string): PrimaryRailSection | nu
   const { pathname } = splitPath(path);
 
   if (/^\/(?:messenger|chat)(?:\/|$)/.test(pathname)) return "messenger";
-  if (/^\/(?:dashboard|calendar)(?:\/|$)/.test(pathname)) return "dashboard";
   if (/^\/issues(?:\/|$)/.test(pathname)) return "issues";
   if (/^\/agents(?:\/|$)/.test(pathname)) return "agents";
   if (/^\/(?:library|resources|workspaces)(?:\/|$)/.test(pathname)) return "library";
-  if (/^\/(?:org|projects|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(pathname)) return "organization";
+  if (/^\/(?:dashboard|calendar|org|projects|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(pathname)) return "organization";
   if (/^\/automations(?:\/|$)/.test(pathname)) return "automations";
 
   return null;
