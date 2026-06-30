@@ -2,7 +2,7 @@
 title: Agent V1 MCP Tools
 date: 2026-06-30
 kind: implementation
-status: in_progress
+status: completed
 area: agent_runtimes
 entities:
   - agent_v1_tools
@@ -15,6 +15,7 @@ supersedes: []
 related_code:
   - cli/src/agent-v1-registry.ts
   - cli/src/agent-v1-mcp-server.ts
+  - packages/agent-runtime-utils/src/rudder-mcp.ts
   - packages/agent-runtimes/codex-local/src/server/codex-home.ts
   - packages/agent-runtimes/claude-local/src/server/execute.ts
 commit_refs: []
@@ -65,3 +66,20 @@ Logic Registry requires explicit user approval for that delta.
   plan.
 - Codex and Claude runtime tests prove first-party Rudder MCP config is managed
   and inherited user/provider MCP config remains stripped.
+- Real-local acceptance used an isolated Rudder instance at
+  `/tmp/rudder-mcp-real2` with `RUDDER_INSTANCE_ID=mcp-real2` and disposable
+  organization `62a219ba-d2b7-461d-bef5-406cfbcf48c6`.
+- Codex local run `91d46da7-40de-4ad7-8192-1a8dd47bf568` used
+  `rudder-control-plane` MCP tools to run `rudder_issue_context`,
+  `rudder_issue_checkout`, `rudder_issue_comment`, and `rudder_issue_done` for
+  issue `MCP-1`; the issue ended `done` with both marker comments.
+- Claude local run `173120da-ea9d-4b7b-be8c-94bd250d37df` used the same MCP
+  workflow for issue `MCP-2`; the issue ended `done` with both marker comments.
+- Direct transcript inspection found no shell `rudder ...` command executions
+  in either accepted run; the control-plane writes came through MCP tool calls.
+- Both managed runtime configs contained runtime-owned MCP identity environment:
+  `RUDDER_API_URL`, `RUDDER_API_KEY`, `RUDDER_ORG_ID`, `RUDDER_AGENT_ID`, and
+  `RUDDER_RUN_ID`.
+- Real-local config mode inspection after the credential-permission hardening
+  confirmed Claude `rudder-mcp.json`, Claude `settings.json`, and Codex
+  `config.toml` were all owner-only `0600`.

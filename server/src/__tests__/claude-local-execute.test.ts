@@ -26,9 +26,14 @@ const settingsIndex = process.argv.indexOf("--settings");
 const settingsPath = settingsIndex >= 0 ? process.argv[settingsIndex + 1] : null;
 const settingSourcesIndex = process.argv.indexOf("--setting-sources");
 const settingSources = settingSourcesIndex >= 0 ? process.argv[settingSourcesIndex + 1] : null;
+const mcpConfigIndex = process.argv.indexOf("--mcp-config");
+const mcpConfigPath = mcpConfigIndex >= 0 ? process.argv[mcpConfigIndex + 1] : null;
 const managedClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR ?? null;
 const managedClaudeSettingsPath = process.env.RUDDER_CLAUDE_HOME
   ? path.join(process.env.RUDDER_CLAUDE_HOME, ".claude", "settings.json")
+  : null;
+const managedClaudeMcpConfigPath = process.env.RUDDER_CLAUDE_HOME
+  ? path.join(process.env.RUDDER_CLAUDE_HOME, ".claude", "rudder-mcp.json")
   : null;
 const managedClaudeJsonPath = process.env.RUDDER_CLAUDE_HOME
   ? path.join(process.env.RUDDER_CLAUDE_HOME, ".claude.json")
@@ -54,11 +59,17 @@ const payload = {
   },
   settingsPath,
   settingSources,
+  mcpConfigPath,
   managedClaudeConfigDir,
   managedClaudeSettingsPath,
   managedClaudeSettings:
     managedClaudeSettingsPath && fs.existsSync(managedClaudeSettingsPath)
       ? fs.readFileSync(managedClaudeSettingsPath, "utf8")
+      : null,
+  managedClaudeMcpConfigPath,
+  managedClaudeMcpConfig:
+    managedClaudeMcpConfigPath && fs.existsSync(managedClaudeMcpConfigPath)
+      ? fs.readFileSync(managedClaudeMcpConfigPath, "utf8")
       : null,
   managedClaudeJsonPath,
   managedClaudeJsonExists: managedClaudeJsonPath ? fs.existsSync(managedClaudeJsonPath) : false,
@@ -655,9 +666,12 @@ describe("claude execute", { timeout: 20_000 }, () => {
         };
         settingsPath: string | null;
         settingSources: string | null;
+        mcpConfigPath: string | null;
         managedClaudeConfigDir: string | null;
         managedClaudeSettingsPath: string | null;
         managedClaudeSettings: string | null;
+        managedClaudeMcpConfigPath: string | null;
+        managedClaudeMcpConfig: string | null;
         managedClaudeJsonPath: string | null;
         managedClaudeJsonExists: boolean;
         addDirSkillEntries: string[];
@@ -681,9 +695,15 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(capture.settingsPath).toBe(capture.managedClaudeSettingsPath);
       expect(capture.argv).toContain("--setting-sources");
       expect(capture.settingSources).toBe("user");
+      expect(capture.argv).toContain("--mcp-config");
+      expect(capture.mcpConfigPath).toBe(capture.managedClaudeMcpConfigPath);
       expect(capture.argv).toContain("--strict-mcp-config");
       const settingsStat = await fs.lstat(capture.managedClaudeSettingsPath!);
       expect(settingsStat.isSymbolicLink()).toBe(false);
+      expect(settingsStat.mode & 0o777).toBe(0o600);
+      const mcpConfigStat = await fs.lstat(capture.managedClaudeMcpConfigPath!);
+      expect(mcpConfigStat.isSymbolicLink()).toBe(false);
+      expect(mcpConfigStat.mode & 0o777).toBe(0o600);
       const managedSettings = JSON.parse(capture.managedClaudeSettings ?? "{}") as {
         env?: Record<string, string>;
         enabledPlugins?: unknown;
@@ -702,8 +722,28 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(managedSettings.mcpServers).toMatchObject({
         "rudder-control-plane": {
           command: expect.any(String),
-          args: ["mcp-server"],
+          args: expect.arrayContaining(["mcp-server"]),
         },
+      });
+      const managedMcpConfig = JSON.parse(capture.managedClaudeMcpConfig ?? "{}") as {
+        mcpServers?: Record<string, { env?: Record<string, string> }>;
+      };
+      expect(managedMcpConfig.mcpServers).toMatchObject({
+        "rudder-control-plane": {
+          type: "stdio",
+          command: expect.any(String),
+          args: expect.arrayContaining(["mcp-server"]),
+          env: {
+            RUDDER_MCP_RUDDER_BIN: expect.any(String),
+          },
+        },
+      });
+      expect(managedMcpConfig.mcpServers?.["rudder-control-plane"]?.env).toMatchObject({
+        RUDDER_API_URL: "http://localhost:3100",
+        RUDDER_API_KEY: "run-jwt-token",
+        RUDDER_ORG_ID: "organization-1",
+        RUDDER_AGENT_ID: "agent-3",
+        RUDDER_RUN_ID: "run-3",
       });
       expect(managedSettings.permissions).toBeUndefined();
       expect(capture.managedClaudeJsonPath).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/.claude.json");
@@ -1006,12 +1046,16 @@ describe("claude execute", { timeout: 20_000 }, () => {
         argv: string[];
         settingsPath: string | null;
         settingSources: string | null;
+        mcpConfigPath: string | null;
         managedClaudeSettingsPath: string | null;
+        managedClaudeMcpConfigPath: string | null;
         addDirSkillEntries: string[];
       };
       expect(capture.argv).not.toContain(hostileSettingsPath);
       expect(capture.argv).not.toContain(hostileAddDir);
-      expect(capture.argv).not.toContain("--mcp-config");
+      expect(capture.argv).not.toContain(path.join(root, "hostile-mcp.json"));
+      expect(capture.argv).toContain("--mcp-config");
+      expect(capture.mcpConfigPath).toBe(capture.managedClaudeMcpConfigPath);
       expect(capture.argv).not.toContain("--plugin-dir");
       expect(capture.argv).not.toContain("--no-strict-mcp-config");
       expect(capture.argv).not.toContain("--dangerously-skip-permissions");

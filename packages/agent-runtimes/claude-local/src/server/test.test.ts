@@ -104,6 +104,7 @@ describe("claude hello probe classification", () => {
       expect(argv).toContain("--permission-mode");
       expect(argv[argv.indexOf("--permission-mode") + 1]).toBe("auto");
       expect(argv).toContain("--settings");
+      expect(argv).toContain("--mcp-config");
       expect(argv).toContain("--setting-sources");
       expect(argv).toContain("--strict-mcp-config");
       expect(argv).not.toContain("--dangerously-skip-permissions");
@@ -177,8 +178,11 @@ describe("claude hello probe classification", () => {
       expect(capture.env.CLAUDE_CONFIG_DIR).toBe(path.join(managedHome, ".claude"));
       expect(capture.env.RUDDER_OPERATOR_HOME).toBe(tempDir);
       expect(capture.argv[capture.argv.indexOf("--settings") + 1]).toBe(path.join(managedHome, ".claude", "settings.json"));
+      expect(capture.argv[capture.argv.indexOf("--mcp-config") + 1]).toBe(path.join(managedHome, ".claude", "rudder-mcp.json"));
       expect(capture.argv[capture.argv.indexOf("--setting-sources") + 1]).toBe("user");
       expect(capture.argv).toContain("--strict-mcp-config");
+      expect((await lstat(path.join(managedHome, ".claude", "settings.json"))).mode & 0o777).toBe(0o600);
+      expect((await lstat(path.join(managedHome, ".claude", "rudder-mcp.json"))).mode & 0o777).toBe(0o600);
       await expect(lstat(path.join(managedHome, ".anthropic")).then((stat) => stat.isSymbolicLink())).resolves.toBe(true);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -253,7 +257,9 @@ describe("claude hello probe classification", () => {
       expect(argv[argv.indexOf("--settings") + 1]).toContain("/.rudder/instances/default/organizations/org-1/claude-home/.claude/settings.json");
       expect(argv).not.toContain(path.join(tempDir, "hostile-settings.json"));
       expect(argv.some((arg) => arg.startsWith("--add-dir="))).toBe(false);
-      expect(argv).not.toContain("--mcp-config");
+      expect(argv).toContain("--mcp-config");
+      expect(argv[argv.indexOf("--mcp-config") + 1]).toContain("/.rudder/instances/default/organizations/org-1/claude-home/.claude/rudder-mcp.json");
+      expect(argv).not.toContain(path.join(tempDir, "hostile-mcp.json"));
       expect(argv.some((arg) => arg.startsWith("--plugin-url="))).toBe(false);
     } finally {
       await rm(tempDir, { recursive: true, force: true });

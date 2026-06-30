@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -29,6 +30,8 @@ interface McpServerEnv {
   RUDDER_MCP_RUDDER_BIN?: string;
   [key: string]: string | undefined;
 }
+
+type McpStdioMode = "framed" | "newline";
 
 export interface TempFilePlan {
   flag: string;
@@ -96,7 +99,7 @@ export async function runAgentV1McpJsonRpcMessage(
         return isNotification ? null : rpcResult(id, {});
       case "initialize":
         return rpcResult(id, {
-          protocolVersion: "2024-11-05",
+          protocolVersion: requestedProtocolVersion(message.params) ?? "2024-11-05",
           capabilities: { tools: {} },
           serverInfo: { name: RUDDER_MCP_SERVER_NAME, version: "1.0.0" },
         });
@@ -118,18 +121,70 @@ export async function runAgentV1McpJsonRpcMessage(
 
 export async function runMcpStdioServer(env: McpServerEnv = buildMcpServerEnv()): Promise<void> {
   let buffer = "";
+  let mode: McpStdioMode | null = null;
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) {
     buffer += chunk;
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const parsed = JSON.parse(line) as JsonRpcRequest;
-      const response = await runAgentV1McpJsonRpcMessage(parsed, env);
-      if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
+    const parsed = parseMcpStdioMessages(buffer, mode);
+    mode = parsed.mode ?? mode;
+    buffer = parsed.remainder;
+    for (const message of parsed.messages) {
+      const response = await runAgentV1McpJsonRpcMessage(message, env);
+      if (!response) continue;
+      const payload = JSON.stringify(response);
+      process.stdout.write(parsed.mode === "framed"
+        ? `Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`
+        : `${payload}\n`);
     }
   }
+}
+
+export function parseMcpStdioMessages(buffer: string, mode: McpStdioMode | null = null): {
+  messages: JsonRpcRequest[];
+  remainder: string;
+  mode: McpStdioMode | null;
+} {
+  const messages: JsonRpcRequest[] = [];
+  const detectedMode = mode ?? detectMcpStdioMode(buffer);
+  if (!detectedMode) {
+    return { messages, remainder: buffer, mode: null };
+  }
+  if (detectedMode === "framed") {
+    let restBuffer = Buffer.from(buffer, "utf8");
+    while (true) {
+      const restText = restBuffer.toString("utf8");
+      const headerEnd = restText.indexOf("\r\n\r\n");
+      if (headerEnd < 0) break;
+      const header = restText.slice(0, headerEnd);
+      const match = /^Content-Length:\s*(\d+)\s*$/im.exec(header);
+      if (!match) break;
+      const length = Number(match[1]);
+      const bodyStart = Buffer.byteLength(restText.slice(0, headerEnd + 4), "utf8");
+      const bodyEnd = bodyStart + length;
+      if (restBuffer.byteLength < bodyEnd) break;
+      const body = restBuffer.subarray(bodyStart, bodyEnd).toString("utf8");
+      messages.push(JSON.parse(body) as JsonRpcRequest);
+      restBuffer = restBuffer.subarray(bodyEnd);
+    }
+    return { messages, remainder: restBuffer.toString("utf8"), mode: "framed" };
+  }
+
+  const lines = buffer.split(/\r?\n/);
+  const remainder = lines.pop() ?? "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    messages.push(JSON.parse(line) as JsonRpcRequest);
+  }
+  return { messages, remainder, mode: "newline" };
+}
+
+function detectMcpStdioMode(buffer: string): McpStdioMode | null {
+  const trimmed = buffer.trimStart();
+  if (!trimmed) return null;
+  const contentLength = "Content-Length:";
+  if (contentLength.toLowerCase().startsWith(trimmed.toLowerCase())) return null;
+  if (/^Content-Length:/iu.test(trimmed)) return "framed";
+  return "newline";
 }
 
 async function callToolSafely(params: unknown, env: McpServerEnv): Promise<Record<string, unknown>> {
@@ -627,6 +682,13 @@ function toMcpToolListEntry(tool: AgentV1McpToolManifestEntry): Record<string, u
   };
 }
 
+function requestedProtocolVersion(params: unknown): string | null {
+  if (!isRecord(params)) return null;
+  return typeof params.protocolVersion === "string" && params.protocolVersion.trim().length > 0
+    ? params.protocolVersion.trim()
+    : null;
+}
+
 function toolNameToCapabilityId(toolName: string): string | null {
   const manifest = buildAgentV1McpToolsManifest("agent-v1");
   return manifest.tools.find((tool) => tool.name === toolName)?.id ?? null;
@@ -720,11 +782,9 @@ function renderCsv(value: unknown): unknown {
 }
 
 function runRudderCli(args: string[], env: McpServerEnv): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
-  const command = env.RUDDER_MCP_RUDDER_BIN || process.execPath;
-  const modulePath = fileURLToPath(new URL("./index.js", import.meta.url));
-  const commandArgs = env.RUDDER_MCP_RUDDER_BIN ? args : [modulePath, ...args];
+  const invocation = resolveRudderCliInvocation(args, env);
   return new Promise((resolve) => {
-    const child = spawn(command, commandArgs, { env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(invocation.command, invocation.args, { env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
@@ -732,6 +792,38 @@ function runRudderCli(args: string[], env: McpServerEnv): Promise<{ exitCode: nu
     child.on("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
     child.on("error", (err) => resolve({ exitCode: 1, stdout, stderr: err.message }));
   });
+}
+
+export function resolveRudderCliInvocation(
+  args: string[],
+  env: McpServerEnv,
+): { command: string; args: string[] } {
+  if (env.RUDDER_MCP_RUDDER_BIN) {
+    return { command: env.RUDDER_MCP_RUDDER_BIN, args };
+  }
+
+  const modulePath = fileURLToPath(new URL("./index.js", import.meta.url));
+  if (existsSync(modulePath)) {
+    return { command: process.execPath, args: [modulePath, ...args] };
+  }
+
+  if (hasRunnableRudderOnPath(env)) {
+    return { command: "rudder", args };
+  }
+
+  return {
+    command: process.execPath,
+    args: [modulePath, ...args],
+  };
+}
+
+function hasRunnableRudderOnPath(env: McpServerEnv): boolean {
+  const probe = spawnSync("rudder", ["--version"], {
+    env: env as NodeJS.ProcessEnv,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return !probe.error;
 }
 
 function rpcResult(id: JsonRpcId, result: unknown): Record<string, unknown> {

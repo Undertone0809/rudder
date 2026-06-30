@@ -3,7 +3,11 @@ import type {
   AgentRuntimeEnvironmentTestContext,
   AgentRuntimeEnvironmentTestResult,
 } from "@rudderhq/agent-runtime-utils";
-import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
+import {
+  RUDDER_MCP_SERVER_NAME,
+  resolveOrganizationStorageKey,
+} from "@rudderhq/agent-runtime-utils";
+import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
   asBoolean,
   asNumber,
@@ -18,12 +22,15 @@ import {
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   configuredClaudeExtraArgs,
   resolveClaudePermissionMode,
   sanitizeClaudeExtraArgs,
 } from "./cli-args.js";
 import { detectClaudeLoginRequired, parseClaudeStreamJson } from "./parse.js";
+
+const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -114,6 +121,12 @@ async function ensureSymlink(target: string, source: string) {
   await fs.symlink(source, target);
 }
 
+async function writePrivateJsonFile(filePath: string, value: unknown): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await fs.chmod(filePath, 0o600);
+}
+
 async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: string): Promise<string> {
   const sourceSettings = await readJsonObject(path.join(sourceHome, ".claude", "settings.json"));
   const targetSettingsPath = path.join(targetHome, ".claude", "settings.json");
@@ -126,15 +139,31 @@ async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: stri
   }
 
   const sanitized = Object.keys(authEnv).length > 0 ? { env: authEnv } : {};
-  await fs.mkdir(path.dirname(targetSettingsPath), { recursive: true });
-  await fs.writeFile(targetSettingsPath, `${JSON.stringify(sanitized, null, 2)}\n`, "utf8");
+  await writePrivateJsonFile(targetSettingsPath, sanitized);
   return targetSettingsPath;
+}
+
+async function writeManagedClaudeMcpConfig(targetHome: string): Promise<string> {
+  const configPath = path.join(targetHome, ".claude", "rudder-mcp.json");
+  const rudderMcp = await resolveRudderMcpCliCommand(__moduleDir);
+  const server = {
+    type: "stdio",
+    command: rudderMcp.command,
+    args: rudderMcp.args,
+    ...(rudderMcp.env ? { env: rudderMcp.env } : {}),
+  };
+  await writePrivateJsonFile(configPath, {
+    mcpServers: {
+      [RUDDER_MCP_SERVER_NAME]: server,
+    },
+  });
+  return configPath;
 }
 
 async function prepareManagedClaudeProbeHome(
   sourceEnv: NodeJS.ProcessEnv,
   orgId: string,
-): Promise<{ home: string; configDir: string; settingsPath: string; operatorHome: string }> {
+): Promise<{ home: string; configDir: string; settingsPath: string; mcpConfigPath: string; operatorHome: string }> {
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
   const home = resolveManagedClaudeHomeDir(sourceEnv, orgId);
   const configDir = path.join(home, ".claude");
@@ -145,12 +174,13 @@ async function prepareManagedClaudeProbeHome(
   await fs.rm(path.join(home, ".claude.json"), { force: true });
   await fs.mkdir(path.join(configDir, "skills"), { recursive: true });
   const settingsPath = await writeSanitizedClaudeSettings(operatorHome, home);
+  const mcpConfigPath = await writeManagedClaudeMcpConfig(home);
   for (const relativeEntry of SHARED_CLAUDE_HOME_ENTRIES) {
     const source = path.join(operatorHome, relativeEntry);
     if (!(await pathExists(source))) continue;
     await ensureSymlink(path.join(home, relativeEntry), source);
   }
-  return { home, configDir, settingsPath, operatorHome };
+  return { home, configDir, settingsPath, mcpConfigPath, operatorHome };
 }
 
 function summarizeProbeDetail(stdout: string, stderr: string): string | null {
@@ -352,7 +382,7 @@ export async function testEnvironment(
       if (model) args.push("--model", model);
       if (effort) args.push("--effort", effort);
       if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
-      args.push("--settings", managedClaudeHome.settingsPath, "--setting-sources", "user", "--strict-mcp-config");
+      args.push("--settings", managedClaudeHome.settingsPath, "--setting-sources", "user", "--mcp-config", managedClaudeHome.mcpConfigPath, "--strict-mcp-config");
       if (extraArgs.length > 0) args.push(...extraArgs);
 
       const probe = await runChildProcess(

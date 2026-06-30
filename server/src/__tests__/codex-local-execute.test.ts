@@ -1504,7 +1504,14 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(managedConfigContents).toContain("plugins = false");
       expect(managedConfigContents).toContain("[mcp_servers.rudder-control-plane]");
       expect(managedConfigContents).toContain("command =");
-      expect(managedConfigContents).toContain('args = ["mcp-server"]');
+      expect(managedConfigContents).toContain('"mcp-server"');
+      expect(managedConfigContents).toContain("[mcp_servers.rudder-control-plane.env]");
+      expect(managedConfigContents).toContain("RUDDER_MCP_RUDDER_BIN =");
+      expect(managedConfigContents).toContain('RUDDER_API_URL = "http://localhost:3100"');
+      expect(managedConfigContents).toContain('RUDDER_API_KEY = "run-jwt-token"');
+      expect(managedConfigContents).toContain('RUDDER_ORG_ID = "organization-1"');
+      expect(managedConfigContents).toContain('RUDDER_AGENT_ID = "agent-1"');
+      expect(managedConfigContents).toContain('RUDDER_RUN_ID = "run-strip-managed"');
       expect(managedConfigContents).not.toContain("notify =");
       expect(managedConfigContents).not.toContain("plugins = true");
       expect(managedConfigContents).not.toContain("[mcp_servers.linear]");

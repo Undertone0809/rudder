@@ -1,7 +1,12 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildAgentV1ToolCallPlan,
   buildMcpServerEnv,
+  parseMcpStdioMessages,
+  resolveRudderCliInvocation,
   runAgentV1McpJsonRpcMessage,
 } from "../agent-v1-mcp-server.js";
 import { buildAgentV1McpToolsManifest } from "../agent-v1-registry.js";
@@ -204,6 +209,29 @@ describe("agent-v1 MCP server", () => {
     expect(result.tools.map((tool) => tool.name)).toContain("rudder_issue_review");
   });
 
+  it("echoes the client's initialize protocol version", async () => {
+    const response = await runAgentV1McpJsonRpcMessage(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18" },
+      },
+      buildMcpServerEnv({
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "runtime-key",
+      }),
+    );
+
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        protocolVersion: "2025-06-18",
+      },
+    });
+  });
+
   it("returns structured MCP tool failure content for invalid tool arguments", async () => {
     const response = await runAgentV1McpJsonRpcMessage(
       {
@@ -241,5 +269,89 @@ describe("agent-v1 MCP server", () => {
         }),
       ),
     ).resolves.toBeNull();
+  });
+
+  it("parses Content-Length framed MCP stdio messages", () => {
+    const first = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    const second = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const framed =
+      `Content-Length: ${Buffer.byteLength(first, "utf8")}\r\n\r\n${first}` +
+      `Content-Length: ${Buffer.byteLength(second, "utf8")}\r\n\r\n${second.slice(0, 10)}`;
+
+    const parsed = parseMcpStdioMessages(framed);
+
+    expect(parsed.mode).toBe("framed");
+    expect(parsed.messages).toEqual([
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    ]);
+    expect(parsed.remainder).toBe(`Content-Length: ${Buffer.byteLength(second, "utf8")}\r\n\r\n${second.slice(0, 10)}`);
+
+    const completed = parseMcpStdioMessages(`${parsed.remainder}${second.slice(10)}`);
+    expect(completed.messages).toEqual([
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    ]);
+    expect(completed.remainder).toBe("");
+  });
+
+  it("waits for a complete Content-Length prefix before locking stdio mode", () => {
+    const pending = parseMcpStdioMessages("Content-L");
+
+    expect(pending.mode).toBeNull();
+    expect(pending.messages).toEqual([]);
+    expect(pending.remainder).toBe("Content-L");
+
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    const completed = parseMcpStdioMessages(
+      `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`,
+      pending.mode,
+    );
+    expect(completed.mode).toBe("framed");
+    expect(completed.messages).toEqual([
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    ]);
+  });
+
+  it("parses Content-Length framed messages by byte length", () => {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "rudder_issue_comment",
+        arguments: { issue: "MCP-1", body: "中文 progress" },
+      },
+    });
+    const framed = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+
+    const parsed = parseMcpStdioMessages(framed);
+
+    expect(parsed.mode).toBe("framed");
+    expect(parsed.messages).toEqual([JSON.parse(body)]);
+    expect(parsed.remainder).toBe("");
+  });
+
+  it("uses the runtime PATH rudder shim when running from TypeScript source", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-path-"));
+    try {
+      const shimPath = path.join(tempDir, process.platform === "win32" ? "rudder.cmd" : "rudder");
+      if (process.platform === "win32") {
+        await fs.writeFile(shimPath, "@echo off\r\necho rudder-test\r\n", "utf8");
+      } else {
+        await fs.writeFile(shimPath, "#!/bin/sh\necho rudder-test\n", "utf8");
+        await fs.chmod(shimPath, 0o755);
+      }
+
+      const invocation = resolveRudderCliInvocation(["agent", "me", "--json"], {
+        PATH: tempDir,
+      });
+
+      expect(invocation).toEqual({
+        command: "rudder",
+        args: ["agent", "me", "--json"],
+      });
+      expect(invocation.args.join(" ")).not.toContain("cli/src/index.js");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,5 +1,6 @@
 import {
   inferOpenAiCompatibleBiller,
+  pickRudderMcpManagedEnv,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
@@ -323,6 +324,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     agent.orgId,
     agent.id,
     { disabledSkillPaths: externalCodexSkillPaths },
+    __moduleDir,
   );
   const defaultCodexHome = resolveManagedCodexHomeDir(codexTargetEnv, agent.orgId, agent.id);
   const effectiveCodexHome = preparedManagedCodexHome ?? defaultCodexHome;
@@ -353,16 +355,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     description: entry.description ?? null,
   }));
   const skillBoundaryPrompt = renderCodexRudderSkillBoundaryPrompt(loadedSkills);
-  await realizeManagedCodexSkillEntries(
-    {
-      ...codexTargetEnv,
-      CODEX_HOME: sharedCodexHome,
-    },
-    effectiveCodexHome,
-    selectedCodexSkillEntries.map((entry) => entry.source),
-    onLog,
-    { disabledSkillPaths: externalCodexSkillPaths },
-  );
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
@@ -482,6 +474,18 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
   }
+  await realizeManagedCodexSkillEntries(
+    {
+      ...codexTargetEnv,
+      CODEX_HOME: sharedCodexHome,
+    },
+    effectiveCodexHome,
+    selectedCodexSkillEntries.map((entry) => entry.source),
+    onLog,
+    { disabledSkillPaths: externalCodexSkillPaths },
+    __moduleDir,
+    pickRudderMcpManagedEnv(env),
+  );
   applyGitIdentityPreparationEnv(env, preparedGitIdentity);
   applyGitCredentialHelperPolicyEnv(env);
   const effectiveEnv = Object.fromEntries(
