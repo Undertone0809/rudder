@@ -1367,8 +1367,11 @@ function ChatThreadRow({
       data-testid={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
       data-messenger-thread-key={`chat:${conversation.id}`}
       className={cn(
-        "group relative mx-1.5 flex [contain-intrinsic-size:auto_44px] [content-visibility:auto] rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
-        compact ? "items-center gap-2 px-2 py-1.5" : "items-start gap-3 px-3 py-2.5",
+        "group relative flex [contain-intrinsic-size:auto_44px] [content-visibility:auto] rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
+        customGroupId ? "mx-0" : "mx-1.5",
+        compact
+          ? cn("items-center gap-2 py-1.5", customGroupId ? "px-1.5" : "px-2")
+          : cn("items-start gap-3 py-2.5", customGroupId ? "px-2" : "px-3"),
         active
           ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
@@ -1704,11 +1707,15 @@ function ThreadRow({
       data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}
       data-messenger-thread-key={thread.threadKey}
       className={cn(
-        "group relative mx-1.5 flex [contain-intrinsic-size:auto_44px] [content-visibility:auto] rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
-        compact ? "items-center gap-2 px-2 py-1.5" : "items-start gap-3 px-3 py-2.5",
+        "group relative flex [contain-intrinsic-size:auto_44px] [content-visibility:auto] rounded-[calc(var(--radius-md)-2px)] border transition-[background-color,border-color,color]",
+        customGroupId ? "mx-0" : "mx-1.5",
+        compact
+          ? cn("items-center gap-2 py-1.5", customGroupId ? "px-1.5" : "px-2")
+          : cn("items-start gap-3 py-2.5", customGroupId ? "px-2" : "px-3"),
         active
           ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
           : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
+        customGroupId && "text-[color:var(--messenger-group-entry-text)] dark:text-[color:var(--messenger-group-entry-text-dark)]",
         dragging && "opacity-80 shadow-sm ring-1 ring-border/70",
       )}
     >
@@ -3731,7 +3738,7 @@ export function MessengerContextSidebar() {
           data-drag-move-target={isMoveIntoGroupTarget ? "true" : undefined}
           data-drag-intent={isMoveIntoGroupTarget ? "move-into-group" : undefined}
           className={cn(
-            "group/custom-group relative mx-1.5 rounded-[calc(var(--radius-md)-1px)] border p-1.5 text-[color:var(--messenger-group-text)] shadow-[0_8px_20px_-18px_rgba(15,23,42,0.45)] transition-[background-color,border-color] duration-150 bg-[color:var(--messenger-group-bg)] border-[color:var(--messenger-group-border)] hover:bg-[color:var(--messenger-group-bg-hover)] dark:bg-[color:var(--messenger-group-bg-dark)] dark:text-[color:var(--messenger-group-text-dark)] dark:border-[color:var(--messenger-group-border-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]",
+            "group/custom-group relative mx-0.5 rounded-[calc(var(--radius-md)-1px)] border p-1 text-[color:var(--messenger-group-text)] shadow-[0_8px_20px_-18px_rgba(15,23,42,0.45)] transition-[background-color,border-color] duration-150 bg-[color:var(--messenger-group-bg)] border-[color:var(--messenger-group-border)] hover:bg-[color:var(--messenger-group-bg-hover)] dark:bg-[color:var(--messenger-group-bg-dark)] dark:text-[color:var(--messenger-group-text-dark)] dark:border-[color:var(--messenger-group-border-dark)] dark:hover:bg-[color:var(--messenger-group-bg-hover-dark)]",
             isMoveIntoGroupTarget && "bg-[color:var(--messenger-group-bg-hover)] ring-2 ring-[color:color-mix(in_oklab,var(--messenger-group-text)_34%,transparent)]",
           )}
           style={customGroupStyle(displayedCustomGroup)}
