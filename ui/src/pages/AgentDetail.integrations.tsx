@@ -915,13 +915,13 @@ function CustomIntegrationForm({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Scope</p>
-        <div className="inline-flex rounded-md border border-border bg-background p-0.5">
+        <div className="inline-flex rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-0.5">
           {(["agent", "organization"] as const).map((scope) => (
             <button
               key={scope}
               type="button"
               className={cn(
-                "h-7 rounded px-2.5 text-xs font-medium transition-colors",
+                "h-7 rounded-[2px] px-2.5 text-xs font-medium transition-colors first:rounded-l-[calc(var(--radius-sm)-2px)] last:rounded-r-[calc(var(--radius-sm)-2px)]",
                 form.scope === scope
                   ? "bg-muted text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",

@@ -545,6 +545,13 @@ describe("AgentIntegrationsTab", () => {
     expect(dialog?.querySelector('input[placeholder="https://api.example.com"]')).toBeTruthy();
     expect(dialog?.querySelector(".md\\:grid-cols-2")).toBeNull();
     expect(dialog?.querySelector('button[aria-label="Connect Custom API"] svg')).toBeNull();
+    const scopeControl = [...dialog!.querySelectorAll("div")]
+      .find((element) => element.textContent?.trim() === "This agentOrganization");
+    const scopeAgentButton = [...dialog!.querySelectorAll("button")]
+      .find((button) => button.textContent === "This agent");
+    expect(scopeControl?.className).toContain("rounded-[calc(var(--radius-sm)-1px)]");
+    expect(scopeAgentButton?.className).toContain("rounded-[2px]");
+    expect(scopeAgentButton?.className).toContain("first:rounded-l-[calc(var(--radius-sm)-2px)]");
 
     const cancelButton = [...dialog!.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Cancel"));
