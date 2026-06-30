@@ -17,6 +17,10 @@ actor's side. It does not review architecture and it does not fix failures.
 - If state matters, read it back through the API, DB, logs, or visible UI.
 - Record substitutions explicitly, such as browser current-dev instead of
   packaged Desktop.
+- If the parent marks a real/local/live surface as required, do not return
+  `PASS` from substituted proof. Return `FAIL` for a reproduced wrong behavior,
+  or `QUESTION` when credentials, tunnel, callback, app install, user action, or
+  another blocker prevents the required surface from running.
 - Avoid real/prod Rudder data for benchmark or performance checks unless the
   parent explicitly asks for hard real-local validation.
 - Return `PASS`, `FAIL`, or `QUESTION`. Do not return a soft pass.

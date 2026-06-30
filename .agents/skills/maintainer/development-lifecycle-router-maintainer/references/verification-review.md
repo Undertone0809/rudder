@@ -130,10 +130,20 @@ Reconcile the verifier result before review or handoff:
   `doc/product/**` contracts resolve the ambiguity
 
 Reviewer approval does not convert verifier `FAIL` into acceptance.
-Verifier wording also does not convert missing required proof into acceptance:
-if the verifier says `PASS` but its evidence says the required real/local/live
-surface was not run, the parent must treat the gate as not passed and record the
-missing proof as handoff-blocking.
+Verifier wording also does not convert missing required proof into acceptance.
+Before treating a child verifier `PASS` as valid, compare the verifier's
+evidence against the packet's required terminal surface:
+
+- If the required real/local/live surface was not exercised, downgrade the
+  result to `blocked/substituted: required surface not run`.
+- If the verifier used automated E2E, DB-backed tests, mocks, isolated temp
+  databases, code inspection, or screenshots in place of a requested hard
+  real-local surface, keep that as supporting evidence only.
+- If an external integration was named, such as real local Feishu long-connection
+  chat, require that exact surface or record the missing credential, tunnel,
+  callback, app install, or user-action blocker.
+- Do not proceed to final reviewers, handoff, commit, or push as complete until
+  the missing proof is produced or the user explicitly lowers the acceptance bar.
 
 ## Hard Real-Local Validation
 
@@ -269,7 +279,10 @@ spawning:
 - heuristic reviewer: `../agents/heuristic-reviewer.md`
 
 The parent remains responsible for reconciling outputs. Child creation is not a
-passed gate until the parent reads final verdicts and records blockers.
+passed gate until the parent reads final verdicts, checks the evidence against
+the required terminal surface, and records blockers. A child `PASS` with
+substituted proof is not a passed gate when the route required hard real-local or
+live integration evidence.
 
 Each child packet should include target SHA or artifact basis, changed files,
 acceptance bar, prior blockers, changed evidence since the last round, and

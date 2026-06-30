@@ -598,6 +598,23 @@
         "The result reuses or closes prior verifier/reviewer gate state and works the blocker first.",
         "The result spawns again only after a real changed evidence delta exists, using the smallest targeted verifier/reviewer packet needed for that delta."
       ]
+    },
+    {
+      "id": 45,
+      "prompt": "child verifier reports PASS, but its evidence only ran Playwright E2E and DB-backed chat tests; the live Feishu long-connection surface was not run. The verifier packet required the live Feishu long-connection surface: send a message, immediately send /stop, observe the Feishu reply, and read back Rudder state. 按 lifecycle-router 现在能 final review / handoff 吗？",
+      "expected_output": "Rejects the child verifier PASS as not passed because the required real/local/live integration surface was substituted. It downgrades the verifier result to blocked/substituted, records that automated E2E and DB-backed tests are supporting evidence only, does not proceed to final reviewers or handoff as complete, and either runs the real Feishu path or records the exact missing credential, tunnel, callback, app-install, or user-action blocker.",
+      "files": [
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/references/verification-review.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/agents/product-verifier.md",
+        ".agents/skills/maintainer/development-lifecycle-router-maintainer/scripts/benchmark_pipeline.py"
+      ],
+      "expectations": [
+        "The result checks the verifier's evidence against the required terminal surface instead of trusting the word PASS.",
+        "The result treats Playwright E2E, DB-backed tests, mocks, code inspection, and screenshots as supporting evidence only for the live Feishu requirement.",
+        "The result downgrades the verifier gate to blocked/substituted because the real Feishu long-connection path was not exercised.",
+        "The result does not proceed to final reviewers, handoff, commit, or push as complete until the required surface runs or the user lowers the bar.",
+        "The result records the exact blocker if credentials, tunnel, callback, app installation, or user action prevents the live Feishu test."
+      ]
     }
   ]
 }

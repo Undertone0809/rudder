@@ -172,6 +172,19 @@ CHECKS = [
         ],
     },
     {
+        "name": "verification_reference_downgrades_substituted_child_pass",
+        "files": ["references/verification-review.md", "agents/product-verifier.md", "evals/evals.json"],
+        "patterns": [
+            r"child verifier `PASS`",
+            r"downgrade the\s+result to `blocked/substituted: required surface not run`",
+            r"automated E2E, DB-backed tests, mocks, isolated temp\s+databases, code inspection, or screenshots",
+            r"external integration.*real local Feishu long-connection\s+chat",
+            r"Do not proceed to final reviewers, handoff, commit, or push",
+            r"do not return\s+`PASS` from substituted proof",
+            r"child verifier reports PASS.*live Feishu long-connection surface was not run",
+        ],
+    },
+    {
         "name": "verification_reference_has_real_data_guard",
         "files": ["references/verification-review.md"],
         "patterns": [
