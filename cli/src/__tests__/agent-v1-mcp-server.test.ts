@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildAgentV1McpToolsManifest } from "../agent-v1-registry.js";
 import {
   buildAgentV1ToolCallPlan,
   buildMcpServerEnv,
   runAgentV1McpJsonRpcMessage,
 } from "../agent-v1-mcp-server.js";
+import { buildAgentV1McpToolsManifest } from "../agent-v1-registry.js";
 
 const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_agent_update: { title: "Runtime Agent" },

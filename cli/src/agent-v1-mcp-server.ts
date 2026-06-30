@@ -4,10 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  agentCliCapabilityIdToMcpToolName,
   buildAgentV1McpToolsManifest,
   getAgentCliCapabilityById,
-  type AgentV1McpToolManifestEntry,
+  type AgentV1McpToolManifestEntry
 } from "./agent-v1-registry.js";
 
 export const RUDDER_MCP_SERVER_NAME = "rudder-control-plane";

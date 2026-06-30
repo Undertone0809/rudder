@@ -60,6 +60,7 @@ export interface EnsureRuntimeInstalledOptions {
   homeDir?: string;
   packageName?: string;
   spawnSyncImpl?: typeof spawnSync;
+  postgresVersionProbe?: RuntimePostgresVersionProbe;
   preparePostgresPayload?: boolean;
   pruneRuntimeCache?: boolean;
   retention?: RuntimeCacheRetentionOptions;
@@ -104,6 +105,7 @@ export class RuntimeInstallError extends Error {
 }
 
 type SpawnSyncResultLike = ReturnType<typeof spawnSync>;
+export type RuntimePostgresVersionProbe = (postgresBinary: string) => string;
 
 function sanitizeRuntimeCacheSegment(value: string): string {
   return encodeURIComponent(value.trim() || "latest").replaceAll("%", "_");
@@ -241,9 +243,10 @@ export async function ensureRuntimeInstalled(
   const packageSpec = resolveRuntimePackageSpec(packageVersion, packageName);
   const command = formatRuntimeInstallCommand(cacheDir, packageSpec);
   const preparePostgresPayload = options.preparePostgresPayload === true;
+  const postgresVersionProbe = options.postgresVersionProbe ?? readPostgresVersion;
 
   if (await isRuntimeCacheHit({ cacheDir, version: packageVersion, packageName })) {
-    const postgresPayload = await stageRuntimePostgresPayload(cacheDir, preparePostgresPayload);
+    const postgresPayload = await stageRuntimePostgresPayload(cacheDir, preparePostgresPayload, postgresVersionProbe);
     await touchRuntimeInstallMetadata(cacheDir);
     const prune = await maybePruneRuntimeCache({
       homeDir: options.homeDir,
@@ -265,7 +268,7 @@ export async function ensureRuntimeInstalled(
     packageVersion,
   });
   if (existingRuntimeOutput !== null) {
-    const postgresPayload = await stageRuntimePostgresPayload(cacheDir, preparePostgresPayload);
+    const postgresPayload = await stageRuntimePostgresPayload(cacheDir, preparePostgresPayload, postgresVersionProbe);
     const metadata: RuntimeInstallMetadata = {
       version: 1,
       packageName,
@@ -299,7 +302,11 @@ export async function ensureRuntimeInstalled(
     const fallbackSpec = resolveRuntimePackageSpec(fallbackVersion, packageName);
 
     if (await isRuntimeCacheHit({ cacheDir: fallbackCacheDir, version: fallbackVersion, packageName })) {
-      const fallbackPostgresPayload = await stageRuntimePostgresPayload(fallbackCacheDir, preparePostgresPayload);
+      const fallbackPostgresPayload = await stageRuntimePostgresPayload(
+        fallbackCacheDir,
+        preparePostgresPayload,
+        postgresVersionProbe,
+      );
       await touchRuntimeInstallMetadata(fallbackCacheDir);
       return withPostgresPayload(
         {
@@ -324,7 +331,11 @@ export async function ensureRuntimeInstalled(
         fallbackOutput,
         await ensureRequiredEmbeddedPostgresPlatformPackage(spawnSyncImpl, fallbackCacheDir),
       );
-      const postgresPayload = await stageRuntimePostgresPayload(fallbackCacheDir, preparePostgresPayload);
+      const postgresPayload = await stageRuntimePostgresPayload(
+        fallbackCacheDir,
+        preparePostgresPayload,
+        postgresVersionProbe,
+      );
       const fallbackMetadata: RuntimeInstallMetadata = {
         version: 1,
         packageName,
@@ -357,7 +368,7 @@ export async function ensureRuntimeInstalled(
     output,
     await ensureRequiredEmbeddedPostgresPlatformPackage(spawnSyncImpl, cacheDir),
   );
-  const postgresPayload = await stageRuntimePostgresPayload(cacheDir, preparePostgresPayload);
+  const postgresPayload = await stageRuntimePostgresPayload(cacheDir, preparePostgresPayload, postgresVersionProbe);
 
   const metadata: RuntimeInstallMetadata = {
     version: 1,
@@ -706,22 +717,34 @@ async function assertRuntimePostgresBinDirComplete(cacheDir: string, binDir: str
   }
 }
 
-async function isRuntimePostgresPayloadUsable(cacheDir: string, binDir: string): Promise<boolean> {
+function readPostgresVersion(postgresBinary: string): string {
+  return execFileSync(postgresBinary, ["--version"], { encoding: "utf8" });
+}
+
+async function isRuntimePostgresPayloadUsable(
+  cacheDir: string,
+  binDir: string,
+  postgresVersionProbe: RuntimePostgresVersionProbe,
+): Promise<boolean> {
   try {
     await assertRuntimePostgresBinDirComplete(cacheDir, binDir);
     const postgresBinary = path.join(binDir, runtimePostgresExecutableName("postgres"));
-    const result = execFileSync(postgresBinary, ["--version"], { encoding: "utf8" });
+    const result = postgresVersionProbe(postgresBinary);
     return /\bPostgreSQL\)?\s+18\.4\b/i.test(result);
   } catch {
     return false;
   }
 }
 
-async function stageRuntimePostgresPayload(cacheDir: string, enabled: boolean): Promise<RuntimePostgresPayloadStageResult> {
+async function stageRuntimePostgresPayload(
+  cacheDir: string,
+  enabled: boolean,
+  postgresVersionProbe: RuntimePostgresVersionProbe,
+): Promise<RuntimePostgresPayloadStageResult> {
   const targetPayloadRoot = path.join(cacheDir, RUNTIME_POSTGRES_PAYLOAD_DIR);
   const targetBinDir = resolveRuntimePostgresPayloadBinDir(cacheDir);
   const targetRuntimeDir = path.dirname(targetBinDir);
-  if (await isRuntimePostgresPayloadUsable(cacheDir, targetBinDir)) {
+  if (await isRuntimePostgresPayloadUsable(cacheDir, targetBinDir, postgresVersionProbe)) {
     return { output: "", binDir: targetBinDir };
   }
   if (!enabled) return { output: "" };
@@ -738,7 +761,7 @@ async function stageRuntimePostgresPayload(cacheDir: string, enabled: boolean): 
     );
   }
   const postgresBinary = path.join(resolvedSourceBinDir, runtimePostgresExecutableName("postgres"));
-  const result = execFileSync(postgresBinary, ["--version"], { encoding: "utf8" });
+  const result = postgresVersionProbe(postgresBinary);
   if (!/\bPostgreSQL\)?\s+18\.4\b/i.test(result)) {
     throw new RuntimeInstallError(
       `${RUDDER_POSTGRES_BIN_DIR_ENV} must contain PostgreSQL 18.4 production binaries; got ${result.trim() || "unknown version"}`,

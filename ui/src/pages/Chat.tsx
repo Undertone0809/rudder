@@ -1128,7 +1128,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         setChatSendInFlight(activeChatId, false); }
       if (newConversationLockAcquired) { releaseNewConversationSendLock(); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
     return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]); const rawMessages = messagesQuery.data ?? []; const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
-    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const agentSelectionLocked = isChatAgentSelectionLocked({
+    () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined); const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id); const activeQueueItems = queueQuery.data?.items ?? []; const visibleQueueItems = activeQueueItems.filter((item) => !item.deliveredMessageId && !item.sourceMessageId); const agentSelectionLocked = isChatAgentSelectionLocked({
     hasConversation: Boolean(selectedConversation),
     preferredAgentId: selectedConversation?.preferredAgentId,
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
@@ -1632,14 +1632,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         composerStreaming && "chat-composer--streaming",
         centered ? "mx-auto w-full max-w-3xl" : "w-full",
       )} >
-      {selectedConversation && activeQueueItems.length > 0 ? (
+      {selectedConversation && visibleQueueItems.length > 0 ? (
         <div data-testid="chat-running-queue" className="mb-2.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] p-2">
           <div className="mb-1.5 flex items-center justify-between gap-2 px-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
             <span>{activeStream ? "Queued follow-ups" : "Queued follow-ups retained"}</span>
-            <span>{activeQueueItems.length} queued</span>
+            <span>{visibleQueueItems.length} queued</span>
           </div>
           <div className="space-y-1.5">
-            {activeQueueItems.map((item, index) => {
+            {visibleQueueItems.map((item, index) => {
               const itemEditable = item.status === "queued" || item.status === "steer_pending";
               const itemRunning = item.status === "dequeue_claimed" || item.status === "running";
               return (

@@ -400,13 +400,13 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
 
   return (
     <div className="max-w-5xl space-y-5">
-      <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+      <div className="inline-flex rounded-[var(--menu-radius)] border border-border bg-muted/30 p-0.5">
         {(["discover", "manage"] as const).map((view) => (
           <button
             key={view}
             type="button"
             className={cn(
-              "h-8 rounded px-3 text-sm font-medium transition-colors",
+              "h-8 rounded-[calc(var(--menu-radius)-2px)] px-3 text-sm font-medium transition-colors",
               integrationsView === view
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",

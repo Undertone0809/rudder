@@ -1016,7 +1016,7 @@ describe("Chat streaming controls", () => {
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
   });
 
-  it("renders running queued follow-ups without editable queue actions", () => {
+  it("renders claimed queued follow-ups without editable queue actions before delivery", () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
     };
@@ -1024,7 +1024,7 @@ describe("Chat streaming controls", () => {
       activeGenerationId: "generation-1",
       items: [
         queuedMessage({
-          status: "running",
+          status: "dequeue_claimed",
           payload: {
             body: "Already delivering",
             attachmentIds: [],
@@ -1047,6 +1047,37 @@ describe("Chat streaming controls", () => {
     expect(queueItem?.querySelector("button[aria-label='Edit queued message']")).toBeNull();
     expect(queueItem?.querySelector("button[aria-label='Delete queued message']")).toBeNull();
     expect(queueItem?.textContent).not.toContain("Steer");
+  });
+
+  it("hides queued follow-ups after the queued message is delivered", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    mockState.queueSnapshot = {
+      activeGenerationId: "generation-2",
+      items: [
+        queuedMessage({
+          status: "running",
+          sourceMessageId: "user-message-2",
+          deliveredMessageId: "user-message-2",
+          payload: {
+            body: "Already delivered",
+            attachmentIds: [],
+            projectId: null,
+            skillRefs: [],
+            accessMode: null,
+            model: null,
+            effort: null,
+            metadata: null,
+          },
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+
+    expect(container.querySelector("[data-testid='chat-running-queue']")).toBeNull();
+    expect(container.textContent).not.toContain("Already delivered");
   });
 });
 

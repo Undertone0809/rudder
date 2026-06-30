@@ -1762,6 +1762,7 @@ describe("runtime install helpers", () => {
         version: "1.2.3",
         homeDir: root,
         spawnSyncImpl: spawnSyncImpl as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
         preparePostgresPayload: true,
       });
 
