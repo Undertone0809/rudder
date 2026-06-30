@@ -10,6 +10,7 @@ contract_ids:
   - WORKSPACE.RUN.001
   - WORKSPACE.BACKUP.001
 related_code:
+  - server/src/home-paths.ts
   - packages/db/src/schema/organization_resources.ts
   - packages/db/src/schema/library_entries.ts
   - packages/db/src/schema/project_resource_attachments.ts
@@ -28,6 +29,7 @@ related_code:
   - ui/src/pages/OrganizationWorkspaceBackups.tsx
   - ui/src/components/ProjectResourcesPanel.tsx
 related_tests:
+  - server/src/__tests__/home-paths.test.ts
   - server/src/__tests__/library-path-markdown.test.ts
   - server/src/__tests__/organization-workspace-browser.test.ts
   - server/src/__tests__/execution-workspace-policy.test.ts
@@ -94,29 +96,49 @@ Why:
 Product model:
 
 - Library entries map stable ids/references to organization workspace files.
+- In the default local-first Desktop/dev layout, organization workspace files
+  live under a user-facing folder at `~/Documents/Rudder/<org-folder>`.
+  Rudder stores the stable org-id-to-folder mapping in
+  `~/Documents/Rudder/.rudder-organizations.json` so display names can remain
+  human-readable while organization identity stays stable.
+- Folder names are derived from organization name/url key/storage key, sanitized
+  for local filesystems, and collision-resolved with numeric suffixes such as
+  `org-name-2`.
 - Operators and agents can list, read, create, update, delete, rename, and link
   allowed files.
 - Protected roots such as agent instruction, skills, and managed directories
   are excluded from normal mentionable Library surfaces unless an explicit
   management flow owns them.
+- Older organization workspace layouts are migrated into the mapped folder when
+  Rudder can do so without unsafe overwrite.
 
 Flow:
 
-1. Actor browses or edits Library through UI, CLI, or API.
-2. Server normalizes and validates the path against workspace/protected-path
+1. Rudder resolves or creates the organization folder mapping before exposing
+   Library files.
+2. Actor browses or edits Library through UI, CLI, or API.
+3. Server normalizes and validates the path against workspace/protected-path
    rules.
-3. Library entry cache/reference id is created or reused.
-4. Markdown/reference rendering can turn the Library file into a stable link.
-5. Project resources can attach eligible Library files as curated run context.
+4. Library entry cache/reference id is created or reused.
+5. Markdown/reference rendering can turn the Library file into a stable link.
+6. Project resources can attach eligible Library files as curated run context.
 
 Invariants:
 
 - Library references must stay stable enough for comments, chats, and docs to
   remain readable.
+- Mapping identity is by organization id, not display name. Renaming an
+  organization must not silently move or orphan its existing Library folder.
+- If a mapped organization folder is missing after being established, Rudder
+  must stop before creating an empty replacement and tell the operator to
+  restore the mapped folder name/path or restore from a workspace backup.
 - Protected paths are not ordinary Library content.
 
 Evidence:
 
+- Home path tests cover friendly folder allocation, same-name suffixes,
+  migration, mapping recovery, corrupt mapping failure, and missing mapped
+  folder fail-fast behavior.
 - Library path markdown tests cover reference generation.
 - Organization workspace browser tests cover path safety and browser behavior.
 
@@ -203,14 +225,23 @@ Product model:
 - Workspace backups are organization-scoped versions with status, trigger
   source, file count, byte size, checksum metadata, expiration, and a local
   artifact reference.
+- Automatic backups use two freshness windows: while Rudder is running, the
+  scheduler creates a new organization workspace backup only when the latest
+  successful version is at least two hours old; on startup, Rudder uses a
+  twenty-four-hour offline catch-up window so a stopped app does not create
+  noisy catch-up versions on every launch.
 - The board operator can create a manual version, browse and preview files from
   a succeeded/restored version, restore that version after Rudder creates a
   pre-restore safety backup, delete non-running versions from visible history,
-  and download a selected succeeded/restored version to local disk.
-- Download returns the selected backup artifact as an attachment only after the
-  server verifies that the artifact exists, belongs to the requested
-  organization, is not failed/running/deleted, and matches the recorded archive
-  checksum when one is present.
+  and download a selected succeeded/restored version to local disk as a zip
+  archive of the backed-up workspace files.
+- Rudder may keep an internal JSON backup artifact for browsing and restore,
+  but the operator-facing download must be a zip file rather than the internal
+  artifact format.
+- Download returns the selected backup as an attachment only after the server
+  verifies that the artifact exists, belongs to the requested organization, is
+  not failed/running/deleted, and matches recorded checksum metadata when
+  present.
 
 Flow:
 
@@ -218,8 +249,8 @@ Flow:
 2. Rudder keeps file browsing scoped to the selected version instead of the
    live workspace.
 3. Operator downloads the selected version from the version details action.
-4. Server streams the exact backup artifact for that organization/version as a
-   local file download.
+4. Server packages the selected version's backed-up workspace files into a zip
+   attachment for that organization/version.
 5. Restore and delete remain separate explicit actions with their existing
    safety and retention semantics.
 
@@ -230,12 +261,15 @@ Invariants:
   artifacts must not be downloaded.
 - Downloading a backup is read-only; it must not mutate backup status,
   retention, workspace files, or activity history.
+- Downloaded zip contents must preserve file paths and bytes from the selected
+  backup version, including nested files and binary files.
 
 Evidence:
 
 - Workspace backup service tests cover version creation, browsing, restore,
-  delete, download metadata, and checksum failure.
+  delete, download metadata, zip contents, and checksum failure.
 - Workspace backup route tests cover attachment headers, board-only download,
   and artifact validation errors.
 - Workspace backups E2E covers selecting a version, previewing a file,
-  downloading the selected artifact, restore safety backup creation, and delete.
+  downloading the selected zip artifact, restore safety backup creation, and
+  delete.

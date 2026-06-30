@@ -495,14 +495,17 @@ contracts:
       - doc/product/domains/library-and-context/resources-library-workspaces.md
     related_code:
       - packages/db/src/schema/library_entries.ts
+      - server/src/home-paths.ts
       - server/src/services/library-entries.ts
       - server/src/services/organization-workspace-browser.ts
       - ui/src/pages/OrganizationResources.tsx
     related_tests:
+      - server/src/__tests__/home-paths.test.ts
       - server/src/__tests__/library-path-markdown.test.ts
       - server/src/__tests__/organization-workspace-browser.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
   WORKSPACE.PROJECT.001:
     owner: product
     domain: library-and-context
@@ -552,6 +555,7 @@ contracts:
       - tests/e2e/workspace-backups.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+      - doc/plans/2026-06-30-org-library-folder-and-backup-zip.md
   AUTOMATION.DEFINITION.001:
     owner: product
     domain: automations
