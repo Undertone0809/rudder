@@ -27,6 +27,7 @@ function run(command, args, options = {}) {
       stdio: "inherit",
       shell: process.platform === "win32",
       cwd: options.cwd,
+      env: options.env ? { ...process.env, ...options.env } : process.env,
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
@@ -40,6 +41,24 @@ function run(command, args, options = {}) {
       }
       resolve();
     });
+  });
+}
+
+async function stagePackagedRuntime() {
+  /**
+   * Generic Desktop builds must remain runnable in offline CI without a
+   * production PostgreSQL payload. The actual distributable path restages the
+   * server package with the payload enabled immediately before electron-builder
+   * copies `.packaged/postgres-18.4` into app resources.
+   */
+  await run(process.execPath, ["scripts/stage-server.mjs"], {
+    cwd: desktopRoot,
+    env: {
+      RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME: "1",
+    },
+  });
+  await run(process.execPath, ["scripts/stage-cli.mjs"], {
+    cwd: desktopRoot,
   });
 }
 
@@ -255,6 +274,7 @@ async function restorePackagingNodeModules(hidden) {
 }
 
 async function main() {
+  await stagePackagedRuntime();
   const nodeModulesHidden = await hidePackagingNodeModules();
 
   try {

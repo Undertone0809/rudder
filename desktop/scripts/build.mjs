@@ -9,13 +9,12 @@ const repoRoot = path.resolve(desktopRoot, "..");
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const tscBin = process.platform === "win32" ? "tsc.cmd" : "tsc";
 
-function run(command, args, cwd, options = {}) {
+function run(command, args, cwd) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
       stdio: "inherit",
       shell: process.platform === "win32",
-      env: options.env ? { ...process.env, ...options.env } : process.env,
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
@@ -35,11 +34,7 @@ function run(command, args, cwd, options = {}) {
 async function main() {
   await run(pnpmBin, ["--filter", "@rudderhq/server...", "build"], repoRoot);
   await run(pnpmBin, ["--filter", "@rudderhq/server", "prepare:ui-dist"], repoRoot);
-  await run(process.execPath, ["scripts/stage-server.mjs"], desktopRoot, {
-    env: {
-      RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME: "1",
-    },
-  });
+  await run(process.execPath, ["scripts/stage-server.mjs"], desktopRoot);
   await run(process.execPath, ["scripts/stage-cli.mjs"], desktopRoot);
   await fs.rm(path.join(desktopRoot, "dist"), { recursive: true, force: true });
   await run(tscBin, ["-p", "tsconfig.json"], desktopRoot);
