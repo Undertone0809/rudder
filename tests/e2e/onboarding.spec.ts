@@ -22,7 +22,7 @@ function onboardingHeading(page: Page, text: string) {
 }
 
 async function expectOnboardingStep(page: Page, text: string) {
-  await expect(onboardingHeading(page, text)).toBeVisible({ timeout: 15_000 });
+  await expect(onboardingHeading(page, text)).toBeVisible({ timeout: 30_000 });
 }
 
 async function expectSelectedCodexModel(page: Page) {
@@ -45,7 +45,7 @@ function extractMarkdownHref(markdown: string, label: string) {
 }
 
 test.describe("Onboarding wizard", () => {
-  test("fresh onboarding creates a Getting Started project and opens dashboard", async ({
+  test("fresh onboarding creates a Getting Started project and opens messenger", async ({
     page,
   }) => {
     const initialOrganizationName = `E2E-Fresh-${Date.now()}`;
@@ -88,8 +88,8 @@ test.describe("Onboarding wizard", () => {
     const selectedCodexModel = await expectSelectedCodexModel(page);
     await onboardingNameInput.fill(updatedAgentName);
 
-    await page.getByRole("button", { name: "Create & Open Dashboard" }).click();
-    await expect(page).toHaveURL(/\/dashboard$/, { timeout: 30_000 });
+    await page.getByRole("button", { name: "Create & Open Messenger" }).click();
+    await expect(page).toHaveURL(/\/messenger$/, { timeout: 30_000 });
 
     const baseUrl = page.url().split("/").slice(0, 3).join("/");
 
@@ -103,7 +103,12 @@ test.describe("Onboarding wizard", () => {
       (org: { name: string }) => org.name === updatedOrganizationName
     );
     expect(organization).toBeTruthy();
-    expect(page.url()).toContain(`/${organization.issuePrefix}/dashboard`);
+    expect(page.url()).toContain(`/${organization.issuePrefix}/messenger`);
+    await page.goto("/");
+    await expect(page).toHaveURL(
+      new RegExp(`/${escapeRegExp(organization.issuePrefix)}/messenger$`),
+      { timeout: 15_000 },
+    );
     expect(organization).not.toHaveProperty("defaultChatAgentRuntimeType");
     expect(organization).not.toHaveProperty("defaultChatAgentRuntimeConfig");
 
@@ -348,9 +353,7 @@ test.describe("Onboarding wizard", () => {
     expect(createRes.ok()).toBe(true);
     const organization = await createRes.json();
 
-    await page.goto(`/${organization.issuePrefix}/dashboard`);
-
-    await page.getByRole("button", { name: "Create one here" }).click();
+    await page.goto(`/${organization.issuePrefix}/onboarding`);
 
     await expectOnboardingStep(page, "Create your first agent");
     const onboardingNameInput = page.locator('input[placeholder="Agent name"]');

@@ -8,6 +8,7 @@ import { useSidebar } from "@/context/SidebarContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { sortOrganizationsByStoredOrder } from "@/lib/organization-order";
+import { DEFAULT_ORGANIZATION_HOME_PATH } from "@/lib/organization-routes";
 import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
 import { RUDDER_DOCS_URL } from "@/lib/product-links";
 import { queryKeys } from "@/lib/queryKeys";
@@ -155,7 +156,7 @@ export function SettingsSidebar({
               className="h-9 w-full justify-start gap-2 rounded-[var(--radius-md)] px-2.5 text-[13px] font-medium text-muted-foreground hover:text-foreground"
               asChild
             >
-              <Link to="/dashboard">
+              <Link to={DEFAULT_ORGANIZATION_HOME_PATH}>
                 <ArrowLeft className="h-4 w-4" />
                 {t("common.backToWorkspace")}
               </Link>

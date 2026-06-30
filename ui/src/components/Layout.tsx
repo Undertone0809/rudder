@@ -26,7 +26,7 @@ import {
   resolveDefaultSettingsPath,
 } from "../lib/instance-settings";
 import { resolveInAppBackStackTargetIndex } from "../lib/navigation-back-stack";
-import { findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix, toOrganizationRelativePath } from "../lib/organization-routes";
 import { shouldSyncOrganizationSelectionFromRoute } from "../lib/organization-selection";
 import { rememberPrimaryRailPath } from "../lib/primary-rail-memory";
 import { RUDDER_DOCS_URL } from "../lib/product-links";
@@ -98,20 +98,20 @@ function readRememberedSettingsPath(canManageAdminSettings: boolean): string {
 }
 
 function readRememberedWorkspacePath(): string {
-  if (typeof window === "undefined") return "/dashboard";
+  if (typeof window === "undefined") return DEFAULT_ORGANIZATION_HOME_PATH;
   try {
     const stored = window.localStorage.getItem(LAST_WORKSPACE_PATH_KEY);
-    if (!stored) return "/dashboard";
+    if (!stored) return DEFAULT_ORGANIZATION_HOME_PATH;
     const relativePath = toOrganizationRelativePath(stored);
     if (
       relativePath.startsWith("/instance/")
       || relativePath.startsWith("/organization/settings")
     ) {
-      return "/dashboard";
+      return DEFAULT_ORGANIZATION_HOME_PATH;
     }
     return relativePath;
   } catch {
-    return "/dashboard";
+    return DEFAULT_ORGANIZATION_HOME_PATH;
   }
 }
 
@@ -804,7 +804,7 @@ export function Layout() {
                 {isSettingsRoute ? (
                   <Button variant="ghost" size="icon-sm" className="text-muted-foreground shrink-0" asChild>
                     <Link
-                      to="/dashboard"
+                      to={DEFAULT_ORGANIZATION_HOME_PATH}
                       aria-label={t("common.backToWorkspace")}
                       title={t("common.backToWorkspace")}
                       onClick={() => {

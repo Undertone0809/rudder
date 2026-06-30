@@ -26,6 +26,8 @@ const BOARD_ROUTE_ROOTS = new Set([
 
 const GLOBAL_ROUTE_ROOTS = new Set(["auth", "invite", "board-claim", "cli-auth", "docs", "instance"]);
 
+export const DEFAULT_ORGANIZATION_HOME_PATH = "/messenger";
+
 export function normalizeOrganizationPrefix(prefix: string): string {
   return prefix.trim().toUpperCase();
 }

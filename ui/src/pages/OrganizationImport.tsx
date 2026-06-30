@@ -41,6 +41,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { getAgentOrderStorageKey, writeAgentOrder } from "../lib/agent-order";
+import { DEFAULT_ORGANIZATION_HOME_PATH } from "../lib/organization-routes";
 import { getPortableFileDataUrl, getPortableFileText, isPortableImageFile } from "../lib/portable-files";
 import { getProjectOrderStorageKey, writeProjectOrder } from "../lib/project-order";
 import { queryKeys } from "../lib/queryKeys";
@@ -868,8 +869,8 @@ export function OrganizationImport() {
         title: "Import complete",
         body: `${result.organization.name}: ${result.agents.length} agent${result.agents.length === 1 ? "" : "s"} processed.`,
       });
-      // Force a fresh dashboard load so newly imported agents are immediately visible.
-      window.location.assign(`/${importedOrganization.issuePrefix}/dashboard`);
+      // Force a fresh workspace load so newly imported agents are immediately visible.
+      window.location.assign(`/${importedOrganization.issuePrefix}${DEFAULT_ORGANIZATION_HOME_PATH}`);
     },
     onError: (err) => {
       pushToast({

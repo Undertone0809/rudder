@@ -8,7 +8,7 @@ import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { formatDisplayPath } from "@/lib/display-path";
 import { normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
-import { applyOrganizationPrefix } from "@/lib/organization-routes";
+import { applyOrganizationPrefix, DEFAULT_ORGANIZATION_HOME_PATH } from "@/lib/organization-routes";
 import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
 import { Link, useLocation, useNavigate } from "@/lib/router";
 import {
@@ -62,7 +62,7 @@ export function OrganizationSettings() {
   const overlayState = preserveSettingsOverlayState(location.state);
   const overlayBackgroundPath = readSettingsOverlayBackgroundPath(location.state)
     ?? readStoredSettingsOverlayBackgroundPath()
-    ?? "/dashboard";
+    ?? DEFAULT_ORGANIZATION_HOME_PATH;
   // General settings local state
   const [organizationName, setOrganizationName] = useState("");
   const [description, setDescription] = useState("");
@@ -370,7 +370,7 @@ export function OrganizationSettings() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: viewedOrganization?.name ?? "Organization", href: "/dashboard" },
+      { label: viewedOrganization?.name ?? "Organization", href: DEFAULT_ORGANIZATION_HOME_PATH },
       { label: t("organizationSettings.breadcrumb") },
     ]);
   }, [setBreadcrumbs, t, viewedOrganization?.name]);

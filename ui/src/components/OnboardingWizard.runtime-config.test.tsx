@@ -115,7 +115,7 @@ vi.mock("@/context/OrganizationContext", () => ({
 }));
 
 vi.mock("@/lib/router", () => ({
-  useLocation: () => ({ pathname: "/dashboard" }),
+  useLocation: () => ({ pathname: "/messenger" }),
   useNavigate: () => navigateMock,
   useParams: () => ({}),
 }));

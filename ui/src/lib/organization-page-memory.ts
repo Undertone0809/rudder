@@ -1,4 +1,5 @@
 import {
+  DEFAULT_ORGANIZATION_HOME_PATH,
   extractOrganizationPrefixFromPath,
   findOrganizationByPrefix,
   normalizeOrganizationPrefix,
@@ -36,9 +37,9 @@ export function sanitizeRememberedPathForOrganization(params: {
   path: string | null | undefined;
   organizationPrefix: string;
 }): string {
-  const relativePath = params.path ? toOrganizationRelativePath(params.path) : "/dashboard";
+  const relativePath = params.path ? toOrganizationRelativePath(params.path) : DEFAULT_ORGANIZATION_HOME_PATH;
   if (!isRememberableOrganizationPath(relativePath)) {
-    return "/dashboard";
+    return DEFAULT_ORGANIZATION_HOME_PATH;
   }
 
   const pathname = relativePath.split("?")[0] ?? "";
@@ -50,7 +51,7 @@ export function sanitizeRememberedPathForOrganization(params: {
       identifierMatch &&
       normalizeOrganizationPrefix(identifierMatch[1] ?? "") !== normalizeOrganizationPrefix(params.organizationPrefix)
     ) {
-      return "/dashboard";
+      return DEFAULT_ORGANIZATION_HOME_PATH;
     }
   }
 

@@ -158,7 +158,7 @@ describe("InstanceGeneralSettings", () => {
       startButton!.click();
     });
 
-    expect(navigate).toHaveBeenCalledWith("/dashboard");
+    expect(navigate).toHaveBeenCalledWith("/messenger");
     expect(openProductTour).not.toHaveBeenCalled();
 
     act(() => {

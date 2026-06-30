@@ -71,22 +71,22 @@ describe("sanitizeRememberedPathForOrganization", () => {
     ).toBe("/issues/PAP-12");
   });
 
-  it("falls back to dashboard for remembered issue identifiers from another organization", () => {
+  it("falls back to messenger for remembered issue identifiers from another organization", () => {
     expect(
       sanitizeRememberedPathForOrganization({
         path: "/issues/FOR-1",
         organizationPrefix: "PAP",
       }),
-    ).toBe("/dashboard");
+    ).toBe("/messenger");
   });
 
-  it("falls back to dashboard when no remembered path exists", () => {
+  it("falls back to messenger when no remembered path exists", () => {
     expect(
       sanitizeRememberedPathForOrganization({
         path: null,
         organizationPrefix: "PAP",
       }),
-    ).toBe("/dashboard");
+    ).toBe("/messenger");
   });
 
   it("keeps remembered skills paths intact for the target organization", () => {
