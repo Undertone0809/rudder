@@ -14,6 +14,7 @@ const mockState = vi.hoisted(() => ({
   setSearchParams: vi.fn(),
   searchParams: "path=agents/Asher/instructions/HEARTBEAT.md",
   desktopShell: null as unknown,
+  copyWorkspaceEntry: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -195,6 +196,12 @@ vi.mock("@/lib/router", () => ({
   ],
 }));
 
+vi.mock("../api/orgs", () => ({
+  organizationsApi: {
+    copyWorkspaceEntry: mockState.copyWorkspaceEntry,
+  },
+}));
+
 vi.mock("../context/I18nContext", () => ({
   useI18n: () => ({ locale: "en", t: (key: string) => key }),
 }));
@@ -245,6 +252,12 @@ beforeEach(() => {
   });
   mockState.desktopShell = null;
   mockState.searchParams = "path=agents/Asher/instructions/HEARTBEAT.md";
+  mockState.copyWorkspaceEntry.mockResolvedValue({
+    previousPath: "docs/draft.md",
+    path: "docs/draft copy.md",
+    isDirectory: false,
+    libraryEntryId: "entry-copy",
+  });
 });
 
 afterEach(() => {
@@ -422,6 +435,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(instructionsMenu?.textContent).toContain("Copy link");
     expect(instructionsMenu?.textContent).toContain("Copy absolute path");
     expect(instructionsMenu?.textContent).toContain("New file");
+    expect(instructionsMenu?.textContent).not.toContain("Create copy");
     expect(instructionsMenu?.textContent).not.toContain("Delete");
     expect(instructionsMenu?.textContent).not.toContain("Rename");
 
@@ -432,6 +446,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     const heartbeatMenu = openEntryMenu("agents/Asher/instructions/HEARTBEAT.md");
     expect(heartbeatMenu?.textContent).toContain("Copy link");
     expect(heartbeatMenu?.textContent).toContain("Copy absolute path");
+    expect(heartbeatMenu?.textContent).not.toContain("Create copy");
     expect(heartbeatMenu?.textContent).not.toContain("Delete");
     expect(heartbeatMenu?.textContent).not.toContain("Rename");
   });
@@ -513,8 +528,31 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     renderSidebar();
 
     const menu = openEntryMenu("agents/Asher/instructions/notes.md");
+    expect(menu?.textContent).toContain("Create copy");
     expect(menu?.textContent).toContain("Rename");
     expect(menu?.textContent).toContain("Delete");
+  });
+
+  it("creates a copy of ordinary workspace files from the entry menu", async () => {
+    renderSidebar("docs/draft.md");
+
+    openEntryMenu("docs/draft.md");
+    const copyItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
+      .find((item) => item.textContent?.includes("Create copy"));
+    expect(copyItem).toBeTruthy();
+    await act(async () => {
+      copyItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockState.copyWorkspaceEntry).toHaveBeenCalledWith("org-1", "docs/draft.md");
+    expect(mockState.setSearchParams).toHaveBeenCalled();
+    const [nextParams] = mockState.setSearchParams.mock.calls.at(-1) ?? [];
+    expect(nextParams?.toString()).toContain("path=docs%2Fdraft+copy.md");
+    expect(mockState.pushToast).toHaveBeenLastCalledWith(expect.objectContaining({
+      title: "Workspace entry copied",
+    }));
   });
 
   it("hides destructive actions for agent memory entries", () => {
@@ -524,6 +562,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(memoryFolderMenu?.textContent).toContain("Copy link");
     expect(memoryFolderMenu?.textContent).toContain("Copy absolute path");
     expect(memoryFolderMenu?.textContent).toContain("New file");
+    expect(memoryFolderMenu?.textContent).not.toContain("Create copy");
     expect(memoryFolderMenu?.textContent).not.toContain("Delete");
     expect(memoryFolderMenu?.textContent).not.toContain("Rename");
 
@@ -534,6 +573,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     const memoryFileMenu = openEntryMenu("agents/Asher/memory/notes.md");
     expect(memoryFileMenu?.textContent).toContain("Copy link");
     expect(memoryFileMenu?.textContent).toContain("Copy absolute path");
+    expect(memoryFileMenu?.textContent).not.toContain("Create copy");
     expect(memoryFileMenu?.textContent).not.toContain("Delete");
     expect(memoryFileMenu?.textContent).not.toContain("Rename");
   });
@@ -545,6 +585,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(agentSkillsFolderMenu?.textContent).toContain("Copy link");
     expect(agentSkillsFolderMenu?.textContent).toContain("Copy absolute path");
     expect(agentSkillsFolderMenu?.textContent).toContain("New file");
+    expect(agentSkillsFolderMenu?.textContent).not.toContain("Create copy");
     expect(agentSkillsFolderMenu?.textContent).not.toContain("Delete");
     expect(agentSkillsFolderMenu?.textContent).not.toContain("Rename");
 
@@ -555,6 +596,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     const agentSkillFileMenu = openEntryMenu("agents/Asher/skills/agent-helper/SKILL.md");
     expect(agentSkillFileMenu?.textContent).toContain("Copy link");
     expect(agentSkillFileMenu?.textContent).toContain("Copy absolute path");
+    expect(agentSkillFileMenu?.textContent).not.toContain("Create copy");
     expect(agentSkillFileMenu?.textContent).not.toContain("Delete");
     expect(agentSkillFileMenu?.textContent).not.toContain("Rename");
   });
@@ -567,6 +609,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(skillsRootMenu?.textContent).toContain("Copy absolute path");
     expect(skillsRootMenu?.textContent).not.toContain("New file");
     expect(skillsRootMenu?.textContent).not.toContain("New folder");
+    expect(skillsRootMenu?.textContent).not.toContain("Create copy");
     expect(skillsRootMenu?.textContent).not.toContain("Delete");
     expect(skillsRootMenu?.textContent).not.toContain("Rename");
 
@@ -577,6 +620,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     const orgSkillFileMenu = openEntryMenu("skills/org-helper/SKILL.md");
     expect(orgSkillFileMenu?.textContent).toContain("Copy link");
     expect(orgSkillFileMenu?.textContent).toContain("Copy absolute path");
+    expect(orgSkillFileMenu?.textContent).not.toContain("Create copy");
     expect(orgSkillFileMenu?.textContent).not.toContain("Delete");
     expect(orgSkillFileMenu?.textContent).not.toContain("Rename");
   });

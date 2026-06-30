@@ -157,6 +157,24 @@ function assertMutableWorkspaceEntry(normalizedPath: string) {
   }
 }
 
+function assertCopyableWorkspaceEntry(normalizedPath: string) {
+  if (!normalizedPath) {
+    throw unprocessable("The organization Library root cannot be copied");
+  }
+  if (isProtectedAgentWorkspaceContainerPath(normalizedPath)) {
+    throw unprocessable("Agent directory entries cannot be copied from the Library browser");
+  }
+  if (isProtectedAgentInstructionsEntryPath(normalizedPath)) {
+    throw unprocessable("Protected agent instruction entries cannot be copied from the Library browser");
+  }
+  if (isProtectedAgentManagedEntryPath(normalizedPath)) {
+    throw unprocessable("Protected agent managed directory entries cannot be copied from the Library browser");
+  }
+  if (isProtectedOrganizationSkillsEntryPath(normalizedPath)) {
+    throw unprocessable("Organization skill entries cannot be copied from the Library browser");
+  }
+}
+
 function assertCanCreateWorkspaceEntry(normalizedPath: string) {
   const parentPath = toPortableRelativePath(path.dirname(normalizedPath));
   if (isProtectedAgentWorkspaceContainerPath(parentPath === "." ? "" : parentPath)) {
@@ -174,6 +192,27 @@ function normalizeEntryName(name: string) {
     throw unprocessable("Entry name must not include path separators");
   }
   return nextName;
+}
+
+function copyNameForAttempt(baseName: string, attempt: number) {
+  const extension = path.extname(baseName);
+  const stem = extension ? baseName.slice(0, -extension.length) : baseName;
+  const suffix = attempt === 1 ? " copy" : ` copy ${attempt}`;
+  return `${stem}${suffix}${extension}`;
+}
+
+async function resolveAvailableCopyTarget(
+  destinationDirectory: string,
+  originalName: string,
+): Promise<{ targetPath: string; name: string }> {
+  for (let attempt = 1; attempt <= 999; attempt += 1) {
+    const name = copyNameForAttempt(originalName, attempt);
+    const targetPath = path.resolve(destinationDirectory, name);
+    if (!(await statWorkspaceEntry(targetPath))) {
+      return { targetPath, name };
+    }
+  }
+  throw conflict("No available copy name was found for this entry");
 }
 
 async function statWorkspaceEntry(targetPath: string) {
@@ -753,6 +792,68 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const libraryEntry = stat.isDirectory()
         ? (await libraryEntries.moveWorkspaceDirectoryEntries(orgId, normalizedPath, nextPath), null)
         : await libraryEntries.moveWorkspaceFileEntry(orgId, normalizedPath, nextPath);
+      return {
+        previousPath: normalizedPath,
+        path: nextPath,
+        isDirectory: stat.isDirectory(),
+        libraryEntryId: libraryEntry?.id ?? null,
+      };
+    },
+
+    async copyEntry(
+      orgId: string,
+      entryPath: string,
+      destinationDirectoryPath?: string | null,
+    ): Promise<OrganizationWorkspaceEntryMutationResult> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, entryPath);
+      const destinationInput = destinationDirectoryPath ?? path.dirname(normalizedPath);
+      const {
+        resolvedTarget: resolvedDestinationDirectory,
+        normalizedPath: normalizedDestinationDirectory,
+      } = resolveWithinRoot(root.rootPath, destinationInput === "." ? "" : destinationInput);
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) {
+        throw notFound("The shared Library root is not available on this machine yet.");
+      }
+      assertCopyableWorkspaceEntry(normalizedPath);
+      if (isProtectedAgentWorkspaceContainerPath(normalizedDestinationDirectory)) {
+        throw unprocessable("Entries cannot be copied into the protected agent area");
+      }
+
+      const stat = await statWorkspaceEntry(resolvedTarget);
+      if (!stat) {
+        throw notFound("Entry not found inside the organization Library");
+      }
+      if (!(await pathExistsAsDirectory(resolvedDestinationDirectory))) {
+        throw notFound("Destination directory not found inside the organization Library");
+      }
+      if (stat.isDirectory()) {
+        const relativeDestination = path.relative(resolvedTarget, resolvedDestinationDirectory);
+        if (relativeDestination === "" || (!relativeDestination.startsWith("..") && !path.isAbsolute(relativeDestination))) {
+          throw unprocessable("A folder cannot be copied into itself or one of its children");
+        }
+      }
+
+      const { targetPath: nextTarget } = await resolveAvailableCopyTarget(
+        resolvedDestinationDirectory,
+        path.basename(resolvedTarget),
+      );
+      const nextRelativePath = path.relative(resolvedRoot, nextTarget);
+      if (nextRelativePath.startsWith("..") || path.isAbsolute(nextRelativePath)) {
+        throw unprocessable("Entry path must stay inside the organization Library root");
+      }
+      const nextPath = toPortableRelativePath(nextRelativePath);
+      assertCanCreateWorkspaceEntry(nextPath);
+
+      await fs.cp(resolvedTarget, nextTarget, {
+        recursive: stat.isDirectory(),
+        errorOnExist: true,
+        force: false,
+      });
+      const libraryEntry = stat.isDirectory()
+        ? null
+        : await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, nextPath);
       return {
         previousPath: normalizedPath,
         path: nextPath,

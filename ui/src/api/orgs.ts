@@ -20,6 +20,7 @@ import type {
   OrganizationPortabilityPreviewResult,
   OrganizationResource,
   OrganizationWorkspaceDirectoryCreateRequest,
+  OrganizationWorkspaceEntryCopyRequest,
   OrganizationWorkspaceEntryMoveRequest,
   OrganizationWorkspaceEntryMutationResult,
   OrganizationWorkspaceEntryRenameRequest,
@@ -165,6 +166,15 @@ export const organizationsApi = {
     const query = search.toString();
     return api.patch<OrganizationWorkspaceEntryMutationResult>(
       `/orgs/${orgId}/workspace/entry/move${query ? `?${query}` : ""}`,
+      data,
+    );
+  },
+  copyWorkspaceEntry: (orgId: string, entryPath: string, data: OrganizationWorkspaceEntryCopyRequest = {}) => {
+    const search = new URLSearchParams();
+    if (entryPath) search.set("path", entryPath);
+    const query = search.toString();
+    return api.post<OrganizationWorkspaceEntryMutationResult>(
+      `/orgs/${orgId}/workspace/entry/copy${query ? `?${query}` : ""}`,
       data,
     );
   },

@@ -420,6 +420,24 @@ describe("organization workspace browser", () => {
     expect(afterRename.mentionHref).toBe(`library-entry://${entryId}?p=projects%2Fwork%2Frenamed.md`);
     expect(afterRename.markdownLink).toBe(`[renamed.md](library-entry://${entryId}?p=projects%2Fwork%2Frenamed.md)`);
 
+    const copied = await workspaceBrowser.copyEntry(orgId, "projects/work/renamed.md");
+    expect(copied).toEqual(expect.objectContaining({
+      previousPath: "projects/work/renamed.md",
+      path: "projects/work/renamed copy.md",
+      isDirectory: false,
+      libraryEntryId: expect.any(String),
+    }));
+    expect(copied.libraryEntryId).not.toBe(entryId);
+    await expect(fs.readFile(path.join(root, "projects", "work", "renamed copy.md"), "utf8")).resolves.toBe("# Original\n");
+    const copiedAgain = await workspaceBrowser.copyEntry(orgId, "projects/work/renamed.md");
+    expect(copiedAgain).toEqual(expect.objectContaining({
+      previousPath: "projects/work/renamed.md",
+      path: "projects/work/renamed copy 2.md",
+      isDirectory: false,
+      libraryEntryId: expect.any(String),
+    }));
+    expect(copiedAgain.libraryEntryId).not.toBe(entryId);
+
     await workspaceBrowser.createDirectory(orgId, "projects/final");
     const moved = await workspaceBrowser.moveEntry(orgId, "projects/work/renamed.md", "projects/final");
     expect(moved).toEqual(expect.objectContaining({
@@ -441,6 +459,18 @@ describe("organization workspace browser", () => {
 
     const child = await workspaceBrowser.createFile(orgId, "projects/work/nested/child.md", "# Child\n");
     const childEntryId = child.libraryEntryId!;
+    const copiedDirectory = await workspaceBrowser.copyEntry(orgId, "projects/work/nested");
+    expect(copiedDirectory).toEqual({
+      previousPath: "projects/work/nested",
+      path: "projects/work/nested copy",
+      isDirectory: true,
+      libraryEntryId: null,
+    });
+    await expect(fs.readFile(path.join(root, "projects", "work", "nested copy", "child.md"), "utf8")).resolves.toBe("# Child\n");
+    const copiedDirectoryFile = await workspaceBrowser.readFile(orgId, "projects/work/nested copy/child.md");
+    expect(copiedDirectoryFile.libraryEntryId).toEqual(expect.any(String));
+    expect(copiedDirectoryFile.libraryEntryId).not.toBe(childEntryId);
+
     await expect(workspaceBrowser.renameEntry(orgId, "projects/work", "research")).resolves.toEqual(
       expect.objectContaining({
         previousPath: "projects/work",
@@ -635,7 +665,16 @@ describe("organization workspace browser", () => {
     await expect(workspaceBrowser.moveEntry(orgId, "skills/org-helper", "docs")).rejects.toMatchObject({
       status: 422,
     });
+    await expect(workspaceBrowser.copyEntry(orgId, "skills/org-helper")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.copyEntry(orgId, `agents/${workspaceKey}/memory/notes.md`)).rejects.toMatchObject({
+      status: 422,
+    });
     await expect(workspaceBrowser.moveEntry(orgId, "projects/work/new-file.md", "agents")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.copyEntry(orgId, "projects/work/new-file.md", "agents")).rejects.toMatchObject({
       status: 422,
     });
     await expect(workspaceBrowser.moveEntry(orgId, "projects/work/new-file.md", `agents/${workspaceKey}`)).rejects.toMatchObject({

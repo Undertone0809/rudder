@@ -48,6 +48,7 @@ import {
   ExternalLink,
   FileCode2,
   FilePlus2,
+  Files,
   FileText,
   Folder,
   FolderOpen,
@@ -892,6 +893,10 @@ function canMoveWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path
     && !isProtectedOrganizationSkillsEntryPath(entry.path);
 }
 
+function canCopyWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
+  return canMoveWorkspaceEntry(entry);
+}
+
 function canRenameWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
   return !isProtectedAgentWorkspaceContainerPath(entry.path)
     && !isProtectedAgentInstructionsEntryPath(entry.path)
@@ -1298,6 +1303,7 @@ function DirectoryChildren({
   onOpenEntry,
   onOpenEntryTarget,
   onStartCreateEntry,
+  onCopyEntry,
   onStartRename,
   onStartDelete,
   onMoveEntry,
@@ -1333,6 +1339,7 @@ function DirectoryChildren({
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntryTarget?: (entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
+  onCopyEntry: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
@@ -1386,6 +1393,7 @@ function DirectoryChildren({
           onOpenEntry={onOpenEntry}
           onOpenEntryTarget={onOpenEntryTarget}
           onStartCreateEntry={onStartCreateEntry}
+          onCopyEntry={onCopyEntry}
           onStartRename={onStartRename}
           onStartDelete={onStartDelete}
           onMoveEntry={onMoveEntry}
@@ -1427,6 +1435,7 @@ function WorkspaceTreeNode({
   onOpenEntry,
   onOpenEntryTarget,
   onStartCreateEntry,
+  onCopyEntry,
   onStartRename,
   onStartDelete,
   onMoveEntry,
@@ -1462,6 +1471,7 @@ function WorkspaceTreeNode({
   onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
   onOpenEntryTarget?: (entry: OrganizationWorkspaceFileEntry, target: DesktopWorkspaceLaunchTarget) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
+  onCopyEntry: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
@@ -1491,6 +1501,7 @@ function WorkspaceTreeNode({
   const isProtectedContainer = isProtectedAgentWorkspaceContainerPath(entry.path);
   const projectResourceGroup = projectResourceGroupsByLibraryPath.get(entry.path) ?? null;
   const canCreateInsideDirectory = !isVirtualSkillEntry && entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
+  const canCopyEntry = !isVirtualSkillEntry && canCopyWorkspaceEntry(entry);
   const canMoveEntry = !isVirtualSkillEntry && canMoveWorkspaceEntry(entry);
   const canRenameEntry = !isVirtualSkillEntry && canRenameWorkspaceEntry(entry);
   const canDeleteEntry = !isVirtualSkillEntry && canDeleteWorkspaceEntry(entry);
@@ -1683,7 +1694,13 @@ function WorkspaceTreeNode({
                 </DropdownMenuItem>
               </>
             ) : null}
-            {canRenameEntry || canDeleteEntry ? <DropdownMenuSeparator /> : null}
+            {canCopyEntry || canRenameEntry || canDeleteEntry ? <DropdownMenuSeparator /> : null}
+            {canCopyEntry ? (
+              <DropdownMenuItem onSelect={() => onCopyEntry(entry)}>
+                <Files className="h-3.5 w-3.5" />
+                Create copy
+              </DropdownMenuItem>
+            ) : null}
             {canRenameEntry ? (
               <DropdownMenuItem onSelect={() => onStartRename(entry)}>
                 <Pencil className="h-3.5 w-3.5" />
@@ -1847,6 +1864,7 @@ function WorkspaceTreeNode({
               onOpenEntry={onOpenEntry}
               onOpenEntryTarget={onOpenEntryTarget}
               onStartCreateEntry={onStartCreateEntry}
+              onCopyEntry={onCopyEntry}
               onStartRename={onStartRename}
               onStartDelete={onStartDelete}
               onMoveEntry={onMoveEntry}
@@ -3281,6 +3299,31 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
     },
   });
 
+  const copyWorkspaceEntry = useMutation({
+    mutationFn: (entry: OrganizationWorkspaceFileEntry) =>
+      organizationsApi.copyWorkspaceEntry(viewedOrganizationId!, entry.path),
+    onSuccess: (result) => {
+      void invalidateWorkspaceBrowser();
+      if (!result.isDirectory) {
+        setActiveEntryPath(result.path);
+        updateSelectedPath(searchParams, setSearchParams, result.path);
+      } else {
+        setActiveEntryPath(result.path);
+      }
+      pushToast({
+        title: "Workspace entry copied",
+        body: result.previousPath ? `${result.previousPath} -> ${result.path}` : result.path,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to copy workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
   const deleteWorkspaceEntry = useMutation({
     mutationFn: (entry: OrganizationWorkspaceFileEntry) =>
       organizationsApi.deleteWorkspaceEntry(viewedOrganizationId!, entry.path),
@@ -3515,6 +3558,11 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
     setDeleteTarget(entry);
   }
 
+  function handleCopyEntry(entry: OrganizationWorkspaceFileEntry) {
+    if (!canCopyWorkspaceEntry(entry)) return;
+    copyWorkspaceEntry.mutate(entry);
+  }
+
   function handleMoveEntry(
     entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">,
     destinationDirectoryPath: string,
@@ -3714,6 +3762,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
                         void handleOpenEntryTarget(entryToOpen, target);
                       }}
                       onStartCreateEntry={handleStartCreateEntry}
+                      onCopyEntry={handleCopyEntry}
                       onStartRename={handleStartRename}
                       onStartDelete={handleStartDelete}
                       onMoveEntry={handleMoveEntry}
@@ -4733,6 +4782,35 @@ export function OrganizationWorkspaceBrowser({
     },
   });
 
+  const copyWorkspaceEntry = useMutation({
+    mutationFn: (entry: OrganizationWorkspaceFileEntry) => {
+      flushCurrentDraft();
+      return organizationsApi.copyWorkspaceEntry(viewedOrganizationId!, entry.path);
+    },
+    onSuccess: (result) => {
+      if (!viewedOrganizationId) return;
+      void invalidateWorkspaceBrowser();
+      setActiveEntryPath(result.path);
+      if (!result.isDirectory) {
+        setSelectedFilePath(result.path);
+        openWorkspaceFileTab(result.path);
+        setDraftFilePath(null);
+        updateSelectedPath(searchParams, setSearchParams, result.path);
+      }
+      pushToast({
+        title: "Workspace entry copied",
+        body: result.previousPath ? `${result.previousPath} -> ${result.path}` : result.path,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to copy workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
   const createWorkspaceEntry = useMutation({
     mutationFn: async (payload: {
       parent: OrganizationWorkspaceFileEntry;
@@ -4919,6 +4997,11 @@ export function OrganizationWorkspaceBrowser({
     setCreateTarget({ parent: workspaceRootEntry, kind });
     setCreateDraft(kind === "file" ? "untitled.md" : "new-folder");
   }, [flushCurrentDraft, workspaceRootEntry]);
+
+  const handleCopyEntry = useCallback((entry: OrganizationWorkspaceFileEntry) => {
+    if (!canCopyWorkspaceEntry(entry)) return;
+    copyWorkspaceEntry.mutate(entry);
+  }, [copyWorkspaceEntry]);
 
   const handleOpenWorkspaceTarget = useCallback(async (
     rootPath: string,
@@ -5836,6 +5919,7 @@ export function OrganizationWorkspaceBrowser({
                             void handleOpenEntryTarget(entryToOpen, target);
                           }}
                           onStartCreateEntry={handleStartCreateEntry}
+                          onCopyEntry={handleCopyEntry}
                           onStartRename={handleStartRename}
                           onStartDelete={handleStartDelete}
                           onMoveEntry={handleMoveEntry}

@@ -74,6 +74,10 @@ export interface OrganizationWorkspaceEntryMoveRequest {
   destinationDirectoryPath: string;
 }
 
+export interface OrganizationWorkspaceEntryCopyRequest {
+  destinationDirectoryPath?: string;
+}
+
 export interface OrganizationWorkspaceEntryMutationResult {
   path: string;
   previousPath?: string;

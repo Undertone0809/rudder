@@ -76,3 +76,9 @@ export const moveOrganizationWorkspaceEntrySchema = z.object({
 });
 
 export type MoveOrganizationWorkspaceEntry = z.infer<typeof moveOrganizationWorkspaceEntrySchema>;
+
+export const copyOrganizationWorkspaceEntrySchema = z.object({
+  destinationDirectoryPath: z.string().trim().max(1000).optional(),
+});
+
+export type CopyOrganizationWorkspaceEntry = z.infer<typeof copyOrganizationWorkspaceEntrySchema>;

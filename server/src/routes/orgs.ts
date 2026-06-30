@@ -1,5 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import {
+  copyOrganizationWorkspaceEntrySchema,
   createLibraryDocumentSchema,
   createOrganizationResourceSchema,
   createOrganizationSchema,
@@ -676,6 +677,32 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       },
     });
     res.json(result);
+  });
+
+  router.post("/:orgId/workspace/entry/copy", validate(copyOrganizationWorkspaceEntrySchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const entryPath = typeof req.query.path === "string" ? req.query.path : "";
+    const result = await workspaceBrowser.copyEntry(orgId, entryPath, req.body.destinationDirectoryPath);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_entry.copied",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        previousPath: result.previousPath,
+        path: result.path,
+        destinationDirectoryPath: req.body.destinationDirectoryPath ?? null,
+        isDirectory: result.isDirectory,
+      },
+    });
+    res.status(201).json(result);
   });
 
   router.delete("/:orgId/workspace/entry", async (req, res) => {
