@@ -4001,6 +4001,7 @@ export function OrganizationWorkspaceBrowser({
   const [htmlFileMode, setHtmlFileMode] = useState<"preview" | "source">("preview");
   const [csvFileMode, setCsvFileMode] = useState<"table" | "source">("table");
   const [showHiddenMarkdownSections, setShowHiddenMarkdownSections] = useState(false);
+  const [markdownOutlineCollapsed, setMarkdownOutlineCollapsed] = useState(false);
   const [openFilePaths, setOpenFilePaths] = useState<string[]>(
     () => normalizeWorkspaceOpenFilePaths([...initialOpenFileTabState.openFilePaths, initialSafeSelectedFilePath])
       .filter((filePath) => !isLegacyAgentHeartbeatInstructionPath(filePath)),
@@ -5351,6 +5352,7 @@ export function OrganizationWorkspaceBrowser({
       : selectedMarkdownOutlineWithHidden.filter((item) => !item.hidden)
     : [];
   const showSelectedMarkdownOutlinePanel = selectedMarkdownOutline.length > 0 || selectedMarkdownHasHiddenOutlineItems;
+  const renderSelectedMarkdownOutlinePanel = showSelectedMarkdownOutlinePanel && !markdownOutlineCollapsed;
   const selectedDirectoryPath = !selectedFilePath && !selectedProjectResource
     ? requestedDirectoryPath
     : null;
@@ -6262,12 +6264,22 @@ export function OrganizationWorkspaceBrowser({
                     >
                       <div
                         className={cn(
-                          "mx-auto min-h-full w-full px-8 py-8",
-                          showSelectedMarkdownOutlinePanel
+                          "relative mx-auto min-h-full w-full px-8 py-8",
+                          renderSelectedMarkdownOutlinePanel
                             ? "max-w-[1180px] xl:grid xl:grid-cols-[minmax(0,880px)_220px] xl:gap-8"
                             : "max-w-[880px]",
                         )}
                       >
+                        {showSelectedMarkdownOutlinePanel && markdownOutlineCollapsed ? (
+                          <button
+                            type="button"
+                            className="absolute right-8 top-6 hidden h-7 w-7 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring xl:inline-flex"
+                            aria-label="Show sections"
+                            onClick={() => setMarkdownOutlineCollapsed(false)}
+                          >
+                            <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        ) : null}
                         <div className="min-w-0">
                           {selectedMarkdownParts.frontmatter !== null ? (
                             <details
@@ -6308,7 +6320,7 @@ export function OrganizationWorkspaceBrowser({
                             contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"
                           />
                         </div>
-                        {showSelectedMarkdownOutlinePanel ? (
+                        {renderSelectedMarkdownOutlinePanel ? (
                           <aside
                             aria-label="Document sections"
                             data-testid="org-workspaces-document-outline"
@@ -6317,27 +6329,30 @@ export function OrganizationWorkspaceBrowser({
                             <div className="sticky top-6 border-l border-border/60 py-1 pl-4">
                               <div className="mb-2 flex items-center justify-between gap-2">
                                 <div className="text-xs font-medium text-muted-foreground">Sections</div>
-                                {selectedMarkdownHasHiddenOutlineItems ? (
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <button
-                                        type="button"
-                                        className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                                        aria-label="Section display options"
-                                      >
-                                        <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
-                                      </button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                                      aria-label="Section display options"
+                                    >
+                                      <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-48">
+                                    <DropdownMenuItem onSelect={() => setMarkdownOutlineCollapsed(true)}>
+                                      Hide sections
+                                    </DropdownMenuItem>
+                                    {selectedMarkdownHasHiddenOutlineItems ? (
                                       <DropdownMenuCheckboxItem
                                         checked={showHiddenMarkdownSections}
                                         onCheckedChange={(checked) => setShowHiddenMarkdownSections(checked === true)}
                                       >
                                         Show hidden sections
                                       </DropdownMenuCheckboxItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                ) : null}
+                                    ) : null}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                               </div>
                               {selectedMarkdownOutline.length > 0 ? (
                                 <nav className="space-y-0.5">

@@ -460,3 +460,22 @@ test("Library markdown section options can reveal hidden headings", async ({ pag
     return Math.round(headingBox.y - scrollBox.y);
   }).toBeLessThan(48);
 });
+
+test("Library markdown section options can hide and restore the outline panel", async ({ page }) => {
+  const organization = await createOrg(page, "Library-Markdown-Hide-Outline");
+  const filePath = "docs/hide-outline.md";
+  await writeWorkspaceFile(page, organization.id, filePath, "# Visible Outline\n\n## Next Step\n\nDone.\n");
+  await selectOrg(page, organization.id);
+  await page.setViewportSize({ width: 1491, height: 926 });
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+
+  const outline = page.getByTestId("org-workspaces-document-outline");
+  await expect(outline).toBeVisible();
+  await outline.getByRole("button", { name: "Section display options" }).click();
+  await page.getByRole("menuitem", { name: "Hide sections" }).click();
+
+  await expect(outline).toHaveCount(0);
+  await page.getByRole("button", { name: "Show sections" }).click();
+  await expect(page.getByTestId("org-workspaces-document-outline")).toBeVisible();
+  await expect(page.getByTestId("org-workspaces-document-outline").getByRole("button", { name: "Next Step" })).toBeVisible();
+});
