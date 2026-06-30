@@ -3744,7 +3744,7 @@ export function MessengerContextSidebar() {
           style={customGroupStyle(displayedCustomGroup)}
         >
           <MessengerInsertionLine placement={sectionInsertionPlacement} tone="group" />
-          <div className="flex min-h-7 items-center gap-1.5">
+          <div className="flex min-h-8 items-center gap-1.5">
             <MessengerDragHandle
               dragHandleProps={dragHandleProps}
               label={`Drag group ${section.label}`}
