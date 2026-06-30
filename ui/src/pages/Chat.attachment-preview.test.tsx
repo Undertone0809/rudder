@@ -893,8 +893,11 @@ describe("Chat message scroll map", () => {
       await Promise.resolve();
     });
 
+    const targetMessage = container.querySelector("[data-message-id='long-message-7']");
+    const targetBubble = targetMessage?.querySelector("[data-testid='chat-user-message-bubble']");
     expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
-    expect(container.querySelector("[data-message-id='long-message-7']")?.className).toContain("chat-message-jump-highlight");
+    expect(targetMessage?.className).not.toContain("chat-message-jump-highlight");
+    expect(targetBubble?.className).toContain("chat-message-jump-highlight");
   });
 
   it("renders markdown tokens in hover previews without exposing raw mention protocols", async () => {

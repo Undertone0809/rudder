@@ -1541,6 +1541,7 @@ export function AskUserAnswerBubble({
   return (
     <div
       data-testid="chat-ask-user-answer"
+      data-message-highlight-target="true"
       data-motion={animate ? "submitted" : undefined}
       className={cn(
         "chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]",
@@ -2174,7 +2175,7 @@ export function ChatMessageItem({
   if (!isUser) {
     return (
       <div data-testid="chat-assistant-message" data-message-id={message.id} className="flex justify-start transition-all duration-200">
-        <div className="group w-full max-w-3xl px-1 py-1">
+        <div data-message-highlight-target="true" className="group w-full max-w-3xl px-1 py-1">
           <ChatAssistantAttributionRow
             replyingAgentId={message.replyingAgentId ?? null}
             conversation={conversation}
@@ -2281,6 +2282,7 @@ export function ChatMessageItem({
           <div
             ref={inlineEdit.surfaceRef}
             data-testid="chat-inline-message-editor"
+            data-message-highlight-target="true"
             className="chat-message-user w-full max-w-[min(100%,88ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
           >
             <MarkdownEditor
@@ -2335,6 +2337,7 @@ export function ChatMessageItem({
         ) : (
           <div
             data-testid="chat-user-message-bubble"
+            data-message-highlight-target="true"
             className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
           >
             <ChatUserPlainTextBody

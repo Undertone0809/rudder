@@ -164,12 +164,17 @@ function findChatMessageElement(root: HTMLElement, messageId: string) {
   const candidates = root.querySelectorAll<HTMLElement>("[data-message-id]");
   return Array.from(candidates).find((element) => element.dataset.messageId === messageId) ?? null;
 }
+function findChatMessageHighlightElement(target: HTMLElement) {
+  return target.querySelector<HTMLElement>("[data-message-highlight-target='true']") ?? target;
+}
 function revealChatMessageElement(target: HTMLElement) {
+  const highlightTarget = findChatMessageHighlightElement(target);
   target.scrollIntoView({ block: "center", behavior: "smooth" });
   target.classList.remove("chat-message-jump-highlight");
-  void target.offsetWidth;
-  target.classList.add("chat-message-jump-highlight");
-  window.setTimeout(() => { target.classList.remove("chat-message-jump-highlight"); }, 1800);
+  highlightTarget.classList.remove("chat-message-jump-highlight");
+  void highlightTarget.offsetWidth;
+  highlightTarget.classList.add("chat-message-jump-highlight");
+  window.setTimeout(() => { highlightTarget.classList.remove("chat-message-jump-highlight"); }, 1800);
 }
 const RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT = 5;
 const RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT = 10;

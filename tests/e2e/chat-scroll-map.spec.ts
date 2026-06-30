@@ -21,7 +21,7 @@ async function expectMessageInScrollViewport(page: import("@playwright/test").Pa
 
 test.describe("Chat message scroll map", () => {
   test("shows a hover preview and jumps within long conversations", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 820 });
+    await page.setViewportSize({ width: 1600, height: 820 });
 
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -158,7 +158,9 @@ test.describe("Chat message scroll map", () => {
     await page.screenshot({ path: "/tmp/rudder-chat-scroll-map-preview.png", fullPage: true });
 
     await targetMarker.click();
-    await expect(page.locator(`[data-message-id="${targetMessage.id}"]`)).toHaveClass(/chat-message-jump-highlight/);
+    const targetMessageRow = page.locator(`[data-message-id="${targetMessage.id}"]`);
+    await expect(targetMessageRow).not.toHaveClass(/chat-message-jump-highlight/);
+    await expect(targetMessageRow.getByTestId("chat-user-message-bubble")).toHaveClass(/chat-message-jump-highlight/);
     await expectMessageInScrollViewport(page, targetMessage.id);
     await expect(scrollMap).toBeVisible();
     await page.screenshot({ path: "/tmp/rudder-chat-scroll-map-jump.png", fullPage: true });
