@@ -3,58 +3,368 @@ name: debug-run-transcript-maintainer
 description: "Use when analyzing one Rudder agent run or recent run batches: run IDs, partial IDs, transcripts, run logs, execution traces, runtime failures, finalizer failures, stdout/stderr, run quality, or recent org run behavior."
 ---
 
-# Debug Run Transcript Maintainer
+# Debug Run Transcript
 
-## Overview
+Analyze Rudder agent runs by reconstructing the execution story from the best available source.
 
-Diagnose one run or a recent run batch by reconstructing execution from run-intelligence, logs, and targeted DB evidence.
+## Purpose
 
-## When to Use
+Runs fail for several different reasons:
+- the model/runtime emitted an error
+- the transcript parser missed useful structure
+- the event stream is incomplete
+- the stored excerpts are too shallow
+- a tool call succeeded, but Rudder's message/run lifecycle marked the
+  workflow failed during stream finalization, persistence, or UI status mapping
+- the operator has only a partial run ID or limited context
 
-Use this skill when:
+This skill helps diagnose those cases without getting stuck on the wrong data source.
 
-- the user asks why an agent run failed
-- the user names a run id, run prefix, org, runtime, or timeframe
-- recent run quality or batch behavior needs analysis
-- tool success and Rudder final status disagree
+Debugging proves what happened in a run; it does not by itself prove that a
+product fix works. When a transcript diagnosis leads to a code, CLI, skill,
+runtime, or UI change, hand the work back to the lifecycle verification path and
+require product proof for the affected actor and terminal surface.
 
-Do not use this skill when:
+## Source Priority
 
-- claim a product fix is proven from transcript diagnosis alone
-- skip run-intelligence and jump to raw DB guesses
+Always use sources in this order:
 
-## Core Pattern
+1. **Run-intelligence loader/API**
+   - Best default.
+   - Reads run metadata, run events, and the underlying run log.
+   - Reconstructs transcript entries with runtime-specific parsers.
+2. **Filesystem run log fallback**
+   - Use when the local API is unavailable but run logs exist on disk.
+   - Good for transcript/tool-call reconstruction.
+3. **Direct database queries**
+   - Use only for targeted checks or when the first two paths are unavailable.
+   - DB rows alone are not the full transcript story.
 
-```text
-identify run/batch -> source priority -> failure classification -> evidence -> next route
+## Important Lessons / Known Traps
+
+- Do **not** assume `~/.rudder/instances/dev/postgres-uri` exists. In this repo it is not a reliable universal entrypoint.
+- Do **not** start with `heartbeat_run_events` and assume they are the complete transcript. They are supplemental run events, not the full parsed execution trace.
+- Do **not** write `WHERE id LIKE 'prefix%'` against `uuid` columns. Cast first: `id::text ILIKE 'prefix%'`.
+- Do **not** assume `pnpm exec tsx` works from the repo root here. Prefer the repo-local launcher:
+
+```bash
+node cli/node_modules/tsx/dist/cli.mjs ...
 ```
 
-## Quick Reference
+- Do **not** treat `stdout_excerpt` / `stderr_excerpt` as the whole log. They are quick diagnostics only.
+- If `/api/run-intelligence/runs/<id>/log` returns `404`, do **not** assume the run has no raw log anywhere. First check whether you are querying the wrong Rudder instance (for example `dev` server/API while the run log lives under `~/.rudder/instances/e2e/data/run-logs/...`).
 
-| Situation | Action |
-| --- | --- |
-| Single run | Resolve and reconstruct transcript |
-| Recent batch | Build bounded cohort and classify failures |
-| Finalizer failure suspected | Separate tool result from stream/persistence/UI status |
-| Fix required | Hand back to lifecycle verification path |
+## Workflow
 
-## Implementation
+### 1. Identify the run
 
-1. Identify run, org, runtime, or batch window.
-2. Use run-intelligence loader/API first, filesystem logs second, direct DB last.
-3. Classify root cause: model/runtime, tool call, parser, event stream, persistence, UI status, or continuity.
-4. Separate diagnosis evidence from fix proof.
-5. Report what happened, key evidence, and next route.
+If the user gives:
+- a full run ID: use it directly
+- a short prefix like `7d28669d`: treat it as a prefix
+- a recent-run batch request like "prod Z Studio 最近 30 个 run": treat it as
+  batch mode and identify the org/runtime/time window before deep-diving
+- only an agent or timeframe: first help locate likely runs before deeper analysis
 
-Reference files are part of this skill contract. Before executing high-risk actions or final judgments, load `references/runbook.md` for the detailed legacy workflow, examples, validation cases, and command-level guidance.
+If the user provides no identifying info at all, ask for at least one of:
+- run ID or prefix
+- agent name
+- approximate time window
 
-Use `evals/` when the route needs that detail; keep the entrypoint thin.
+### 1.1 Batch mode for recent runs
 
-## Common Mistakes
+Use batch mode when the user asks for recent N runs, org-level run quality,
+efficiency, repeated failures, automation output quality, or "有什么可以优化".
 
-| Mistake | Fix |
-| --- | --- |
-| Treating run debug as implementation | Debug first, then route fixes separately. |
-| Using DB rows as full transcript truth | Prefer run-intelligence/log source. |
-| Merging finalizer and tool failures | Diagnose them separately. |
-| Over-scanning recent runs | Bound the cohort and state filters. |
+Batch mode is not the same as a Codex session benchmark. Stay on Rudder agent
+run evidence: `heartbeat_runs`, run-intelligence metadata, run logs,
+`result_json`, `usage_json`, stderr/stdout excerpts, and transcript outlines.
+
+Workflow:
+
+1. Resolve the active Rudder instance and org. Prefer explicit org names from
+   the prompt, then live API/org listings, then local instance files.
+2. Build the cohort with a stable ordering, usually most recent finished runs
+   for the selected org and optional agent/runtime filter.
+3. For each run, capture status, duration, runtime, cost/tokens when present,
+   result shape, stderr/error excerpt, and whether raw log/transcript evidence
+   exists.
+4. Classify reusable failure classes: no-op heartbeat, missing context, shallow
+   final answer, repeated tool/runtime failure, excessive cost, blocked
+   environment, stale session continuity, or missing handoff artifact.
+5. Deep-dive only the representative runs needed to prove each failure class.
+   Do not parse every full log when metadata already shows the distribution.
+6. Output optimization proposals tied to evidence, not a generic agent-quality
+   essay.
+
+If localhost, API, or Postgres access is blocked by sandbox or runtime policy,
+do not stop. Pivot to filesystem-side evidence:
+
+- `~/.rudder/instances/*/data/run-logs`
+- local run-intelligence artifacts or log stores
+- workspace artifacts referenced by recent runs
+- database directory or config files that identify the likely instance
+- available JSON summaries, excerpts, and session ids
+
+State which sources were unavailable and label any conclusions that are based
+on fallback evidence rather than live API/DB reads.
+
+### 1.2 Separate root cause evidence from fix proof
+
+When the user is debugging a concrete failure that may need a fix, keep two
+ledgers separate:
+
+- Root cause evidence: run metadata, transcript entries, stdout/stderr, events,
+  source code, config, database rows, or runtime state that explains why the run
+  behaved that way.
+- Product proof required after a fix: actor, trigger, system effect, terminal
+  surface, seed/mutation data, screenshots, API readback, or CLI output needed
+  to show the workflow now behaves correctly.
+
+If the debug stage finds the likely fix but the terminal workflow has not been
+rerun, say `fix proof missing` instead of calling the issue resolved. For
+agent-facing bugs, prefer rerunning a disposable agent issue or heartbeat path
+after implementation rather than only checking stored excerpts or database rows.
+
+### 1.3 Diagnose finalizer failures separately from tool failures
+
+When the user says a tool failed, or a UI surface shows `failed`, do not assume
+the named tool was the root cause. Split the execution into layers:
+
+1. Tool result: did the tool call return `isError`, stderr, HTTP error, or a
+   malformed payload?
+2. Assistant output: did the model produce a final answer, structured result,
+   or continuation after the tool result?
+3. Runtime process: did the adapter process exit cleanly, timeout, receive a
+   signal, or lose the session?
+4. Rudder finalizer: did stream close, message persistence, run status update,
+   transcript parsing, or result extraction mark the run/message failed?
+5. Terminal surface: did Messenger, Issue Detail, run-intelligence, or another
+   UI/API consumer show a failure state that disagrees with lower-level evidence?
+
+If tool results are successful but the UI or run row is failed, classify the
+root cause as `finalizer/status-mapping suspected` until proven otherwise. The
+next source of truth is the server log, stream route, adapter finalization path,
+run events, message status rows, and UI status mapping, not another inspection
+of the successful tool payload.
+
+### 2. Preferred path: run-intelligence CLI helpers
+
+Use these first when working locally in this repo.
+
+**High-level diagnosis**
+```bash
+node cli/node_modules/tsx/dist/cli.mjs packages/run-intelligence-core/src/cli/analyze.ts <run-id-or-prefix> [auto|quick|error|perf|full]
+```
+
+**Outline model turns / steps**
+```bash
+node cli/node_modules/tsx/dist/cli.mjs packages/run-intelligence-core/src/cli/trace-outline.ts <run-id-or-prefix>
+```
+
+**Inspect a specific step**
+```bash
+node cli/node_modules/tsx/dist/cli.mjs packages/run-intelligence-core/src/cli/trace-entry.ts <run-id-or-prefix> <stepIndex|turn:N>
+```
+
+These commands already know how to:
+- search by run prefix across orgs
+- fetch run metadata, events, and logs through the API
+- fall back to filesystem run logs if the API path is unavailable
+- parse runtime-specific stdout into transcript entries
+
+### 3. API path if you need raw data
+
+If the local Rudder server is up, use the run-intelligence API directly.
+
+Useful endpoints:
+
+```bash
+curl http://127.0.0.1:3100/api/orgs
+curl "http://127.0.0.1:3100/api/run-intelligence/orgs/<org-id>/runs?limit=50&runIdPrefix=<prefix>"
+curl "http://127.0.0.1:3100/api/run-intelligence/runs/<run-id>"
+curl "http://127.0.0.1:3100/api/run-intelligence/runs/<run-id>/events"
+curl "http://127.0.0.1:3100/api/run-intelligence/runs/<run-id>/log"
+```
+
+If `RUDDER_API_URL` is set, use that base URL instead of `http://127.0.0.1:3100/api`.
+
+### 4. Filesystem fallback
+
+If the API path is unavailable, the run-intelligence CLI loader can still fall back to filesystem logs automatically.
+
+Default local run-log root:
+
+```text
+~/.rudder/instances/dev/data/run-logs
+```
+
+If the run came from a different local instance, also check sibling stores such as:
+
+```text
+~/.rudder/instances/e2e/data/run-logs
+```
+
+This matters when:
+- run detail and events resolve correctly through one server
+- but `/run-intelligence/runs/<id>/log` returns `404`
+- and the raw log actually exists under another instance root
+
+Use the same CLI commands above before inventing a custom parser.
+
+### 5. Direct DB fallback
+
+Use DB queries only when you need targeted supplementary checks.
+
+Examples:
+
+**Run metadata by prefix**
+```sql
+SELECT
+  r.id,
+  r.status,
+  r.exit_code,
+  r.signal,
+  r.error,
+  r.error_code,
+  r.started_at,
+  r.finished_at,
+  r.session_id_before,
+  r.session_id_after,
+  r.stdout_excerpt,
+  r.stderr_excerpt,
+  r.usage_json,
+  r.result_json,
+  a.name AS agent_name,
+  a.agent_runtime_type
+FROM heartbeat_runs r
+JOIN agents a ON r.agent_id = a.id
+WHERE r.id::text ILIKE '7d28669d%'
+ORDER BY r.created_at DESC;
+```
+
+**Run events by prefix**
+```sql
+SELECT
+  seq,
+  event_type,
+  stream,
+  level,
+  message,
+  payload,
+  created_at
+FROM heartbeat_run_events
+WHERE run_id::text ILIKE '7d28669d%'
+ORDER BY seq, id;
+```
+
+**Likely error events**
+```sql
+SELECT
+  seq,
+  event_type,
+  stream,
+  level,
+  message,
+  payload
+FROM heartbeat_run_events
+WHERE run_id::text ILIKE '7d28669d%'
+  AND (
+    stream = 'stderr'
+    OR level = 'error'
+    OR event_type ILIKE '%error%'
+    OR COALESCE(payload->>'isError', payload->>'is_error', 'false') = 'true'
+  )
+ORDER BY seq, id;
+```
+
+## Interpreting the data
+
+When analyzing a run, focus on these in order:
+
+1. **Run summary**
+   - status
+   - duration
+   - runtime type / agent name
+   - exit code / signal / error / error code
+   - token and cost fields from `usage_json`
+
+2. **Transcript story**
+   - model turns
+   - tool calls and tool results
+   - stderr / system events
+   - where the run first visibly goes wrong
+
+3. **Supporting evidence**
+   - run events such as `adapter.invoke`, `heartbeat.run.status`, `heartbeat.run.log`
+   - `stdout_excerpt` / `stderr_excerpt`
+   - session IDs before/after
+
+## What to look for
+
+### Tool call problems
+- tool call without matching tool result
+- tool result marked error
+- unexpectedly large tool payloads or truncation
+- successful tool results followed by a failed message/run status; treat this
+  as a lifecycle/finalizer problem, not as a tool-call problem, until logs prove
+  the tool caused the final failure
+
+### Output problems
+- stderr that explains the failure more clearly than `error`
+- no parsed `result` entry even though raw log exists
+- transcript parser missing structure that is visible in raw log
+- assistant final text exists but Rudder still stored failed status
+
+### Metadata problems
+- `status` inconsistent with `exit_code` or `error_code`
+- `usage_json` missing obvious token/cost fields
+- `result_json` present but too shallow to explain failure
+- message status, run status, and transcript terminal event disagree with each
+  other
+
+### Session / continuity problems
+- surprising `session_id_before` / `session_id_after`
+- retries or continuation context missing
+- repeated init/start signals without a clean result
+
+## Output Format
+
+Present findings in this order:
+
+### 1. Run Summary
+```text
+Run: 7d28669d-...
+Agent: CEO (claude_local)
+Status: failed
+Duration: 3m 38s
+Cost: $0.7919 | 47.8k in | 8.3k out | 2.1k cached
+Exit Code: 1
+Error: unknown session
+```
+
+### 2. What Happened
+- Short narrative of the execution flow
+- First clear failure point
+- Whether the root cause came from transcript, raw log, or run event evidence
+
+### 3. Key Evidence
+- Tool calls
+- Error snippets
+- Relevant system / adapter.invoke events
+- Session / retry clues
+- Lifecycle/finalizer evidence when tool results and final UI status disagree
+
+### 4. Raw Log
+
+Only if the user asks. Save outside the repo, for example:
+
+```bash
+printf "%s" "$LOG_CONTENT" > /tmp/run-<run-id>.log
+```
+
+## Notes
+
+- `heartbeat_run_events` may contain `stream = null` for non-log events.
+- `payload` may use either `isError` or `is_error` depending on source.
+- For costs/tokens, check `inputTokens`, `outputTokens`, `cachedInputTokens`, `cachedTokens`, `costUsd`, and `totalCostUsd`.
+- The best default is usually: run `analyze.ts`, then `trace-outline.ts`, then inspect raw events/log only if the diagnosis is still unclear.
