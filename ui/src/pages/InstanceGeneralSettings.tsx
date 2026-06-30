@@ -13,6 +13,7 @@ import {
   readDesktopShell,
   type DesktopUpdateChannel,
 } from "@/lib/desktop-shell";
+import { DEFAULT_ORGANIZATION_HOME_PATH } from "@/lib/organization-routes";
 import { useNavigate } from "@/lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -203,7 +204,7 @@ export function InstanceGeneralSettings() {
                 size="sm"
                 className="shrink-0"
                 onClick={() => {
-                  navigate("/dashboard");
+                  navigate(DEFAULT_ORGANIZATION_HOME_PATH);
                   window.setTimeout(() => openProductTour({ source: "settings" }), 0);
                 }}
               >

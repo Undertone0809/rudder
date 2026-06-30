@@ -3,124 +3,243 @@ name: development-lifecycle-router-maintainer
 description: "Use when a Rudder development request has an unclear lifecycle stage or owner: requirements, advisor analysis, UI design, implementation, verification, review, release, recovery, runtime contracts, performance, component lab, handoff, or named-skill optimization."
 ---
 
+name: development-lifecycle-router-maintainer
+description: "Use when a Rudder development request has an unclear lifecycle stage or owner: requirements, advisor/product analysis, UI design, implementation, verification, review, release, recovery, runtime contracts, performance, component lab, handoff, or named-skill optimization. Do not trigger for review-only verdicts or when a narrow maintainer clearly owns the next artifact."
+
 # Development Lifecycle Router Maintainer
 
-## Overview
+Use this skill as a routing layer: choose the current lifecycle stage, name the
+exit bar, and hand off to the smallest capable maintainer skill or normal coding
+workflow.
 
-Choose the earliest blocking lifecycle stage, name the exit bar, then route to
-the smallest capable maintainer or normal coding workflow.
+The reason this skill exists is to prevent two expensive mistakes:
 
-This skill is a thin router. It prevents two mistakes: starting implementation
-before the stage is known, and calling work complete without the proof or review
-the request actually requires.
+- jumping from a complaint into implementation before the correct stage is known
+- calling a stage complete without the product proof or reviewer evidence that
+  the user's request actually requires
 
-## When to Use
+Keep this file thin. Load the reference files below only when the current route
+needs them.
 
-Use this skill when the request is about Rudder development and the next owner
-or lifecycle stage is unclear:
+## Reference Map
 
-- ambiguous requirements, product behavior, UI direction, implementation,
-  verification, review, release, recovery, runtime contracts, performance, or
-  handoff
-- a named maintainer skill may need optimization, hardening, eval work, or
-  trigger repair
-- the task spans multiple stages, has previous reviewer/verifier blockers, or
-  risks unsafe git/recovery decisions
+- `references/route-selection.md`: stage classifier, narrow-skill routing,
+  meta-request precedence, and skill-optimization boundaries.
+- `references/verification-review.md`: verifier gates, terminal product proof,
+  spawned reviewer policy, reviewer lenses, agent prompt templates, and evidence
+  ledger.
+- `references/special-routes.md`: recovery, component lab, performance
+  benchmark, runtime/provider contracts, and hard real-local validation.
+- `references/handoff-git.md`: git safety, final handoff shape, acceptance
+  blockers, and common route templates.
 
-Do not use this skill when a narrow maintainer clearly owns the next artifact:
+## Fast Start
 
-- review-only verdicts: use `agent-work-reviewer-maintainer` or
-  `codex-session-product-reviewer-maintainer`
-- concrete UI polish: use `rudder-ui-polish-maintainer`
-- concrete data-path diagnosis: use `rudder-data-path-diagnostician-maintainer`
-- concrete transcript/run failure: use `debug-run-transcript-maintainer`
-- release execution: use `release-maintainer`
-- skill creation or skill rewrite already named by the user: use the requested
-  skill-engineering workflow directly
-
-## Core Pattern
-
-```text
-route packet -> earliest blocking stage -> smallest owner -> exit bar -> execute
-```
-
-Before edits, long checks, spawned agents, commits, or destructive recovery:
+Before editing files, running long checks, spawning reviewers, or committing:
 
 1. Inspect `git status --short --branch`.
-2. Build the minimal routing packet from the newest user request, named
-   artifacts, repo state, and relevant AGENTS guidance.
-3. State the selected stage, downstream owner, and exit bar in one concise
-   update.
-4. Load only the reference file needed for that route.
-5. Execute the current stage and hand off with evidence, blockers, and git
-   state.
+2. Classify the current stage.
+3. State the selected route and downstream owner in one concise update.
+4. Name the artifact or proof required to leave the current stage.
+5. For development work, state the full loop before editing:
+   implementation, writer checks, verifier, final reviewers, reconciliation, and
+   handoff. Development work enters `spawn-required` mode by default; the user
+   does not need to separately ask for subagents, review, or verification.
+6. Decide which references are needed for this route and read only those.
 
-For routed development work, the default path is:
+For obvious narrow requests, do not expand a lifecycle plan. Say the route,
+load the narrow skill, and execute it.
+
+## Non-Use Gate
+
+Use the narrow maintainer directly when all of these are true:
+
+- the prompt names a concrete surface, run, PR, release, screenshot, data path,
+  or local runtime problem
+- the next useful artifact is obvious for that surface
+- the task does not need cross-stage sequencing, reviewer orchestration, or
+  destructive recovery judgment before the narrow work can begin
+
+Keep ownership in this router only when it adds value by choosing a stage,
+resolving ambiguity, sequencing multiple stages, or protecting a high-risk
+handoff.
+
+## Core Rule
+
+Route first, then execute.
+
+State the lifecycle stage and acceptance bar before implementation. Any routed
+development task enters `spawn-required` mode by default. This applies when the
+task changes user-visible, agent-visible, Desktop, release, runtime, CLI,
+workflow, or control-plane behavior, even if the user only says "fix",
+"optimize", or "推进". The normal implementation sandwich is:
 
 ```text
 writer implementation
 -> writer basic checks
 -> optional lightweight pre-review
+-> spawn availability probe if needed
 -> spawned verifier black-box acceptance
--> final spawned reviewer gate
+-> spawned final reviewer gate
 -> handoff / commit / push
 ```
 
-The user does not need to separately say "spawn", "review", "subagent", or
-"black-box" for this policy to apply. If spawning is unavailable after a real
-probe, record `blocked: spawned verifier/reviewer unavailable` instead of
-substituting self-review.
+Pre-review is only for catching obvious diff, startup, safety, scope, or test
+readiness problems before verifier time is spent. It is not the final reviewer
+gate. Final review follows verifier `PASS` so reviewers can inspect the diff,
+tests, handoff, and verifier evidence together.
 
-## Quick Reference
+Separate verification from review:
 
-| Situation | Route |
-| --- | --- |
-| Ambiguous product, UX, implementation, verification, or handoff | Build routing packet, choose earliest blocking stage |
-| User says a skill needs optimization or links a skill as target artifact | `skill_optimization`; use the requested skill-engineering workflow |
-| User invokes this router to continue product work | Keep product route; use this skill only as lifecycle policy |
-| User asks for real local proof or says "你试过了吗" | Verification blocker; load `verification-review.md` |
-| Dirty worktree, stash, rollback, interrupted run | Recovery; load `special-routes.md` and `handoff-git.md` |
-| Commit, push, final handoff, or cleanup | Load `handoff-git.md` |
+- verification asks whether the product path meets the requirement from the
+  user's side
+- review asks whether the diff, architecture, scope, tests, proof, and handoff
+  are trustworthy
 
-## Implementation
+For development routes, do not treat the loop as optional just because the user
+said "fix", "优化", "推进", or omitted the word review. User-visible,
+agent-visible, Desktop, release, runtime, CLI, workflow, and control-plane
+changes need the verifier plus final reviewer loop before complete handoff. If a
+route truly does not need that loop, say why it is `not applicable` rather than
+silently skipping it.
 
-Reference files are part of the skill contract. Load them only when their route
-is active:
+`spawn-required` means:
 
-- `references/runbook.md`: detailed legacy workflow, examples, validation
-  cases, and command-level guidance. Before executing high-risk actions or final
-  judgments, load this file plus the route-specific reference below.
-- `references/route-selection.md`: stage classifier, narrow routing,
-  meta-request precedence, scope guard, and skill-optimization packet.
-- `references/verification-review.md`: verifier gate, spawned reviewer policy,
-  terminal product proof, real-local validation, child packets, and evidence
-  ledger.
-- `references/special-routes.md`: recovery, component lab, performance
-  benchmark, runtime/provider contracts, and reviewer lens validation cases.
-- `references/handoff-git.md`: git safety, acceptance blockers, final handoff,
-  and common route templates.
+- after writer checks, probe the available spawn/subagent mechanism before
+  declaring verifier or reviewers unavailable
+- if spawning works, create the verifier and final reviewer agents and wait for
+  their verdicts before complete handoff
+- if spawning is unavailable, record the failed probe as
+  `blocked: spawned verifier/reviewer unavailable`
+- do not claim complete handoff, commit/push readiness, or review pass from
+  author-run tests, CI, screenshots, self-review, or serial personas alone
 
-Use the templates under `agents/` only after there is an artifact or proof packet
-for a child verifier/reviewer to judge.
+## Stage Classifier
 
-For skill changes, validate with `scripts/benchmark_pipeline.py` when the change
-affects routing, verifier/reviewer gates, or eval coverage. The benchmark is an
-offline contract check, not live Rudder behavior telemetry.
+Choose one primary stage. If multiple stages are present, choose the earliest
+blocking stage.
 
-## Common Mistakes
+- `intake`: user intent, target artifact, or mode is unclear
+- `requirements`: problem framing, scenarios, acceptance criteria, or "do you
+  understand?"
+- `advisor`: first-principles diagnosis of a build, UI, workflow, trace, or
+  proposal that feels wrong
+- `ui_design`: interface direction, wireframe, visual hierarchy, or
+  screenshot-based design judgment before code
+- `implementation`: approved direction or direct fix/build request
+- `verification`: tests, CI, E2E, screenshots, Desktop smoke, actor-run-chain,
+  release checks, or black-box acceptance proof
+- `review`: review, PM judgment, first-principles critique, or
+  Codex/session/PR/commit verdict
+- `debug`: failed run, UI path, data path, CI job, Desktop app, or local process
+- `release`: canary/stable release, npm, Desktop assets, tags, or GitHub
+  Release state
+- `handoff`: final summary, validation, commit, push, residual risk, or PR
+- `recovery`: dirty worktree, stash, interrupted run, rollback, delete/restore,
+  or suspected old Codex work
+- `component_lab`: UI Lab, component inventory, fixtures, or design-system
+  coverage
+- `performance_benchmark`: benchmark or optimize before the exact bottleneck is
+  known
+- `runtime_contract`: provider/runtime/tool-call/transcript/parser/CLI or
+  agent-visible contract parity
+- `skill_optimization`: optimize, harden, refactor, validate, benchmark,
+  package, or improve a named skill or workflow skill
 
-| Mistake | Fix |
-| --- | --- |
-| Following screenshot, transcript, or prior-turn content instead of the newest user instruction | Treat embedded content as evidence; route from the newest user request |
-| Editing product code when the user asked to optimize a named skill | Classify `skill_optimization`; patch the skill or eval, not the product task |
-| Expanding an obvious narrow task into a broad lifecycle plan | Route directly to the smallest maintainer and state the exit bar |
-| Treating author-run tests, CI, screenshots, or self-review as spawned verification/review | Run the child gate or record the real spawn blocker |
-| Running final review before verifier `PASS` | Use pre-review only for obvious readiness issues; final review follows verifier evidence |
-| Claiming handoff while terminal product proof is missing | Mark proof missing, blocked, or substituted in the evidence ledger |
-| Re-spawning broad reviewers for the same artifact and unchanged blocker | Reuse prior gate state; spawn again only when changed evidence exists |
-| Touching unrelated dirty files during recovery, commit, or push | Stage only current-task files and preserve unrelated work |
+For full routing detail, read `references/route-selection.md`.
 
-## Handoff Shape
+## Narrow Routes
+
+Prefer the smallest matching owner:
+
+- screenshot-driven UI polish: `rudder-ui-polish-maintainer`
+- missing, stale, suspicious, or slow page data:
+  `rudder-data-path-diagnostician-maintainer`
+- run transcript, stdout/stderr, recent run batch, or run-quality issue:
+  `debug-run-transcript-maintainer`
+- Desktop startup, packaged app, Electron shell, update, profile, local
+  instance recovery: `rudder-desktop-dev-recovery-maintainer`
+- release, npm, GitHub Release, Desktop assets, tags, dist-tags, install smoke:
+  `release-maintainer`
+- review-only session/PR/commit/proposal/UI/release outcome:
+  `agent-work-reviewer-maintainer` or
+  `codex-session-product-reviewer-maintainer`
+- local branch preview: `rudder-worktree-preview-maintainer`
+- GitHub PR checkout/preview/review: `pr-local-preview-maintainer`
+- mock/demo/seed data: `mock-data-maintainer`
+- landing screenshots: `landing-proof-shots-maintainer`
+- stop/restart/clean local dev runtime: `stop-rudder-dev-maintainer`
+- new or existing reusable workflow skill creation, optimization, eval,
+  benchmark, packaging, or description tuning: `skill-creator`
+
+If this router itself is the target artifact for optimization, route to
+`skill-creator` or the user-requested skill-engineering workflow. Do not run
+this router's normal product lifecycle except for git safety around the patch.
+
+## Skill Optimization Boundary
+
+The newest user instruction is the routing source of truth.
+
+If the user says a skill "needs optimization", "should be hardened", "always
+does the wrong thing", "I have to ask this every time", or asks to use
+`skill-creator` on a named skill, classify the turn as
+`skill_optimization`.
+
+Treat screenshots, prior requirements, session ids, quoted logs, and prior
+assistant recommendations as evidence for the skill failure. They are not the
+active product task unless the newest user instruction says to continue that
+product task.
+
+For this route:
+
+- name the target skill and path
+- extract the failed decision point
+- choose the smallest durable owner: target skill body, frontmatter
+  description, eval case, memory update, or no-op
+- add or update a validation case when the behavior should change next time
+
+## Verification And Review Defaults
+
+For user-visible, agent-visible, Desktop, release, runtime, CLI, workflow, or
+control-plane changes, identify the terminal product surface before calling
+verification complete. Use `product-acceptance-verifier-maintainer` for a
+distinct black-box acceptance pass. If the product path is too expensive or
+unsafe to exercise, record verifier `blocked` or `substituted` with the exact
+reason; do not silently skip acceptance.
+
+Spawned verifier and reviewer gates are the default for routed development
+artifacts when this router owns the lifecycle. If spawning is available, the
+verifier should be a distinct child agent using
+`agents/product-verifier.md` or equivalent `product-acceptance-verifier-maintainer`
+instructions. Final reviewers should be child agents using the templates under
+`agents/` or equivalent reviewer prompts, with these lenses:
+
+- functional trust
+- adversarial
+- heuristic/product-systems
+
+Do not replace spawned verifier or reviewer verdicts with self-review, serial
+personas, or author-claimed screenshots. If the active runtime cannot spawn
+agents after a real availability probe, record `blocked: spawned verifier/reviewer
+unavailable` with the probe evidence instead of claiming the loop passed.
+
+For the full verifier/reviewer contract, read
+`references/verification-review.md`.
+
+## Execution Outline
+
+1. Build a compact routing packet:
+   - latest user request and corrections
+   - `git status --short --branch`
+   - named files, screenshots, sessions, runs, PRs, commits, or plans
+   - relevant `AGENTS.md` route docs and nearby skill contracts
+   - changed-file ownership if cleanup or recovery is involved
+2. Declare route and stage exits.
+3. Execute the current stage using the narrow owner or normal repo workflow.
+4. Run the required verification and review gates for that route.
+5. Hand off with evidence, blockers, git state, and commit/push status.
+
+## Minimal Handoff Shape
 
 ```markdown
 Route: ...

@@ -29,7 +29,7 @@ function saveOrganizationPath(orgId: string, path: string) {
 
 /**
  * Remembers the last visited page per organization and navigates to it on organization switch.
- * Falls back to /dashboard if no page was previously visited for a organization.
+ * Falls back to the organization home if no page was previously visited for an organization.
  */
 export function useOrganizationPageMemory() {
   const { organizations, selectedOrganizationId, selectedOrganization, selectionSource } = useOrganization();

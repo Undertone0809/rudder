@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/context/I18nContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+import { DEFAULT_ORGANIZATION_HOME_PATH } from "@/lib/organization-routes";
 import { Link } from "@/lib/router";
 import {
   ArrowLeft,
@@ -29,7 +30,7 @@ export function OrganizationSettingsSidebar({ showOrganizationSwitcher = true }:
           className="h-9 w-full justify-start gap-2 rounded-[var(--radius-md)] px-2.5 text-[13px] font-medium text-muted-foreground hover:text-foreground"
           asChild
         >
-          <Link to="/dashboard">
+          <Link to={DEFAULT_ORGANIZATION_HOME_PATH}>
             <ArrowLeft className="h-4 w-4" />
             {t("common.backToWorkspace")}
           </Link>

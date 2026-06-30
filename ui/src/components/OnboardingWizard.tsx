@@ -47,6 +47,7 @@ import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { parseOnboardingGoalInput } from "../lib/onboarding-goal";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
+import { DEFAULT_ORGANIZATION_HOME_PATH } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import {
   blockingRuntimeEnvironmentMessage,
@@ -774,8 +775,8 @@ export function OnboardingWizard() {
         closeOnboarding();
         navigate(
           organizationSnapshot.issuePrefix
-            ? `/${organizationSnapshot.issuePrefix}/dashboard`
-            : "/dashboard"
+            ? `/${organizationSnapshot.issuePrefix}${DEFAULT_ORGANIZATION_HOME_PATH}`
+            : DEFAULT_ORGANIZATION_HOME_PATH
         );
         return;
       }
@@ -1377,7 +1378,7 @@ export function OnboardingWizard() {
                       {loading
                         ? "Creating..."
                         : createdNewOrganizationInSession
-                          ? "Create & Open Dashboard"
+                          ? "Create & Open Messenger"
                           : "Next"}
                     </Button>
                   )}

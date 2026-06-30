@@ -24,13 +24,22 @@ related_code:
   - server/src/services/knowledge-portability/organization-portability.import.ts
   - server/src/services/export-jobs.ts
   - ui/index.html
+  - ui/src/App.tsx
+  - ui/src/lib/organization-routes.ts
+  - ui/src/lib/organization-page-memory.ts
+  - ui/src/hooks/useOrganizationPageMemory.ts
+  - ui/src/components/Layout.tsx
+  - ui/src/components/MobileBottomNav.tsx
+  - ui/src/components/OnboardingWizard.tsx
   - ui/src/context/ThemeContext.tsx
   - ui/src/pages/InstanceAppearanceSettings.tsx
+  - ui/src/pages/InstanceGeneralSettings.tsx
   - ui/src/pages/InstanceSettings.tsx
   - ui/src/pages/OrganizationSettings.tsx
   - ui/src/pages/OrganizationExport.tsx
   - ui/src/pages/OrganizationImport.tsx
   - ui/src/pages/InviteLanding.tsx
+  - ui/src/pages/NotFound.tsx
   - ui/src/components/DesktopReleaseNotesDialog.tsx
 related_tests:
   - desktop/src/release-notes.test.ts
@@ -41,8 +50,12 @@ related_tests:
   - server/src/__tests__/organization-intelligence-profiles.test.ts
   - server/src/__tests__/organization-intelligence-profiles-routes.test.ts
   - server/src/__tests__/export-jobs.test.ts
+  - ui/src/components/OnboardingWizard.runtime-config.test.tsx
   - ui/src/context/ThemeContext.test.tsx
+  - ui/src/hooks/useOrganizationPageMemory.test.ts
+  - ui/src/lib/organization-routes.test.ts
   - ui/src/pages/InstanceAppearanceSettings.test.tsx
+  - ui/src/pages/InstanceGeneralSettings.test.tsx
   - ui/src/components/DesktopReleaseNotesDialog.test.tsx
   - tests/e2e/onboarding.spec.ts
   - tests/e2e/settings-appearance.spec.ts
@@ -139,6 +152,9 @@ Product model:
 - Getting Started onboarding seed creates starter project/issues and mirrors
   those issue threads into the operator's Messenger directory as a grouped,
   already-read starter set.
+- Messenger is the organization home and default landing surface for root app
+  startup, first organization entry, and newly created onboarding organizations.
+  Dashboard remains an explicit observability page, not the organization home.
 - The full tutorial seed creates a `Getting Started` project with one welcome
   issue and eleven numbered tutorial issues. The experienced-user seed may
   create only the welcome issue.
@@ -158,13 +174,21 @@ Flow:
 4. Server seeds starter work when needed, including the `Getting Started`
    project, tutorial issues, next-step links, chat CTA links, Messenger grouping,
    and read-state markers required for the starter set.
-5. User lands in the organization work surface with starter work or clear next
-   action.
+5. User lands in the organization's Messenger home with starter work or clear
+   next action.
 
 Invariants:
 
 - Onboarding should end in a real Rudder work surface, not a detached marketing
   page.
+- Onboarding for a newly created organization must resolve to
+  `/{issuePrefix}/messenger`.
+- Root app startup and organization-index entry must resolve to the selected or
+  first available organization's Messenger route.
+- "Home", "workspace", and "back to workspace" fallbacks should use the
+  organization home route, currently `/messenger`, rather than Dashboard.
+- Dashboard must remain route-accessible as an explicit analysis/observability
+  surface, but it must not be treated as the default landing or home surface.
 - Seeded Getting Started issues are starter content, not new operator
   attention. They should appear under a `Getting Started` Messenger custom
   group for the operator and should not create unread Messenger or sidebar
@@ -179,11 +203,17 @@ Invariants:
 
 Evidence:
 
-- `tests/e2e/onboarding.spec.ts` covers the onboarding UI path.
+- `tests/e2e/onboarding.spec.ts` covers the onboarding UI path, including
+  post-onboarding Messenger landing and root startup redirect to Messenger.
 - `tests/e2e/onboarding.spec.ts` covers Getting Started project creation,
   tutorial issue grouping/statuses, next-issue links, chat CTA prefill with
   project/agent context, Messenger custom group membership, and cleared unread
   sidebar state for seeded starter issues.
+- `ui/src/lib/organization-routes.test.ts`,
+  `ui/src/hooks/useOrganizationPageMemory.test.ts`,
+  `ui/src/components/OnboardingWizard.runtime-config.test.tsx`, and
+  `ui/src/pages/InstanceGeneralSettings.test.tsx` cover organization home route,
+  page-memory fallback, onboarding completion, and settings return behavior.
 - `server/src/__tests__/invite-onboarding-text.test.ts` covers invite/onboarding
   instruction text behavior.
 - Known gap: release-smoke onboarding evidence still belongs to release/Desktop

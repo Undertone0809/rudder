@@ -24,7 +24,7 @@ import {
   resolveDefaultInstanceSettingsPath,
 } from "./lib/instance-settings";
 import { shouldRedirectOrganizationlessRouteToOnboarding } from "./lib/onboarding-route";
-import { findOrganizationByPrefix } from "./lib/organization-routes";
+import { DEFAULT_ORGANIZATION_HOME_PATH, findOrganizationByPrefix } from "./lib/organization-routes";
 import { getOrganizationSettingsPath } from "./lib/organization-settings-path";
 import { queryKeys } from "./lib/queryKeys";
 import {
@@ -185,7 +185,7 @@ function AgentsEntryRedirect() {
 function boardRoutes() {
   return (
     <>
-      <Route index element={<Navigate to="dashboard" replace />} />
+      <Route index element={<Navigate to={DEFAULT_ORGANIZATION_HOME_PATH.slice(1)} replace />} />
       <Route path="dashboard" element={<Dashboard />} />
       <Route path="dashboard/calendar" element={<CalendarPage />} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
@@ -415,7 +415,7 @@ function OrganizationRootRedirect() {
     return <NoOrganizationsStartPage />;
   }
 
-  return <Navigate to={`/${targetOrganization.issuePrefix}/dashboard`} replace />;
+  return <Navigate to={`/${targetOrganization.issuePrefix}${DEFAULT_ORGANIZATION_HOME_PATH}`} replace />;
 }
 
 function UnprefixedBoardRedirect() {
@@ -476,7 +476,7 @@ function DesktopSettingsOverlayLayout() {
     selectedOrganization,
   } = useOrganization();
   const { viewedOrganization } = useViewedOrganization();
-  const backgroundPath = readSettingsOverlayBackgroundPath(location.state) ?? "/dashboard";
+  const backgroundPath = readSettingsOverlayBackgroundPath(location.state) ?? DEFAULT_ORGANIZATION_HOME_PATH;
   const overlayState = preserveSettingsOverlayState(location.state);
 
   useEffect(() => {

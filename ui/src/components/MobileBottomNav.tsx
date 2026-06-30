@@ -11,6 +11,7 @@ import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useInboxBadge } from "../hooks/useInboxBadge";
+import { DEFAULT_ORGANIZATION_HOME_PATH } from "../lib/organization-routes";
 import { cn } from "../lib/utils";
 
 interface MobileBottomNavProps {
@@ -44,7 +45,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
 
   const items = useMemo<MobileNavItem[]>(
     () => [
-      { type: "link", to: "/dashboard", label: t("common.home"), icon: House },
+      { type: "link", to: DEFAULT_ORGANIZATION_HOME_PATH, label: t("common.home"), icon: House },
       { type: "link", to: "/issues", label: t("common.issues"), icon: CircleDot },
       { type: "action", label: t("common.create"), icon: SquarePen, onClick: () => openNewIssue() },
       { type: "link", to: "/agents", label: t("common.agents"), icon: Users },
