@@ -3151,10 +3151,10 @@ button[draggable="false"] {
   --rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) + 1px);
   --rudder-doc-editor-tab-inactive-height: 38px;
   --rudder-doc-editor-tab-hover-bg: color-mix(in oklab, var(--surface-active) 86%, var(--foreground) 10%);
-  --rudder-doc-editor-tab-radius: calc(var(--desktop-workspace-radius) + 2px);
-  --rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) + 4px);
-  --rudder-doc-editor-tab-corner-offset: calc(var(--rudder-doc-editor-tab-corner-size) * -1 + 7px);
-  --rudder-doc-editor-tab-corner-fill: calc(var(--rudder-doc-editor-tab-radius) - 4px);
+  --rudder-doc-editor-tab-radius: calc(var(--desktop-workspace-radius) + 1px);
+  --rudder-doc-editor-tab-corner-size: 8px;
+  --rudder-doc-editor-tab-corner-fill: 4px;
+  --rudder-doc-editor-tab-corner-spread: 3px;
 }
 
 .rudder-doc-editor-sidebar-header {
@@ -3229,19 +3229,29 @@ button[draggable="false"] {
 }
 
 .rudder-doc-editor-tab--active::before {
-  left: var(--rudder-doc-editor-tab-corner-offset);
+  left: calc((var(--rudder-doc-editor-tab-corner-size) - 2px) * -1);
   border-right: 1px solid var(--border-base);
   border-bottom: 1px solid var(--border-base);
   border-bottom-right-radius: var(--rudder-doc-editor-tab-corner-size);
-  box-shadow: var(--rudder-doc-editor-tab-corner-fill) var(--rudder-doc-editor-tab-corner-fill) 0 calc(var(--rudder-doc-editor-tab-radius) - 3px) var(--surface-elevated);
+  box-shadow:
+    var(--rudder-doc-editor-tab-corner-fill)
+    var(--rudder-doc-editor-tab-corner-fill)
+    0
+    var(--rudder-doc-editor-tab-corner-spread)
+    var(--surface-elevated);
 }
 
 .rudder-doc-editor-tab--active::after {
-  right: var(--rudder-doc-editor-tab-corner-offset);
+  right: calc((var(--rudder-doc-editor-tab-corner-size) - 2px) * -1);
   border-bottom: 1px solid var(--border-base);
   border-left: 1px solid var(--border-base);
   border-bottom-left-radius: var(--rudder-doc-editor-tab-corner-size);
-  box-shadow: calc(var(--rudder-doc-editor-tab-corner-fill) * -1) var(--rudder-doc-editor-tab-corner-fill) 0 calc(var(--rudder-doc-editor-tab-radius) - 3px) var(--surface-elevated);
+  box-shadow:
+    calc(var(--rudder-doc-editor-tab-corner-fill) * -1)
+    var(--rudder-doc-editor-tab-corner-fill)
+    0
+    var(--rudder-doc-editor-tab-corner-spread)
+    var(--surface-elevated);
 }
 
 .rudder-doc-editor-tab--first-active::before {
