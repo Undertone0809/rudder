@@ -1,6 +1,6 @@
 # codex-session-benchmark-maintainer Runbook
 
-This file preserves the detailed pre-template maintainer instructions. Load it when the thin `SKILL.md` entrypoint does not contain enough operational detail for the active route.
+This file preserves the complete maintainer know-how. Load it after the thin `SKILL.md` entrypoint triggers and before substantive execution or final judgment.
 
 ---
 
