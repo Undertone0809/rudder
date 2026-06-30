@@ -362,8 +362,12 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).toContain("installed but not enabled");
     expect(loaded.prefix).toContain("library:projects/<project-key>/");
     expect(loaded.prefix).toContain("$RUDDER_PROJECT_LIBRARY_ROOT");
+    expect(loaded.prefix).toContain("library:artifacts/YYYY-MM-DD/<conversation-title>/");
+    expect(loaded.prefix).toContain("$RUDDER_ORG_WORKSPACE_ROOT/artifacts/YYYY-MM-DD/<conversation-title>/");
+    expect(loaded.prefix).toContain("Do not choose an existing project, such as Getting Started");
     expect(loaded.prefix).toContain("always include a user-visible Markdown link");
     expect(loaded.prefix).toContain('rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>" --json');
+    expect(loaded.prefix).toContain('rudder library file ref "artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>" --json');
     expect(loaded.prefix).not.toContain("library-file://file?p=<url-encoded-relative-path>&t=<url-encoded-title>");
     expect(loaded.prefix).toContain("## Rudder Renderable Links");
     expect(loaded.prefix).toContain("prefer Rudder's renderable Markdown link syntax over plain IDs");

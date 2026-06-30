@@ -57,6 +57,13 @@ const mockWorkspaceBackupService = vi.hoisted(() => ({
   restore: vi.fn(),
   remove: vi.fn(),
 }));
+const mockWorkspaceBrowser = vi.hoisted(() => ({
+  listFiles: vi.fn(),
+  readFile: vi.fn(),
+  readAttachmentFile: vi.fn(),
+  createFile: vi.fn(),
+  writeFile: vi.fn(),
+}));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockSecretService = vi.hoisted(() => ({
@@ -90,6 +97,9 @@ vi.mock("../services/index.js", () => ({
   }),
   organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
   logActivity: mockLogActivity,
+}));
+vi.mock("../services/organization-workspace-browser.js", () => ({
+  organizationWorkspaceBrowserService: () => mockWorkspaceBrowser,
 }));
 
 function createOrganization() {
@@ -248,6 +258,11 @@ describe("organization workspace file agent access", () => {
     mockAgentService.getById.mockReset();
     mockLogActivity.mockReset();
     mockOrganizationSkillService.syncWorkspaceFileChange.mockReset();
+    mockWorkspaceBrowser.listFiles.mockReset();
+    mockWorkspaceBrowser.readFile.mockReset();
+    mockWorkspaceBrowser.readAttachmentFile.mockReset();
+    mockWorkspaceBrowser.createFile.mockReset();
+    mockWorkspaceBrowser.writeFile.mockReset();
   });
 
   it("limits agent workspace file reads to project Library paths", async () => {
@@ -260,7 +275,8 @@ describe("organization workspace file agent access", () => {
     const res = await request(app).get("/api/orgs/organization-1/workspace/files?path=agents");
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
+    expect(res.body.error).toContain("library:projects/<project-key>/...");
+    expect(res.body.error).toContain("library:artifacts/YYYY-MM-DD/<conversation-title>/...");
   });
 
   it("rejects agent workspace file reads that traverse out of project Library paths", async () => {
@@ -273,7 +289,8 @@ describe("organization workspace file agent access", () => {
     const res = await request(app).get("/api/orgs/organization-1/workspace/files?path=projects/../agents");
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
+    expect(res.body.error).toContain("library:projects/<project-key>/...");
+    expect(res.body.error).toContain("library:artifacts/YYYY-MM-DD/<conversation-title>/...");
   });
 
   it("limits agent workspace file writes to project Library paths", async () => {
@@ -293,7 +310,8 @@ describe("organization workspace file agent access", () => {
       .send({ filePath: "skills/agent-team-design.md", content: "# Design\n" });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
+    expect(res.body.error).toContain("library:projects/<project-key>/...");
+    expect(res.body.error).toContain("library:artifacts/YYYY-MM-DD/<conversation-title>/...");
   });
 
   it("rejects agent workspace file writes directly under the projects root", async () => {
@@ -313,7 +331,8 @@ describe("organization workspace file agent access", () => {
       .send({ filePath: "projects/spec.md", content: "# Spec\n" });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
+    expect(res.body.error).toContain("library:projects/<project-key>/...");
+    expect(res.body.error).toContain("library:artifacts/YYYY-MM-DD/<conversation-title>/...");
   });
 
   it("rejects agent workspace file writes that traverse out of project Library paths", async () => {
@@ -333,7 +352,81 @@ describe("organization workspace file agent access", () => {
       .send({ filePath: "projects/../skills/agent-team-design.md", content: "# Design\n" });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe("Agent Library file access is limited to `library:projects/<project-key>/...`");
+    expect(res.body.error).toContain("library:projects/<project-key>/...");
+    expect(res.body.error).toContain("library:artifacts/YYYY-MM-DD/<conversation-title>/...");
+  });
+
+  it("allows agent workspace file writes to the no-project artifacts fallback", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
+      orgId: "organization-1",
+      role: "engineer",
+    });
+    mockWorkspaceBrowser.createFile.mockResolvedValue({
+      filePath: "artifacts/2026-06-30/rudder-mcp-tools-report/rudder-mcp-tools-report.md",
+      name: "rudder-mcp-tools-report.md",
+      isDirectory: false,
+      content: "# Rudder MCP Tools Report\n",
+      contentType: "text/markdown",
+      previewKind: "text",
+      contentPath: null,
+      mentionHref: "library-entry://entry-1?p=artifacts%2F2026-06-30%2Frudder-mcp-tools-report%2Frudder-mcp-tools-report.md",
+      markdownLink: "[rudder-mcp-tools-report.md](library-entry://entry-1?p=artifacts%2F2026-06-30%2Frudder-mcp-tools-report%2Frudder-mcp-tools-report.md)",
+    });
+    const app = createApp({
+      type: "agent",
+      orgId: "organization-1",
+      agentId: "agent-1",
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/organization-1/workspace/file")
+      .send({
+        filePath: "artifacts/2026-06-30/rudder-mcp-tools-report/rudder-mcp-tools-report.md",
+        content: "# Rudder MCP Tools Report\n",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toBeDefined();
+  });
+
+  it("allows agent workspace file reads from the no-project artifacts fallback", async () => {
+    mockWorkspaceBrowser.listFiles.mockResolvedValue({
+      path: "artifacts/2026-06-30/rudder-mcp-tools-report",
+      parentPath: "artifacts/2026-06-30",
+      entries: [],
+    });
+    const app = createApp({
+      type: "agent",
+      orgId: "organization-1",
+      agentId: "agent-1",
+    });
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/workspace/files?path=artifacts%2F2026-06-30%2Frudder-mcp-tools-report");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toBeDefined();
+  });
+
+  it("rejects malformed agent artifacts fallback paths", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
+      orgId: "organization-1",
+      role: "engineer",
+    });
+    const app = createApp({
+      type: "agent",
+      orgId: "organization-1",
+      agentId: "agent-1",
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/organization-1/workspace/file")
+      .send({ filePath: "artifacts/rudder-mcp-tools-report.md", content: "# Report\n" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("library:artifacts/YYYY-MM-DD/<conversation-title>/...");
   });
 
   it("rejects embedded image data URLs when creating workspace files", async () => {

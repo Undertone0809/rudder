@@ -114,6 +114,20 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     }
   }
 
+  function isAgentProjectLibraryPath(parts: string[], safePath: string, mode: "directory" | "file") {
+    return mode === "directory"
+      ? safePath === "projects" || (parts[0] === "projects" && parts.length >= 2)
+      : parts[0] === "projects" && parts.length >= 3;
+  }
+
+  function isAgentArtifactsFallbackPath(parts: string[], mode: "directory" | "file") {
+    const dateSegment = parts[1] ?? "";
+    const hasDateSegment = /^\d{4}-\d{2}-\d{2}$/.test(dateSegment);
+    return mode === "directory"
+      ? parts[0] === "artifacts" && hasDateSegment && parts.length >= 3
+      : parts[0] === "artifacts" && hasDateSegment && parts.length >= 4;
+  }
+
   function assertAgentLibraryProjectPath(req: Request, requestedPath: string, mode: "directory" | "file") {
     if (req.actor.type !== "agent") return;
     const rawPath = requestedPath.trim().replaceAll("\\", "/").replace(/^\/+/, "");
@@ -122,11 +136,11 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     const normalizedPath = path.posix.normalize(rawPath);
     const safePath = normalizedPath === "." ? "" : normalizedPath;
     const parts = safePath.split("/").filter(Boolean);
-    const allowed = mode === "directory"
-      ? safePath === "projects" || (parts[0] === "projects" && parts.length >= 2)
-      : parts[0] === "projects" && parts.length >= 3;
+    const allowed = isAgentProjectLibraryPath(parts, safePath, mode) || isAgentArtifactsFallbackPath(parts, mode);
     if (hasUnsafeSegment || !allowed) {
-      throw forbidden("Agent Library file access is limited to `library:projects/<project-key>/...`");
+      throw forbidden(
+        "Agent Library file access is limited to `library:projects/<project-key>/...` or `library:artifacts/YYYY-MM-DD/<conversation-title>/...`",
+      );
     }
   }
 

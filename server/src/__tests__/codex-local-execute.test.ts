@@ -452,6 +452,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.ident.stdout).toContain("Rudder Agent <rudder-agent@example.com>");
       expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_ROOT");
       expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_PATH");
+      const managedConfigContents = await fs.readFile(path.join(managedCodexHome, "config.toml"), "utf8");
+      expect(managedConfigContents).toContain('RUDDER_PROJECT_LIBRARY_PATH = "projects/product"');
       expect(capture.ident.stdout).not.toContain(".local");
       expect(capture.useConfigOnly.stdout).toBe("true\n");
       expect(capture.email.stdout).toBe("");

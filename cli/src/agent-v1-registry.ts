@@ -1099,6 +1099,10 @@ function mcpNumber(description: string): Record<string, unknown> {
   return { type: "number", description };
 }
 
+function mcpStringArray(description: string): Record<string, unknown> {
+  return { type: "array", items: { type: "string" }, description };
+}
+
 function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["inputSchema"] {
   const properties: Record<string, unknown> = {};
   const add = (key: string, value: Record<string, unknown>) => {
@@ -1114,6 +1118,9 @@ function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["i
   if (id.startsWith("project.")) add("project", mcpString("Project UUID or shortname."));
   if (id.startsWith("library.file.")) {
     add("path", mcpString("Library-relative file or directory path."));
+    if (id === "library.file.list") {
+      add("directory", mcpString("Library-relative directory path. Defaults to the run's project Library path when available."));
+    }
     add("body", mcpString("Direct file content for put operations."));
   }
   if (id.startsWith("approval.")) {
@@ -1146,20 +1153,91 @@ function mcpInputSchemaForCapability(id: string): AgentV1McpToolManifestEntry["i
     name: "Name.",
     description: "Description or summary text.",
     status: "Status filter or new status.",
-    limit: "Page size or result limit.",
     cursor: "Pagination cursor.",
     source: "Source path or source label.",
     kind: "Trigger kind.",
+    label: "Trigger label.",
+    skill: "Skill key, id, or display name.",
+    role: "Agent role.",
+    reportsTo: "Manager or reporting agent reference.",
+    capabilities: "Agent capability summary.",
+    wakeCommentId: "Issue comment id that triggered the wake.",
+    expectedStatuses: "Comma-separated checkout precondition statuses.",
+    after: "Pagination anchor or lower bound.",
+    order: "Sort order.",
+    priority: "Issue or automation priority.",
+    assigneeAgentId: "Target assignee agent id or reference.",
+    projectId: "Project id or reference.",
+    goalId: "Goal id or reference.",
+    parentId: "Parent issue id or reference.",
+    parentIssueId: "Parent issue id or reference.",
+    requestDepth: "Requested issue depth.",
+    billingCode: "Billing code.",
+    hiddenAt: "Hidden timestamp.",
+    sha: "Git commit SHA.",
+    message: "Commit or status message.",
+    branch: "Git branch name.",
+    repoPath: "Repository path.",
+    workspacePath: "Workspace path.",
+    relatedAgentId: "Agent id used as a filter or related principal.",
+    since: "Activity start timestamp.",
+    until: "Activity end timestamp.",
+    include: "Comma-separated optional data sections.",
+    content: "Direct content alias for body.",
+    roots: "Comma-separated local roots.",
+    projectIds: "Comma-separated project ids.",
+    workspaceIds: "Comma-separated workspace ids.",
+    cronExpression: "Cron expression.",
+    timezone: "Timezone.",
+    signingMode: "Webhook signing mode.",
+    replayWindowSec: "Webhook replay window in seconds.",
+    instructions: "Automation instructions.",
+    outputMode: "Automation output mode.",
+    concurrencyPolicy: "Automation concurrency policy.",
+    catchUpPolicy: "Automation catch-up policy.",
+    triggerId: "Automation trigger id.",
+    idempotencyKey: "Idempotency key.",
+    summary: "Chat summary.",
+    preferredAgentId: "Preferred responding agent id or reference.",
+    issueCreationMode: "Chat issue creation mode.",
+    editUserMessageId: "User message id to edit.",
+    updatedAfter: "Run updated-after timestamp.",
+    runIdPrefix: "Run id prefix filter.",
+    runtime: "Runtime type filter.",
+    issueId: "Issue id filter.",
+    usedSkill: "Used skill filter.",
+    loadedSkill: "Loaded skill filter.",
+    createdBefore: "Created-before timestamp.",
+    evidence: "Skill evidence type.",
+    aroundError: "Transcript error step id.",
+    maxOutputChars: "Maximum output characters.",
   })) {
-    add(key, key === "limit" ? mcpNumber(description) : mcpString(description));
+    add(key, mcpString(description));
   }
-  for (const key of ["enable", "enabled", "disabled", "reopen", "planMode", "includeTranscript", "includeOutput", "notifyOnIssueCreated"]) {
+  for (const [key, description] of Object.entries({
+    limit: "Page size or result limit.",
+    count: "Count represented by a report.",
+    turnLimit: "Maximum turns to return.",
+    contextTurns: "Number of context turns.",
+    maxChars: "Maximum characters.",
+    snippetChars: "Maximum snippet characters.",
+  })) {
+    add(key, mcpNumber(description));
+  }
+  for (const [key, description] of Object.entries({
+    selectionRefs: "Skill selection refs.",
+    images: "Local image paths to attach when supported.",
+    goalIds: "Goal ids.",
+  })) {
+    add(key, mcpStringArray(description));
+  }
+  for (const key of ["clearTitle", "clearCapabilities", "clearDescription", "clearReportsTo", "enable", "enabled", "disabled", "reopen", "planMode", "includeTranscript", "includeOutput", "includeOutputs", "notifyOnIssueCreated", "errorsOnly", "chronological", "narrative"]) {
     add(key, mcpBoolean(`Boolean option ${key}.`));
   }
 
   return {
     type: "object",
-    additionalProperties: true,
+    additionalProperties: false,
     properties,
   };
 }

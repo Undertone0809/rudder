@@ -79,49 +79,79 @@ describe("agent-v1 MCP server", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses runtime environment identity instead of model-provided identity fields", () => {
-    const plan = buildAgentV1ToolCallPlan(
-      "rudder_issue_checkout",
+  it("rejects model-provided runtime identity fields", async () => {
+    const response = await runAgentV1McpJsonRpcMessage(
       {
-        issue: "ZST-123",
-        orgId: "wrong-org",
-        agentId: "wrong-agent",
-        runId: "wrong-run",
-        apiKey: "wrong-key",
-        apiBase: "https://wrong.invalid",
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "rudder_issue_checkout",
+          arguments: {
+            issue: "ZST-123",
+            orgId: "wrong-org",
+            ApiKey: "mixed-case-key",
+            apiBASE: "mixed-case-base",
+            agentId: "wrong-agent",
+            runId: "wrong-run",
+            apiKey: "wrong-key",
+            apiBase: "https://wrong.invalid",
+          },
+        },
       },
-      {
+      buildMcpServerEnv({
         RUDDER_API_URL: "http://127.0.0.1:3100",
         RUDDER_API_KEY: "runtime-key",
         RUDDER_ORG_ID: "runtime-org",
         RUDDER_AGENT_ID: "runtime-agent",
         RUDDER_RUN_ID: "runtime-run",
-      },
+      }),
     );
 
-    expect(plan.env).toMatchObject({
-      RUDDER_API_URL: "http://127.0.0.1:3100",
-      RUDDER_API_KEY: "runtime-key",
-      RUDDER_ORG_ID: "runtime-org",
-      RUDDER_AGENT_ID: "runtime-agent",
-      RUDDER_RUN_ID: "runtime-run",
+    expect(response).not.toBeNull();
+    const result = response!.result as { content: Array<{ text: string }>; isError: boolean; structuredContent?: Record<string, unknown> };
+    const payload = JSON.parse(result.content[0]?.text ?? "{}") as { code: string; message: string };
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe("rudder_mcp_reserved_identity_argument");
+    expect(payload.message).toContain("ApiKey");
+    expect(payload.message).toContain("apiBase");
+    expect(payload.message).toContain("apiBASE");
+    expect(payload.message).toContain("orgId");
+    expect(result.structuredContent).toMatchObject({
+      code: "rudder_mcp_reserved_identity_argument",
     });
-    expect(plan.args).toEqual([
-      "issue",
-      "checkout",
-      "ZST-123",
-      "--json",
-    ]);
-    expect(plan.env.RUDDER_ORG_ID).not.toBe("wrong-org");
-    expect(plan.env.RUDDER_AGENT_ID).not.toBe("wrong-agent");
-    expect(plan.env.RUDDER_RUN_ID).not.toBe("wrong-run");
+  });
+
+  it("fails closed when runtime authentication context is missing", async () => {
+    const response = await runAgentV1McpJsonRpcMessage(
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "rudder_library_file_list", arguments: {} },
+      },
+      buildMcpServerEnv({
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "",
+        RUDDER_ORG_ID: "runtime-org",
+      }),
+    );
+
+    expect(response).not.toBeNull();
+    const result = response!.result as { content: Array<{ text: string }>; isError: boolean; structuredContent?: Record<string, unknown> };
+    const payload = JSON.parse(result.content[0]?.text ?? "{}") as { code: string; message: string };
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe("rudder_mcp_missing_runtime_context");
+    expect(payload.message).toContain("RUDDER_API_KEY");
+    expect(result.structuredContent).toMatchObject({
+      code: "rudder_mcp_missing_runtime_context",
+    });
   });
 
   it("uses runtime agent identity for commands that need an agent positional argument", () => {
     const plan = buildAgentV1ToolCallPlan(
       "rudder_agent_skills_enable",
       {
-        agentId: "wrong-agent",
         runtimeAgent: "also-wrong",
         selectionRefs: ["rudder/rudder"],
       },
@@ -129,6 +159,7 @@ describe("agent-v1 MCP server", () => {
         RUDDER_API_URL: "http://127.0.0.1:3100",
         RUDDER_API_KEY: "runtime-key",
         RUDDER_AGENT_ID: "runtime-agent",
+        RUDDER_ORG_ID: "runtime-org",
       },
     );
 
@@ -142,6 +173,52 @@ describe("agent-v1 MCP server", () => {
     ]);
     expect(plan.args).not.toContain("wrong-agent");
     expect(plan.args).not.toContain("also-wrong");
+  });
+
+  it("defaults library file list to the runtime project Library path", () => {
+    const plan = buildAgentV1ToolCallPlan(
+      "rudder_library_file_list",
+      {},
+      {
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "runtime-key",
+        RUDDER_ORG_ID: "runtime-org",
+        RUDDER_PROJECT_LIBRARY_PATH: "projects/test-project",
+      },
+    );
+
+    expect(plan.args).toEqual([
+      "library",
+      "file",
+      "list",
+      "projects/test-project",
+      "--json",
+    ]);
+  });
+
+  it("keeps runtime identity out of MCP tool schemas and descriptions", async () => {
+    const response = await runAgentV1McpJsonRpcMessage(
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      buildMcpServerEnv({
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "runtime-key",
+        RUDDER_ORG_ID: "runtime-org",
+      }),
+    );
+
+    expect(response).not.toBeNull();
+    const result = response!.result as {
+      tools: Array<{ description: string; inputSchema: { additionalProperties?: boolean; properties: Record<string, unknown> } }>;
+    };
+    for (const tool of result.tools) {
+      expect(tool.description).not.toMatch(/\b(?:orgId|agentId|runId|apiBase|apiKey)\b/);
+      expect(tool.inputSchema.additionalProperties).toBe(false);
+      expect(tool.inputSchema.properties).not.toHaveProperty("orgId");
+      expect(tool.inputSchema.properties).not.toHaveProperty("agentId");
+      expect(tool.inputSchema.properties).not.toHaveProperty("runId");
+      expect(tool.inputSchema.properties).not.toHaveProperty("apiKey");
+      expect(tool.inputSchema.properties).not.toHaveProperty("apiBase");
+    }
   });
 
   it("turns direct comment text into a temporary body file instead of shell text", () => {
@@ -189,6 +266,16 @@ describe("agent-v1 MCP server", () => {
     for (const tool of buildAgentV1McpToolsManifest("agent-v1").tools) {
       const input = SAMPLE_INPUT_BY_TOOL[tool.name] ?? {};
       expect(() => buildAgentV1ToolCallPlan(tool.name, input, env), tool.name).not.toThrow();
+    }
+  });
+
+  it("advertises every sampled MCP tool input argument in strict schemas", () => {
+    for (const tool of buildAgentV1McpToolsManifest("agent-v1").tools) {
+      const input = SAMPLE_INPUT_BY_TOOL[tool.name] ?? {};
+      for (const key of Object.keys(input)) {
+        expect(tool.inputSchema.properties, `${tool.name}.${key}`).toHaveProperty(key);
+      }
+      expect(tool.inputSchema.additionalProperties).toBe(false);
     }
   });
 
@@ -257,6 +344,43 @@ describe("agent-v1 MCP server", () => {
       code: "rudder_mcp_tool_error",
       message: "Missing required argument: issue",
     });
+  });
+
+  it("returns structuredContent for successful JSON tool output", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-success-"));
+    try {
+      const shimPath = path.join(tempDir, process.platform === "win32" ? "rudder.cmd" : "rudder");
+      const output = JSON.stringify({ entries: [], path: "projects/test-project" });
+      if (process.platform === "win32") {
+        await fs.writeFile(shimPath, `@echo off\r\necho ${output.replaceAll('"', '\\"')}\r\n`, "utf8");
+      } else {
+        await fs.writeFile(shimPath, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, "utf8");
+        await fs.chmod(shimPath, 0o755);
+      }
+
+      const response = await runAgentV1McpJsonRpcMessage(
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: { name: "rudder_library_file_list", arguments: {} },
+        },
+        buildMcpServerEnv({
+          PATH: tempDir,
+          RUDDER_API_URL: "http://127.0.0.1:3100",
+          RUDDER_API_KEY: "runtime-key",
+          RUDDER_ORG_ID: "runtime-org",
+          RUDDER_PROJECT_LIBRARY_PATH: "projects/test-project",
+        }),
+      );
+
+      expect(response).not.toBeNull();
+      const result = response!.result as { isError: boolean; structuredContent?: Record<string, unknown> };
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toEqual({ entries: [], path: "projects/test-project" });
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("does not respond to JSON-RPC notifications", async () => {

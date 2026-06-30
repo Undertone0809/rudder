@@ -639,7 +639,14 @@ describe("claude execute", { timeout: 20_000 }, () => {
           },
           promptTemplate: "Follow the rudder heartbeat.",
         },
-        context: {},
+        context: {
+          rudderWorkspace: {
+            orgWorkspaceRoot: path.join(root, "org-workspace"),
+            orgSkillsDir: path.join(root, "org-workspace", "skills"),
+            projectLibraryRoot: path.join(root, "org-workspace", "projects", "product"),
+            projectLibraryRelativePath: "projects/product",
+          },
+        },
         authToken: "run-jwt-token",
         onLog: async () => {},
         onMeta: async (meta) => {
@@ -744,6 +751,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
         RUDDER_ORG_ID: "organization-1",
         RUDDER_AGENT_ID: "agent-3",
         RUDDER_RUN_ID: "run-3",
+        RUDDER_PROJECT_LIBRARY_PATH: "projects/product",
       });
       expect(managedSettings.permissions).toBeUndefined();
       expect(capture.managedClaudeJsonPath).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/.claude.json");

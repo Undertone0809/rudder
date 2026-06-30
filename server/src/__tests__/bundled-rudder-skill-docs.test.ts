@@ -75,6 +75,9 @@ describe("bundled rudder skill docs", () => {
     expect(contents).toContain("Do not rely on free-form");
     expect(contents).toContain('Add `--image "<path>"');
     expect(contents).toContain('rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>" --json');
+    expect(contents).toContain('rudder library file ref "artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>" --json');
+    expect(contents).toContain("library:artifacts/YYYY-MM-DD/<conversation-title>/");
+    expect(contents).toContain("Do not choose an existing project, such as Getting Started");
     expect(contents).toContain("`markdownLink`");
   });
 

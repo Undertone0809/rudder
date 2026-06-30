@@ -6,6 +6,7 @@ export const RUDDER_MCP_MANAGED_ENV_KEYS = [
   "RUDDER_ORG_ID",
   "RUDDER_AGENT_ID",
   "RUDDER_RUN_ID",
+  "RUDDER_PROJECT_LIBRARY_PATH",
 ] as const;
 
 export type RudderMcpManagedEnvKey = typeof RUDDER_MCP_MANAGED_ENV_KEYS[number];

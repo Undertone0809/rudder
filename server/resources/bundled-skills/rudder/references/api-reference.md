@@ -182,9 +182,13 @@ Project mutation policy:
 ### Library Workspace Files
 
 Local trusted agents should use normal filesystem tools under
-`$RUDDER_PROJECT_LIBRARY_ROOT` for durable project files. API fallback for
-Library files is for debugging, compatibility, remote runtimes, or restricted
-runtimes that cannot access the local Library filesystem.
+`$RUDDER_PROJECT_LIBRARY_ROOT` for durable project files when the run has project
+context. When there is no project context, durable generated chat/work artifacts
+belong under the organization Library artifacts fallback:
+`$RUDDER_ORG_WORKSPACE_ROOT/artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>`
+with product locator `library:artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>`.
+API fallback for Library files is for debugging, compatibility, remote runtimes,
+or restricted runtimes that cannot access the local Library filesystem.
 
 - `GET /api/orgs/:orgId/workspace/files?path=:directory`
 - `GET /api/orgs/:orgId/workspace/file?path=:file`
@@ -204,15 +208,19 @@ Workspace file detail responses include renderable reference fields:
 ```
 
 Agents should paste `markdownLink` into issue comments and close-out notes. In
-normal local runs, obtain that field with
+normal local project-context runs, obtain that field with
 `rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>" --json`
-after writing the file directly. The `ref` path is Library-relative, not the
-absolute `$RUDDER_PROJECT_LIBRARY_ROOT/...` filesystem path. Posting that
-returned link is the Rudder-visible handoff checkpoint for direct filesystem
-writes. If `$RUDDER_PROJECT_LIBRARY_ROOT` is unset or inaccessible, use
+after writing the file directly. With no project context, obtain it with
+`rudder library file ref "artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>" --json`.
+The `ref` path is Library-relative, not an absolute filesystem path such as
+`$RUDDER_PROJECT_LIBRARY_ROOT/...` or `$RUDDER_ORG_WORKSPACE_ROOT/...`. Posting
+that returned link is the Rudder-visible handoff checkpoint for direct filesystem
+writes. If `$RUDDER_PROJECT_LIBRARY_ROOT` is unset or inaccessible but
+`$RUDDER_PROJECT_LIBRARY_PATH` exists, use
 `rudder library file get/put "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"` as
-the remote or restricted runtime fallback. `library-file://...` is legacy weak
-path syntax and should not be used for new durable Library references when
+the remote or restricted runtime fallback. If there is no project context, use
+the organization artifacts fallback path instead. `library-file://...` is legacy
+weak path syntax and should not be used for new durable Library references when
 `libraryEntryId` is available.
 
 The `libraryEntryId` remains the strong identity. The optional `p` query value

@@ -27,11 +27,36 @@ interface McpServerEnv {
   RUDDER_ORG_ID?: string;
   RUDDER_AGENT_ID?: string;
   RUDDER_RUN_ID?: string;
+  RUDDER_PROJECT_LIBRARY_PATH?: string;
   RUDDER_MCP_RUDDER_BIN?: string;
   [key: string]: string | undefined;
 }
 
 type McpStdioMode = "framed" | "newline";
+const RESERVED_MODEL_ARGUMENTS = new Set([
+  "orgId",
+  "org_id",
+  "companyId",
+  "company_id",
+  "agentId",
+  "agent_id",
+  "runId",
+  "run_id",
+  "apiBase",
+  "api_base",
+  "apiKey",
+  "api_key",
+  "authorization",
+]);
+const NORMALIZED_RESERVED_MODEL_ARGUMENTS = new Set([
+  "orgid",
+  "companyid",
+  "agentid",
+  "runid",
+  "apibase",
+  "apikey",
+  "authorization",
+]);
 
 export interface TempFilePlan {
   flag: string;
@@ -53,6 +78,7 @@ export function buildMcpServerEnv(env: NodeJS.ProcessEnv = process.env): McpServ
     RUDDER_ORG_ID: env.RUDDER_ORG_ID,
     RUDDER_AGENT_ID: env.RUDDER_AGENT_ID,
     RUDDER_RUN_ID: env.RUDDER_RUN_ID,
+    RUDDER_PROJECT_LIBRARY_PATH: env.RUDDER_PROJECT_LIBRARY_PATH,
     RUDDER_MCP_RUDDER_BIN: env.RUDDER_MCP_RUDDER_BIN,
   };
 }
@@ -67,6 +93,9 @@ export function buildAgentV1ToolCallPlan(
   if (!capabilityId) {
     throw new Error(`Unknown Rudder MCP tool: ${toolName}`);
   }
+  const capability = getAgentCliCapabilityById(capabilityId);
+  rejectModelProvidedRuntimeIdentity(input);
+  assertRuntimeMcpContext(capability, env);
 
   const tempFiles: TempFilePlan[] = [];
   const args = cliArgsForCapability(capabilityId, input, tempFiles, env);
@@ -82,6 +111,7 @@ export function buildAgentV1ToolCallPlan(
       RUDDER_ORG_ID: env.RUDDER_ORG_ID,
       RUDDER_AGENT_ID: env.RUDDER_AGENT_ID,
       RUDDER_RUN_ID: env.RUDDER_RUN_ID,
+      RUDDER_PROJECT_LIBRARY_PATH: env.RUDDER_PROJECT_LIBRARY_PATH,
     },
     tempFiles,
   };
@@ -192,16 +222,18 @@ async function callToolSafely(params: unknown, env: McpServerEnv): Promise<Recor
     return await callTool(params, env);
   } catch (err) {
     const details = errorDetails(err);
+    const payload = {
+      status: "error",
+      code: isRecord(details) && typeof details.code === "string" ? details.code : "rudder_mcp_tool_error",
+      message: errorMessage(err),
+      details: details ?? null,
+    };
     return {
       content: [{
         type: "text",
-        text: JSON.stringify({
-          status: "error",
-          code: isRecord(details) && typeof details.code === "string" ? details.code : "rudder_mcp_tool_error",
-          message: errorMessage(err),
-          details: details ?? null,
-        }),
+        text: JSON.stringify(payload),
       }],
+      structuredContent: payload,
       isError: true,
     };
   }
@@ -226,21 +258,25 @@ async function callTool(params: unknown, env: McpServerEnv): Promise<Record<stri
 
     const result = await runRudderCli(materializedArgs, plan.env);
     if (result.exitCode === 0) {
+      const text = result.stdout.trim() || "{}";
       return {
-        content: [{ type: "text", text: result.stdout.trim() || "{}" }],
+        content: [{ type: "text", text }],
+        ...structuredContentFromJsonText(text),
         isError: false,
       };
     }
+    const payload = {
+      status: "error",
+      code: "rudder_cli_command_failed",
+      message: result.stderr.trim() || result.stdout.trim() || "Rudder CLI command failed",
+      details: { exitCode: result.exitCode },
+    };
     return {
       content: [{
         type: "text",
-        text: JSON.stringify({
-          status: "error",
-          code: "rudder_cli_command_failed",
-          message: result.stderr.trim() || result.stdout.trim() || "Rudder CLI command failed",
-          details: { exitCode: result.exitCode },
-        }),
+        text: JSON.stringify(payload),
       }],
+      structuredContent: payload,
       isError: true,
     };
   } finally {
@@ -418,7 +454,7 @@ function cliArgsForCapability(
       return args;
     }
     case "library.file.list":
-      return ["library", "file", "list", optionalString(input.directory ?? input.path) ?? "projects"];
+      return ["library", "file", "list", optionalString(input.directory ?? input.path) ?? optionalString(env.RUDDER_PROJECT_LIBRARY_PATH) ?? "projects"];
     case "library.file.get":
       return ["library", "file", "get", requiredString(input, "path")];
     case "library.file.ref":
@@ -677,7 +713,7 @@ function cliArgsForCapability(
 function toMcpToolListEntry(tool: AgentV1McpToolManifestEntry): Record<string, unknown> {
   return {
     name: tool.name,
-    description: `${tool.description} Mutating: ${tool.mutating ? "yes" : "no"}. Org context: ${tool.requiresOrgId ? "required" : "runtime/env"}. Agent context: ${tool.requiresAgentId ? "required" : "runtime/env"}. Run attribution: ${tool.attachesRunIdWhenAvailable ? "attached when available" : "not attached"}.`,
+    description: `${tool.description} Mutating: ${tool.mutating ? "yes" : "no"}. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: ${tool.requiresOrgId ? "required from runtime env" : "not required by this tool"}. Agent context: ${tool.requiresAgentId ? "required from runtime env" : "runtime env when available"}. Run attribution: ${tool.attachesRunIdWhenAvailable ? "attached from runtime env when available" : "not attached"}.`,
     inputSchema: tool.inputSchema,
   };
 }
@@ -773,6 +809,48 @@ function pushRuntimeAgentArg(
   }
   if (required) {
     throw new Error("Runtime agent ID is required. Set RUDDER_AGENT_ID.");
+  }
+}
+
+function rejectModelProvidedRuntimeIdentity(input: Record<string, unknown>): void {
+  const reserved = Object.keys(input).filter((key) =>
+    RESERVED_MODEL_ARGUMENTS.has(key) ||
+    RESERVED_MODEL_ARGUMENTS.has(key.toLowerCase()) ||
+    NORMALIZED_RESERVED_MODEL_ARGUMENTS.has(normalizeRuntimeIdentityKey(key)) ||
+    key.toUpperCase().startsWith("RUDDER_")
+  );
+  if (reserved.length === 0) return;
+  const err = new Error(`Rudder MCP runtime identity is managed by the server; do not pass these arguments: ${reserved.sort().join(", ")}`);
+  (err as Error & { code?: string }).code = "rudder_mcp_reserved_identity_argument";
+  throw err;
+}
+
+function normalizeRuntimeIdentityKey(key: string): string {
+  return key.replace(/[^a-z0-9]/giu, "").toLowerCase();
+}
+
+function assertRuntimeMcpContext(
+  capability: { requiresOrgId: boolean; requiresAgentId: boolean },
+  env: McpServerEnv,
+): void {
+  const missing: string[] = [];
+  if (!optionalString(env.RUDDER_API_URL)) missing.push("RUDDER_API_URL");
+  if (!optionalString(env.RUDDER_API_KEY)) missing.push("RUDDER_API_KEY");
+  if (capability.requiresOrgId && !optionalString(env.RUDDER_ORG_ID)) missing.push("RUDDER_ORG_ID");
+  if (capability.requiresAgentId && !optionalString(env.RUDDER_AGENT_ID)) missing.push("RUDDER_AGENT_ID");
+  if (missing.length === 0) return;
+  const err = new Error(`Rudder MCP runtime context is incomplete. Missing ${missing.join(", ")}.`);
+  (err as Error & { code?: string }).code = "rudder_mcp_missing_runtime_context";
+  throw err;
+}
+
+function structuredContentFromJsonText(text: string): { structuredContent?: Record<string, unknown> } {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (isRecord(parsed)) return { structuredContent: parsed };
+    return { structuredContent: { result: parsed } };
+  } catch {
+    return {};
   }
 }
 
