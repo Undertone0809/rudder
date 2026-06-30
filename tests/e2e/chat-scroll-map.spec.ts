@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { agents, chatConversations, chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { buildAgentMentionHref, buildIssueMentionHref } from "../../packages/shared/src/index.ts";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -45,6 +46,7 @@ test.describe("Chat message scroll map", () => {
       const createdAt = new Date(baseTime + index * 60_000);
       const messageNumber = index + 1;
       const isUserMessage = index % 2 === 0;
+      const tokenUserBody = `Checkpoint ${messageNumber}: ask [Navigator](${buildAgentMentionHref(agentId, "notionists-neutral")}) to review \`verification\` and [ZST-789](${buildIssueMentionHref("issue-789", "ZST-789", null, "in_progress")}). ${"Detailed context. ".repeat(20)}`;
       return {
         id: randomUUID(),
         orgId: organization.id,
@@ -52,7 +54,9 @@ test.describe("Chat message scroll map", () => {
         role: isUserMessage ? "user" as const : "assistant" as const,
         kind: "message" as const,
         status: "completed" as const,
-        body: `Checkpoint ${messageNumber}: ${isUserMessage ? "operator context" : "assistant progress"} for navigating a long conversation. ${"Detailed context. ".repeat(20)}`,
+        body: messageNumber === 11 && isUserMessage
+          ? tokenUserBody
+          : `Checkpoint ${messageNumber}: ${isUserMessage ? "operator context" : "assistant progress"} for navigating a long conversation. ${"Detailed context. ".repeat(20)}`,
         structuredPayload: null,
         replyingAgentId: isUserMessage ? null : agentId,
         chatTurnId: randomUUID(),
@@ -106,8 +110,8 @@ test.describe("Chat message scroll map", () => {
     expect(compactRailGeometry).not.toBeNull();
     expect(compactRailGeometry?.railWidth).toBeLessThanOrEqual(20);
     expect(compactRailGeometry?.railHeight).toBeLessThanOrEqual(100);
-    expect(compactRailGeometry?.railLeftOffset).toBeGreaterThanOrEqual(20);
-    expect(compactRailGeometry?.railLeftOffset).toBeLessThanOrEqual(36);
+    expect(compactRailGeometry?.railLeftOffset).toBeGreaterThanOrEqual(8);
+    expect(compactRailGeometry?.railLeftOffset).toBeLessThanOrEqual(18);
     expect(compactRailGeometry?.railToUserBubbleGap).toBeGreaterThan(80);
 
     const targetMessage = messages[10];
@@ -115,11 +119,17 @@ test.describe("Chat message scroll map", () => {
     await targetMarker.hover();
     const preview = page.getByTestId("chat-scroll-map-preview");
     await expect(preview).toContainText("Checkpoint 11");
+    await expect(preview).toContainText("Navigator");
+    await expect(preview).toContainText("verification");
     await expect(preview).toContainText("assistant progress");
     await expect(preview).not.toContainText("Message map");
+    await expect(preview).not.toContainText("agent://");
+    await expect(preview).not.toContainText("issue://");
     const floatingPreviewGeometry = await page.evaluate((targetMessageId) => {
       const marker = document.querySelector<HTMLElement>(`[data-testid="chat-scroll-map-marker-${targetMessageId}"]`);
       const previewCard = document.querySelector<HTMLElement>('[data-testid="chat-scroll-map-preview"]');
+      const agentMention = previewCard?.querySelector<HTMLElement>('[data-mention-kind="agent"]');
+      const issueMention = previewCard?.querySelector<HTMLElement>('[data-mention-kind="issue"]');
       if (!marker || !previewCard) return null;
       const markerBounds = marker.getBoundingClientRect();
       const previewBounds = previewCard.getBoundingClientRect();
@@ -131,6 +141,8 @@ test.describe("Chat message scroll map", () => {
         previewBackground: style.backgroundColor,
         previewVisibleTop: previewBounds.top >= 0,
         previewVisibleBottom: previewBounds.bottom <= window.innerHeight,
+        hasAgentMention: Boolean(agentMention),
+        hasIssueMention: Boolean(issueMention),
       };
     }, targetMessage.id);
     expect(floatingPreviewGeometry).not.toBeNull();
@@ -141,6 +153,8 @@ test.describe("Chat message scroll map", () => {
     expect(floatingPreviewGeometry?.previewBackground).toBe("rgba(42, 42, 42, 0.94)");
     expect(floatingPreviewGeometry?.previewVisibleTop).toBe(true);
     expect(floatingPreviewGeometry?.previewVisibleBottom).toBe(true);
+    expect(floatingPreviewGeometry?.hasAgentMention).toBe(true);
+    expect(floatingPreviewGeometry?.hasIssueMention).toBe(true);
     await page.screenshot({ path: "/tmp/rudder-chat-scroll-map-preview.png", fullPage: true });
 
     await targetMarker.click();
@@ -148,5 +162,13 @@ test.describe("Chat message scroll map", () => {
     await expectMessageInScrollViewport(page, targetMessage.id);
     await expect(scrollMap).toBeVisible();
     await page.screenshot({ path: "/tmp/rudder-chat-scroll-map-jump.png", fullPage: true });
+
+    await page.setViewportSize({ width: 920, height: 820 });
+    await expect.poll(() => page.evaluate(() => {
+      const rail = document.querySelector<HTMLElement>('[data-testid="chat-scroll-map"]');
+      if (!rail) return "missing";
+      return window.getComputedStyle(rail).visibility;
+    }), { timeout: 5_000 }).toBe("hidden");
+    await page.screenshot({ path: "/tmp/rudder-chat-scroll-map-responsive-hidden.png", fullPage: true });
   });
 });

@@ -8,7 +8,7 @@ import {
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
 } from "@/lib/chat-pending-attachments";
-import type { ChatConversation, ChatMessage, ChatQueuedMessage, ChatQueueSnapshot, Project } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildIssueMentionHref, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -895,6 +895,51 @@ describe("Chat message scroll map", () => {
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
     expect(container.querySelector("[data-message-id='long-message-7']")?.className).toContain("chat-message-jump-highlight");
+  });
+
+  it("renders markdown tokens in hover previews without exposing raw mention protocols", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        ...longConversationMessages(12),
+        message({
+          id: "token-message",
+          role: "user",
+          body: `Ask [Heidi](${buildAgentMentionHref("agent-123", "code")}) to review \`verification\` and [ZST-789](${buildIssueMentionHref("issue-789", "ZST-789", null, "in_progress")}).`,
+          createdAt: new Date("2026-05-12T10:13:00.000Z"),
+          updatedAt: new Date("2026-05-12T10:13:00.000Z"),
+        }),
+        message({
+          id: "token-assistant",
+          role: "assistant",
+          body: `The agent reply mentions [Heidi](${buildAgentMentionHref("agent-123", "code")}) and keeps \`agent://\` as code only.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T10:14:00.000Z"),
+          updatedAt: new Date("2026-05-12T10:14:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const marker = container.querySelector<HTMLButtonElement>("[data-testid='chat-scroll-map-marker-token-message']");
+    expect(marker).not.toBeNull();
+
+    await act(async () => {
+      marker?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const preview = document.body.querySelector<HTMLElement>("[data-testid='chat-scroll-map-preview']");
+    expect(preview).not.toBeNull();
+    expect(preview?.textContent).toContain("Heidi");
+    expect(preview?.textContent).toContain("verification");
+    expect(preview?.innerHTML).toContain('data-mention-kind="agent"');
+    expect(preview?.innerHTML).toContain('data-mention-kind="issue"');
+    expect(preview?.innerHTML).not.toContain("agent://agent-123");
+    expect(preview?.innerHTML).not.toContain("issue://issue-789");
   });
 });
 

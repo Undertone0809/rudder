@@ -12,7 +12,7 @@ import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
 import { AgentIcon } from "@/components/AgentIconPicker";
-import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
+import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
@@ -181,7 +181,8 @@ const CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT = 96;
 const CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT = 180;
 const CHAT_SCROLL_MAP_RAIL_WIDTH_PX = 16;
 const CHAT_SCROLL_MAP_RAIL_GAP_PX = 8;
-const CHAT_SCROLL_MAP_RAIL_LEFT_OFFSET_PX = 28;
+const CHAT_SCROLL_MAP_RAIL_LEFT_OFFSET_PX = 12;
+const CHAT_SCROLL_MAP_CONTENT_SAFE_GAP_PX = 28;
 const CHAT_SCROLL_MAP_PREVIEW_WIDTH_PX = 640;
 const CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX = 16;
 
@@ -211,6 +212,42 @@ function chatScrollMapTextExcerpt(value: string, limit: number) {
   return text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
 }
 
+function findSafeMarkdownExcerptBoundary(source: string, limit: number) {
+  if (source.length <= limit) return source.length;
+
+  let boundary = limit;
+  while (boundary > 0 && !/\s/u.test(source[boundary - 1] ?? "")) {
+    boundary -= 1;
+  }
+  if (boundary < Math.floor(limit * 0.6)) boundary = limit;
+
+  const prefix = source.slice(0, boundary);
+  const lastLinkOpen = prefix.lastIndexOf("](");
+  if (lastLinkOpen >= 0) {
+    const linkClose = source.indexOf(")", lastLinkOpen + 2);
+    if (linkClose >= boundary && linkClose < limit + 96) return linkClose + 1;
+    const labelOpen = source.lastIndexOf("[", lastLinkOpen);
+    if (labelOpen >= 0 && labelOpen < boundary) return Math.max(0, labelOpen);
+  }
+
+  const backtickCount = (prefix.match(/`/g) ?? []).length;
+  if (backtickCount % 2 === 1) {
+    const lastBacktick = prefix.lastIndexOf("`");
+    if (lastBacktick >= 0) return Math.max(0, lastBacktick);
+  }
+
+  return boundary;
+}
+
+function chatScrollMapMarkdownExcerpt(value: string, limit: number) {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length <= limit) return text;
+  const boundary = findSafeMarkdownExcerptBoundary(text, limit - 3);
+  const excerpt = text.slice(0, boundary).trim();
+  if (!excerpt || excerpt.length < Math.floor(limit * 0.6)) return text;
+  return `${excerpt}...`;
+}
+
 function nextAssistantReplyPreview(message: ChatMessage, messages: ChatMessage[]) {
   const index = messages.findIndex((candidate) => candidate.id === message.id);
   const nextMessage = index >= 0 ? messages[index + 1] : null;
@@ -222,7 +259,7 @@ function nextAssistantReplyPreview(message: ChatMessage, messages: ChatMessage[]
   ) {
     return "";
   }
-  return chatScrollMapTextExcerpt(nextMessage.body, CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT);
+  return chatScrollMapMarkdownExcerpt(nextMessage.body, CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT);
 }
 
 function chatScrollMapPreviewParts(message: ChatMessage, messages: ChatMessage[]) {
@@ -233,8 +270,8 @@ function chatScrollMapPreviewParts(message: ChatMessage, messages: ChatMessage[]
       ? body.slice(CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT).trim()
       : "";
     return {
-      title: chatScrollMapTextExcerpt(body, CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT),
-      summary: assistantReplyPreview || chatScrollMapTextExcerpt(summarySource, CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT),
+      title: chatScrollMapMarkdownExcerpt(body, CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT),
+      summary: assistantReplyPreview || chatScrollMapMarkdownExcerpt(summarySource, CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT),
     };
   }
   return { title: chatScrollMapPreviewText(message), summary: assistantReplyPreview };
@@ -278,6 +315,7 @@ function ChatScrollMap({
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [previewPosition, setPreviewPosition] = useState<{ left: number; top: number } | null>(null);
   const [railLeft, setRailLeft] = useState<number | null>(null);
+  const [railVisible, setRailVisible] = useState(true);
   const mapMessages = useMemo(() => chatScrollMapVisibleMessages(messages), [messages]);
   const hoveredMessage = hoveredMessageId
     ? mapMessages.find((message) => message.id === hoveredMessageId) ?? null
@@ -294,6 +332,18 @@ function ChatScrollMap({
       frame = requestAnimationFrame(() => {
         const scrollRegion = shell.closest<HTMLElement>("[data-testid='chat-messages-scroll-region']");
         const anchorBounds = scrollRegion?.getBoundingClientRect() ?? shell.getBoundingClientRect();
+        const visibleContentBlocks = Array.from(shell.querySelectorAll<HTMLElement>(
+          [
+            "[data-testid='chat-user-message-bubble']",
+            "[data-testid='chat-inline-message-editor']",
+            "[data-testid='chat-assistant-message'] > div",
+          ].join(","),
+        ));
+        const visibleContentLeft = visibleContentBlocks.reduce((left, element) => {
+          const bounds = element.getBoundingClientRect();
+          if (bounds.bottom <= 0 || bounds.top >= window.innerHeight || bounds.width <= 0) return left;
+          return Math.min(left, bounds.left);
+        }, Number.POSITIVE_INFINITY);
         const maxLeft = Math.max(
           CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX,
           window.innerWidth - CHAT_SCROLL_MAP_RAIL_WIDTH_PX - CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX,
@@ -301,6 +351,13 @@ function ChatScrollMap({
         const minLeft = Math.max(CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX, anchorBounds.left);
         const anchorLeft = anchorBounds.left + CHAT_SCROLL_MAP_RAIL_LEFT_OFFSET_PX;
         const nextLeft = Math.round(Math.min(Math.max(anchorLeft, minLeft), maxLeft));
+        const hasContentClearance = !Number.isFinite(visibleContentLeft)
+          || nextLeft + CHAT_SCROLL_MAP_RAIL_WIDTH_PX + CHAT_SCROLL_MAP_CONTENT_SAFE_GAP_PX <= visibleContentLeft;
+        setRailVisible((current) => current === hasContentClearance ? current : hasContentClearance);
+        if (!hasContentClearance) {
+          setHoveredMessageId(null);
+          setPreviewPosition(null);
+        }
         setRailLeft((current) => current === nextLeft ? current : nextLeft);
       });
     };
@@ -331,7 +388,7 @@ function ChatScrollMap({
       top: Math.min(Math.max(bounds.top + bounds.height / 2, 80), window.innerHeight - 80),
     });
   }, []);
-  const showPreview = Boolean(hoveredMessage && hoveredPreview && previewPosition);
+  const showPreview = Boolean(railVisible && hoveredMessage && hoveredPreview && previewPosition);
   if (mapMessages.length === 0) return null;
   return (
     <>
@@ -341,7 +398,7 @@ function ChatScrollMap({
         aria-label="Conversation message map"
         className={cn(
           "pointer-events-none fixed top-1/2 z-20 hidden w-4 -translate-y-1/2 flex-col items-start gap-0.5 md:flex",
-          railLeft === null && "invisible",
+          (railLeft === null || !railVisible) && "invisible",
         )}
         style={{ left: railLeft ?? 0 }}
       >
@@ -382,13 +439,13 @@ function ChatScrollMap({
           className="pointer-events-none fixed z-50 w-[40rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[18px] border border-white/10 bg-[rgba(42,42,42,0.94)] px-4 py-3.5 text-left shadow-[0_24px_70px_-34px_rgb(0_0_0/0.88)] backdrop-blur-xl"
           style={{ left: previewPosition!.left, top: previewPosition!.top }}
         >
-          <div className="line-clamp-1 text-[15px] font-semibold leading-6 text-white">
-            {hoveredPreview?.title}
-          </div>
+          <MarkdownBody className="line-clamp-1 text-[15px] font-semibold leading-6 text-white [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_code]:text-white/92 [&_p]:inline">
+            {hoveredPreview?.title ?? ""}
+          </MarkdownBody>
           {hoveredPreview?.summary ? (
-            <div className="mt-1.5 line-clamp-3 text-[15px] leading-6 text-white/48">
+            <MarkdownBody className="mt-1.5 line-clamp-3 text-[15px] leading-6 text-white/48 [&_*]:text-current [&_a]:pointer-events-none [&_a]:align-baseline [&_code]:bg-white/10 [&_code]:text-white/70 [&_p]:inline">
               {hoveredPreview.summary}
-            </div>
+            </MarkdownBody>
           ) : null}
         </div>,
         document.body,
