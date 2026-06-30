@@ -746,43 +746,41 @@ export function AgentDetail() {
         </div>
       </div>
 
-      {!urlRunId && (
-        <Tabs
-          value={activeView}
-          onValueChange={handleDetailTabChange}
-        >
-          <div className="flex items-start justify-between gap-4">
-            <PageTabBar
-              items={[
-                { value: "dashboard", label: "Dashboard" },
-                { value: "configuration", label: "Configuration" },
-                { value: "instructions", label: "Instructions" },
-                { value: "skills", label: "Skills" },
-                { value: "integrations", label: "Integrations" },
-                { value: "runs", label: "Runs" },
-                { value: "issues", label: "Issues" },
-                { value: "budget", label: "Budget" },
-              ]}
-              value={activeView}
-              onValueChange={handleDetailTabChange}
-            />
-            {activeView === "dashboard" ? (
-              <div className="hidden lg:block shrink-0">
-                <DashboardDateRangeControl
-                  preset={datePreset}
-                  customFrom={customFrom}
-                  customTo={customTo}
-                  customOpen={customRangeOpen}
-                  onCustomOpenChange={setCustomRangeOpen}
-                  onPresetSelect={handleDashboardPresetSelect}
-                  onCustomFromChange={setCustomFrom}
-                  onCustomToChange={setCustomTo}
-                />
-              </div>
-            ) : null}
-          </div>
-        </Tabs>
-      )}
+      <Tabs
+        value={activeView}
+        onValueChange={handleDetailTabChange}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <PageTabBar
+            items={[
+              { value: "dashboard", label: "Dashboard" },
+              { value: "configuration", label: "Configuration" },
+              { value: "instructions", label: "Instructions" },
+              { value: "skills", label: "Skills" },
+              { value: "integrations", label: "Integrations" },
+              { value: "runs", label: "Runs" },
+              { value: "issues", label: "Issues" },
+              { value: "budget", label: "Budget" },
+            ]}
+            value={activeView}
+            onValueChange={handleDetailTabChange}
+          />
+          {activeView === "dashboard" ? (
+            <div className="hidden lg:block shrink-0">
+              <DashboardDateRangeControl
+                preset={datePreset}
+                customFrom={customFrom}
+                customTo={customTo}
+                customOpen={customRangeOpen}
+                onCustomOpenChange={setCustomRangeOpen}
+                onPresetSelect={handleDashboardPresetSelect}
+                onCustomFromChange={setCustomFrom}
+                onCustomToChange={setCustomTo}
+              />
+            </div>
+          ) : null}
+        </div>
+      </Tabs>
 
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}
       {isPendingApproval && (

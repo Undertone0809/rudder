@@ -136,6 +136,17 @@ test.describe("Run transcript detail", () => {
 
     await page.goto(`/agents/${agent.id}/runs/${run.id}`);
 
+    const mainContent = page.locator("#main-content");
+    const agentRunsTab = mainContent.getByRole("tab", { name: "Runs" });
+    await expect(mainContent.getByRole("tab", { name: "Dashboard" })).toBeVisible({ timeout: 15_000 });
+    await expect(mainContent.getByRole("tab", { name: "Configuration" })).toBeVisible();
+    await expect(mainContent.getByRole("tab", { name: "Instructions" })).toBeVisible();
+    await expect(mainContent.getByRole("tab", { name: "Skills" })).toBeVisible();
+    await expect(mainContent.getByRole("tab", { name: "Integrations" })).toBeVisible();
+    await expect(agentRunsTab).toBeVisible();
+    await expect(mainContent.getByRole("tab", { name: "Budget" })).toBeVisible();
+    await expect(agentRunsTab).toHaveAttribute("data-state", "active");
+
     const transcriptTab = page.getByRole("tab", { name: "Transcript" });
     const invocationTab = page.getByRole("tab", { name: "Invocation" });
     await expect(transcriptTab).toBeVisible({ timeout: 15_000 });
@@ -151,7 +162,7 @@ test.describe("Run transcript detail", () => {
     expect(detailBox!.x).toBeLessThan(listBox!.x);
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
-    await expect(page.getByText("adapter invocation")).toBeVisible();
+    await expect(page.getByText("adapter invocation", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Expand transcript" }).click();
     const transcriptDialog = page.getByRole("dialog", { name: "Transcript" });
@@ -180,11 +191,11 @@ test.describe("Run transcript detail", () => {
 
     await invocationTab.click();
     await expect(invocationTab).toHaveAttribute("data-state", "active");
-    await expect(page.getByText("Exact adapter invoke payload")).toHaveClass(/invisible/);
+    await expect(page.getByText("Exact adapter invocation and Agent Instruction stack")).toHaveClass(/invisible/);
     await expect(page.getByText("Runtime:", { exact: false })).toBeVisible();
     await expect(page.getByText("Command:", { exact: false })).toBeVisible();
     await expect(page.getByText(/^Events \(\d+\)$/)).toBeVisible();
-    await expect(page.getByText("adapter invocation")).toBeVisible();
+    await expect(page.getByText("adapter invocation", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "nice" })).toBeHidden();
 
     const promptBlock = page.getByTestId("invocation-prompt");
@@ -195,13 +206,13 @@ test.describe("Run transcript detail", () => {
     if (baseURL) {
       await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
     }
-    await page.getByRole("button", { name: "Copy invocation prompt" }).click();
+    await page.getByRole("button", { name: "Copy agent instruction stack" }).click();
     await expect
       .poll(async () => page.evaluate(() => navigator.clipboard.readText()))
       .toBe(promptText);
 
     await invocationTab.hover();
-    await expect(page.getByText("Exact adapter invoke payload")).toBeVisible();
+    await expect(page.getByText("Exact adapter invocation and Agent Instruction stack")).toBeVisible();
 
     await transcriptTab.click();
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
