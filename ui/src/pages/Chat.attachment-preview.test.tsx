@@ -869,6 +869,7 @@ describe("Chat message scroll map", () => {
     expect(scrollMap?.className).toContain("gap-0.5");
     expect(container.querySelector<HTMLElement>("[data-testid='chat-messages-shell']")?.className).toContain("relative");
     expect(container.querySelector<HTMLElement>("[data-testid='chat-messages-content']")?.className).not.toContain("ml-5");
+    expect(container.querySelector<HTMLElement>("[data-testid='chat-messages-content']")?.className).toContain("pb-4");
 
     const marker = container.querySelector<HTMLButtonElement>("[data-testid='chat-scroll-map-marker-long-message-7']");
     expect(marker).not.toBeNull();

@@ -2042,7 +2042,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     {showChatScrollMap && !showMessagesLoading ? (
                       <ChatScrollMap messages={visibleMessages} onJump={jumpToChatMessage} />
                     ) : null}
-                    <div data-testid="chat-messages-content" className="mx-auto flex w-full max-w-4xl flex-col gap-5 pr-1" >
+                    <div data-testid="chat-messages-content" className="mx-auto flex w-full max-w-4xl flex-col gap-5 pb-4 pr-1" >
                       {renamingConversationId === selectedConversation.id ? (
                         <form
                           data-testid="chat-title-rename-form"
