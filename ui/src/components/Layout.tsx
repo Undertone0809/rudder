@@ -163,11 +163,11 @@ export function DesktopSettingsModalFrame({
       >
         <SettingsSidebar showBackButton={false} variant="modal" />
         <section className="settings-modal-main flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex h-9 shrink-0 items-center justify-end px-3">
+          <div className="flex h-12 shrink-0 items-center justify-end px-4">
             <Button
               variant="ghost"
               size="icon-sm"
-              className="text-muted-foreground"
+              className="size-8 rounded-full text-muted-foreground"
               onClick={onClose}
               aria-label={t("common.closeSidebar")}
               title={t("common.closeSidebar")}
