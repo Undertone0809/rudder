@@ -443,7 +443,7 @@ test("Library markdown section options can reveal hidden headings", async ({ pag
   await expect(outline.getByRole("button", { name: "Visible Outline", exact: true })).toBeVisible();
   await expect(outline.getByRole("button", { name: /Hidden Notes/ })).toHaveCount(0);
 
-  await outline.getByRole("button", { name: "Section display options" }).click();
+  await page.getByRole("button", { name: "Document options" }).click();
   await page.getByRole("menuitemcheckbox", { name: "Show hidden sections" }).click();
 
   const hiddenSectionButton = outline.getByRole("button", { name: /Hidden Notes/ });
@@ -471,11 +471,42 @@ test("Library markdown section options can hide and restore the outline panel", 
 
   const outline = page.getByTestId("org-workspaces-document-outline");
   await expect(outline).toBeVisible();
-  await outline.getByRole("button", { name: "Section display options" }).click();
+  await page.getByRole("button", { name: "Document options" }).click();
   await page.getByRole("menuitem", { name: "Hide sections" }).click();
 
   await expect(outline).toHaveCount(0);
-  await page.getByRole("button", { name: "Show sections" }).click();
+  await page.getByRole("button", { name: "Document options" }).click();
+  await page.getByRole("menuitem", { name: "Show sections" }).click();
   await expect(page.getByTestId("org-workspaces-document-outline")).toBeVisible();
   await expect(page.getByTestId("org-workspaces-document-outline").getByRole("button", { name: "Next Step" })).toBeVisible();
+});
+
+test("Library MDX files use the markdown document chrome and outline options", async ({ page }) => {
+  const organization = await createOrg(page, "Library-MDX-Document-Chrome");
+  const filePath = "docs/component-notes.mdx";
+  await writeWorkspaceFile(
+    page,
+    organization.id,
+    filePath,
+    [
+      "# MDX Notes",
+      "",
+      "export const Status = () => <span>Draft</span>",
+      "",
+      "## Component Section",
+      "",
+      "<Status />",
+    ].join("\n"),
+  );
+  await selectOrg(page, organization.id);
+  await page.setViewportSize({ width: 1491, height: 926 });
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+
+  await expect(page.getByTestId("org-workspaces-markdown-editor").locator("h1", { hasText: "MDX Notes" })).toBeVisible();
+  await expect(page.getByTestId("org-workspaces-document-outline").getByRole("button", { name: "Component Section" })).toBeVisible();
+  await expect(page.getByTestId("org-workspaces-path-breadcrumb")).toContainText("component-notes.mdx");
+
+  await page.getByRole("button", { name: "Document options" }).click();
+  await page.getByRole("menuitem", { name: "Hide sections" }).click();
+  await expect(page.getByTestId("org-workspaces-document-outline")).toHaveCount(0);
 });

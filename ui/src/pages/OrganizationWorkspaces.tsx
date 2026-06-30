@@ -60,7 +60,6 @@ import {
   MoreHorizontal,
   PackageOpen,
   PanelLeftClose,
-  PanelRight,
   Pencil,
   Plus,
   Terminal,
@@ -137,7 +136,7 @@ const SKILL_INSTALL_CHAT_PREFILL = [
   "",
   "After importing, verify it appears in Library / skills and explain whether it is editable or read-only.",
 ].join("\n");
-const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
+const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx"]);
 const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
 const WORKSPACE_TEXT_IMPORT_FILE_EXTENSIONS = new Set([
   ...WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS,
@@ -6035,51 +6034,82 @@ export function OrganizationWorkspaceBrowser({
             {visibleWorkspaceBreadcrumbPath !== null ? (
               <div
                 data-testid="org-workspaces-path-breadcrumb"
-                className="flex h-[var(--rudder-doc-editor-breadcrumb-height)] shrink-0 items-center gap-1 overflow-hidden border-x border-b border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
+                className="flex h-[var(--rudder-doc-editor-breadcrumb-height)] shrink-0 items-center justify-between gap-3 overflow-hidden border-x border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm text-muted-foreground"
                 aria-label="File path"
               >
-                {applyOrganizationSkillBreadcrumbLabels(
-                  workspacePathBreadcrumb(
-                    visibleWorkspaceBreadcrumbPath,
-                    agentWorkspaceEntryByName,
-                    visibleWorkspaceBreadcrumbKind,
-                    libraryCopy("library", locale),
-                  ),
-                  selectedVirtualOrganizationSkill,
-                ).map((part, index, parts) => {
-                  const isLast = index === parts.length - 1;
-                  return (
-                    <div key={`${part.path}:${index}`} className="flex min-w-0 items-center gap-1.5">
-                      {index > 0 ? <span className="shrink-0 text-muted-foreground/45">/</span> : null}
+                <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+                  {applyOrganizationSkillBreadcrumbLabels(
+                    workspacePathBreadcrumb(
+                      visibleWorkspaceBreadcrumbPath,
+                      agentWorkspaceEntryByName,
+                      visibleWorkspaceBreadcrumbKind,
+                      libraryCopy("library", locale),
+                    ),
+                    selectedVirtualOrganizationSkill,
+                  ).map((part, index, parts) => {
+                    const isLast = index === parts.length - 1;
+                    return (
+                      <div key={`${part.path}:${index}`} className="flex min-w-0 items-center gap-1.5">
+                        {index > 0 ? <span className="shrink-0 text-muted-foreground/45">/</span> : null}
+                        <button
+                          type="button"
+                          className={cn(
+                            "inline-flex min-w-0 rounded-[4px] px-1 py-0.5 text-left font-medium transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                            isLast ? "text-foreground" : "text-muted-foreground",
+                          )}
+                          title={part.path}
+                          onClick={() => {
+                            if (part.isFile) {
+                              if (requestedSkillId && requestedSkillFilePath) {
+                                handleSelectSkillFile(requestedSkillId, requestedSkillFilePath, part.path);
+                              } else {
+                                handleSelectFile(part.path);
+                              }
+                            } else if (part.path) {
+                              setActiveEntryPath(part.path);
+                              focusWorkspaceTreeEntry(part.path);
+                              updateSelectedDirectory(searchParams, setSearchParams, part.path);
+                            } else {
+                              setActiveEntryPath(null);
+                              updateSelectedDirectory(searchParams, setSearchParams, null);
+                            }
+                          }}
+                        >
+                          <span className="truncate">{part.label}</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                {selectedFileUsesMarkdownEditor ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
                       <button
                         type="button"
-                        className={cn(
-                          "inline-flex min-w-0 rounded-[4px] px-1 py-0.5 text-left font-medium transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                          isLast ? "text-foreground" : "text-muted-foreground",
-                        )}
-                        title={part.path}
-                        onClick={() => {
-                          if (part.isFile) {
-                            if (requestedSkillId && requestedSkillFilePath) {
-                              handleSelectSkillFile(requestedSkillId, requestedSkillFilePath, part.path);
-                            } else {
-                              handleSelectFile(part.path);
-                            }
-                          } else if (part.path) {
-                            setActiveEntryPath(part.path);
-                            focusWorkspaceTreeEntry(part.path);
-                            updateSelectedDirectory(searchParams, setSearchParams, part.path);
-                          } else {
-                            setActiveEntryPath(null);
-                            updateSelectedDirectory(searchParams, setSearchParams, null);
-                          }
-                        }}
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                        aria-label="Document options"
                       >
-                        <span className="truncate">{part.label}</span>
+                        <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
                       </button>
-                    </div>
-                  );
-                })}
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                      <DropdownMenuItem
+                        disabled={!showSelectedMarkdownOutlinePanel}
+                        onSelect={() => setMarkdownOutlineCollapsed((collapsed) => !collapsed)}
+                      >
+                        {markdownOutlineCollapsed ? "Show sections" : "Hide sections"}
+                      </DropdownMenuItem>
+                      {selectedMarkdownHasHiddenOutlineItems ? (
+                        <DropdownMenuCheckboxItem
+                          checked={showHiddenMarkdownSections}
+                          onCheckedChange={(checked) => setShowHiddenMarkdownSections(checked === true)}
+                        >
+                          Show hidden sections
+                        </DropdownMenuCheckboxItem>
+                      ) : null}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
               </div>
             ) : null}
             <div
@@ -6264,22 +6294,12 @@ export function OrganizationWorkspaceBrowser({
                     >
                       <div
                         className={cn(
-                          "relative mx-auto min-h-full w-full px-8 py-8",
+                          "mx-auto min-h-full w-full px-8 py-8",
                           renderSelectedMarkdownOutlinePanel
                             ? "max-w-[1180px] xl:grid xl:grid-cols-[minmax(0,880px)_220px] xl:gap-8"
                             : "max-w-[880px]",
                         )}
                       >
-                        {showSelectedMarkdownOutlinePanel && markdownOutlineCollapsed ? (
-                          <button
-                            type="button"
-                            className="absolute right-8 top-6 hidden h-7 w-7 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring xl:inline-flex"
-                            aria-label="Show sections"
-                            onClick={() => setMarkdownOutlineCollapsed(false)}
-                          >
-                            <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
-                          </button>
-                        ) : null}
                         <div className="min-w-0">
                           {selectedMarkdownParts.frontmatter !== null ? (
                             <details
@@ -6329,30 +6349,6 @@ export function OrganizationWorkspaceBrowser({
                             <div className="sticky top-6 border-l border-border/60 py-1 pl-4">
                               <div className="mb-2 flex items-center justify-between gap-2">
                                 <div className="text-xs font-medium text-muted-foreground">Sections</div>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                                      aria-label="Section display options"
-                                    >
-                                      <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-48">
-                                    <DropdownMenuItem onSelect={() => setMarkdownOutlineCollapsed(true)}>
-                                      Hide sections
-                                    </DropdownMenuItem>
-                                    {selectedMarkdownHasHiddenOutlineItems ? (
-                                      <DropdownMenuCheckboxItem
-                                        checked={showHiddenMarkdownSections}
-                                        onCheckedChange={(checked) => setShowHiddenMarkdownSections(checked === true)}
-                                      >
-                                        Show hidden sections
-                                      </DropdownMenuCheckboxItem>
-                                    ) : null}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
                               </div>
                               {selectedMarkdownOutline.length > 0 ? (
                                 <nav className="space-y-0.5">
