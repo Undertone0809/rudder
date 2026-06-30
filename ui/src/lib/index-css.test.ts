@@ -495,6 +495,8 @@ describe("index.css motion rules", () => {
     const sidebarTabsAndBreadcrumb = cssBlock(".rudder-doc-editor-sidebar-header--tabs-and-breadcrumb");
     const sidebarChromeStates = cssBlock(".rudder-doc-editor-sidebar-header--breadcrumb-only,\n.rudder-doc-editor-sidebar-header--tabs-only,\n.rudder-doc-editor-sidebar-header--tabs-and-breadcrumb");
     const activeTabCorners = cssBlock(".rudder-doc-editor-tab--active::before,\n.rudder-doc-editor-tab--active::after");
+    const fileTab = indexCss.match(/\n\.rudder-doc-editor-tab \{[\s\S]*?\n\}/)?.[0] ?? "";
+    const activeTab = indexCss.match(/\n\.rudder-doc-editor-tab--active \{[\s\S]*?\n\}/)?.[0] ?? "";
 
     expect(editorSurface).toContain("--rudder-doc-editor-tab-strip-height: 53px");
     expect(editorSurface).toContain("--rudder-doc-editor-breadcrumb-height: 32px");
@@ -510,9 +512,17 @@ describe("index.css motion rules", () => {
     expect(tabStrip).toContain("--rudder-doc-editor-tab-active-height: calc(var(--rudder-doc-editor-tab-strip-height) + 1px)");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-inactive-height: 38px");
     expect(tabStrip).toContain("--rudder-doc-editor-tab-hover-bg: color-mix(in oklab, var(--surface-active) 86%, var(--foreground) 10%)");
-    expect(tabStrip).toContain("--rudder-doc-editor-tab-radius: var(--desktop-workspace-radius)");
-    expect(tabStrip).toContain("--rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-radius: calc(var(--desktop-workspace-radius) + 2px)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) + 4px)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-corner-offset: calc(var(--rudder-doc-editor-tab-corner-size) * -1 + 7px)");
+    expect(tabStrip).toContain("--rudder-doc-editor-tab-corner-fill: calc(var(--rudder-doc-editor-tab-radius) - 4px)");
     expect(activeTabCorners).toContain("width: var(--rudder-doc-editor-tab-corner-size)");
+    expect(fileTab).toContain("contain: paint");
+    expect(activeTab).toContain("contain: none");
+    expect(indexCss).not.toContain("--rudder-doc-editor-tab-corner-size: calc(var(--rudder-doc-editor-tab-radius) * 2)");
+    expect(indexCss).toContain("left: var(--rudder-doc-editor-tab-corner-offset)");
+    expect(indexCss).toContain("right: var(--rudder-doc-editor-tab-corner-offset)");
+    expect(indexCss).toContain("box-shadow: var(--rudder-doc-editor-tab-corner-fill) var(--rudder-doc-editor-tab-corner-fill)");
     expect(indexCss).toContain("border-bottom-right-radius: var(--rudder-doc-editor-tab-corner-size)");
     expect(indexCss).toContain("border-bottom-left-radius: var(--rudder-doc-editor-tab-corner-size)");
     const tabStripClassMatch = organizationWorkspacesSource.match(/data-testid="org-workspaces-editor-tabs"[\s\S]{0,220}className="([^"]+)"/);
@@ -536,6 +546,7 @@ describe("index.css motion rules", () => {
     expect(organizationWorkspacesSource).toContain("mb-2 h-[var(--rudder-doc-editor-tab-inactive-height)]");
     expect(organizationWorkspacesSource).toContain("transition-[box-shadow,opacity,transform]");
     expect(organizationWorkspacesSource).not.toContain("transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]");
+    expect(organizationWorkspacesSource).toContain("items-end gap-1.5 overflow-x-auto");
     expect(organizationWorkspacesSource).toContain("hover:bg-[color:var(--rudder-doc-editor-tab-hover-bg)]");
     expect(organizationWorkspacesSource).toContain("rudder-doc-editor-tab-drag-spacer mb-2 h-9");
     expect(organizationWorkspacesSource).toContain("rounded-t-[var(--rudder-doc-editor-tab-radius)]");
