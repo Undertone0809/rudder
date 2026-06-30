@@ -8,7 +8,7 @@ Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop f
 
 ## The Vision
 
-Agent teams become useful when their work stops disappearing into one-off prompts. They need the same durable coordination surfaces that make human teams compound: goals, explicit ownership, shared context, review, feedback, operating memory, and budget discipline.
+Agent teams need the same durable coordination surfaces that make human teams compound: goals, explicit ownership, shared context, review, feedback, operating memory, and budget discipline.
 
 Rudder is the operating layer that makes those loops visible and repeatable. It is not the agent runtime and it is not a generic chat product. It is the place where real work becomes structured enough to assign, run, review, learn from, and improve.
 
