@@ -39,13 +39,13 @@ describe("runtime cache helpers", () => {
 
   it("resolves the default Desktop organization workspace home under Documents", () => {
     expect(resolveDefaultOrganizationWorkspaceHomeDir("dev", "/Users/test")).toBe(
-      "/Users/test/Documents/Rudder/instances/dev/organizations",
+      "/Users/test/Documents/Rudder",
     );
   });
 
   it("only injects the Desktop organization workspace home when Rudder home is implicit", () => {
     expect(resolveDesktopOrganizationWorkspaceHomeEnv({}, "dev", "/Users/test")).toBe(
-      "/Users/test/Documents/Rudder/instances/dev/organizations",
+      "/Users/test/Documents/Rudder",
     );
     expect(resolveDesktopOrganizationWorkspaceHomeEnv({ RUDDER_HOME: "/tmp/rudder" }, "dev", "/Users/test"))
       .toBeNull();

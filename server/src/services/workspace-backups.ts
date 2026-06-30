@@ -10,6 +10,8 @@ import {
 import {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
+  WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
+  WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS,
   type OrganizationWorkspaceFileDetail,
   type OrganizationWorkspaceFileEntry,
   type OrganizationWorkspaceFileList,
@@ -52,6 +54,8 @@ const SKIPPED_ENTRY_NAMES = new Set([
 ]);
 const ACTIVE_RUN_STATUSES = ["queued", "running"] as const;
 const WORKSPACE_BACKUP_DEFAULT_INTERVAL_MS = WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS * 60 * 60 * 1000;
+export const WORKSPACE_BACKUP_RUNNING_INTERVAL_MS = WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS * 60 * 60 * 1000;
+export const WORKSPACE_BACKUP_OFFLINE_INTERVAL_MS = WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS * 60 * 60 * 1000;
 const WORKSPACE_BACKUP_RUNNING_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const MAX_BACKUP_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_BACKUP_TOTAL_BYTES = 100 * 1024 * 1024;
@@ -106,7 +110,7 @@ type WorkspaceBackupArtifactMigrationSkip = {
 export type WorkspaceBackupDownload = {
   artifactRef: string;
   filename: string;
-  contentType: "application/json";
+  contentType: "application/json" | "application/zip";
   byteSize: number;
   archiveSha256: string | null;
   content: Buffer;
@@ -129,6 +133,23 @@ function timestamp(date = new Date()) {
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
+const CRC32_TABLE = new Uint32Array(256);
+for (let index = 0; index < 256; index += 1) {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  CRC32_TABLE[index] = value >>> 0;
+}
+
+function crc32(buffer: Buffer): number {
+  let value = 0xffffffff;
+  for (const byte of buffer) {
+    value = CRC32_TABLE[(value ^ byte) & 0xff]! ^ (value >>> 8);
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
 function addDays(date: Date, days: number) {
   const normalizedDays = Math.max(1, Math.trunc(days));
   return new Date(date.getTime() + normalizedDays * 24 * 60 * 60 * 1000);
@@ -136,6 +157,115 @@ function addDays(date: Date, days: number) {
 
 function sha256Buffer(buffer: Buffer | string) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+function writeUInt16(value: number) {
+  const buffer = Buffer.allocUnsafe(2);
+  buffer.writeUInt16LE(value, 0);
+  return buffer;
+}
+
+function writeUInt32(value: number) {
+  const buffer = Buffer.allocUnsafe(4);
+  buffer.writeUInt32LE(value >>> 0, 0);
+  return buffer;
+}
+
+function dosDateTime(date = new Date()): { time: number; date: number } {
+  const year = Math.max(1980, date.getFullYear());
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { time, date: dosDate };
+}
+
+function buildWorkspaceBackupZip(artifact: WorkspaceBackupArtifact, rootFolderName: string): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  const sortedEntries = [...artifact.entries].sort((left, right) => left.path.localeCompare(right.path));
+  const normalizedRoot = sanitizeZipPathSegment(rootFolderName);
+  const createdAt = new Date(artifact.createdAt);
+  const zipEntries = [
+    {
+      path: `${normalizedRoot}/`,
+      data: Buffer.alloc(0),
+      isDirectory: true,
+      mtimeMs: createdAt.getTime(),
+    },
+    ...sortedEntries.map((entry) => ({
+      path: `${normalizedRoot}/${entry.path}${entry.kind === "directory" ? "/" : ""}`,
+      data: entry.kind === "file" ? Buffer.from(entry.dataBase64 ?? "", "base64") : Buffer.alloc(0),
+      isDirectory: entry.kind === "directory",
+      mtimeMs: entry.mtimeMs ?? createdAt.getTime(),
+    })),
+  ];
+
+  for (const entry of zipEntries) {
+    const name = Buffer.from(entry.path, "utf8");
+    const data = entry.data;
+    const checksum = crc32(data);
+    const { time, date } = dosDateTime(new Date(entry.mtimeMs));
+    const localHeader = Buffer.concat([
+      writeUInt32(0x04034b50),
+      writeUInt16(20),
+      writeUInt16(0x0800),
+      writeUInt16(0),
+      writeUInt16(time),
+      writeUInt16(date),
+      writeUInt32(checksum),
+      writeUInt32(data.byteLength),
+      writeUInt32(data.byteLength),
+      writeUInt16(name.byteLength),
+      writeUInt16(0),
+      name,
+    ]);
+    localParts.push(localHeader, data);
+
+    centralParts.push(Buffer.concat([
+      writeUInt32(0x02014b50),
+      writeUInt16(20),
+      writeUInt16(20),
+      writeUInt16(0x0800),
+      writeUInt16(0),
+      writeUInt16(time),
+      writeUInt16(date),
+      writeUInt32(checksum),
+      writeUInt32(data.byteLength),
+      writeUInt32(data.byteLength),
+      writeUInt16(name.byteLength),
+      writeUInt16(0),
+      writeUInt16(0),
+      writeUInt16(0),
+      writeUInt16(0),
+      writeUInt32(entry.isDirectory ? 0x10 : 0),
+      writeUInt32(offset),
+      name,
+    ]));
+    offset += localHeader.byteLength + data.byteLength;
+  }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.concat([
+    writeUInt32(0x06054b50),
+    writeUInt16(0),
+    writeUInt16(0),
+    writeUInt16(zipEntries.length),
+    writeUInt16(zipEntries.length),
+    writeUInt32(centralDirectory.byteLength),
+    writeUInt32(offset),
+    writeUInt16(0),
+  ]);
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
+function sanitizeZipPathSegment(value: string): string {
+  return value.replaceAll("\\", "/").split("/").filter(Boolean).join("-") || "workspace";
+}
+
+function backupDownloadRootFolderName(artifact: WorkspaceBackupArtifact): string {
+  const basename = path.basename(artifact.rootPath);
+  if (basename && basename !== "workspaces") return basename;
+  return `workspace-${resolveOrganizationStorageKey(artifact.orgId)}`;
 }
 
 function addWarning(warnings: string[], warning: string) {
@@ -910,13 +1040,14 @@ export function workspaceBackupService(db: Db) {
     async getDownload(orgId: string, backupId: string): Promise<WorkspaceBackupDownload> {
       const row = await getBackupRow(orgId, backupId);
       const payload = await readArtifactPayload(row);
+      const zip = buildWorkspaceBackupZip(payload.artifact, backupDownloadRootFolderName(payload.artifact));
       return {
         artifactRef: row.artifactRef,
-        filename: path.basename(row.artifactRef),
-        contentType: "application/json",
-        byteSize: payload.raw.byteLength,
-        archiveSha256: row.archiveSha256,
-        content: payload.raw,
+        filename: `${path.basename(row.artifactRef, ".json")}.zip`,
+        contentType: "application/zip",
+        byteSize: zip.byteLength,
+        archiveSha256: sha256Buffer(zip),
+        content: zip,
       };
     },
 

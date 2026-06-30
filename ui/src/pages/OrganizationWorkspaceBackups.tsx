@@ -1,7 +1,8 @@
 import { Button } from "@/components/ui/button";
 import {
-  WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
+  WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
+  WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS,
   type WorkspaceBackupSummary,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -386,10 +387,11 @@ export function OrganizationWorkspaceBackups() {
         <div className="border-b border-border/70 px-4 py-3">
           <div className="text-sm font-medium">Policy</div>
           <div className="mt-0.5 text-xs text-muted-foreground">
-            Daily snapshots. 30-day retention.
+            Running snapshots with daily startup catch-up. 30-day retention.
           </div>
           <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-            <div className="flex justify-between gap-3"><span>Schedule</span><span>Every {WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS}h</span></div>
+            <div className="flex justify-between gap-3"><span>Running</span><span>Every {WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS}h</span></div>
+            <div className="flex justify-between gap-3"><span>Startup</span><span>After {WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS}h offline</span></div>
             <div className="flex justify-between gap-3"><span>Retention</span><span>{WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS} days</span></div>
             <div className="flex justify-between gap-3"><span>Scope</span><span>Workspace files</span></div>
             <div className="flex justify-between gap-3"><span>Safety</span><span>Pre-restore backup</span></div>

@@ -29,10 +29,10 @@ export function resolveSharedRudderHomeDir(
 }
 
 export function resolveDefaultOrganizationWorkspaceHomeDir(
-  instanceId: string,
+  _instanceId: string,
   homeDir: string = os.homedir(),
 ): string {
-  return path.resolve(homeDir, "Documents", "Rudder", "instances", instanceId, "organizations");
+  return path.resolve(homeDir, "Documents", "Rudder");
 }
 
 export function resolveDesktopOrganizationWorkspaceHomeEnv(

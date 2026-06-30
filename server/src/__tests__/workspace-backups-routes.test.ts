@@ -93,12 +93,12 @@ describe("workspace backup download route", () => {
     mockWorkspaceBackupService.getDownload.mockReset();
   });
 
-  it("downloads the selected backup artifact with attachment headers", async () => {
-    const content = Buffer.from("{\"version\":1,\"orgId\":\"organization-1\",\"entries\":[]}\n", "utf8");
+  it("downloads the selected backup zip with attachment headers", async () => {
+    const content = Buffer.from("PK\u0003\u0004workspace.zip", "utf8");
     mockWorkspaceBackupService.getDownload.mockResolvedValue({
       artifactRef: "/tmp/.rudder-backups/workspace-20260621.json",
-      filename: "workspace-20260621.json",
-      contentType: "application/json",
+      filename: "workspace-20260621.zip",
+      contentType: "application/zip",
       byteSize: content.byteLength,
       archiveSha256: "abc123",
       content,
@@ -112,12 +112,12 @@ describe("workspace backup download route", () => {
     const res = await request(app).get("/api/orgs/organization-1/workspace/backups/backup-1/download");
 
     expect(res.status).toBe(200);
-    expect(res.header["content-type"]).toContain("application/json");
+    expect(res.header["content-type"]).toContain("application/zip");
     expect(res.header["content-length"]).toBe(String(content.byteLength));
     expect(res.header["cache-control"]).toBe("private, max-age=60");
     expect(res.header["x-content-type-options"]).toBe("nosniff");
     expect(res.header["x-rudder-archive-sha256"]).toBe("abc123");
-    expect(res.header["content-disposition"]).toBe("attachment; filename=\"workspace-20260621.json\"");
+    expect(res.header["content-disposition"]).toBe("attachment; filename=\"workspace-20260621.zip\"");
     expect(res.text).toBe(content.toString("utf8"));
     expect(mockWorkspaceBackupService.getDownload).toHaveBeenCalledWith("organization-1", "backup-1");
   });

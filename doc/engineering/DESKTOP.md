@@ -144,9 +144,12 @@ Organization workspaces are user work files and default to the user's Documents
 folder when `RUDDER_HOME` is not explicitly set:
 
 - macOS, Windows, and Linux default:
-  `~/Documents/Rudder/instances/<instance>/organizations/<org-storage-key>/workspaces`
+  `~/Documents/Rudder/<org-folder>`
+- local folder map:
+  `~/Documents/Rudder/.rudder-organizations.json` records the
+  `<org-folder>` to organization-id mapping for this machine
 - explicit override:
-  `RUDDER_ORGANIZATION_WORKSPACE_HOME=/path/to/organizations`
+  `RUDDER_ORGANIZATION_WORKSPACE_HOME=/path/to/rudder-workspaces`
 - compatibility mode:
   setting `RUDDER_HOME` keeps organization workspaces under
   `~/.rudder/instances/<instance>/organizations/<org-storage-key>/workspaces`

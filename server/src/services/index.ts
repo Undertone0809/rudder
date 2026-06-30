@@ -40,6 +40,9 @@ export { resourceCatalogService } from "./resource-catalog.js";
 export { secretService } from "./secrets.js";
 export { sidebarBadgeService } from "./sidebar-badges.js";
 export { workProductService } from "./work-products.js";
-export { reconcileWorkspaceBackupArtifactStorage, workspaceBackupService } from "./workspace-backups.js";
+export {
+  WORKSPACE_BACKUP_OFFLINE_INTERVAL_MS,
+  WORKSPACE_BACKUP_RUNNING_INTERVAL_MS, reconcileWorkspaceBackupArtifactStorage, workspaceBackupService
+} from "./workspace-backups.js";
 export { workspaceOperationService } from "./workspace-operations.js";
 export { reconcilePersistedRuntimeServicesOnStartup } from "./workspace-runtime.js";

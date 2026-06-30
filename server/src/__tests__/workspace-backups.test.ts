@@ -10,6 +10,7 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
@@ -63,6 +64,19 @@ async function getAvailablePort(): Promise<number> {
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function expectZipContains(buffer: Buffer, value: string) {
+  expect(buffer.toString("utf8")).toContain(value);
+}
+
+async function unzipArchive(archivePath: string, outputDir: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    execFile("unzip", ["-q", archivePath, "-d", outputDir], (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
 
 async function startTempDatabase() {
@@ -145,11 +159,12 @@ describe("workspace backup service", () => {
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
     await fs.mkdir(path.join(workspaceRoot, "projects", "roadmap"), { recursive: true });
     await fs.writeFile(path.join(workspaceRoot, "projects", "roadmap", "roadmap.md"), "# Roadmap\n", "utf8");
+    await fs.writeFile(path.join(workspaceRoot, "projects", "roadmap", "logo.bin"), Buffer.from([0, 1, 2, 255]));
 
     const backup = await service.create({ orgId });
 
     expect(backup.status).toBe("succeeded");
-    expect(backup.fileCount).toBe(1);
+    expect(backup.fileCount).toBe(2);
     expect(backup.byteSize).toBeGreaterThan(0);
     expect(backup.expiresAt).not.toBeNull();
     expect(backup.artifactRef).toContain(path.join("workspaces", resolveOrganizationStorageKey(orgId)));
@@ -163,9 +178,10 @@ describe("workspace backup service", () => {
     ]));
 
     const projectFiles = await service.listFiles(orgId, backup.id, "projects/roadmap");
-    expect(projectFiles.entries).toEqual([
+    expect(projectFiles.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "logo.bin", path: "projects/roadmap/logo.bin", isDirectory: false }),
       expect.objectContaining({ name: "roadmap.md", path: "projects/roadmap/roadmap.md", isDirectory: false }),
-    ]);
+    ]));
 
     const file = await service.readFile(orgId, backup.id, "projects/roadmap/roadmap.md");
     expect(file.content).toBe("# Roadmap\n");
@@ -173,11 +189,30 @@ describe("workspace backup service", () => {
     const download = await service.getDownload(orgId, backup.id);
     expect(download).toEqual(expect.objectContaining({
       artifactRef: backup.artifactRef,
-      filename: path.basename(backup.artifactRef),
-      contentType: "application/json",
-      archiveSha256: backup.archiveSha256,
+      filename: `${path.basename(backup.artifactRef, ".json")}.zip`,
+      contentType: "application/zip",
     }));
     expect(download.byteSize).toBeGreaterThan(0);
+    expect(download.archiveSha256).not.toBe(backup.archiveSha256);
+    expectZipContains(download.content, "workspace-");
+    expectZipContains(download.content, "projects/roadmap/roadmap.md");
+    expectZipContains(download.content, "# Roadmap\n");
+    const unzipRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backup-unzip-"));
+    try {
+      const archivePath = path.join(unzipRoot, "workspace.zip");
+      const outputDir = path.join(unzipRoot, "out");
+      await fs.writeFile(archivePath, download.content);
+      await unzipArchive(archivePath, outputDir);
+      const [rootFolderName] = await fs.readdir(outputDir);
+      expect(rootFolderName).toBeTruthy();
+      const extractedRoot = path.join(outputDir, rootFolderName!);
+      await expect(fs.readFile(path.join(extractedRoot, "projects", "roadmap", "roadmap.md"), "utf8"))
+        .resolves.toBe("# Roadmap\n");
+      await expect(fs.readFile(path.join(extractedRoot, "projects", "roadmap", "logo.bin")))
+        .resolves.toEqual(Buffer.from([0, 1, 2, 255]));
+    } finally {
+      await fs.rm(unzipRoot, { recursive: true, force: true });
+    }
   });
 
   it("migrates legacy full UUID backup artifact paths and metadata to the short storage key", async () => {
@@ -505,6 +540,35 @@ describe("workspace backup service", () => {
 
     expect(deleted).toHaveLength(1);
     await expect(service.list(orgId)).resolves.toEqual([]);
+  });
+
+  it("uses a shorter due interval for running scheduler ticks than offline startup catch-up", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
+
+    const initialNow = new Date("2026-05-20T08:00:00.000Z");
+    const first = await service.runScheduledBackups({ now: initialNow });
+    expect(first.created).toHaveLength(1);
+    await db
+      .update(workspaceBackups)
+      .set({ createdAt: initialNow, updatedAt: initialNow })
+      .where(eq(workspaceBackups.id, first.created[0]!.id));
+
+    const threeHoursLater = new Date(initialNow.getTime() + 3 * 60 * 60 * 1000);
+    const offline = await service.runScheduledBackups({
+      now: threeHoursLater,
+      intervalMs: 24 * 60 * 60 * 1000,
+    });
+    expect(offline.created).toHaveLength(0);
+    expect(offline.skipped).toBe(1);
+
+    const running = await service.runScheduledBackups({
+      now: threeHoursLater,
+      intervalMs: 2 * 60 * 60 * 1000,
+    });
+    expect(running.created).toHaveLength(1);
   });
 
   it("marks stale running backups as failed before creating the next scheduled backup", async () => {
