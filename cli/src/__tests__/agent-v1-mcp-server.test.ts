@@ -279,6 +279,36 @@ describe("agent-v1 MCP server", () => {
     }
   });
 
+  it("advertises every planner-supported MCP tool input argument in strict schemas", async () => {
+    const serverSource = await fs.readFile(path.resolve(import.meta.dirname, "../agent-v1-mcp-server.ts"), "utf8");
+    const reservedRuntimeIdentityKeys = new Set(["orgId", "agentId", "runId", "apiBase", "apiKey"]);
+    const referencedKeys = new Set<string>();
+    for (const match of serverSource.matchAll(/\binput\.([a-zA-Z][a-zA-Z0-9]*)\b/g)) {
+      referencedKeys.add(match[1]);
+    }
+    for (const match of serverSource.matchAll(/\binput\.([a-zA-Z][a-zA-Z0-9]*)\s*\?\?/g)) {
+      referencedKeys.add(match[1]);
+    }
+    for (const match of serverSource.matchAll(/requiredString\(input,\s*"([a-zA-Z][a-zA-Z0-9]*)"/g)) {
+      referencedKeys.add(match[1]);
+    }
+    for (const match of serverSource.matchAll(/requiredAnyString\(input,\s*\[([^\]]*)\]/g)) {
+      for (const key of match[0].matchAll(/"([a-zA-Z][a-zA-Z0-9]*)"/g)) {
+        referencedKeys.add(key[1]);
+      }
+    }
+
+    const schemaKeys = new Set<string>();
+    for (const tool of buildAgentV1McpToolsManifest("agent-v1").tools) {
+      for (const key of Object.keys(tool.inputSchema.properties)) schemaKeys.add(key);
+    }
+
+    for (const key of referencedKeys) {
+      if (reservedRuntimeIdentityKeys.has(key)) continue;
+      expect(schemaKeys, `planner input key ${key}`).toContain(key);
+    }
+  });
+
   it("lists every agent-v1 MCP tool through JSON-RPC tools/list", async () => {
     const response = await runAgentV1McpJsonRpcMessage(
       { jsonrpc: "2.0", id: 1, method: "tools/list" },

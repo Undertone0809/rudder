@@ -675,16 +675,16 @@ function cliArgsForCapability(
       return args;
     }
     case "runs.get":
-      return ["runs", "get", requiredAnyString(input, ["run", "runId"])];
+      return ["runs", "get", requiredString(input, "run")];
     case "runs.events":
-      return ["runs", "events", requiredAnyString(input, ["run", "runId"])];
+      return ["runs", "events", requiredString(input, "run")];
     case "runs.log": {
-      const args = ["runs", "log", requiredAnyString(input, ["run", "runId"])];
+      const args = ["runs", "log", requiredString(input, "run")];
       pushOptional(args, "--max-chars", input.maxChars);
       return args;
     }
     case "runs.transcript": {
-      const args = ["runs", "transcript", requiredAnyString(input, ["run", "runId"])];
+      const args = ["runs", "transcript", requiredString(input, "run")];
       pushBoolean(args, "--errors-only", input.errorsOnly);
       pushOptional(args, "--around-error", input.aroundError);
       pushOptional(args, "--context-turns", input.contextTurns);
@@ -697,14 +697,14 @@ function cliArgsForCapability(
       return args;
     }
     case "runs.errors": {
-      const args = ["runs", "errors", requiredAnyString(input, ["run", "runId"])];
+      const args = ["runs", "errors", requiredString(input, "run")];
       pushOptional(args, "--max-chars", input.maxChars);
       return args;
     }
     case "runs.cancel":
-      return ["runs", "cancel", requiredAnyString(input, ["run", "runId"])];
+      return ["runs", "cancel", requiredString(input, "run")];
     case "runs.retry":
-      return ["runs", "retry", requiredAnyString(input, ["run", "runId"])];
+      return ["runs", "retry", requiredString(input, "run")];
     default:
       throw new Error(`Rudder MCP tool is not implemented: ${capabilityId}`);
   }

@@ -81,6 +81,21 @@ describe("bundled rudder skill docs", () => {
     expect(contents).toContain("`markdownLink`");
   });
 
+  it("keeps linked Library references aligned with no-project artifacts fallback", async () => {
+    const docs = [
+      "server/resources/bundled-skills/rudder/SKILL.md",
+      "server/resources/bundled-skills/rudder/references/api-reference.md",
+      "server/resources/bundled-skills/rudder/references/cli-reference.md",
+    ];
+
+    for (const doc of docs) {
+      const contents = await fs.readFile(path.join(process.cwd(), doc), "utf8");
+      expect(contents, doc).toContain("artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>");
+      expect(contents, doc).toContain('rudder library file ref "artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>" --json');
+      expect(contents, doc).not.toContain('If `$RUDDER_PROJECT_LIBRARY_ROOT` is unset or inaccessible, use\n`rudder library file get/put "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"`');
+    }
+  });
+
   it("keeps organization skill details delegated and assignment semantics explicit", async () => {
     const contents = await readSkillDoc();
 
