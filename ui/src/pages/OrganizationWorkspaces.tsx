@@ -5867,7 +5867,7 @@ export function OrganizationWorkspaceBrowser({
                 <div
                   ref={setOpenFileTabsScrollerRef}
                   data-testid="org-workspaces-editor-tab-scroller"
-                  className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1.5 overflow-x-auto pl-0 pr-2 pt-1"
+                  className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-0 pr-2 pt-1"
                 >
                   <>
                     {openFilePaths.map((filePath, index) => {
