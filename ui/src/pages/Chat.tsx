@@ -181,7 +181,8 @@ const CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT = 96;
 const CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT = 180;
 const CHAT_SCROLL_MAP_RAIL_WIDTH_PX = 16;
 const CHAT_SCROLL_MAP_RAIL_GAP_PX = 8;
-const CHAT_SCROLL_MAP_PREVIEW_WIDTH_PX = 576;
+const CHAT_SCROLL_MAP_RAIL_LEFT_OFFSET_PX = 28;
+const CHAT_SCROLL_MAP_PREVIEW_WIDTH_PX = 640;
 const CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX = 16;
 
 function countScrollMapUserMessages(messages: ChatMessage[]) {
@@ -205,20 +206,38 @@ function chatScrollMapPreviewText(message: ChatMessage) {
   return "Empty message";
 }
 
-function chatScrollMapPreviewParts(message: ChatMessage) {
+function chatScrollMapTextExcerpt(value: string, limit: number) {
+  const text = value.replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
+}
+
+function nextAssistantReplyPreview(message: ChatMessage, messages: ChatMessage[]) {
+  const index = messages.findIndex((candidate) => candidate.id === message.id);
+  const nextMessage = index >= 0 ? messages[index + 1] : null;
+  if (
+    !nextMessage
+    || nextMessage.role !== "assistant"
+    || nextMessage.kind !== "message"
+    || nextMessage.supersededAt
+  ) {
+    return "";
+  }
+  return chatScrollMapTextExcerpt(nextMessage.body, CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT);
+}
+
+function chatScrollMapPreviewParts(message: ChatMessage, messages: ChatMessage[]) {
   const body = message.body.replace(/\s+/g, " ").trim();
+  const assistantReplyPreview = nextAssistantReplyPreview(message, messages);
   if (body) {
     const summarySource = body.length > CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT
       ? body.slice(CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT).trim()
       : "";
     return {
-      title: body,
-      summary: summarySource.length > CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT
-        ? `${summarySource.slice(0, CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT - 3)}...`
-        : summarySource,
+      title: chatScrollMapTextExcerpt(body, CHAT_SCROLL_MAP_PREVIEW_TITLE_LIMIT),
+      summary: assistantReplyPreview || chatScrollMapTextExcerpt(summarySource, CHAT_SCROLL_MAP_PREVIEW_SUMMARY_LIMIT),
     };
   }
-  return { title: chatScrollMapPreviewText(message), summary: "" };
+  return { title: chatScrollMapPreviewText(message), summary: assistantReplyPreview };
 }
 
 function chatScrollMapRoleLabel(message: ChatMessage) {
@@ -263,7 +282,7 @@ function ChatScrollMap({
   const hoveredMessage = hoveredMessageId
     ? mapMessages.find((message) => message.id === hoveredMessageId) ?? null
     : null;
-  const hoveredPreview = hoveredMessage ? chatScrollMapPreviewParts(hoveredMessage) : null;
+  const hoveredPreview = hoveredMessage ? chatScrollMapPreviewParts(hoveredMessage, messages) : null;
   useEffect(() => {
     const rail = railRef.current;
     const shell = rail?.closest<HTMLElement>("[data-testid='chat-messages-shell']");
@@ -273,21 +292,14 @@ function ChatScrollMap({
     const updateRailPlacement = () => {
       if (frame) cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const messageIds = new Set(mapMessages.map((message) => message.id));
-        const bubbleBounds = Array.from(shell.querySelectorAll<HTMLElement>("[data-testid='chat-user-message'][data-message-id]"))
-          .filter((element) => messageIds.has(element.dataset.messageId ?? ""))
-          .map((element) => element.querySelector<HTMLElement>("[data-testid='chat-user-message-bubble']") ?? element)
-          .map((element) => element.getBoundingClientRect())
-          .filter((bounds) => bounds.width > 0 && bounds.height > 0);
-        const shellBounds = shell.getBoundingClientRect();
+        const scrollRegion = shell.closest<HTMLElement>("[data-testid='chat-messages-scroll-region']");
+        const anchorBounds = scrollRegion?.getBoundingClientRect() ?? shell.getBoundingClientRect();
         const maxLeft = Math.max(
           CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX,
           window.innerWidth - CHAT_SCROLL_MAP_RAIL_WIDTH_PX - CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX,
         );
-        const minLeft = Math.max(CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX, shellBounds.left);
-        const anchorLeft = bubbleBounds.length > 0
-          ? Math.min(...bubbleBounds.map((bounds) => bounds.left)) - CHAT_SCROLL_MAP_RAIL_WIDTH_PX - CHAT_SCROLL_MAP_RAIL_GAP_PX
-          : shellBounds.left;
+        const minLeft = Math.max(CHAT_SCROLL_MAP_PREVIEW_VIEWPORT_MARGIN_PX, anchorBounds.left);
+        const anchorLeft = anchorBounds.left + CHAT_SCROLL_MAP_RAIL_LEFT_OFFSET_PX;
         const nextLeft = Math.round(Math.min(Math.max(anchorLeft, minLeft), maxLeft));
         setRailLeft((current) => current === nextLeft ? current : nextLeft);
       });
@@ -328,7 +340,7 @@ function ChatScrollMap({
         data-testid="chat-scroll-map"
         aria-label="Conversation message map"
         className={cn(
-          "pointer-events-none fixed top-1/2 z-20 hidden w-4 -translate-y-1/2 flex-col items-end gap-0.5 md:flex",
+          "pointer-events-none fixed top-1/2 z-20 hidden w-4 -translate-y-1/2 flex-col items-start gap-0.5 md:flex",
           railLeft === null && "invisible",
         )}
         style={{ left: railLeft ?? 0 }}
@@ -367,14 +379,14 @@ function ChatScrollMap({
       {showPreview ? createPortal(
         <div
           data-testid="chat-scroll-map-preview"
-          className="pointer-events-none fixed z-50 w-[36rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-overlay)] px-4 py-3 text-left shadow-[var(--shadow-md)]"
+          className="pointer-events-none fixed z-50 w-[40rem] max-w-[calc(100vw-2rem)] -translate-y-1/2 rounded-[18px] border border-white/10 bg-[rgba(42,42,42,0.94)] px-4 py-3.5 text-left shadow-[0_24px_70px_-34px_rgb(0_0_0/0.88)] backdrop-blur-xl"
           style={{ left: previewPosition!.left, top: previewPosition!.top }}
         >
-          <div className="line-clamp-1 text-sm font-semibold leading-6 text-foreground">
+          <div className="line-clamp-1 text-[15px] font-semibold leading-6 text-white">
             {hoveredPreview?.title}
           </div>
           {hoveredPreview?.summary ? (
-            <div className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
+            <div className="mt-1.5 line-clamp-3 text-[15px] leading-6 text-white/48">
               {hoveredPreview.summary}
             </div>
           ) : null}

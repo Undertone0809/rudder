@@ -883,6 +883,10 @@ describe("Chat message scroll map", () => {
     expect(preview).not.toBeNull();
     expect(preview?.textContent).toContain("Checkpoint 7");
     expect(preview?.textContent).toContain("operator context");
+    expect(preview?.textContent).toContain("assistant progress");
+    expect(preview?.className).toContain("w-[40rem]");
+    expect(preview?.className).toContain("bg-[rgba(42,42,42,0.94)]");
+    expect(preview?.className).toContain("rounded-[18px]");
 
     await act(async () => {
       marker?.click();
