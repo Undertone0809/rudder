@@ -27,8 +27,11 @@ import {
   isUuidLike,
   organizationSkillCreateSchema,
   resetAgentSessionSchema,
+  RUDDER_AGENT_V1_MCP_SERVER_NAME,
+  RUDDER_AGENT_V1_MCP_TOOL_NAMES,
   testAgentRuntimeEnvironmentSchema,
   updateCustomIntegrationBindingSchema,
+  type AgentControlPlaneIntegrationSummary,
   type AgentIntegrationProviderRegion,
   type AgentIntegrationSetupSession,
   type AgentSkillAnalytics,
@@ -154,6 +157,24 @@ function requestBaseUrl(req: Request) {
 
 function normalizeFeishuProviderRegion(value: unknown): AgentIntegrationProviderRegion {
   return value === "lark_global" ? "lark_global" : "feishu_cn";
+}
+
+function buildAgentControlPlaneIntegrations(): AgentControlPlaneIntegrationSummary[] {
+  return [
+    {
+      id: RUDDER_AGENT_V1_MCP_SERVER_NAME,
+      displayName: "Rudder MCP tools",
+      kind: "rudder_mcp",
+      status: "available",
+      scope: "runtime",
+      serverName: RUDDER_AGENT_V1_MCP_SERVER_NAME,
+      contract: "agent-v1",
+      toolCount: RUDDER_AGENT_V1_MCP_TOOL_NAMES.length,
+      tools: [...RUDDER_AGENT_V1_MCP_TOOL_NAMES],
+      authMode: "runtime_managed",
+      cliFallbackAvailable: true,
+    },
+  ];
 }
 
 const FEISHU_SUGGESTED_BOT_NAME_MAX_LENGTH = 32;
@@ -548,7 +569,10 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       chainOfCommand,
       access: accessState,
       instructionsLibraryPath,
-      ...(options?.restricted ? {} : { integrations }),
+      ...(options?.restricted ? {} : {
+        controlPlaneIntegrations: buildAgentControlPlaneIntegrations(),
+        integrations,
+      }),
     };
   }
 

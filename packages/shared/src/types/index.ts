@@ -18,6 +18,7 @@ export type {
   AgentSkillTelemetryEvidenceCounts
 } from "./adapter-skills.js";
 export type {
+  AgentControlPlaneIntegrationSummary,
   AgentIntegration,
   AgentIntegrationBindingToken,
   AgentIntegrationChatBinding,

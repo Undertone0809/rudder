@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import type { AgentDetail, AgentIntegrationSummary, CustomIntegrationSummary } from "@rudderhq/shared";
+import {
+  RUDDER_AGENT_V1_MCP_SERVER_NAME,
+  RUDDER_AGENT_V1_MCP_TOOL_NAMES,
+  type AgentControlPlaneIntegrationSummary,
+  type AgentDetail,
+  type AgentIntegrationSummary,
+  type CustomIntegrationSummary,
+} from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -141,7 +148,25 @@ function agent(overrides: Partial<AgentDetail> = {}): AgentDetail {
     chainOfCommand: [],
     access: { membership: null, grants: [], canAssignTasks: false, taskAssignSource: "none" },
     instructionsLibraryPath: null,
+    controlPlaneIntegrations: [controlPlaneIntegration()],
     integrations: [],
+    ...overrides,
+  };
+}
+
+function controlPlaneIntegration(overrides: Partial<AgentControlPlaneIntegrationSummary> = {}): AgentControlPlaneIntegrationSummary {
+  return {
+    id: RUDDER_AGENT_V1_MCP_SERVER_NAME,
+    displayName: "Rudder MCP tools",
+    kind: "rudder_mcp",
+    status: "available",
+    scope: "runtime",
+    serverName: RUDDER_AGENT_V1_MCP_SERVER_NAME,
+    contract: "agent-v1",
+    toolCount: RUDDER_AGENT_V1_MCP_TOOL_NAMES.length,
+    tools: [...RUDDER_AGENT_V1_MCP_TOOL_NAMES],
+    authMode: "runtime_managed",
+    cliFallbackAvailable: true,
     ...overrides,
   };
 }
@@ -223,6 +248,11 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).not.toContain("Connect the external tools this agent can use during work loops.");
     expect(container.textContent).toContain("Discover");
     expect(container.textContent).toContain("Manage");
+    expect(container.textContent).toContain("Built-in");
+    expect(container.textContent).toContain("Rudder MCP tools");
+    expect(container.textContent).toContain("rudder-control-plane");
+    expect(container.textContent).toContain(`${RUDDER_AGENT_V1_MCP_TOOL_NAMES.length} tools`);
+    expect(container.textContent).toContain("runtime-managed auth");
     expect(container.textContent).toContain("Custom API");
     expect(container.textContent).toContain("MCP Server");
     expect(container.textContent).toContain("Feishu / Lark");
@@ -231,6 +261,26 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent?.match(/Coming soon/g)?.length).toBe(6);
     expect(container.textContent).not.toContain("0 of 10 connected");
     expect(container.textContent).not.toContain("Create a Feishu bot named Wesley - Rudder");
+  });
+
+  it("renders built-in Rudder MCP tools in manage view without custom integration actions", () => {
+    const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+    const manageButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Manage");
+
+    act(() => {
+      manageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("Rudder MCP tools");
+    expect(container.textContent).toContain("rudder-control-plane");
+    expect(container.textContent).toContain(`${RUDDER_AGENT_V1_MCP_TOOL_NAMES.length} exposed`);
+    expect(container.textContent).toContain("Runtime managed");
+    expect(container.textContent).toContain("No user credential");
+    expect(container.textContent).toContain("rudder_agent_me");
+    expect(container.textContent).toContain("rudder_issue_checkout");
+    expect(container.textContent).not.toContain("No connected integrations");
+    expect(container.textContent).not.toContain("Credential stored");
   });
 
   it("uses the larger integration action radius on catalog buttons", () => {
@@ -358,8 +408,9 @@ describe("AgentIntegrationsTab", () => {
       manageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(container.textContent).toContain("No connected integrations");
+    expect(container.textContent).not.toContain("No connected integrations");
     expect(container.textContent).not.toContain("cli_a_app");
+    expect(container.textContent).toContain("Rudder MCP tools");
   });
 
   it("opens the Feishu setup URL from the agent detail tab", async () => {

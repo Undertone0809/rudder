@@ -32,6 +32,20 @@ export type AgentIntegrationSummary = Omit<AgentIntegration, "appCredentialSecre
   hasCredentialSecret: boolean;
 };
 
+export interface AgentControlPlaneIntegrationSummary {
+  id: "rudder-control-plane";
+  displayName: "Rudder MCP tools";
+  kind: "rudder_mcp";
+  status: "available";
+  scope: "runtime";
+  serverName: string;
+  contract: "agent-v1";
+  toolCount: number;
+  tools: string[];
+  authMode: "runtime_managed";
+  cliFallbackAvailable: boolean;
+}
+
 export interface AgentIntegrationSetupUrl {
   provider: AgentIntegrationProvider;
   providerRegion: AgentIntegrationProviderRegion;

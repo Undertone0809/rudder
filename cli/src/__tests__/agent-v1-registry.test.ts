@@ -1,3 +1,4 @@
+import { RUDDER_AGENT_V1_MCP_SERVER_NAME, RUDDER_AGENT_V1_MCP_TOOL_NAMES } from "@rudderhq/shared";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -136,7 +137,9 @@ describe("agent-v1 registry", () => {
 
     expect(mcpManifest.schema).toBe("rudder.agent-mcp-tools/v1");
     expect(mcpManifest.contract).toBe("agent-v1");
+    expect(mcpManifest.serverName).toBe(RUDDER_AGENT_V1_MCP_SERVER_NAME);
     expect(mcpManifest.tools).toHaveLength(cliManifest.capabilities.length);
+    expect(mcpManifest.tools.map((tool) => tool.name)).toEqual([...RUDDER_AGENT_V1_MCP_TOOL_NAMES]);
     expect(mcpManifest.tools.map((tool) => tool.capabilityId)).toEqual(
       cliManifest.capabilities.map((entry) => entry.id),
     );
