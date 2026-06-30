@@ -68,6 +68,8 @@ import {
   logActivity,
   reconcilePersistedRuntimeServicesOnStartup,
   reconcileWorkspaceBackupArtifactStorage,
+  WORKSPACE_BACKUP_OFFLINE_INTERVAL_MS,
+  WORKSPACE_BACKUP_RUNNING_INTERVAL_MS,
   workspaceBackupService,
 } from "./services/index.js";
 import {
@@ -765,10 +767,15 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   }
   
   const liveOrganizationRows = await db
-    .select({ id: organizations.id })
+    .select({ id: organizations.id, name: organizations.name, urlKey: organizations.urlKey })
     .from(organizations);
+  const liveOrganizations = liveOrganizationRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    urlKey: row.urlKey,
+  }));
   const liveOrganizationIds = liveOrganizationRows.map((row) => row.id);
-  const organizationStorageReconciliation = await reconcileOrganizationStorageRoots(liveOrganizationIds);
+  const organizationStorageReconciliation = await reconcileOrganizationStorageRoots(liveOrganizations);
   const organizationStorageMigrations = organizationStorageReconciliation.migrations;
   const migratedOrganizationStorage = organizationStorageMigrations.filter((result) => result.migrated);
   const skippedOrganizationStorageMigrations = organizationStorageMigrations.filter((result) =>
@@ -1150,7 +1157,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     const workspaceBackups = workspaceBackupService(db as any);
     let workspaceBackupInFlight = false;
 
-    const runScheduledWorkspaceBackups = async () => {
+    const runScheduledWorkspaceBackups = async (mode: "startup" | "running") => {
       if (workspaceBackupInFlight) {
         logger.warn("Skipping scheduled workspace backup tick because a previous tick is still running");
         return;
@@ -1158,7 +1165,9 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
       workspaceBackupInFlight = true;
       try {
-        const result = await workspaceBackups.runScheduledBackups();
+        const result = await workspaceBackups.runScheduledBackups({
+          intervalMs: mode === "startup" ? WORKSPACE_BACKUP_OFFLINE_INTERVAL_MS : WORKSPACE_BACKUP_RUNNING_INTERVAL_MS,
+        });
         for (const recovery of result.sparseRecoveries) {
           try {
             await logActivity(db as any, {
@@ -1246,13 +1255,15 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     logger.info(
       {
         intervalHours: WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
+        runningIntervalHours: WORKSPACE_BACKUP_RUNNING_INTERVAL_MS / (60 * 60 * 1000),
+        offlineIntervalHours: WORKSPACE_BACKUP_OFFLINE_INTERVAL_MS / (60 * 60 * 1000),
         retentionDays: WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
       },
       "Automatic workspace backups enabled",
     );
-    void runScheduledWorkspaceBackups();
+    void runScheduledWorkspaceBackups("startup");
     intervalHandles.push(setInterval(() => {
-      void runScheduledWorkspaceBackups();
+      void runScheduledWorkspaceBackups("running");
     }, WORKSPACE_BACKUP_SCHEDULER_TICK_MS));
   }
   

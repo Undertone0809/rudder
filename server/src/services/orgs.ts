@@ -233,7 +233,11 @@ export function organizationService(db: Db) {
           })),
         );
 
-        await ensureOrganizationWorkspaceLayout(created.id);
+        await ensureOrganizationWorkspaceLayout({
+          id: created.id,
+          name: created.name,
+          urlKey: created.urlKey,
+        });
 
         const row = await getCompanyQuery(tx)
           .where(eq(organizations.id, created.id))

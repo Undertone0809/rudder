@@ -46,7 +46,8 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await expect(page.getByTestId("workspace-main-card")).toBeVisible();
   await expect(page.getByTestId("workspace-sidebar").getByRole("heading", { name: "Files" })).toBeVisible();
   await expect(page.getByText("Policy")).toBeVisible();
-  await expect(page.getByText("Every 24h")).toBeVisible();
+  await expect(page.getByText("Every 2h")).toBeVisible();
+  await expect(page.getByText("After 24h offline")).toBeVisible();
   await expect(page.getByText("30 days")).toBeVisible();
   await expect(page.getByTestId("workspace-main-card").getByText("Versions")).toBeVisible();
   await expect(page.getByText("1 backup")).toBeVisible();
@@ -64,17 +65,14 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   const download = page.waitForEvent("download");
   await page.getByRole("link", { name: "Download" }).click();
   const downloadedBackup = await download;
-  expect(downloadedBackup.suggestedFilename()).toMatch(/^workspace-.*\.json$/);
+  expect(downloadedBackup.suggestedFilename()).toMatch(/^workspace-.*\.zip$/);
   const downloadedPath = await downloadedBackup.path();
   expect(downloadedPath).toBeTruthy();
-  const downloadedArtifact = JSON.parse(await fs.readFile(downloadedPath!, "utf8")) as {
-    orgId: string;
-    entries: Array<{ path: string; kind: string; dataBase64?: string }>;
-  };
-  expect(downloadedArtifact.orgId).toBe(organization.id);
-  expect(downloadedArtifact.entries).toEqual(expect.arrayContaining([
-    expect.objectContaining({ path: "plans/roadmap.md", kind: "file" }),
-  ]));
+  const downloadedArtifact = await fs.readFile(downloadedPath!);
+  expect(downloadedArtifact.subarray(0, 4).toString("binary")).toBe("PK\u0003\u0004");
+  const zipText = downloadedArtifact.toString("utf8");
+  expect(zipText).toContain("plans/roadmap.md");
+  expect(zipText).toContain("# Roadmap\n");
 
   await page.getByRole("button", { name: "Restore" }).click();
   const restoreDialog = page.getByRole("dialog", { name: "Restore workspace backup" });

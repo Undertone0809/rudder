@@ -24,7 +24,9 @@ import {
   resolveOrganizationRoot,
   resolveOrganizationSkillsDir,
   resolveOrganizationWorkspaceHomeDir,
+  resolveOrganizationWorkspaceMapPath,
   resolveOrganizationWorkspaceRoot,
+  resolvePreviousDocumentsOrganizationWorkspaceRoot,
   resolveProjectLibraryDir,
   resolveProjectLibraryRelativePath,
 } from "../home-paths.js";
@@ -143,7 +145,7 @@ describe("home paths", () => {
     const result = await migrateOrganizationWorkspaceRoot(orgId);
 
     expect(result).toMatchObject({
-      canonicalRootPath: path.join(workspaceHome, orgId, "workspaces"),
+      canonicalRootPath: path.join(workspaceHome, orgId),
       legacyRootPath: legacyWorkspaceRoot,
       migrated: true,
       mergedIntoExistingTarget: false,
@@ -152,6 +154,181 @@ describe("home paths", () => {
     await expect(fs.stat(legacyWorkspaceRoot)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "demo", "README.md"), "utf8"))
       .resolves.toBe("# Demo\n");
+  });
+
+  it("allocates friendly organization workspace folders under the configured user workspace home", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-friendly-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-friendly-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const first = await ensureOrganizationWorkspaceLayout({
+      id: "organization-1",
+      name: "Acme Inc.",
+      urlKey: "acme",
+    });
+    const second = await ensureOrganizationWorkspaceLayout({
+      id: "organization-2",
+      name: "Acme Inc.",
+      urlKey: "acme-2",
+    });
+
+    expect(first.root).toBe(path.join(workspaceHome, "acme-inc"));
+    expect(second.root).toBe(path.join(workspaceHome, "acme-inc-2"));
+    await expect(fs.readFile(resolveOrganizationWorkspaceMapPath(), "utf8")).resolves.toContain("\"folderName\": \"acme-inc\"");
+    expect(resolveOrganizationWorkspaceRoot("organization-1")).toBe(first.root);
+  });
+
+  it("migrates the previous Documents instance workspace root into the friendly folder", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-documents-migration-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-documents-migration-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    await ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Demo Org",
+      urlKey: "demo-org",
+    });
+    await fs.rm(resolveOrganizationWorkspaceRoot(orgId), { recursive: true, force: true });
+
+    const previousRoot = resolvePreviousDocumentsOrganizationWorkspaceRoot(orgId);
+    const previousFile = path.join(previousRoot, "projects", "demo", "README.md");
+    await fs.mkdir(path.dirname(previousFile), { recursive: true });
+    await fs.writeFile(previousFile, "# Previous\n", "utf8");
+
+    const result = await migrateOrganizationWorkspaceRoot(orgId);
+
+    expect(result).toMatchObject({
+      canonicalRootPath: path.join(workspaceHome, "demo-org"),
+      legacyRootPath: previousRoot,
+      migrated: true,
+    });
+    await expect(fs.stat(previousRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "demo", "README.md"), "utf8"))
+      .resolves.toBe("# Previous\n");
+  });
+
+  it("fails instead of recreating an empty folder when a mapped organization folder is missing", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-missing-friendly-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-missing-friendly-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Missing Folder Org",
+      urlKey: "missing-folder-org",
+    });
+    await fs.rm(layout.root, { recursive: true, force: true });
+
+    await expect(ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Missing Folder Org",
+      urlKey: "missing-folder-org",
+    })).rejects.toThrow(/could not find the mapped organization Library folder/i);
+    await expect(fs.stat(layout.root)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails string layout calls instead of recreating an empty mapped organization folder", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-string-missing-friendly-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-string-missing-friendly-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "String Missing Folder Org",
+      urlKey: "string-missing-folder-org",
+    });
+    await fs.rm(layout.root, { recursive: true, force: true });
+
+    await expect(ensureOrganizationWorkspaceLayout(orgId)).rejects.toThrow(
+      /could not find the mapped organization Library folder/i,
+    );
+    await expect(fs.stat(layout.root)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails startup reconciliation when an existing mapped organization folder is missing", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-reconcile-missing-friendly-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-reconcile-missing-friendly-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const org = {
+      id: orgId,
+      name: "Reconcile Missing Folder Org",
+      urlKey: "reconcile-missing-folder-org",
+    };
+    const layout = await ensureOrganizationWorkspaceLayout(org);
+    await fs.rm(layout.root, { recursive: true, force: true });
+
+    await expect(reconcileOrganizationStorageRoots([org])).rejects.toThrow(
+      /could not find the mapped organization Library folder/i,
+    );
+    await expect(fs.stat(layout.root)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reclaims an existing friendly folder when the mapping file is missing", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-reclaim-friendly-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-reclaim-friendly-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const existingRoot = path.join(workspaceHome, "reclaim-org");
+    const existingFile = path.join(existingRoot, "projects", "demo", "README.md");
+    await fs.mkdir(path.dirname(existingFile), { recursive: true });
+    await fs.writeFile(existingFile, "# Reclaim\n", "utf8");
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Reclaim Org",
+      urlKey: "reclaim-org",
+    });
+
+    expect(layout.root).toBe(existingRoot);
+    await expect(fs.readFile(existingFile, "utf8")).resolves.toBe("# Reclaim\n");
+    await expect(fs.readFile(resolveOrganizationWorkspaceMapPath(), "utf8")).resolves.toContain(
+      "\"folderName\": \"reclaim-org\"",
+    );
+  });
+
+  it("fails instead of resetting a corrupt organization workspace mapping file", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-corrupt-map-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-corrupt-map-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    await fs.mkdir(workspaceHome, { recursive: true });
+    await fs.writeFile(resolveOrganizationWorkspaceMapPath(), "{\"version\":2,\"organizations\":[]}\n", "utf8");
+
+    await expect(ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Corrupt Map Org",
+      urlKey: "corrupt-map-org",
+    })).rejects.toThrow(/Invalid organization workspace mapping file/);
+    await expect(fs.stat(path.join(workspaceHome, "corrupt-map-org"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("uses short organization ids for UUID-backed workspace roots", async () => {

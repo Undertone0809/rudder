@@ -29,8 +29,8 @@ export {
 export { resolveAgentRunScene, toAgentRun, toAgentRuns } from "./agent-run.js";
 export { EXECUTION_OBSERVABILITY_SURFACES } from "./types/observability.js";
 export {
-  WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
-  WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS
+  WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS, WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS, WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
+  WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS
 } from "./types/workspace-backup.js";
 
 export type {

@@ -3,7 +3,9 @@ import type {
   OrganizationWorkspaceFileList,
 } from "./organization.js";
 
-export const WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS = 24;
+export const WORKSPACE_BACKUP_RUNNING_INTERVAL_HOURS = 2;
+export const WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS = 24;
+export const WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS = WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS;
 export const WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS = 30;
 
 export type WorkspaceBackupStatus = "running" | "succeeded" | "failed" | "restored" | "deleted";
@@ -52,7 +54,7 @@ export interface WorkspaceBackupRestoreResult {
 
 export interface WorkspaceBackupDownloadInfo {
   filename: string;
-  contentType: "application/json";
+  contentType: "application/json" | "application/zip";
   byteSize: number;
   archiveSha256: string | null;
 }
