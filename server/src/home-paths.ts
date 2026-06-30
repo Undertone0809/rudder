@@ -23,6 +23,7 @@ const RESERVED_ORGANIZATION_WORKSPACE_NAMES = new Set([
   "instances",
   "runtimes",
 ]);
+let organizationWorkspaceMapUpdateQueue: Promise<unknown> = Promise.resolve();
 
 type OrganizationWorkspaceLocator = {
   id: string;
@@ -307,41 +308,50 @@ export async function ensureOrganizationWorkspaceLayout(org: string | Organizati
 
 async function ensureOrganizationWorkspaceMapping(org: OrganizationWorkspaceLocator): Promise<OrganizationWorkspaceMappingState | null> {
   if (!usesFriendlyOrganizationWorkspaceHome()) return null;
-  const orgId = validatePathSegment(org.id, "org id");
-  const homeDir = resolveOrganizationWorkspaceHomeDir();
-  const mapPath = resolveOrganizationWorkspaceMapPath();
-  await fs.mkdir(homeDir, { recursive: true });
+  return await updateOrganizationWorkspaceMap(async () => {
+    const orgId = validatePathSegment(org.id, "org id");
+    const homeDir = resolveOrganizationWorkspaceHomeDir();
+    const mapPath = resolveOrganizationWorkspaceMapPath();
+    await fs.mkdir(homeDir, { recursive: true });
 
-  const now = new Date().toISOString();
-  const mapState = await readOrganizationWorkspaceMapFileState();
-  const map = mapState.map;
-  const existing = findOrganizationWorkspaceMapRecord(map, orgId);
-  if (existing) {
-    existing.orgName = org.name ?? existing.orgName ?? null;
-    existing.updatedAt = now;
+    const now = new Date().toISOString();
+    const mapState = await readOrganizationWorkspaceMapFileState();
+    const map = mapState.map;
+    const existing = findOrganizationWorkspaceMapRecord(map, orgId);
+    if (existing) {
+      existing.orgName = org.name ?? existing.orgName ?? null;
+      existing.updatedAt = now;
+      await writeOrganizationWorkspaceMapFile(mapPath, map);
+      return { record: existing, created: false };
+    }
+
+    const folderName = await allocateOrganizationWorkspaceFolderName({
+      homeDir,
+      map,
+      orgId,
+      orgName: org.name,
+      orgUrlKey: org.urlKey,
+      allowExistingBaseDirectory: !mapState.exists,
+    });
+    const record: OrganizationWorkspaceMapRecord = {
+      instanceId: resolveRudderInstanceId(),
+      orgId,
+      folderName,
+      orgName: org.name ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    map.organizations.push(record);
     await writeOrganizationWorkspaceMapFile(mapPath, map);
-    return { record: existing, created: false };
-  }
-
-  const folderName = await allocateOrganizationWorkspaceFolderName({
-    homeDir,
-    map,
-    orgId,
-    orgName: org.name,
-    orgUrlKey: org.urlKey,
-    allowExistingBaseDirectory: !mapState.exists,
+    return { record, created: true };
   });
-  const record: OrganizationWorkspaceMapRecord = {
-    instanceId: resolveRudderInstanceId(),
-    orgId,
-    folderName,
-    orgName: org.name ?? null,
-    createdAt: now,
-    updatedAt: now,
-  };
-  map.organizations.push(record);
-  await writeOrganizationWorkspaceMapFile(mapPath, map);
-  return { record, created: true };
+}
+
+async function updateOrganizationWorkspaceMap<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = organizationWorkspaceMapUpdateQueue.catch(() => {});
+  const current = previous.then(fn, fn);
+  organizationWorkspaceMapUpdateQueue = current.catch(() => {});
+  return await current;
 }
 
 export async function migrateOrganizationStorageRoot(orgId: string): Promise<{
@@ -701,7 +711,7 @@ async function writeOrganizationWorkspaceMapFile(
   mapPath: string,
   map: OrganizationWorkspaceMapFile,
 ): Promise<void> {
-  const tempPath = `${mapPath}.tmp`;
+  const tempPath = `${mapPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   await fs.mkdir(path.dirname(mapPath), { recursive: true });
   await fs.writeFile(tempPath, `${JSON.stringify(map, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await fs.rename(tempPath, mapPath);

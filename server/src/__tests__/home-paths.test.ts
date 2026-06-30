@@ -182,6 +182,40 @@ describe("home paths", () => {
     expect(resolveOrganizationWorkspaceRoot("organization-1")).toBe(first.root);
   });
 
+  it("keeps the friendly organization workspace map valid during concurrent layout creation", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-friendly-concurrent-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-friendly-concurrent-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        ensureOrganizationWorkspaceLayout({
+          id: `organization-${index + 1}`,
+          name: `Concurrent Org ${index + 1}`,
+          urlKey: `concurrent-org-${index + 1}`,
+        }),
+      ),
+    );
+
+    const rawMap = await fs.readFile(resolveOrganizationWorkspaceMapPath(), "utf8");
+    const parsed = JSON.parse(rawMap) as {
+      version?: number;
+      organizations?: Array<{ orgId?: string; folderName?: string }>;
+    };
+    expect(parsed.version).toBe(1);
+    expect(parsed.organizations).toHaveLength(12);
+    expect(parsed.organizations?.map((entry) => entry.orgId).sort()).toEqual(
+      Array.from({ length: 12 }, (_, index) => `organization-${index + 1}`).sort(),
+    );
+    expect(parsed.organizations?.map((entry) => entry.folderName).sort()).toEqual(
+      Array.from({ length: 12 }, (_, index) => `concurrent-org-${index + 1}`).sort(),
+    );
+  });
+
   it("migrates the previous Documents instance workspace root into the friendly folder", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-documents-migration-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-documents-migration-");
