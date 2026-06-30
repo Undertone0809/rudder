@@ -75,6 +75,19 @@ export interface FeishuOutboundSender {
   }): Promise<void>;
 }
 
+export interface FeishuMarkdownCardPayload {
+  config: {
+    wide_screen_mode: boolean;
+  };
+  elements: Array<{
+    tag: "div";
+    text: {
+      tag: "lark_md";
+      content: string;
+    };
+  }>;
+}
+
 export interface FeishuLongConnectionClient {
   start(input: {
     integration: FeishuRuntimeIntegration;
@@ -126,6 +139,53 @@ function feishuOpenApiBase(region: AgentIntegrationProviderRegion) {
   return region === "lark_global" ? "https://open.larksuite.com" : "https://open.feishu.cn";
 }
 
+export function buildFeishuMarkdownCardPayload(markdown: string): FeishuMarkdownCardPayload {
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    elements: [
+      {
+        tag: "div",
+        text: {
+          tag: "lark_md",
+          content: markdown,
+        },
+      },
+    ],
+  };
+}
+
+class FeishuMessageSendError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: number | null,
+    readonly providerMessage: string,
+  ) {
+    super(message);
+    this.name = "FeishuMessageSendError";
+  }
+}
+
+const FEISHU_CARD_PAYLOAD_REJECTION_CODES = new Set([
+  99991663,
+]);
+
+function shouldFallbackToText(error: unknown) {
+  if (!(error instanceof FeishuMessageSendError)) return false;
+  if (error.status === 401 || error.status === 403 || error.status === 429 || error.status >= 500) return false;
+  if (error.code !== null && FEISHU_CARD_PAYLOAD_REJECTION_CODES.has(error.code)) return true;
+  const message = error.providerMessage.toLowerCase();
+  return Boolean(
+    error.status >= 400
+      && /(card|interactive|content|payload|message type|msg_type)/
+        .test(message)
+      && /(invalid|unsupported|malformed|illegal|bad request|rejected)/
+        .test(message),
+  );
+}
+
 async function resolveTenantAccessToken(input: {
   region: AgentIntegrationProviderRegion;
   appId: string;
@@ -153,27 +213,60 @@ async function resolveTenantAccessToken(input: {
 }
 
 export function createFeishuRestOutboundSender(): FeishuOutboundSender {
+  async function sendMessage(input: {
+    region: AgentIntegrationProviderRegion;
+    appId: string;
+    appSecret?: string | null;
+    tenantAccessToken?: string | null;
+    chatId: string;
+    msgType: "interactive" | "text";
+    content: string;
+  }) {
+    const token = await resolveTenantAccessToken(input);
+    const res = await fetch(`${feishuOpenApiBase(input.region)}/open-apis/im/v1/messages?receive_id_type=chat_id`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        receive_id: input.chatId,
+        msg_type: input.msgType,
+        content: input.content,
+      }),
+    });
+    const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+    const data = json.data && typeof json.data === "object" ? json.data as Record<string, unknown> : null;
+    const code = typeof json.code === "number" ? json.code : null;
+    if (!res.ok || (code !== null && code !== 0)) {
+      const providerMessage = firstString(json.msg) ?? res.statusText;
+      throw new FeishuMessageSendError(
+        `Failed to send Feishu message: ${providerMessage}`,
+        res.status,
+        code,
+        providerMessage,
+      );
+    }
+    return { messageId: firstString(data?.message_id) };
+  }
+
   return {
     sendText: async (input) => {
-      const token = await resolveTenantAccessToken(input);
-      const res = await fetch(`${feishuOpenApiBase(input.region)}/open-apis/im/v1/messages?receive_id_type=chat_id`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          receive_id: input.chatId,
-          msg_type: "text",
-          content: JSON.stringify({ text: input.text }),
-        }),
-      });
-      const json = await res.json().catch(() => ({})) as Record<string, unknown>;
-      const data = json.data && typeof json.data === "object" ? json.data as Record<string, unknown> : null;
-      if (!res.ok || (typeof json.code === "number" && json.code !== 0)) {
-        throw new Error(`Failed to send Feishu message: ${firstString(json.msg) ?? res.statusText}`);
+      try {
+        return await sendMessage({
+          ...input,
+          msgType: "interactive",
+          content: JSON.stringify(buildFeishuMarkdownCardPayload(input.text)),
+        });
+      } catch (error) {
+        if (!shouldFallbackToText(error)) throw error;
+        logger.warn({ err: error, chatId: input.chatId }, "Feishu markdown card rejected; falling back to text message");
       }
-      return { messageId: firstString(data?.message_id) };
+      return sendMessage({
+        ...input,
+        msgType: "text",
+        content: JSON.stringify({ text: input.text }),
+      });
     },
     addReaction: async (input) => {
       const token = await resolveTenantAccessToken(input);

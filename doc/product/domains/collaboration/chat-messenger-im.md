@@ -749,6 +749,13 @@ Product model:
   needed by the setup, inbound, outbound, and working-reaction flows.
 - Group messages require explicit bot addressing unless provider policy says
   otherwise.
+- Feishu runtime outbound text, including assistant replies and operational
+  setup/command responses, defaults to provider-side rich Markdown rendering by
+  sending an interactive message card with Markdown content. When Feishu
+  explicitly rejects the card payload, Rudder falls back to a plain text message
+  with the same body instead of dropping the reply. Ambiguous transport,
+  authentication, rate-limit, or server failures do not trigger fallback because
+  Rudder cannot prove whether the card reached Feishu.
 - Feishu-bound conversations carry provider source metadata into Messenger
   thread summaries, so chat rows can show a compact `Feishu` source badge.
 - Feishu-origin chat runs carry source metadata in the run context snapshot, so
@@ -811,10 +818,17 @@ Accepted reply flow:
 Outbound flow:
 
 1. Assistant/run result creates a Rudder chat message.
-2. Integration runtime patches or sends the corresponding Feishu outbound
-   message.
-3. Outbound table records provider, external chat id, text, status, and linked
-   Rudder message/run/conversation.
+2. Integration runtime sends the corresponding Feishu outbound message as an
+   interactive Markdown card by default.
+3. If Feishu explicitly rejects the Markdown card payload, the runtime sends the
+   same body as a plain text fallback so the user still receives the reply.
+   Ambiguous delivery failures, authentication failures, rate limits, and server
+   failures surface through the normal outbound error path instead of sending a
+   possible duplicate.
+4. Outbound table records provider, external chat id, status, and linked Rudder
+   message/run/conversation. The persisted chat message body remains the
+   canonical Rudder text/Markdown source even when provider delivery uses a
+   card wrapper.
 
 Local Rudder read-only flow:
 
@@ -836,6 +850,10 @@ Invariants:
 - External Feishu chat id maps to exactly one active Rudder conversation per
   integration binding.
 - IM messages remain auditable in Rudder even when the external send fails.
+- Feishu rich-card delivery is a rendering optimization, not the canonical
+  message source. A provider-declared card rejection must not prevent plain text
+  fallback delivery from preserving the reply in the external chat, but
+  uncertain delivery state must not create a second fallback message.
 - Feishu-bound Messenger chat rows must remain visibly distinguishable with a
   compact `Feishu` source badge.
 - Feishu-origin chat runs must show `Source: Feishu` in Agent Detail run
@@ -869,12 +887,13 @@ Evidence:
 - Feishu route tests cover org scoping and callback verification.
 - Inbound dispatcher tests cover dedup, binding, issue/run enqueue, and
   outbound response.
-- Feishu DB/runtime dispatcher tests cover setup-session completion,
+- Feishu DB/runtime dispatcher and outbound sender tests cover setup-session completion,
   credential secrecy, revoked integration reactivation, installer auto-binding,
   SDK normalized long-connection events, hydrated chat message attachments,
   source metadata propagation, per-event runtime failure containment, background
-  accepted-reply handling, stopped reply cleanup, and `OnIt` working reaction
-  add/remove behavior.
+  accepted-reply handling, stopped reply cleanup, default Markdown card outbound
+  delivery, plain text fallback, no-fallback ambiguous failures, and `OnIt`
+  working reaction add/remove behavior.
 - Feishu app registration tests cover the permissions requested for message,
   reaction, self-management, bot menu, quick-command, and receive-event flows.
 - Agent Detail Feishu E2E covers setup-session launcher flow, polling,
