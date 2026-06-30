@@ -123,7 +123,12 @@ If `RUDDER_WAKE_REASON=issue_passive_followup`, the run is issue follow-up for t
 
 Agents should not hand-write `library-entry://...` URLs. Local trusted agents
 should create and update durable project files directly under
-`$RUDDER_PROJECT_LIBRARY_ROOT` with normal filesystem tools. After creating,
+`$RUDDER_PROJECT_LIBRARY_ROOT` with normal filesystem tools when the run has
+project context. When there is no project context, write durable generated
+chat/work artifacts under
+`$RUDDER_ORG_WORKSPACE_ROOT/artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>`
+and reference the Library-relative product path
+`artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>`. After creating,
 updating, or reading a durable Library file, use `rudder library file ref` to
 get the CLI-returned `markdownLink` for issue comments, review comments,
 blocker notes, done comments, and chat replies.
@@ -131,6 +136,11 @@ blocker notes, done comments, and chat replies.
 ```bash
 printf '%s\n' "<markdown body>" > "$RUDDER_PROJECT_LIBRARY_ROOT/<issue>.md"
 result="$(rudder library file ref "$RUDDER_PROJECT_LIBRARY_PATH/<issue>.md" --json)"
+printf '%s\n' "$result" | jq -r .markdownLink
+
+mkdir -p "$RUDDER_ORG_WORKSPACE_ROOT/artifacts/YYYY-MM-DD/<conversation-title>"
+printf '%s\n' "<markdown body>" > "$RUDDER_ORG_WORKSPACE_ROOT/artifacts/YYYY-MM-DD/<conversation-title>/<artifact>.md"
+result="$(rudder library file ref "artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>" --json)"
 printf '%s\n' "$result" | jq -r .markdownLink
 ```
 
@@ -148,13 +158,17 @@ Use `rudder library file get/put` only when local filesystem access to the
 Library is unavailable, such as remote or restricted runtimes. `rudder library
 file link <path> --json` remains as a compatibility alias for `ref`. The
 `ref` path is Library-relative, for example
-`$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>`; do not pass the absolute
-`$RUDDER_PROJECT_LIBRARY_ROOT/...` filesystem path. Posting the returned
-`markdownLink` is the Rudder-visible handoff checkpoint for direct filesystem
-writes. If `$RUDDER_PROJECT_LIBRARY_ROOT` is unset or inaccessible, use
+`$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>` with project context or
+`artifacts/YYYY-MM-DD/<conversation-title>/<relative-file>` without project
+context; do not pass absolute filesystem paths such as
+`$RUDDER_PROJECT_LIBRARY_ROOT/...` or `$RUDDER_ORG_WORKSPACE_ROOT/...`. Posting
+the returned `markdownLink` is the Rudder-visible handoff checkpoint for direct
+filesystem writes. If `$RUDDER_PROJECT_LIBRARY_ROOT` is unset or inaccessible
+but `$RUDDER_PROJECT_LIBRARY_PATH` exists, use
 `rudder library file get/put "$RUDDER_PROJECT_LIBRARY_PATH/<relative-file>"` as
-the remote or restricted runtime fallback. Treat `library-file://...` as legacy
-weak path syntax and use it only when preserving old content that has no
+the remote or restricted runtime fallback. If there is no project context, use
+the organization artifacts fallback path instead. Treat `library-file://...` as
+legacy weak path syntax and use it only when preserving old content that has no
 `libraryEntryId`.
 
 ## Git Identity Policy
