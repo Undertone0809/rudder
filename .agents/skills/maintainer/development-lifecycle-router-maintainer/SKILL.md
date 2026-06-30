@@ -66,10 +66,7 @@ writer implementation
 -> handoff / commit / push
 ```
 
-The user does not need to separately say "spawn", "review", "subagent", or
-"black-box" for this policy to apply. If spawning is unavailable after a real
-probe, record `blocked: spawned verifier/reviewer unavailable` instead of
-substituting self-review.
+DO NOT self-review and self-verified if without spawn subagent.
 
 ## Quick Reference
 
