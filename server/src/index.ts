@@ -36,6 +36,7 @@ import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { createRudderApp } from "./app.js";
+import { shouldStartAutomaticBackupSchedulers } from "./backup-scheduler-policy.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
@@ -1104,7 +1105,9 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       });
   }
   
-  if (config.databaseBackupEnabled) {
+  const automaticBackupSchedulersEnabled = shouldStartAutomaticBackupSchedulers(localEnv);
+
+  if (config.databaseBackupEnabled && automaticBackupSchedulersEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
     let backupInFlight = false;
   
@@ -1143,7 +1146,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     }, backupIntervalMs));
   }
 
-  {
+  if (automaticBackupSchedulersEnabled) {
     const workspaceBackups = workspaceBackupService(db as any);
     let workspaceBackupInFlight = false;
 
@@ -1290,7 +1293,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
           migrationSummary,
           heartbeatSchedulerEnabled: config.heartbeatSchedulerEnabled,
           heartbeatSchedulerIntervalMs: config.heartbeatSchedulerIntervalMs,
-          databaseBackupEnabled: config.databaseBackupEnabled,
+          databaseBackupEnabled: config.databaseBackupEnabled && automaticBackupSchedulersEnabled,
           databaseBackupIntervalMinutes: config.databaseBackupIntervalMinutes,
           databaseBackupRetentionDays: config.databaseBackupRetentionDays,
           databaseBackupDir: config.databaseBackupDir,
