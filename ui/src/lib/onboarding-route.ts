@@ -26,14 +26,17 @@ export function resolveRouteOnboardingOptions(params: {
 
   if (!isOnboardingPath(pathname)) return null;
 
-  if (!orgPrefix) {
+  const pathOrgPrefix = pathname.split("/").filter(Boolean)[0];
+  const effectiveOrgPrefix = orgPrefix ?? (pathOrgPrefix?.toLowerCase() === "onboarding" ? undefined : pathOrgPrefix);
+
+  if (!effectiveOrgPrefix) {
     return { initialStep: 1 };
   }
 
   const matchedOrganization =
     organizations.find(
       (organization) =>
-        organization.issuePrefix.toUpperCase() === orgPrefix.toUpperCase(),
+        organization.issuePrefix.toUpperCase() === effectiveOrgPrefix.toUpperCase(),
     ) ?? null;
 
   if (!matchedOrganization) {

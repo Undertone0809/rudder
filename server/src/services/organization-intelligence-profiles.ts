@@ -150,25 +150,82 @@ export function organizationIntelligenceProfileService(db: Db) {
     return toProfile(row!);
   }
 
+  async function createDefaultIfAbsent(
+    orgId: string,
+    purpose: OrganizationIntelligenceProfilePurpose,
+    data: {
+      agentRuntimeType: AgentRuntimeType;
+      agentRuntimeConfig: Record<string, unknown>;
+      status?: OrganizationIntelligenceProfileStatus;
+      lastError?: string | null;
+      lastVerifiedAt?: Date | null;
+    },
+  ) {
+    const sanitizedConfig = sanitizeConfigForProductIntelligence(data.agentRuntimeConfig);
+    const [row] = await db
+      .insert(organizationIntelligenceProfiles)
+      .values({
+        orgId,
+        purpose,
+        agentRuntimeType: data.agentRuntimeType,
+        agentRuntimeConfig: sanitizedConfig,
+        status: data.status ?? "disabled",
+        lastError: data.lastError ?? null,
+        lastVerifiedAt: data.lastVerifiedAt ?? null,
+      })
+      .onConflictDoNothing({
+        target: [organizationIntelligenceProfiles.orgId, organizationIntelligenceProfiles.purpose],
+      })
+      .returning();
+    if (row) return toProfile(row);
+    return getByPurpose(orgId, purpose);
+  }
+
   async function ensureDefaultsFromRuntime(input: {
     orgId: string;
     agentRuntimeType: AgentRuntimeType;
     agentRuntimeConfig: Record<string, unknown>;
+    testRuntimeChain?: (input: {
+      purpose: OrganizationIntelligenceProfilePurpose;
+      agentRuntimeType: AgentRuntimeType;
+      agentRuntimeConfig: Record<string, unknown>;
+    }) => Promise<void>;
   }) {
     const existing = await list(input.orgId);
     const existingPurposes = new Set(existing.filter(Boolean).map((profile) => profile!.purpose));
     const created: OrganizationIntelligenceProfile[] = [];
     for (const purpose of ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES) {
       if (existingPurposes.has(purpose)) continue;
-      created.push(await upsert(input.orgId, purpose, {
+      const agentRuntimeConfig = buildIntelligenceProfileConfigWithPurposeDefaults(
+        purpose,
+        input.agentRuntimeType,
+        input.agentRuntimeConfig,
+      );
+      let status: OrganizationIntelligenceProfileStatus = "disabled";
+      let lastError: string | null = null;
+      let lastVerifiedAt: Date | null = null;
+      if (input.agentRuntimeType === "codex_local" && input.testRuntimeChain) {
+        try {
+          await input.testRuntimeChain({
+            purpose,
+            agentRuntimeType: input.agentRuntimeType,
+            agentRuntimeConfig,
+          });
+          status = "configured";
+          lastVerifiedAt = new Date();
+        } catch (error) {
+          status = "invalid";
+          lastError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      const profile = await createDefaultIfAbsent(input.orgId, purpose, {
         agentRuntimeType: input.agentRuntimeType,
-        agentRuntimeConfig: buildIntelligenceProfileConfigWithPurposeDefaults(
-          purpose,
-          input.agentRuntimeType,
-          input.agentRuntimeConfig,
-        ),
-        status: "disabled",
-      }));
+        agentRuntimeConfig,
+        status,
+        lastError,
+        lastVerifiedAt,
+      });
+      if (profile) created.push(profile);
     }
     return created;
   }

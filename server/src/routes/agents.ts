@@ -64,6 +64,7 @@ import {
   issueService,
   logActivity,
   organizationIntelligenceProfileService,
+  organizationIntelligenceRuntimeChainService,
   organizationSkillService,
   secretService,
   workspaceOperationService
@@ -264,9 +265,10 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   const instructions = agentInstructionsService();
   const organizationSkills = organizationSkillService(db);
   const intelligenceProfiles = organizationIntelligenceProfileService(db);
+  const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
+  const intelligenceRuntimeChain = organizationIntelligenceRuntimeChainService(db, { strictSecretsMode });
   const workspaceOperations = workspaceOperationService(db);
   const instanceSettings = instanceSettingsService(db);
-  const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
   const avatarUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
@@ -1925,6 +1927,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     instructions,
     organizationSkills,
     intelligenceProfiles,
+    intelligenceRuntimeChain,
     workspaceOperations,
     instanceSettings,
     avatarUpload,

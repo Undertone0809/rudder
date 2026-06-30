@@ -1,6 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 
 const mockOrganizationIntelligenceProfiles = vi.hoisted(() => ({
@@ -8,6 +9,9 @@ const mockOrganizationIntelligenceProfiles = vi.hoisted(() => ({
   getByPurpose: vi.fn(),
   upsert: vi.fn(),
   ensureDefaultsFromRuntime: vi.fn(),
+}));
+const mockOrganizationIntelligenceRuntimeChain = vi.hoisted(() => ({
+  assertUsable: vi.fn(),
 }));
 
 const mockSecretService = vi.hoisted(() => ({
@@ -48,6 +52,7 @@ vi.mock("../services/index.js", () => ({
     cancel: vi.fn(),
   }),
   organizationIntelligenceProfileService: () => mockOrganizationIntelligenceProfiles,
+  organizationIntelligenceRuntimeChainService: () => mockOrganizationIntelligenceRuntimeChain,
   organizationPortabilityService: () => ({
     exportBundle: vi.fn(),
     previewExport: vi.fn(),
@@ -121,6 +126,7 @@ describe("organization intelligence profile routes", () => {
     mockSecretService.normalizeAdapterConfigForPersistence.mockClear();
     mockSecretService.resolveAdapterConfigForRuntime.mockClear();
     mockLogActivity.mockReset();
+    mockOrganizationIntelligenceRuntimeChain.assertUsable.mockReset();
     mockTestEnvironment.mockReset();
     mockFindServerAdapter.mockClear();
     mockTestEnvironment.mockResolvedValue({
@@ -158,28 +164,24 @@ describe("organization intelligence profile routes", () => {
           }],
         },
         status: "configured",
-      });
+    });
 
     expect(res.status).toBe(200);
-    expect(mockFindServerAdapter).toHaveBeenCalledWith("codex_local");
-    expect(mockFindServerAdapter).toHaveBeenCalledWith("claude_local");
-    expect(mockTestEnvironment).toHaveBeenCalledTimes(2);
-    expect(mockTestEnvironment).toHaveBeenNthCalledWith(1, {
-      orgId: "org-1",
-      agentRuntimeType: "codex_local",
-      config: {
+    expect(mockOrganizationIntelligenceRuntimeChain.assertUsable).toHaveBeenCalledWith(
+      "org-1",
+      "codex_local",
+      {
         model: "gpt-5.4-mini",
         modelReasoningEffort: "low",
+        modelFallbacks: [{
+          agentRuntimeType: "claude_local",
+          model: "claude-sonnet-4-5",
+          config: {
+            effort: "medium",
+          },
+        }],
       },
-    });
-    expect(mockTestEnvironment).toHaveBeenNthCalledWith(2, {
-      orgId: "org-1",
-      agentRuntimeType: "claude_local",
-      config: {
-        effort: "medium",
-        model: "claude-sonnet-4-5",
-      },
-    });
+    );
     expect(mockOrganizationIntelligenceProfiles.upsert).toHaveBeenCalledWith(
       "org-1",
       "lightweight",
@@ -192,16 +194,9 @@ describe("organization intelligence profile routes", () => {
   });
 
   it("rejects configured status when the runtime chain does not pass", async () => {
-    mockTestEnvironment.mockResolvedValueOnce({
-      agentRuntimeType: "codex_local",
-      status: "fail",
-      testedAt: "2026-06-18T00:00:00.000Z",
-      checks: [{
-        code: "codex_hello_probe_model_unavailable",
-        level: "error",
-        message: "Model is not available.",
-      }],
-    });
+    mockOrganizationIntelligenceRuntimeChain.assertUsable.mockRejectedValueOnce(
+      unprocessable("Runtime chain test failed for Primary: Model is not available."),
+    );
     const app = await createApp();
 
     const res = await request(app)

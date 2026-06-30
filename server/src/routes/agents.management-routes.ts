@@ -14,7 +14,7 @@ import {
   upsertAgentInstructionsFileSchema,
   wakeAgentSchema
 } from "@rudderhq/shared";
-import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, not, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
@@ -40,6 +40,11 @@ type AgentManagementRouteContext = {
   [key: string]: any;
 };
 
+type IntelligenceRuntimeChainTestInput = {
+  agentRuntimeType: string;
+  agentRuntimeConfig: Record<string, unknown>;
+};
+
 export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) {
   const {
     router,
@@ -56,6 +61,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     instructions,
     organizationSkills,
     intelligenceProfiles,
+    intelligenceRuntimeChain,
     workspaceOperations,
     instanceSettings,
     avatarUpload,
@@ -92,6 +98,32 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     KNOWN_INSTRUCTIONS_PATH_KEYS,
     KNOWN_INSTRUCTIONS_BUNDLE_KEYS,
   } = ctx;
+
+  async function ensureFirstAgentIntelligenceDefaults(
+    orgId: string,
+    agent: {
+      id: string;
+      agentRuntimeType: string;
+      agentRuntimeConfig?: unknown;
+    },
+  ) {
+    const [firstAgent] = await db
+      .select({ id: agentsTable.id })
+      .from(agentsTable)
+      .where(eq(agentsTable.orgId, orgId))
+      .orderBy(asc(agentsTable.createdAt), asc(agentsTable.id))
+      .limit(1);
+    if (firstAgent?.id !== agent.id) return;
+    await intelligenceProfiles.ensureDefaultsFromRuntime({
+      orgId,
+      agentRuntimeType: agent.agentRuntimeType,
+      agentRuntimeConfig: (agent.agentRuntimeConfig ?? {}) as Record<string, unknown>,
+      testRuntimeChain: async ({ agentRuntimeType, agentRuntimeConfig }: IntelligenceRuntimeChainTestInput) => {
+        await intelligenceRuntimeChain.assertUsable(orgId, agentRuntimeType, agentRuntimeConfig);
+      },
+    });
+  }
+
   router.post("/orgs/:orgId/agent-hires", validate(createAgentHireSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     await assertCanCreateAgentsForCompany(req, orgId);
@@ -157,13 +189,6 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       desiredSkillAssignment.desiredSkills,
     );
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
-    if (!requiresApproval) {
-      await intelligenceProfiles.ensureDefaultsFromRuntime({
-        orgId,
-        agentRuntimeType: agent.agentRuntimeType,
-        agentRuntimeConfig: (agent.agentRuntimeConfig ?? {}) as Record<string, unknown>,
-      });
-    }
 
     let approval: Awaited<ReturnType<typeof approvalsSvc.getById>> | null = null;
     const actor = getActorInfo(req);
@@ -294,6 +319,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
     const {
       desiredSkills: requestedDesiredSkills,
+      seedOrganizationIntelligenceDefaults,
       ...createInput
     } = req.body;
     const requestedAdapterConfig = applyCreateDefaultsByAdapterType(
@@ -336,11 +362,9 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       desiredSkillAssignment.desiredSkills,
     );
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
-    await intelligenceProfiles.ensureDefaultsFromRuntime({
-      orgId,
-      agentRuntimeType: agent.agentRuntimeType,
-      agentRuntimeConfig: (agent.agentRuntimeConfig ?? {}) as Record<string, unknown>,
-    });
+    if (seedOrganizationIntelligenceDefaults) {
+      await ensureFirstAgentIntelligenceDefaults(orgId, agent);
+    }
 
     const actor = getActorInfo(req);
     await logActivity(db, {

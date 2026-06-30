@@ -60,6 +60,7 @@ vi.mock("../services/index.js", () => ({
     upsert: vi.fn(),
     ensureDefaultsFromRuntime: vi.fn(),
   }),
+  organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
   organizationSkillService: () => ({}),
   secretService: () => mockSecretService,
   syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),

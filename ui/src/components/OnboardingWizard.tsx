@@ -748,7 +748,8 @@ export function OnboardingWizard() {
             preflightEnabled: true,
             maxConcurrentRuns: AGENT_RUN_CONCURRENCY_DEFAULT
           }
-        }
+        },
+        seedOrganizationIntelligenceDefaults: createdNewOrganizationInSession
       };
       const agent = createdAgentId
         ? await agentsApi.update(createdAgentId, agentPayload, createdCompanyId)

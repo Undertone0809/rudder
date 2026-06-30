@@ -123,6 +123,11 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 process.stdin.on("end", async () => {
+  if (/Respond with hello\\.?/i.test(prompt)) {
+    process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-e2e", model: "gpt-5.4" }) + "\\n");
+    process.stdout.write(JSON.stringify({ type: "turn.completed", result: "hello", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }) + "\\n");
+    return;
+  }
   const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
   const finalText = "Streaming reply for chat.\\n" + sentinel + JSON.stringify({
     kind: "message",

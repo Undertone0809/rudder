@@ -34,6 +34,7 @@ vi.mock("../services/index.js", () => ({
     upsert: vi.fn(),
     ensureDefaultsFromRuntime: vi.fn(),
   }),
+  organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
   logActivity: mockLogActivity,
 }));
 

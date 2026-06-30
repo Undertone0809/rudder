@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAgentSchema, updateAgentSchema } from "./agent.js";
+import { createAgentHireSchema, createAgentSchema, updateAgentSchema } from "./agent.js";
 
 describe("agent avatar validation", () => {
   it("accepts DiceBear Notionists and uploaded image avatar references", () => {
@@ -46,5 +46,30 @@ describe("agent permission validation", () => {
         permissions: { canCreateAgents: false },
       }).permissions?.canCreateAgents,
     ).toBe(false);
+  });
+});
+
+describe("agent intelligence seeding validation", () => {
+  it("allows organization intelligence seeding only on direct agent creation", () => {
+    expect(
+      createAgentSchema.parse({
+        name: "Builder",
+        seedOrganizationIntelligenceDefaults: true,
+      }).seedOrganizationIntelligenceDefaults,
+    ).toBe(true);
+
+    expect(
+      createAgentHireSchema.parse({
+        name: "Builder",
+        seedOrganizationIntelligenceDefaults: true,
+      } as unknown),
+    ).not.toHaveProperty("seedOrganizationIntelligenceDefaults");
+
+    expect(
+      updateAgentSchema.parse({
+        name: "Builder",
+        seedOrganizationIntelligenceDefaults: true,
+      } as unknown),
+    ).not.toHaveProperty("seedOrganizationIntelligenceDefaults");
   });
 });

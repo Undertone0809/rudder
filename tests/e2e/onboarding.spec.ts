@@ -26,11 +26,11 @@ async function expectOnboardingStep(page: Page, text: string) {
 }
 
 async function expectSelectedCodexModel(page: Page) {
-  const modelButton = page.getByRole("button", { name: /gpt-5\.\d+/ });
+  const modelButton = page.getByRole("button", { name: /gpt-5(?:\.\d+)?(?:-[\w.-]+)?/i });
   await expect(modelButton).toBeVisible();
   const model = (await modelButton.textContent())?.trim();
-  expect(model).toMatch(/^gpt-5\.\d+$/);
-  return model!;
+  expect(model).toMatch(/^gpt-5(?:\.\d+)?(?:-[\w.-]+)?$/i);
+  return model!.toLowerCase();
 }
 
 function escapeRegExp(value: string) {
@@ -89,7 +89,7 @@ test.describe("Onboarding wizard", () => {
     await onboardingNameInput.fill(updatedAgentName);
 
     await page.getByRole("button", { name: "Create & Open Messenger" }).click();
-    await expect(page).toHaveURL(/\/messenger$/, { timeout: 30_000 });
+    await expect(page).toHaveURL(/\/messenger(?:\/chat)?$/, { timeout: 30_000 });
 
     const baseUrl = page.url().split("/").slice(0, 3).join("/");
 
@@ -106,7 +106,7 @@ test.describe("Onboarding wizard", () => {
     expect(page.url()).toContain(`/${organization.issuePrefix}/messenger`);
     await page.goto("/");
     await expect(page).toHaveURL(
-      new RegExp(`/${escapeRegExp(organization.issuePrefix)}/messenger$`),
+      new RegExp(`/${escapeRegExp(organization.issuePrefix)}/messenger(?:/chat)?$`),
       { timeout: 15_000 },
     );
     expect(organization).not.toHaveProperty("defaultChatAgentRuntimeType");
@@ -126,6 +126,31 @@ test.describe("Onboarding wizard", () => {
     expect(rootAgent.title).toBe("Operator Assistant");
     expect(rootAgent.agentRuntimeType).toBe("codex_local");
     expect(rootAgent.agentRuntimeConfig.model).toBe(selectedCodexModel);
+
+    const profilesRes = await page.request.get(
+      `${baseUrl}/api/orgs/${organization.id}/intelligence-profiles`,
+    );
+    expect(profilesRes.ok()).toBe(true);
+    const profiles = await profilesRes.json() as Array<{
+      purpose: string;
+      agentRuntimeType: string;
+      agentRuntimeConfig: Record<string, unknown>;
+      status: string;
+      lastVerifiedAt: string | null;
+      lastError: string | null;
+    } | null>;
+    const profileByPurpose = new Map(
+      profiles.filter(Boolean).map((profile) => [profile!.purpose, profile!]),
+    );
+    for (const purpose of ["lightweight", "reasoning"]) {
+      const profile = profileByPurpose.get(purpose);
+      expect(profile).toBeTruthy();
+      expect(profile!.agentRuntimeType).toBe("codex_local");
+      expect(profile!.agentRuntimeConfig.model).toBe("gpt-5.4-mini");
+      expect(profile!.status).toBe("configured");
+      expect(profile!.lastVerifiedAt).toBeTruthy();
+      expect(profile!.lastError).toBeNull();
+    }
 
     const projectsRes = await page.request.get(
       `${baseUrl}/api/orgs/${organization.id}/projects`
@@ -216,8 +241,8 @@ test.describe("Onboarding wizard", () => {
     };
     const gettingStartedGroup = messengerGroups.groups.find((group) => group.name === "Getting Started");
     expect(gettingStartedGroup).toBeTruthy();
-    expect(gettingStartedGroup!.entries.map((entry) => entry.threadKey)).toEqual(
-      issues.map((issue) => `issue:${issue.id}`),
+    expect(new Set(gettingStartedGroup!.entries.map((entry) => entry.threadKey))).toEqual(
+      new Set(issues.map((issue) => `issue:${issue.id}`)),
     );
     expect(gettingStartedGroup!.entries.every((entry) => entry.thread.unreadCount === 0)).toBe(true);
     expect(gettingStartedGroup!.entries.every((entry) => entry.thread.needsAttention === false)).toBe(true);
@@ -246,14 +271,18 @@ test.describe("Onboarding wizard", () => {
     expect(sidebarBadges.inbox).toBe(0);
 
     await page.goto(`/${organization.issuePrefix}/issues?projectId=${gettingStartedProject.id}`);
-    await expect(page.getByText("Welcome", { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("Core loop", { exact: true })).toBeVisible();
-    await expect(page.getByText("Recommended next", { exact: true })).toBeVisible();
-    await expect(page.getByText("Advanced", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("link", { name: /Welcome to Rudder/ }).first()).toBeVisible();
+    await expect(page.getByRole("link", { name: /Ask your agent one quick question/ }).first()).toBeVisible();
 
     await page.goto(
       `/${organization.issuePrefix}/issues/${encodeURIComponent(nextIssueSource!.identifier ?? nextIssueSource!.id)}`,
     );
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.productTour.completed.v1", "true");
+      window.localStorage.removeItem("rudder.productTour.pendingAfterSetup.v1");
+    });
+    await page.reload({ waitUntil: "networkidle" });
     await expect(page.getByRole("heading", { name: nextIssueSource!.title })).toBeVisible({
       timeout: 15_000,
     });

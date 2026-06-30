@@ -5,12 +5,16 @@ const mockAgentService = vi.hoisted(() => ({
   activatePendingApproval: vi.fn(),
   create: vi.fn(),
   getById: vi.fn(),
+  list: vi.fn(),
   terminate: vi.fn(),
 }));
 
 const mockNotifyHireApproved = vi.hoisted(() => vi.fn());
 const mockOrganizationIntelligenceProfiles = vi.hoisted(() => ({
   ensureDefaultsFromRuntime: vi.fn(),
+}));
+const mockOrganizationIntelligenceRuntimeChain = vi.hoisted(() => ({
+  assertUsable: vi.fn(),
 }));
 
 vi.mock("../services/agents.js", () => ({
@@ -23,6 +27,10 @@ vi.mock("../services/hire-hook.js", () => ({
 
 vi.mock("../services/organization-intelligence-profiles.js", () => ({
   organizationIntelligenceProfileService: vi.fn(() => mockOrganizationIntelligenceProfiles),
+}));
+
+vi.mock("../services/organization-intelligence-runtime-chain.js", () => ({
+  organizationIntelligenceRuntimeChainService: vi.fn(() => mockOrganizationIntelligenceRuntimeChain),
 }));
 
 type ApprovalRecord = {
@@ -73,6 +81,7 @@ describe("approvalService resolution idempotency", () => {
       agentRuntimeType: "codex_local",
       agentRuntimeConfig: { model: "gpt-5.4" },
     });
+    mockAgentService.list.mockResolvedValue([{ id: "agent-1" }]);
     mockAgentService.terminate.mockResolvedValue(undefined);
     mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime.mockResolvedValue([]);
     mockNotifyHireApproved.mockResolvedValue(undefined);
@@ -116,11 +125,8 @@ describe("approvalService resolution idempotency", () => {
 
     expect(result.applied).toBe(true);
     expect(mockAgentService.activatePendingApproval).toHaveBeenCalledWith("agent-1");
-    expect(mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime).toHaveBeenCalledWith({
-      orgId: "organization-1",
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: { model: "gpt-5.4" },
-    });
+    expect(mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime).not.toHaveBeenCalled();
+    expect(mockOrganizationIntelligenceRuntimeChain.assertUsable).not.toHaveBeenCalled();
     expect(mockNotifyHireApproved).toHaveBeenCalledTimes(1);
   });
 });

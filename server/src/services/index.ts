@@ -31,6 +31,7 @@ export { publishLiveEvent, subscribeCompanyLiveEvents } from "./live-events.js";
 export { messengerService } from "./messenger.js";
 export { operatorProfileService } from "./operator-profile.js";
 export { organizationIntelligenceProfileService } from "./organization-intelligence-profiles.js";
+export { organizationIntelligenceRuntimeChainService } from "./organization-intelligence-runtime-chain.js";
 export { organizationPortabilityFacade, organizationPortabilityService } from "./organization-portability.js";
 export { organizationSkillFacade, organizationSkillService } from "./organization-skills.js";
 export { organizationService } from "./orgs.js";

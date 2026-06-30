@@ -149,6 +149,11 @@ Product model:
 
 - Onboarding can create or select organization, seed starter context, expose
   invite/onboarding instructions, and guide runtime configuration.
+- When onboarding creates a new organization and then creates that new
+  organization's first agent with the Codex local runtime in the same onboarding
+  flow, Rudder must derive the organization's Fast and Smart intelligence
+  profiles from that Codex runtime, test each profile's runtime chain, and
+  automatically enable only the profiles whose tests pass.
 - Getting Started onboarding seed creates starter project/issues and mirrors
   those issue threads into the operator's Messenger directory as a grouped,
   already-read starter set.
@@ -171,16 +176,34 @@ Flow:
 1. Fresh user or invited actor enters onboarding/invite route.
 2. Server exposes safe onboarding metadata and required setup state.
 3. UI guides organization/agent/runtime setup.
-4. Server seeds starter work when needed, including the `Getting Started`
+4. When the selected local runtime requires a runtime environment check,
+   onboarding tests that agent runtime before creating the first agent.
+5. If the first agent is Codex local, server derives Fast and Smart
+   organization intelligence profiles from the tested Codex runtime config,
+   runs the same runtime-chain environment checks used by manual profile
+   enablement, persists passing profiles as `configured` with verification
+   evidence, and leaves failing profiles disabled/invalid with visible error
+   state instead of silently enabling them.
+6. Server seeds starter work when needed, including the `Getting Started`
    project, tutorial issues, next-step links, chat CTA links, Messenger grouping,
    and read-state markers required for the starter set.
-5. User lands in the organization's Messenger home with starter work or clear
+7. User lands in the organization's Messenger home with starter work or clear
    next action.
 
 Invariants:
 
 - Onboarding should end in a real Rudder work surface, not a detached marketing
   page.
+- Codex-created organization intelligence profiles must not be marked
+  configured unless their runtime-chain environment test passes.
+- A failed Fast or Smart intelligence-profile test must not block organization
+  or agent creation; it must leave an inspectable non-configured profile state
+  so the operator can repair credentials/model/runtime setup and enable it
+  later.
+- Automatic Fast/Smart enablement is limited to the new-organization onboarding
+  flow's first Codex local agent. Existing organizations, later agents, and
+  non-Codex runtimes may still create disabled derived profile drafts for manual
+  configuration when the relevant service path requests defaults.
 - Onboarding for a newly created organization must resolve to
   `/{issuePrefix}/messenger`.
 - Root app startup and organization-index entry must resolve to the selected or
@@ -214,6 +237,12 @@ Evidence:
   `ui/src/components/OnboardingWizard.runtime-config.test.tsx`, and
   `ui/src/pages/InstanceGeneralSettings.test.tsx` cover organization home route,
   page-memory fallback, onboarding completion, and settings return behavior.
+- `server/src/__tests__/organization-intelligence-profiles.test.ts` covers
+  derived Codex Fast/Smart defaults and automatic configured/invalid outcomes
+  based on runtime-chain test results.
+- `server/src/__tests__/organization-intelligence-profiles-routes.test.ts`
+  covers the same runtime-chain gate used when an operator manually enables an
+  organization intelligence profile.
 - `server/src/__tests__/invite-onboarding-text.test.ts` covers invite/onboarding
   instruction text behavior.
 - Known gap: release-smoke onboarding evidence still belongs to release/Desktop

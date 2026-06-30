@@ -7,6 +7,7 @@ import { agentRoutes } from "../routes/agents.js";
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
   getInternalById: vi.fn(),
+  list: vi.fn(),
   update: vi.fn(),
   create: vi.fn(),
   resolveByReference: vi.fn(),
@@ -52,6 +53,15 @@ const mockCompanySkillService = vi.hoisted(() => ({
   replaceEnabledSkillKeysForAgent: vi.fn(),
   addEnabledSkillKeysForAgent: vi.fn(),
 }));
+const mockOrganizationIntelligenceProfiles = vi.hoisted(() => ({
+  list: vi.fn(),
+  getByPurpose: vi.fn(),
+  upsert: vi.fn(),
+  ensureDefaultsFromRuntime: vi.fn(),
+}));
+const mockOrganizationIntelligenceRuntimeChain = vi.hoisted(() => ({
+  assertUsable: vi.fn(),
+}));
 
 const mockSecretService = vi.hoisted(() => ({
   resolveAdapterConfigForRuntime: vi.fn(),
@@ -93,12 +103,8 @@ vi.mock("../services/index.js", () => ({
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => mockIssueApprovalService,
   issueService: () => ({}),
-  organizationIntelligenceProfileService: () => ({
-    list: vi.fn(),
-    getByPurpose: vi.fn(),
-    upsert: vi.fn(),
-    ensureDefaultsFromRuntime: vi.fn(),
-  }),
+  organizationIntelligenceProfileService: () => mockOrganizationIntelligenceProfiles,
+  organizationIntelligenceRuntimeChainService: () => mockOrganizationIntelligenceRuntimeChain,
   logActivity: mockLogActivity,
   secretService: () => mockSecretService,
   syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
@@ -118,17 +124,31 @@ vi.mock("@rudderhq/agent-runtime-pi-local/server", () => ({
   ensurePiModelConfiguredAndAvailable: mockEnsurePiModelConfiguredAndAvailable,
 }));
 
-function createDb(requireBoardApprovalForNewAgents = false) {
+function createDb(
+  requireBoardApprovalForNewAgents = false,
+  firstAgentId = "11111111-1111-4111-8111-111111111111",
+) {
   return {
-    select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(async () => [
-          {
-            id: "organization-1",
-            requireBoardApprovalForNewAgents,
-          },
-        ]),
-      })),
+    select: vi.fn((selection?: Record<string, unknown>) => ({
+      from: vi.fn(() => {
+        if (selection && Object.prototype.hasOwnProperty.call(selection, "id")) {
+          return {
+            where: vi.fn(() => ({
+              orderBy: vi.fn(() => ({
+                limit: vi.fn(async () => [{ id: firstAgentId }]),
+              })),
+            })),
+          };
+        }
+        return {
+          where: vi.fn(async () => [
+            {
+              id: "organization-1",
+              requireBoardApprovalForNewAgents,
+            },
+          ]),
+        };
+      }),
     })),
   };
 }
@@ -264,6 +284,7 @@ describe("agent skill routes", () => {
       agent: makeAgent("claude_local"),
     });
     mockAgentService.getInternalById.mockResolvedValue(makeAgent("claude_local"));
+    mockAgentService.list.mockResolvedValue([makeAgent("claude_local")]);
     mockSecretService.resolveAdapterConfigForRuntime.mockResolvedValue({ config: { env: {} } });
     mockCompanySkillService.list.mockResolvedValue([
       {
@@ -510,6 +531,87 @@ describe("agent skill routes", () => {
       "11111111-1111-4111-8111-111111111111",
       [],
     );
+  });
+
+  it("passes a runtime-chain tester when onboarding seeds Codex organization intelligence defaults", async () => {
+    mockAgentService.update.mockImplementationOnce(async (_id: string, patch: Record<string, unknown>) => ({
+      ...makeAgent("codex_local"),
+      agentRuntimeConfig: patch.agentRuntimeConfig ?? {},
+    }));
+    mockAgentService.list.mockResolvedValueOnce([makeAgent("codex_local")]);
+
+    await request(createApp())
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "Codex Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          command: "codex",
+          model: "gpt-5.3-codex",
+        },
+        seedOrganizationIntelligenceDefaults: true,
+      })
+      .expect(201);
+
+    expect(mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: expect.objectContaining({
+        command: "codex",
+        model: "gpt-5.3-codex",
+      }),
+      testRuntimeChain: expect.any(Function),
+    });
+
+    const input = mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime.mock.calls.at(-1)?.[0];
+    await input.testRuntimeChain({
+      purpose: "lightweight",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { command: "codex", model: "gpt-5.4-mini" },
+    });
+    expect(mockOrganizationIntelligenceRuntimeChain.assertUsable).toHaveBeenCalledWith(
+      "organization-1",
+      "codex_local",
+      { command: "codex", model: "gpt-5.4-mini" },
+    );
+  });
+
+  it("does not create Codex organization intelligence defaults without the onboarding seed flag", async () => {
+    mockAgentService.list.mockResolvedValueOnce([makeAgent("codex_local")]);
+
+    await request(createApp())
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "Later Codex Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          command: "codex",
+          model: "gpt-5.3-codex",
+        },
+      })
+      .expect(201);
+
+    expect(mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime).not.toHaveBeenCalled();
+  });
+
+  it("does not create Codex organization intelligence defaults when another agent is already first", async () => {
+    await request(createApp(createDb(false, "22222222-2222-4222-8222-222222222222")))
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "Second Codex Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          command: "codex",
+          model: "gpt-5.3-codex",
+        },
+        seedOrganizationIntelligenceDefaults: true,
+      })
+      .expect(201);
+
+    expect(mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime).not.toHaveBeenCalled();
   });
 
   it("allows direct agent creation without an explicit name", async () => {

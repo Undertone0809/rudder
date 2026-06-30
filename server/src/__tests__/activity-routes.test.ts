@@ -18,6 +18,7 @@ const mockActivityService = vi.hoisted(() => ({
     upsert: vi.fn(),
     ensureDefaultsFromRuntime: vi.fn(),
   }),
+  organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
 }));
 
 const mockIssueService = vi.hoisted(() => ({

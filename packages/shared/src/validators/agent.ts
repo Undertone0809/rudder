@@ -113,19 +113,22 @@ export const createAgentSchema = z.object({
   budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
   permissions: agentPermissionsSchema.optional(),
   metadata: z.record(z.unknown()).optional().nullable(),
+  seedOrganizationIntelligenceDefaults: z.boolean().optional().default(false),
 });
 
 export type CreateAgent = z.infer<typeof createAgentSchema>;
 
-export const createAgentHireSchema = createAgentSchema.extend({
-  sourceIssueId: z.string().uuid().optional().nullable(),
-  sourceIssueIds: z.array(z.string().uuid()).optional(),
-});
+export const createAgentHireSchema = createAgentSchema
+  .omit({ seedOrganizationIntelligenceDefaults: true })
+  .extend({
+    sourceIssueId: z.string().uuid().optional().nullable(),
+    sourceIssueIds: z.array(z.string().uuid()).optional(),
+  });
 
 export type CreateAgentHire = z.infer<typeof createAgentHireSchema>;
 
 export const updateAgentSchema = createAgentSchema
-  .omit({ permissions: true })
+  .omit({ permissions: true, seedOrganizationIntelligenceDefaults: true })
   .partial()
   .extend({
     permissions: z.never().optional(),

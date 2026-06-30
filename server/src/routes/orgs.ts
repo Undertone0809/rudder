@@ -1,4 +1,3 @@
-import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
   createLibraryDocumentSchema,
@@ -24,7 +23,6 @@ import {
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
 import path from "node:path";
-import { findServerAdapter } from "../agent-runtimes/index.js";
 import { forbidden, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -35,6 +33,7 @@ import {
   logActivity,
   organizationExportJobService,
   organizationIntelligenceProfileService,
+  organizationIntelligenceRuntimeChainService,
   organizationPortabilityService,
   organizationService,
   organizationSkillService,
@@ -51,53 +50,10 @@ const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:
 const EMBEDDED_IMAGE_DATA_URL_ERROR =
   "Embedded image data URLs are not allowed in Library files. Upload images as attachments or assets and reference their content URL instead.";
 
-type RuntimeChainTestTarget = {
-  label: string;
-  runtimeType: string;
-  config: Record<string, unknown>;
-};
-
 function assertNoEmbeddedImageDataUrls(content: string) {
   if (EMBEDDED_IMAGE_DATA_URL_RE.test(content)) {
     throw unprocessable(EMBEDDED_IMAGE_DATA_URL_ERROR);
   }
-}
-
-function buildRuntimeChainTestTargets(
-  agentRuntimeType: string,
-  agentRuntimeConfig: Record<string, unknown>,
-): RuntimeChainTestTarget[] {
-  const primaryConfig = { ...agentRuntimeConfig };
-  delete primaryConfig.modelFallbacks;
-  const primaryModel = typeof primaryConfig.model === "string" ? primaryConfig.model : null;
-  const fallbacks = normalizeModelFallbacks(agentRuntimeConfig.modelFallbacks, {
-    agentRuntimeType,
-    model: primaryModel,
-  });
-  return [
-    {
-      label: "Primary",
-      runtimeType: agentRuntimeType,
-      config: primaryConfig,
-    },
-    ...fallbacks.map((fallback, index) => ({
-      label: `Fallback ${index + 1}`,
-      runtimeType: fallback.agentRuntimeType,
-      config: {
-        ...(fallback.config ?? {}),
-        model: fallback.model,
-      },
-    })),
-  ];
-}
-
-function blockingEnvironmentMessage(result: {
-  status?: string;
-  checks?: Array<{ level?: string; message?: string }>;
-}) {
-  if (result.status === "pass") return null;
-  const errorCheck = result.checks?.find((check) => check.level === "error");
-  return errorCheck?.message ?? `Runtime environment returned ${result.status ?? "unknown"} status.`;
 }
 
 export function organizationRoutes(db: Db, storage?: StorageService) {
@@ -117,41 +73,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   const exportJobs = organizationExportJobService();
   const secrets = secretService(db);
   const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
-
-  async function assertRuntimeChainUsable(
-    orgId: string,
-    agentRuntimeType: string,
-    agentRuntimeConfig: Record<string, unknown>,
-  ) {
-    const targets = buildRuntimeChainTestTargets(agentRuntimeType, agentRuntimeConfig);
-    for (const target of targets) {
-      const adapter = findServerAdapter(target.runtimeType);
-      if (!adapter) {
-        throw unprocessable(`Unknown adapter type in ${target.label}: ${target.runtimeType}`);
-      }
-      const normalizedAdapterConfig = await secrets.normalizeAdapterConfigForPersistence(
-        orgId,
-        target.config,
-        { strictMode: strictSecretsMode },
-      );
-      const { config: runtimeAdapterConfig } = await secrets.resolveAdapterConfigForRuntime(
-        orgId,
-        normalizedAdapterConfig,
-      );
-      const result = await adapter.testEnvironment({
-        orgId,
-        agentRuntimeType: target.runtimeType,
-        config: runtimeAdapterConfig,
-      });
-      const blockingMessage = blockingEnvironmentMessage(result);
-      if (blockingMessage) {
-        throw unprocessable(`Runtime chain test failed for ${target.label}: ${blockingMessage}`, {
-          runtimeType: target.runtimeType,
-          result,
-        });
-      }
-    }
-  }
+  const runtimeChain = organizationIntelligenceRuntimeChainService(db, { strictSecretsMode });
 
   async function assertCanUpdateBranding(req: Request, orgId: string) {
     assertCompanyAccess(req, orgId);
@@ -452,7 +374,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
 
       const input = { ...req.body };
       if (input.status === "configured") {
-        await assertRuntimeChainUsable(
+        await runtimeChain.assertUsable(
           orgId,
           input.agentRuntimeType,
           input.agentRuntimeConfig ?? {},
