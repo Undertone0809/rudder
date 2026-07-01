@@ -474,6 +474,9 @@ Product model:
   icon, canonical title/code text, and normal inline wrapping behavior.
 - Composer/editor surfaces and read-only markdown surfaces share the same
   visual grammar for the same reference type.
+- Issue references that carry status metadata show the issue status icon inline,
+  whether they appear in assistant messages, user messages, comments, or other
+  read-only markdown bodies.
 - Composer tokens may use single-line truncation for very long labels, but
   short or ordinary labels remain visible without unnecessary abbreviation.
 
@@ -491,6 +494,10 @@ Invariants:
 - Rich-reference icons and labels must share a stable text baseline across
   composer, issue comment editor, issue description, rendered markdown, and
   Library document surfaces.
+- Chat user-message rendering and assistant/read-only markdown rendering must
+  not diverge for issue reference status icons or line-height rhythm. The same
+  reference type with the same status metadata should look like the same object
+  on both sides of a conversation.
 - Do not add one-off vertical offsets for a single surface unless visual proof
   shows the shared token contract is wrong for that whole class of tokens.
 - New reference kinds must join the same token grammar instead of inventing
@@ -505,6 +512,8 @@ Evidence:
 - CSS contract tests lock the composer token icon alignment and truncation
   behavior.
 - Markdown editor/body tests cover special markdown rendering consistency.
+- Chat message tests cover user-message issue reference status icons and their
+  parity with assistant markdown rendering.
 - Chat rich-reference E2E covers real chat insertion and rendering behavior.
 
 ## CHAT.WEBSITE.LINK.ICON.001
