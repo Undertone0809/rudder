@@ -922,7 +922,7 @@ describe("MarkdownBody", () => {
     expect(entityPreviewApiMocks.getLibraryEntry).toHaveBeenCalledWith("org-1", "entry-123");
   });
 
-  it("renders issue mentions with status metadata as prose links without an inline status control", () => {
+  it("renders issue mentions with status metadata using the status icon affordance", () => {
     markdownMentionsMock.mentions = [{
       id: "issue:issue-789",
       name: "PAP-123 auth flow",
@@ -943,8 +943,8 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/issues/issue-789"');
     expect(html).toContain('data-mention-kind="issue"');
     expect(html).toContain('data-mention-status="done"');
+    expect(html).toContain("rudder-mention-chip--with-status-icon");
     expect(html).not.toContain('title="Open PAP-123 auth flow"');
-    expect(html).not.toContain("rudder-mention-chip--with-status-icon");
     expect(html).not.toContain('data-slot="issue-status-icon"');
     expect(html).not.toContain('data-status="done"');
     expect(html).toContain("当前自动化列表里已经完成");
@@ -2008,7 +2008,7 @@ describe("MarkdownBody", () => {
     expect(mention?.getAttribute("href")).toBe("/ZST/issues/1664b23e");
     expect(mention?.getAttribute("data-mention-status")).toBe("done");
     expect(mention?.classList.contains("rudder-mention-chip")).toBe(true);
-    expect(mention?.classList.contains("rudder-mention-chip--with-status-icon")).toBe(false);
+    expect(mention?.classList.contains("rudder-mention-chip--with-status-icon")).toBe(true);
   });
 
   it("uses canonical issue identity for resolved internal issue links with opaque labels", () => {

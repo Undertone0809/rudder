@@ -1009,7 +1009,7 @@ export function MarkdownBody({
             className={cn(
               "rudder-mention-chip",
               `rudder-mention-chip--${mention.kind}`,
-              mention.kind === "issue" && mention.commentId && mention.status && "rudder-mention-chip--with-status-icon",
+              mention.kind === "issue" && mention.status && "rudder-mention-chip--with-status-icon",
               mention.kind === "project" && "rudder-project-mention-chip",
             )}
             data-mention-kind={mention.kind}
@@ -1060,7 +1060,10 @@ export function MarkdownBody({
         const mentionLink = (
           <a
             href={internalHref}
-            className="rudder-mention-chip rudder-mention-chip--issue"
+            className={cn(
+              "rudder-mention-chip rudder-mention-chip--issue",
+              mention.status && "rudder-mention-chip--with-status-icon",
+            )}
             data-mention-kind="issue"
             data-mention-status={mention.status ?? undefined}
             {...markdownSourceAttributes(node)}

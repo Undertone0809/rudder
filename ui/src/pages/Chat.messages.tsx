@@ -1253,7 +1253,7 @@ export function ChatUserPlainTextBody({
               "rudder-mention-chip",
               `rudder-mention-chip--${mention.kind}`,
               mention.kind === "project" && "rudder-project-mention-chip",
-              mention.kind === "issue" && mention.commentId && mention.status && "rudder-mention-chip--with-status-icon",
+              mention.kind === "issue" && mention.status && "rudder-mention-chip--with-status-icon",
             )}
             data-mention-kind={mention.kind}
             data-mention-comment={mention.kind === "issue" && mention.commentId ? "true" : undefined}
@@ -2345,7 +2345,7 @@ export function ChatMessageItem({
               body={message.body}
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
-              className="text-[15px] leading-7"
+              className="text-[15px] leading-[1.6]"
             />
             <ChatAttachmentList
               attachments={message.attachments}
