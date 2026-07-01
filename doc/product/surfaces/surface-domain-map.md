@@ -41,7 +41,8 @@ owning domain contract.
   `ROUTING.REVIEWER.001`, `ROUTING.ATTENTION.001`.
 - Integrations tab for Feishu/IM setup, custom agent integrations, built-in
   Rudder MCP control-plane visibility, and Feishu source badges on chat-origin
-  run details: `IM.FEISHU.001`, `AGENT.CUSTOM.INTEGRATIONS.001`.
+  run details: `IM.FEISHU.001`, `AGENT.CUSTOM.INTEGRATIONS.001`,
+  `AGENT.CONTROL.TOOLS.001`.
 
 ## Issues List
 

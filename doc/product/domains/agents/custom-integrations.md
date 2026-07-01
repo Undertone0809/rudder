@@ -57,7 +57,8 @@ runtime-owned built-in infrastructure exposed as `rudder-control-plane` during
 supported agent runs. Agent Detail may show this built-in control-plane tool
 surface so operators understand what the runtime can call, but operators do not
 configure its URL, credentials, binding, or tool allowlist from the custom
-integration setup flow.
+integration setup flow. `AGENT.CONTROL.TOOLS.001` owns the runtime injection,
+tool naming, identity, and fallback semantics for that built-in surface.
 
 ### Actors / Objects / State
 
@@ -206,5 +207,6 @@ semantics remain governed by their provider contracts, not this page.
   - `AGENT.SKILLS.001` for discovery vs runtime enablement.
   - `AGENT.INSTRUCTIONS.001` for runtime prompt assembly.
   - `AGENT.RUNTIME.PERMISSIONS.001` for runtime credential boundaries.
+  - `AGENT.CONTROL.TOOLS.001` for built-in Rudder MCP control-plane tools.
   - `PLUGIN.CAPABILITY.001` for namespaced tool capability principles.
   - `IM.FEISHU.001` for the existing fixed-provider, agent-bound precedent.

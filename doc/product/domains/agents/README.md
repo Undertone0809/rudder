@@ -42,6 +42,9 @@ edit_policy: user_confirmed_only
 - `AGENT.RUNTIME.PERMISSIONS.001`: local runtime platform permissions define
   how managed homes, operator-home bridges, skills, credentials, and
   filesystem substitutions behave across macOS, Linux, and Windows.
+- `AGENT.CONTROL.TOOLS.001`: first-party Rudder MCP control-plane tools expose
+  the stable `agent-v1` command contract to supported runtimes through
+  runtime-managed identity and auth.
 - `AGENT.SKILLS.001`: skills have source, desired, enabled, materialized, and
   always-enabled semantics.
 - `AGENT.SKILL.TELEMETRY.001`: skill analytics preserve evidence level.

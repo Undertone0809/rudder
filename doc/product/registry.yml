@@ -375,6 +375,31 @@ contracts:
       - server/src/__tests__/managed-workspace-preflight.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
+  AGENT.CONTROL.TOOLS.001:
+    owner: product
+    domain: agents
+    status: active
+    spec_depth: logic_contract
+    docs:
+      - doc/product/domains/agents/control-tools.md
+    related_code:
+      - cli/src/agent-v1-registry.ts
+      - cli/src/agent-v1-mcp-server.ts
+      - cli/src/program.ts
+      - packages/agent-runtime-utils/src/rudder-mcp.ts
+      - packages/agent-runtime-utils/src/rudder-mcp-server.ts
+      - packages/agent-runtimes/claude-local/src/server/execute.ts
+      - packages/agent-runtimes/codex-local/src/server/execute.ts
+      - server/resources/bundled-skills/rudder/SKILL.md
+      - server/resources/bundled-skills/rudder/references/cli-reference.md
+    related_tests:
+      - cli/src/__tests__/agent-v1-registry.test.ts
+      - cli/src/__tests__/agent-v1-mcp-server.test.ts
+      - server/src/__tests__/claude-local-execute.test.ts
+      - server/src/__tests__/codex-local-execute.test.ts
+      - tests/e2e/agent-detail-integrations-tab.spec.ts
+    related_plans:
+      - doc/plans/2026-06-30-agent-v1-mcp-tools.md
   AGENT.SKILLS.001:
     owner: product
     domain: agents
