@@ -1259,6 +1259,7 @@ export function ChatUserPlainTextBody({
             data-mention-comment={mention.kind === "issue" && mention.commentId ? "true" : undefined}
             data-mention-status={mention.kind === "issue" && mention.status ? mention.status : undefined}
             style={mentionChipInlineStyle(mention)}
+            onClick={(event) => handlePlainTextLinkClick(event, targetHref, mentionLabel)}
           >
             {mentionLabel}
           </Link>

@@ -10,7 +10,18 @@ import {
   createImageDesktopPayload,
   resolveImageFilename,
 } from "@/lib/image-actions";
-import type { Agent, ChatConversation, ChatMessage, Issue, MessengerThreadSummary, Project } from "@rudderhq/shared";
+import {
+  buildChatMentionHref,
+  buildIssueMentionHref,
+  buildLibraryDirectoryMentionHref,
+  buildLibraryFileMentionHref,
+  type Agent,
+  type ChatConversation,
+  type ChatMessage,
+  type Issue,
+  type MessengerThreadSummary,
+  type Project,
+} from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -32,6 +43,7 @@ import {
   canRetryFailedChatMessage,
   chatEmptyStateHeading,
   chatIssueApprovalPayloadWithProposalOverride,
+  chatSidePanelTargetFromHref,
   computeDisplayedChatMessages,
   draftIssueContextLabel,
   findLatestUnansweredAskUserMessage,
@@ -422,6 +434,61 @@ describe("ChatMessageItem", () => {
     expect(html).toContain("Code chat_result_missing_sentinel");
     expect(html).toContain("Run 12345678");
     expect(html).toContain("Retry");
+  });
+});
+
+describe("Chat Side Panel targets", () => {
+  it("resolves issue, chat, and library targets from chat links", () => {
+    expect(chatSidePanelTargetFromHref(buildIssueMentionHref("issue-1", "ZST-1", "comment-1"))).toEqual({
+      kind: "issue",
+      issueId: "issue-1",
+      ref: "ZST-1",
+      commentId: "comment-1",
+      label: "ZST-1",
+    });
+    expect(chatSidePanelTargetFromHref(buildChatMentionHref("chat-2"))).toEqual({
+      kind: "chat",
+      conversationId: "chat-2",
+      messageId: null,
+      label: "Chat",
+    });
+    expect(chatSidePanelTargetFromHref(`${buildChatMentionHref("chat-2")}?messageId=message-3`, "Source message")).toEqual({
+      kind: "chat",
+      conversationId: "chat-2",
+      messageId: "message-3",
+      label: "Source message",
+    });
+    expect(chatSidePanelTargetFromHref(buildLibraryFileMentionHref("docs/plan.md"), "Plan doc")).toEqual({
+      kind: "library_file",
+      filePath: "docs/plan.md",
+      label: "Plan doc",
+    });
+    expect(chatSidePanelTargetFromHref(buildLibraryDirectoryMentionHref("docs"), "Docs")).toEqual({
+      kind: "library_directory",
+      directoryPath: "docs",
+      label: "Docs",
+    });
+    expect(chatSidePanelTargetFromHref("/messenger/chat/chat-2?messageId=message-3", "Source message")).toEqual({
+      kind: "chat",
+      conversationId: "chat-2",
+      messageId: "message-3",
+      label: "Source message",
+    });
+    expect(chatSidePanelTargetFromHref("/library?path=docs%2Fplan.md", "Plan doc")).toEqual({
+      kind: "library_file",
+      filePath: "docs/plan.md",
+      label: "Plan doc",
+    });
+    expect(chatSidePanelTargetFromHref("/library?directory=docs", "Docs")).toEqual({
+      kind: "library_directory",
+      directoryPath: "docs",
+      label: "Docs",
+    });
+  });
+
+  it("does not treat external links or unsupported internal routes as Side Panel targets", () => {
+    expect(chatSidePanelTargetFromHref("https://example.com", "Example")).toBeNull();
+    expect(chatSidePanelTargetFromHref("/agents/agent-1", "Agent")).toBeNull();
   });
 });
 

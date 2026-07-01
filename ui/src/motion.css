@@ -360,6 +360,12 @@
   transform: translateY(-8px) scale(0.992);
 }
 
+.motion-chat-side-panel {
+  transform-origin: right center;
+  animation: rudder-chat-side-panel-enter var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+  will-change: opacity, transform, filter;
+}
+
 .motion-organization-menu-pop {
   transform-origin: var(--radix-dropdown-menu-content-transform-origin, left top);
   will-change: opacity, transform, clip-path;
@@ -685,6 +691,24 @@
   }
 }
 
+@keyframes rudder-chat-side-panel-enter {
+  0% {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translateX(28px) scale(0.985);
+  }
+  58% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateX(-3px) scale(1.006);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateX(0) scale(1);
+  }
+}
+
 @keyframes rudder-chat-ask-user-answer-pop {
   0% {
     opacity: 0;
@@ -839,6 +863,7 @@
   .motion-chat-options-pop [data-chat-option],
   .motion-chat-composer-menu-pop,
   .motion-chat-composer-menu-pop [data-chat-composer-menu-item],
+  .motion-chat-side-panel,
   .motion-chat-empty-heading,
   .motion-chat-ask-user-answer-pop,
   .motion-chat-empty-recent-conversations,
@@ -894,6 +919,7 @@
   .motion-new-issue-created-banner,
   .motion-chat-composer-menu-pop,
   .motion-chat-composer-menu-pop [data-chat-composer-menu-item],
+  .motion-chat-side-panel,
   .motion-chat-empty-heading,
   .motion-organization-menu-pop,
   .motion-organization-menu-pop [data-org-menu-item],
