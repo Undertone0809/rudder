@@ -171,6 +171,14 @@ describe("server-utils prompt contracts", () => {
     expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("respond to the comment itself instead of executing the whole issue");
   });
 
+  it("makes first-party Rudder MCP tools the default control-plane interface", () => {
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("Prefer first-party Rudder MCP tools");
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("rudder-control-plane");
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("rudder_<capability_id>");
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("Use `rudder ... --json` only as a compatibility fallback");
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("Do not use direct API calls or `curl`");
+  });
+
   it("uses the assignee comment prompt for issue reopen comment wakes", () => {
     const issue = {
       id: "issue-685",
