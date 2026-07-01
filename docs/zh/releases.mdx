@@ -18,6 +18,30 @@ npx @rudderhq/cli@latest start
 
 这个页面只记录稳定版本。Canary 会更频繁地用于验证和 Desktop 资产测试；如果需要查看预发布历史，可以看 [GitHub Releases](https://github.com/Undertone0809/rudder/releases)。
 
+## v0.4.2
+
+发布时间：2026-06-30
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.4.2)
+
+### New Features
+
+- 增加 Agent V1 MCP tools，支持更丰富的 agent-side Rudder operations。
+- 增加 Appearance settings surface，扩展 base color palettes 和 action color themes。
+- 增加 chat message scroll-map navigation，便于更快回看较长 conversations。
+
+### Improvements
+
+- 改善 agent integration setup 和 bundled skill defaults，让 runtime answers 保持 scoped 到当前选择的 skill，并让 integration actions 默认更安全。
+- 改善 Pi、OpenCode 和 Codex follow-up flows 的 local runtime compatibility。
+- 改善 Desktop release verification，覆盖 packaged server dependencies 和 bundled PostgreSQL runtime payloads。
+
+### Bug Fixes
+
+- 修复 packaged Desktop startup，确保 PostgreSQL 18.4 runtime payload 被打包到 `prod_local` 使用的 app resources 中。
+- 修复 stopped replies 之后的 chat composer recovery，并收紧 chat navigation edge cases。
+- 修复重复的 Feishu stop-command handling，以及其他 integration setup details。
+
 ## v0.4.1
 
 发布时间：2026-06-27

@@ -18,6 +18,30 @@ npx @rudderhq/cli@latest start
 
 This changelog tracks stable releases only. Canary builds are published more frequently for validation and Desktop asset testing; use [GitHub Releases](https://github.com/Undertone0809/rudder/releases) when you need prerelease history.
 
+## v0.4.2
+
+Released: 2026-06-30
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.4.2)
+
+### New Features
+
+- Added Agent V1 MCP tools for richer agent-side Rudder operations.
+- Added an Appearance settings surface with expanded base color palettes and action color themes.
+- Added chat message scroll-map navigation for faster review of longer conversations.
+
+### Improvements
+
+- Improved agent integration setup and bundled skill defaults so runtime answers stay scoped to the selected skill and integration actions remain safer by default.
+- Improved local runtime compatibility for Pi, OpenCode, and Codex follow-up flows.
+- Improved Desktop release verification around packaged server dependencies and bundled PostgreSQL runtime payloads.
+
+### Bug Fixes
+
+- Fixed packaged Desktop startup by ensuring the PostgreSQL 18.4 runtime payload is bundled into the app resources used by `prod_local`.
+- Fixed chat composer recovery after stopped replies and tightened chat navigation edge cases.
+- Fixed repeated Feishu stop-command handling and other integration setup details.
+
 ## v0.4.1
 
 Released: 2026-06-27
