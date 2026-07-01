@@ -32,6 +32,9 @@ export const issues = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull().references(() => organizations.id),
     projectId: uuid("project_id").references(() => projects.id),
+    // Legacy project workspace pointer. It may guide runtime cwd resolution for
+    // old/imported issues, but new code should prefer execution/run workspace
+    // settings instead of treating this as a first-class product surface.
     projectWorkspaceId: uuid("project_workspace_id").references(() => projectWorkspaces.id, { onDelete: "set null" }),
     goalId: uuid("goal_id").references(() => goals.id),
     parentId: uuid("parent_id").references((): AnyPgColumn => issues.id),

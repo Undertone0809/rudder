@@ -10,6 +10,13 @@ export interface ProjectGoalRef {
   title: string;
 }
 
+/**
+ * Legacy project workspace record.
+ *
+ * The table is still read by issue/runtime resolution and portability import,
+ * but ordinary Project Workspace management is not exposed as a current product
+ * surface. Prefer Project.codebase and run workspace types for new code.
+ */
 export interface ProjectWorkspace {
   id: string;
   orgId: string;

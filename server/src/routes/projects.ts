@@ -85,6 +85,9 @@ export function projectRoutes(db: Db) {
   router.post("/orgs/:orgId/projects", validate(createProjectSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    // Legacy project workspace creation used a nested `workspace` body. Current
+    // project creation ignores that old shape; workspaces are resolved through
+    // organization Library/codebase and run workspace paths.
     const { workspace: _ignoredWorkspace, ...projectData } = req.body as Parameters<typeof svc.create>[1] & {
       workspace?: unknown;
     };

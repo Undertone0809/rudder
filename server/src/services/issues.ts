@@ -163,6 +163,9 @@ export function issueService(db: Db) {
   }
 
   async function assertValidProjectWorkspace(orgId: string, projectId: string | null | undefined, projectWorkspaceId: string) {
+    // Compatibility guard for legacy issue.projectWorkspaceId references.
+    // Project Workspace CRUD is no longer a normal product entry point, but old
+    // issue payloads and imports can still carry this id.
     const workspace = await db
       .select({
         id: projectWorkspaces.id,
@@ -830,6 +833,9 @@ export function issueService(db: Db) {
               parseProjectExecutionWorkspacePolicy(project?.executionWorkspacePolicy),
             ) as Record<string, unknown> | null;
         }
+        // Legacy fallback: keep old project_workspace_id population for
+        // existing runtime resolution paths. Current run workspace behavior is
+        // configured through executionWorkspaceSettings / executionWorkspaces.
         let projectWorkspaceId = issueData.projectWorkspaceId ?? null;
         if (!projectWorkspaceId && issueData.projectId) {
           const project = await tx

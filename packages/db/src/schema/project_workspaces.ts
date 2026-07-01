@@ -11,6 +11,10 @@ import {
 import { organizations } from "./organizations.js";
 import { projects } from "./projects.js";
 
+// Legacy project workspace model.
+// Current product entry points use organization Library/codebase context and run
+// workspaces; keep this table for existing data, portability imports, and
+// internal runtime resolution that still references project_workspace_id.
 export const projectWorkspaces = pgTable(
   "project_workspaces",
   {

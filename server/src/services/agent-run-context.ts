@@ -545,6 +545,9 @@ export function agentRunContextService(db: Db) {
       : null;
     const sharedOrganizationCwd = organizationWorkspace?.root ?? null;
 
+    // Legacy project_workspaces are only candidate cwd hints for existing
+    // project-linked runs. They are not the current user-facing workspace CRUD
+    // model; run workspaces and organization Library paths own new behavior.
     const unorderedProjectWorkspaceRows = workspaceProjectId
       ? await db
           .select()

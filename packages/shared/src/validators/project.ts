@@ -34,6 +34,9 @@ export const projectExecutionWorkspacePolicySchema = z
 const projectWorkspaceSourceTypeSchema = z.enum(["local_path", "git_repo", "remote_managed", "non_git_path"]);
 const projectWorkspaceVisibilitySchema = z.enum(["default", "advanced"]);
 
+// Legacy project workspace payloads. These schemas are kept for internal
+// service callers and portability, not for a current first-class Project
+// Workspace CRUD surface.
 const projectWorkspaceFields = {
   name: z.string().min(1).optional(),
   sourceType: projectWorkspaceSourceTypeSchema.optional(),

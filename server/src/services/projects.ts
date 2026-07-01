@@ -31,6 +31,9 @@ import {
 import { listWorkspaceRuntimeServicesForProjectWorkspaces } from "./workspace-runtime.js";
 
 type ProjectRow = typeof projects.$inferSelect;
+// Legacy project workspace rows are still attached for compatibility with old
+// data and runtime workspace resolution. Do not treat these helpers as a new
+// user-facing Project Workspace management surface.
 type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;
 type WorkspaceRuntimeServiceRow = typeof workspaceRuntimeServices.$inferSelect;
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
@@ -669,6 +672,9 @@ export function projectService(db: Db) {
           return { ...row, icon: row.icon ?? DEFAULT_PROJECT_ICON, urlKey: deriveProjectUrlKey(row.name, row.id) };
         }),
 
+    // Legacy internal Project Workspace CRUD. These methods are intentionally
+    // not exposed by project routes; current product flows resolve codebases and
+    // run workspaces through newer organization/runtime surfaces.
     listWorkspaces: async (projectId: string): Promise<ProjectWorkspace[]> => {
       const rows = await db
         .select()
