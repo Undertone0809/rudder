@@ -17,7 +17,7 @@ defaults:
     shell: bash
 
 env:
-  DOCS_HEALTH_HOSTS: doc.rudder.zeeland.studio,rudder-docs.vercel.app,rudder-docs-zeelands-projects.vercel.app,rudder-docs-zeeland-zeelands-projects.vercel.app
+  DOCS_HEALTH_HOSTS: doc.rudder.zeeland.studio,rudder-docs.vercel.app,rudder-docs-zeelands-projects.vercel.app
 
 jobs:
   check:

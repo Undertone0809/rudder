@@ -517,6 +517,8 @@ describe("index.css motion rules", () => {
     expect(indexCss).toContain("border-bottom-left-radius: var(--rudder-doc-editor-tab-corner-size)");
     const tabStripClassMatch = organizationWorkspacesSource.match(/data-testid="org-workspaces-editor-tabs"[\s\S]{0,220}className="([^"]+)"/);
     const tabStripClassTokens = tabStripClassMatch?.[1]?.split(/\s+/) ?? [];
+    const breadcrumbClassMatch = organizationWorkspacesSource.match(/data-testid="org-workspaces-path-breadcrumb"\s+className="([^"]+)"/);
+    const breadcrumbClassTokens = breadcrumbClassMatch?.[1]?.split(/\s+/) ?? [];
 
     expect(organizationWorkspacesSource).toContain("rudder-doc-editor-surface flex min-h-[420px]");
     expect(organizationWorkspacesSource).toContain("h-[var(--rudder-doc-editor-tab-strip-height)]");
@@ -540,8 +542,11 @@ describe("index.css motion rules", () => {
     expect(organizationWorkspacesSource).toContain("rudder-doc-editor-tab-drag-spacer mb-2 h-9");
     expect(organizationWorkspacesSource).toContain("rounded-t-[var(--rudder-doc-editor-tab-radius)]");
     expect(organizationWorkspacesSource).toContain("rounded-[var(--rudder-doc-editor-tab-radius)]");
-    expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-path-breadcrumb"[\s\S]{0,260}className="[^"]*h-\[var\(--rudder-doc-editor-breadcrumb-height\)\]/);
-    expect(organizationWorkspacesSource).toMatch(/data-testid="org-workspaces-path-breadcrumb"[\s\S]{0,260}className="[^"]*\bborder-x\b[^"]*\bborder-b\b[^"]*border-\[color:var\(--border-base\)\]/);
+    expect(breadcrumbClassTokens).toEqual(expect.arrayContaining([
+      "h-[var(--rudder-doc-editor-breadcrumb-height)]",
+      "border-x",
+      "border-[color:var(--border-base)]",
+    ]));
     expect(organizationWorkspacesSource).not.toContain("showWorkspaceFileTabs && \"rounded-tr-[var(--desktop-workspace-radius)] border-t\"");
     expect(organizationWorkspacesSource).toContain("const showWorkspaceFileTabs = openFilePaths.length > 0");
     expect(organizationWorkspacesSource).toMatch(/\{showWorkspaceFileTabs \? \([\s\S]{0,240}data-testid="org-workspaces-editor-tabs"/);

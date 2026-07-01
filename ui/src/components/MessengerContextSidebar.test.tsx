@@ -303,7 +303,9 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('data-testid="messenger-thread-chat-chat-1-agent-avatar"');
     expect(html).toMatch(/data-testid="messenger-thread-chat-chat-1-agent-avatar"[\s\S]*?<img/);
     expect(html).toContain('title="Chat agent: Asher"');
-    expect(html).toContain("items-center gap-2 px-2 py-1.5");
+    const newChatClassMatch = html.match(/href="\/messenger\/chat" class="([^"]+)"/);
+    const newChatClassTokens = newChatClassMatch?.[1]?.split(/\s+/) ?? [];
+    expect(newChatClassTokens).toEqual(expect.arrayContaining(["flex", "items-center", "gap-2", "px-2", "py-1.5"]));
     expect(html).toContain("h-7 w-7");
     expect(html).toContain("grid-cols-[minmax(0,1fr)_2.75rem] items-center");
     expect(messengerModelOptions).toContainEqual({ splitIssues: true });

@@ -10,7 +10,6 @@ const DEFAULT_HOSTS = [
   "doc.rudder.zeeland.studio",
   "rudder-docs.vercel.app",
   "rudder-docs-zeelands-projects.vercel.app",
-  "rudder-docs-zeeland-zeelands-projects.vercel.app",
 ];
 const CANONICAL_ORIGIN = "https://doc.rudder.zeeland.studio";
 const REQUIRED_PATHS = [
