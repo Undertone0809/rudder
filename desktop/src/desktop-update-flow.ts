@@ -50,7 +50,7 @@ export function createDesktopUpdateFlow(context: {
   showMainWindow: () => void;
 }) {
   let latestDesktopUpdateProgress: DesktopUpdateProgressEvent | null = null;
-  const activeDesktopUpdates = new Map<string, { version: string; stdin: NodeJS.WritableStream | null }>();
+  const activeDesktopUpdates = new Map<string, { version: string; stdin: NodeJS.WritableStream | null; totalRuns?: number }>();
   let activeDesktopUpdateAttempt: {
     updateId: string;
     version: string;
@@ -131,9 +131,16 @@ export function createDesktopUpdateFlow(context: {
   }
 
   function publishDesktopUpdateProgress(event: DesktopUpdateProgressEvent): void {
+    const activeUpdate = activeDesktopUpdates.get(event.updateId);
     const nextEvent: DesktopUpdateProgressEvent = {
       ...event,
       ...(event.totalRuns === undefined
+        && activeUpdate?.totalRuns !== undefined
+        && (event.phase === "ready_to_install" || event.phase === "preparing_restart")
+        ? { totalRuns: activeUpdate.totalRuns }
+        : {}),
+      ...(event.totalRuns === undefined
+        && activeUpdate?.totalRuns === undefined
         && latestDesktopUpdateProgress?.updateId === event.updateId
         && latestDesktopUpdateProgress.totalRuns !== undefined
         && (event.phase === "ready_to_install" || event.phase === "preparing_restart")
@@ -186,6 +193,11 @@ export function createDesktopUpdateFlow(context: {
     return Math.floor(value);
   }
 
+  function normalizeProgressTotalRuns(value: unknown): number | undefined {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+    return Math.floor(value);
+  }
+
   function parseDesktopUpdateProgressLine(
     updateId: string,
     version: string,
@@ -218,6 +230,7 @@ export function createDesktopUpdateFlow(context: {
 
     const totalBytes = normalizeProgressBytes(record.totalBytes);
     const transferredBytes = normalizeProgressBytes(record.transferredBytes);
+    const totalRuns = normalizeProgressTotalRuns(record.totalRuns);
     return {
       updateId,
       version,
@@ -226,6 +239,7 @@ export function createDesktopUpdateFlow(context: {
       ...(normalizeProgressPercent(record.percent) === undefined ? {} : { percent: normalizeProgressPercent(record.percent) }),
       ...(transferredBytes === undefined ? {} : { transferredBytes }),
       ...(totalBytes === undefined ? {} : { totalBytes }),
+      ...(totalRuns === undefined ? {} : { totalRuns }),
       ...(typeof record.error === "string" ? { error: record.error.slice(0, 1000) } : {}),
       at: typeof record.at === "string" ? record.at : new Date().toISOString(),
     };
@@ -485,6 +499,7 @@ export function createDesktopUpdateFlow(context: {
       activeDesktopUpdates.set(updateId, {
         version: normalizedVersion,
         stdin: child.stdin,
+        ...(waitForActiveRuns && activeRuns.totalRuns > 0 ? { totalRuns: activeRuns.totalRuns } : {}),
       });
       let stdoutBuffer = "";
       let diagnosticStdout = "";
