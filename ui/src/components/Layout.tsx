@@ -4,9 +4,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
 import { useI18n } from "@/context/I18nContext";
 import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
+import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookOpen, PanelLeftOpen, Settings, X } from "lucide-react";
+import { ArrowLeft, BookOpen, PanelLeftOpen, PanelRightOpen, Settings, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
@@ -39,6 +40,7 @@ import {
 } from "../lib/settings-overlay-state";
 import { scheduleSettingsPrefetchQueries } from "../lib/settings-prefetch";
 import { cn } from "../lib/utils";
+import { ChatSidePanel } from "../pages/Chat.side-panel";
 import { NotFoundPage } from "../pages/NotFound";
 import { OrganizationWorkspaceFilesSidebar } from "../pages/OrganizationWorkspaces";
 import { BreadcrumbBar } from "./BreadcrumbBar";
@@ -239,6 +241,25 @@ function readRememberedWorkspaceColumnWidth(family: WorkspaceColumnFamily): numb
   } catch {
     return fallback;
   }
+}
+
+function GlobalSidePanelTrigger() {
+  const sidePanel = useSidePanel();
+  if (sidePanel.open) return null;
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="icon"
+      data-testid="global-side-panel-trigger"
+      className="absolute right-[3px] top-1/2 z-20 h-11 w-7 -translate-y-1/2 rounded-l-[calc(var(--radius-sm)-1px)] rounded-r-none border-r-0 bg-[color:var(--surface-elevated)] text-muted-foreground shadow-[var(--shadow-sm)] hover:bg-[color:var(--surface-active)] hover:text-foreground"
+      onClick={sidePanel.openEmpty}
+      aria-label="Open Side Panel"
+      title="Open Side Panel"
+    >
+      <PanelRightOpen className="h-4 w-4" />
+    </Button>
+  );
 }
 
 export function Layout() {
@@ -759,6 +780,7 @@ export function Layout() {
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
       <MarkdownMentionsProvider>
+      <SidePanelProvider>
       <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
         {isMobile && sidebarOpen && (
@@ -944,6 +966,7 @@ export function Layout() {
                         <TooltipContent side="right">Show Library sidebar</TooltipContent>
                       </Tooltip>
                     ) : null}
+                    <GlobalSidePanelTrigger />
                     <div
                       data-testid="workspace-main-card"
                       data-tour-target="workspace-main"
@@ -982,6 +1005,7 @@ export function Layout() {
                         )}
                       </main>
                     </div>
+                    <ChatSidePanel selectedOrganizationId={selectedOrganizationId} />
                   </div>
                 ) : (
                   <main
@@ -1016,7 +1040,9 @@ export function Layout() {
       <NewProjectDialog />
       <NewGoalDialog />
       <NewAgentDialog />
+      {isMobile ? <ChatSidePanel selectedOrganizationId={selectedOrganizationId} /> : null}
       </CalendarWorkspaceProvider>
+      </SidePanelProvider>
       </MarkdownMentionsProvider>
     </div>
     </NavigationBackProvider>

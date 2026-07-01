@@ -11,6 +11,7 @@ import {
   resolveImageFilename,
 } from "@/lib/image-actions";
 import {
+  buildAutomationMentionHref,
   buildChatMentionHref,
   buildIssueMentionHref,
   buildLibraryDirectoryMentionHref,
@@ -438,7 +439,7 @@ describe("ChatMessageItem", () => {
 });
 
 describe("Chat Side Panel targets", () => {
-  it("resolves issue, chat, and library targets from chat links", () => {
+  it("resolves issue, chat, automation, and library targets from chat links", () => {
     expect(chatSidePanelTargetFromHref(buildIssueMentionHref("issue-1", "ZST-1", "comment-1"))).toEqual({
       kind: "issue",
       issueId: "issue-1",
@@ -458,6 +459,11 @@ describe("Chat Side Panel targets", () => {
       messageId: "message-3",
       label: "Source message",
     });
+    expect(chatSidePanelTargetFromHref(buildAutomationMentionHref("automation-1", "Daily report"))).toEqual({
+      kind: "automation",
+      automationId: "automation-1",
+      label: "Daily report",
+    });
     expect(chatSidePanelTargetFromHref(buildLibraryFileMentionHref("docs/plan.md"), "Plan doc")).toEqual({
       kind: "library_file",
       filePath: "docs/plan.md",
@@ -473,6 +479,11 @@ describe("Chat Side Panel targets", () => {
       conversationId: "chat-2",
       messageId: "message-3",
       label: "Source message",
+    });
+    expect(chatSidePanelTargetFromHref("/automations/automation-1?t=Daily%20report")).toEqual({
+      kind: "automation",
+      automationId: "automation-1",
+      label: "Daily report",
     });
     expect(chatSidePanelTargetFromHref("/library?path=docs%2Fplan.md", "Plan doc")).toEqual({
       kind: "library_file",

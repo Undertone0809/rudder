@@ -1,0 +1,121 @@
+import {
+  buildAutomationMentionHref,
+  buildChatMentionHref,
+  buildIssueMentionHref,
+  buildLibraryDirectoryMentionHref,
+  buildLibraryDocMentionHref,
+  buildLibraryEntryMentionHref,
+  buildLibraryFileMentionHref,
+} from "@rudderhq/shared";
+import { describe, expect, it } from "vitest";
+import {
+  sidePanelFullPageHref,
+  sidePanelTargetFromHref,
+  sidePanelTargetKey,
+} from "./side-panel-targets";
+
+describe("side panel targets", () => {
+  it("parses supported mention hrefs into global side panel targets", () => {
+    expect(sidePanelTargetFromHref(buildIssueMentionHref("issue-1", "RUD-1", "comment-1"), "RUD-1")).toEqual({
+      kind: "issue",
+      issueId: "issue-1",
+      ref: "RUD-1",
+      commentId: "comment-1",
+      label: "RUD-1",
+    });
+    expect(sidePanelTargetFromHref(buildAutomationMentionHref("automation-1", "Daily report"))).toEqual({
+      kind: "automation",
+      automationId: "automation-1",
+      label: "Daily report",
+    });
+    expect(sidePanelTargetFromHref(`${buildChatMentionHref("chat-1")}?messageId=message-2`, "Planning chat")).toEqual({
+      kind: "chat",
+      conversationId: "chat-1",
+      messageId: "message-2",
+      label: "Planning chat",
+    });
+    expect(sidePanelTargetFromHref(buildLibraryDocMentionHref("doc-1"), "Runbook")).toEqual({
+      kind: "library_document",
+      documentId: "doc-1",
+      label: "Runbook",
+    });
+    expect(sidePanelTargetFromHref(buildLibraryEntryMentionHref("entry-1", "Spec", "projects/rudder/spec.md"))).toEqual({
+      kind: "library_entry",
+      entryId: "entry-1",
+      path: "projects/rudder/spec.md",
+      label: "projects/rudder/spec.md",
+    });
+    expect(sidePanelTargetFromHref(buildLibraryFileMentionHref("docs/spec.md"))).toEqual({
+      kind: "library_file",
+      filePath: "docs/spec.md",
+      label: "spec.md",
+    });
+    expect(sidePanelTargetFromHref(buildLibraryDirectoryMentionHref("docs"))).toEqual({
+      kind: "library_directory",
+      directoryPath: "docs",
+      label: "docs",
+    });
+  });
+
+  it("parses internal app routes without requiring chat-local state", () => {
+    expect(sidePanelTargetFromHref("/automations/automation-1?t=Daily%20report")).toMatchObject({
+      kind: "automation",
+      automationId: "automation-1",
+      label: "Daily report",
+    });
+    expect(sidePanelTargetFromHref("/issues/issue-1#comment-comment-2", "RUD-1")).toEqual({
+      kind: "issue",
+      issueId: "issue-1",
+      ref: "RUD-1",
+      commentId: "comment-2",
+      label: "RUD-1",
+    });
+    expect(sidePanelTargetFromHref("/messenger/chat/chat-1?messageId=message-1")).toMatchObject({
+      kind: "chat",
+      conversationId: "chat-1",
+      messageId: "message-1",
+    });
+    expect(sidePanelTargetFromHref("/library?document=doc-1&t=Runbook")).toEqual({
+      kind: "library_document",
+      documentId: "doc-1",
+      label: "Runbook",
+    });
+    expect(sidePanelTargetFromHref("/library?path=docs%2Fspec.md")).toEqual({
+      kind: "library_file",
+      filePath: "docs/spec.md",
+      label: "spec.md",
+    });
+  });
+
+  it("generates stable keys and full page hrefs", () => {
+    const issueTarget = sidePanelTargetFromHref(buildIssueMentionHref("issue-1", "RUD-1", "comment-1"), "RUD-1")!;
+    expect(sidePanelTargetKey(issueTarget)).toBe("issue:issue-1:comment-1");
+    expect(sidePanelFullPageHref(issueTarget)).toBe("/issues/issue-1#comment-comment-1");
+
+    const libraryDocumentTarget = sidePanelTargetFromHref(buildLibraryDocMentionHref("doc-1"), "Runbook")!;
+    expect(sidePanelTargetKey(libraryDocumentTarget)).toBe("library-document:doc-1");
+    expect(sidePanelFullPageHref(libraryDocumentTarget)).toBe("/library?document=doc-1");
+
+    const browserTarget = { kind: "browser", url: "https://example.com", label: "example.com" } as const;
+    expect(sidePanelTargetKey(browserTarget)).toBe("browser:https://example.com");
+    expect(sidePanelFullPageHref(browserTarget)).toBe("https://example.com");
+
+    const issuePlaceholder = { kind: "placeholder", targetKind: "issue", label: "Issue" } as const;
+    expect(sidePanelTargetKey(issuePlaceholder)).toBe("placeholder:issue");
+    expect(sidePanelFullPageHref(issuePlaceholder)).toBe("/issues");
+
+    const automationPlaceholder = { kind: "placeholder", targetKind: "automation", label: "Automation" } as const;
+    expect(sidePanelTargetKey(automationPlaceholder)).toBe("placeholder:automation");
+    expect(sidePanelFullPageHref(automationPlaceholder)).toBe("/automations");
+
+    const chatPlaceholder = { kind: "placeholder", targetKind: "chat", label: "Chat" } as const;
+    expect(sidePanelTargetKey(chatPlaceholder)).toBe("placeholder:chat");
+    expect(sidePanelFullPageHref(chatPlaceholder)).toBe("/messenger/chat");
+  });
+
+  it("ignores unsupported or external hrefs unless they are browser targets", () => {
+    expect(sidePanelTargetFromHref("https://example.com")).toBeNull();
+    expect(sidePanelTargetFromHref("mailto:hello@example.com")).toBeNull();
+    expect(sidePanelTargetFromHref("/unknown/path")).toBeNull();
+  });
+});

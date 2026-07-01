@@ -1,24 +1,42 @@
+import { automationsApi } from "@/api/automations";
 import { chatsApi } from "@/api/chats";
 import { issuesApi } from "@/api/issues";
 import { organizationsApi } from "@/api/orgs";
+import { PriorityIcon } from "@/components/PriorityIcon";
+import { StatusBadge } from "@/components/StatusBadge";
+import { StatusIcon } from "@/components/StatusIcon";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { useSidePanel } from "@/context/SidePanelContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link } from "@/lib/router";
+import { sidePanelFullPageHref, sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
-import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
-import { useQuery } from "@tanstack/react-query";
+import type { Automation, AutomationDetail, AutomationRunSummary, AutomationTrigger, Issue, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bot,
+  CalendarClock,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Circle,
+  Compass,
   FileCode2,
   FileText,
   Folder,
   Image as ImageIcon,
-  MessageSquareText,
-  X,
+  Loader2,
+  MessageSquare,
+  Pencil,
+  Play,
+  Plus,
+  X
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { conversationDisplayTitle, type ChatSidePanelTarget } from "./Chat.parts";
+import { formatAutomationTimestamp, runSourceLabel, runStatusTitle, summarizeTrigger } from "./AutomationDetail.parts";
+import { conversationDisplayTitle } from "./Chat.parts";
 
 const CHAT_SIDE_PANEL_IMAGE_FILE_EXTENSIONS = new Set([
   ".avif",
@@ -40,54 +58,465 @@ const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
   ".text",
 ]);
 
-function sidePanelTargetKey(target: ChatSidePanelTarget) {
-  if (target.kind === "issue") return `issue:${target.issueId}:${target.commentId ?? ""}`;
-  if (target.kind === "chat") return `chat:${target.conversationId}:${target.messageId ?? ""}`;
-  if (target.kind === "library_file") return `library-file:${target.filePath}`;
-  if (target.kind === "library_directory") return `library-directory:${target.directoryPath}`;
-  return `library-entry:${target.entryId}:${target.path ?? ""}`;
-}
-
-function sidePanelTargetTypeLabel(target: ChatSidePanelTarget) {
-  if (target.kind === "issue") return "Issue";
-  if (target.kind === "chat") return "Chat";
-  if (target.kind === "library_directory") return "Library folder";
-  if (target.kind === "library_entry") return "Library entry";
-  return "Library file";
-}
-
-function sidePanelIcon(target: ChatSidePanelTarget) {
-  if (target.kind === "chat") return <MessageSquareText className="h-4 w-4" aria-hidden />;
-  if (target.kind === "library_directory") return <Folder className="h-4 w-4" aria-hidden />;
-  return <FileText className="h-4 w-4" aria-hidden />;
-}
-
-function chatSidePanelFullPageHref(target: ChatSidePanelTarget) {
-  if (target.kind === "issue") {
-    const base = `/issues/${target.issueId}`;
-    return target.commentId ? `${base}#comment-${encodeURIComponent(target.commentId)}` : base;
-  }
-  if (target.kind === "chat") {
-    const base = `/messenger/chat/${target.conversationId}`;
-    return target.messageId ? `${base}?messageId=${encodeURIComponent(target.messageId)}` : base;
-  }
-  if (target.kind === "library_file") return `/library?path=${encodeURIComponent(target.filePath)}`;
-  if (target.kind === "library_directory") {
-    return target.directoryPath
-      ? `/library?directory=${encodeURIComponent(target.directoryPath)}`
-      : "/library";
-  }
-  const search = new URLSearchParams({ entry: target.entryId });
-  if (target.path) search.set("path", target.path);
-  return `/library?${search.toString()}`;
-}
-
 function LoadingPanelBody() {
   return (
     <div className="space-y-3" data-testid="chat-side-panel-loading">
       <div className="h-4 w-2/3 animate-pulse rounded bg-[color:var(--surface-active)]" />
       <div className="h-20 animate-pulse rounded-[var(--radius-lg)] bg-[color:var(--surface-active)]" />
       <div className="h-28 animate-pulse rounded-[var(--radius-lg)] bg-[color:var(--surface-active)]" />
+    </div>
+  );
+}
+
+function humanizeSidePanelToken(value: string | null | undefined, fallback = "-") {
+  const trimmed = value?.trim();
+  if (!trimmed) return fallback;
+  return trimmed.replace(/_/g, " ");
+}
+
+function sidePanelDate(value: Date | string | null | undefined, fallback = "-") {
+  if (!value) return fallback;
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return fallback;
+  }
+}
+
+function SidePanelDetailRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <div className="min-w-0 text-right text-foreground">{children}</div>
+    </div>
+  );
+}
+
+function SidePanelEmptyState({
+  onOpenTarget,
+}: {
+  onOpenTarget: (target: SidePanelTarget) => void;
+}) {
+  const targets: Array<{
+    label: string;
+    description: string;
+    icon: typeof Compass;
+    target: SidePanelTarget;
+  }> = [
+    {
+      label: "Browser",
+      description: "Keep a browser tab beside the current workspace.",
+      icon: Compass,
+      target: { kind: "browser", url: "about:blank", label: "Browser" },
+    },
+    {
+      label: "Library",
+      description: "Browse workspace files with the Library tree.",
+      icon: Folder,
+      target: { kind: "library_directory", directoryPath: "", label: "Library" },
+    },
+    {
+      label: "Issue",
+      description: "Pin an issue workspace and edit task fields here.",
+      icon: Circle,
+      target: { kind: "placeholder", targetKind: "issue", label: "Issue" },
+    },
+  ];
+
+  return (
+    <div className="flex min-h-full flex-col justify-center py-6" data-testid="chat-side-panel-empty-state">
+      <div className="space-y-2">
+        <h3 className="text-base font-semibold text-foreground">Open a panel</h3>
+        <p className="text-sm leading-6 text-muted-foreground">Choose a workspace target to keep working without leaving this page.</p>
+      </div>
+      <div className="mt-5 grid gap-2">
+        {targets.map(({ label, description, icon: Icon, target }) => (
+          <button
+            key={label}
+            type="button"
+            className="flex items-center gap-3 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-left text-sm transition-colors hover:bg-[color:var(--surface-active)]"
+            onClick={() => onOpenTarget(target)}
+          >
+            <Icon className="h-4 w-4 text-muted-foreground" />
+            <span className="min-w-0">
+              <span className="block font-medium text-foreground">{label}</span>
+              <span className="block truncate text-xs text-muted-foreground">{description}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SidePanelPlaceholderView({
+  target,
+  onOpenTarget,
+}: {
+  target: Extract<SidePanelTarget, { kind: "placeholder" }>;
+  onOpenTarget: (target: SidePanelTarget) => void;
+}) {
+  const config = {
+    issue: {
+      icon: Circle,
+      title: "Issue",
+      body: "Open an issue link or use workspace search to load the editable task panel here.",
+      actions: [
+        { label: "Library", target: { kind: "library_directory", directoryPath: "", label: "Library" } as SidePanelTarget },
+        { label: "Chat", target: { kind: "placeholder", targetKind: "chat", label: "Chat" } as SidePanelTarget },
+      ],
+    },
+    automation: {
+      icon: Bot,
+      title: "Automation",
+      body: "Open an automation link to inspect schedule state and pause or resume it without leaving this page.",
+      actions: [
+        { label: "Issue", target: { kind: "placeholder", targetKind: "issue", label: "Issue" } as SidePanelTarget },
+        { label: "Library", target: { kind: "library_directory", directoryPath: "", label: "Library" } as SidePanelTarget },
+      ],
+    },
+    chat: {
+      icon: MessageSquare,
+      title: "Chat",
+      body: "Open a chat reference to compare messages beside the current workspace.",
+      actions: [
+        { label: "Issue", target: { kind: "placeholder", targetKind: "issue", label: "Issue" } as SidePanelTarget },
+        { label: "Browser", target: { kind: "browser", url: "about:blank", label: "Browser" } as SidePanelTarget },
+      ],
+    },
+  }[target.targetKind];
+  const Icon = config.icon;
+
+  return (
+    <div className="flex min-h-full flex-col justify-center py-6" data-testid={`chat-side-panel-${target.targetKind}-placeholder`}>
+      <div className="mx-auto flex max-w-[18rem] flex-col items-center text-center">
+        <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[color:var(--surface-active)] text-muted-foreground">
+          <Icon className="h-4 w-4" />
+        </span>
+        <h3 className="mt-3 text-base font-semibold text-foreground">{config.title}</h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">{config.body}</p>
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          {config.actions.map((action) => (
+            <Button key={action.label} type="button" variant="outline" size="sm" onClick={() => onOpenTarget(action.target)}>
+              {action.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChatIssueSidePanelView({
+  issue,
+  commentId,
+  onUpdate,
+  updating,
+}: {
+  issue: Issue;
+  commentId: string | null;
+  onUpdate: (data: Record<string, unknown>) => Promise<Issue>;
+  updating: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(issue.title);
+  const [descriptionDraft, setDescriptionDraft] = useState(issue.description ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const issueRef = issue.identifier ?? issue.id.slice(0, 8);
+  const projectName = issue.project?.name ?? null;
+  const assigneeLabel = issue.assigneeAgentId ?? issue.assigneeUserId ?? "Unassigned";
+  const reviewerLabel = issue.reviewerAgentId ?? issue.reviewerUserId ?? "No reviewer";
+  const titleChanged = titleDraft.trim() !== issue.title;
+  const descriptionChanged = descriptionDraft !== (issue.description ?? "");
+  const canSave = titleDraft.trim().length > 0 && (titleChanged || descriptionChanged);
+
+  useEffect(() => {
+    if (editing) return;
+    setTitleDraft(issue.title);
+    setDescriptionDraft(issue.description ?? "");
+  }, [editing, issue.description, issue.title]);
+
+  const saveDraft = async () => {
+    if (!canSave) return;
+    const patch: Record<string, unknown> = {};
+    if (titleChanged) patch.title = titleDraft.trim();
+    if (descriptionChanged) patch.description = descriptionDraft.trim() || null;
+    setError(null);
+    try {
+      await onUpdate(patch);
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update this issue.");
+    }
+  };
+
+  const cancelDraft = () => {
+    setTitleDraft(issue.title);
+    setDescriptionDraft(issue.description ?? "");
+    setError(null);
+    setEditing(false);
+  };
+
+  const updateIssueField = async (data: Record<string, unknown>) => {
+    setError(null);
+    try {
+      await onUpdate(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update this issue.");
+    }
+  };
+
+  return (
+    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-issue-view">
+      <div className="space-y-4 border-b border-[color:var(--border-soft)] pb-4">
+        <div className="flex items-start justify-between gap-3">
+          {editing ? (
+            <Input
+              aria-label="Issue title"
+              value={titleDraft}
+              onChange={(event) => setTitleDraft(event.currentTarget.value)}
+              className="h-9 text-base font-semibold"
+              disabled={updating}
+            />
+          ) : (
+            <h3 className="min-w-0 flex-1 text-lg font-semibold leading-7 text-foreground">{issue.title}</h3>
+          )}
+          <span className="shrink-0 rounded-full border border-[color:var(--border-soft)] px-2 py-0.5 text-xs text-muted-foreground">
+            {issueRef}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge status={issue.status} />
+            <span className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">
+              <PriorityIcon priority={issue.priority} showLabel />
+            </span>
+            {projectName ? (
+              <span className="rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-[var(--shadow-sm)]">{projectName}</span>
+            ) : null}
+          </div>
+          <span className="inline-flex items-center gap-2">
+            <StatusIcon status={issue.status} onChange={(status) => void updateIssueField({ status })} />
+            <PriorityIcon priority={issue.priority} onChange={(priority) => void updateIssueField({ priority })} />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={editing ? "Cancel issue edit" : "Edit issue"}
+              onClick={editing ? cancelDraft : () => setEditing(true)}
+              disabled={updating}
+            >
+              {editing ? <X className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+            </Button>
+          </span>
+        </div>
+        {error ? (
+          <div role="alert" className="rounded-[var(--radius-md)] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
+        <SidePanelDetailRow label="Owner">
+          <span className="truncate">{assigneeLabel}</span>
+        </SidePanelDetailRow>
+        <SidePanelDetailRow label="Reviewer">
+          <span className="truncate">{reviewerLabel}</span>
+        </SidePanelDetailRow>
+        <SidePanelDetailRow label="Project">
+          <span className="truncate">{projectName ?? "No project"}</span>
+        </SidePanelDetailRow>
+        <SidePanelDetailRow label="Updated">
+          <span className="truncate">{sidePanelDate(issue.updatedAt)}</span>
+        </SidePanelDetailRow>
+      </div>
+
+      <section className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-sm font-semibold text-foreground">Details</h4>
+          {editing ? (
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="ghost" size="sm" onClick={cancelDraft} disabled={updating}>
+                Cancel
+              </Button>
+              <Button type="button" size="sm" onClick={() => void saveDraft()} disabled={!canSave || updating}>
+                {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                Save
+              </Button>
+            </div>
+          ) : null}
+        </div>
+        {editing ? (
+          <Textarea
+            aria-label="Issue description"
+            value={descriptionDraft}
+            onChange={(event) => setDescriptionDraft(event.currentTarget.value)}
+            className="min-h-36 resize-y text-sm leading-6"
+            disabled={updating}
+          />
+        ) : issue.description ? (
+          <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{issue.description}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground">No description.</p>
+        )}
+      </section>
+
+      <section className="flex min-h-[10rem] flex-1 flex-col py-4">
+        <h4 className="text-sm font-semibold text-foreground">Comment</h4>
+        <div className="mt-3 space-y-3 text-sm text-muted-foreground">
+          {commentId ? (
+            <div className="rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-2">
+              Target comment: <span className="font-mono text-foreground">{commentId}</span>
+            </div>
+          ) : null}
+          <p>Open the full issue to review the complete comment thread and activity.</p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function automationNextTrigger(automation: AutomationDetail): AutomationTrigger | null {
+  return [...automation.triggers]
+    .filter((trigger) => trigger.enabled)
+    .sort((a, b) => {
+      const aTime = a.nextRunAt ? new Date(a.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
+      const bTime = b.nextRunAt ? new Date(b.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
+      return aTime - bTime;
+    })[0] ?? automation.triggers[0] ?? null;
+}
+
+function ChatAutomationSidePanelView({
+  automation,
+  runs,
+  onUpdate,
+  updating,
+}: {
+  automation: AutomationDetail;
+  runs: AutomationRunSummary[];
+  onUpdate: (data: Record<string, unknown>) => Promise<Automation | AutomationDetail>;
+  updating: boolean;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const nextTrigger = automationNextTrigger(automation);
+  const latestRun = runs[0] ?? automation.recentRuns[0] ?? null;
+  const active = automation.status === "active";
+  const projectLabel = automation.project?.name ?? "No project";
+  const modelLabel = automation.assignee ? `${automation.assignee.name}` : "No assignee";
+  const visibleRuns = runs.length > 0 ? runs : automation.recentRuns;
+  const toggleStatus = async () => {
+    setError(null);
+    try {
+      await onUpdate({ status: active ? "paused" : "active" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update this automation.");
+    }
+  };
+
+  return (
+    <div className="flex min-h-full flex-col" data-testid="chat-side-panel-automation-view">
+      <div className="space-y-4 border-b border-[color:var(--border-soft)] pb-4">
+        <div className="flex items-start gap-3">
+          <h3 className="min-w-0 flex-1 text-lg font-semibold leading-7 text-foreground">{automation.title}</h3>
+          <span className={cn(
+            "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs",
+            active ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" : "bg-[color:var(--surface-active)] text-muted-foreground",
+          )}>
+            <span className={cn("h-1.5 w-1.5 rounded-full", active ? "bg-emerald-500" : "bg-muted-foreground/60")} />
+            {active ? "Active" : "Paused"}
+          </span>
+        </div>
+        {automation.description ? (
+          <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{automation.description}</p>
+        ) : null}
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Button type="button" variant="outline" size="xs" onClick={() => void toggleStatus()} disabled={updating}>
+            {updating ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+            {active ? "Pause" : "Resume"}
+          </Button>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--surface-active)] px-2 py-1">
+            <Play className="h-3 w-3" />
+            Run controls on full page
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--surface-active)] px-2 py-1">
+            <Bot className="h-3 w-3" />
+            {automation.outputMode === "chat_output" ? "Sends to chat" : "Tracks issue"}
+          </span>
+        </div>
+        {error ? (
+          <div role="alert" className="rounded-[var(--radius-md)] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
+      </div>
+
+      <section className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
+        <h4 className="text-sm font-semibold text-foreground">Status</h4>
+        <SidePanelDetailRow label="Status">
+          <span className="truncate">{active ? "Active" : "Paused"}</span>
+        </SidePanelDetailRow>
+        <SidePanelDetailRow label="Next run">
+          <span className="truncate">{formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}</span>
+        </SidePanelDetailRow>
+        <SidePanelDetailRow label="Last ran">
+          <span className="truncate">{formatAutomationTimestamp(latestRun?.triggeredAt, "-")}</span>
+        </SidePanelDetailRow>
+      </section>
+
+      <section className="space-y-2 border-b border-[color:var(--border-soft)] py-4">
+        <h4 className="text-sm font-semibold text-foreground">Details</h4>
+        <SidePanelDetailRow label="Runs in">
+          <span className="truncate">{automation.outputMode === "chat_output" ? "Chat" : "Issue"}</span>
+        </SidePanelDetailRow>
+        <SidePanelDetailRow label="Project">
+          <span className="truncate">{projectLabel}</span>
+        </SidePanelDetailRow>
+        <SidePanelDetailRow label="Repeats">
+          <span className="truncate">{summarizeTrigger(nextTrigger)}</span>
+        </SidePanelDetailRow>
+        <SidePanelDetailRow label="Model">
+          <span className="truncate">{modelLabel}</span>
+        </SidePanelDetailRow>
+      </section>
+
+      <section className="flex min-h-[12rem] flex-1 flex-col py-4">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h4 className="text-sm font-semibold text-foreground">Previous runs</h4>
+          <span className="text-xs text-muted-foreground">{visibleRuns.length}</span>
+        </div>
+        {visibleRuns.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No runs yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {visibleRuns.slice(0, 12).map((run) => (
+              <div key={run.id} className="grid grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 text-sm">
+                {run.status === "running" ? (
+                  <CalendarClock className="h-3.5 w-3.5 text-blue-500" />
+                ) : (
+                  <Circle className={cn("h-2.5 w-2.5 fill-current", run.status === "failed" ? "text-red-500" : "text-muted-foreground")} />
+                )}
+                <div className="min-w-0">
+                  <div className="truncate text-foreground">{runStatusTitle(run.status)}</div>
+                  <div className="truncate text-xs text-muted-foreground">{runSourceLabel(run.source)}</div>
+                </div>
+                <span className="text-xs text-muted-foreground">{sidePanelDate(run.triggeredAt)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -120,7 +549,7 @@ function ChatSidePanelLibraryTree({
 }: {
   entries: OrganizationWorkspaceFileEntry[];
   selectedOrganizationId: string | null | undefined;
-  onOpenTarget: (target: ChatSidePanelTarget) => void;
+  onOpenTarget: (target: SidePanelTarget) => void;
 }) {
   if (entries.length === 0) {
     return <div className="px-2 py-3 text-sm text-muted-foreground">This folder is empty or unavailable.</div>;
@@ -148,7 +577,7 @@ function ChatSidePanelLibraryTreeNode({
 }: {
   entry: OrganizationWorkspaceFileEntry;
   selectedOrganizationId: string | null | undefined;
-  onOpenTarget: (target: ChatSidePanelTarget) => void;
+  onOpenTarget: (target: SidePanelTarget) => void;
   depth?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -245,44 +674,50 @@ export function ChatSidePanel({
   selectedOrganizationId,
   onClose,
 }: {
-  target: ChatSidePanelTarget | null;
+  target?: SidePanelTarget | null;
   selectedOrganizationId: string | null | undefined;
-  onClose: () => void;
+  onClose?: () => void;
 }) {
-  const [tabs, setTabs] = useState<ChatSidePanelTarget[]>([]);
-  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const sidePanel = useSidePanel();
+  const queryClient = useQueryClient();
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!target) return;
-    const nextKey = sidePanelTargetKey(target);
-    setTabs((current) => {
-      if (current.some((candidate) => sidePanelTargetKey(candidate) === nextKey)) {
-        return current.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? target : candidate));
-      }
-      return [...current, target];
-    });
-    setActiveKey(nextKey);
-  }, [target]);
+    sidePanel.openTarget(target);
+  }, [sidePanel, target]);
 
-  const visibleTabs = tabs.length > 0 ? tabs : target ? [target] : [];
+  const visibleTabs = sidePanel.tabs;
   const activeTarget = useMemo(() => {
     if (visibleTabs.length === 0) return null;
-    if (activeKey) {
-      const matchingTab = visibleTabs.find((candidate) => sidePanelTargetKey(candidate) === activeKey);
+    if (sidePanel.activeKey) {
+      const matchingTab = visibleTabs.find((candidate) => sidePanelTargetKey(candidate) === sidePanel.activeKey);
       if (matchingTab) return matchingTab;
     }
     return visibleTabs.at(-1) ?? null;
-  }, [activeKey, visibleTabs]);
+  }, [sidePanel.activeKey, visibleTabs]);
 
   const issueTarget = activeTarget?.kind === "issue" ? activeTarget : null;
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
+  const automationTarget = activeTarget?.kind === "automation" ? activeTarget : null;
   const libraryFileTarget = activeTarget?.kind === "library_file" ? activeTarget : null;
   const libraryDirectoryTarget = activeTarget?.kind === "library_directory" ? activeTarget : null;
+  const browserTarget = activeTarget?.kind === "browser" ? activeTarget : null;
+  const placeholderTarget = activeTarget?.kind === "placeholder" ? activeTarget : null;
 
   const issueQuery = useQuery({
     queryKey: queryKeys.issues.detail(issueTarget?.issueId ?? "__none__"),
     queryFn: () => issuesApi.get(issueTarget!.issueId),
     enabled: !!issueTarget,
+  });
+  const updateIssueMutation = useMutation({
+    mutationFn: ({ issueId, data }: { issueId: string; data: Record<string, unknown> }) =>
+      issuesApi.update(issueId, data),
+    onSuccess: (updatedIssue) => {
+      queryClient.setQueryData(queryKeys.issues.detail(updatedIssue.id), updatedIssue);
+      void queryClient.invalidateQueries({ queryKey: ["issues"] });
+      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
+    },
   });
   const chatQuery = useQuery({
     queryKey: queryKeys.chats.detail(selectedOrganizationId ?? "__none__", chatTarget?.conversationId ?? "__none__"),
@@ -293,6 +728,28 @@ export function ChatSidePanel({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", chatTarget?.conversationId ?? "__none__"),
     queryFn: () => chatsApi.listMessages(chatTarget!.conversationId),
     enabled: !!selectedOrganizationId && !!chatTarget,
+  });
+  const automationQuery = useQuery({
+    queryKey: queryKeys.automations.detail(automationTarget?.automationId ?? "__none__"),
+    queryFn: () => automationsApi.get(automationTarget!.automationId),
+    enabled: !!automationTarget,
+  });
+  const automationRunsQuery = useQuery({
+    queryKey: queryKeys.automations.runs(automationTarget?.automationId ?? "__none__"),
+    queryFn: () => automationsApi.listRuns(automationTarget!.automationId),
+    enabled: !!automationTarget,
+  });
+  const updateAutomationMutation = useMutation({
+    mutationFn: ({ automationId, data }: { automationId: string; data: Record<string, unknown> }) =>
+      automationsApi.update(automationId, data),
+    onSuccess: (updatedAutomation) => {
+      queryClient.setQueryData(queryKeys.automations.detail(updatedAutomation.id), (current: AutomationDetail | undefined) =>
+        current ? { ...current, ...updatedAutomation } : updatedAutomation,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["automations"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.automations.runs(updatedAutomation.id) });
+      void queryClient.invalidateQueries({ queryKey: ["messenger"] });
+    },
   });
   const libraryFileQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFile(selectedOrganizationId ?? "__none__", libraryFileTarget?.filePath ?? ""),
@@ -305,59 +762,49 @@ export function ChatSidePanel({
     enabled: !!selectedOrganizationId && !!libraryDirectoryTarget,
   });
 
-  if (!activeTarget) return null;
+  if (!sidePanel.open) return null;
 
   const loading = Boolean(
     (issueTarget && issueQuery.isPending)
       || (chatTarget && (chatQuery.isPending || chatMessagesQuery.isPending))
+      || (automationTarget && (automationQuery.isPending || automationRunsQuery.isPending))
       || (libraryFileTarget && libraryFileQuery.isPending)
       || (libraryDirectoryTarget && libraryDirectoryQuery.isPending),
   );
-  const error = issueQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
-  const fullPageHref = chatSidePanelFullPageHref(activeTarget);
+  const error = issueQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? automationQuery.error ?? automationRunsQuery.error ?? libraryFileQuery.error ?? libraryDirectoryQuery.error;
+  const fullPageHref = activeTarget ? sidePanelFullPageHref(activeTarget) : null;
   const issue = issueTarget ? issueQuery.data : null;
   const chat = chatTarget ? chatQuery.data : null;
   const chatMessages = chatTarget ? (chatMessagesQuery.data ?? []) : [];
+  const automation = automationTarget ? automationQuery.data : null;
+  const automationRuns = automationTarget ? (automationRunsQuery.data ?? []) : [];
   const libraryFile = libraryFileTarget ? libraryFileQuery.data : null;
   const libraryDirectory = libraryDirectoryTarget ? libraryDirectoryQuery.data : null;
-  const activeTargetKey = sidePanelTargetKey(activeTarget);
+  const activeTargetKey = activeTarget ? sidePanelTargetKey(activeTarget) : "empty";
 
   const closePanel = () => {
-    setTabs([]);
-    setActiveKey(null);
-    onClose();
+    sidePanel.closePanel();
+    onClose?.();
   };
 
-  const openSidePanelTarget = (nextTarget: ChatSidePanelTarget) => {
-    const nextKey = sidePanelTargetKey(nextTarget);
-    setTabs((current) => {
-      if (current.some((candidate) => sidePanelTargetKey(candidate) === nextKey)) {
-        return current.map((candidate) => (sidePanelTargetKey(candidate) === nextKey ? nextTarget : candidate));
-      }
-      return [...current, nextTarget];
-    });
-    setActiveKey(nextKey);
-  };
+  const openSidePanelTarget = (nextTarget: SidePanelTarget) => sidePanel.openTarget(nextTarget);
 
-  const closeSidePanelTab = (tab: ChatSidePanelTarget) => {
-    const closingKey = sidePanelTargetKey(tab);
-    if (visibleTabs.length <= 1) {
-      closePanel();
-      return;
-    }
-
-    const closingIndex = visibleTabs.findIndex((candidate) => sidePanelTargetKey(candidate) === closingKey);
-    const nextTabs = visibleTabs.filter((candidate) => sidePanelTargetKey(candidate) !== closingKey);
-    setTabs(nextTabs);
-    if (closingKey === activeTargetKey) {
-      const fallbackTarget = nextTabs[Math.min(Math.max(closingIndex, 0), nextTabs.length - 1)] ?? nextTabs.at(-1) ?? null;
-      setActiveKey(fallbackTarget ? sidePanelTargetKey(fallbackTarget) : null);
-    }
-  };
+  const closeSidePanelTab = (tab: SidePanelTarget) => sidePanel.closeTarget(sidePanelTargetKey(tab));
 
   const libraryDirectoryEntries = libraryDirectory?.entries ?? [];
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;
   const libraryDirectoryFolderCount = libraryDirectoryEntries.length - libraryDirectoryFileCount;
+  const addTabTargets: Array<{ label: string; icon: typeof Compass; target: SidePanelTarget }> = [
+    { label: "Issue", icon: Circle, target: { kind: "placeholder", targetKind: "issue", label: "Issue" } },
+    { label: "Automation", icon: Bot, target: { kind: "placeholder", targetKind: "automation", label: "Automation" } },
+    { label: "Library", icon: Folder, target: { kind: "library_directory", directoryPath: "", label: "Library" } },
+    { label: "Chat", icon: MessageSquare, target: { kind: "placeholder", targetKind: "chat", label: "Chat" } },
+    { label: "Browser", icon: Compass, target: { kind: "browser", url: "about:blank", label: "Browser" } },
+  ];
+  const addSidePanelTab = (nextTarget: SidePanelTarget) => {
+    openSidePanelTarget(nextTarget);
+    setAddMenuOpen(false);
+  };
 
   const isMobile = typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)").matches;
 
@@ -366,99 +813,124 @@ export function ChatSidePanel({
       key={activeTargetKey}
       data-testid="chat-side-panel"
       className={cn(
-        "motion-chat-side-panel flex min-h-0 w-full shrink-0 flex-col overflow-hidden",
+        "motion-chat-side-panel flex min-h-0 w-full shrink-0 flex-col gap-1.5 bg-transparent",
         isMobile
-          ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40 rounded-[var(--radius-xl)] border shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]"
-          : "workspace-main-card md:w-[min(420px,36vw)] md:rounded-[var(--desktop-workspace-radius)]",
+          ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40"
+          : "md:w-[min(420px,36vw)]",
       )}
       aria-label="Side Panel"
     >
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[color:var(--border-soft)] px-4 py-3">
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Side Panel</p>
-            <h2 className="mt-1 flex min-w-0 items-center gap-2 truncate text-sm font-semibold text-foreground">
-              <span className="shrink-0 text-muted-foreground">{sidePanelIcon(activeTarget)}</span>
-              <span className="truncate">{activeTarget.label}</span>
-            </h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">{sidePanelTargetTypeLabel(activeTarget)}</p>
-          </div>
-          <Button type="button" variant="ghost" size="icon-sm" aria-label="Close Side Panel" onClick={closePanel}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-        {visibleTabs.length > 1 ? (
-          <div
-            role="tablist"
-            aria-label="Side Panel targets"
-            data-testid="chat-side-panel-tabs"
-            className="scrollbar-auto-hide flex shrink-0 gap-1 overflow-x-auto border-b border-[color:var(--border-soft)] px-3 py-2"
-          >
-            {visibleTabs.map((tab) => {
-              const tabKey = sidePanelTargetKey(tab);
-              const selected = tabKey === activeTargetKey;
-              return (
-                <div
-                  key={tabKey}
-                  role="presentation"
-                  className={cn(
-                    "group flex max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-colors",
-                    selected
-                      ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
-                      : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
-                  )}
+      <div className={cn(
+        "workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]",
+        isMobile && "shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]",
+      )}>
+        <div
+          role="tablist"
+          aria-label="Side Panel targets"
+          data-testid="chat-side-panel-tabs"
+          className="scrollbar-auto-hide flex shrink-0 gap-1 overflow-x-auto px-2 py-1.5"
+        >
+          {visibleTabs.map((tab) => {
+            const tabKey = sidePanelTargetKey(tab);
+            const selected = tabKey === activeTargetKey;
+            return (
+              <div
+                key={tabKey}
+                role="presentation"
+                className={cn(
+                  "group flex h-7 max-w-[12.5rem] shrink-0 items-center rounded-full border pr-1 transition-colors",
+                  selected
+                    ? "border-[color:var(--border-strong)] bg-[color:var(--surface-active)] text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                )}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  data-testid="chat-side-panel-tab"
+                  className="min-w-0 flex-1 truncate rounded-l-full px-2.5 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  onClick={() => sidePanel.setActiveKey(tabKey)}
                 >
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    data-testid="chat-side-panel-tab"
-                    className="min-w-0 flex-1 truncate rounded-l-full px-3 py-1.5 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    onClick={() => setActiveKey(tabKey)}
-                  >
-                    {tab.label}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="chat-side-panel-tab-close"
-                    aria-label={`Close ${tab.label} tab`}
-                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      closeSidePanelTab(tab);
-                    }}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              );
-            })}
+                  {tab.label}
+                </button>
+                <button
+                  type="button"
+                  data-testid="chat-side-panel-tab-close"
+                  aria-label={`Close ${tab.label} tab`}
+                  className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-panel)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeSidePanelTab(tab);
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            );
+          })}
+          <div className="shrink-0">
+            <button
+              type="button"
+              data-testid="chat-side-panel-add-tab"
+              aria-label="Add Side Panel tab"
+              aria-haspopup="menu"
+              aria-expanded={addMenuOpen}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              onClick={() => setAddMenuOpen((value) => !value)}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+        {addMenuOpen ? (
+          <div
+            role="menu"
+            aria-label="Add Side Panel tab"
+            data-testid="chat-side-panel-add-menu"
+            className="absolute right-2 top-9 z-50 w-44 rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-panel)] p-1 shadow-[var(--shadow-lg)]"
+          >
+            {addTabTargets.map(({ label, icon: Icon, target }) => (
+              <button
+                key={label}
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-[color:var(--surface-active)]"
+                onClick={() => addSidePanelTab(target)}
+              >
+                <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                <span>{label}</span>
+              </button>
+            ))}
           </div>
         ) : null}
+      </div>
+      <div className="workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]">
         <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          {loading ? (
+          {!activeTarget ? (
+            <SidePanelEmptyState onOpenTarget={openSidePanelTarget} />
+          ) : loading ? (
             <LoadingPanelBody />
           ) : error ? (
             <div role="alert" className="rounded-[var(--radius-lg)] border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive">
               {error instanceof Error ? error.message : "Could not load this Side Panel target."}
             </div>
           ) : issueTarget && issue ? (
-            <div className="space-y-4" data-testid="chat-side-panel-issue-view">
-              <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span className="font-mono">{issue.identifier ?? issue.id.slice(0, 8)}</span>
-                  <span>·</span>
-                  <span>{issue.status.replace(/_/g, " ")}</span>
-                  <span>·</span>
-                  <span>{issue.priority}</span>
-                </div>
-                <h3 className="mt-2 text-base font-semibold leading-6 text-foreground">{issue.title}</h3>
-                {issue.description ? (
-                  <p className="mt-2 line-clamp-6 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{issue.description}</p>
-                ) : null}
-              </div>
-              {issueTarget.commentId ? <p className="text-xs text-muted-foreground">Target comment: {issueTarget.commentId}</p> : null}
-            </div>
+            <ChatIssueSidePanelView
+              issue={issue}
+              commentId={issueTarget.commentId}
+              updating={updateIssueMutation.isPending}
+              onUpdate={(data) => updateIssueMutation.mutateAsync({ issueId: issue.id, data })}
+            />
+          ) : automationTarget && automation ? (
+            <ChatAutomationSidePanelView
+              automation={automation}
+              runs={automationRuns}
+              updating={updateAutomationMutation.isPending}
+              onUpdate={(data) => updateAutomationMutation.mutateAsync({ automationId: automation.id, data })}
+            />
+          ) : placeholderTarget ? (
+            <SidePanelPlaceholderView target={placeholderTarget} onOpenTarget={openSidePanelTarget} />
           ) : chatTarget ? (
             <div className="space-y-4" data-testid="chat-side-panel-chat-view">
               <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">
@@ -505,15 +977,32 @@ export function ChatSidePanel({
                 onOpenTarget={openSidePanelTarget}
               />
             </div>
+          ) : browserTarget ? (
+            <div className="space-y-4" data-testid="chat-side-panel-browser-view">
+              <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3">
+                <h3 className="text-base font-semibold text-foreground">{browserTarget.label}</h3>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Browser targets are kept as panel tabs first. A secure embedded browsing surface can attach here when the app exposes one.
+                </p>
+                <div className="mt-3 rounded-[var(--radius-sm)] bg-[color:var(--surface-inset)] px-2 py-1.5 font-mono text-xs text-muted-foreground">
+                  {browserTarget.url}
+                </div>
+              </div>
+            </div>
           ) : (
             <p className="text-sm text-muted-foreground">Open this target in the full page for details.</p>
           )}
         </div>
-        <div className="flex shrink-0 justify-end border-t border-[color:var(--border-soft)] px-4 py-3">
-          <Link to={fullPageHref} className="inline-flex h-8 items-center rounded-[var(--radius-sm)] px-3 text-sm text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground">
-            Open full page
-          </Link>
+      </div>
+      <div className="workspace-main-card flex shrink-0 items-center justify-between gap-3 rounded-[var(--desktop-workspace-radius)] px-3 py-2">
+        <div className="min-w-0 text-xs text-muted-foreground">
+          {activeTarget ? "Panel comments and quick actions stay here." : "Select a target to start working."}
         </div>
+        {fullPageHref ? (
+          <Link to={fullPageHref} className="inline-flex h-8 shrink-0 items-center rounded-[var(--radius-sm)] px-2.5 text-xs text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground">
+            Full page
+          </Link>
+        ) : null}
       </div>
     </aside>
   );

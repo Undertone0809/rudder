@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
+import { SidePanelProvider } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
 import {
@@ -8,12 +9,13 @@ import {
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
 } from "@/lib/chat-pending-attachments";
-import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type Project } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type Issue, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Chat } from "./Chat";
+import { ChatSidePanel } from "./Chat.side-panel";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -27,6 +29,9 @@ const mockState = vi.hoisted(() => ({
   conversations: [] as ChatConversation[],
   messagesByChatId: {} as Record<string, ChatMessage[]>,
   pendingChatDetailIds: new Set<string>(),
+  issues: {} as Record<string, Issue>,
+  automations: {} as Record<string, AutomationDetail>,
+  automationRuns: {} as Record<string, AutomationRunSummary[]>,
   projects: [] as Project[],
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: Array<{ name: string; path: string; isDirectory: boolean; displayLabel?: string }> }>,
   workspaceFiles: {} as Record<string, { filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; truncated: boolean }>,
@@ -90,6 +95,30 @@ vi.mock("@tanstack/react-query", () => ({
         error: null,
       };
     }
+    if (queryKey[0] === "issues" && queryKey[1] === "detail") {
+      return {
+        data: mockState.issues[String(queryKey[2])] ?? null,
+        isPending: false,
+        isLoading: false,
+        error: null,
+      };
+    }
+    if (queryKey[0] === "automations" && queryKey[1] === "detail") {
+      return {
+        data: mockState.automations[String(queryKey[2])] ?? null,
+        isPending: false,
+        isLoading: false,
+        error: null,
+      };
+    }
+    if (queryKey[0] === "automations" && queryKey[1] === "runs") {
+      return {
+        data: mockState.automationRuns[String(queryKey[2])] ?? [],
+        isPending: false,
+        isLoading: false,
+        error: null,
+      };
+    }
     if (queryKey[0] === "organizations" && queryKey[2] === "workspace-files") {
       const directoryPath = String(queryKey[3] ?? "");
       return {
@@ -124,11 +153,18 @@ vi.mock("@tanstack/react-query", () => ({
     }
     return { data: [], isPending: false, isLoading: false, error: null };
   },
-  useMutation: () => ({
+  useMutation: (options?: { mutationFn?: (variables: unknown) => unknown | Promise<unknown>; onSuccess?: (data: unknown, variables: unknown) => void | Promise<void> }) => ({
     isPending: false,
     mutate: (variables: unknown) => {
       mockState.mutations.push(variables);
       mockState.markRead(variables);
+    },
+    mutateAsync: async (variables: unknown) => {
+      mockState.mutations.push(variables);
+      const data = await Promise.resolve(options?.mutationFn?.(variables) ?? variables);
+      mockState.markRead(variables);
+      await options?.onSuccess?.(data, variables);
+      return data;
     },
   }),
   useQueryClient: () => ({
@@ -207,6 +243,33 @@ vi.mock("@/api/chats", () => ({
     updateQueuedMessage: mockState.updateQueuedMessage,
     cancelQueuedMessage: mockState.cancelQueuedMessage,
     steerQueuedMessage: mockState.steerQueuedMessage,
+  },
+}));
+
+vi.mock("@/api/issues", () => ({
+  issuesApi: {
+    get: vi.fn(),
+    update: vi.fn(async (issueId: string, data: Partial<Issue>) => {
+      const current = mockState.issues[issueId];
+      if (!current) throw new Error("Issue not found");
+      const updated = { ...current, ...data, updatedAt: new Date("2026-05-12T10:00:00.000Z") };
+      mockState.issues[issueId] = updated;
+      return updated;
+    }),
+  },
+}));
+
+vi.mock("@/api/automations", () => ({
+  automationsApi: {
+    get: vi.fn(),
+    update: vi.fn(async (automationId: string, data: Partial<AutomationDetail>) => {
+      const current = mockState.automations[automationId];
+      if (!current) throw new Error("Automation not found");
+      const updated = { ...current, ...data, updatedAt: new Date("2026-05-12T10:00:00.000Z") };
+      mockState.automations[automationId] = updated;
+      return updated;
+    }),
+    listRuns: vi.fn(),
   },
 }));
 
@@ -347,6 +410,166 @@ function message(overrides: Partial<ChatMessage>): ChatMessage {
     supersededAt: null,
     createdAt: new Date("2026-05-12T09:01:00.000Z"),
     updatedAt: new Date("2026-05-12T09:01:00.000Z"),
+    ...overrides,
+  };
+}
+
+function issue(overrides: Partial<Issue> = {}): Issue {
+  return {
+    id: "issue-1",
+    orgId: "org-1",
+    projectId: "10000000-0000-4000-8000-000000000010",
+    projectWorkspaceId: null,
+    goalId: null,
+    parentId: null,
+    ancestors: [],
+    title: "Polish side panel layout",
+    description: "Make the issue reference read like a task detail panel.",
+    status: "in_progress",
+    priority: "high",
+    boardOrder: 1,
+    assigneeAgentId: "agent-1",
+    assigneeUserId: null,
+    reviewerAgentId: null,
+    reviewerUserId: "reviewer-user",
+    checkoutRunId: null,
+    executionRunId: null,
+    executionAgentNameKey: null,
+    executionLockedAt: null,
+    createdByAgentId: null,
+    createdByUserId: "local-board",
+    issueNumber: 42,
+    identifier: "RUD-42",
+    originKind: "manual",
+    originId: null,
+    originRunId: null,
+    requestDepth: 0,
+    billingCode: null,
+    assigneeAgentRuntimeOverrides: null,
+    executionWorkspaceId: null,
+    executionWorkspacePreference: "project_default",
+    executionWorkspaceSettings: null,
+    runWorkspaceId: null,
+    runWorkspacePreference: "project_default",
+    runWorkspaceSettings: null,
+    startedAt: null,
+    completedAt: null,
+    cancelledAt: null,
+    hiddenAt: null,
+    labelIds: [],
+    labels: [],
+    project: project({ name: "Launch Ops" }),
+    goal: null,
+    currentRunWorkspace: null,
+    currentExecutionWorkspace: null,
+    workProducts: [],
+    mentionedProjects: [],
+    searchMatch: null,
+    myLastTouchAt: null,
+    lastExternalCommentAt: null,
+    isUnreadForMe: false,
+    createdAt: new Date("2026-05-12T08:00:00.000Z"),
+    updatedAt: new Date("2026-05-12T09:30:00.000Z"),
+    ...overrides,
+  };
+}
+
+function automationDetail(overrides: Partial<AutomationDetail> = {}): AutomationDetail {
+  return {
+    id: "automation-1",
+    orgId: "org-1",
+    projectId: "10000000-0000-4000-8000-000000000010",
+    goalId: null,
+    parentIssueId: null,
+    title: "Daily report",
+    description: "Summarize yesterday's project movement every morning.",
+    assigneeAgentId: "agent-1",
+    outputMode: "chat_output",
+    chatConversationId: "chat-1",
+    notifyOnIssueCreated: false,
+    notifyOnIssueCreatedUserId: null,
+    priority: "medium",
+    status: "active",
+    concurrencyPolicy: "coalesce_if_active",
+    catchUpPolicy: "skip_missed",
+    createdByAgentId: null,
+    createdByUserId: "local-board",
+    updatedByAgentId: null,
+    updatedByUserId: null,
+    lastTriggeredAt: new Date("2026-05-12T07:30:00.000Z"),
+    lastEnqueuedAt: new Date("2026-05-12T07:30:00.000Z"),
+    createdAt: new Date("2026-05-10T09:00:00.000Z"),
+    updatedAt: new Date("2026-05-12T09:00:00.000Z"),
+    project: { id: "10000000-0000-4000-8000-000000000010", name: "Launch Ops", description: null, status: "active", goalId: null },
+    assignee: { id: "agent-1", name: "Wesley", role: "engineer", title: "Founding Engineer", urlKey: "wesley" },
+    parentIssue: null,
+    chatConversation: {
+      id: "chat-1",
+      title: "Daily report output",
+      status: "active",
+      preferredAgentId: "agent-1",
+      lastMessageAt: new Date("2026-05-12T07:31:00.000Z"),
+    },
+    triggers: [{
+      id: "trigger-1",
+      orgId: "org-1",
+      automationId: "automation-1",
+      kind: "schedule",
+      label: "Weekday morning",
+      enabled: true,
+      cronExpression: "0 9 * * 1-5",
+      timezone: "Asia/Shanghai",
+      nextRunAt: new Date("2026-05-13T01:00:00.000Z"),
+      lastFiredAt: new Date("2026-05-12T01:00:00.000Z"),
+      publicId: null,
+      secretId: null,
+      signingMode: null,
+      replayWindowSec: null,
+      lastRotatedAt: null,
+      lastResult: "success",
+      createdByAgentId: null,
+      createdByUserId: "local-board",
+      updatedByAgentId: null,
+      updatedByUserId: null,
+      createdAt: new Date("2026-05-10T09:00:00.000Z"),
+      updatedAt: new Date("2026-05-12T09:00:00.000Z"),
+    }],
+    recentRuns: [],
+    activeIssue: null,
+    ...overrides,
+  };
+}
+
+function automationRun(overrides: Partial<AutomationRunSummary> = {}): AutomationRunSummary {
+  return {
+    id: "automation-run-1",
+    orgId: "org-1",
+    automationId: "automation-1",
+    triggerId: "trigger-1",
+    source: "schedule",
+    status: "completed",
+    triggeredAt: new Date("2026-05-12T07:30:00.000Z"),
+    idempotencyKey: null,
+    triggerPayload: null,
+    linkedIssueId: null,
+    linkedChatConversationId: "chat-1",
+    startedChatMessageId: "message-start",
+    terminalChatMessageId: "message-terminal",
+    lastChatMessageId: "message-terminal",
+    coalescedIntoRunId: null,
+    failureReason: null,
+    completedAt: new Date("2026-05-12T07:31:00.000Z"),
+    createdAt: new Date("2026-05-12T07:30:00.000Z"),
+    updatedAt: new Date("2026-05-12T07:31:00.000Z"),
+    linkedIssue: null,
+    linkedChatConversation: {
+      id: "chat-1",
+      title: "Daily report output",
+      status: "active",
+      preferredAgentId: "agent-1",
+      lastMessageAt: new Date("2026-05-12T07:31:00.000Z"),
+    },
+    trigger: { id: "trigger-1", kind: "schedule", label: "Weekday morning" },
     ...overrides,
   };
 }
@@ -572,7 +795,10 @@ function renderChat() {
   const render = (targetRoot: Root) => {
     targetRoot.render(
       <ThemeProvider>
-        <Chat />
+        <SidePanelProvider>
+          <Chat />
+          <ChatSidePanel selectedOrganizationId="org-1" />
+        </SidePanelProvider>
       </ThemeProvider>,
     );
   };
@@ -656,6 +882,9 @@ beforeEach(() => {
   ];
   mockState.workspaceDirectories = {};
   mockState.workspaceFiles = {};
+  mockState.issues = {};
+  mockState.automations = {};
+  mockState.automationRuns = {};
   mockState.messagesByChatId = {
     "chat-1": [imageMessage(), pendingIssueProposal()],
     "chat-2": [message({ id: "other-message-1", conversationId: "chat-2", body: "Other chat" })],
@@ -791,7 +1020,250 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel).not.toBeNull();
     expect(sidePanel?.textContent).toContain("Other chat");
     expect(sidePanel?.textContent).toContain("1 message");
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(1);
+    expect(container.querySelector("[data-testid='chat-side-panel-tabs']")).not.toBeNull();
     expect(mockState.navigate).not.toHaveBeenCalledWith("/messenger/chat/chat-2");
+  });
+
+  it("opens an automation mention in the Side Panel without navigating away", async () => {
+    mockState.automations["automation-1"] = automationDetail();
+    mockState.automationRuns["automation-1"] = [automationRun()];
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-automation-side-panel",
+          role: "assistant",
+          body: `Check [Daily report](${buildAutomationMentionHref("automation-1", "Daily report")}) before changing the schedule.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const automationReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="automation"]');
+    expect(automationReference).not.toBeNull();
+
+    await act(async () => {
+      automationReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel).not.toBeNull();
+    expect(sidePanel?.textContent).toContain("Daily report");
+    expect(sidePanel?.textContent).toContain("Active");
+    expect(sidePanel?.textContent).toContain("Next run");
+    expect(sidePanel?.textContent).toContain("Last ran");
+    expect(sidePanel?.textContent).toContain("Launch Ops");
+    expect(sidePanel?.textContent).toContain("Repeats");
+    expect(sidePanel?.textContent).toContain("Previous runs");
+    expect(sidePanel?.textContent).toContain("Run controls on full page");
+    expect(mockState.navigate).not.toHaveBeenCalledWith("/automations/automation-1");
+    expect(sidePanel?.querySelector<HTMLAnchorElement>('a[href="/automations/automation-1"]')?.textContent).toContain("Full page");
+  });
+
+  it("lets the operator pause an automation from the Side Panel", async () => {
+    mockState.automations["automation-1"] = automationDetail();
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-automation-toggle-side-panel",
+          role: "assistant",
+          body: `Check [Daily report](${buildAutomationMentionHref("automation-1", "Daily report")}) before changing the schedule.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container, rerender } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const automationReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="automation"]');
+    await act(async () => {
+      automationReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const pauseButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Pause"),
+    );
+    expect(pauseButton).not.toBeUndefined();
+
+    await act(async () => {
+      pauseButton?.click();
+      await Promise.resolve();
+    });
+    rerender();
+
+    expect(mockState.mutations).toContainEqual({
+      automationId: "automation-1",
+      data: { status: "paused" },
+    });
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.textContent).toContain("Paused");
+    expect(sidePanel?.textContent).toContain("Resume");
+  });
+
+  it("opens an internal automation route in the Side Panel without leaving chat", async () => {
+    mockState.automations["automation-1"] = automationDetail();
+    mockState.automationRuns["automation-1"] = [];
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-automation-route",
+          role: "assistant",
+          body: "Open [Automation](/automations/automation-1?t=Daily%20report) for context.",
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const automationReference = Array.from(container.querySelectorAll<HTMLAnchorElement>("a")).find(
+      (candidate) => (candidate.getAttribute("href") ?? "").includes("/automations/automation-1"),
+    );
+    expect(automationReference).not.toBeUndefined();
+
+    await act(async () => {
+      automationReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel).not.toBeNull();
+    expect(sidePanel?.textContent).toContain("Daily report");
+    expect(sidePanel?.textContent).toContain("Runs in");
+    expect(sidePanel?.textContent).toContain("No runs yet.");
+    expect(mockState.navigate).not.toHaveBeenCalledWith("/automations/automation-1?t=Daily%20report");
+  });
+
+  it("renders issue references as a detail panel with task fields and comment target", async () => {
+    mockState.issues["issue-1"] = issue();
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-issue-side-panel",
+          role: "assistant",
+          body: `Review [RUD-42](${buildIssueMentionHref("issue-1", "RUD-42", "comment-1", "in_progress")}) next.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const issueReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="issue"]');
+    expect(issueReference).not.toBeNull();
+
+    await act(async () => {
+      issueReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel).not.toBeNull();
+    expect(sidePanel?.textContent).toContain("Polish side panel layout");
+    expect(sidePanel?.textContent).toContain("RUD-42");
+    expect(sidePanel?.textContent).toContain("in progress");
+    expect(sidePanel?.textContent).toContain("High");
+    expect(sidePanel?.textContent).toContain("Owner");
+    expect(sidePanel?.textContent).toContain("Reviewer");
+    expect(sidePanel?.textContent).toContain("Project");
+    expect(sidePanel?.textContent).toContain("Updated");
+    expect(sidePanel?.textContent).toContain("Make the issue reference read like a task detail panel.");
+    expect(sidePanel?.textContent).toContain("Comment");
+    expect(sidePanel?.textContent).toContain("comment-1");
+  });
+
+  it("lets the operator edit issue title and description from the Side Panel", async () => {
+    mockState.issues["issue-1"] = issue();
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({
+          id: "assistant-editable-issue-side-panel",
+          role: "assistant",
+          body: `Review [RUD-42](${buildIssueMentionHref("issue-1", "RUD-42", null, "in_progress")}) next.`,
+          replyingAgentId: "agent-1",
+          createdAt: new Date("2026-05-12T09:06:00.000Z"),
+          updatedAt: new Date("2026-05-12T09:06:00.000Z"),
+        }),
+      ],
+    };
+
+    const { container, rerender } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const issueReference = container.querySelector<HTMLAnchorElement>('a[data-mention-kind="issue"]');
+    await act(async () => {
+      issueReference?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+
+    const editButton = container.querySelector<HTMLButtonElement>('button[aria-label="Edit issue"]');
+    expect(editButton).not.toBeNull();
+    await act(async () => {
+      editButton?.click();
+      await Promise.resolve();
+    });
+
+    const titleInput = container.querySelector<HTMLInputElement>('input[aria-label="Issue title"]');
+    const descriptionInput = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Issue description"]');
+    expect(titleInput).not.toBeNull();
+    expect(descriptionInput).not.toBeNull();
+
+    await act(async () => {
+      const inputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      const textareaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+      inputValueSetter?.call(titleInput, "Polish editable side panel");
+      titleInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      textareaValueSetter?.call(descriptionInput, "Updated from the chat side panel.");
+      descriptionInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const saveButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Save"),
+    );
+    expect(saveButton).not.toBeUndefined();
+    expect(saveButton?.disabled).toBe(false);
+
+    await act(async () => {
+      saveButton?.click();
+      await Promise.resolve();
+    });
+    rerender();
+
+    expect(mockState.mutations).toContainEqual({
+      issueId: "issue-1",
+      data: {
+        title: "Polish editable side panel",
+        description: "Updated from the chat side panel.",
+      },
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Polish editable side panel");
   });
 
   it("keeps multiple Side Panel chat targets as deduplicated focusable tabs", async () => {
@@ -858,7 +1330,8 @@ describe("Chat Side Panel link handling", () => {
     });
 
     tabs = Array.from(container.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']"));
-    expect(tabs).toHaveLength(0);
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.textContent).toContain("Third chat");
     expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Third chat side panel content");
   });
 
@@ -945,6 +1418,72 @@ describe("Chat Side Panel link handling", () => {
 
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("# Side Panel notes");
+    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
+  });
+
+  it("opens the empty Side Panel picker and add-tab menu with supported panel types", async () => {
+    mockState.workspaceDirectories = {
+      "": {
+        directoryPath: "",
+        entries: [{ name: "notes.md", path: "notes.md", isDirectory: false }],
+      },
+    };
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "empty-side-panel-message", body: "Open the global side panel." })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const chatSidePanelButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]');
+    expect(chatSidePanelButton).not.toBeNull();
+    await act(async () => {
+      chatSidePanelButton?.click();
+      await Promise.resolve();
+    });
+
+    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel).not.toBeNull();
+    expect(sidePanel?.textContent).toContain("Open a panel");
+
+    const issueOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Issue"),
+    );
+    expect(issueOption).not.toBeUndefined();
+    await act(async () => {
+      issueOption?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.textContent).toContain("Open an issue link");
+    expect(sidePanel?.querySelector<HTMLAnchorElement>('a[href="/issues"]')?.textContent).toContain("Full page");
+
+    const addTabButton = sidePanel!.querySelector<HTMLButtonElement>('[data-testid="chat-side-panel-add-tab"]');
+    expect(addTabButton).not.toBeNull();
+    await act(async () => {
+      addTabButton?.click();
+      await Promise.resolve();
+    });
+
+    const addMenu = sidePanel!.querySelector<HTMLElement>('[data-testid="chat-side-panel-add-menu"]');
+    expect(addMenu).not.toBeNull();
+    for (const label of ["Issue", "Automation", "Library", "Chat", "Browser"]) {
+      expect(addMenu?.textContent).toContain(label);
+    }
+
+    const automationOption = Array.from(addMenu!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(
+      (candidate) => candidate.textContent?.includes("Automation"),
+    );
+    await act(async () => {
+      automationOption?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.textContent).toContain("Open an automation link");
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
   });
 
@@ -1458,6 +1997,17 @@ describe("Feishu-backed chat controls", () => {
 
     await act(async () => {
       sidePanelTrigger?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Open a panel");
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Browser");
+    expect(container.querySelector("[data-testid='chat-side-panel']")?.textContent).toContain("Library");
+
+    await act(async () => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>("[data-testid='chat-side-panel'] button"))
+        .find((button) => button.textContent?.includes("Library"))
+        ?.click();
       await Promise.resolve();
     });
 
