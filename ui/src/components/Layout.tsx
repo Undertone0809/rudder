@@ -294,6 +294,8 @@ export function Layout() {
     [relativeBoardPath],
   );
   const isChatRoute = useMemo(() => /^\/chat(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
+  const isMessengerRoute = useMemo(() => /^\/messenger(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
+  const useFramelessWorkspaceMain = isLibraryRoute || isChatRoute || isMessengerRoute;
   const isProjectsRoute = useMemo(() => /^\/projects(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
   const hasActiveChatConversation = useMemo(
     () => /\/chat\/[^/]+/.test(relativeBoardPath),
@@ -603,7 +605,7 @@ export function Layout() {
   const showIntegratedCardHeaders = showDesktopWorkspaceShell;
   const showDesktopSettingsModal = !isMobile && isSettingsRoute;
   const shellMainPaddingClass = showDesktopWorkspaceShell
-    ? isLibraryRoute
+    ? useFramelessWorkspaceMain
       ? "p-0"
       : "px-2 py-1.5 md:px-3.5 md:py-2.5 lg:px-5 lg:py-3"
     : "px-2.5 py-1.5 md:px-3 md:py-2 lg:px-4 lg:py-2.5";
@@ -948,10 +950,10 @@ export function Layout() {
                       className={cn(
                         "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
                         "workspace-main-card",
-                        isLibraryRoute && "workspace-main-card--frameless",
+                        useFramelessWorkspaceMain && "workspace-main-card--frameless",
                       )}
                     >
-                      {!isLibraryRoute ? (
+                      {!useFramelessWorkspaceMain ? (
                         <div data-testid="workspace-main-header" className="shrink-0">
                           <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
                         </div>
@@ -965,7 +967,7 @@ export function Layout() {
                           shellMainPaddingClass,
                           isMobile
                             ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]"
-                            : isLibraryRoute
+                            : useFramelessWorkspaceMain
                               ? "overflow-hidden"
                               : "overflow-auto",
                         )}

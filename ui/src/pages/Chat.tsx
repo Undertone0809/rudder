@@ -110,6 +110,7 @@ import {
   Mail,
   MailOpen,
   MoreHorizontal,
+  PanelRight,
   Paperclip,
   Pencil,
   PencilLine,
@@ -1922,7 +1923,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     </>
   );
   return (
-    <div className="chat-shell relative flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden text-foreground md:-mx-3.5 md:h-full md:min-h-0 md:px-0 lg:-mx-5">
+    <div className="chat-shell relative flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden text-foreground md:h-full md:min-h-0">
       <ChatAttachmentPreviewDialog
         preview={attachmentPreview} onOpenChange={(open) => { if (!open) setAttachmentPreview(null);
         }} />
@@ -1932,8 +1933,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       {loadErrorMessage ? (
         <div className="mx-6 mt-6 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           {loadErrorMessage} </div> ) : null}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row md:gap-1.5">
+        <main className="workspace-main-card relative flex min-h-0 flex-1 flex-col overflow-hidden md:rounded-[var(--desktop-workspace-radius)]">
           {!selectedOrganizationId ? (
             <div className="flex flex-1 items-center justify-center px-6 py-12 text-sm text-muted-foreground">
               Select a organization first. </div> ) : showConversationLoading ? (
@@ -1949,15 +1950,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   type="button"
                   data-testid="chat-side-panel-trigger"
                   aria-label="Open Side Panel"
-                  className="pointer-events-auto inline-flex h-7 items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-2 text-xs font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                  title="Open Side Panel"
+                  className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
                   onClick={() => setSidePanelTarget({
                     kind: "library_directory",
                     directoryPath: "",
                     label: "Library",
                   })}
                 >
-                  <Folder className="h-4 w-4" aria-hidden />
-                  <span className="hidden sm:inline">Side Panel</span>
+                  <PanelRight className="h-4 w-4" aria-hidden />
                 </button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

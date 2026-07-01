@@ -972,6 +972,9 @@ describe("Chat Side Panel link handling", () => {
     const { container } = renderChat();
     const sidePanelTrigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-side-panel-trigger"]');
     expect(sidePanelTrigger).not.toBeNull();
+    expect(sidePanelTrigger?.textContent?.trim()).toBe("");
+    expect(sidePanelTrigger?.className).toContain("w-7");
+    expect(sidePanelTrigger?.title).toBe("Open Side Panel");
 
     await act(async () => {
       sidePanelTrigger?.click();
@@ -1483,14 +1486,13 @@ describe("Feishu-backed chat controls", () => {
 });
 
 describe("Chat attachment previews", () => {
-  it("does not over-cancel the workspace main padding on desktop", () => {
+  it("renders the chat workspace as an internal card without negative shell margins", () => {
     const { container } = renderChat();
 
     const shell = container.querySelector(".chat-shell");
-    expect(shell?.className).toContain("md:-mx-3.5");
-    expect(shell?.className).toContain("lg:-mx-5");
-    expect(shell?.className).not.toContain("md:-mx-6");
-    expect(shell?.className).not.toContain("lg:-mx-7");
+    expect(shell?.className).not.toContain("md:-mx-3.5");
+    expect(shell?.className).not.toContain("lg:-mx-5");
+    expect(container.querySelector("main.workspace-main-card")).not.toBeNull();
   });
 
   it("opens message image previews while a pending proposal hides the composer and clears on conversation change", () => {

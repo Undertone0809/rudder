@@ -366,10 +366,10 @@ export function ChatSidePanel({
       key={activeTargetKey}
       data-testid="chat-side-panel"
       className={cn(
-        "motion-chat-side-panel flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-panel)_94%,transparent)] shadow-[var(--shadow-sm)]",
+        "motion-chat-side-panel flex min-h-0 w-full shrink-0 flex-col overflow-hidden",
         isMobile
           ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40 rounded-[var(--radius-xl)] border shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]"
-          : "border-t md:w-[min(420px,36vw)] md:border-l md:border-t-0",
+          : "workspace-main-card md:w-[min(420px,36vw)] md:rounded-[var(--desktop-workspace-radius)]",
       )}
       aria-label="Side Panel"
     >
