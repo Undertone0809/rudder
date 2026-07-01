@@ -189,8 +189,12 @@ test.describe("Global search results", () => {
     await expect(skillResult).toContainText("Route Rudder development work through lifecycle stages.");
     await skillResult.click();
 
-    await expect(page).toHaveURL(new RegExp(`/skills/${skill.id}$`));
-    await expect(page.getByRole("heading", { name: "development-lifecycle-router-maintainer" })).toBeVisible();
+    await expect(page).toHaveURL(
+      new RegExp(
+        `/${organization.issuePrefix}/library\\?(?:skill=${skill.id}&skillFile=SKILL\\.md|path=skills%2Fdevelopment-lifecycle-router-maintainer%2FSKILL\\.md)$`,
+      ),
+    );
+    await expect(page.getByRole("heading", { name: "Development Lifecycle Router Maintainer" })).toBeVisible();
   });
 
   test("scopes search to issues and opens the selected issue", async ({ page }) => {

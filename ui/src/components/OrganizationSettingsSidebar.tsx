@@ -3,6 +3,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { DEFAULT_ORGANIZATION_HOME_PATH } from "@/lib/organization-routes";
 import { Link } from "@/lib/router";
+import { SKILLS_LIBRARY_DIRECTORY_HREF } from "@/lib/skill-library-routes";
 import {
   ArrowLeft,
   Boxes,
@@ -48,7 +49,7 @@ export function OrganizationSettingsSidebar({ showOrganizationSwitcher = true }:
           <SidebarNavItem to="/organization/settings" label={t("common.general")} icon={Settings} end />
           <SidebarNavItem to="/org" label={t("common.structure")} icon={Network} />
           <SidebarNavItem to="/heartbeats" label={t("common.heartbeats")} icon={Clock3} />
-          <SidebarNavItem to="/skills" label={t("common.skills")} icon={Boxes} />
+          <SidebarNavItem to={SKILLS_LIBRARY_DIRECTORY_HREF} label={t("common.skills")} icon={Boxes} />
           <SidebarNavItem to="/costs" label={t("common.costs")} icon={DollarSign} />
           <SidebarNavItem to="/activity" label={t("common.activity")} icon={History} />
         </div>

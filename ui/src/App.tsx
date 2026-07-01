@@ -34,6 +34,7 @@ import {
   readSettingsOverlayBackgroundPath,
   readStoredSettingsOverlayBackgroundPath,
 } from "./lib/settings-overlay-state";
+import { legacySkillRouteToLibraryHref } from "./lib/skill-library-routes";
 import { agentUrl } from "./lib/utils";
 import { Activity } from "./pages/Activity";
 import { AgentDetail } from "./pages/AgentDetail";
@@ -68,7 +69,6 @@ import { OrganizationHeartbeats } from "./pages/OrganizationHeartbeats";
 import { OrganizationImport } from "./pages/OrganizationImport";
 import { OrganizationResources } from "./pages/OrganizationResources";
 import { OrganizationSettings } from "./pages/OrganizationSettings";
-import { OrganizationSkills } from "./pages/OrganizationSkills";
 import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBackups";
 import { OrgChart } from "./pages/OrgChart";
 import { PluginManager } from "./pages/PluginManager";
@@ -199,7 +199,7 @@ function boardRoutes() {
       <Route path="workspaces/backups" element={<OrganizationWorkspaceBackups />} />
       <Route path="organization/export/*" element={<OrganizationExport />} />
       <Route path="organization/import" element={<OrganizationImport />} />
-      <Route path="skills/*" element={<OrganizationSkills />} />
+      <Route path="skills/*" element={<LegacySkillsRedirect />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />
@@ -338,6 +338,11 @@ function LegacyResourcesRedirect() {
 function LegacyWorkspacesRedirect() {
   const location = useLocation();
   return <Navigate to={`/library${location.search}${location.hash}`} replace />;
+}
+
+function LegacySkillsRedirect() {
+  const { "*": routePath } = useParams<{ "*": string }>();
+  return <Navigate to={legacySkillRouteToLibraryHref(routePath)} replace />;
 }
 
 function LegacyOrganizationsRedirect() {

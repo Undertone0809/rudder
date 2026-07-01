@@ -46,6 +46,7 @@ import {
 } from "../lib/global-search-scope";
 import { eventMatchesShortcutAction, isEditableShortcutTarget } from "../lib/keyboard-shortcuts";
 import { queryKeys } from "../lib/queryKeys";
+import { buildLibrarySkillHref, SKILLS_LIBRARY_DIRECTORY_HREF } from "../lib/skill-library-routes";
 import { agentUrl, projectUrl, relativeTime } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
 import { ProjectIcon } from "./ProjectIdentity";
@@ -422,7 +423,7 @@ export function CommandPalette() {
               <Bot className="mr-2 h-4 w-4" />
               Agents
             </CommandItem>
-            <CommandItem value="skills" onSelect={() => go("/skills")}>
+            <CommandItem value="skills" onSelect={() => go(SKILLS_LIBRARY_DIRECTORY_HREF)}>
               <Boxes className="mr-2 h-4 w-4 text-[#2f80ed]" />
               Skills
             </CommandItem>
@@ -576,7 +577,7 @@ export function CommandPalette() {
                 <CommandItem
                   key={skill.id}
                   value={`${skill.name} ${skill.description ?? ""} ${skill.key} ${skill.slug} ${skill.sourceLabel ?? ""}`}
-                  onSelect={() => go(`/skills/${encodeURIComponent(skill.id)}`)}
+                  onSelect={() => go(buildLibrarySkillHref(skill.id))}
                 >
                   <Boxes className="mr-2 h-4 w-4 text-[#2f80ed]" />
                   <span className="flex min-w-0 flex-1 flex-col">

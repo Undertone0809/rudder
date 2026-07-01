@@ -613,7 +613,7 @@ describe("CommandPalette", () => {
       skillButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(navigateMock).toHaveBeenCalledWith("/skills/skill-router");
+    expect(navigateMock).toHaveBeenCalledWith("/library?skill=skill-router&skillFile=SKILL.md");
   });
 
   it("uses the skill blocks icon for the Skills page entry", () => {

@@ -7,6 +7,7 @@ import {
   type OrganizationSkillListItem,
 } from "@rudderhq/shared";
 import { organizationSkillMarkdownTarget } from "./organization-skill-picker";
+import { buildLibrarySkillHref } from "./skill-library-routes";
 import {
   buildAgentSkillReferenceHref,
   buildLocalSkillReferenceHref,
@@ -144,7 +145,7 @@ export function buildAgentSkillMentionOptions(params: {
         skillDescription: normalizeOptionalText(organizationSkill?.description ?? entry.description ?? entry.detail),
         skillCategoryLabel: null,
         skillLocationLabel: null,
-        skillDetailsHref: organizationSkill ? `/skills/${organizationSkill.id}` : null,
+        skillDetailsHref: organizationSkill ? buildLibrarySkillHref(organizationSkill.id) : null,
       });
       continue;
     }
@@ -214,7 +215,7 @@ export function buildOrganizationSkillMentionOptions(params: {
         skillDescription: normalizeOptionalText(skill.description),
         skillCategoryLabel: "Org skill",
         skillLocationLabel: normalizeOptionalText(skill.sourceLabel ?? skill.sourcePath),
-        skillDetailsHref: `/skills/${skill.id}`,
+        skillDetailsHref: buildLibrarySkillHref(skill.id),
       };
     })
     .filter((option): option is SkillMentionOption => option !== null)

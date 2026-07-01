@@ -660,7 +660,7 @@ describe("MarkdownEditor", () => {
               kind: "skill",
               skillRefLabel: "build-advisor",
               skillMarkdownTarget: skillTarget,
-              skillDetailsHref: "/skills/skill-123",
+              skillDetailsHref: "/library?skill=skill-123&skillFile=SKILL.md",
             },
           ]}
         />,
@@ -674,7 +674,7 @@ describe("MarkdownEditor", () => {
       token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
 
-    expect(mdxEditorMocks.navigate).toHaveBeenCalledWith("/skills/skill-123");
+    expect(mdxEditorMocks.navigate).toHaveBeenCalledWith("/library?skill=skill-123&skillFile=SKILL.md");
   });
 
   it("inserts a selected mention at the active mid-text caret position", async () => {

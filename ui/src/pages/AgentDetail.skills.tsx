@@ -45,6 +45,7 @@ import {
   toggleSkillSelection,
 } from "../lib/agent-skills-state";
 import { queryKeys } from "../lib/queryKeys";
+import { buildLibrarySkillHref } from "../lib/skill-library-routes";
 import { cn } from "../lib/utils";
 import { compactSkillText, CreateAgentSkillDialog, isGenericSkillLocationLabel, isGenericSkillRuntimeDetail, resolveSkillSummaryText, shouldHideExternalSkillEntry, SkillSwitch } from "./AgentDetail.helpers";
 
@@ -245,7 +246,7 @@ export function AgentSkillsTab({
             metadataTokens: [skill.sourceLabel]
               .filter((value): value is string => Boolean(value))
               .filter((value) => value !== badgeLabel),
-            linkTo: `/skills/${skill.id}`,
+            linkTo: buildLibrarySkillHref(skill.id),
             workspaceEditPath: skill.workspaceEditPath,
             alwaysEnabled: entry.alwaysEnabled,
             configurable: canManageSkillEntry(entry),

@@ -184,7 +184,7 @@ describe("buildAgentSkillMentionOptions", () => {
       skillRefLabel: "alpha-test",
       skillMarkdownTarget: "skill://org/org-alpha-test?ref=alpha-test",
       skillDisplayName: "Alpha Test",
-      skillDetailsHref: "/skills/org-alpha-test",
+      skillDetailsHref: "/library?skill=org-alpha-test&skillFile=SKILL.md",
     });
     expect(options.find((option) => option.name === "build-advisor")).toMatchObject({
       skillRefLabel: "build-advisor",

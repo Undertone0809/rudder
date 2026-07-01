@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { E2E_CLAUDE_STUB, E2E_CODEX_STUB, E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
@@ -48,45 +48,6 @@ process.stdin.on("end", () => {
 `;
   await fs.writeFile(commandPath, script, "utf8");
   await fs.chmod(commandPath, 0o755);
-}
-
-async function installDesktopShellOpenExternalStub(page: Page) {
-  await page.addInitScript(() => {
-    const openedTargets: string[] = [];
-    Object.defineProperty(window, "__rudderOpenedExternalTargets", {
-      configurable: true,
-      value: openedTargets,
-      writable: false,
-    });
-
-    const desktopShell = {
-      getBootState: async () => ({}),
-      onBootState: () => () => {},
-      openPath: async () => {},
-      copyText: async () => {},
-      setAppearance: async () => {},
-      restart: async () => {},
-      getAppVersion: async () => "0.0.0-test",
-      checkForUpdates: async () => ({
-        status: "unavailable",
-        currentVersion: "0.0.0-test",
-        checkedAt: "1970-01-01T00:00:00.000Z",
-      }),
-      sendFeedback: async () => {},
-      openExternal: async (target: string) => {
-        openedTargets.push(target);
-      },
-      openNotificationSettings: async () => ({ opened: false, platform: "darwin" }),
-      setBadgeCount: async () => {},
-      showNotification: async () => {},
-      pickPath: async () => ({ canceled: true, path: null }),
-    };
-
-    Object.defineProperty(window, "desktopShell", {
-      configurable: true,
-      value: desktopShell,
-    });
-  });
 }
 
 async function readNamedSkillSwitchOrder(root: Locator, skillNames: string[]) {
@@ -206,15 +167,13 @@ test.describe("Organization and agent skills", () => {
 
     await page.goto(`/${organization.issuePrefix}/skills`);
     const skillsMain = page.locator("#main-content");
-    await expect(skillsMain.getByRole("heading", { name: "Skills" })).toBeVisible();
-    await expect(skillsMain.getByText("Bundled, community preset, and imported skills for this organization.")).toBeVisible();
-    await expect(skillsMain.getByRole("link", { name: /para-memory-files/ })).toBeVisible();
-    await expect(skillsMain.getByRole("link", { name: /rudder-create-agent/ })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?directory=skills$`));
+    const libraryFiles = page.getByTestId("org-workspaces-files-scroll");
+    await expect(libraryFiles).toContainText("para-memory-files");
+    await expect(libraryFiles).toContainText("rudder-create-agent");
     await expect(skillsMain.getByText("conversation-to-skill")).toHaveCount(0);
     await expect(skillsMain.getByText("skill-optimizer")).toHaveCount(0);
-    await expect(skillsMain.getByText("deep-research").first()).toBeVisible();
-    await expect(skillsMain.getByText("Community preset").first()).toBeVisible();
-    await expect(skillsMain.getByText("Bundled by Rudder").first()).toBeVisible();
+    await expect(libraryFiles).toContainText("deep-research");
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
@@ -264,9 +223,7 @@ test.describe("Organization and agent skills", () => {
     await disableSyncResponse;
   });
 
-  test("opens import helper links through the desktop shell bridge", async ({ page }) => {
-    await installDesktopShellOpenExternalStub(page);
-
+  test("opens the Library skill import helper and agent install path", async ({ page }) => {
     const organizationName = `Org-Skills-External-Links-${Date.now()}`;
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -284,21 +241,19 @@ test.describe("Organization and agent skills", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/skills`);
-    const skillsMain = page.locator("#main-content");
-    await skillsMain.getByRole("button", { name: "Add skill" }).click();
-    const dialog = page.getByRole("dialog", { name: "Add skill" });
+    await page.goto(`/${organization.issuePrefix}/library?directory=skills`);
+    await page.getByTestId("org-workspaces-skills-add-button").click();
+    const dialog = page.getByRole("dialog", { name: "Add skill to Library" });
     await expect(dialog).toBeVisible();
 
-    await dialog.getByRole("link", { name: "Browse skills.sh" }).click();
-    await dialog.getByRole("link", { name: "Search GitHub" }).click();
+    const sourceInput = dialog.getByRole("textbox", { name: "Skill source, one per line" });
+    await expect(sourceInput).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Import skill" })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Scan local skills" })).toBeEnabled();
 
-    await expect.poll(() => page.evaluate(() => (
-      (window as typeof window & { __rudderOpenedExternalTargets?: string[] }).__rudderOpenedExternalTargets ?? []
-    ))).toEqual([
-      "https://skills.sh",
-      "https://github.com/search?q=SKILL.md&type=code",
-    ]);
+    await dialog.getByRole("button", { name: "Ask Agent to install" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat\\?prefill=`));
+    await expect.poll(() => new URL(page.url()).searchParams.get("prefill") ?? "").toContain("Install or import");
   });
 
   test("shows agent skills above organization skills and edits both through Library", async ({ page }) => {

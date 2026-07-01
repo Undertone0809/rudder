@@ -127,6 +127,7 @@ import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { formatRunDurationLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
 import { skillAnalyticsQueryOptions } from "../lib/skill-analytics-cache";
+import { buildLibrarySkillHref } from "../lib/skill-library-routes";
 import { agentIssuesUrl, agentRouteRef, cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime } from "../lib/utils";
 import {
   compactSkillText,
@@ -2643,7 +2644,7 @@ function AgentSkillsTab({
             metadataTokens: [skill.sourceLabel]
               .filter((value): value is string => Boolean(value))
               .filter((value) => value !== badgeLabel),
-            linkTo: `/skills/${skill.id}`,
+            linkTo: buildLibrarySkillHref(skill.id),
             workspaceEditPath: skill.workspaceEditPath,
             alwaysEnabled: entry.alwaysEnabled,
             configurable: canManageSkillEntry(entry),

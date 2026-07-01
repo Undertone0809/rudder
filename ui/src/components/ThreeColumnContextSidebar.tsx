@@ -45,6 +45,7 @@ import {
   resolveRecentIssues,
 } from "@/lib/recent-issues";
 import { Link, useLocation, useNavigate } from "@/lib/router";
+import { SKILLS_LIBRARY_DIRECTORY_HREF } from "@/lib/skill-library-routes";
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { agentUrl, cn, issueUrl, projectRouteRef, relativeTime } from "@/lib/utils";
 import type { Agent, CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
@@ -751,6 +752,7 @@ export function ThreeColumnContextSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const relativePath = toOrganizationRelativePath(location.pathname);
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const contextHeader = useMemo(() => resolveContextColumnHeader(relativePath), [relativePath]);
   const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
   const isCalendarRoute = /^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath);
@@ -1015,7 +1017,18 @@ export function ThreeColumnContextSidebar() {
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
     { key: "heartbeats", to: "/heartbeats", icon: Clock3, label: "Heartbeats", active: /^\/heartbeats(?:\/|$)/.test(relativePath) },
     { key: "goals", to: "/goals", icon: Target, label: "Goals", active: /^\/goals(?:\/|$)/.test(relativePath) },
-    { key: "skills", to: "/skills", icon: Boxes, label: "Skills", active: /^\/skills(?:\/|$)/.test(relativePath) },
+    {
+      key: "skills",
+      to: SKILLS_LIBRARY_DIRECTORY_HREF,
+      icon: Boxes,
+      label: "Skills",
+      active:
+        /^\/skills(?:\/|$)/.test(relativePath)
+        || (
+          /^\/library(?:\/|$)/.test(relativePath)
+          && (searchParams.get("directory") === "skills" || searchParams.has("skill"))
+        ),
+    },
     { key: "costs", to: "/costs", icon: DollarSign, label: "Costs", active: /^\/costs(?:\/|$)/.test(relativePath) },
     { key: "activity", to: "/activity", icon: History, label: "Activity", active: /^\/activity(?:\/|$)/.test(relativePath) },
   ];

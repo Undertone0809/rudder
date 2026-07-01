@@ -122,7 +122,7 @@ describe("chat-skill-options", () => {
           skillDescription: "Turns vague build feedback into expert diagnosis.",
           skillCategoryLabel: null,
           skillLocationLabel: null,
-          skillDetailsHref: "/skills/bundle-build-advisor",
+          skillDetailsHref: "/library?skill=bundle-build-advisor&skillFile=SKILL.md",
         },
       ],
       "advisor",

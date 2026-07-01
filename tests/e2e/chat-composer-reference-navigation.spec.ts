@@ -209,5 +209,8 @@ test("chat composer reference tokens navigate to their target pages with a comma
   await page.goto(hostChatPath);
   await expect(skillToken).toBeVisible({ timeout: 15_000 });
   await skillToken.click({ modifiers: ["ControlOrMeta"] });
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/skills/${skill.id}$`));
+  await expect(page).toHaveURL(
+    new RegExp(`/${organization.issuePrefix}/library\\?skill=${skill.id}&skillFile=SKILL\\.md$`),
+  );
+  await expect(page.getByTestId("org-workspaces-virtual-skill-readonly")).toContainText("Navigation Skill");
 });

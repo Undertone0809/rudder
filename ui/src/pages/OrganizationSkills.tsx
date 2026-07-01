@@ -44,7 +44,7 @@ import { organizationSkillsApi } from "../api/organizationSkills";
 import { EmptyState } from "../components/EmptyState";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { MarkdownEditor } from "../components/MarkdownEditor";
-import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
+import { buildFileTree, PackageFileTree } from "../components/PackageFileTree";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { RudderLogo } from "../components/RudderLogo";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -59,6 +59,7 @@ import {
   resolveOrganizationSkillSourceCopyText,
 } from "../lib/organization-skill-source-label";
 import { queryKeys } from "../lib/queryKeys";
+import { legacySkillFileRoute, SKILLS_LIBRARY_DIRECTORY_HREF } from "../lib/skill-library-routes";
 import { cn } from "../lib/utils";
 
 const OFFICE_HOURS_SKILL_PATH = "/Users/zeeland/.codex/skills/office-hours/SKILL.md";
@@ -211,10 +212,6 @@ function openDesktopExternalLink(event: MouseEvent<HTMLAnchorElement>, target: s
   void desktopShell.openExternal(target);
 }
 
-function encodeSkillFilePath(filePath: string) {
-  return filePath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
-}
-
 function decodeSkillFilePath(filePath: string | undefined) {
   if (!filePath) return "SKILL.md";
   return filePath
@@ -253,7 +250,7 @@ function parseSkillRoute(routePath: string | undefined) {
 }
 
 function skillRoute(skillId: string, filePath?: string | null) {
-  return filePath ? `/skills/${skillId}/files/${encodeSkillFilePath(filePath)}` : `/skills/${skillId}`;
+  return legacySkillFileRoute(skillId, filePath);
 }
 
 function parentDirectoryPaths(filePath: string) {
@@ -914,7 +911,7 @@ export function OrganizationSkills() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: "Skills", href: "/skills" },
+      { label: "Skills", href: SKILLS_LIBRARY_DIRECTORY_HREF },
       ...(routeSkillId ? [{ label: "Detail" }] : []),
     ]);
   }, [routeSkillId, setBreadcrumbs]);
@@ -1099,7 +1096,7 @@ export function OrganizationSkills() {
       setEditMode(false);
 
       queryClient.removeQueries({ queryKey: deletedSkillQueryKey });
-      navigate("/skills");
+      navigate(SKILLS_LIBRARY_DIRECTORY_HREF);
       void queryClient.invalidateQueries({ queryKey: queryKeys.organizationSkills.list(organizationId) });
       pushToast({
         tone: "success",

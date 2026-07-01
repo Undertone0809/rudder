@@ -1586,7 +1586,7 @@ describe("MarkdownBody", () => {
               description: "Turn vague build feedback into expert diagnosis.",
               categoryLabel: "Global skill",
               locationLabel: "~/.agents/skills",
-              detailsHref: "/skills/skill-1",
+              detailsHref: "/library?skill=skill-1&skillFile=SKILL.md",
             },
           ]}
         >
@@ -1599,7 +1599,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain("Global skill");
     expect(html).toContain("~/.agents/skills");
     expect(html).toContain("Turn vague build feedback into expert diagnosis.");
-    expect(html).toContain('href="/skills/skill-1"');
+    expect(html).toContain('href="/library?skill=skill-1&amp;skillFile=SKILL.md"');
     expect(html).toContain('class="rudder-skill-token"');
     expect(html).toContain(">build-advisor</a>");
     expect(html).not.toContain("rudder/build-advisor");
@@ -1617,7 +1617,7 @@ describe("MarkdownBody", () => {
               description: "Current skill metadata.",
               categoryLabel: "Org skill",
               locationLabel: "Organization skills",
-              detailsHref: "/skills/skill-1",
+              detailsHref: "/library?skill=skill-1&skillFile=SKILL.md",
             },
           ]}
         >
@@ -1628,7 +1628,7 @@ describe("MarkdownBody", () => {
 
     expect(html).toContain('class="rudder-skill-hover-card scrollbar-auto-hide"');
     expect(html).toContain("Current skill metadata.");
-    expect(html).toContain('href="/skills/skill-1"');
+    expect(html).toContain('href="/library?skill=skill-1&amp;skillFile=SKILL.md"');
     expect(html).toContain(">renamed-advisor</a>");
     expect(html).not.toContain("build-advisor</a>");
     expect(html).not.toContain("skill://org/skill-1");

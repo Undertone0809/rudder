@@ -1873,7 +1873,7 @@ function CommonComponentsSection() {
                   categoryLabel: "Maintainer",
                   locationLabel: ".agents/skills/maintainer",
                   description: "Screenshot-driven Rudder UI polish and narrow visible interaction fixes.",
-                  detailsHref: "/skills/rudder-ui-polish-maintainer",
+                  detailsHref: "/library?skill=rudder-ui-polish-maintainer&skillFile=SKILL.md",
                 }}
               />
             </p>
