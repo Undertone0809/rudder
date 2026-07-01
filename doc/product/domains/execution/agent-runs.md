@@ -165,8 +165,13 @@ Flow:
    evidence on the run result.
 6. When repair is not attempted or fails, Rudder records a recoverable failed
    chat result with any safe partial body.
-7. The assistant message stores a reverse link to the run.
-8. Agent Detail Run context and Messenger can navigate between run evidence and
+7. If the operator stops an in-flight chat run before completion, Rudder marks
+   the run cancelled and may return only the assistant text that was already
+   streamed as user-visible content. Provider reasoning, scratchpad/thinking
+   events, and incomplete adapter result summaries must not be used as the
+   stopped chat bubble body.
+8. The assistant message stores a reverse link to the run.
+9. Agent Detail Run context and Messenger can navigate between run evidence and
    chat transcript.
 
 Invariants:
@@ -176,6 +181,8 @@ Invariants:
 - Chat run audit must preserve conversation and message identity.
 - Internal repair prompts, repair protocol text, and repair transcript logs must
   not be surfaced as normal assistant chat content.
+- Stopped chat runs must not turn provider reasoning/thinking transcript entries
+  or incomplete runtime summaries into user-visible assistant message bodies.
 - Missing-result-sentinel repair is only for recovering a runtime response that
   otherwise completed successfully. Timeout, nonzero exit, adapter error, or
   malformed result JSON remain failed chat outcomes.
@@ -188,7 +195,8 @@ Evidence:
 - Chat assistant messages expose run attribution.
 - Agent Detail Run context can open the source conversation.
 - Chat assistant tests cover missing-result-sentinel repair, persisted repair
-  metadata, and primary/repair usage aggregation.
+  metadata, stopped-run partial body filtering, and primary/repair usage
+  aggregation.
 - Chat streaming E2E covers a missing-result-sentinel turn recovering into a
   succeeded assistant message without exposing the internal protocol failure.
 

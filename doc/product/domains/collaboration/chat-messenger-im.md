@@ -96,6 +96,10 @@ Product model:
   payloads, and optional run attribution.
 - Chat-native assistant turns that invoke runtimes are Agent Runs under
   `RUN.CHAT.AGENT.001`.
+- Assistant message bodies contain user-visible assistant output only. Runtime
+  transcript evidence such as thinking/reasoning entries, scratchpad text, tool
+  logs, and incomplete adapter summaries remain run evidence, not chat bubble
+  body content.
 - Durable tracked work remains issue-centric unless the configured flow is
   explicitly chat-native, such as automation `chat_output`.
 
@@ -120,6 +124,10 @@ Invariants:
 - Assistant-created issue proposals must be grounded in an explicit latest
   operator-authored request for issue creation, chat-to-issue conversion, or
   issue-proposal drafting.
+- When an assistant turn is stopped before completion, the chat may show only
+  already streamed user-visible assistant text as a partial reply. It must not
+  fill the bubble from provider reasoning/thinking events or incomplete runtime
+  summaries.
 - Agent attribution is visible enough to navigate from message to run/agent.
 
 Evidence:
@@ -127,6 +135,8 @@ Evidence:
 - Chat E2E covers rich references, skill picker, attachments, draft
   persistence, and attribution navigation.
 - Chat assistant tests cover runtime-backed turns.
+- Chat assistant tests cover stopped runtime turns that keep reasoning out of
+  partial assistant bodies.
 
 ## CHAT.TITLE.GENERATION.001
 
