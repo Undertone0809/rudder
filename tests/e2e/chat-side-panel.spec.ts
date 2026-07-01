@@ -140,7 +140,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(3);
   });
 
-  test("opens a Library directory in the Side Panel with a file-count summary", async ({ page }) => {
+  test("opens a Library directory in the Side Panel with the Library file-tree UI", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Chat-Side-Panel-Library-Directory-${Date.now()}` },
     });
@@ -151,6 +151,7 @@ test.describe("Chat Side Panel", () => {
     const files = [
       { filePath: `${directoryPath}/alpha.md`, content: "# Alpha\n\nAlpha file preview." },
       { filePath: `${directoryPath}/bravo.md`, content: "# Bravo\n\nBravo file preview." },
+      { filePath: `${directoryPath}/nested/charlie.md`, content: "# Charlie\n\nNested file preview." },
     ];
     for (const file of files) {
       const libraryFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
@@ -202,8 +203,14 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
     const directoryView = sidePanel.getByTestId("chat-side-panel-library-directory-view");
     await expect(directoryView).toBeVisible();
-    await expect(directoryView).toContainText("2 files");
+    await expect(directoryView.getByTestId("chat-side-panel-library-file-count")).toBeVisible();
+    await expect(directoryView.getByTestId("chat-side-panel-library-file-count")).toHaveText("2 files · 1 folder");
     await expect(directoryView).toContainText("alpha.md");
     await expect(directoryView).toContainText("bravo.md");
+    const nestedFolder = directoryView.getByRole("button", { name: /nested/ });
+    await expect(nestedFolder).toHaveAttribute("aria-expanded", "false");
+    await nestedFolder.click();
+    await expect(nestedFolder).toHaveAttribute("aria-expanded", "true");
+    await expect(directoryView).toContainText("charlie.md");
   });
 });

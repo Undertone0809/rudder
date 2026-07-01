@@ -871,6 +871,10 @@ describe("Chat Side Panel link handling", () => {
           { name: "notes.md", path: "notes.md", isDirectory: false },
         ],
       },
+      docs: {
+        directoryPath: "docs",
+        entries: [{ name: "guide.md", path: "docs/guide.md", isDirectory: false }],
+      },
     };
     mockState.workspaceFiles = {
       "notes.md": {
@@ -913,6 +917,21 @@ describe("Chat Side Panel link handling", () => {
     expect(sidePanel?.textContent).toContain("Library root");
     expect(sidePanel?.textContent).toContain("1 file · 1 folder");
     expect(sidePanel?.textContent).toContain("notes.md");
+
+    const docsButton = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("docs"),
+    );
+    expect(docsButton).not.toBeUndefined();
+    expect(docsButton?.getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => {
+      docsButton?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(docsButton?.getAttribute("aria-expanded")).toBe("true");
+    expect(sidePanel?.textContent).toContain("guide.md");
 
     const notesButton = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
       (candidate) => candidate.textContent?.includes("notes.md"),

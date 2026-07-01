@@ -5,10 +5,40 @@ import { Button } from "@/components/ui/button";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
+import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
-import { FileText, Folder, MessageSquareText, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileCode2,
+  FileText,
+  Folder,
+  Image as ImageIcon,
+  MessageSquareText,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { conversationDisplayTitle, type ChatSidePanelTarget } from "./Chat.parts";
+
+const CHAT_SIDE_PANEL_IMAGE_FILE_EXTENSIONS = new Set([
+  ".avif",
+  ".bmp",
+  ".gif",
+  ".ico",
+  ".jpeg",
+  ".jpg",
+  ".png",
+  ".svg",
+  ".webp",
+]);
+const CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([
+  ".md",
+  ".markdown",
+  ".mdown",
+  ".mdx",
+  ".txt",
+  ".text",
+]);
 
 function sidePanelTargetKey(target: ChatSidePanelTarget) {
   if (target.kind === "issue") return `issue:${target.issueId}:${target.commentId ?? ""}`;
@@ -59,6 +89,154 @@ function LoadingPanelBody() {
       <div className="h-20 animate-pulse rounded-[var(--radius-lg)] bg-[color:var(--surface-active)]" />
       <div className="h-28 animate-pulse rounded-[var(--radius-lg)] bg-[color:var(--surface-active)]" />
     </div>
+  );
+}
+
+function chatSidePanelWorkspaceFileExtension(filePath: string | null) {
+  if (!filePath) return null;
+  const basename = filePath.split("/").at(-1) ?? filePath;
+  const extensionIndex = basename.lastIndexOf(".");
+  return extensionIndex === -1 ? null : basename.slice(extensionIndex).toLowerCase();
+}
+
+function isChatSidePanelWorkspaceImageFile(filePath: string | null) {
+  const extension = chatSidePanelWorkspaceFileExtension(filePath);
+  return extension !== null && CHAT_SIDE_PANEL_IMAGE_FILE_EXTENSIONS.has(extension);
+}
+
+function isChatSidePanelWorkspaceTextDocumentFile(filePath: string | null) {
+  const extension = chatSidePanelWorkspaceFileExtension(filePath);
+  return extension !== null && CHAT_SIDE_PANEL_TEXT_DOCUMENT_FILE_EXTENSIONS.has(extension);
+}
+
+function displayChatSidePanelWorkspaceEntryLabel(entry: Pick<OrganizationWorkspaceFileEntry, "displayLabel" | "name">) {
+  return entry.displayLabel?.trim() || entry.name;
+}
+
+function ChatSidePanelLibraryTree({
+  entries,
+  selectedOrganizationId,
+  onOpenTarget,
+}: {
+  entries: OrganizationWorkspaceFileEntry[];
+  selectedOrganizationId: string | null | undefined;
+  onOpenTarget: (target: ChatSidePanelTarget) => void;
+}) {
+  if (entries.length === 0) {
+    return <div className="px-2 py-3 text-sm text-muted-foreground">This folder is empty or unavailable.</div>;
+  }
+
+  return (
+    <ul className="space-y-0.5">
+      {entries.map((entry) => (
+        <ChatSidePanelLibraryTreeNode
+          key={entry.path}
+          entry={entry}
+          selectedOrganizationId={selectedOrganizationId}
+          onOpenTarget={onOpenTarget}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function ChatSidePanelLibraryTreeNode({
+  entry,
+  selectedOrganizationId,
+  onOpenTarget,
+  depth = 0,
+}: {
+  entry: OrganizationWorkspaceFileEntry;
+  selectedOrganizationId: string | null | undefined;
+  onOpenTarget: (target: ChatSidePanelTarget) => void;
+  depth?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const primaryLabel = displayChatSidePanelWorkspaceEntryLabel(entry);
+  const childrenQuery = useQuery({
+    queryKey: queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", entry.path),
+    queryFn: () => organizationsApi.listWorkspaceFiles(selectedOrganizationId!, entry.path),
+    enabled: Boolean(selectedOrganizationId && entry.isDirectory && expanded),
+    refetchOnWindowFocus: false,
+  });
+  const childEntries = childrenQuery.data?.entries ?? [];
+
+  if (entry.isDirectory) {
+    return (
+      <li>
+        <div
+          className="group flex w-full items-center rounded-md pr-1 text-sm text-foreground transition-[background-color,color,opacity,transform] duration-150 hover:bg-accent/60"
+          style={{ paddingLeft: `${depth * 14 + 8}px` }}
+          data-workspace-entry-path={entry.path}
+        >
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
+            onClick={() => setExpanded((value) => !value)}
+            aria-expanded={expanded}
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
+              {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </span>
+            <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium">{primaryLabel}</div>
+            </div>
+          </button>
+        </div>
+        {expanded ? (
+          childrenQuery.isPending ? (
+            <div
+              className="px-2 py-1.5 text-sm text-muted-foreground"
+              style={{ paddingLeft: `${(depth + 1) * 14 + 23}px` }}
+            >
+              Loading files...
+            </div>
+          ) : childEntries.length > 0 ? (
+            <ul className="space-y-0.5">
+              {childEntries.map((childEntry) => (
+                <ChatSidePanelLibraryTreeNode
+                  key={childEntry.path}
+                  entry={childEntry}
+                  selectedOrganizationId={selectedOrganizationId}
+                  onOpenTarget={onOpenTarget}
+                  depth={depth + 1}
+                />
+              ))}
+            </ul>
+          ) : null
+        ) : null}
+      </li>
+    );
+  }
+
+  const FileIcon = isChatSidePanelWorkspaceImageFile(entry.path)
+    ? ImageIcon
+    : isChatSidePanelWorkspaceTextDocumentFile(entry.path)
+      ? FileText
+      : FileCode2;
+
+  return (
+    <li>
+      <div
+        className="group flex w-full items-center rounded-md pr-1 text-sm text-muted-foreground transition-[background-color,color,opacity,transform] duration-150 hover:bg-accent/50 hover:text-foreground"
+        style={{ paddingLeft: `${depth * 14 + 23}px` }}
+        data-workspace-entry-path={entry.path}
+      >
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
+          onClick={() => onOpenTarget({
+            kind: "library_file",
+            filePath: entry.path,
+            label: primaryLabel,
+          })}
+        >
+          <FileIcon className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{primaryLabel}</span>
+        </button>
+      </div>
+    </li>
   );
 }
 
@@ -314,40 +492,18 @@ export function ChatSidePanel({
           ) : libraryDirectoryTarget ? (
             <div className="space-y-3" data-testid="chat-side-panel-library-directory-view">
               {libraryDirectory ? (
-                <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-3 text-sm">
-                  <div className="font-mono text-xs text-muted-foreground">{libraryDirectory.directoryPath || "Library root"}</div>
-                  <div className="mt-2 text-xs text-muted-foreground" data-testid="chat-side-panel-library-file-count">
+                <div className="rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-3 py-2 text-sm">
+                  <div className="truncate font-mono text-xs text-muted-foreground">{libraryDirectory.directoryPath || "Library root"}</div>
+                  <div className="mt-1 text-xs text-muted-foreground" data-testid="chat-side-panel-library-file-count">
                     {libraryDirectoryFileCount} file{libraryDirectoryFileCount === 1 ? "" : "s"} · {libraryDirectoryFolderCount} folder{libraryDirectoryFolderCount === 1 ? "" : "s"}
                   </div>
                 </div>
               ) : null}
-              {libraryDirectoryEntries.length === 0 ? (
-                <p className="text-sm text-muted-foreground">This folder is empty or unavailable.</p>
-              ) : libraryDirectoryEntries.slice(0, 20).map((entry) => (
-                <button
-                  key={entry.path}
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] px-3 py-2 text-left text-sm transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                  onClick={() => openSidePanelTarget(entry.isDirectory
-                    ? {
-                        kind: "library_directory",
-                        directoryPath: entry.path,
-                        label: entry.displayLabel ?? entry.name,
-                      }
-                    : {
-                        kind: "library_file",
-                        filePath: entry.path,
-                        label: entry.displayLabel ?? entry.name,
-                      })}
-                >
-                  {entry.isDirectory ? (
-                    <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="min-w-0 truncate">{entry.displayLabel ?? entry.name}</span>
-                </button>
-              ))}
+              <ChatSidePanelLibraryTree
+                entries={libraryDirectoryEntries}
+                selectedOrganizationId={selectedOrganizationId}
+                onOpenTarget={openSidePanelTarget}
+              />
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Open this target in the full page for details.</p>
