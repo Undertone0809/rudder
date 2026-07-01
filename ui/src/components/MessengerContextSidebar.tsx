@@ -2782,10 +2782,12 @@ export function MessengerContextSidebar() {
       );
       const pinnedGroupSections = topLevelSections.filter((section) => section.isPinned);
       const remainingTopLevelSections = topLevelSections.filter((section) => !section.isPinned);
+      const loosePinnedSection = orderedPinnedEntries.length > 0
+        ? [{ key: "custom:pinned", label: "Pinned", entries: orderedPinnedEntries } satisfies OrganizedThreadSection]
+        : [];
       return [
-        ...(pinnedGroupSections.length > 0 || orderedPinnedEntries.length > 0
-          ? [{ key: "custom:pinned", label: "Pinned", entries: orderedPinnedEntries, childSections: pinnedGroupSections }]
-          : []),
+        ...pinnedGroupSections,
+        ...loosePinnedSection,
         ...remainingTopLevelSections,
       ];
     }
