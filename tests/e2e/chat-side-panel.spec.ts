@@ -212,5 +212,10 @@ test.describe("Chat Side Panel", () => {
     await nestedFolder.click();
     await expect(nestedFolder).toHaveAttribute("aria-expanded", "true");
     await expect(directoryView).toContainText("charlie.md");
+
+    await directoryView.getByRole("button", { name: "charlie.md" }).click();
+    await expect(sidePanel).toContainText(`${directoryPath}/nested/charlie.md`);
+    await expect(sidePanel).toContainText("Nested file preview.");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
   });
 });
