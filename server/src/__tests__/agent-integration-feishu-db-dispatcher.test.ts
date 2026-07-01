@@ -1615,7 +1615,9 @@ describe("Feishu inbound dispatcher DB deps", () => {
         terminalReason: "stopped",
       });
     });
-    expect(sent).toEqual([{ chatId: "oc_runtime_presend_stop", text: "Stop requested." }]);
+    await waitUntil(() => {
+      expect(sent).toEqual([{ chatId: "oc_runtime_presend_stop", text: "Stop requested." }]);
+    });
     await waitUntil(async () => {
       const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
       expect(messages.map((message) => ({ role: message.role, kind: message.kind, body: message.body }))).toEqual([
