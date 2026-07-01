@@ -720,7 +720,11 @@ describe("heartbeat managed workspace preflight", () => {
       const latestRun = await getRun(run!.id);
       if (latestRun?.status !== "failed") return false;
       const events = await getRunEvents(run!.id);
-      return events.some((event) => event.eventType === "adapter.forbidden_marker");
+      return (
+        models.length === 2 &&
+        events.some((event) => event.eventType === "adapter.forbidden_marker") &&
+        events.filter((event) => event.eventType === "adapter.invoke").length === 2
+      );
     });
 
     expect(models).toEqual(["primary-model", "backup-model"]);
