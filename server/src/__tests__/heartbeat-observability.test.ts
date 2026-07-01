@@ -360,6 +360,8 @@ describe("heartbeat observability surface", () => {
           "",
           "## Recent Rudder Context",
           "",
+          "#### today memory: 2026-06-21.md",
+          "",
           "- private startup detail",
           "",
           "## Current Time",
@@ -373,6 +375,8 @@ describe("heartbeat observability surface", () => {
           "",
           "## Recent Rudder Context",
           "",
+          "#### today memory: 2026-06-21.md",
+          "",
           "- private startup detail",
           "",
           "## Current Time",
@@ -383,10 +387,13 @@ describe("heartbeat observability surface", () => {
       runtimeSkills: [],
     });
 
-    expect(payload.prompt).toContain("[startup context omitted from persisted prompt]");
+    expect(payload.prompt).toContain("#### today memory: 2026-06-21.md");
+    expect(payload.prompt).not.toContain("[startup context omitted from persisted prompt]");
+    expect(payload.prompt).not.toContain("- private startup detail");
     expect(payload.agentInstructionStack).toContain("# SOUL.md");
     expect(payload.agentInstructionStack).not.toContain("## Agent Instruction:");
-    expect(payload.agentInstructionStack).toContain("[startup context omitted from persisted prompt]");
+    expect(payload.agentInstructionStack).toContain("#### today memory: 2026-06-21.md");
+    expect(payload.agentInstructionStack).not.toContain("[startup context omitted from persisted prompt]");
     expect(payload.agentInstructionStack).not.toContain("- private startup detail");
   });
 

@@ -136,6 +136,10 @@ function formatIssuePrincipal(agentId: string | null | undefined, userId: string
   return null;
 }
 
+function formatDailyMemoryHeading(label: "today" | "yesterday", relativePath: string) {
+  return `#### ${label} memory: ${path.basename(relativePath)}`;
+}
+
 export function buildAgentStartupContextPrompt(
   input: AgentStartupContextPromptInput,
   limits: AgentStartupContextLimits = {},
@@ -150,10 +154,10 @@ export function buildAgentStartupContextPrompt(
   const lines = [
     "## Recent Rudder Context",
     "",
-    `#### today ${input.todayMemory.relativePath}`,
+    formatDailyMemoryHeading("today", input.todayMemory.relativePath),
     clipMarkdown(input.todayMemory.content, resolvedLimits.memoryFileChars),
     "",
-    `#### yesterday ${input.yesterdayMemory.relativePath}`,
+    formatDailyMemoryHeading("yesterday", input.yesterdayMemory.relativePath),
     clipMarkdown(input.yesterdayMemory.content, resolvedLimits.memoryFileChars),
     "",
     "#### recent issues",

@@ -597,10 +597,10 @@ describe("agentRunContextService buildSceneContext", () => {
       markdown: [
         "## Recent Rudder Context",
         "",
-        "#### today memory/2026-06-19.md",
+        "#### today memory: 2026-06-19.md",
         "- Morning calibration",
         "",
-        "#### yesterday memory/2026-06-18.md",
+        "#### yesterday memory: 2026-06-18.md",
         "- Launch context",
         "",
         "#### recent issues",
@@ -662,7 +662,7 @@ describe("agentRunContextService buildSceneContext", () => {
     expect(context.rudderWorkspace.resourcesPrompt.indexOf("## Project Context Resources")).toBeLessThan(
       context.rudderWorkspace.resourcesPrompt.indexOf("## Recent Rudder Context"),
     );
-    expect(context.rudderWorkspace.resourcesPrompt).toContain("#### today memory/2026-06-19.md");
+    expect(context.rudderWorkspace.resourcesPrompt).toContain("#### today memory: 2026-06-19.md");
     expect(context.rudderWorkspace.resourcesPrompt).toContain("| `RD-421` | `in_review` | assignee | agent:agent-1 | empty");
     expect(context.rudderWorkspace.resourcesPrompt).toContain("| `chat_01JY9M2V8Q6Z` | 2026-06-19T00:33:00.000Z");
     expect(context.rudderWorkspace.resourcesPrompt).not.toContain("#### startup context metadata");

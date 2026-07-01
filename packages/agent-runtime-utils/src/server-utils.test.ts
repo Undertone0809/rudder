@@ -541,7 +541,7 @@ describe("loadAgentInstructionsPrefix", () => {
       const loaded = await loadAgentInstructionsPrefix({
         instructionsFilePath: instructionsPath,
         includeHeartbeatInstructions: true,
-        contextSectionsBeforeCurrentTime: ["## Recent Rudder Context\n\n#### today memory/2026-06-21.md\n- Calibrate prompt stack"],
+        contextSectionsBeforeCurrentTime: ["## Recent Rudder Context\n\n#### today memory: 2026-06-21.md\n- Calibrate prompt stack"],
         currentTime: new Date("2026-06-21T05:50:43.024Z"),
         onLog: async () => {},
       });

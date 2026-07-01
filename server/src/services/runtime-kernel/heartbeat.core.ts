@@ -394,7 +394,17 @@ export function sanitizeStartupContextPromptForPersistence(prompt: string | null
   }
   if (start < 0) return prompt;
   const nextSection = prompt.indexOf("\n## ", start + headingLength);
-  const replacement = `${start === 0 ? "" : "\n"}## Recent Rudder Context\n\n[startup context omitted from persisted prompt]`;
+  const recentContext = nextSection < 0 ? prompt.slice(start) : prompt.slice(start, nextSection);
+  const sourceHeadings = recentContext
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^#### (today|yesterday) memory: \d{4}-\d{2}-\d{2}\.md$/.test(line));
+  const replacementLines = [
+    `${start === 0 ? "" : "\n"}## Recent Rudder Context`,
+    "",
+    ...sourceHeadings,
+  ];
+  const replacement = replacementLines.join("\n").trimEnd();
   if (nextSection < 0) return `${prompt.slice(0, start)}${replacement}`;
   return `${prompt.slice(0, start)}${replacement}${prompt.slice(nextSection)}`;
 }

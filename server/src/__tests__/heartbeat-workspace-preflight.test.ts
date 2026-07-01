@@ -920,9 +920,9 @@ describe("heartbeat managed workspace preflight", () => {
 
     const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { prompt: string };
     expect(capture.prompt).toContain("## Recent Rudder Context");
-    expect(capture.prompt).toContain(`#### today memory/${todayKey}.md`);
+    expect(capture.prompt).toContain(`#### today memory: ${todayKey}.md`);
     expect(capture.prompt).toContain("- Today startup memory signal");
-    expect(capture.prompt).toContain(`#### yesterday memory/${yesterdayKey}.md`);
+    expect(capture.prompt).toContain(`#### yesterday memory: ${yesterdayKey}.md`);
     expect(capture.prompt).toContain("- Yesterday startup memory signal");
     expect(capture.prompt).toContain("| Issue | Status | Role | Assignee | Reviewer | Created | Updated | Title | Summary |");
     expect(capture.prompt).toContain("| `RD-421` | `in_review` | assignee |");
@@ -959,7 +959,9 @@ describe("heartbeat managed workspace preflight", () => {
       promptSanitizedForPersistence: true,
     });
     const persistedAdapterPayload = JSON.stringify(adapterInvoke?.payload ?? {});
-    expect(persistedAdapterPayload).toContain("[startup context omitted from persisted prompt]");
+    expect(persistedAdapterPayload).toContain(`#### today memory: ${todayKey}.md`);
+    expect(persistedAdapterPayload).toContain(`#### yesterday memory: ${yesterdayKey}.md`);
+    expect(persistedAdapterPayload).not.toContain("[startup context omitted from persisted prompt]");
     expect(persistedAdapterPayload).not.toContain("Today startup memory signal");
     expect(persistedAdapterPayload).not.toContain("Yesterday startup memory signal");
     expect(persistedAdapterPayload).not.toContain("默认装载今天和昨天的 memory md");

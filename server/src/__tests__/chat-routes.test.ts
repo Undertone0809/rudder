@@ -2732,7 +2732,7 @@ describe("chat routes", () => {
       "",
       "## Recent Rudder Context",
       "",
-      "#### today memory/2026-06-19.md",
+      "#### today memory: 2026-06-19.md",
       "- Chat startup memory signal",
       "",
       "#### recent chats",
@@ -2746,7 +2746,7 @@ describe("chat routes", () => {
       "",
       "## Recent Rudder Context",
       "",
-      "[startup context omitted from persisted prompt]",
+      "#### today memory: 2026-06-19.md",
       "## Conversation input",
       "{}",
     ].join("\n");
