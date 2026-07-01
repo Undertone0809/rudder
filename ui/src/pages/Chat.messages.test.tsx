@@ -275,7 +275,8 @@ describe("user chat message rendering", () => {
     expect(link?.textContent).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.classList.contains("rudder-website-link")).toBe(true);
-    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("https://icons.duckduckgo.com/ip3/x.com.ico");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("favicon-provider");
     await act(async () => {
       await vi.waitFor(() => {
         expect(websiteMetadataApiMock.get).toHaveBeenCalledWith(url);

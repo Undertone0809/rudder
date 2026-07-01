@@ -1747,14 +1747,15 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("rel")).toBe("noreferrer noopener");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
     expect(link?.textContent).toBe("the guide");
-    expect(link?.querySelector("svg.rudder-website-link-icon")?.getAttribute("aria-hidden")).toBe("true");
-    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("aria-hidden")).toBe("true");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("https://icons.duckduckgo.com/ip3/gingiris.github.io.ico");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("favicon-provider");
     expect(link?.querySelector(".rudder-website-link-label")?.textContent).toBe("the guide");
     expect(link?.querySelector(".rudder-link-chip-domain")).toBeNull();
     expect(link?.querySelector(".rudder-link-chip-detail")).toBeNull();
   });
 
-  it("uses the generic website icon when metadata has no site icon", async () => {
+  it("uses the favicon provider when metadata has no site icon", async () => {
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValueOnce({
       url: "https://openai.com/policies/terms-of-use/",
       siteName: "OpenAI",
@@ -1773,11 +1774,18 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("href")).toBe("https://openai.com/policies/terms-of-use/");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
     expect(link?.textContent).toBe("Terms of Use");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("https://icons.duckduckgo.com/ip3/openai.com.ico");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("favicon-provider");
     await act(async () => {
       await vi.waitFor(() => {
         expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith("https://openai.com/policies/terms-of-use/");
       });
     });
+
+    await act(async () => {
+      link?.querySelector("img.rudder-website-link-logo")?.dispatchEvent(new Event("error", { bubbles: false }));
+    });
+
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
     expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
   });
@@ -1798,7 +1806,8 @@ describe("MarkdownBody", () => {
     );
 
     const link = container.querySelector("a");
-    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("https://icons.duckduckgo.com/ip3/x.com.ico");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("favicon-provider");
 
     await act(async () => {
       await vi.waitFor(() => {
@@ -1814,7 +1823,68 @@ describe("MarkdownBody", () => {
     expect(link?.textContent).toBe("tweet");
   });
 
-  it("falls back to the generic website icon when a fetched icon fails to load", async () => {
+  it("keeps a favicon provider image when website metadata lookup is blocked", async () => {
+    const url = "https://developers.google.com/engineering-practices/code-review";
+    entityPreviewApiMocks.getWebsiteMetadata.mockRejectedValueOnce(new Error("Private network URLs cannot be inspected"));
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`Read [Google Engineering Practices](${url})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a");
+    const icon = link?.querySelector("img.rudder-website-link-logo");
+    expect(icon?.getAttribute("src")).toBe("https://icons.duckduckgo.com/ip3/developers.google.com.ico");
+    expect(icon?.getAttribute("data-website-icon")).toBe("favicon-provider");
+    expect(icon?.getAttribute("referrerpolicy")).toBe("no-referrer");
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
+      });
+    });
+
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("https://icons.duckduckgo.com/ip3/developers.google.com.ico");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("favicon-provider");
+  });
+
+  it.each([
+    "http://localhost:8080/post",
+    "http://127.0.0.1:8080/post",
+    "http://10.2.3.4/post",
+    "http://100.64.0.1/post",
+    "http://app.local/post",
+    "http://service.internal/post",
+    "http://intranet/post",
+  ])("does not request fallback favicons for private or internal origins: %s", async (url) => {
+    entityPreviewApiMocks.getWebsiteMetadata.mockRejectedValueOnce(new Error("Private network URLs cannot be inspected"));
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`Read [internal](${url})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a");
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(url);
+      });
+    });
+
+    expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+  });
+
+  it("falls back to the favicon provider and then generic icon when a fetched metadata icon fails to load", async () => {
     const url = "https://example.com/post/";
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
       url,
@@ -1841,6 +1911,13 @@ describe("MarkdownBody", () => {
         expect(link?.querySelector("img.rudder-website-link-logo")).toBeTruthy();
       });
     });
+
+    await act(async () => {
+      link?.querySelector("img.rudder-website-link-logo")?.dispatchEvent(new Event("error", { bubbles: false }));
+    });
+
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("https://icons.duckduckgo.com/ip3/example.com.ico");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("favicon-provider");
 
     await act(async () => {
       link?.querySelector("img.rudder-website-link-logo")?.dispatchEvent(new Event("error", { bubbles: false }));
@@ -1878,7 +1955,8 @@ describe("MarkdownBody", () => {
     expect(link?.getAttribute("title")).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.classList.contains("rudder-link-chip--website")).toBe(false);
-    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toBe("https://icons.duckduckgo.com/ip3/gingiris.github.io.ico");
+    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("favicon-provider");
     expect(link?.textContent).toBe(url);
   });
 
