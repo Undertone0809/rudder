@@ -166,6 +166,34 @@ process.stdin.on("end", () => {
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeMcpProcessCleanupNoiseCodexCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stderr.write("2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server rudder-control-plane: No such process (os error 3)\\n");
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeExternalMcpProcessCleanupNoiseCodexCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stderr.write("2026-07-01T06:12:02.158754Z  WARN codex_rmcp_client::stdio_server_launcher: Failed to kill MCP process group for server external-control-plane: No such process (os error 3)\\n");
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 async function writeClosedStdinNoiseCodexCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 process.stdin.resume();
@@ -2627,6 +2655,104 @@ describe("codex execute", { timeout: 20_000 }, () => {
         stderr: "",
       });
       expect(logs.some((entry) => entry.stream === "stderr")).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("filters benign Codex MCP process cleanup warnings from stderr", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-mcp-cleanup-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeMcpProcessCleanupNoiseCodexCommand(commandPath);
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-mcp-cleanup-noise",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      expect(result.resultJson).toMatchObject({
+        stderr: "",
+      });
+      expect(logs.some((entry) => entry.stream === "stderr")).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps MCP process cleanup warnings for non-Rudder servers", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-external-mcp-cleanup-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeExternalMcpProcessCleanupNoiseCodexCommand(commandPath);
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-external-mcp-cleanup-noise",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      expect(result.resultJson?.stderr).toContain("external-control-plane");
+      expect(logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("external-control-plane"))).toBe(true);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
