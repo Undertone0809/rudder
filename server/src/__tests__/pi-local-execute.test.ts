@@ -38,6 +38,14 @@ if (capturePath) {
     rudderEnvKeys: Object.keys(process.env)
       .filter((key) => key.startsWith("RUDDER_"))
       .sort(),
+    rudderManagedEnv: {
+      RUDDER_API_URL: process.env.RUDDER_API_URL || null,
+      RUDDER_API_KEY: process.env.RUDDER_API_KEY || null,
+      RUDDER_ORG_ID: process.env.RUDDER_ORG_ID || null,
+      RUDDER_AGENT_ID: process.env.RUDDER_AGENT_ID || null,
+      RUDDER_RUN_ID: process.env.RUDDER_RUN_ID || null,
+      RUDDER_PROJECT_LIBRARY_PATH: process.env.RUDDER_PROJECT_LIBRARY_PATH || null,
+    },
     gitIdentity: captureGitIdentityEnv(),
   }), "utf8");
 }
@@ -193,6 +201,7 @@ type CapturePayload = {
   piCodingAgentDir: string | null;
   piCodingAgentSessionDir: string | null;
   rudderEnvKeys: string[];
+  rudderManagedEnv: Record<string, string | null>;
   gitIdentity: GitIdentityCapture;
 };
 
@@ -238,6 +247,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
     let realizedSkills: unknown[] = [];
     let nativeDiscoverableSkills: unknown[] | undefined;
     let agentInstructionStack = "";
+    let rudderMcp: unknown;
     const runtimeSkillsRoot = path.join(root, "runtime-skills");
     const rudderDir = await createSkillDir(runtimeSkillsRoot, "rudder");
     const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
@@ -267,6 +277,12 @@ describe("pi execute", { timeout: 20_000 }, () => {
           model: "openai/gpt-test",
           env: {
             ...clearInheritedGitIdentityEnv,
+            RUDDER_AGENT_ID: "forbidden-agent",
+            RUDDER_API_KEY: "forbidden-api-key",
+            RUDDER_API_URL: "https://forbidden.example.invalid",
+            RUDDER_ORG_ID: "forbidden-org",
+            RUDDER_PROJECT_LIBRARY_PATH: "forbidden/project-library",
+            RUDDER_RUN_ID: "forbidden-run",
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           instructionsFilePath: instructionsPath,
@@ -306,6 +322,7 @@ describe("pi execute", { timeout: 20_000 }, () => {
           realizedSkills = meta.realizedSkills ?? [];
           nativeDiscoverableSkills = meta.nativeDiscoverableSkills;
           agentInstructionStack = meta.agentInstructionStack ?? "";
+          rudderMcp = meta.rudderMcp;
         },
       });
 
@@ -361,6 +378,14 @@ describe("pi execute", { timeout: 20_000 }, () => {
         "RUDDER_PROJECT_LIBRARY_PATH",
         "RUDDER_PROJECT_LIBRARY_ROOT",
       ]));
+      expect(capture.rudderManagedEnv).toMatchObject({
+        RUDDER_API_URL: "http://localhost:3100",
+        RUDDER_API_KEY: "run-jwt-token",
+        RUDDER_ORG_ID: "organization-1",
+        RUDDER_AGENT_ID: "agent-1",
+        RUDDER_RUN_ID: "run-pi-memory",
+        RUDDER_PROJECT_LIBRARY_PATH: "projects/product",
+      });
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
@@ -373,6 +398,12 @@ describe("pi execute", { timeout: 20_000 }, () => {
       ]);
       expect(realizedSkills).toEqual(loadedSkills);
       expect(nativeDiscoverableSkills).toBeUndefined();
+      expect(rudderMcp).toEqual({
+        available: false,
+        serverName: "rudder-control-plane",
+        toolCount: 69,
+        fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface in this adapter.",
+      });
       expect((await fs.lstat(path.join(managedPiAgentDir, "skills", "ascii-heart"))).isSymbolicLink()).toBe(true);
       expect(await fs.realpath(path.join(managedPiAgentDir, "skills", "ascii-heart"))).toBe(
         await fs.realpath(asciiHeartDir),

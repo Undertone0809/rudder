@@ -1,4 +1,10 @@
-import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import {
+  RUDDER_MCP_MANAGED_ENV_KEYS,
+  inferOpenAiCompatibleBiller,
+  rudderMcpRuntimeMetadata,
+  type AgentRuntimeExecutionContext,
+  type AgentRuntimeExecutionResult,
+} from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asNumber,
@@ -45,6 +51,7 @@ const MAX_PI_RESULT_STDOUT_BYTES = 64 * 1024;
 const PI_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
+  ...RUDDER_MCP_MANAGED_ENV_KEYS,
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
@@ -458,8 +465,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   await ensurePiSkillsInjected(onLog, piSkillEntries, skillsDir, desiredPiSkillNames);
 
   // Build environment
-  const hasExplicitApiKey =
-    typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.HOME = operatorHome;
   env.USERPROFILE = operatorHome;
@@ -524,9 +529,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   env.PI_CODING_AGENT_DIR = path.join(managedHome, ".pi", "agent");
   env.PI_CODING_AGENT_SESSION_DIR = sessionsDir;
   env.RUDDER_OPERATOR_HOME = operatorHome;
-  if (!hasExplicitApiKey && authToken) {
-    env.RUDDER_API_KEY = authToken;
-  }
+  if (authToken) env.RUDDER_API_KEY = authToken;
   applyGitIdentityPreparationEnv(env, preparedGitIdentity);
   applyGitCredentialHelperPolicyEnv(env);
   const piModelConfigNotes = await ensurePiOpenCodeAnonymousModelsConfig({
@@ -737,6 +740,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics,
         loadedSkills,
         realizedSkills: loadedSkills,
+        rudderMcp: rudderMcpRuntimeMetadata({
+          available: false,
+          fallbackReason: "Pi CLI does not expose a supported MCP server configuration surface in this adapter.",
+        }),
         context,
       });
     }

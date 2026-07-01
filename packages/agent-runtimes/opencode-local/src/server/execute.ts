@@ -1,5 +1,15 @@
-import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import {
+  RUDDER_MCP_MANAGED_ENV_KEYS,
+  RUDDER_MCP_SERVER_NAME,
+  inferOpenAiCompatibleBiller,
+  pickRudderMcpManagedEnv,
+  rudderMcpRuntimeMetadata,
+  type AgentRuntimeExecutionContext,
+  type AgentRuntimeExecutionResult,
+  type RudderMcpManagedEnv,
+} from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
+import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
   asBoolean,
   asNumber,
@@ -39,15 +49,22 @@ const OPENCODE_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
   "OPENCODE_CONFIG",
+  "OPENCODE_CONFIG_CONTENT",
+  "OPENCODE_CONFIG_DIR",
   "OPENCODE_DISABLE_CLAUDE_CODE",
   "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT",
   "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS",
+  ...RUDDER_MCP_MANAGED_ENV_KEYS,
   "RUDDER_AGENT_ROOT",
   "RUDDER_OPERATOR_HOME",
   "USERPROFILE",
   "XDG_CACHE_HOME",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
+]);
+const OPENCODE_INHERITED_ENV_BLOCKLIST = new Set([
+  "OPENCODE_CONFIG_CONTENT",
+  "OPENCODE_CONFIG_DIR",
 ]);
 const SHARED_OPENCODE_HOME_ENTRIES = [
   ".local/share/opencode",
@@ -196,9 +213,26 @@ async function readOpenCodeConfigFile(sourceHome: string): Promise<Record<string
   return sanitizeOpenCodeConfig({});
 }
 
+async function resolveRudderOpenCodeMcpConfig(
+  managedEnv: RudderMcpManagedEnv = {},
+): Promise<Record<string, unknown>> {
+  const rudderMcp = await resolveRudderMcpCliCommand(__moduleDir);
+  const env = {
+    ...(rudderMcp.env ?? {}),
+    ...managedEnv,
+  };
+  return {
+    type: "local",
+    command: [rudderMcp.command, ...rudderMcp.args],
+    enabled: true,
+    ...(Object.keys(env).length > 0 ? { environment: env } : {}),
+  };
+}
+
 async function ensureManagedOpenCodeConfig(input: {
   sourceHome: string;
   targetHome: string;
+  managedEnv?: RudderMcpManagedEnv;
   onLog: AgentRuntimeExecutionContext["onLog"];
 }) {
   const configDir = path.join(input.targetHome, ".config", "opencode");
@@ -211,11 +245,15 @@ async function ensureManagedOpenCodeConfig(input: {
   await removeManagedOpenCodeConfigExtensions(configDir);
 
   const config = await readOpenCodeConfigFile(input.sourceHome);
+  config.mcp = {
+    [RUDDER_MCP_SERVER_NAME]: await resolveRudderOpenCodeMcpConfig(input.managedEnv ?? {}),
+  };
   await fs.writeFile(
     path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE),
     `${JSON.stringify(config, null, 2)}\n`,
-    "utf8",
+    { encoding: "utf8", mode: 0o600 },
   );
+  await fs.chmod(path.join(configDir, MANAGED_OPENCODE_CONFIG_FILE), 0o600);
   await input.onLog(
     "stdout",
     `[rudder] Wrote sanitized OpenCode config into adapter-managed runtime state ${configDir}.\n`,
@@ -235,6 +273,7 @@ async function prepareManagedOpenCodeHome(
   operatorHome: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
+  managedEnv: RudderMcpManagedEnv = {},
 ): Promise<string> {
   const sourceHome = path.resolve(operatorHome);
   const targetHome = resolveManagedOpenCodeHomeDir({ env }, orgId);
@@ -249,7 +288,7 @@ async function prepareManagedOpenCodeHome(
     if (!(await pathExists(source))) continue;
     await ensureSymlink(path.join(targetHome, relativeEntry), source);
   }
-  await ensureManagedOpenCodeConfig({ sourceHome, targetHome, onLog });
+  await ensureManagedOpenCodeConfig({ sourceHome, targetHome, managedEnv, onLog });
 
   await onLog(
     "stdout",
@@ -365,8 +404,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
 
   const envConfig = parseObject(config.env);
-  const hasExplicitApiKey =
-    typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.RUDDER_RUN_ID = runId;
   const wakeTaskId =
@@ -422,7 +459,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
   const sourceEnv = { ...process.env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedOpenCodeHome({ ...sourceEnv, ...env }, operatorHome, onLog, agent.orgId);
+  if (authToken) env.RUDDER_API_KEY = authToken;
+  const managedHome = await prepareManagedOpenCodeHome(
+    { ...sourceEnv, ...env },
+    operatorHome,
+    onLog,
+    agent.orgId,
+    pickRudderMcpManagedEnv(env),
+  );
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
     home: managedHome,
@@ -439,9 +483,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   env.XDG_CONFIG_HOME = path.join(managedHome, ".config");
   env.XDG_DATA_HOME = path.join(managedHome, ".local", "share");
   env.XDG_CACHE_HOME = path.join(managedHome, ".cache");
-  if (!hasExplicitApiKey && authToken) {
-    env.RUDDER_API_KEY = authToken;
-  }
   applyGitIdentityPreparationEnv(env, preparedGitIdentity);
   applyGitCredentialHelperPolicyEnv(env);
   const openCodeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
@@ -474,6 +515,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     Object.entries(ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })))
       .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
+  for (const key of OPENCODE_INHERITED_ENV_BLOCKLIST) {
+    delete runtimeEnv[key];
+  }
+  for (const key of RUDDER_MCP_MANAGED_ENV_KEYS) {
+    const value = env[key];
+    if (typeof value === "string" && value.trim().length > 0) runtimeEnv[key] = value;
+    else delete runtimeEnv[key];
+  }
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
   validateOpenCodeModelConfig({ model });
@@ -515,19 +564,25 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const instructionsDir = loadedInstructions.instructionsDir;
 
   const commandNotes = (() => {
+    const rudderMcpNote = "Configured first-party Rudder MCP tools for OpenCode.";
     if (!resolvedInstructionsFilePath) {
       return [
         ...loadedInstructions.commandNotes,
+        rudderMcpNote,
         "Prepended Rudder operating contract to stdin prompt.",
       ];
     }
     if (instructionsPrefix.length > 0) {
       return [
         ...loadedInstructions.commandNotes,
+        rudderMcpNote,
         `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
       ];
     }
-    return loadedInstructions.commandNotes;
+    return [
+      ...loadedInstructions.commandNotes,
+      rudderMcpNote,
+    ];
   })();
 
   /**
@@ -607,7 +662,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     : commandNotes;
 
   const buildArgs = (resumeSessionId: string | null, redactPromptFile: boolean) => {
-    const args = ["run", "--format", "json", "--dir", cwd];
+    const args = ["run", "--pure", "--format", "json", "--dir", cwd];
     if (!useStdinPrompt) args.push(OPENCODE_PROMPT_FILE_MESSAGE);
     if (resumeSessionId) args.push("--session", resumeSessionId);
     if (model) args.push("--model", model);
@@ -636,6 +691,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         loadedSkills,
         realizedSkills: loadedSkills,
         promptInjectedSkills: loadedSkills,
+        rudderMcp: rudderMcpRuntimeMetadata(),
         context,
       });
     }

@@ -29,6 +29,8 @@ const payload = {
   home: process.env.HOME || null,
   userProfile: process.env.USERPROFILE || null,
   opencodeConfig: process.env.OPENCODE_CONFIG || null,
+  opencodeConfigContent: process.env.OPENCODE_CONFIG_CONTENT || null,
+  opencodeConfigDir: process.env.OPENCODE_CONFIG_DIR || null,
   rudderOperatorHome: process.env.RUDDER_OPERATOR_HOME || null,
   xdgConfigHome: process.env.XDG_CONFIG_HOME || null,
   xdgDataHome: process.env.XDG_DATA_HOME || null,
@@ -257,10 +259,10 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(capture.opencodeConfig).toBe(path.join(root, ".rudder", "instances", "default", "organizations", "organization-1", "opencode-home", ".config", "opencode", "opencode.json"));
       expect(capture.rudderOperatorHome).toBe(root);
       expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).toContain("--pure");
       expect(capture.argv).toContain("Follow the attached Rudder runtime prompt file exactly.");
       expect(capture.argv).toContain("--file");
       expect(capture.argv).not.toContain(capture.prompt);
-      expect(capture.argv).not.toContain("--pure");
       expect(capture.argv).not.toContain("--dangerously-skip-permissions");
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
@@ -328,9 +330,9 @@ describe("opencode execute", { timeout: 20_000 }, () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { argv: string[] };
       expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).toContain("--pure");
       expect(capture.argv).toContain("Follow the attached Rudder runtime prompt file exactly.");
       expect(capture.argv).toContain("--file");
-      expect(capture.argv).not.toContain("--pure");
       expect(capture.argv).toContain("--dangerously-skip-permissions");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -502,6 +504,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     let realizedSkills: unknown[] = [];
     let promptInjectedSkills: unknown[] = [];
     let nativeDiscoverableSkills: unknown[] | undefined;
+    let rudderMcp: unknown;
     const previousHome = process.env.HOME;
     const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
     const previousRudderHome = process.env.RUDDER_HOME;
@@ -552,6 +555,21 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           },
           env: {
             ...clearInheritedGitIdentityEnv,
+            OPENCODE_CONFIG: path.join(root, "forbidden-opencode.json"),
+            OPENCODE_CONFIG_CONTENT: JSON.stringify({
+              mcp: {
+                forbidden: {
+                  command: `printf ${forbiddenConfigMarker}`,
+                },
+              },
+            }),
+            OPENCODE_CONFIG_DIR: path.join(root, "forbidden-opencode-config-dir"),
+            RUDDER_AGENT_ID: "forbidden-agent",
+            RUDDER_API_KEY: "forbidden-api-key",
+            RUDDER_API_URL: "https://forbidden.example.invalid",
+            RUDDER_ORG_ID: "forbidden-org",
+            RUDDER_PROJECT_LIBRARY_PATH: "forbidden/project-library",
+            RUDDER_RUN_ID: "forbidden-run",
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           promptTemplate: "Follow the rudder heartbeat.",
@@ -564,6 +582,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           realizedSkills = meta.realizedSkills ?? [];
           promptInjectedSkills = meta.promptInjectedSkills ?? [];
           nativeDiscoverableSkills = meta.nativeDiscoverableSkills;
+          rudderMcp = meta.rudderMcp;
         },
       });
 
@@ -578,6 +597,8 @@ describe("opencode execute", { timeout: 20_000 }, () => {
         xdgDataHome: string | null;
         xdgCacheHome: string | null;
         prompt: string;
+        opencodeConfigContent: string | null;
+        opencodeConfigDir: string | null;
       };
       expect(capture.home).toBe(root);
       expect(capture.opencodeConfig).toBe(path.join(managedOpenCodeHome, ".config", "opencode", "opencode.json"));
@@ -586,10 +607,12 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(capture.xdgDataHome).toBe(path.join(managedOpenCodeHome, ".local", "share"));
       expect(capture.xdgCacheHome).toBe(path.join(managedOpenCodeHome, ".cache"));
       expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
+      expect(capture.argv).toContain("--pure");
       expect(capture.argv).toContain("Follow the attached Rudder runtime prompt file exactly.");
       expect(capture.argv).toContain("--file");
       expect(capture.argv).not.toContain(capture.prompt);
-      expect(capture.argv).not.toContain("--pure");
+      expect(capture.opencodeConfigContent).toBeNull();
+      expect(capture.opencodeConfigDir).toBeNull();
       await expectNoOperatorHomeSentinelsInManagedHome(managedOpenCodeHome);
       const managedConfigDir = path.join(managedOpenCodeHome, ".config", "opencode");
       expect((await fs.lstat(managedConfigDir)).isSymbolicLink()).toBe(false);
@@ -605,14 +628,37 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       await expect(fs.lstat(path.join(managedConfigDir, "opencode.jsonc"))).rejects.toMatchObject({
         code: "ENOENT",
       });
+      expect((await fs.stat(path.join(managedConfigDir, "opencode.json"))).mode & 0o777).toBe(0o600);
       await expect(fs.readFile(path.join(managedConfigDir, "opencode.json"), "utf8")).resolves.not.toContain(
         forbiddenConfigMarker,
       );
       const managedConfig = JSON.parse(await fs.readFile(path.join(managedConfigDir, "opencode.json"), "utf8")) as {
         autoupdate?: unknown;
+        mcp?: Record<string, { type?: unknown; command?: unknown; environment?: Record<string, unknown>; enabled?: unknown }>;
         provider?: Record<string, unknown>;
       };
       expect(managedConfig.autoupdate).toBe(false);
+      expect(Object.keys(managedConfig.mcp ?? {})).toEqual(["rudder-control-plane"]);
+      expect(managedConfig.mcp?.["rudder-control-plane"]).toMatchObject({
+        type: "local",
+        enabled: true,
+        environment: {
+          RUDDER_API_URL: "http://localhost:3100",
+          RUDDER_API_KEY: "run-jwt-token",
+          RUDDER_ORG_ID: "organization-1",
+          RUDDER_AGENT_ID: "agent-1",
+          RUDDER_RUN_ID: "run-opencode-runtime-skill",
+        },
+      });
+      expect(JSON.stringify(managedConfig)).not.toContain("forbidden-agent");
+      expect(JSON.stringify(managedConfig)).not.toContain("forbidden-api-key");
+      expect(JSON.stringify(managedConfig)).not.toContain("https://forbidden.example.invalid");
+      expect(JSON.stringify(managedConfig)).not.toContain("forbidden-org");
+      expect(JSON.stringify(managedConfig)).not.toContain("forbidden/project-library");
+      expect(JSON.stringify(managedConfig)).not.toContain("forbidden-run");
+      expect(managedConfig.mcp?.["rudder-control-plane"]?.command).toEqual(
+        expect.arrayContaining(["mcp-server"]),
+      );
       expect(managedConfig.provider).toMatchObject({
         deepseek: {
           id: "deepseek",
@@ -651,6 +697,12 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(realizedSkills).toEqual(loadedSkills);
       expect(promptInjectedSkills).toEqual(loadedSkills);
       expect(nativeDiscoverableSkills).toBeUndefined();
+      expect(rudderMcp).toEqual({
+        available: true,
+        serverName: "rudder-control-plane",
+        toolCount: 69,
+        fallbackReason: null,
+      });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
