@@ -149,6 +149,8 @@ export type DesktopIdeTarget = {
   label: string;
 };
 
+export type DesktopFileLaunchTargetId = DesktopIdeTarget["id"] | "defaultApp";
+
 export type DesktopWorkspaceLaunchTarget = {
   id: DesktopIdeTarget["id"] | "xcode" | "terminal" | "warp" | "commandPrompt" | "powershell" | "finder";
   label: string;
@@ -163,7 +165,7 @@ export type DesktopShellApi = {
   listAvailableIdes(): Promise<DesktopIdeTarget[]>;
   listWorkspaceLaunchTargets?(): Promise<DesktopWorkspaceLaunchTarget[]>;
   openWorkspace?(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
-  openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
+  openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopFileLaunchTargetId): Promise<void>;
   copyText(value: string): Promise<void>;
   copyImage?(payload: DesktopImageDataPayload): Promise<void>;
   showImageInFolder?(payload: DesktopImageDataPayload): Promise<void>;

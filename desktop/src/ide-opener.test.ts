@@ -299,6 +299,32 @@ describe("openWorkspaceFileInIde", () => {
     });
   });
 
+  it("opens a workspace file with the system default app", async () => {
+    const openDefaultApp = vi.fn(async () => {});
+
+    const result = await openWorkspaceFileInIde(
+      "/Users/tester/workspaces/org-1",
+      "plans/next-step.docx",
+      "defaultApp",
+      {
+        platform: "darwin",
+        pathExists: async () => false,
+        commandExists: async () => false,
+        openDefaultApp,
+      },
+    );
+
+    expect(openDefaultApp).toHaveBeenCalledWith(
+      "/Users/tester/workspaces/org-1/plans/next-step.docx",
+      "darwin",
+    );
+    expect(result).toEqual({
+      id: "defaultApp",
+      label: "Default app",
+      absolutePath: "/Users/tester/workspaces/org-1/plans/next-step.docx",
+    });
+  });
+
   it("rejects file paths that escape the workspace root", async () => {
     await expect(
       openWorkspaceFileInIde("/tmp/org", "../secrets.txt", "cursor", {
