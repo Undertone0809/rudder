@@ -54,10 +54,14 @@ describe("workspace context column sizing", () => {
 describe("workspace main card framing", () => {
   it("keeps Messenger directory and chat routes frameless", () => {
     expect(shouldUseFramelessWorkspaceMain("/messenger")).toBe(true);
+    expect(shouldUseFramelessWorkspaceMain("/messenger/chat")).toBe(true);
     expect(shouldUseFramelessWorkspaceMain("/messenger/chat/chat-1")).toBe(true);
   });
 
-  it("keeps Messenger issue detail routes on the normal paper workspace card", () => {
+  it("keeps Messenger thread routes on the normal paper workspace card", () => {
+    expect(shouldUseFramelessWorkspaceMain("/messenger/approvals")).toBe(false);
+    expect(shouldUseFramelessWorkspaceMain("/messenger/system/failed-runs")).toBe(false);
+    expect(shouldUseFramelessWorkspaceMain("/messenger/issues")).toBe(false);
     expect(shouldUseFramelessWorkspaceMain("/messenger/issues/issue-1")).toBe(false);
   });
 

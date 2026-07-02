@@ -218,8 +218,8 @@ function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily |
 export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   if (/^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath) && !/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return true;
   if (/^\/chat(?:\/|$)/.test(relativePath)) return true;
-  if (/^\/messenger\/issues\/[^/]+(?:\/|$)/.test(relativePath)) return false;
-  return /^\/messenger(?:\/|$)/.test(relativePath);
+  if (/^\/messenger\/chat(?:\/|$)/.test(relativePath)) return true;
+  return relativePath === "/messenger";
 }
 
 function getCurrentViewportWidth(): number | null {
