@@ -51,6 +51,12 @@ test.describe("Chat Side Panel", () => {
     expect(issueRes.ok(), await issueRes.text()).toBe(true);
     const issue = await issueRes.json() as { id: string; identifier: string | null; title: string };
     const issueRef = issue.identifier ?? issue.id;
+    const existingCommentRes = await page.request.post(`/api/issues/${issue.id}/comments`, {
+      data: {
+        body: "Existing side panel comment should stay visible.",
+      },
+    });
+    expect(existingCommentRes.ok(), await existingCommentRes.text()).toBe(true);
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -168,9 +174,14 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByRole("button", { name: `Close ${issueRef} tab` })).toBeVisible();
     await expect(sidePanel).toContainText("Reference issue target");
     await expect(sidePanel).toContainText("Issue details should stay beside the active chat.");
+    await expect(sidePanel).toContainText("Existing side panel comment should stay visible.");
     await expect(sidePanel.getByLabel("Edit issue")).toBeVisible();
     await expect(sidePanel.locator('button[aria-label="Close Side Panel"]')).toHaveCount(0);
     await expect(sidePanel.getByRole("link", { name: "Full page" })).toHaveCount(0);
+
+    await sidePanel.locator('button:has([data-slot="issue-status-icon"])').first().click();
+    await page.getByRole("menuitemradio", { name: "Done" }).click();
+    await expect(sidePanel).toContainText("done");
 
     await sidePanel.getByLabel("Edit issue").click();
     await sidePanel.getByLabel("Issue title").fill("Reference issue target edited");
@@ -178,6 +189,32 @@ test.describe("Chat Side Panel", () => {
     await sidePanel.getByRole("button", { name: "Save" }).click();
     await expect(sidePanel).toContainText("Reference issue target edited");
     await expect(sidePanel).toContainText("Edited from the chat detail panel.");
+
+    const commentComposer = sidePanel.locator(".chat-composer .rudder-milkdown-content [contenteditable='true']").last();
+    await expect(commentComposer).toBeVisible({ timeout: 15_000 });
+    await commentComposer.click();
+    await page.keyboard.type("Posted without leaving Messenger.");
+    const commentResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "POST"
+        && url.pathname.endsWith(`/api/issues/${issue.id}/comments`);
+    });
+    await sidePanel.locator(".chat-composer").getByRole("button", { name: "Comment", exact: true }).click();
+    const postedCommentRes = await commentResponse;
+    expect(postedCommentRes.ok(), await postedCommentRes.text()).toBe(true);
+    await expect(sidePanel).toContainText("Posted without leaving Messenger.");
+
+    const updatedIssueRes = await page.request.get(`/api/issues/${issue.id}`);
+    expect(updatedIssueRes.ok(), await updatedIssueRes.text()).toBe(true);
+    const updatedIssue = await updatedIssueRes.json() as { status: string; title: string; description: string | null };
+    expect(updatedIssue.status).toBe("done");
+    expect(updatedIssue.title).toBe("Reference issue target edited");
+    expect(updatedIssue.description).toBe("Edited from the chat detail panel.");
+
+    const commentsRes = await page.request.get(`/api/issues/${issue.id}/comments`);
+    expect(commentsRes.ok(), await commentsRes.text()).toBe(true);
+    const comments = await commentsRes.json() as Array<{ body: string }>;
+    expect(comments.some((comment) => comment.body === "Posted without leaving Messenger.")).toBe(true);
 
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-issue-editable.png"),
