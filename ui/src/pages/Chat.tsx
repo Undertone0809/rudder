@@ -127,7 +127,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSPr
 import { createPortal } from "react-dom";
 import { ChatAttachmentPreviewDialog, PendingAttachmentPreview } from "./Chat.attachments";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
-import { ASK_USER_ANSWER_PREFIX, ApprovalAction, AttachmentPreviewState, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStateRecentConversations, EMPTY_STATE_PROMPT_GROUPS, EmptyStatePromptLabel, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, PLAN_MODE_HELP_TEXT, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, chatEmptyStateHeading, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
+import { ASK_USER_ANSWER_PREFIX, ApprovalAction, AttachmentPreviewState, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStateRecentConversations, EMPTY_STATE_PROMPT_GROUPS, EmptyStatePromptLabel, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, PLAN_MODE_HELP_TEXT, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
@@ -1485,7 +1485,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         },
       },
     );
-  }; const retryFailedMessage = useCallback(
+  }; const selectedConversationHasActiveReply = Boolean(selectedConversation && (activeStream || activeSendInFlight || queueQuery.data?.activeGenerationId)); const retryFailedMessage = useCallback(
     (message: ChatMessage) => { if (!selectedConversation) return; const sourceUserMessage = findRetrySourceUserMessage(rawMessages, message);
       if (!sourceUserMessage) {
         pushToast({
@@ -1497,7 +1497,24 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         filesOverride: [],
         conversationOverride: selectedConversation,
         editUserMessageIdOverride: sourceUserMessage.id,
-      }); }, [pushToast, rawMessages, selectedConversation, sendMessage], ); const editDraftOnly = useCallback((text: string) => { setInlineEditUserMessageId(null); setInlineEditDraft(""); setDraft(text);
+      }); }, [pushToast, rawMessages, selectedConversation, sendMessage], ); const refreshAssistantMessage = useCallback(
+    (message: ChatMessage) => { if (!selectedConversation) return; if (!canRefreshAssistantChatMessage(message)) return; const sourceUserMessage = findRetrySourceUserMessage(rawMessages, message);
+      if (selectedConversationHasActiveReply) {
+        pushToast({
+          title: "Refresh unavailable",
+          body: "Wait for the current reply to finish before refreshing this answer.", tone: "error", });
+        return; }
+      if (!sourceUserMessage || sourceUserMessage.supersededAt) {
+        pushToast({
+          title: "Refresh unavailable",
+          body: "The original user message for this answer could not be found.", tone: "error", });
+        return; }
+      void sendMessage({
+        bodyOverride: sourceUserMessage.body,
+        filesOverride: [],
+        conversationOverride: selectedConversation,
+        editUserMessageIdOverride: sourceUserMessage.id,
+      }); }, [pushToast, rawMessages, selectedConversation, selectedConversationHasActiveReply, sendMessage], ); const editDraftOnly = useCallback((text: string) => { setInlineEditUserMessageId(null); setInlineEditDraft(""); setDraft(text);
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, []); const toggleEmptyStatePrompt = useCallback((label: EmptyStatePromptLabel) => { setExpandedEmptyStatePrompt((current) => (current === label ? null : label)); }, []); const applyEmptyStateExample = useCallback((example: string) => { setDraft(example); setExpandedEmptyStatePrompt(null);
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, []); const turnBranchControlsForTurn = useCallback(
     (chatTurnId: string | null, activeTurnVariant?: number | null): ChatTurnBranchControls | null => { if (!chatTurnId) return null; const userRows = rawMessages.filter( (m) => m.role === "user" && m.kind === "message" && m.chatTurnId === chatTurnId, ); const variants = [...new Set([...userRows.map((m) => m.turnVariant), ...(activeTurnVariant === null || activeTurnVariant === undefined ? [] : [activeTurnVariant])])].sort((a, b) => a - b); if (variants.length < 2) return null; const activeRows = userRows.filter((m) => !m.supersededAt);
@@ -1516,7 +1533,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     activeProjectName: emptyStateProjectName, userNickname, t, }); const emptyStateHeadingKey = emptyStateProjectName ? `project:${activeProject?.id}:${emptyStateProjectName}` : "no-project"; const composerPlaceholder = activePlanMode ? t("chat.composer.planModePlaceholder") : draftIssueContext ? t("chat.composer.issuePlaceholder", { issue: draftIssueContextLabel(draftIssueContext) }) : t("chat.composer.placeholder"); const expandedPromptGroup = EMPTY_STATE_PROMPT_GROUPS.find((group) => group.label === expandedEmptyStatePrompt) ?? null; const emptyStatePromptOptionsId = "chat-empty-state-prompt-options"; const emptyStatePromptOriginX = expandedEmptyStatePrompt === "Scope a new feature" ? "22%" : expandedEmptyStatePrompt === "Clarify a vague request" ? "50%" : expandedEmptyStatePrompt === "Turn a chat into an issue" ? "78%" : "50%";
   const showEmptyStateSupplementalContent = draft.trim().length === 0 && pendingFiles.length === 0;
   const hasRecentProjectConversations = allRecentProjectConversations.length > 0;
-  const selectedConversationHasActiveReply = Boolean(selectedConversation && (activeStream || activeSendInFlight || queueQuery.data?.activeGenerationId));
   const canQueueDraft = Boolean(selectedConversationHasActiveReply && draft.trim().length > 0 && !newConversationSendInFlight);
   const sendButtonMode: SendButtonMode = newConversationSendInFlight || (activeSendInFlight && !activeStream) ? "sending" : canQueueDraft ? "queue" : activeSendInFlight ? "stop" : "send";
   const selectedConversationExternalBound = isExternalBoundConversation(selectedConversation);
@@ -2183,6 +2199,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                               || message.kind === "issue_proposal" || message.kind === "operation_proposal";
                             const shouldRenderPersistedTranscript =
                               persistedTranscript.length > 0 && messageCanShowProcess; const shouldRenderLazyTranscript = persistedTranscript.length === 0 && messageCanShowProcess && Boolean(message.transcriptSummary?.entryCount); const persistedProcessStartedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript) : null; const persistedProcessEndedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessEndedAt(message, persistedTranscript) : null;
+                            const messageTurnBranchControls = turnBranchControlsFor(message);
+                            const refreshTurnBranchControls = message.chatTurnId ? turnBranchControlsForTurn(message.chatTurnId) : null;
                             return (
                               <Fragment key={message.id}>
                                 {shouldRenderPersistedTranscript ? (
@@ -2225,11 +2243,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     void sendMessage({
                                       bodyOverride: INTERRUPTED_CHAT_CONTINUATION_PROMPT,
                                       filesOverride: [], conversationOverride: selectedConversation, });
-                                  }} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} onForkMessage={(messageToFork) => forkConversationMutation.mutate({
+                                  }} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} canRefreshAssistantMessage={canRefreshDisplayedAssistantChatMessage({
+                                    message,
+                                    branchControls: refreshTurnBranchControls,
+                                    hasActiveReply: selectedConversationHasActiveReply,
+                                  })} onRefreshAssistantMessage={selectedConversationExternalBound ? undefined : refreshAssistantMessage} onForkMessage={(messageToFork) => forkConversationMutation.mutate({
                                     chatId: selectedConversation.id,
                                     sourceMessageId: messageToFork.id,
                                   })} onOpenImage={setAttachmentPreview} onOpenFile={openLocalFile} onMarkdownLinkClick={handleChatMarkdownLinkClick}
-                                  turnBranchControls={turnBranchControlsFor(message)}
+                                  turnBranchControls={messageTurnBranchControls}
                                   skillReferences={chatSkillReferences}
                                   issueCreatedMessage={issueCreatedMessage}
                                   inlineEdit={inlineEditUserMessageId === message.id ? {

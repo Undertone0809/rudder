@@ -1092,6 +1092,27 @@ export function canRetryFailedChatMessage(message: Pick<ChatMessage, "role" | "k
     && Boolean(message.chatTurnId);
 }
 
+export function canRefreshAssistantChatMessage(message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId">) {
+  return message.role === "assistant"
+    && message.kind === "message"
+    && message.status === "completed"
+    && Boolean(message.chatTurnId);
+}
+
+export function canRefreshDisplayedAssistantChatMessage({
+  message,
+  branchControls,
+  hasActiveReply,
+}: {
+  message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId">;
+  branchControls: { current: number; total: number } | null | undefined;
+  hasActiveReply: boolean;
+}) {
+  if (hasActiveReply || !canRefreshAssistantChatMessage(message)) return false;
+  if (!branchControls) return true;
+  return branchControls.current === branchControls.total;
+}
+
 export function recoverableFailureFromMessage(
   message: Pick<ChatMessage, "structuredPayload" | "runId">,
 ) {

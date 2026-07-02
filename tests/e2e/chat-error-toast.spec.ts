@@ -123,4 +123,48 @@ test.describe("Chat error recovery", () => {
     });
     await expect(failedMessage).toHaveCount(0);
   });
+
+  test("refreshes a completed assistant answer as another turn variant", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Refresh-Chat-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Refresh Agent",
+      command: E2E_CODEX_STUB,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("Refresh this final answer");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const firstAssistantMessage = page.getByTestId("chat-assistant-message").filter({
+      hasText: "Streaming reply for chat.",
+    });
+    await expect(firstAssistantMessage).toBeVisible({ timeout: 15_000 });
+
+    await firstAssistantMessage.getByRole("button", { name: "Refresh answer" }).click();
+
+    await expect(page.getByRole("button", { name: "Previous branch" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("2/2")).toBeVisible();
+    await expect(page.getByText("Refresh this final answer").first()).toBeVisible();
+    await expect(page.getByTestId("chat-assistant-message").filter({
+      hasText: "Streaming reply for chat.",
+    })).toBeVisible({ timeout: 15_000 });
+
+    await page.getByRole("button", { name: "Previous branch" }).click();
+    await expect(page.getByText("1/2")).toBeVisible();
+    await expect(page.getByText("Refresh this final answer").first()).toBeVisible();
+  });
 });

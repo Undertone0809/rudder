@@ -67,6 +67,7 @@ import {
   Loader2,
   Paperclip,
   Pencil,
+  RefreshCcw,
   Repeat,
   RotateCcw,
   Sparkles
@@ -2085,6 +2086,8 @@ export function ChatMessageItem({
   onEditUserMessage,
   onContinueInterruptedMessage,
   onRetryFailedMessage,
+  canRefreshAssistantMessage = false,
+  onRefreshAssistantMessage,
   onOpenImage,
   onOpenFile,
   onMarkdownLinkClick,
@@ -2116,6 +2119,8 @@ export function ChatMessageItem({
   onEditUserMessage?: (message: ChatMessage) => void;
   onContinueInterruptedMessage?: (message: ChatMessage) => void;
   onRetryFailedMessage?: (message: ChatMessage) => void;
+  canRefreshAssistantMessage?: boolean;
+  onRefreshAssistantMessage?: (message: ChatMessage) => void;
   onOpenImage: (preview: AttachmentPreviewState) => void;
   onOpenFile: (targetPath: string) => void;
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
@@ -2288,6 +2293,25 @@ export function ChatMessageItem({
                 className="text-[11px] tracking-normal"
               />
               <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
+              {onRefreshAssistantMessage && canRefreshAssistantMessage ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                        aria-label="Refresh answer"
+                        onClick={() => onRefreshAssistantMessage(message)}
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={8}>
+                      Refresh answer
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
               {onForkMessage && message.status !== "streaming" ? (
                 <button
                   type="button"
