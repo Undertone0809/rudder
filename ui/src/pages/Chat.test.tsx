@@ -1426,6 +1426,43 @@ describe("computeDisplayedChatMessages", () => {
     expect(computeDisplayedChatMessages(messages, { chatTurnId: "turn-1", turnVariant: 0 }).map((row) => row.id))
       .toEqual(["user-1", "proposal-1", "system-1"]);
   });
+
+  it("keeps prior turn variants visible while a newer variant is still streaming", () => {
+    const messages = [
+      message({
+        id: "user-v0",
+        role: "user",
+        kind: "message",
+        body: "Original request",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        supersededAt: new Date("2026-05-07T00:01:00.000Z"),
+        createdAt: new Date("2026-05-07T00:00:00.000Z"),
+      }),
+      message({
+        id: "assistant-v0",
+        role: "assistant",
+        kind: "message",
+        body: "Original response",
+        chatTurnId: "turn-1",
+        turnVariant: 0,
+        supersededAt: new Date("2026-05-07T00:01:00.000Z"),
+        createdAt: new Date("2026-05-07T00:00:01.000Z"),
+      }),
+      message({
+        id: "context-after",
+        role: "system",
+        kind: "system_event",
+        body: "Unrelated system event.",
+        chatTurnId: null,
+        supersededAt: null,
+        createdAt: new Date("2026-05-07T00:00:02.000Z"),
+      }),
+    ];
+
+    expect(computeDisplayedChatMessages(messages, { chatTurnId: "turn-1", turnVariant: 0 }).map((row) => row.id))
+      .toEqual(["user-v0", "assistant-v0", "context-after"]);
+  });
 });
 
 describe("scrollChatMessagesToBottom", () => {

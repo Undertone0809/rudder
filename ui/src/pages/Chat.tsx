@@ -126,7 +126,7 @@ import {
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { ChatAttachmentPreviewDialog, PendingAttachmentPreview } from "./Chat.attachments";
-import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride } from "./Chat.messages";
+import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import { ASK_USER_ANSWER_PREFIX, ApprovalAction, AttachmentPreviewState, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStateRecentConversations, EMPTY_STATE_PROMPT_GROUPS, EmptyStatePromptLabel, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, PLAN_MODE_HELP_TEXT, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, chatEmptyStateHeading, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
@@ -1111,6 +1111,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         userCreatedAt: startedAt,
         userMessageId: null,
         chatTurnId: null,
+        turnVariant: editTargetMessage ? editTargetMessage.turnVariant + 1 : 0,
         editedFromCreatedAt: editTargetMessage ? new Date(editTargetMessage.createdAt) : null,
         body: "",
         state: "streaming",
@@ -1147,7 +1148,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               chatId,
               (current) => (current ? { ...current,
                 userMessageId: event.userMessage.id,
-                chatTurnId: event.userMessage.chatTurnId ?? null, } : current), );
+              chatTurnId: event.userMessage.chatTurnId ?? null,
+              turnVariant: event.userMessage.turnVariant ?? 0, } : current), );
             return; }
           if (event.type === "assistant_delta") {
             setStreamDraftForChat(
@@ -1213,7 +1215,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     hasConversation: Boolean(selectedConversation),
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
     hasMessages: rawMessages.length > 0,
-    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeEditCutoffMs === null ? displayedMessages : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs); const visibleMessages = activeStream ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const scrollMapUserMessageCount = useMemo(
+    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeEditCutoffMs === null ? displayedMessages : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs); const activeStreamPreviewHidden = Boolean(activeStream?.chatTurnId && branchPreview?.chatTurnId === activeStream.chatTurnId && branchPreview.turnVariant !== activeStream.turnVariant); const visibleMessages = activeStream && !activeStreamPreviewHidden ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const scrollMapUserMessageCount = useMemo(
     () => countScrollMapUserMessages(visibleMessages), [visibleMessages],
   ); const showChatScrollMap = scrollMapUserMessageCount > CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD; const jumpToChatMessage = useCallback((messageId: string) => {
     const scrollElement = chatMessagesScrollElementRef.current;
@@ -1246,7 +1248,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryClient,
     selectedConversation,
     selectedOrganizationId,
-  ]); const showOptimisticUserMessage = Boolean(
+  ]); const showActiveStreamDraft = Boolean(activeStream && !activeStreamPreviewHidden); const showOptimisticUserMessage = Boolean(
     activeStream && (
       activeEditCutoffMs !== null
       || !activeStream.userMessageId || !rawMessages.some((message) => message.id === activeStream.userMessageId) ), );
@@ -1497,18 +1499,20 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         editUserMessageIdOverride: sourceUserMessage.id,
       }); }, [pushToast, rawMessages, selectedConversation, sendMessage], ); const editDraftOnly = useCallback((text: string) => { setInlineEditUserMessageId(null); setInlineEditDraft(""); setDraft(text);
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, []); const toggleEmptyStatePrompt = useCallback((label: EmptyStatePromptLabel) => { setExpandedEmptyStatePrompt((current) => (current === label ? null : label)); }, []); const applyEmptyStateExample = useCallback((example: string) => { setDraft(example); setExpandedEmptyStatePrompt(null);
-    requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, []); const turnBranchControlsFor = useCallback(
-    (message: ChatMessage) => { const tid = message.chatTurnId; if (!tid || message.role !== "user" || message.kind !== "message") return null; const userRows = rawMessages.filter( (m) => m.role === "user" && m.kind === "message" && m.chatTurnId === tid, ); const variants = [...new Set(userRows.map((m) => m.turnVariant))].sort((a, b) => a - b); if (variants.length < 2) return null; const activeRows = userRows.filter((m) => !m.supersededAt);
-      const activeVariant = activeRows.length > 0 ? Math.max(...activeRows.map((m) => m.turnVariant)) : variants[variants.length - 1]!;
-      const selected = branchPreview?.chatTurnId === tid ? branchPreview.turnVariant : activeVariant; let idx = variants.indexOf(selected); if (idx < 0) idx = variants.length - 1;
+    requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, []); const turnBranchControlsForTurn = useCallback(
+    (chatTurnId: string | null, activeTurnVariant?: number | null): ChatTurnBranchControls | null => { if (!chatTurnId) return null; const userRows = rawMessages.filter( (m) => m.role === "user" && m.kind === "message" && m.chatTurnId === chatTurnId, ); const variants = [...new Set([...userRows.map((m) => m.turnVariant), ...(activeTurnVariant === null || activeTurnVariant === undefined ? [] : [activeTurnVariant])])].sort((a, b) => a - b); if (variants.length < 2) return null; const activeRows = userRows.filter((m) => !m.supersededAt);
+      const activeVariant = activeTurnVariant ?? (activeRows.length > 0 ? Math.max(...activeRows.map((m) => m.turnVariant)) : variants[variants.length - 1]!);
+      const selected = branchPreview?.chatTurnId === chatTurnId ? branchPreview.turnVariant : activeVariant; let idx = variants.indexOf(selected); if (idx < 0) idx = variants.length - 1;
       return {
         current: idx + 1,
         total: variants.length,
         canPrev: idx > 0,
         canNext: idx < variants.length - 1,
-        onPrev: () => setBranchPreview({ chatTurnId: tid, turnVariant: variants[idx - 1]! }),
-        onNext: () => setBranchPreview({ chatTurnId: tid, turnVariant: variants[idx + 1]! }),
-      }; }, [rawMessages, branchPreview], ); const userNickname = profileQuery.data?.nickname.trim() ?? ""; const emptyStateProjectName = activeProject ? projectDisplayName(activeProject) : null; const emptyStateHeading = chatEmptyStateHeading({
+        onPrev: () => setBranchPreview({ chatTurnId, turnVariant: variants[idx - 1]! }),
+        onNext: () => setBranchPreview({ chatTurnId, turnVariant: variants[idx + 1]! }),
+      }; }, [rawMessages, branchPreview], ); const turnBranchControlsFor = useCallback(
+    (message: ChatMessage) => { const tid = message.chatTurnId; if (!tid || message.role !== "user" || message.kind !== "message") return null;
+      return turnBranchControlsForTurn(tid); }, [turnBranchControlsForTurn], ); const userNickname = profileQuery.data?.nickname.trim() ?? ""; const emptyStateProjectName = activeProject ? projectDisplayName(activeProject) : null; const emptyStateHeading = chatEmptyStateHeading({
     activeProjectName: emptyStateProjectName, userNickname, t, }); const emptyStateHeadingKey = emptyStateProjectName ? `project:${activeProject?.id}:${emptyStateProjectName}` : "no-project"; const composerPlaceholder = activePlanMode ? t("chat.composer.planModePlaceholder") : draftIssueContext ? t("chat.composer.issuePlaceholder", { issue: draftIssueContextLabel(draftIssueContext) }) : t("chat.composer.placeholder"); const expandedPromptGroup = EMPTY_STATE_PROMPT_GROUPS.find((group) => group.label === expandedEmptyStatePrompt) ?? null; const emptyStatePromptOptionsId = "chat-empty-state-prompt-options"; const emptyStatePromptOriginX = expandedEmptyStatePrompt === "Scope a new feature" ? "22%" : expandedEmptyStatePrompt === "Clarify a vague request" ? "50%" : expandedEmptyStatePrompt === "Turn a chat into an issue" ? "78%" : "50%";
   const showEmptyStateSupplementalContent = draft.trim().length === 0 && pendingFiles.length === 0;
   const hasRecentProjectConversations = allRecentProjectConversations.length > 0;
@@ -2243,7 +2247,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   answered={isAskUserMessageAnswered(message, visibleMessages)}
                                   askUserAnswer={askUserAnswerFromMessage(message, visibleMessages)}
                                   animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} /> </Fragment> ); })}
-                          {activeStream ? ( <>
+                          {showActiveStreamDraft && activeStream ? ( <>
                               {showOptimisticUserMessage ? (
                                 <OptimisticUserDraftItem
                                   body={activeStream.userBody}
@@ -2252,7 +2256,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   askUserAnswer={
                                     pendingAskUserRequest ? parseAskUserAnswerMessage(pendingAskUserRequest, activeStream.userBody) : null
                                   }
-                                  animateAskUserAnswer={activeStream.userBody.startsWith(ASK_USER_ANSWER_PREFIX)} /> ) : null}
+                                  animateAskUserAnswer={activeStream.userBody.startsWith(ASK_USER_ANSWER_PREFIX)}
+                                  turnBranchControls={turnBranchControlsForTurn(activeStream.chatTurnId, activeStream.turnVariant)} /> ) : null}
                               <StreamTranscriptItem key={`${activeStream.chatId}-${activeStream.createdAt.getTime()}`}
                                 entries={activeStream.transcript}
                                 state={activeStream.state}

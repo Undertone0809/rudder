@@ -908,6 +908,43 @@ export function ProposalCard({
 export const chatMessageHoverBarClass =
   "opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100";
 
+export type ChatTurnBranchControls = {
+  current: number;
+  total: number;
+  canPrev: boolean;
+  canNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+};
+
+function ChatTurnBranchSelector({ controls }: { controls: ChatTurnBranchControls }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 rounded-md px-0.5 text-[11px] tabular-nums text-muted-foreground">
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        aria-label="Previous branch"
+        disabled={!controls.canPrev}
+        onClick={controls.onPrev}
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <span className="min-w-[2.25rem] text-center">
+        {controls.current}/{controls.total}
+      </span>
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        aria-label="Next branch"
+        disabled={!controls.canNext}
+        onClick={controls.onNext}
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </span>
+  );
+}
+
 function CopyMessageButton({ onClick }: { onClick: () => void }) {
   return (
     <TooltipProvider>
@@ -2099,14 +2136,7 @@ export function ChatMessageItem({
   askUserAnswer?: AskUserAnswerRecord | null;
   animateAskUserAnswer?: boolean;
   issueCreatedMessage?: ChatMessage | null;
-  turnBranchControls?: {
-    current: number;
-    total: number;
-    canPrev: boolean;
-    canNext: boolean;
-    onPrev: () => void;
-    onNext: () => void;
-  } | null;
+  turnBranchControls?: ChatTurnBranchControls | null;
 }) {
   if (message.kind === "issue_proposal" || message.kind === "operation_proposal") {
     return (
@@ -2379,31 +2409,7 @@ export function ChatMessageItem({
               <Pencil className="h-4 w-4" />
             </button>
           ) : null}
-          {turnBranchControls ? (
-            <span className="inline-flex items-center gap-0.5 rounded-md px-0.5 text-[11px] tabular-nums text-muted-foreground">
-            <button
-              type="button"
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-              aria-label="Previous branch"
-                disabled={!turnBranchControls.canPrev}
-                onClick={turnBranchControls.onPrev}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <span className="min-w-[2.25rem] text-center">
-                {turnBranchControls.current}/{turnBranchControls.total}
-              </span>
-              <button
-                type="button"
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                aria-label="Next branch"
-                disabled={!turnBranchControls.canNext}
-                onClick={turnBranchControls.onNext}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </span>
-          ) : null}
+          {turnBranchControls ? <ChatTurnBranchSelector controls={turnBranchControls} /> : null}
           <HoverTimestampLabel
             date={message.createdAt}
             label={relativeTime(message.createdAt)}
@@ -2424,6 +2430,7 @@ export function OptimisticUserDraftItem({
   onMarkdownLinkClick,
   askUserAnswer,
   animateAskUserAnswer,
+  turnBranchControls,
 }: {
   body: string;
   createdAt: Date;
@@ -2433,6 +2440,7 @@ export function OptimisticUserDraftItem({
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   askUserAnswer?: AskUserAnswerRecord | null;
   animateAskUserAnswer?: boolean;
+  turnBranchControls?: ChatTurnBranchControls | null;
 }) {
   return (
     <div className="flex justify-end transition-all duration-200">
@@ -2464,6 +2472,7 @@ export function OptimisticUserDraftItem({
           >
             <Pencil className="h-4 w-4" />
           </button>
+          {turnBranchControls ? <ChatTurnBranchSelector controls={turnBranchControls} /> : null}
           <HoverTimestampLabel
             date={createdAt}
             label={relativeTime(createdAt)}
