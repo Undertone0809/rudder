@@ -9,6 +9,7 @@ contract_ids:
   - CHAT.FORK.001
   - CHAT.RICH.REFERENCE.RENDERING.001
   - CHAT.WEBSITE.LINK.ICON.001
+  - CHAT.SIDE.PANEL.001
   - MESSENGER.ATTENTION.001
   - MESSENGER.CUSTOM.GROUPS.001
   - IM.FEISHU.001
@@ -37,8 +38,12 @@ related_code:
   - ui/src/components/MarkdownBody.tsx
   - ui/src/api/websiteMetadata.ts
   - ui/src/lib/source-badge.ts
+  - ui/src/lib/side-panel-targets.ts
+  - ui/src/context/SidePanelContext.tsx
+  - ui/src/components/Layout.tsx
   - ui/src/components/MilkdownMarkdownEditor.tsx
   - ui/src/components/MessengerContextSidebar.tsx
+  - ui/src/pages/Chat.side-panel.tsx
   - ui/src/pages/Chat.tsx
   - ui/src/pages/Chat.messages.tsx
   - ui/src/pages/Messenger.tsx
@@ -61,6 +66,8 @@ related_tests:
   - ui/src/lib/source-badge.test.ts
   - ui/src/components/MilkdownMarkdownEditor.test.ts
   - ui/src/components/MarkdownBody.test.tsx
+  - ui/src/lib/side-panel-targets.test.ts
+  - ui/src/components/Layout.test.ts
   - ui/src/pages/AgentDetail.runs.test.ts
   - ui/src/pages/Chat.attachment-preview.test.tsx
   - ui/src/pages/Chat.messages.test.tsx
@@ -69,6 +76,7 @@ related_tests:
   - tests/e2e/messenger-contract.spec.ts
   - tests/e2e/chat-fork.spec.ts
   - tests/e2e/chat-rich-references.spec.ts
+  - tests/e2e/chat-side-panel.spec.ts
   - tests/e2e/agent-detail-feishu-integration.spec.ts
   - tests/e2e/feishu-source-badges.spec.ts
 edit_policy: user_confirmed_only
@@ -580,6 +588,83 @@ Evidence:
 - Markdown/body and chat message tests cover metadata icon rendering, generic
   fallback, image-load failure fallback, safe external-link attributes, and
   unchanged link text.
+- Website-link E2E covers real issue-page rendering, favicon-provider fallback,
+  inline wrapping, and internal-link no-fetch behavior.
+
+## CHAT.SIDE.PANEL.001
+
+Why:
+
+- Operators often need to inspect or lightly operate on a referenced issue,
+  automation, Library file, directory, chat, or browser-like target while keeping
+  their current work surface in view.
+- Chat remains an intake and coordination surface, but references should not
+  force route replacement when the user's job is quick context inspection or a
+  small adjacent edit.
+
+Product model:
+
+- The Side Panel is a global board workbench mounted in the shared organization
+  layout, not a Chat-only drawer.
+- Supported internal references can open or focus tabs in the Side Panel without
+  replacing the current route on ordinary clicks. Modifier-click and unsupported
+  links preserve normal navigation behavior.
+- Side Panel targets are typed objects: issue, automation, Library file,
+  Library directory, chat, browser placeholder, and explicit placeholders for
+  target classes that need a link/search before loading a concrete object.
+- The panel owns tab state, active target, add-tab affordances, empty-state
+  choices, width/resizer behavior, and close/focus behavior. It does not become
+  the owning domain for issue workflow, automation dispatch, Library path safety,
+  Messenger attention, or chat lifecycle.
+- The Browser target is a placeholder/tab target unless a secure embedded
+  browser surface exists; it must not perform unsafe remote fetches by itself.
+
+Flow:
+
+1. The operator opens the Side Panel from the global right-edge trigger, the
+   panel add-tab menu, or a supported internal reference in Chat/Messenger.
+2. The side-panel target parser normalizes the object into a stable tab key.
+3. If the target is already open, Rudder focuses the existing tab instead of
+   duplicating it.
+4. The target view loads through the existing organization-scoped API for that
+   domain.
+5. The panel renders the object in a compact workbench view and keeps the
+   current board route stable.
+6. Lightweight mutations exposed in the panel, such as issue title/description
+   edits or automation status edits, call the same domain APIs and show errors
+   in the panel instead of silently ignoring failures.
+7. Closing a tab focuses a neighboring tab or returns the panel to the empty
+   picker state.
+
+Invariants:
+
+- The Side Panel must not infer cross-organization access from a link string; all
+  target loads and mutations remain enforced by existing organization-scoped
+  APIs.
+- Side Panel issue views must preserve `ISSUE.SURFACE.001`,
+  `ISSUE.STATE.001`, assignment, reviewer, run, and routing semantics.
+- Side Panel automation views must preserve automation definition, trigger,
+  output, run-history, and dispatch semantics from `AUTOMATION.*`.
+- Side Panel Library views must preserve `LIBRARY.FILES.001` path safety,
+  protected paths, previews, and stable reference behavior.
+- Side Panel chat views must preserve chat lifecycle and Messenger attention
+  semantics; opening a chat target in the panel is not a read-state or routing
+  rewrite unless the owning Messenger/chat code performs that action.
+- The panel should not show a generic full-page footer as the primary action for
+  every target. Full-page navigation may remain a secondary object toolbar
+  action, but the panel's job is adjacent work.
+
+Evidence:
+
+- Side-panel target tests cover parsing supported route/mention targets, stable
+  keys, labels, and full-page href generation.
+- Layout tests cover shared shell behavior and panel framing decisions.
+- Chat attachment/side-panel tests cover tab behavior, empty state, add-tab
+  actions, issue and automation compact views, Library previews, and browser
+  placeholder behavior.
+- Side Panel E2E covers opening issue, automation, Library, and chat references
+  without replacing the Chat route; editing an issue inside the panel; browsing
+  a Library directory tree; and opening the global empty panel from Dashboard.
 
 ## MESSENGER.ATTENTION.001
 
