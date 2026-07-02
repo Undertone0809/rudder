@@ -407,9 +407,10 @@ function DesktopSidePanelSlot({
         data-testid="side-panel-resizer"
         className={cn(
           "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none",
-          "w-2 opacity-100 md:w-[9px]",
+          "opacity-100",
           resizingSidePanel && "is-resizing",
         )}
+        style={{ flexBasis: 4, maxWidth: 4, minWidth: 4, width: 4 }}
         onPointerDown={startSidePanelResize}
         role="separator"
         aria-orientation="vertical"

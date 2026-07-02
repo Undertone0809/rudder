@@ -658,6 +658,10 @@ Invariants:
 - Side Panel chat views must preserve chat lifecycle and Messenger attention
   semantics; opening a chat target in the panel is not a read-state or routing
   rewrite unless the owning Messenger/chat code performs that action.
+- On desktop and web shells, the Side Panel docks directly against the main
+  workspace with only a narrow resize affordance between them. It must not leave
+  a broad blank gutter that visually separates the panel from the current work
+  surface.
 - The panel should not show a generic full-page footer as the primary action for
   every target. Full-page navigation may remain a secondary object toolbar
   action, but the panel's job is adjacent work.
@@ -673,7 +677,8 @@ Evidence:
   behavior.
 - Side Panel E2E covers opening issue, automation, Library, and chat references
   without replacing the Chat route; editing an issue inside the panel; browsing
-  a Library directory tree; and opening the global empty panel from Dashboard.
+  a Library directory tree; opening the global empty panel from Dashboard; and
+  keeping the desktop/web panel gutter compact against the main workspace.
 
 ## MESSENGER.ATTENTION.001
 

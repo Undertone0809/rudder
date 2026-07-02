@@ -351,11 +351,14 @@ test.describe("Chat Side Panel", () => {
     const mainCardBox = await page.getByTestId("workspace-main-card").boundingBox();
     const resizerBox = await page.getByTestId("side-panel-resizer").boundingBox();
     const sidePanelBox = await sidePanel.boundingBox();
+    const sidePanelHeaderBox = await sidePanel.locator(".workspace-main-card").first().boundingBox();
     expect(mainCardBox).not.toBeNull();
     expect(resizerBox).not.toBeNull();
     expect(sidePanelBox).not.toBeNull();
-    expect(Math.round(resizerBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeGreaterThanOrEqual(0);
-    expect(Math.round(sidePanelBox!.x - (resizerBox!.x + resizerBox!.width))).toBeGreaterThanOrEqual(0);
+    expect(sidePanelHeaderBox).not.toBeNull();
+    expect(Math.round(resizerBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeLessThanOrEqual(2);
+    expect(Math.round(sidePanelBox!.x - (resizerBox!.x + resizerBox!.width))).toBe(0);
+    expect(Math.round(sidePanelHeaderBox!.x - (mainCardBox!.x + mainCardBox!.width))).toBeLessThanOrEqual(6);
 
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(sidePanel.getByLabel("Restore Side Panel width")).toBeVisible();
