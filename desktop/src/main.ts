@@ -499,6 +499,7 @@ function createDesktopWebPreferences(preloadPath: string): Electron.WebPreferenc
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: false,
+    webviewTag: true,
   };
 }
 
