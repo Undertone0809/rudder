@@ -416,8 +416,7 @@ test.describe("Chat Side Panel", () => {
     await page.getByTestId("chat-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("chat-side-panel-trigger")).toHaveAttribute("aria-label", "Close Side Panel");
-    await expect(page.getByTestId("chat-side-panel-trigger")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("chat-side-panel-trigger")).toHaveCount(0);
 
     await sidePanel.getByRole("button", { name: /Browser/ }).click();
     await expect(sidePanel.getByTestId("chat-side-panel-browser-view")).toBeVisible();
@@ -437,7 +436,7 @@ test.describe("Chat Side Panel", () => {
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
     await expect(sidePanel.getByTestId("chat-side-panel-tab").last()).toContainText("New tab");
 
-    await page.getByTestId("chat-side-panel-trigger").click();
+    await sidePanel.getByLabel("Close Side Panel").click();
     await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
     await expect(page.getByTestId("chat-side-panel-trigger")).toHaveAttribute("aria-pressed", "false");
   });

@@ -281,7 +281,8 @@ function DesktopSidePanelSlot({
   const sidePanel = useSidePanel();
   const [sidePanelWidth, setSidePanelWidth] = useState(readRememberedSidePanelWidth);
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
-  const sidePanelExpanded = sidePanelWidth > SIDE_PANEL_MAX_WIDTH;
+  const expandedSidePanelWidth = clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH);
+  const sidePanelExpanded = sidePanelWidth >= expandedSidePanelWidth - 1;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -369,9 +370,9 @@ function DesktopSidePanelSlot({
         expanded={sidePanelExpanded}
         onClose={sidePanel.closePanel}
         onToggleExpanded={() => setSidePanelWidth((current) =>
-          current > SIDE_PANEL_MAX_WIDTH
+          current >= expandedSidePanelWidth - 1
             ? clampSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)
-            : clampSidePanelWidth(SIDE_PANEL_EXPANDED_WIDTH),
+            : expandedSidePanelWidth,
         )}
       />
     </>
