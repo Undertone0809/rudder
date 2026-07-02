@@ -3279,6 +3279,10 @@ button[draggable="false"] {
   min-height: 2rem;
 }
 
+.rudder-issue-description-surface {
+  min-height: 2rem;
+}
+
 .rudder-milkdown-content a[href^="agent://"],
 .rudder-milkdown-content a[href^="automation://"],
 .rudder-milkdown-content a[href^="chat://"],
@@ -4127,6 +4131,86 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 
 .rudder-markdown h4 {
   font-size: 0.95rem;
+}
+
+.rudder-markdown.rudder-issue-description-markdown,
+.rudder-milkdown-content.rudder-issue-description-markdown {
+  font-size: 0.9375rem;
+  line-height: 1.75rem;
+  color: var(--foreground);
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h1, h2, h3, h4, h5, h6),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h1, h2, h3, h4, h5, h6) {
+  margin: 1.35em 0 0.45em;
+  color: var(--foreground);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h1),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h1) {
+  font-size: 1.35em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h2),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h2) {
+  font-size: 1.2em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h3),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h3) {
+  font-size: 1.08em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(h4, h5, h6),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(h4, h5, h6) {
+  font-size: 1em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(p),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(p) {
+  margin: 0;
+  line-height: inherit;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(p + p),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(p + p) {
+  margin-top: 1.1em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(ul, ol),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(ul, ol) {
+  margin: 0.6em 0;
+  padding-left: 1.45em;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(li),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(li) {
+  margin: 0.18em 0;
+  padding-left: 0.15em;
+  line-height: inherit;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(li > p),
+.rudder-milkdown-content.rudder-issue-description-markdown :where(li > p) {
+  margin: 0;
+}
+
+.rudder-markdown.rudder-issue-description-markdown :where(li)::marker,
+.rudder-milkdown-content.rudder-issue-description-markdown :where(li)::marker {
+  color: var(--muted-foreground);
+}
+
+.rudder-markdown.rudder-issue-description-markdown > :first-child,
+.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.rudder-markdown.rudder-issue-description-markdown > :last-child,
+.rudder-milkdown-content.rudder-issue-description-markdown .ProseMirror > :last-child {
+  margin-bottom: 0;
 }
 
 .rudder-markdown :where(strong, b) {

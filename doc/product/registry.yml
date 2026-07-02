@@ -35,9 +35,13 @@ contracts:
     docs:
       - doc/product/domains/issues/surfaces.md
     related_code:
+      - ui/src/components/InlineEditor.tsx
+      - ui/src/index.css
       - ui/src/pages/IssueDetail.tsx
       - ui/src/pages/Issues.tsx
     related_tests:
+      - ui/src/components/InlineEditor.test.tsx
+      - ui/src/pages/IssueDetail.test.tsx
       - tests/e2e/issue-detail-toolbar-actions.spec.ts
       - tests/e2e/issue-board-display-properties.spec.ts
     related_plans:

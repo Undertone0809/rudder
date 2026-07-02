@@ -6,9 +6,13 @@ coverage: seed
 contract_ids:
   - ISSUE.SURFACE.001
 related_code:
+  - ui/src/components/InlineEditor.tsx
+  - ui/src/index.css
   - ui/src/pages/IssueDetail.tsx
   - ui/src/pages/Issues.tsx
 related_tests:
+  - ui/src/components/InlineEditor.test.tsx
+  - ui/src/pages/IssueDetail.test.tsx
   - tests/e2e/issue-detail-toolbar-actions.spec.ts
   - tests/e2e/issue-board-display-properties.spec.ts
 edit_policy: user_confirmed_only
@@ -30,6 +34,9 @@ Behavior:
   transitions clearly through disabled states or server errors.
 - Issue detail may show run evidence, comments, review state, and activity, but
   those semantics remain owned by their domains.
+- Issue detail description reading and editing are the same content surface:
+  headings, lists, paragraphs, links, images, and multiline spacing must keep
+  the same readable rhythm when the operator enters edit mode.
 - Failed issue mutations must surface an error; they must not silently discard
   the user's action.
 
@@ -37,18 +44,28 @@ Invariant:
 
 - Issue UI must not redefine run, routing, review, comment, or activity rules as
   local page behavior.
+- Issue description edit mode must not introduce a different Markdown box model
+  from display mode. Any editor-specific implementation must opt into the same
+  issue-description typography contract used by the read state.
 
 Rationale:
 
 - Issue pages are the operator's main inspection surface, but product logic must
   remain owned by bounded domains to avoid duplicate facts.
+- Operators treat issue descriptions as durable task context. Switching between
+  reading and editing must not make the content jump, change paragraph grouping,
+  or make the user re-parse the work item.
 
 Related code:
 
+- `ui/src/components/InlineEditor.tsx`
+- `ui/src/index.css`
 - `ui/src/pages/IssueDetail.tsx`
 - `ui/src/pages/Issues.tsx`
 
 Related tests:
 
+- `ui/src/components/InlineEditor.test.tsx`
+- `ui/src/pages/IssueDetail.test.tsx`
 - `tests/e2e/issue-detail-toolbar-actions.spec.ts`
 - `tests/e2e/issue-board-display-properties.spec.ts`

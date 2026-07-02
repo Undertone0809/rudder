@@ -17,22 +17,24 @@ const markdownEditorHarness = vi.hoisted(() => ({
 }));
 
 vi.mock("./MarkdownBody", () => ({
-  MarkdownBody: ({ children }: { children: ReactNode }) => (
-    <div data-testid="markdown-body">{children}</div>
+  MarkdownBody: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <div data-testid="markdown-body" className={className}>{children}</div>
   ),
 }));
 
 vi.mock("./MarkdownEditor", () => ({
-  MarkdownEditor: ({ value, onChange, onSubmit }: {
+  MarkdownEditor: ({ value, onChange, onSubmit, contentClassName }: {
     value: string;
     onChange: (value: string) => void;
     onSubmit: () => void;
+    contentClassName?: string;
   }) => {
     markdownEditorHarness.onChange = onChange;
     markdownEditorHarness.onSubmit = onSubmit;
     return (
       <textarea
         data-testid="markdown-editor"
+        data-content-class-name={contentClassName}
         value={value}
         readOnly
       />
@@ -111,6 +113,42 @@ describe("InlineEditor", () => {
     });
 
     expect(host.querySelector("[data-testid='markdown-editor']")).toBeTruthy();
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("uses the same issue-description markdown rhythm in read and edit modes", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <InlineEditor
+          value={"## 需求分析\n\n- 第一条\n- 第二条\n\n问题：几号发版？"}
+          onSave={() => undefined}
+          multiline
+          variant="issue-description"
+        />,
+      );
+    });
+
+    const displayBody = host.querySelector("[data-testid='markdown-body']");
+    expect(displayBody?.className).toContain("rudder-inline-markdown-body");
+    expect(displayBody?.className).toContain("rudder-issue-description-markdown");
+    expect(displayBody?.className).toContain("rudder-issue-description-markdown-read");
+
+    const display = host.querySelector(".rudder-inline-markdown-surface");
+    await act(async () => {
+      display!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const editor = host.querySelector<HTMLTextAreaElement>("[data-testid='markdown-editor']");
+    expect(editor?.dataset.contentClassName).toContain("rudder-edit-in-place-content");
+    expect(editor?.dataset.contentClassName).toContain("rudder-issue-description-markdown");
+    expect(editor?.dataset.contentClassName).toContain("rudder-issue-description-markdown-edit");
+
     await act(async () => {
       root.unmount();
     });
