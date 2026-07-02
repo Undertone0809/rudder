@@ -248,6 +248,67 @@ Evidence:
 - Known gap: release-smoke onboarding evidence still belongs to release/Desktop
   validation, not this product contract alone.
 
+## ORG.DESKTOP.UPDATE.001
+
+Why:
+
+- Packaged Desktop updates should not make operators choose between losing
+  active agent work and getting stuck on an obsolete build.
+- Update progress should stay visible in the board shell so the operator can
+  understand whether the app is downloading, waiting for active work, ready to
+  apply, applying, complete, or failed.
+
+Product model:
+
+- In-app update install is available only from packaged Rudder Desktop builds.
+- Desktop checks the selected release channel, downloads the matching portable
+  Desktop asset, verifies checksums, and then waits for an explicit apply signal
+  before replacing the installed app.
+- If active runs exist when an update starts, Desktop can download the installer
+  while keeping those runs alive.
+- The update session preserves the active-run count across intermediate
+  download/checksum progress events so the final ready state can keep the
+  correct operator actions visible.
+
+Flow:
+
+1. The operator checks for an update or accepts the startup update prompt.
+2. If no active runs are present, Desktop downloads and verifies the update,
+   then shows a ready action to quit and update.
+3. If active runs are present, Desktop asks whether to download now and update
+   when idle, stop runs and update now, or cancel.
+4. When the operator chooses to update when idle, Desktop downloads and verifies
+   the update while keeping active work running. The ready status must show both
+   the idle apply path and the force apply path.
+5. Choosing the force apply path cancels active runs, quits Rudder, and applies
+   the update immediately.
+6. If a session expires or the child installer fails, Desktop reports a failed
+   update state with retry and releases-page actions.
+
+Invariants:
+
+- Active runs must not be cancelled by the default deferred download path.
+- A ready update that still has active runs must not collapse to a plain
+  "Quit and update" action; it must expose the explicit force update action.
+- Retrying or starting a second update while one is active reuses the existing
+  update attempt instead of launching a competing installer.
+- Failed update states must be operator-visible and should not silently close
+  the board.
+- A successful in-app update writes the post-update restart marker consumed by
+  `ORG.DESKTOP.RELEASE.NOTES.001`.
+
+Evidence:
+
+- `desktop/src/desktop-update-flow.test.ts` covers update child diagnostics,
+  deferred active-run updates, force apply, active update reuse, and preserving
+  active-run count through final ready progress.
+- `ui/src/components/DesktopUpdateStatusCard.test.tsx` covers the visible ready,
+  force update, expired-session, and failure actions.
+- `ui/src/components/DesktopUpdatePromptBridge.test.tsx` covers the renderer
+  prompt copy and active-run choices shown before a deferred update starts.
+- `desktop/src/desktop-quit-flow.test.ts` covers forced update quit handoff and
+  active-run cancellation failure cases.
+
 ## ORG.DESKTOP.RELEASE.NOTES.001
 
 Why:

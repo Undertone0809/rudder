@@ -1058,6 +1058,23 @@ contracts:
       - tests/e2e/onboarding.spec.ts
     related_plans:
       - doc/plans/2026-05-08-onboarding-getting-started-dashboard.md
+  ORG.DESKTOP.UPDATE.001:
+    owner: product
+    domain: organizations-and-goals
+    spec_depth: compact
+    docs:
+      - doc/product/domains/organizations-and-goals/settings-onboarding-portability.md
+    related_code:
+      - desktop/src/desktop-update-flow.ts
+      - desktop/src/desktop-quit-flow.ts
+      - desktop/src/preload.ts
+      - ui/src/components/DesktopUpdatePromptBridge.tsx
+      - ui/src/components/DesktopUpdateStatusCard.tsx
+    related_tests:
+      - desktop/src/desktop-update-flow.test.ts
+      - desktop/src/desktop-quit-flow.test.ts
+      - ui/src/components/DesktopUpdatePromptBridge.test.tsx
+      - ui/src/components/DesktopUpdateStatusCard.test.tsx
   ORG.DESKTOP.RELEASE.NOTES.001:
     owner: product
     domain: organizations-and-goals
