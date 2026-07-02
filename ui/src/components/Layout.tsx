@@ -209,6 +209,13 @@ function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily |
   return null;
 }
 
+export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
+  if (/^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath) && !/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return true;
+  if (/^\/chat(?:\/|$)/.test(relativePath)) return true;
+  if (/^\/messenger\/issues\/[^/]+(?:\/|$)/.test(relativePath)) return false;
+  return /^\/messenger(?:\/|$)/.test(relativePath);
+}
+
 function getCurrentViewportWidth(): number | null {
   if (typeof window === "undefined") return null;
   return window.innerWidth;
@@ -316,7 +323,10 @@ export function Layout() {
   );
   const isChatRoute = useMemo(() => /^\/chat(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
   const isMessengerRoute = useMemo(() => /^\/messenger(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
-  const useFramelessWorkspaceMain = isLibraryRoute || isChatRoute || isMessengerRoute;
+  const useFramelessWorkspaceMain = useMemo(
+    () => shouldUseFramelessWorkspaceMain(relativeBoardPath),
+    [relativeBoardPath],
+  );
   const isProjectsRoute = useMemo(() => /^\/projects(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
   const hasActiveChatConversation = useMemo(
     () => /\/chat\/[^/]+/.test(relativeBoardPath),
