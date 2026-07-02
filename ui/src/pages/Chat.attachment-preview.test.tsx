@@ -9,7 +9,7 @@ import {
   resolveChatPendingAttachmentScopeKey,
   updateChatPendingAttachmentsForScope,
 } from "@/lib/chat-pending-attachments";
-import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type Issue, type IssueComment, type Project } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type Issue, type IssueComment, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -34,7 +34,7 @@ const mockState = vi.hoisted(() => ({
   automations: {} as Record<string, AutomationDetail>,
   automationRuns: {} as Record<string, AutomationRunSummary[]>,
   projects: [] as Project[],
-  workspaceDirectories: {} as Record<string, { directoryPath: string; entries: Array<{ name: string; path: string; isDirectory: boolean; displayLabel?: string }> }>,
+  workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
   workspaceFiles: {} as Record<string, { filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; truncated: boolean }>,
   queueSnapshot: { activeGenerationId: null, items: [] } as ChatQueueSnapshot,
   cancelQueuedMessage: vi.fn(),
@@ -1477,13 +1477,54 @@ describe("Chat Side Panel link handling", () => {
       "": {
         directoryPath: "",
         entries: [
+          { name: "agents", path: "agents", isDirectory: true },
           { name: "docs", path: "docs", isDirectory: true },
           { name: "notes.md", path: "notes.md", isDirectory: false },
+          { name: "projects", path: "projects", isDirectory: true },
+          { name: "skills", path: "skills", isDirectory: true },
+        ],
+      },
+      agents: {
+        directoryPath: "agents",
+        entries: [
+          {
+            name: "asher",
+            displayLabel: "Asher",
+            path: "agents/asher",
+            isDirectory: true,
+            entityType: "agent_workspace",
+            agentIcon: null,
+            agentRole: "engineer",
+          },
         ],
       },
       docs: {
         directoryPath: "docs",
         entries: [{ name: "guide.md", path: "docs/guide.md", isDirectory: false }],
+      },
+      "agents/asher": {
+        directoryPath: "agents/asher",
+        entries: [{ name: "instructions", path: "agents/asher/instructions", isDirectory: true }],
+      },
+      "agents/asher/instructions": {
+        directoryPath: "agents/asher/instructions",
+        entries: [],
+      },
+      projects: {
+        directoryPath: "projects",
+        entries: [{ name: "rudder-dev", displayLabel: "Rudder Dev", path: "projects/rudder-dev", isDirectory: true }],
+      },
+      "projects/rudder-dev": {
+        directoryPath: "projects/rudder-dev",
+        entries: [],
+      },
+      skills: {
+        directoryPath: "skills",
+        entries: [{ name: "build-advisor", path: "skills/build-advisor", isDirectory: true }],
+      },
+      "skills/build-advisor": {
+        directoryPath: "skills/build-advisor",
+        entries: [{ name: "SKILL.md", path: "skills/build-advisor/SKILL.md", isDirectory: false }],
       },
     };
     mockState.workspaceFiles = {
@@ -1525,8 +1566,10 @@ describe("Chat Side Panel link handling", () => {
     let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel).not.toBeNull();
     expect(sidePanel?.textContent).toContain("Library root");
-    expect(sidePanel?.textContent).toContain("1 file · 1 folder");
+    expect(sidePanel?.textContent).toContain("1 file · 4 folders");
     expect(sidePanel?.textContent).toContain("notes.md");
+    expect(sidePanel?.querySelector('[data-testid="chat-side-panel-library-agents-root-icon"]')).not.toBeNull();
+    expect(sidePanel?.querySelector('[data-testid="chat-side-panel-library-skills-root-icon"]')).not.toBeNull();
 
     const docsButton = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
       (candidate) => candidate.textContent?.includes("docs"),
@@ -1542,6 +1585,49 @@ describe("Chat Side Panel link handling", () => {
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(docsButton?.getAttribute("aria-expanded")).toBe("true");
     expect(sidePanel?.textContent).toContain("guide.md");
+
+    const agentsButton = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("agents"),
+    );
+    expect(agentsButton).not.toBeUndefined();
+
+    await act(async () => {
+      agentsButton?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.textContent).toContain("Asher");
+    expect(sidePanel?.querySelector('[data-testid="chat-side-panel-library-agent-icon"]')).not.toBeNull();
+    expect(sidePanel?.querySelector('[data-testid="chat-side-panel-library-agent-badge"]')?.textContent).toContain("Agent");
+
+    const skillsButton = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("skills"),
+    );
+    expect(skillsButton).not.toBeUndefined();
+
+    await act(async () => {
+      skillsButton?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.textContent).toContain("build-advisor");
+    expect(sidePanel?.querySelector('[data-testid="chat-side-panel-library-skill-folder-icon"]')).not.toBeNull();
+
+    const projectsButton = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("projects"),
+    );
+    expect(projectsButton).not.toBeUndefined();
+
+    await act(async () => {
+      projectsButton?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.textContent).toContain("Rudder Dev");
+    expect(sidePanel?.querySelector('[data-testid="chat-side-panel-library-project-icon"]')).not.toBeNull();
 
     const notesButton = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
       (candidate) => candidate.textContent?.includes("notes.md"),
@@ -1620,6 +1706,66 @@ describe("Chat Side Panel link handling", () => {
     sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.textContent).toContain("Library root");
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
+  });
+
+  it("opens an interactive browser target from the empty Side Panel picker", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "browser-side-panel-message", body: "Open the browser panel." })],
+    };
+
+    const { container } = renderChat();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const chatSidePanelButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open Side Panel"]');
+    expect(chatSidePanelButton).not.toBeNull();
+    await act(async () => {
+      chatSidePanelButton?.click();
+      await Promise.resolve();
+    });
+
+    let sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel).not.toBeNull();
+
+    const browserOption = Array.from(sidePanel!.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.includes("Browser"),
+    );
+    expect(browserOption).not.toBeUndefined();
+    await act(async () => {
+      browserOption?.click();
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.textContent).toContain("Start browsing");
+    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-view']")).not.toBeNull();
+
+    const urlInput = sidePanel!.querySelector<HTMLInputElement>('input[aria-label="Browser URL"]');
+    expect(urlInput).not.toBeNull();
+    await act(async () => {
+      urlInput!.value = "example.com";
+      urlInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      urlInput!.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-browser-start']")).toBeNull();
+    const webview = sidePanel?.querySelector<HTMLElement>("[data-testid='chat-side-panel-browser-webview']");
+    expect(webview).not.toBeNull();
+    expect(webview?.getAttribute("src")).toBe("https://example.com");
+    expect(Array.from(sidePanel!.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']")).at(0)?.textContent).toContain("example.com");
+
+    const newBrowserTabButton = sidePanel!.querySelector<HTMLButtonElement>('button[aria-label="Open new browser tab"]');
+    await act(async () => {
+      newBrowserTabButton?.click();
+      await Promise.resolve();
+    });
+
+    const tabs = Array.from(container.querySelectorAll<HTMLElement>("[data-testid='chat-side-panel-tab']"));
+    expect(tabs).toHaveLength(2);
+    expect(tabs.at(-1)?.textContent).toContain("New tab");
   });
 
   it("uses a mobile overlay Side Panel without removing the Chat composer", async () => {
