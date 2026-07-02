@@ -616,13 +616,18 @@ Product model:
   choices, width/resizer behavior, and close/focus behavior. It does not become
   the owning domain for issue workflow, automation dispatch, Library path safety,
   Messenger attention, or chat lifecycle.
+- The add-tab affordance opens the empty `Open a panel` picker directly. It must
+  not automatically open a target-type menu; target choice belongs in the picker
+  page so the operator can choose Browser, Library, Issue, or another supported
+  target from the panel body.
 - The Browser target is a placeholder/tab target unless a secure embedded
   browser surface exists; it must not perform unsafe remote fetches by itself.
 
 Flow:
 
 1. The operator opens the Side Panel from the global right-edge trigger, the
-   panel add-tab menu, or a supported internal reference in Chat/Messenger.
+   panel add-tab affordance, or a supported internal reference in
+   Chat/Messenger.
 2. The side-panel target parser normalizes the object into a stable tab key.
 3. If the target is already open, Rudder focuses the existing tab instead of
    duplicating it.
@@ -630,10 +635,13 @@ Flow:
    domain.
 5. The panel renders the object in a compact workbench view and keeps the
    current board route stable.
-6. Lightweight mutations exposed in the panel, such as issue title/description
+6. When the operator clicks the add-tab affordance while a target is already
+   open, Rudder keeps existing tabs available but sets the active panel content
+   to the empty `Open a panel` picker instead of showing a dropdown menu.
+7. Lightweight mutations exposed in the panel, such as issue title/description
    edits or automation status edits, call the same domain APIs and show errors
    in the panel instead of silently ignoring failures.
-7. Closing a tab focuses a neighboring tab or returns the panel to the empty
+8. Closing a tab focuses a neighboring tab or returns the panel to the empty
    picker state.
 
 Invariants:
@@ -660,8 +668,9 @@ Evidence:
   keys, labels, and full-page href generation.
 - Layout tests cover shared shell behavior and panel framing decisions.
 - Chat attachment/side-panel tests cover tab behavior, empty state, add-tab
-  actions, issue and automation compact views, Library previews, and browser
-  placeholder behavior.
+  actions that return to the empty picker without opening a dropdown menu, issue
+  and automation compact views, Library previews, and browser placeholder
+  behavior.
 - Side Panel E2E covers opening issue, automation, Library, and chat references
   without replacing the Chat route; editing an issue inside the panel; browsing
   a Library directory tree; and opening the global empty panel from Dashboard.
