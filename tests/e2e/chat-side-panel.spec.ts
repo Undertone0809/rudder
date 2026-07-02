@@ -362,8 +362,30 @@ test.describe("Chat Side Panel", () => {
 
     await sidePanel.getByLabel("Expand Side Panel").click();
     await expect(sidePanel.getByLabel("Restore Side Panel width")).toBeVisible();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
+    await expect(page.getByTestId("side-panel-resizer")).toHaveCount(0);
+
+    const expandedMainCardBox = await page.getByTestId("workspace-main-card").boundingBox();
+    const expandedSidePanelBox = await sidePanel.boundingBox();
+    expect(expandedMainCardBox).not.toBeNull();
+    expect(expandedSidePanelBox).not.toBeNull();
+    expect(Math.abs(Math.round(expandedSidePanelBox!.x - expandedMainCardBox!.x))).toBeLessThanOrEqual(2);
+    expect(Math.abs(Math.round((expandedMainCardBox!.x + expandedMainCardBox!.width) - (expandedSidePanelBox!.x + expandedSidePanelBox!.width)))).toBeLessThanOrEqual(2);
+
     await sidePanel.getByLabel("Restore Side Panel width").click();
     await expect(sidePanel.getByLabel("Expand Side Panel")).toBeVisible();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
+    await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
+
+    await sidePanel.getByLabel("Expand Side Panel").click();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toBeVisible();
+    await sidePanel.getByLabel("Close Side Panel").click();
+    await expect(sidePanel).toHaveCount(0);
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click();
+    await expect(sidePanel).toBeVisible();
+    await expect(page.getByTestId("side-panel-expanded-overlay")).toHaveCount(0);
+    await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
 
     await sidePanel.getByRole("button", { name: /Issue/ }).click();
     await expect(sidePanel).toContainText("Open an issue link");

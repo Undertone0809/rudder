@@ -401,6 +401,25 @@ function DesktopSidePanelSlot({
     );
   }
 
+  if (sidePanelExpanded) {
+    return (
+      <div
+        className="absolute inset-y-0 left-0 right-0 z-30 flex min-w-0"
+        data-testid="side-panel-expanded-overlay"
+      >
+        <ChatSidePanel
+          selectedOrganizationId={selectedOrganizationId}
+          expanded
+          onClose={() => {
+            setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
+            sidePanel.closePanel();
+          }}
+          onToggleExpanded={() => setProportionalSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)}
+        />
+      </div>
+    );
+  }
+
   return (
     <>
       <div
@@ -1159,45 +1178,47 @@ export function Layout() {
                         <TooltipContent side="right">Show Library sidebar</TooltipContent>
                       </Tooltip>
                     ) : null}
-                    <div
-                      data-testid="workspace-main-card"
-                      data-tour-target="workspace-main"
-                      className={cn(
-                        "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-                        "workspace-main-card",
-                        useFramelessWorkspaceMain && "workspace-main-card--frameless",
-                      )}
-                    >
-                      {!useFramelessWorkspaceMain ? (
-                        <div data-testid="workspace-main-header" className="shrink-0">
-                          <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
-                        </div>
-                      ) : null}
-                      <main
-                        id="main-content"
-                        tabIndex={-1}
-                        ref={mainScrollRef}
+                    <div className="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-main-panel-stack">
+                      <div
+                        data-testid="workspace-main-card"
+                        data-tour-target="workspace-main"
                         className={cn(
-                          "scrollbar-auto-hide min-w-0 flex-1",
-                          shellMainPaddingClass,
-                          isMobile
-                            ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]"
-                            : useFramelessWorkspaceMain
-                              ? "overflow-hidden"
-                              : "overflow-auto",
+                          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+                          "workspace-main-card",
+                          useFramelessWorkspaceMain && "workspace-main-card--frameless",
                         )}
                       >
-                        {hasUnknownOrganizationPrefix ? (
-                          <NotFoundPage
-                            scope="invalid_organization_prefix"
-                            requestedPrefix={orgPrefix ?? selectedOrganization?.issuePrefix}
-                          />
-                        ) : (
-                          <Outlet />
-                        )}
-                      </main>
+                        {!useFramelessWorkspaceMain ? (
+                          <div data-testid="workspace-main-header" className="shrink-0">
+                            <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
+                          </div>
+                        ) : null}
+                        <main
+                          id="main-content"
+                          tabIndex={-1}
+                          ref={mainScrollRef}
+                          className={cn(
+                            "scrollbar-auto-hide min-w-0 flex-1",
+                            shellMainPaddingClass,
+                            isMobile
+                              ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]"
+                              : useFramelessWorkspaceMain
+                                ? "overflow-hidden"
+                                : "overflow-auto",
+                          )}
+                        >
+                          {hasUnknownOrganizationPrefix ? (
+                            <NotFoundPage
+                              scope="invalid_organization_prefix"
+                              requestedPrefix={orgPrefix ?? selectedOrganization?.issuePrefix}
+                            />
+                          ) : (
+                            <Outlet />
+                          )}
+                        </main>
+                      </div>
+                      <DesktopSidePanelSlot selectedOrganizationId={selectedOrganizationId} />
                     </div>
-                    <DesktopSidePanelSlot selectedOrganizationId={selectedOrganizationId} />
                   </div>
                 ) : (
                   <main

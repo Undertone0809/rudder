@@ -1252,6 +1252,7 @@ export function ChatSidePanel({
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;
   const libraryDirectoryFolderCount = libraryDirectoryEntries.length - libraryDirectoryFileCount;
   const isMobile = typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)").matches;
+  const desktopPanelStyle = !isMobile && desktopWidth && !expanded ? { width: desktopWidth } : undefined;
 
   return (
     <aside
@@ -1261,9 +1262,11 @@ export function ChatSidePanel({
         "motion-chat-side-panel flex min-h-0 w-full shrink-0 flex-col gap-1.5 bg-transparent",
         isMobile
           ? "fixed inset-x-3 bottom-3 top-[4.75rem] z-40"
-          : "md:w-[min(420px,36vw)]",
+          : expanded
+            ? "md:w-full"
+            : "md:w-[min(420px,36vw)]",
       )}
-      style={!isMobile && desktopWidth ? { width: desktopWidth } : undefined}
+      style={desktopPanelStyle}
       aria-label="Side Panel"
     >
       <div className={cn(
